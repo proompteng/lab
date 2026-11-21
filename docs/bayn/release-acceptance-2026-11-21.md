@@ -107,6 +107,31 @@ The [follow-up bundle](bayn-pr16145-followup-acceptance-20261121.json) preserves
 
 Normal changed-source [OpenCode CI 44914277712](https://github.com/proompteng/lab/actions/runs/44914277712), attempt 1, accepted exact head `b8333109`. At the retained **14:31:41 UTC** observation, both native architecture jobs were queued and unassigned. **Merge remains held for the intended current-head gates.** This improves failure evidence; the startup cause remains unresolved.
 
+### b833 native failures on both architectures
+
+The normal `b8333109` native workflow failed on both architectures. [AMD job 136876434674](https://github.com/proompteng/lab/actions/runs/44914277712/job/136876434674) completed with failure at **14:41:46 UTC**, and [ARM job 136876434948](https://github.com/proompteng/lab/actions/runs/44914277712/job/136876434948) at **14:43:35**. Both reached the initial readiness limit with no native HTTP response, provider call, native session or native application operation. Root independently verified the exact PR and workflow heads at **14:54:55 UTC**: the full rollup was terminal with **37 successful checks, two native failures and 25 skipped checks**. The index job was skipped. The earlier observation with four other checks still in progress remains in the receipts. Merge remains blocked.
+
+| Measurement                                        |                AMD64 |                ARM64 |
+| -------------------------------------------------- | -------------------: | -------------------: |
+| Initial readiness failure                          |            25,010 ms |            25,014 ms |
+| Native requests / transport errors / cancellations |          22 / 1 / 20 |          23 / 2 / 20 |
+| Diagnostic capture                                 |                 7 ms |                20 ms |
+| Main-task state at final stat read                 |                  `D` |                  `D` |
+| Wait-channel result                                | Unrecognized content | Unrecognized content |
+| Syscall result                                     |          Read denied |          Read denied |
+| Reported assertion-to-scope interval               |            63,306 ms |             1,802 ms |
+| Native test duration                               |         88,332.43 ms |         26,857.71 ms |
+
+Both failures retained the original **25-second `TimeoutError`**; neither log reports an outer 90-second timeout. The new wait interfaces ran within their capture budgets but supplied no recognized wait site or syscall number. The discarded wait-channel content need not have been a usable symbol. There was no permission escalation.
+
+The AMD main task recorded **142.678131 ms** of cumulative scheduler runtime and **0 ns** of run-queue delay; ARM recorded **306.151920 ms** and **1.950360 ms** respectively. Process-and-waited-children storage-write accounting was **5,267,456 bytes** on AMD and **4,866,048 bytes** on ARM, with zero reported storage-read bytes on both. These main-task and cumulative measurements do not establish duration in `D`, absence of other CPU contention, an I/O latency, a filesystem, device or common cause.
+
+AMD's embedded process-diagnostic time-of-day is **14:40:25.908**, while that line's GitHub envelope is **14:41:29.205 UTC**. The startup block itself straddles that envelope delay. Embedded logger timezone was not independently measured, and envelope arrival is not capture wall-clock time. The **63,306 ms** difference between reported assertion and scope elapsed times does not isolate one cleanup operation or the child's exit latency. ARM's corresponding interval was **1,802 ms**, so the matching `D` observations do not justify treating the later behavior as identical.
+
+The [follow-up evidence bundle](bayn-pr16145-followup-acceptance-20261121.json) preserves both full diagnostic records, selected raw failure lines, complete-download hashes, original phase/lifecycle measurements and independent review. Root checked both complete log hashes and sizes, their exact diagnostic lines (**677 AMD / 676 ARM**) and all **73 retained block rows per architecture**. The original pending-CI observation and prior failed heads remain separate historical records.
+
+The next authorized diagnostic step retains a domain-separated hash only for an otherwise unknown, strictly validated and bounded ASCII kernel-symbol identifier. It reuses the existing wait-channel read and keeps known outputs, explicit unrecognized status, all seven-read/200–250 ms limits and the native gates unchanged. Forbidden shapes and raw values remain excluded. A hash permits offline comparison with public symbol candidates; it cannot recover discarded `b833` content, guarantee a match or establish root cause. This follow-up is under implementation and review; no new source commit or passing CI is claimed here.
+
 ### 7a60 queue and composition boundaries
 
 A bounded runner read at **13:57:29 UTC** found AMD with **9 online-busy / 0 idle / 1 offline** and ARM with **5 online-busy / 0 idle / 5 offline** runners. Both pools had ten registered workers and retained **minRunners 5 / maxRunners 10**. All 20 actual EphemeralRunner Pods had matching architecture selectors; listeners, controllers and observability Pods were excluded. The offline names matched six unready workers: three running initialization, two scheduled before sandbox readiness and one initially unscheduled.

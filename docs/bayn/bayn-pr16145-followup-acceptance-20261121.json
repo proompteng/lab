@@ -954,21 +954,22 @@
   },
   "exactHeadCi": {
     "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
-    "state": "PENDING",
+    "state": "FAILED",
     "nativeRun": 44914277712,
     "runAttempt": 1,
     "amdJob": 136876434674,
     "armJob": 136876434948,
-    "observedAt": "2026-11-21T14:31:41.108145+00:00",
+    "observedAt": "2026-11-21T14:54:55.582322+00:00",
     "counts": {
-      "IN_PROGRESS": 2,
-      "QUEUED": 10,
-      "SKIPPED": 2,
-      "SUCCESS": 2
+      "SUCCESS": 37,
+      "FAILURE": 2,
+      "SKIPPED": 25
     },
-    "mergeState": "UNSTABLE",
+    "nativeWorkflowConclusion": "failure",
+    "fullPrRollupTerminal": true,
     "mergeHeld": true,
-    "limitation": "Normal changed-source CI is underway; both native jobs are unassigned and queued at this exact observation. No passing native result, merge or release acceptance is claimed."
+    "limitation": "The full current-head PR rollup is terminal. Both required native jobs failed; all other intended checks are successful or skipped. No merge or new release acceptance is claimed.",
+    "mergeState": "UNSTABLE"
   },
   "limitations": [
     "The 267-test / 2849-assertion composition execution used temporary merge tree828b924ddf6074465161b12051d192cbd77f8b63 (13ea59 + main215cd89), not finalb833 and not a full-main suite. Later7a60 andb833 changes are confined to the failure diagnostic helper, its tests and README.",
@@ -6496,5 +6497,2571 @@
         "independentEvidenceReview": "clear"
       }
     ]
+  },
+  "priorPendingCiB833": {
+    "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
+    "state": "PENDING",
+    "nativeRun": 44914277712,
+    "runAttempt": 1,
+    "amdJob": 136876434674,
+    "armJob": 136876434948,
+    "observedAt": "2026-11-21T14:31:41.108145+00:00",
+    "counts": {
+      "IN_PROGRESS": 2,
+      "QUEUED": 10,
+      "SKIPPED": 2,
+      "SUCCESS": 2
+    },
+    "mergeState": "UNSTABLE",
+    "mergeHeld": true,
+    "limitation": "Normal changed-source CI is underway; both native jobs are unassigned and queued at this exact observation. No passing native result, merge or release acceptance is claimed."
+  },
+  "nativeFailureB833": {
+    "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
+    "nativeRun": 44914277712,
+    "runAttempt": 1,
+    "inputs": [
+      {
+        "sourcePath": "/tmp/bayn-pr16145-b833-amd-native-failure-receipt-20261121.json",
+        "originalSha256": "db3b4552904aaa74dd72808770661c4ae0dce7b6426f5421cd4e0b23997f0b20",
+        "originalBytes": 9210,
+        "evidence": {
+          "schema": "bayn-native-startup-failure.v2",
+          "recordedAt": "2026-11-21T14:46:08.842095+00:00",
+          "repository": "proompteng/lab",
+          "pr": 16145,
+          "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
+          "workflow": {
+            "runId": 44914277712,
+            "runAttempt": 1,
+            "statusAtObservation": "in_progress",
+            "conclusionAtObservation": null
+          },
+          "job": {
+            "activeSteps": [],
+            "completedAt": "2026-11-21T14:41:46Z",
+            "conclusion": "failure",
+            "failedSteps": [
+              {
+                "completedAt": "2026-11-21T14:41:39Z",
+                "conclusion": "failure",
+                "name": "Build Nix image archive",
+                "startedAt": "2026-11-21T14:38:28Z"
+              }
+            ],
+            "id": 136876434674,
+            "name": "image / build-platform (linux/amd64, amd64, arc-amd64)",
+            "runner": "arc-amd64-runner-v5gss",
+            "startedAt": "2026-11-21T14:36:29Z",
+            "status": "completed"
+          },
+          "failureObservationAt": "2026-11-21T14:42:32.196990+00:00",
+          "checkCountsAtObservation": {
+            "FAILURE": 1,
+            "IN_PROGRESS": 8,
+            "QUEUED": 5,
+            "SKIPPED": 24,
+            "SUCCESS": 24
+          },
+          "rawLog": {
+            "path": "/tmp/bayn-pr16145-b833-amd136876434674-full-20261121.log",
+            "sha256": "1e7c0b67131a3c5b37ddf608f40d1ab025d5590b628982c9c67962ecd68e16d0",
+            "bytes": 72999,
+            "lines": 831,
+            "complete": true,
+            "captureCapBytes": 16777216,
+            "capReached": false,
+            "timedOut": false
+          },
+          "initialStartup": {
+            "readinessElapsedMs": 25010,
+            "phaseElapsedMs": 25010,
+            "spawnRequestedElapsedMs": 22,
+            "spawnAcquiredElapsedMs": 26,
+            "nativeRequests": 22,
+            "nativeHttpResponses": 0,
+            "nativeStartingResponses": 0,
+            "nativeTransportErrors": 1,
+            "nativeRequestCancellations": 20,
+            "nativeOtherErrors": 0,
+            "gatewayAttempts": 24,
+            "phase": "initial",
+            "readiness": "FAILED",
+            "embeddedLoggerTimeOfDay": "14:40:25.901",
+            "githubEnvelopeFirstLineAtUtc": "2026-11-21T14:40:25.9019313Z",
+            "githubEnvelopeLastLineAtUtc": "2026-11-21T14:41:29.2048151Z",
+            "firstNative": {
+              "elapsedMs": 29,
+              "outcome": "TRANSPORT_ERROR",
+              "status": null
+            },
+            "lastNative": {
+              "elapsedMs": 29,
+              "outcome": "TRANSPORT_ERROR",
+              "status": null
+            },
+            "lastGatewayStatus": null
+          },
+          "processDiagnostic": {
+            "sourceLineNumber": 677,
+            "githubEnvelopeAtUtc": "2026-11-21T14:41:29.2053186Z",
+            "embeddedLoggerTimeOfDay": "14:40:25.908",
+            "record": {
+              "event": "bayn.opencode-native-process-failure-test.v1",
+              "phase": "initial",
+              "beforeOuterScopeCleanup": true,
+              "captureElapsedMs": 7,
+              "limits": {
+                "captureBudgetMs": 200,
+                "observationBudgetMs": 250,
+                "maximumFileBytes": 4096,
+                "maximumFileReads": 7
+              },
+              "snapshot": {
+                "availability": "AVAILABLE",
+                "value": {
+                  "process": {
+                    "pid": 640,
+                    "parentPid": 606,
+                    "mainTaskState": "D",
+                    "minorFaults": 18071,
+                    "majorFaults": 0,
+                    "userCpuTicks": 29,
+                    "systemCpuTicks": 3,
+                    "threadCount": 6,
+                    "startTimeTicks": 118901453,
+                    "virtualBytes": 7066091520,
+                    "residentPages": 30929
+                  },
+                  "processAndWaitedChildrenIo": {
+                    "availability": "AVAILABLE",
+                    "value": {
+                      "readCharacters": 20030,
+                      "writtenCharacters": 5261832,
+                      "readSyscalls": 79,
+                      "writeSyscalls": 37,
+                      "storageReadBytes": 0,
+                      "storageWriteBytes": 5267456,
+                      "cancelledWriteBytes": 0
+                    }
+                  },
+                  "status": {
+                    "availability": "AVAILABLE",
+                    "value": {
+                      "residentKiB": 141468,
+                      "peakResidentKiB": 141468,
+                      "threadCount": 6,
+                      "mainTaskVoluntaryContextSwitches": 169,
+                      "mainTaskInvoluntaryContextSwitches": 0
+                    }
+                  },
+                  "mainTaskScheduler": {
+                    "availability": "AVAILABLE",
+                    "value": {
+                      "mainTaskRuntimeNs": 142678131,
+                      "mainTaskRunQueueDelayNs": 0,
+                      "mainTaskTimeslices": 169
+                    }
+                  },
+                  "mainTaskWaitChannel": {
+                    "availability": "UNAVAILABLE",
+                    "reason": "UNRECOGNIZED_WAIT_CHANNEL"
+                  },
+                  "mainTaskSyscall": {
+                    "availability": "UNAVAILABLE",
+                    "reason": "READ_DENIED"
+                  }
+                }
+              }
+            }
+          },
+          "lifecycle": {
+            "assertions-failed": {
+              "elapsedMs": 25025,
+              "providerCalls": 0,
+              "nativeSessionCreations": 0,
+              "embeddedLoggerTimeOfDay": "14:40:25.908",
+              "githubEnvelopeFirstLineAtUtc": "2026-11-21T14:41:29.2058750Z",
+              "nativeOperations": []
+            },
+            "scope-failed": {
+              "elapsedMs": 88331,
+              "providerCalls": 0,
+              "nativeSessionCreations": 0,
+              "embeddedLoggerTimeOfDay": "14:41:29.214",
+              "githubEnvelopeFirstLineAtUtc": "2026-11-21T14:41:29.2144942Z"
+            }
+          },
+          "failureAndScope": {
+            "reportedScopeMinusAssertionsElapsedMs": 63306,
+            "pureCleanupDurationKnown": false,
+            "originalFailureTag": "TimeoutError",
+            "originalFailureMessage": "Operation timed out after '25s'",
+            "nativeTestDurationMs": 88332.43,
+            "testSummaryDurationSeconds": 88.68,
+            "testsPassed": 0,
+            "testsFailed": 1,
+            "assertionCount": null,
+            "assertionCountAvailability": "NOT_REPORTED",
+            "outer90SecondTimeoutObserved": false
+          },
+          "interpretation": {
+            "directObservations": [
+              "The original 25-second initial readiness TimeoutError remains the reported failure; no HTTP response, provider call, native study session or native operation was retained before failure.",
+              "The bounded diagnostic reports a 7 ms capture and preserves all fixed fields. The owned native main task is in state D in its final stat sample.",
+              "Wait-channel parsing returned UNRECOGNIZED_WAIT_CHANNEL. Syscall reading returned READ_DENIED. No raw wait-channel content, syscall number, arguments or registers were retained.",
+              "The process reports 29 user and 3 system raw CPU clock ticks. The main-task scheduler reports 142678131 ns runtime, 0 ns runqueue delay and 169 timeslices.",
+              "Process-plus-waited-child I/O reports 5267456 storage-write bytes and 0 storage-read bytes.",
+              "Reported scope elapsed 88331 ms minus assertions-failed elapsed 25025 ms is 63306 ms; the native test completes at 88332.43 ms with the original readiness error."
+            ],
+            "limits": [
+              "The two new fields do not identify a blocking operation. Unrecognized content is not retained and need not be a usable symbol; denied syscall access is explicit, not an inferred syscall.",
+              "No ABI or kernel version was measured. No syscall-name mapping, permission escalation or further proc read was performed.",
+              "One sequential snapshot cannot establish duration in state D, an atomic stack, a file, a device or a common cause with earlier failures.",
+              "Zero runqueue delay does not establish scheduler-accounting coverage or rule out all CPU contention; raw CPU ticks and resident pages are not converted without observed clock frequency/page size.",
+              "Zero storage-read bytes or major faults does not establish absence of filesystem work. Status memory values are approximate KiB.",
+              "The 63306 ms reported post-assertion scope interval is not an isolated measurement of one cleanup operation or finalizer.",
+              "GitHub log-envelope timestamps differ from embedded logger time-of-day across the multiline startup block. Envelope arrival time is not asserted as capture wall-clock time; embedded logger timezone was not independently measured.",
+              "The workflow and ARM job were still in progress at this retained observation. This receipt claims only the completed AMD failure, not a terminal overall workflow result.",
+              "The native startup cause remains unresolved; repaired evidence capture is not a production reliability fix."
+            ]
+          },
+          "sources": [
+            {
+              "path": "/tmp/bayn-pr16145-b833-amd-log-download-20261121.json",
+              "sha256": "87650bca61dbf4eb651c5c97ce00186d9c748f355b854a629bb1448097ab0f99",
+              "bytes": 618
+            },
+            {
+              "path": "/tmp/bayn-pr16145-b833-amd-native-process-diagnostics-20261121.json",
+              "sha256": "d3ef3ff31d4a9a7982a81fa50749437ed2f13832c9e9016c7cd7024147639826",
+              "bytes": 2524
+            },
+            {
+              "path": "/tmp/bayn-pr16145-b833-amd-native-blocks-20261121.json",
+              "sha256": "947d2c6a45ab6eec704d60f2933051b11205ad975c70c1924e75baa1c0c5a259",
+              "bytes": 12302
+            },
+            {
+              "path": "/tmp/bayn-pr16145-b833-ci-watch-20261121.jsonl",
+              "sha256": "09ab6f5742e32c656214c382a3aa8efaaebd1fc9e4417f2b370c98601333959e",
+              "bytes": 71692
+            }
+          ],
+          "actions": {
+            "ciRetried": false,
+            "nativeLaunchedLocally": false,
+            "runtimeQueriesAdded": false,
+            "sourceChangedAfterFailure": false,
+            "mergeHeld": true
+          },
+          "provenanceLimit": "The watcher asserted PR headRefOid and native run head_sha before emitting each accepted projection. Complete job log and selected API projections are retained; raw API response bodies are not claimed retained."
+        }
+      },
+      {
+        "sourcePath": "/tmp/bayn-pr16145-b833-amd-native-process-diagnostics-20261121.json",
+        "originalSha256": "d3ef3ff31d4a9a7982a81fa50749437ed2f13832c9e9016c7cd7024147639826",
+        "originalBytes": 2524,
+        "evidence": {
+          "head": "b83331091527db4166e9bfccd78e8d8065610077",
+          "runId": 44914277712,
+          "jobId": 136876434674,
+          "sourceLogSha256": "1e7c0b67131a3c5b37ddf608f40d1ab025d5590b628982c9c67962ecd68e16d0",
+          "records": [
+            {
+              "lineNumber": 677,
+              "timestamp": "2026-11-21T14:41:29.2053186Z",
+              "record": {
+                "event": "bayn.opencode-native-process-failure-test.v1",
+                "phase": "initial",
+                "beforeOuterScopeCleanup": true,
+                "captureElapsedMs": 7,
+                "limits": {
+                  "captureBudgetMs": 200,
+                  "observationBudgetMs": 250,
+                  "maximumFileBytes": 4096,
+                  "maximumFileReads": 7
+                },
+                "snapshot": {
+                  "availability": "AVAILABLE",
+                  "value": {
+                    "process": {
+                      "pid": 640,
+                      "parentPid": 606,
+                      "mainTaskState": "D",
+                      "minorFaults": 18071,
+                      "majorFaults": 0,
+                      "userCpuTicks": 29,
+                      "systemCpuTicks": 3,
+                      "threadCount": 6,
+                      "startTimeTicks": 118901453,
+                      "virtualBytes": 7066091520,
+                      "residentPages": 30929
+                    },
+                    "processAndWaitedChildrenIo": {
+                      "availability": "AVAILABLE",
+                      "value": {
+                        "readCharacters": 20030,
+                        "writtenCharacters": 5261832,
+                        "readSyscalls": 79,
+                        "writeSyscalls": 37,
+                        "storageReadBytes": 0,
+                        "storageWriteBytes": 5267456,
+                        "cancelledWriteBytes": 0
+                      }
+                    },
+                    "status": {
+                      "availability": "AVAILABLE",
+                      "value": {
+                        "residentKiB": 141468,
+                        "peakResidentKiB": 141468,
+                        "threadCount": 6,
+                        "mainTaskVoluntaryContextSwitches": 169,
+                        "mainTaskInvoluntaryContextSwitches": 0
+                      }
+                    },
+                    "mainTaskScheduler": {
+                      "availability": "AVAILABLE",
+                      "value": {
+                        "mainTaskRuntimeNs": 142678131,
+                        "mainTaskRunQueueDelayNs": 0,
+                        "mainTaskTimeslices": 169
+                      }
+                    },
+                    "mainTaskWaitChannel": {
+                      "availability": "UNAVAILABLE",
+                      "reason": "UNRECOGNIZED_WAIT_CHANNEL"
+                    },
+                    "mainTaskSyscall": {
+                      "availability": "UNAVAILABLE",
+                      "reason": "READ_DENIED"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "sourcePath": "/tmp/bayn-pr16145-b833-amd-native-blocks-20261121.json",
+        "originalSha256": "947d2c6a45ab6eec704d60f2933051b11205ad975c70c1924e75baa1c0c5a259",
+        "originalBytes": 12302,
+        "evidence": {
+          "head": "b83331091527db4166e9bfccd78e8d8065610077",
+          "jobId": 136876434674,
+          "sourceLogSha256": "1e7c0b67131a3c5b37ddf608f40d1ab025d5590b628982c9c67962ecd68e16d0",
+          "rows": [
+            {
+              "lineNumber": 647,
+              "text": "2026-11-21T14:40:00.5350964Z bayn-runtime-root> bun test v1.4.2 (744846f84)"
+            },
+            {
+              "lineNumber": 648,
+              "text": "2026-11-21T14:40:00.5482091Z bayn-runtime-root> "
+            },
+            {
+              "lineNumber": 649,
+              "text": "2026-11-21T14:40:00.5482440Z bayn-runtime-root> services/bayn/src/opencode/server.integration.test.ts:"
+            },
+            {
+              "lineNumber": 650,
+              "text": "2026-11-21T14:40:25.9019313Z bayn-runtime-root> [14:40:25.901] INFO (#2): {"
+            },
+            {
+              "lineNumber": 651,
+              "text": "2026-11-21T14:40:25.9019884Z bayn-runtime-root>   event: \"bayn.opencode-native-startup-test.v1\","
+            },
+            {
+              "lineNumber": 652,
+              "text": "2026-11-21T14:40:25.9020528Z bayn-runtime-root>   phase: \"initial\","
+            },
+            {
+              "lineNumber": 653,
+              "text": "2026-11-21T14:40:25.9021019Z bayn-runtime-root>   spawnRequestedElapsedMs: 22,"
+            },
+            {
+              "lineNumber": 654,
+              "text": "2026-11-21T14:41:29.2034887Z bayn-runtime-root>   spawnAcquiredElapsedMs: 26,"
+            },
+            {
+              "lineNumber": 655,
+              "text": "2026-11-21T14:41:29.2037800Z bayn-runtime-root>   nativeRequests: 22,"
+            },
+            {
+              "lineNumber": 656,
+              "text": "2026-11-21T14:41:29.2038249Z bayn-runtime-root>   nativeHttpResponses: 0,"
+            },
+            {
+              "lineNumber": 657,
+              "text": "2026-11-21T14:41:29.2038663Z bayn-runtime-root>   nativeStartingResponses: 0,"
+            },
+            {
+              "lineNumber": 658,
+              "text": "2026-11-21T14:41:29.2041394Z bayn-runtime-root>   nativeTransportErrors: 1,"
+            },
+            {
+              "lineNumber": 659,
+              "text": "2026-11-21T14:41:29.2041797Z bayn-runtime-root>   nativeRequestCancellations: 20,"
+            },
+            {
+              "lineNumber": 660,
+              "text": "2026-11-21T14:41:29.2042222Z bayn-runtime-root>   nativeOtherErrors: 0,"
+            },
+            {
+              "lineNumber": 661,
+              "text": "2026-11-21T14:41:29.2042559Z bayn-runtime-root>   firstNative: {"
+            },
+            {
+              "lineNumber": 662,
+              "text": "2026-11-21T14:41:29.2042865Z bayn-runtime-root>     elapsedMs: 29,"
+            },
+            {
+              "lineNumber": 663,
+              "text": "2026-11-21T14:41:29.2043202Z bayn-runtime-root>     outcome: \"TRANSPORT_ERROR\","
+            },
+            {
+              "lineNumber": 664,
+              "text": "2026-11-21T14:41:29.2043551Z bayn-runtime-root>     status: null,"
+            },
+            {
+              "lineNumber": 665,
+              "text": "2026-11-21T14:41:29.2043848Z bayn-runtime-root>   },"
+            },
+            {
+              "lineNumber": 666,
+              "text": "2026-11-21T14:41:29.2044653Z bayn-runtime-root>   lastNative: {"
+            },
+            {
+              "lineNumber": 667,
+              "text": "2026-11-21T14:41:29.2044947Z bayn-runtime-root>     elapsedMs: 29,"
+            },
+            {
+              "lineNumber": 668,
+              "text": "2026-11-21T14:41:29.2045265Z bayn-runtime-root>     outcome: \"TRANSPORT_ERROR\","
+            },
+            {
+              "lineNumber": 669,
+              "text": "2026-11-21T14:41:29.2045625Z bayn-runtime-root>     status: null,"
+            },
+            {
+              "lineNumber": 670,
+              "text": "2026-11-21T14:41:29.2045918Z bayn-runtime-root>   },"
+            },
+            {
+              "lineNumber": 671,
+              "text": "2026-11-21T14:41:29.2046388Z bayn-runtime-root>   gatewayAttempts: 24,"
+            },
+            {
+              "lineNumber": 672,
+              "text": "2026-11-21T14:41:29.2046740Z bayn-runtime-root>   lastGatewayStatus: null,"
+            },
+            {
+              "lineNumber": 673,
+              "text": "2026-11-21T14:41:29.2047084Z bayn-runtime-root>   readiness: \"FAILED\","
+            },
+            {
+              "lineNumber": 674,
+              "text": "2026-11-21T14:41:29.2047432Z bayn-runtime-root>   readinessElapsedMs: 25010,"
+            },
+            {
+              "lineNumber": 675,
+              "text": "2026-11-21T14:41:29.2047793Z bayn-runtime-root>   phaseElapsedMs: 25010,"
+            },
+            {
+              "lineNumber": 676,
+              "text": "2026-11-21T14:41:29.2048151Z bayn-runtime-root> }"
+            },
+            {
+              "lineNumber": 677,
+              "text": "2026-11-21T14:41:29.2053186Z bayn-runtime-root> [14:40:25.908] INFO (#255): {\"event\":\"bayn.opencode-native-process-failure-test.v1\",\"phase\":\"initial\",\"beforeOuterScopeCleanup\":true,\"captureElapsedMs\":7,\"limits\":{\"captureBudgetMs\":200,\"observationBudgetMs\":250,\"maximumFileBytes\":4096,\"maximumFileReads\":7},\"snapshot\":{\"availability\":\"AVAILABLE\",\"value\":{\"process\":{\"pid\":640,\"parentPid\":606,\"mainTaskState\":\"D\",\"minorFaults\":18071,\"majorFaults\":0,\"userCpuTicks\":29,\"systemCpuTicks\":3,\"threadCount\":6,\"startTimeTicks\":118901453,\"virtualBytes\":7066091520,\"residentPages\":30929},\"processAndWaitedChildrenIo\":{\"availability\":\"AVAILABLE\",\"value\":{\"readCharacters\":20030,\"writtenCharacters\":5261832,\"readSyscalls\":79,\"writeSyscalls\":37,\"storageReadBytes\":0,\"storageWriteBytes\":5267456,\"cancelledWriteBytes\":0}},\"status\":{\"availability\":\"AVAILABLE\",\"value\":{\"residentKiB\":141468,\"peakResidentKiB\":141468,\"threadCount\":6,\"mainTaskVoluntaryContextSwitches\":169,\"mainTaskInvoluntaryContextSwitches\":0}},\"mainTaskScheduler\":{\"availability\":\"AVAILABLE\",\"value\":{\"mainTaskRuntimeNs\":142678131,\"mainTaskRunQueueDelayNs\":0,\"mainTaskTimeslices\":169}},\"mainTaskWaitChannel\":{\"availability\":\"UNAVAILABLE\",\"reason\":\"UNRECOGNIZED_WAIT_CHANNEL\"},\"mainTaskSyscall\":{\"availability\":\"UNAVAILABLE\",\"reason\":\"READ_DENIED\"}}}}"
+            },
+            {
+              "lineNumber": 678,
+              "text": "2026-11-21T14:41:29.2058750Z bayn-runtime-root> [14:40:25.908] INFO (#2): {"
+            },
+            {
+              "lineNumber": 679,
+              "text": "2026-11-21T14:41:29.2059200Z bayn-runtime-root>   event: \"bayn.opencode-native-lifecycle-test.v1\","
+            },
+            {
+              "lineNumber": 680,
+              "text": "2026-11-21T14:41:29.2059674Z bayn-runtime-root>   phase: \"assertions-failed\","
+            },
+            {
+              "lineNumber": 681,
+              "text": "2026-11-21T14:41:29.2060028Z bayn-runtime-root>   elapsedMs: 25025,"
+            },
+            {
+              "lineNumber": 682,
+              "text": "2026-11-21T14:41:29.2060346Z bayn-runtime-root>   providerCalls: 0,"
+            },
+            {
+              "lineNumber": 683,
+              "text": "2026-11-21T14:41:29.2060685Z bayn-runtime-root>   nativeSessionCreations: 0,"
+            },
+            {
+              "lineNumber": 684,
+              "text": "2026-11-21T14:41:29.2061043Z bayn-runtime-root>   nativeOperations: [],"
+            },
+            {
+              "lineNumber": 685,
+              "text": "2026-11-21T14:41:29.2061354Z bayn-runtime-root> }"
+            },
+            {
+              "lineNumber": 686,
+              "text": "2026-11-21T14:41:29.2144942Z bayn-runtime-root> [14:41:29.214] INFO (#2): {"
+            },
+            {
+              "lineNumber": 687,
+              "text": "2026-11-21T14:41:29.2145415Z bayn-runtime-root>   event: \"bayn.opencode-native-lifecycle-test.v1\","
+            },
+            {
+              "lineNumber": 688,
+              "text": "2026-11-21T14:41:29.2145876Z bayn-runtime-root>   phase: \"scope-failed\","
+            },
+            {
+              "lineNumber": 689,
+              "text": "2026-11-21T14:41:29.2146203Z bayn-runtime-root>   elapsedMs: 88331,"
+            },
+            {
+              "lineNumber": 690,
+              "text": "2026-11-21T14:41:29.2146517Z bayn-runtime-root>   providerCalls: 0,"
+            },
+            {
+              "lineNumber": 691,
+              "text": "2026-11-21T14:41:29.2146854Z bayn-runtime-root>   nativeSessionCreations: 0,"
+            },
+            {
+              "lineNumber": 692,
+              "text": "2026-11-21T14:41:29.2147247Z bayn-runtime-root>   lastNativeOperation: undefined,"
+            },
+            {
+              "lineNumber": 693,
+              "text": "2026-11-21T14:41:29.2147599Z bayn-runtime-root> }"
+            },
+            {
+              "lineNumber": 694,
+              "text": "2026-11-21T14:41:29.2152513Z bayn-runtime-root> 1729 | /** @internal */"
+            },
+            {
+              "lineNumber": 695,
+              "text": "2026-11-21T14:41:29.2153118Z bayn-runtime-root> 1730 | export const delay = /*#__PURE__*/dual(2, (self, duration) => andThen(sleep(duration), self));"
+            },
+            {
+              "lineNumber": 696,
+              "text": "2026-11-21T14:41:29.2153696Z bayn-runtime-root> 1731 | /** @internal */"
+            },
+            {
+              "lineNumber": 697,
+              "text": "2026-11-21T14:41:29.2154633Z bayn-runtime-root> 1732 | export const timeoutOrElse = /*#__PURE__*/dual(2, (self, options) => flatMap(timeoutOption(self, options.duration), option => Option.isNone(option) ? options.orElse() : succeed(option.value)));"
+            },
+            {
+              "lineNumber": 698,
+              "text": "2026-11-21T14:41:29.2155578Z bayn-runtime-root> 1733 | /** @internal */"
+            },
+            {
+              "lineNumber": 699,
+              "text": "2026-11-21T14:41:29.2156300Z bayn-runtime-root> 1734 | const timeoutErrorFromDuration = duration => new TimeoutError(`Operation timed out after '${Duration.format(duration)}'`);"
+            },
+            {
+              "lineNumber": 700,
+              "text": "2026-11-21T14:41:29.2157087Z bayn-runtime-root>                                                         ^"
+            },
+            {
+              "lineNumber": 701,
+              "text": "2026-11-21T14:41:29.2157654Z bayn-runtime-root> error: Operation timed out after '25s'"
+            },
+            {
+              "lineNumber": 702,
+              "text": "2026-11-21T14:41:29.2158050Z bayn-runtime-root>        _tag: \"TimeoutError\","
+            },
+            {
+              "lineNumber": 703,
+              "text": "2026-11-21T14:41:29.2158501Z bayn-runtime-root>  ~effect/Cause/TimeoutError: \"~effect/Cause/TimeoutError\","
+            },
+            {
+              "lineNumber": 704,
+              "text": "2026-11-21T14:41:29.2159004Z bayn-runtime-root> "
+            },
+            {
+              "lineNumber": 705,
+              "text": "2026-11-21T14:41:29.2159794Z bayn-runtime-root>       at timeoutErrorFromDuration (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:1734:50)"
+            },
+            {
+              "lineNumber": 706,
+              "text": "2026-11-21T14:41:29.2161089Z bayn-runtime-root>       at orElse (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:1740:24)"
+            },
+            {
+              "lineNumber": 707,
+              "text": "2026-11-21T14:41:29.2162294Z bayn-runtime-root>       at runLoop (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:493:90)"
+            },
+            {
+              "lineNumber": 708,
+              "text": "2026-11-21T14:41:29.2163501Z bayn-runtime-root>       at evaluate (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:426:23)"
+            },
+            {
+              "lineNumber": 709,
+              "text": "2026-11-21T14:41:29.2164337Z bayn-runtime-root>       at runInAsyncScope (node:async_hooks:207:23)"
+            },
+            {
+              "lineNumber": 710,
+              "text": "2026-11-21T14:41:29.2165189Z bayn-runtime-root>       at evaluate (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:415:29)"
+            },
+            {
+              "lineNumber": 711,
+              "text": "2026-11-21T14:41:29.2166363Z bayn-runtime-root>       at /tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:858:17"
+            },
+            {
+              "lineNumber": 712,
+              "text": "2026-11-21T14:41:29.2167490Z bayn-runtime-root>       at /tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:1198:9"
+            },
+            {
+              "lineNumber": 713,
+              "text": "2026-11-21T14:41:29.2168656Z bayn-runtime-root>       at evaluate (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:447:19)"
+            },
+            {
+              "lineNumber": 714,
+              "text": "2026-11-21T14:41:29.2169505Z bayn-runtime-root>       at runInAsyncScope (node:async_hooks:207:23)"
+            },
+            {
+              "lineNumber": 715,
+              "text": "2026-11-21T14:41:29.2170686Z bayn-runtime-root> ✗ pinned native harness reuses one study session, refuses replay and releases its process scope [88332.43ms]"
+            },
+            {
+              "lineNumber": 716,
+              "text": "2026-11-21T14:41:29.2171307Z bayn-runtime-root> "
+            },
+            {
+              "lineNumber": 717,
+              "text": "2026-11-21T14:41:29.2171557Z bayn-runtime-root>  0 pass"
+            },
+            {
+              "lineNumber": 718,
+              "text": "2026-11-21T14:41:29.2171833Z bayn-runtime-root>  1 fail"
+            },
+            {
+              "lineNumber": 719,
+              "text": "2026-11-21T14:41:29.2172143Z bayn-runtime-root> Ran 1 test across 1 file. [88.68s]"
+            }
+          ]
+        }
+      },
+      {
+        "sourcePath": "/tmp/bayn-pr16145-b833-arm-native-failure-receipt-20261121.json",
+        "originalSha256": "f1839a539dc9f3cd838b266b63f657dde84695e18af6cb0edf1b3219c314bcbc",
+        "originalBytes": 9194,
+        "evidence": {
+          "schema": "bayn-native-startup-failure.v2",
+          "recordedAt": "2026-11-21T14:50:08.684638+00:00",
+          "repository": "proompteng/lab",
+          "pr": 16145,
+          "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
+          "workflow": {
+            "runId": 44914277712,
+            "runAttempt": 1,
+            "statusAtObservation": "completed",
+            "conclusionAtObservation": "failure"
+          },
+          "job": {
+            "activeSteps": [],
+            "completedAt": "2026-11-21T14:43:35Z",
+            "conclusion": "failure",
+            "failedSteps": [
+              {
+                "completedAt": "2026-11-21T14:43:18Z",
+                "conclusion": "failure",
+                "name": "Build Nix image archive",
+                "startedAt": "2026-11-21T14:40:47Z"
+              }
+            ],
+            "id": 136876434948,
+            "name": "image / build-platform (linux/arm64, arm64, arc-arm64)",
+            "runner": "arc-arm64-runner-bn76p",
+            "startedAt": "2026-11-21T14:39:22Z",
+            "status": "completed"
+          },
+          "failureObservationAt": "2026-11-21T14:47:30.684852+00:00",
+          "checkCountsAtObservation": {
+            "FAILURE": 2,
+            "IN_PROGRESS": 4,
+            "SKIPPED": 25,
+            "SUCCESS": 32
+          },
+          "rawLog": {
+            "path": "/tmp/bayn-pr16145-b833-arm136876434948-full-20261121.log",
+            "sha256": "ee0fc17f555f521ee8899b64e6d8d9326dcae8be9be24b7d58e9b54bd80fafa3",
+            "bytes": 73179,
+            "lines": 831,
+            "complete": true,
+            "captureCapBytes": 16777216,
+            "capReached": false,
+            "timedOut": false
+          },
+          "initialStartup": {
+            "readinessElapsedMs": 25014,
+            "phaseElapsedMs": 25015,
+            "spawnRequestedElapsedMs": 39,
+            "spawnAcquiredElapsedMs": 48,
+            "nativeRequests": 23,
+            "nativeHttpResponses": 0,
+            "nativeStartingResponses": 0,
+            "nativeTransportErrors": 2,
+            "nativeRequestCancellations": 20,
+            "nativeOtherErrors": 0,
+            "gatewayAttempts": 24,
+            "phase": "initial",
+            "readiness": "FAILED",
+            "embeddedLoggerTimeOfDay": "14:43:02.810",
+            "githubEnvelopeFirstLineAtUtc": "2026-11-21T14:43:02.8119708Z",
+            "githubEnvelopeLastLineAtUtc": "2026-11-21T14:43:02.8161766Z",
+            "firstNative": {
+              "elapsedMs": 54,
+              "outcome": "TRANSPORT_ERROR",
+              "status": null
+            },
+            "lastNative": {
+              "elapsedMs": 258,
+              "outcome": "TRANSPORT_ERROR",
+              "status": null
+            },
+            "lastGatewayStatus": null
+          },
+          "processDiagnostic": {
+            "sourceLineNumber": 676,
+            "githubEnvelopeAtUtc": "2026-11-21T14:43:02.8348625Z",
+            "embeddedLoggerTimeOfDay": "14:43:02.832",
+            "record": {
+              "event": "bayn.opencode-native-process-failure-test.v1",
+              "phase": "initial",
+              "beforeOuterScopeCleanup": true,
+              "captureElapsedMs": 20,
+              "limits": {
+                "captureBudgetMs": 200,
+                "observationBudgetMs": 250,
+                "maximumFileBytes": 4096,
+                "maximumFileReads": 7
+              },
+              "snapshot": {
+                "availability": "AVAILABLE",
+                "value": {
+                  "process": {
+                    "pid": 585,
+                    "parentPid": 549,
+                    "mainTaskState": "D",
+                    "minorFaults": 19792,
+                    "majorFaults": 0,
+                    "userCpuTicks": 53,
+                    "systemCpuTicks": 16,
+                    "threadCount": 15,
+                    "startTimeTicks": 173574492,
+                    "virtualBytes": 6670356480,
+                    "residentPages": 31246
+                  },
+                  "processAndWaitedChildrenIo": {
+                    "availability": "AVAILABLE",
+                    "value": {
+                      "readCharacters": 15345,
+                      "writtenCharacters": 4856172,
+                      "readSyscalls": 56,
+                      "writeSyscalls": 39,
+                      "storageReadBytes": 0,
+                      "storageWriteBytes": 4866048,
+                      "cancelledWriteBytes": 0
+                    }
+                  },
+                  "status": {
+                    "availability": "AVAILABLE",
+                    "value": {
+                      "residentKiB": 136884,
+                      "peakResidentKiB": 136884,
+                      "threadCount": 15,
+                      "mainTaskVoluntaryContextSwitches": 46,
+                      "mainTaskInvoluntaryContextSwitches": 215
+                    }
+                  },
+                  "mainTaskScheduler": {
+                    "availability": "AVAILABLE",
+                    "value": {
+                      "mainTaskRuntimeNs": 306151920,
+                      "mainTaskRunQueueDelayNs": 1950360,
+                      "mainTaskTimeslices": 261
+                    }
+                  },
+                  "mainTaskWaitChannel": {
+                    "availability": "UNAVAILABLE",
+                    "reason": "UNRECOGNIZED_WAIT_CHANNEL"
+                  },
+                  "mainTaskSyscall": {
+                    "availability": "UNAVAILABLE",
+                    "reason": "READ_DENIED"
+                  }
+                }
+              }
+            }
+          },
+          "lifecycle": {
+            "assertions-failed": {
+              "elapsedMs": 25053,
+              "providerCalls": 0,
+              "nativeSessionCreations": 0,
+              "embeddedLoggerTimeOfDay": "14:43:02.832",
+              "githubEnvelopeFirstLineAtUtc": "2026-11-21T14:43:02.8369254Z",
+              "nativeOperations": []
+            },
+            "scope-failed": {
+              "elapsedMs": 26855,
+              "providerCalls": 0,
+              "nativeSessionCreations": 0,
+              "embeddedLoggerTimeOfDay": "14:43:04.634",
+              "githubEnvelopeFirstLineAtUtc": "2026-11-21T14:43:04.6349165Z"
+            }
+          },
+          "failureAndScope": {
+            "reportedScopeMinusAssertionsElapsedMs": 1802,
+            "pureCleanupDurationKnown": false,
+            "originalFailureTag": "TimeoutError",
+            "originalFailureMessage": "Operation timed out after '25s'",
+            "nativeTestDurationMs": 26857.71,
+            "testSummaryDurationSeconds": 27.59,
+            "testsPassed": 0,
+            "testsFailed": 1,
+            "assertionCount": null,
+            "assertionCountAvailability": "NOT_REPORTED",
+            "outer90SecondTimeoutObserved": false
+          },
+          "interpretation": {
+            "directObservations": [
+              "The original 25-second initial readiness TimeoutError remains the reported failure; no HTTP response, provider call, native study session or native operation was retained before failure.",
+              "The bounded diagnostic reports a 20 ms capture and preserves all fixed fields. The owned native main task is in state D in its final stat sample.",
+              "Wait-channel parsing returned UNRECOGNIZED_WAIT_CHANNEL. Syscall reading returned READ_DENIED. No raw wait-channel content, syscall number, arguments or registers were retained.",
+              "The process reports 53 user and 16 system raw CPU clock ticks. The main-task scheduler reports 306151920 ns runtime, 1950360 ns runqueue delay and 261 timeslices.",
+              "Process-plus-waited-child I/O reports 4866048 storage-write bytes and 0 storage-read bytes.",
+              "Reported scope elapsed 26855 ms minus assertions-failed elapsed 25053 ms is 1802 ms; the native test completes at 26857.71 ms with the original readiness error."
+            ],
+            "limits": [
+              "The two new fields do not identify a blocking operation. Unrecognized content is not retained and need not be a usable symbol; denied syscall access is explicit, not an inferred syscall.",
+              "No ABI or kernel version was measured. No syscall-name mapping, permission escalation or further proc read was performed.",
+              "One sequential snapshot cannot establish duration in state D, an atomic stack, a file, a device or a common cause with earlier failures.",
+              "The main-task scheduler values do not measure every thread or establish the absence of CPU contention; raw CPU ticks and resident pages are not converted without observed clock frequency/page size.",
+              "Zero storage-read bytes or major faults does not establish absence of filesystem work. Status memory values are approximate KiB.",
+              "The reported post-assertion scope interval is not an isolated measurement of one cleanup operation or finalizer.",
+              "GitHub log-envelope timestamps and embedded logger time-of-day are retained separately. Envelope arrival time is not asserted as capture wall-clock time; embedded logger timezone was not independently measured.",
+              "The native workflow is terminal failure at this retained observation. Other PR checks were still in progress, so this receipt does not claim a terminal full PR rollup.",
+              "The native startup cause remains unresolved; repaired evidence capture is not a production reliability fix."
+            ]
+          },
+          "sources": [
+            {
+              "path": "/tmp/bayn-pr16145-b833-arm-log-download-20261121.json",
+              "sha256": "bfd65a65809740f00e7c7c9a2b0dc9b42f42e4e6a0d0e30b6feff200224b1655",
+              "bytes": 618
+            },
+            {
+              "path": "/tmp/bayn-pr16145-b833-arm-native-process-diagnostics-20261121.json",
+              "sha256": "906e3ca91f619e22abfad12f82494a059dcd5f4d22aa5a8e1387467506c49ae1",
+              "bytes": 2535
+            },
+            {
+              "path": "/tmp/bayn-pr16145-b833-arm-native-blocks-20261121.json",
+              "sha256": "3fcc630e0eb3e3ae77e95f97de7cc19bddde17f24b5f1c6f219439c7c79c3b76",
+              "bytes": 12338
+            },
+            {
+              "path": "/tmp/bayn-pr16145-b833-ci-terminal-watch-20261121.jsonl",
+              "sha256": "c9dc365c456dd533719ff6caea7ac463aa69439305e740cd226729fb0e2e27e5",
+              "bytes": 3055
+            }
+          ],
+          "actions": {
+            "ciRetried": false,
+            "nativeLaunchedLocally": false,
+            "runtimeQueriesAdded": false,
+            "sourceChangedAfterFailure": false,
+            "mergeHeld": true
+          },
+          "provenanceLimit": "The watcher asserted PR headRefOid and native run head_sha before emitting each accepted projection. Complete job log and selected API projections are retained; raw API response bodies are not claimed retained."
+        }
+      },
+      {
+        "sourcePath": "/tmp/bayn-pr16145-b833-arm-native-process-diagnostics-20261121.json",
+        "originalSha256": "906e3ca91f619e22abfad12f82494a059dcd5f4d22aa5a8e1387467506c49ae1",
+        "originalBytes": 2535,
+        "evidence": {
+          "head": "b83331091527db4166e9bfccd78e8d8065610077",
+          "runId": 44914277712,
+          "jobId": 136876434948,
+          "sourceLogSha256": "ee0fc17f555f521ee8899b64e6d8d9326dcae8be9be24b7d58e9b54bd80fafa3",
+          "records": [
+            {
+              "lineNumber": 676,
+              "timestamp": "2026-11-21T14:43:02.8348625Z",
+              "record": {
+                "event": "bayn.opencode-native-process-failure-test.v1",
+                "phase": "initial",
+                "beforeOuterScopeCleanup": true,
+                "captureElapsedMs": 20,
+                "limits": {
+                  "captureBudgetMs": 200,
+                  "observationBudgetMs": 250,
+                  "maximumFileBytes": 4096,
+                  "maximumFileReads": 7
+                },
+                "snapshot": {
+                  "availability": "AVAILABLE",
+                  "value": {
+                    "process": {
+                      "pid": 585,
+                      "parentPid": 549,
+                      "mainTaskState": "D",
+                      "minorFaults": 19792,
+                      "majorFaults": 0,
+                      "userCpuTicks": 53,
+                      "systemCpuTicks": 16,
+                      "threadCount": 15,
+                      "startTimeTicks": 173574492,
+                      "virtualBytes": 6670356480,
+                      "residentPages": 31246
+                    },
+                    "processAndWaitedChildrenIo": {
+                      "availability": "AVAILABLE",
+                      "value": {
+                        "readCharacters": 15345,
+                        "writtenCharacters": 4856172,
+                        "readSyscalls": 56,
+                        "writeSyscalls": 39,
+                        "storageReadBytes": 0,
+                        "storageWriteBytes": 4866048,
+                        "cancelledWriteBytes": 0
+                      }
+                    },
+                    "status": {
+                      "availability": "AVAILABLE",
+                      "value": {
+                        "residentKiB": 136884,
+                        "peakResidentKiB": 136884,
+                        "threadCount": 15,
+                        "mainTaskVoluntaryContextSwitches": 46,
+                        "mainTaskInvoluntaryContextSwitches": 215
+                      }
+                    },
+                    "mainTaskScheduler": {
+                      "availability": "AVAILABLE",
+                      "value": {
+                        "mainTaskRuntimeNs": 306151920,
+                        "mainTaskRunQueueDelayNs": 1950360,
+                        "mainTaskTimeslices": 261
+                      }
+                    },
+                    "mainTaskWaitChannel": {
+                      "availability": "UNAVAILABLE",
+                      "reason": "UNRECOGNIZED_WAIT_CHANNEL"
+                    },
+                    "mainTaskSyscall": {
+                      "availability": "UNAVAILABLE",
+                      "reason": "READ_DENIED"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "sourcePath": "/tmp/bayn-pr16145-b833-arm-native-blocks-20261121.json",
+        "originalSha256": "3fcc630e0eb3e3ae77e95f97de7cc19bddde17f24b5f1c6f219439c7c79c3b76",
+        "originalBytes": 12338,
+        "evidence": {
+          "head": "b83331091527db4166e9bfccd78e8d8065610077",
+          "jobId": 136876434948,
+          "sourceLogSha256": "ee0fc17f555f521ee8899b64e6d8d9326dcae8be9be24b7d58e9b54bd80fafa3",
+          "rows": [
+            {
+              "lineNumber": 642,
+              "text": "2026-11-21T14:42:37.0439643Z bayn-runtime-root> bun test v1.4.2 (744846f84)"
+            },
+            {
+              "lineNumber": 643,
+              "text": "2026-11-21T14:42:37.0783319Z bayn-runtime-root> "
+            },
+            {
+              "lineNumber": 644,
+              "text": "2026-11-21T14:42:37.0785172Z bayn-runtime-root> services/bayn/src/opencode/server.integration.test.ts:"
+            },
+            {
+              "lineNumber": 649,
+              "text": "2026-11-21T14:43:02.8119708Z bayn-runtime-root> [14:43:02.810] INFO (#2): {"
+            },
+            {
+              "lineNumber": 650,
+              "text": "2026-11-21T14:43:02.8121728Z bayn-runtime-root>   event: \"bayn.opencode-native-startup-test.v1\","
+            },
+            {
+              "lineNumber": 651,
+              "text": "2026-11-21T14:43:02.8123654Z bayn-runtime-root>   phase: \"initial\","
+            },
+            {
+              "lineNumber": 652,
+              "text": "2026-11-21T14:43:02.8125172Z bayn-runtime-root>   spawnRequestedElapsedMs: 39,"
+            },
+            {
+              "lineNumber": 653,
+              "text": "2026-11-21T14:43:02.8126852Z bayn-runtime-root>   spawnAcquiredElapsedMs: 48,"
+            },
+            {
+              "lineNumber": 654,
+              "text": "2026-11-21T14:43:02.8128432Z bayn-runtime-root>   nativeRequests: 23,"
+            },
+            {
+              "lineNumber": 655,
+              "text": "2026-11-21T14:43:02.8129928Z bayn-runtime-root>   nativeHttpResponses: 0,"
+            },
+            {
+              "lineNumber": 656,
+              "text": "2026-11-21T14:43:02.8131627Z bayn-runtime-root>   nativeStartingResponses: 0,"
+            },
+            {
+              "lineNumber": 657,
+              "text": "2026-11-21T14:43:02.8133775Z bayn-runtime-root>   nativeTransportErrors: 2,"
+            },
+            {
+              "lineNumber": 658,
+              "text": "2026-11-21T14:43:02.8135485Z bayn-runtime-root>   nativeRequestCancellations: 20,"
+            },
+            {
+              "lineNumber": 659,
+              "text": "2026-11-21T14:43:02.8137131Z bayn-runtime-root>   nativeOtherErrors: 0,"
+            },
+            {
+              "lineNumber": 660,
+              "text": "2026-11-21T14:43:02.8138575Z bayn-runtime-root>   firstNative: {"
+            },
+            {
+              "lineNumber": 661,
+              "text": "2026-11-21T14:43:02.8139920Z bayn-runtime-root>     elapsedMs: 54,"
+            },
+            {
+              "lineNumber": 662,
+              "text": "2026-11-21T14:43:02.8141393Z bayn-runtime-root>     outcome: \"TRANSPORT_ERROR\","
+            },
+            {
+              "lineNumber": 663,
+              "text": "2026-11-21T14:43:02.8142913Z bayn-runtime-root>     status: null,"
+            },
+            {
+              "lineNumber": 664,
+              "text": "2026-11-21T14:43:02.8145373Z bayn-runtime-root>   },"
+            },
+            {
+              "lineNumber": 665,
+              "text": "2026-11-21T14:43:02.8146570Z bayn-runtime-root>   lastNative: {"
+            },
+            {
+              "lineNumber": 666,
+              "text": "2026-11-21T14:43:02.8147911Z bayn-runtime-root>     elapsedMs: 258,"
+            },
+            {
+              "lineNumber": 667,
+              "text": "2026-11-21T14:43:02.8149393Z bayn-runtime-root>     outcome: \"TRANSPORT_ERROR\","
+            },
+            {
+              "lineNumber": 668,
+              "text": "2026-11-21T14:43:02.8150914Z bayn-runtime-root>     status: null,"
+            },
+            {
+              "lineNumber": 669,
+              "text": "2026-11-21T14:43:02.8152965Z bayn-runtime-root>   },"
+            },
+            {
+              "lineNumber": 670,
+              "text": "2026-11-21T14:43:02.8154275Z bayn-runtime-root>   gatewayAttempts: 24,"
+            },
+            {
+              "lineNumber": 671,
+              "text": "2026-11-21T14:43:02.8155789Z bayn-runtime-root>   lastGatewayStatus: null,"
+            },
+            {
+              "lineNumber": 672,
+              "text": "2026-11-21T14:43:02.8157297Z bayn-runtime-root>   readiness: \"FAILED\","
+            },
+            {
+              "lineNumber": 673,
+              "text": "2026-11-21T14:43:02.8158810Z bayn-runtime-root>   readinessElapsedMs: 25014,"
+            },
+            {
+              "lineNumber": 674,
+              "text": "2026-11-21T14:43:02.8160373Z bayn-runtime-root>   phaseElapsedMs: 25015,"
+            },
+            {
+              "lineNumber": 675,
+              "text": "2026-11-21T14:43:02.8161766Z bayn-runtime-root> }"
+            },
+            {
+              "lineNumber": 676,
+              "text": "2026-11-21T14:43:02.8348625Z bayn-runtime-root> [14:43:02.832] INFO (#260): {\"event\":\"bayn.opencode-native-process-failure-test.v1\",\"phase\":\"initial\",\"beforeOuterScopeCleanup\":true,\"captureElapsedMs\":20,\"limits\":{\"captureBudgetMs\":200,\"observationBudgetMs\":250,\"maximumFileBytes\":4096,\"maximumFileReads\":7},\"snapshot\":{\"availability\":\"AVAILABLE\",\"value\":{\"process\":{\"pid\":585,\"parentPid\":549,\"mainTaskState\":\"D\",\"minorFaults\":19792,\"majorFaults\":0,\"userCpuTicks\":53,\"systemCpuTicks\":16,\"threadCount\":15,\"startTimeTicks\":173574492,\"virtualBytes\":6670356480,\"residentPages\":31246},\"processAndWaitedChildrenIo\":{\"availability\":\"AVAILABLE\",\"value\":{\"readCharacters\":15345,\"writtenCharacters\":4856172,\"readSyscalls\":56,\"writeSyscalls\":39,\"storageReadBytes\":0,\"storageWriteBytes\":4866048,\"cancelledWriteBytes\":0}},\"status\":{\"availability\":\"AVAILABLE\",\"value\":{\"residentKiB\":136884,\"peakResidentKiB\":136884,\"threadCount\":15,\"mainTaskVoluntaryContextSwitches\":46,\"mainTaskInvoluntaryContextSwitches\":215}},\"mainTaskScheduler\":{\"availability\":\"AVAILABLE\",\"value\":{\"mainTaskRuntimeNs\":306151920,\"mainTaskRunQueueDelayNs\":1950360,\"mainTaskTimeslices\":261}},\"mainTaskWaitChannel\":{\"availability\":\"UNAVAILABLE\",\"reason\":\"UNRECOGNIZED_WAIT_CHANNEL\"},\"mainTaskSyscall\":{\"availability\":\"UNAVAILABLE\",\"reason\":\"READ_DENIED\"}}}}"
+            },
+            {
+              "lineNumber": 677,
+              "text": "2026-11-21T14:43:02.8369254Z bayn-runtime-root> [14:43:02.832] INFO (#2): {"
+            },
+            {
+              "lineNumber": 678,
+              "text": "2026-11-21T14:43:02.8371131Z bayn-runtime-root>   event: \"bayn.opencode-native-lifecycle-test.v1\","
+            },
+            {
+              "lineNumber": 679,
+              "text": "2026-11-21T14:43:02.8373327Z bayn-runtime-root>   phase: \"assertions-failed\","
+            },
+            {
+              "lineNumber": 680,
+              "text": "2026-11-21T14:43:02.8374883Z bayn-runtime-root>   elapsedMs: 25053,"
+            },
+            {
+              "lineNumber": 681,
+              "text": "2026-11-21T14:43:02.8376284Z bayn-runtime-root>   providerCalls: 0,"
+            },
+            {
+              "lineNumber": 682,
+              "text": "2026-11-21T14:43:02.8377773Z bayn-runtime-root>   nativeSessionCreations: 0,"
+            },
+            {
+              "lineNumber": 683,
+              "text": "2026-11-21T14:43:02.8379337Z bayn-runtime-root>   nativeOperations: [],"
+            },
+            {
+              "lineNumber": 684,
+              "text": "2026-11-21T14:43:02.8380724Z bayn-runtime-root> }"
+            },
+            {
+              "lineNumber": 685,
+              "text": "2026-11-21T14:43:04.6349165Z bayn-runtime-root> [14:43:04.634] INFO (#2): {"
+            },
+            {
+              "lineNumber": 686,
+              "text": "2026-11-21T14:43:04.6351536Z bayn-runtime-root>   event: \"bayn.opencode-native-lifecycle-test.v1\","
+            },
+            {
+              "lineNumber": 687,
+              "text": "2026-11-21T14:43:04.6353849Z bayn-runtime-root>   phase: \"scope-failed\","
+            },
+            {
+              "lineNumber": 688,
+              "text": "2026-11-21T14:43:04.6355577Z bayn-runtime-root>   elapsedMs: 26855,"
+            },
+            {
+              "lineNumber": 689,
+              "text": "2026-11-21T14:43:04.6357093Z bayn-runtime-root>   providerCalls: 0,"
+            },
+            {
+              "lineNumber": 690,
+              "text": "2026-11-21T14:43:04.6358636Z bayn-runtime-root>   nativeSessionCreations: 0,"
+            },
+            {
+              "lineNumber": 691,
+              "text": "2026-11-21T14:43:04.6360329Z bayn-runtime-root>   lastNativeOperation: undefined,"
+            },
+            {
+              "lineNumber": 692,
+              "text": "2026-11-21T14:43:04.6361845Z bayn-runtime-root> }"
+            },
+            {
+              "lineNumber": 693,
+              "text": "2026-11-21T14:43:04.6370234Z bayn-runtime-root> 1729 | /** @internal */"
+            },
+            {
+              "lineNumber": 694,
+              "text": "2026-11-21T14:43:04.6372896Z bayn-runtime-root> 1730 | export const delay = /*#__PURE__*/dual(2, (self, duration) => andThen(sleep(duration), self));"
+            },
+            {
+              "lineNumber": 695,
+              "text": "2026-11-21T14:43:04.6375383Z bayn-runtime-root> 1731 | /** @internal */"
+            },
+            {
+              "lineNumber": 696,
+              "text": "2026-11-21T14:43:04.6379356Z bayn-runtime-root> 1732 | export const timeoutOrElse = /*#__PURE__*/dual(2, (self, options) => flatMap(timeoutOption(self, options.duration), option => Option.isNone(option) ? options.orElse() : succeed(option.value)));"
+            },
+            {
+              "lineNumber": 697,
+              "text": "2026-11-21T14:43:04.6383294Z bayn-runtime-root> 1733 | /** @internal */"
+            },
+            {
+              "lineNumber": 698,
+              "text": "2026-11-21T14:43:04.6386272Z bayn-runtime-root> 1734 | const timeoutErrorFromDuration = duration => new TimeoutError(`Operation timed out after '${Duration.format(duration)}'`);"
+            },
+            {
+              "lineNumber": 699,
+              "text": "2026-11-21T14:43:04.6389541Z bayn-runtime-root>                                                     ^"
+            },
+            {
+              "lineNumber": 700,
+              "text": "2026-11-21T14:43:04.6392410Z bayn-runtime-root> error: Operation timed out after '25s'"
+            },
+            {
+              "lineNumber": 701,
+              "text": "2026-11-21T14:43:04.6394119Z bayn-runtime-root>        _tag: \"TimeoutError\","
+            },
+            {
+              "lineNumber": 702,
+              "text": "2026-11-21T14:43:04.6396748Z bayn-runtime-root>  ~effect/Cause/TimeoutError: \"~effect/Cause/TimeoutError\","
+            },
+            {
+              "lineNumber": 703,
+              "text": "2026-11-21T14:43:04.6398687Z bayn-runtime-root> "
+            },
+            {
+              "lineNumber": 704,
+              "text": "2026-11-21T14:43:04.6401961Z bayn-runtime-root>       at timeoutErrorFromDuration (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:1734:46)"
+            },
+            {
+              "lineNumber": 705,
+              "text": "2026-11-21T14:43:04.6407294Z bayn-runtime-root>       at orElse (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:1740:24)"
+            },
+            {
+              "lineNumber": 706,
+              "text": "2026-11-21T14:43:04.6412503Z bayn-runtime-root>       at runLoop (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:493:90)"
+            },
+            {
+              "lineNumber": 707,
+              "text": "2026-11-21T14:43:04.6417545Z bayn-runtime-root>       at evaluate (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:426:23)"
+            },
+            {
+              "lineNumber": 708,
+              "text": "2026-11-21T14:43:04.6421178Z bayn-runtime-root>       at runInAsyncScope (node:async_hooks:207:23)"
+            },
+            {
+              "lineNumber": 709,
+              "text": "2026-11-21T14:43:04.6424792Z bayn-runtime-root>       at evaluate (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:415:29)"
+            },
+            {
+              "lineNumber": 710,
+              "text": "2026-11-21T14:43:04.6429840Z bayn-runtime-root>       at <anonymous> (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:858:17)"
+            },
+            {
+              "lineNumber": 711,
+              "text": "2026-11-21T14:43:04.6434949Z bayn-runtime-root>       at <anonymous> (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:1198:9)"
+            },
+            {
+              "lineNumber": 712,
+              "text": "2026-11-21T14:43:04.6439997Z bayn-runtime-root>       at evaluate (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:447:19)"
+            },
+            {
+              "lineNumber": 713,
+              "text": "2026-11-21T14:43:04.6443586Z bayn-runtime-root>       at runInAsyncScope (node:async_hooks:207:23)"
+            },
+            {
+              "lineNumber": 714,
+              "text": "2026-11-21T14:43:04.6447255Z bayn-runtime-root> ✗ pinned native harness reuses one study session, refuses replay and releases its process scope [26857.71ms]"
+            },
+            {
+              "lineNumber": 715,
+              "text": "2026-11-21T14:43:04.6449880Z bayn-runtime-root> "
+            },
+            {
+              "lineNumber": 716,
+              "text": "2026-11-21T14:43:04.6451019Z bayn-runtime-root>  0 pass"
+            },
+            {
+              "lineNumber": 717,
+              "text": "2026-11-21T14:43:04.6452446Z bayn-runtime-root>  1 fail"
+            },
+            {
+              "lineNumber": 718,
+              "text": "2026-11-21T14:43:04.6453844Z bayn-runtime-root> Ran 1 test across 1 file. [27.59s]"
+            }
+          ]
+        }
+      }
+    ],
+    "rootVerification": {
+      "amdRaw": {
+        "path": "/tmp/bayn-pr16145-b833-amd136876434674-full-20261121.log",
+        "sha256": "1e7c0b67131a3c5b37ddf608f40d1ab025d5590b628982c9c67962ecd68e16d0",
+        "bytes": 72999,
+        "lines": 831,
+        "diagnosticExactLine": 677,
+        "diagnosticMatches": true
+      },
+      "amdBlockRows": {
+        "allRetainedRowsMatchRaw": true,
+        "rowCount": 73
+      },
+      "armRaw": {
+        "path": "/tmp/bayn-pr16145-b833-arm136876434948-full-20261121.log",
+        "bytes": 73179,
+        "lines": 831,
+        "sha256": "ee0fc17f555f521ee8899b64e6d8d9326dcae8be9be24b7d58e9b54bd80fafa3",
+        "allDiagnosticLinesMatch": true
+      },
+      "armBlockRows": {
+        "allRetainedRowsMatchRaw": true,
+        "rowCount": 73
+      },
+      "armSourceFiles": [
+        {
+          "path": "/tmp/bayn-pr16145-b833-arm-log-download-20261121.json",
+          "sha256": "bfd65a65809740f00e7c7c9a2b0dc9b42f42e4e6a0d0e30b6feff200224b1655",
+          "bytes": 618,
+          "hashMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-pr16145-b833-arm-native-process-diagnostics-20261121.json",
+          "sha256": "906e3ca91f619e22abfad12f82494a059dcd5f4d22aa5a8e1387467506c49ae1",
+          "bytes": 2535,
+          "hashMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-pr16145-b833-arm-native-blocks-20261121.json",
+          "sha256": "3fcc630e0eb3e3ae77e95f97de7cc19bddde17f24b5f1c6f219439c7c79c3b76",
+          "bytes": 12338,
+          "hashMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-pr16145-b833-ci-terminal-watch-20261121.jsonl",
+          "sha256": "c9dc365c456dd533719ff6caea7ac463aa69439305e740cd226729fb0e2e27e5",
+          "bytes": 3055,
+          "hashMatches": true,
+          "sizeMatches": true
+        }
+      ],
+      "independentReview": "source_audit independently read both complete retained native failure blocks and parsed process diagnostics; no operation or common cause is established."
+    },
+    "kernelFormatSource": {
+      "sourcePath": "/tmp/bayn-native-wait-linux-v618-format-provenance-20261121.json",
+      "originalSha256": "03ca49dbb02b7a2069a7549c3a2f455e19599bf0bd2701368bf0266c10e5d205",
+      "originalBytes": 3348,
+      "evidence": {
+        "schemaVersion": 1,
+        "sourceUrl": "https://raw.githubusercontent.com/torvalds/linux/v6.18/fs/proc/base.c",
+        "sourceReference": "turn404419538view0",
+        "resolvedTag": {
+          "repository": "torvalds/linux",
+          "tag": "v6.18",
+          "tagObjectSha": "f7b88edb52c8dd01b7e576390d658ae6eef0e134",
+          "objectType": "tag",
+          "commit": "7d0a66e4bb9081d75c82ec4957c50034cb0ea449",
+          "targetType": "commit"
+        },
+        "immutableEquivalentUrl": "https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/fs/proc/base.c",
+        "excerptLines": [
+          "L394: #ifdef CONFIG_KALLSYMS",
+          "L395: /*",
+          "L396:  * Provides a wchan file via kallsyms in a proper one-value-per-file format.",
+          "L397:  * Returns the resolved symbol to user space.",
+          "L398:  */",
+          "L399: static int proc_pid_wchan(struct seq_file *m, struct pid_namespace *ns,",
+          "L400: \t\t\t  struct pid *pid, struct task_struct *task)",
+          "L401: {",
+          "L402: \tunsigned long wchan;",
+          "L403: \tchar symname[KSYM_NAME_LEN];",
+          "L404: ",
+          "L405: \tif (!ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS))",
+          "L406: \t\tgoto print0;",
+          "L407: \twchan = get_wchan(task);",
+          "L408: \tif (wchan && !lookup_symbol_name(wchan, symname)) {",
+          "L409: \t\tseq_puts(m, symname);",
+          "L410: \t\treturn 0;",
+          "L411: \t}",
+          "L412: ",
+          "L413: print0:",
+          "L414: \tseq_putc(m, '0');",
+          "L415: \treturn 0;",
+          "L416: }",
+          "L417: #endif /* CONFIG_KALLSYMS */",
+          "L418: ",
+          "L419: static int lock_trace(struct task_struct *task)",
+          "L420: {",
+          "L421: \tint err = down_read_killable(&task->signal->exec_update_lock);",
+          "L422: \tif (err)",
+          "L423: \t\treturn err;",
+          "L424: \tif (!ptrace_may_access(task, PTRACE_MODE_ATTACH_FSCREDS)) {",
+          "L425: \t\tup_read(&task->signal->exec_update_lock);",
+          "L426: \t\treturn -EPERM;",
+          "L427: \t}",
+          "L428: \treturn 0;",
+          "L429: }",
+          "L430: static void unlock_trace(struct task_struct *task)",
+          "L635: static int proc_pid_syscall(struct seq_file *m, struct pid_namespace *ns,",
+          "L636: \t\t\t    struct pid *pid, struct task_struct *task)",
+          "L637: {",
+          "L638: \tstruct syscall_info info;",
+          "L639: \tu64 *args = &info.data.args[0];",
+          "L640: \tint res;",
+          "L641: ",
+          "L642: \tres = lock_trace(task);",
+          "L643: \tif (res)",
+          "L644: \t\treturn res;",
+          "L645: \tif (task_current_syscall(task, &info))",
+          "L646: \t\tseq_puts(m, \"running\\n\");",
+          "L647: \telse if (info.data.nr < 0)",
+          "L648: \t\tseq_printf(m, \"%d 0x%llx 0x%llx\\n\",",
+          "L649: \t\t\t   info.data.nr, info.sp, info.data.instruction_pointer);",
+          "L650: \telse",
+          "L651: \t\tseq_printf(m,",
+          "L652: \t\t       \"%d 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx\\n\",",
+          "L653: \t\t       info.data.nr,",
+          "L654: \t\t       args[0], args[1], args[2], args[3], args[4], args[5],",
+          "L655: \t\t       info.sp, info.data.instruction_pointer);",
+          "L656: \tunlock_trace(task);",
+          "L657: ",
+          "L658: \treturn 0;",
+          "L659: }"
+        ],
+        "limitations": [
+          "Recovered from the already retained primary web-source result; no new source or runtime fetch.",
+          "This records a format reference, not the CI host kernel version.",
+          "Tag-to-commit resolution was a separate existing read of the official GitHub tag API."
+        ]
+      }
+    },
+    "interpretationLimits": [
+      "Both native jobs failed the initial 25-second readiness limit with zero HTTP responses, provider calls, native sessions or native operations. The original TimeoutError remained; no outer90-second timeout was observed.",
+      "Each sequential process snapshot observed the owned main task in D. Neither unknown wait-channel content nor denied syscall reading identifies a blocking operation.",
+      "The unrecognized content was discarded and need not be a valid kernel symbol. The syscall reason is a typed access-denial observation; no permission change or bypass was attempted.",
+      "AMD and ARM reported post-assertion scope intervals of63306ms and1802ms. These are not isolated child-exit or finalizer durations and do not establish a shared operation or cause.",
+      "AMD GitHub envelope timestamps were substantially later than embedded logger time-of-day. Envelope arrival must not be treated as capture wall-clock time; embedded logger timezone was not independently observed.",
+      "CPU clock ticks and resident pages remain raw. Scheduler accounting is main-task-only; I/O is cumulative process-and-waited-children accounting. No hostkernel/ABI/resource-limit/storage-request correlation was observed.",
+      "The pinned Linux excerpt is format provenance, not measured CI-host source. Its proc_pid_wchan resolves a symbol using lookup_symbol_name and emits that name or literal0; generic printk pointer formatting is not asserted for it."
+    ],
+    "nextDiagnosticBoundary": {
+      "state": "authorized_for_implementation_and_review_not_yet_committed",
+      "reason": "Both normal architecture failures leave the same unknown-wchan evidence gap.",
+      "approach": "Preserve known-symbol output and explicit UNRECOGNIZED status. For an otherwise unknown bounded ASCII C identifier only, retain a domain-separated SHA-256 digest, excluding raw value, address-like or forbidden shapes.",
+      "limits": "Reuse already-read bytes, same seven reads and200/250ms budgets, same ownership and originalCause behavior, unchanged native1s/25s/90s/25s gates; no permissions or runtime changes.",
+      "qualification": "This permits later offline candidate matching; it is not anonymization, cannot recover discardedb833 content, does not guarantee a match, and is not a startup-cause fix."
+    },
+    "rootTerminalCi": {
+      "sourcePath": "/tmp/bayn-pr16145-b833-terminal-ci-root-20261121.json",
+      "originalSha256": "8fc584b90c8d38374a13cab33ad841b77dcc39bfaa22fd8979eb5952ceaf04d8",
+      "originalBytes": 39516,
+      "evidence": {
+        "observedAt": "2026-11-21T14:54:55.582322+00:00",
+        "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
+        "pullRequest": 16145,
+        "pr": {
+          "headRefOid": "b83331091527db4166e9bfccd78e8d8065610077",
+          "mergeStateStatus": "UNSTABLE",
+          "state": "OPEN",
+          "statusCheckRollup": [
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:35:54Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277945/job/136876434952",
+              "name": "Plan changed-area validation",
+              "startedAt": "2026-11-21T14:35:41Z",
+              "status": "COMPLETED",
+              "workflowName": "CI"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:00Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277839/job/136876434874",
+              "name": "changes",
+              "startedAt": "2026-11-21T14:32:41Z",
+              "status": "COMPLETED",
+              "workflowName": "Restate images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:10Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277727/job/136876434636",
+              "name": "Lint commit messages",
+              "startedAt": "2026-11-21T14:32:07Z",
+              "status": "COMPLETED",
+              "workflowName": "Semantic Commits"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:09Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277718/job/136876434461",
+              "name": "Validate PR title",
+              "startedAt": "2026-11-21T14:32:05Z",
+              "status": "COMPLETED",
+              "workflowName": "Semantic Pull Request"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:46Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876434938",
+              "name": "changes",
+              "startedAt": "2026-11-21T14:31:32Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:49Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277968/job/136876435236",
+              "name": "changes",
+              "startedAt": "2026-11-21T14:32:26Z",
+              "status": "COMPLETED",
+              "workflowName": "bumba"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:46Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277730/job/136876434669",
+              "name": "changes",
+              "startedAt": "2026-11-21T14:31:30Z",
+              "status": "COMPLETED",
+              "workflowName": "froussard"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:04Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277891/job/136876435222",
+              "name": "changes",
+              "startedAt": "2026-11-21T14:31:48Z",
+              "status": "COMPLETED",
+              "workflowName": "oirat"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:10Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277712/job/136876434415",
+              "name": "migration",
+              "startedAt": "2026-11-21T14:30:59Z",
+              "status": "COMPLETED",
+              "workflowName": "opencode"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:34:30Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277954/job/136876435109",
+              "name": "lint-and-test / run",
+              "startedAt": "2026-11-21T14:32:08Z",
+              "status": "COMPLETED",
+              "workflowName": "packages-scripts"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:38Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277808/job/136876434989",
+              "name": "changes",
+              "startedAt": "2026-11-21T14:33:19Z",
+              "status": "COMPLETED",
+              "workflowName": "product-nix-images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:12Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277764/job/136876434713",
+              "name": "changes",
+              "startedAt": "2026-11-21T14:30:55Z",
+              "status": "COMPLETED",
+              "workflowName": "signal-publisher-build-push"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:41:46Z",
+              "conclusion": "FAILURE",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277712/job/136876434674",
+              "name": "image / build-platform (linux/amd64, amd64, arc-amd64)",
+              "startedAt": "2026-11-21T14:36:29Z",
+              "status": "COMPLETED",
+              "workflowName": "opencode"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:35:54Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277945/job/136877867099",
+              "name": "PR validation (landing)",
+              "startedAt": "2026-11-21T14:35:54Z",
+              "status": "COMPLETED",
+              "workflowName": "CI"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:01Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277839/job/136877104497",
+              "name": "Restate build and fault tests (${{ matrix.architecture }})",
+              "startedAt": "2026-11-21T14:33:01Z",
+              "status": "COMPLETED",
+              "workflowName": "Restate images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:47Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876784445",
+              "name": "formal-verification",
+              "startedAt": "2026-11-21T14:31:47Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:49Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277968/job/136877053343",
+              "name": "pr-checks",
+              "startedAt": "2026-11-21T14:32:49Z",
+              "status": "COMPLETED",
+              "workflowName": "bumba"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:46Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277730/job/136876781354",
+              "name": "test",
+              "startedAt": "2026-11-21T14:31:46Z",
+              "status": "COMPLETED",
+              "workflowName": "froussard"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:04Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277891/job/136876858473",
+              "name": "pr-checks",
+              "startedAt": "2026-11-21T14:32:04Z",
+              "status": "COMPLETED",
+              "workflowName": "oirat"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:38Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277808/job/136877271595",
+              "name": "build-proompteng",
+              "startedAt": "2026-11-21T14:33:38Z",
+              "status": "COMPLETED",
+              "workflowName": "product-nix-images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:12Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277764/job/136876629269",
+              "name": "dependency-closure",
+              "startedAt": "2026-11-21T14:31:12Z",
+              "status": "COMPLETED",
+              "workflowName": "signal-publisher-build-push"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:43:35Z",
+              "conclusion": "FAILURE",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277712/job/136876434948",
+              "name": "image / build-platform (linux/arm64, arm64, arc-arm64)",
+              "startedAt": "2026-11-21T14:39:22Z",
+              "status": "COMPLETED",
+              "workflowName": "opencode"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:01Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277839/job/136877104343",
+              "name": "cache-proof",
+              "startedAt": "2026-11-21T14:33:01Z",
+              "status": "COMPLETED",
+              "workflowName": "Restate images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:49Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277968/job/136877052964",
+              "name": "atlas-integration",
+              "startedAt": "2026-11-21T14:32:49Z",
+              "status": "COMPLETED",
+              "workflowName": "bumba"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:46Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277730/job/136876780846",
+              "name": "dependency-closure",
+              "startedAt": "2026-11-21T14:31:46Z",
+              "status": "COMPLETED",
+              "workflowName": "froussard"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:04Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277891/job/136876858353",
+              "name": "dependency-closure",
+              "startedAt": "2026-11-21T14:32:04Z",
+              "status": "COMPLETED",
+              "workflowName": "oirat"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:43:35Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277712/job/136879845256",
+              "name": "image / publish-index",
+              "startedAt": "2026-11-21T14:43:35Z",
+              "status": "COMPLETED",
+              "workflowName": "opencode"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:12Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277764/job/136876630195",
+              "name": "image",
+              "startedAt": "2026-11-21T14:31:12Z",
+              "status": "COMPLETED",
+              "workflowName": "signal-publisher-build-push"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:37:24Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277945/job/136877865556",
+              "name": "PR validation (workflow-lint)",
+              "startedAt": "2026-11-21T14:36:59Z",
+              "status": "COMPLETED",
+              "workflowName": "CI"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:35:54Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277945/job/136877866586",
+              "name": "Agents CI",
+              "startedAt": "2026-11-21T14:35:54Z",
+              "status": "COMPLETED",
+              "workflowName": "CI"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:01Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277839/job/136877104754",
+              "name": "publish",
+              "startedAt": "2026-11-21T14:33:01Z",
+              "status": "COMPLETED",
+              "workflowName": "Restate images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:49Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277968/job/136877052784",
+              "name": "dependency-closure",
+              "startedAt": "2026-11-21T14:32:49Z",
+              "status": "COMPLETED",
+              "workflowName": "bumba"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:46Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277730/job/136876781124",
+              "name": "nix-image",
+              "startedAt": "2026-11-21T14:31:46Z",
+              "status": "COMPLETED",
+              "workflowName": "froussard"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:04Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277891/job/136876859261",
+              "name": "nix-image",
+              "startedAt": "2026-11-21T14:32:04Z",
+              "status": "COMPLETED",
+              "workflowName": "oirat"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:38Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277808/job/136877271781",
+              "name": "Verify App dependency closure",
+              "startedAt": "2026-11-21T14:33:38Z",
+              "status": "COMPLETED",
+              "workflowName": "product-nix-images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:35:11Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783442",
+              "name": "pr-checks / run",
+              "startedAt": "2026-11-21T14:33:38Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:31:47Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876784852",
+              "name": "gepa",
+              "startedAt": "2026-11-21T14:31:47Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:32:49Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277968/job/136877053446",
+              "name": "nix-image",
+              "startedAt": "2026-11-21T14:32:49Z",
+              "status": "COMPLETED",
+              "workflowName": "bumba"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:38Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277808/job/136877271513",
+              "name": "build-synthesis",
+              "startedAt": "2026-11-21T14:33:38Z",
+              "status": "COMPLETED",
+              "workflowName": "product-nix-images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:40:59Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783352",
+              "name": "unit-tests (1)",
+              "startedAt": "2026-11-21T14:36:35Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:39:38Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783382",
+              "name": "unit-tests (2)",
+              "startedAt": "2026-11-21T14:36:39Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:43:10Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783412",
+              "name": "unit-tests (3)",
+              "startedAt": "2026-11-21T14:40:16Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:43:30Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783420",
+              "name": "unit-tests (4)",
+              "startedAt": "2026-11-21T14:39:13Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:38Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277808/job/136877271735",
+              "name": "build-docs",
+              "startedAt": "2026-11-21T14:33:38Z",
+              "status": "COMPLETED",
+              "workflowName": "product-nix-images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:41:05Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783343",
+              "name": "market-data-replay",
+              "startedAt": "2026-11-21T14:38:21Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:39:34Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277945/job/136878249765",
+              "name": "ci-pr",
+              "startedAt": "2026-11-21T14:39:31Z",
+              "status": "COMPLETED",
+              "workflowName": "CI"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:34Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783308",
+              "name": "streaming-integration",
+              "startedAt": "2026-11-21T14:32:51Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:33:38Z",
+              "conclusion": "SKIPPED",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277808/job/136877272315",
+              "name": "build-app",
+              "startedAt": "2026-11-21T14:33:38Z",
+              "status": "COMPLETED",
+              "workflowName": "product-nix-images"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:45:14Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783506",
+              "name": "postgres-integration (1)",
+              "startedAt": "2026-11-21T14:42:05Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:40:07Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783376",
+              "name": "postgres-integration (2)",
+              "startedAt": "2026-11-21T14:34:52Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:44:27Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783417",
+              "name": "postgres-integration (3)",
+              "startedAt": "2026-11-21T14:41:25Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:40:33Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783374",
+              "name": "postgres-integration (4)",
+              "startedAt": "2026-11-21T14:35:50Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:36:48Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783360",
+              "name": "archive-integration",
+              "startedAt": "2026-11-21T14:34:41Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:49:53Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783498",
+              "name": "ledger-integration (runtime)",
+              "startedAt": "2026-11-21T14:42:46Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:43:16Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783462",
+              "name": "ledger-integration (backtest)",
+              "startedAt": "2026-11-21T14:41:37Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:45:32Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783473",
+              "name": "ledger-integration (latency-jev)",
+              "startedAt": "2026-11-21T14:44:22Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:42:04Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783444",
+              "name": "ledger-integration (latency-ablation)",
+              "startedAt": "2026-11-21T14:41:01Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:44:40Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783507",
+              "name": "ledger-integration (latency-momentum)",
+              "startedAt": "2026-11-21T14:43:31Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:48:26Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783532",
+              "name": "ledger-integration (latency-momentum-trading)",
+              "startedAt": "2026-11-21T14:44:28Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:50:53Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783489",
+              "name": "ledger-integration (frozen-control)",
+              "startedAt": "2026-11-21T14:44:42Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:41:14Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783477",
+              "name": "ledger-integration (restart)",
+              "startedAt": "2026-11-21T14:40:28Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:47:37Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783505",
+              "name": "ledger-integration (inference)",
+              "startedAt": "2026-11-21T14:41:57Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:42:53Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136876783422",
+              "name": "replay-execution-observer",
+              "startedAt": "2026-11-21T14:41:15Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            },
+            {
+              "__typename": "CheckRun",
+              "completedAt": "2026-11-21T14:50:57Z",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/proompteng/lab/actions/runs/44914277907/job/136881742638",
+              "name": "Bayn release gate",
+              "startedAt": "2026-11-21T14:50:55Z",
+              "status": "COMPLETED",
+              "workflowName": "bayn"
+            }
+          ],
+          "url": "https://github.com/proompteng/lab/pull/16145"
+        },
+        "counts": {
+          "SUCCESS": 37,
+          "FAILURE": 2,
+          "SKIPPED": 25
+        },
+        "nativeRun": {
+          "id": 44914277712,
+          "name": "opencode",
+          "head_sha": "b83331091527db4166e9bfccd78e8d8065610077",
+          "head_branch": "codex/bayn-cohort-index-publication-f8ab87c8",
+          "event": "pull_request",
+          "status": "completed",
+          "conclusion": "failure",
+          "run_attempt": 1,
+          "created_at": "2026-11-21T14:30:29Z",
+          "updated_at": "2026-11-21T14:43:35Z",
+          "html_url": "https://github.com/proompteng/lab/actions/runs/44914277712"
+        },
+        "jobs": [
+          {
+            "id": 136876434415,
+            "name": "migration",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-11-21T14:30:59Z",
+            "completed_at": "2026-11-21T14:31:10Z",
+            "runner_name": "GitHub Actions 1000414471",
+            "steps": [
+              {
+                "name": "Set up job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 1,
+                "started_at": "2026-11-21T14:31:00Z",
+                "completed_at": "2026-11-21T14:31:01Z"
+              },
+              {
+                "name": "Run actions/checkout@v5",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 2,
+                "started_at": "2026-11-21T14:31:01Z",
+                "completed_at": "2026-11-21T14:31:06Z"
+              },
+              {
+                "name": "Run actions/setup-python@v5",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 3,
+                "started_at": "2026-11-21T14:31:06Z",
+                "completed_at": "2026-11-21T14:31:06Z"
+              },
+              {
+                "name": "Run bash -n services/opencode/start.sh",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 4,
+                "started_at": "2026-11-21T14:31:06Z",
+                "completed_at": "2026-11-21T14:31:06Z"
+              },
+              {
+                "name": "Run python -m unittest discover -s services/opencode",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 5,
+                "started_at": "2026-11-21T14:31:06Z",
+                "completed_at": "2026-11-21T14:31:07Z"
+              },
+              {
+                "name": "Post Run actions/setup-python@v5",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 9,
+                "started_at": "2026-11-21T14:31:07Z",
+                "completed_at": "2026-11-21T14:31:07Z"
+              },
+              {
+                "name": "Post Run actions/checkout@v5",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 10,
+                "started_at": "2026-11-21T14:31:07Z",
+                "completed_at": "2026-11-21T14:31:07Z"
+              },
+              {
+                "name": "Complete job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 11,
+                "started_at": "2026-11-21T14:31:07Z",
+                "completed_at": "2026-11-21T14:31:07Z"
+              }
+            ],
+            "html_url": "https://github.com/proompteng/lab/actions/runs/44914277712/job/136876434415"
+          },
+          {
+            "id": 136876434674,
+            "name": "image / build-platform (linux/amd64, amd64, arc-amd64)",
+            "status": "completed",
+            "conclusion": "failure",
+            "started_at": "2026-11-21T14:36:29Z",
+            "completed_at": "2026-11-21T14:41:46Z",
+            "runner_name": "arc-amd64-runner-v5gss",
+            "steps": [
+              {
+                "name": "Set up job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 1,
+                "started_at": "2026-11-21T14:36:30Z",
+                "completed_at": "2026-11-21T14:37:16Z"
+              },
+              {
+                "name": "Start checkout timer",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 2,
+                "started_at": "2026-11-21T14:37:16Z",
+                "completed_at": "2026-11-21T14:37:18Z"
+              },
+              {
+                "name": "Checkout",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 3,
+                "started_at": "2026-11-21T14:37:18Z",
+                "completed_at": "2026-11-21T14:38:11Z"
+              },
+              {
+                "name": "Resolve source commit metadata",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 4,
+                "started_at": "2026-11-21T14:38:11Z",
+                "completed_at": "2026-11-21T14:38:11Z"
+              },
+              {
+                "name": "Record checkout timing",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 5,
+                "started_at": "2026-11-21T14:38:11Z",
+                "completed_at": "2026-11-21T14:38:11Z"
+              },
+              {
+                "name": "Require Attic public key",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 6,
+                "started_at": "2026-11-21T14:38:11Z",
+                "completed_at": "2026-11-21T14:38:11Z"
+              },
+              {
+                "name": "Start Nix setup timer",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 7,
+                "started_at": "2026-11-21T14:38:11Z",
+                "completed_at": "2026-11-21T14:38:11Z"
+              },
+              {
+                "name": "Set up Nix toolchain",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 8,
+                "started_at": "2026-11-21T14:38:11Z",
+                "completed_at": "2026-11-21T14:38:28Z"
+              },
+              {
+                "name": "Record Nix setup timing",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 9,
+                "started_at": "2026-11-21T14:38:28Z",
+                "completed_at": "2026-11-21T14:38:28Z"
+              },
+              {
+                "name": "Build Nix image archive",
+                "status": "completed",
+                "conclusion": "failure",
+                "number": 10,
+                "started_at": "2026-11-21T14:38:28Z",
+                "completed_at": "2026-11-21T14:41:39Z"
+              },
+              {
+                "name": "Inspect Nix image archive",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 11,
+                "started_at": "2026-11-21T14:41:39Z",
+                "completed_at": "2026-11-21T14:41:39Z"
+              },
+              {
+                "name": "Verify Bayn image contents",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 12,
+                "started_at": "2026-11-21T14:41:39Z",
+                "completed_at": "2026-11-21T14:41:39Z"
+              },
+              {
+                "name": "Verify Headlamp frontend assets from image",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 13,
+                "started_at": "2026-11-21T14:41:39Z",
+                "completed_at": "2026-11-21T14:41:39Z"
+              },
+              {
+                "name": "Verify Proompteng writable cache from image",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 14,
+                "started_at": "2026-11-21T14:41:39Z",
+                "completed_at": "2026-11-21T14:41:39Z"
+              },
+              {
+                "name": "Push platform image without Docker",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 15,
+                "started_at": "2026-11-21T14:41:39Z",
+                "completed_at": "2026-11-21T14:41:39Z"
+              },
+              {
+                "name": "Warm Nix build outputs in Attic",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 16,
+                "started_at": "2026-11-21T14:41:39Z",
+                "completed_at": "2026-11-21T14:41:39Z"
+              },
+              {
+                "name": "Summarize Nix OCI cache use",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 17,
+                "started_at": "2026-11-21T14:41:39Z",
+                "completed_at": "2026-11-21T14:41:39Z"
+              },
+              {
+                "name": "Upload Nix OCI log artifact",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 18,
+                "started_at": "2026-11-21T14:41:39Z",
+                "completed_at": "2026-11-21T14:41:42Z"
+              },
+              {
+                "name": "Post Checkout",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 36,
+                "started_at": "2026-11-21T14:41:42Z",
+                "completed_at": "2026-11-21T14:41:43Z"
+              },
+              {
+                "name": "Complete job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 37,
+                "started_at": "2026-11-21T14:41:43Z",
+                "completed_at": "2026-11-21T14:41:43Z"
+              }
+            ],
+            "html_url": "https://github.com/proompteng/lab/actions/runs/44914277712/job/136876434674"
+          },
+          {
+            "id": 136876434948,
+            "name": "image / build-platform (linux/arm64, arm64, arc-arm64)",
+            "status": "completed",
+            "conclusion": "failure",
+            "started_at": "2026-11-21T14:39:22Z",
+            "completed_at": "2026-11-21T14:43:35Z",
+            "runner_name": "arc-arm64-runner-bn76p",
+            "steps": [
+              {
+                "name": "Set up job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 1,
+                "started_at": "2026-11-21T14:39:24Z",
+                "completed_at": "2026-11-21T14:39:54Z"
+              },
+              {
+                "name": "Start checkout timer",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 2,
+                "started_at": "2026-11-21T14:39:54Z",
+                "completed_at": "2026-11-21T14:39:57Z"
+              },
+              {
+                "name": "Checkout",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 3,
+                "started_at": "2026-11-21T14:39:57Z",
+                "completed_at": "2026-11-21T14:40:29Z"
+              },
+              {
+                "name": "Resolve source commit metadata",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 4,
+                "started_at": "2026-11-21T14:40:29Z",
+                "completed_at": "2026-11-21T14:40:29Z"
+              },
+              {
+                "name": "Record checkout timing",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 5,
+                "started_at": "2026-11-21T14:40:29Z",
+                "completed_at": "2026-11-21T14:40:29Z"
+              },
+              {
+                "name": "Require Attic public key",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 6,
+                "started_at": "2026-11-21T14:40:29Z",
+                "completed_at": "2026-11-21T14:40:29Z"
+              },
+              {
+                "name": "Start Nix setup timer",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 7,
+                "started_at": "2026-11-21T14:40:29Z",
+                "completed_at": "2026-11-21T14:40:29Z"
+              },
+              {
+                "name": "Set up Nix toolchain",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 8,
+                "started_at": "2026-11-21T14:40:29Z",
+                "completed_at": "2026-11-21T14:40:47Z"
+              },
+              {
+                "name": "Record Nix setup timing",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 9,
+                "started_at": "2026-11-21T14:40:47Z",
+                "completed_at": "2026-11-21T14:40:47Z"
+              },
+              {
+                "name": "Build Nix image archive",
+                "status": "completed",
+                "conclusion": "failure",
+                "number": 10,
+                "started_at": "2026-11-21T14:40:47Z",
+                "completed_at": "2026-11-21T14:43:18Z"
+              },
+              {
+                "name": "Inspect Nix image archive",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 11,
+                "started_at": "2026-11-21T14:43:18Z",
+                "completed_at": "2026-11-21T14:43:18Z"
+              },
+              {
+                "name": "Verify Bayn image contents",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 12,
+                "started_at": "2026-11-21T14:43:18Z",
+                "completed_at": "2026-11-21T14:43:18Z"
+              },
+              {
+                "name": "Verify Headlamp frontend assets from image",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 13,
+                "started_at": "2026-11-21T14:43:18Z",
+                "completed_at": "2026-11-21T14:43:18Z"
+              },
+              {
+                "name": "Verify Proompteng writable cache from image",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 14,
+                "started_at": "2026-11-21T14:43:18Z",
+                "completed_at": "2026-11-21T14:43:18Z"
+              },
+              {
+                "name": "Push platform image without Docker",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 15,
+                "started_at": "2026-11-21T14:43:18Z",
+                "completed_at": "2026-11-21T14:43:18Z"
+              },
+              {
+                "name": "Warm Nix build outputs in Attic",
+                "status": "completed",
+                "conclusion": "skipped",
+                "number": 16,
+                "started_at": "2026-11-21T14:43:18Z",
+                "completed_at": "2026-11-21T14:43:18Z"
+              },
+              {
+                "name": "Summarize Nix OCI cache use",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 17,
+                "started_at": "2026-11-21T14:43:18Z",
+                "completed_at": "2026-11-21T14:43:21Z"
+              },
+              {
+                "name": "Upload Nix OCI log artifact",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 18,
+                "started_at": "2026-11-21T14:43:21Z",
+                "completed_at": "2026-11-21T14:43:25Z"
+              },
+              {
+                "name": "Post Checkout",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 36,
+                "started_at": "2026-11-21T14:43:25Z",
+                "completed_at": "2026-11-21T14:43:29Z"
+              },
+              {
+                "name": "Complete job",
+                "status": "completed",
+                "conclusion": "success",
+                "number": 37,
+                "started_at": "2026-11-21T14:43:29Z",
+                "completed_at": "2026-11-21T14:43:29Z"
+              }
+            ],
+            "html_url": "https://github.com/proompteng/lab/actions/runs/44914277712/job/136876434948"
+          },
+          {
+            "id": 136879845256,
+            "name": "image / publish-index",
+            "status": "completed",
+            "conclusion": "skipped",
+            "started_at": "2026-11-21T14:43:35Z",
+            "completed_at": "2026-11-21T14:43:35Z",
+            "runner_name": null,
+            "steps": [],
+            "html_url": "https://github.com/proompteng/lab/actions/runs/44914277712/job/136879845256"
+          }
+        ],
+        "projectionLimits": "Complete selected PR and workflow/job projections; full raw API response bodies are not retained. Three independent read-only requests; no retry, dispatch or mutation.",
+        "mergeHeld": true
+      }
+    }
+  },
+  "priorNativeFailureCiB833": {
+    "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
+    "state": "FAILED",
+    "nativeRun": 44914277712,
+    "runAttempt": 1,
+    "amdJob": 136876434674,
+    "armJob": 136876434948,
+    "observedAt": "2026-11-21T14:54:55.582322+00:00",
+    "counts": {
+      "SUCCESS": 37,
+      "FAILURE": 2,
+      "SKIPPED": 25
+    },
+    "nativeWorkflowConclusion": "failure",
+    "fullPrRollupTerminal": true,
+    "mergeHeld": true,
+    "limitation": "The full current-head PR rollup is terminal. Both required native jobs failed; all other intended checks are successful or skipped. No merge or new release acceptance is claimed.",
+    "mergeState": "UNSTABLE"
   }
 }
