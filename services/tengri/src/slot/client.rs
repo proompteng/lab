@@ -87,6 +87,9 @@ impl SlotClient {
             .headers(crate::telemetry::headers())
             .send()
             .await?;
+        response
+            .error_for_status_ref()
+            .context("supervisor rejected controller fencing generation")?;
         ensure!(
             response.status().is_success(),
             "supervisor rejected controller fencing generation"
@@ -215,6 +218,7 @@ impl SlotClient {
 
     async fn decode(&self, mut response: reqwest::Response) -> anyhow::Result<SlotStatus> {
         let code = response.status();
+        let http_status = response.error_for_status_ref().map(|_| ());
         let mut body = Vec::new();
         while let Some(chunk) = response.chunk().await? {
             ensure!(
@@ -223,10 +227,15 @@ impl SlotClient {
             );
             body.extend_from_slice(&chunk);
         }
+        http_status.with_context(|| {
+            format!(
+                "supervisor lifecycle failed: {}",
+                String::from_utf8_lossy(&body)
+            )
+        })?;
         ensure!(
             code.is_success(),
-            "supervisor lifecycle failed: {}",
-            String::from_utf8_lossy(&body)
+            "unexpected supervisor HTTP status {code}"
         );
         let status: SlotStatus = serde_json::from_slice(&body)?;
         ensure!(

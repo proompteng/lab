@@ -148,6 +148,10 @@ pub(crate) enum State {
         turn_id: String,
         reason: String,
     },
+    Unconfirmed {
+        turn_id: Option<String>,
+        reason: String,
+    },
     Cancelled {
         turn_id: String,
     },
@@ -216,9 +220,17 @@ impl State {
             self,
             Self::Succeeded { .. }
                 | Self::Failed { .. }
+                | Self::Unconfirmed { .. }
                 | Self::Cancelled { .. }
                 | Self::Rejected { .. }
         )
+    }
+
+    fn unconfirmed_after_restart(turn_id: Option<String>) -> Self {
+        Self::Unconfirmed {
+            turn_id,
+            reason: "The workspace restarted. Earlier actions may have taken effect.".into(),
+        }
     }
 }
 
@@ -1218,6 +1230,9 @@ impl ControlPlane {
             .await
         {
             Ok(value) => {
+                if value.get("outcome").and_then(serde_json::Value::as_str) == Some("unconfirmed") {
+                    return State::unconfirmed_after_restart(None);
+                }
                 let Some(turn_id) = value
                     .pointer("/turn/id")
                     .and_then(serde_json::Value::as_str)
@@ -1528,6 +1543,11 @@ impl ControlPlane {
                     .and_then(serde_json::Value::as_bool)
                     == Some(true)
             }),
+            operation
+                .as_ref()
+                .and_then(|value| value.get("bootEnded"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
             turn_id,
         );
         if !matches!(recorded, State::Running { .. }) {
@@ -1636,7 +1656,10 @@ impl ControlPlane {
     }
 }
 
-fn bind_native_generation(recorded: State, alive: bool, turn_id: &str) -> State {
+fn bind_native_generation(recorded: State, alive: bool, boot_ended: bool, turn_id: &str) -> State {
+    if boot_ended && !matches!(recorded, State::Succeeded { .. } | State::Recovering { .. }) {
+        return State::unconfirmed_after_restart(Some(turn_id.into()));
+    }
     if matches!(
         recorded,
         State::Succeeded { .. } | State::NeedsReconciliation { .. } | State::Recovering { .. }

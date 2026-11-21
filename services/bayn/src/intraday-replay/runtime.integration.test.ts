@@ -689,7 +689,7 @@ durableTest.each(
           const now = yield* currentUtcInstant
           yield* notificationConnection
             .executeUnprepared(
-              'INSERT INTO broker_notification_receipts (account_id, event_id, source_revision, received_at) VALUES ($1, $2, $3, $4::timestamptz)',
+              "INSERT INTO broker_source_events (account_id, event_id, source_revision, received_at, event_kind) VALUES ($1, $2, $3, $4::timestamptz, 'LEGACY_RECEIPT')",
               [accountId, 'c'.repeat(64), 'a'.repeat(40), now],
               undefined,
             )
@@ -721,11 +721,11 @@ durableTest.each(
                 ),
               projection: {
                 ...broker.read.projection,
-                snapshot: Ref.get(stallReconciliation).pipe(
+                reconciliationSnapshot: Ref.get(stallReconciliation).pipe(
                   Effect.flatMap((stall) =>
                     stall
                       ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true)))
-                      : broker.read.projection.snapshot,
+                      : broker.read.projection.reconciliationSnapshot,
                   ),
                 ),
               },
@@ -2334,8 +2334,8 @@ durableTest.each(
                     expect((yield* runtime.store.authorityGeneration.readAuthorityState).kill).toBe(KillState.Clear)
                   }
                 } else {
-                  yield* sql`INSERT INTO broker_notification_receipts (account_id,event_id,source_revision,received_at)
-                    VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz)`
+                  yield* sql`INSERT INTO broker_source_events (account_id,event_id,source_revision,received_at,event_kind)
+                    VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz,'LEGACY_RECEIPT')`
                   expect(yield* readProof).toBeUndefined()
                   expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBeUndefined()
                 }
