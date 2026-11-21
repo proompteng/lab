@@ -28,9 +28,60 @@ The authenticated identity probe now has a one-second whole-response timeout ins
 
 The final ARM trace localized one 18.826-second cold context-stage header wait, while its later equivalent call took about 11 ms. The pinned server resolves its cold instance and project graph before that handler. Source inspection found no equivalent faster API preserving the same-session, full-prefix removal contract. This localizes a boundary; it does not apportion the delay among filesystem, database and plugin work, or prove the exact cause of the earlier second-stage CI timeout.
 
-## Bayn and OpenCode acc115 release
+## Bayn recovery publication
 
-Main publication and normal Kargo/Argo acceptance for `acc115c8082a00881fc3d1daef8af08b62458a85` are still pending at this draft's 09:25 UTC cut. The completed CI evidence above must not be read as deployed-runtime acceptance. Bayn and OpenCode are independent publication cohorts; both will receive their own exact-source runtime receipt.
+Bayn's original main run `44889463740` for `acc115c8082a00881fc3d1daef8af08b62458a85` was cancelled before any job started, one second after a newer main run was created. The timing is consistent with pending-slot replacement; no cancellation actor is asserted. Its successor [run 44891137421](https://github.com/proompteng/lab/actions/runs/44891137421), source `6d6600bd98ca3f0a434cd8f104369a6fa552deef`, is a verified descendant carrying the same production recovery code. Intervening Bayn changes affect test fixtures and helpers, not production source, runtime manifests, image definitions or dependency locks.
+
+The successor passed all 29 prerequisites by **10:22:59 UTC** and created its six platform image jobs. Bayn's exact-source cohort publication and live acceptance remain pending at this draft cut. OpenCode's independent recovery release has completed acceptance below.
+
+An earlier source, `cf45fd3bb61fe6215b8d6a26ef25333abf8c98c2`, failed [one Bayn amd64 image build](https://github.com/proompteng/lab/actions/runs/44888790054/job/136805437750) at the original 30-second production-Node startup test limit. Both canonical TypeScript projects completed and the separate retained v38/v39 reader test passed all 14 cases. The log does not identify whether bundling, child startup or cleanup consumed the first test's budget. Its ten expectation calls at suite end do not prove their timing before the timeout. This prior failure is retained separately from successor acceptance; no retry or deadline increase is claimed.
+
+## OpenCode native recovery rollout accepted — 2026-11-21
+
+[PR #16111](https://github.com/proompteng/lab/pull/16111) merged at **09:24:44 UTC** as `acc115c8082a00881fc3d1daef8af08b62458a85`. [Main publication run 44889463638](https://github.com/proompteng/lab/actions/runs/44889463638) succeeded; index publication completed at **10:05:39 UTC**.
+
+### Native validation
+
+The actual pinned native test passed **30 assertions on each architecture**. The original 25-second readiness and 90-second integration bounds were preserved. Both controlled fixture inference receipts completed, the deliberate expiry remained expired, and both process scopes released. Each final diagnostic array contained 24 operations; repeated last-operation summaries were not counted again.
+
+| Architecture | Native test duration | Initial readiness | Restart readiness | Initial cancelled probes |
+| ------------ | -------------------- | ----------------- | ----------------- | ------------------------ |
+| amd64        | 46.38432 s           | 10.055 s          | 1.212 s           | 8                        |
+| arm64        | 51.33504 s           | 18.997 s          | 1.24 s            | 15                       |
+
+These are observed acceptance timings, not a controlled latency comparison. Operations measure HTTP-header completion or cancellation, not full-body processing.
+
+### Published identity
+
+Verified OCI index: `sha256:d6982c5eac11b1a15a1a311dc5d3c19593ea94e265e122872a47860408e5d7e0`. Its source annotation and both platform configs identify the exact main source above.
+
+| Platform | Child manifest digest                                                     | Config digest                                                             |
+| -------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| amd64    | `sha256:5d4d27049c8bc0ce537d1a755dc5a5e458d357d1dd1ae550bc29892cbfada4d5` | `sha256:319fbc5ed190a3a512c589f1d83080c49c11d18e9da6ba783c54dbd43006d167` |
+| arm64    | `sha256:c5a46667616335d524eea9b37788cd9b72a39ef7f310a0be3f2d5a0f64c8aa3a` | `sha256:4920bbe2f5b2e0a1a49bca19993423b53b7ea81760f9a27e396e4351999c5516` |
+
+The native CLI remains independently pinned to OpenCode 2.1.3 at upstream `bb25a2f4a3f3f04d7c344bec0c0574ea3510b3b1`; the main revision identifies image/application packaging.
+
+### Normal delivery and live acceptance
+
+Freight `555ff6bcd91e481bba7b7f60faad3c5e9fedbc87` promoted normally from **10:05:40 to 10:06:47 UTC**. Argo synced delivery revision `5085dfdaf2aceaaa44910fcd0a67f5b249da3eab`. Smoke analysis `opencode.01m7ys77ehytee3wbt917vh71n.93e047e` succeeded from **10:07:52 to 10:08:01 UTC**. At 10:08:37, Stage Ready/Healthy/Verified were all true, Argo was Synced/Healthy, and both deployments had one updated, Ready, available replica with zero container restarts.
+
+| Role              | New Pod                             | Selected architecture | Process started |
+| ----------------- | ----------------------------------- | --------------------- | --------------- |
+| opencode          | `opencode-5df8bc649-ncdhx`          | amd64                 | 10:07:41Z       |
+| opencode-research | `opencode-research-f9f9dfcbc-wp6dt` | amd64                 | 10:07:09Z       |
+
+Each endpoint targeted only its corresponding new Ready/serving Pod. Both roles selected the verified amd64 config under the index above. Their `imageID` denotes the index, while the separate config digest identifies the chosen platform.
+
+At **10:10:52–53 UTC**, read-only process checks found exact `OPENCODE_CODE_REVISION`, Linux x64 and one native process per role, running `/nix/store/px8cbi5gxqzw105z775k3mrv3yjzwzrn-opencode-2.1.3/bin/opencode`. Development's authenticated `/api/info` returned HTTP 200 and version 2.1.3; its unauthenticated request returned 401. Research `/readyz` returned 200, which its verified source gates on authenticated exact-version native info; an unauthenticated native request returned 401. Both original protected PVC claims remain mounted.
+
+These acceptance probes invoked no live inference, study request, pairing, login, order or grant. The arm64 image passed native validation and was published; no arm64 production Pod is claimed.
+
+### Remaining cache limitation
+
+Both cache-warming steps emitted actual upload-failure warnings while the native jobs and registry publication succeeded. The logs show 716/717 planned build paths, 64-path batches and one upload worker each; planned paths are not counts of objects uploaded. ARM reported the fixed client class `InternalServerError`. The later [bounded server correlation](#cache-upload-errors-and-database-acquisition) found database acquisition errors in the same window, but no shared identifier proves an exact request join or the underlying cause. No partial NAR transfer appeared in these job logs.
+
+The companion [sanitized receipt](opencode-acc-runtime-acceptance-20261121.json) retains the sanitized identity, delivery, process and native-test projections, eight input-receipt SHA-256 hashes and eleven exact source-file hashes. No internal addresses, credentials, request headers, raw HTTP bodies or raw job logs are included. Existing receipts supplied the documentation; no extra runtime queries were made solely for it.
 
 ## Build concurrency decision
 
@@ -80,6 +131,109 @@ ARC retained its existing minimum five / maximum ten runners **per architecture*
 This acceptance covers the exact deployment, a 65-second automatic telemetry window, fresh post-restore checkpoints, and an 82-second natural GC comparison. It establishes bounded rollout behavior; long-term reliability, peak-market behavior and profitability require their own measurements.
 
 Evidence: the adjacent [sanitized acceptance receipt](session-investigation-2026-11-20-operations-acceptance-c217.json) preserves the exact release identities, fixed telemetry and GC observations, checkpoint results, limits, and SHA-256 hashes of the retained source files. Artifact **14700179852**, `torghut-retained-pipeline-44886462886-1`, in the linked workflow run contains the original automatic acceptance evidence. ZIP SHA-256: `10d0caf496b0f9a8c5786e425d666f81264606f6103c4c0bcf3f24fb56eee344`. GitHub artifacts follow their configured retention period; source hashes establish provenance but do not preserve the original payloads.
+
+## Later collector capacity and checkpoint latency
+
+The [extended observation](session-investigation-2026-11-20-operations-acceptance-c217-extended.json) preserves a later collector point at **09:52:00 UTC**, 47 minutes 48 seconds after the earlier GC sample and about 65 minutes after process start. The collector retained the same UID, process, configuration and resources, with zero restarts, retained termination states or observed UID-scoped events.
+
+| Collector measurement      | 09:04:11 UTC | 09:52:00 UTC |
+| -------------------------- | -----------: | -----------: |
+| GC count                   |           25 |           49 |
+| Allocated heap, decimal MB |       280.14 |       281.33 |
+| Process RSS, decimal MB    |       465.15 |       471.39 |
+| Samples sent               |    1,895,394 |    7,432,080 |
+| Remote-write pending       |          578 |        1,041 |
+| Failed / retried samples   |        0 / 0 |        0 / 0 |
+
+Highest observed and highest sent timestamps matched at both endpoints. Pending samples are a changing queue gauge, so these endpoints do not establish a monotonic trend. The later cgroup read measured **412.49 MiB current / 412.94 MiB reported peak / 512 MiB limit**, with **99.51 MiB current headroom** and every memory-event counter zero. It is the first retained cgroup sample; it must not be substituted for the earlier process-RSS series.
+
+At the separately recorded **09:56:23 UTC** metric evaluation, all 12 current Ready targets remained bound to their expected runtime image. The 41,694 series remained present; the oldest UP/JVM sample was 29.449 seconds old and maximum scrape time was 0.143235 seconds. An initial client-side query-quoting error was corrected at that same evaluation time; it was not a second collector or checkpoint sample.
+
+Collector capacity and delivery remained supported, but **checkpoint freshness did not pass this later snapshot**: the latest completed checkpoint's last-acknowledgement age was **252.416 seconds for archive and 505.925 seconds for TA**. Both jobs were RUNNING/STABLE, had advanced checkpoints, and retained only their original startup failure each.
+
+### Measured checkpoint phases
+
+The [phase diagnosis](torghut-checkpoint-phase-diagnosis-20261121.json) binds exact checkpoint IDs, retained coordinator logs, REST timestamps, source semantics and the subsequent bounded observation.
+
+| Pipeline / checkpoint | Recorded timestamp to pending checkpoint | Pending checkpoint to last ACK | Last ACK to completion log |
+| --------------------- | ---------------------------------------: | -----------------------------: | -------------------------: |
+| Archive 99273         |                                 36.176 s |                       17.055 s |                  169.678 s |
+| TA 168675             |                                223.640 s |                       31.464 s |                   59.406 s |
+| TA 168676             |                                223.091 s |                       46.609 s |                  189.044 s |
+| TA 168677             |                                186.984 s |                       23.403 s |                   34.039 s |
+
+All relevant tasks acknowledged: 224/224 for archive and 131/131 for TA. The first interval includes planning, executor waiting/checkpoint-ID allocation and scheduling before the pending checkpoint and timer exist. Storage-location initialization and actual task triggering occur after that boundary, so the middle interval includes storage/coordinator work as well as task work; it is not pure barrier/alignment latency. The log's 1–4 ms finalization field starts after metadata close and therefore excludes the long tail after acknowledgements.
+
+At **10:03:18 UTC**, latest-completed last-ACK ages had recovered to **51.430 seconds for archive and 172.655 seconds for TA**, with 64 and 24 completed checkpoints respectively and no new failed count. Archive's next checkpoint already had all acknowledgements while a contemporaneous I/O-worker stack waited in S3 multipart metadata finalization. TA's sampled stack was in S3 object listing; the retained frames do not bind it to a specific checkpoint.
+
+The incident alert range contains ten sampled TA FIRING points from **09:57:00 through 10:01:30 UTC**, with archive PENDING from 09:56:00 through 09:58:30. No active alert series remained at the later observation. This establishes rule detection, not notification delivery. All 28 covered pending-record and 354 backpressure series were finite zero; eight Kafka lag series were finite zero and 46 remained nonfinite.
+
+The exact source defaults the JobManager I/O pool to the JVM-reported processor count and the separate cluster pool to four times that count. One observed JobManager worker and a 500m CPU quota do not measure the numeric pool maximum or queue depth. The evidence supports further attribution of metadata/finalization latency; it does not justify a pool-size, timeout, durability or S3 tuning change. Matching operation evidence is needed to separate client waiting, network, RGW and device delay.
+
+### Checkpoint storage attribution: bounded incident history
+
+The retained 09:49–10:03 UTC history shows substantial shared storage pressure. Across 29 samples at 30-second steps, the median one-minute mean write latency was 17.221 ms on the ARM host’s shared BlueStore DB device and 41.552 ms on Turin’s, with median device busy time of 99.547% and 99.680%. Turin OSDs 0, 1, and 2 had five-minute mean write-latency peaks of 7.768 s, 8.763 s, and 10.887 s at 09:57–09:58. These are windowed aggregate metrics, not individual request percentiles. They establish temporal storage pressure, not the cause of an exact checkpoint request.
+
+The bounded RGW recovery found 27 operations whose path or listing prefix matched TA checkpoint 168676 at 10:03:02.522–10:03:48.999. They occurred after its 09:56:45.379 completion. The retained metadata operations were HEAD/200 at 10:03:34.849 with 1.072 s reported latency and DELETE/204 at 10:03:37.374 with 2.524 s reported latency. No explicit request IDs were present; connection identifiers were not substituted. These later operations do not explain the earlier 189.044 s last-ACK-to-completion interval. No exact archive 99273 or 99280 request was recovered.
+
+Incident-window request coverage remains incomplete. Loki returned zero checkpoint-ID matches, but RGW ingestion and retention coverage were not established. Initial direct log replies exceeded the reply cap and retained only later bytes. One bounded server-limited recovery per known RGW returned coverage beginning at 10:02:59 and 10:15:30, respectively; neither covered the 09:53–09:56 finalization tails. The captures do not establish why that earlier interval was unavailable. The archive 169.678 s and TA 189.044 s tails therefore remain unattributed to a specific RGW request, despite the contemporaneous storage pressure and the separately retained archive metadata-finalization stack.
+
+The [storage-attribution receipt](torghut-checkpoint-storage-attribution-complete-20261121.json) retains the sanitized operations, aggregate metrics, capture bounds, tool job/command hashes, hashes of matched object keys and original log records, and source-file hashes. It omits raw paths, URLs, query values, upload identifiers, headers, payloads, and unrelated request inventories. This step made no new pipeline or collector observation, workload or logging change, synthetic load, or storage tuning. It does not justify changing the I/O-pool size or weakening checkpoint durability.
+
+### Cache workload boundary
+
+The [cache-warming source audit](attic-cache-warming-source-audit-20261121.json) verifies one client upload worker per warmer. Its 64-path batch size is not an upload-worker count. The pinned server separately allows up to ten concurrent chunk uploads per NAR and can fan out multipart writes. Both observed OpenCode warmers emitted upload-failure warnings even though native tests, registry publication and deployment succeeded.
+
+The wrapped upload-command failure is nonfatal, but the warming step remains on the index-publication dependency. Moving it off that dependency requires an exact-source closure handoff design; source inspection alone does not establish a safe concurrency limit or a causal performance benefit.
+
+The [narrow helper-publication correction, PR #16130](https://github.com/proompteng/lab/pull/16130), merged at **10:31:10 UTC** as `ab6eefd4eccbaa10c7d5916165c913a6dd06d692`. It excludes exactly three test-only PostgreSQL helper paths from Bayn and OpenCode main publication. Helper-only changes stop launching those image builds; mixed helper/production changes still publish, and Bayn PR validation remains enabled. Existing workflow-only non-publication and release/security gates are preserved.
+
+Focused local tests passed 84 cases and 1,111 assertions, plus two observability regression cases and eight assertions. A scoped TypeScript check of the changed test and its real import graph passed under compiler options inherited from the owning project. Type-aware lint, formatting and generated-workflow consistency also passed. An optional whole scripts-project check reported 118 diagnostics in unchanged files; no pristine-base rerun was performed. A broader optional observability run encountered a five-second Python timeout in an unchanged test and unavailable promtool/Alloy dependencies. Neither broader run is counted as passing acceptance evidence.
+
+Final CI on `9cfc79195cf0b4a2c9a1d359fcfeffc4af022b85` had **14 successes and 31 intentional skips**, no pending or failed checks, CLEAN merge state and no unresolved review threads. Automatic code and security reviews completed; code review had no findings. Root and independent source review were clear, and the squash merge was guarded by that exact head. This removes directly demonstrated unnecessary work; no dollar savings or reduction in storage latency has been measured.
+
+### Cache upload errors and database acquisition
+
+The accepted OpenCode publication at `acc115c8082a00881fc3d1daef8af08b62458a85` had successful native builds and image publication, while both optional cache warmers emitted upload-failure warnings. A bounded Attic log read for **2026-11-21 09:57:00–10:01:00 UTC** identifies three database connection-pool acquisition timeouts:
+
+| Server time (UTC)  | Fixed cause classification        | Retained operation |
+| ------------------ | --------------------------------- | ------------------ |
+| 09:58:19.222918714 | Database pool acquisition timeout | Not established    |
+| 09:59:21.803505378 | Database pool acquisition timeout | Not established    |
+| 09:59:51.806707472 | Database pool acquisition timeout | `upload_path`      |
+
+The first server error precedes ARM job `136803636307`'s retained `InternalServerError` at `09:58:19.2240516` by approximately **1.13 ms**. This is temporal alignment, not an exact request join: the retained client records contain no shared request or NAR identifier. The client's later summary at `09:58:56.6932798` has no separately logged matching server error in this window. This window does not establish the AMD warmer's specific cause.
+
+The pinned upstream source `zhaofengli/attic@12cbeca141f46e1ade76728bce8adc447f2166c6`, `server/src/error.rs:136–156,203–219`, logs database/storage errors internally and maps them to client `InternalServerError`/HTTP 500. The deployed `0e9b29ee77eaa836990a858e785bbcd608b8eb34` diagnostic patch changes download-stream observation only; it changes neither upload processing nor this error conversion.
+
+The fixed window contains six ERROR records: three classified database errors and three unclassified error records. It contains no matched `StorageError` or download `Stream error`. This does not establish storage health outside the selected events, nor explain why the database pool could not supply a connection. The underlying database latency, connection availability, GC, S3 and Ceph contributions remain unattributed; the source follow-up below narrows the connection-lifetime question. No SQLSTATE or shared request identifier was retained from these errors.
+
+The first read retained aggregate error counts but its 200-event output cap was consumed by unrelated warnings. An authorized correction read used the **same window**, filtered ERROR records before the 40-event cap, and retained all six errors. Neither read hit its log byte or line cap; the correction selected the same 770 log lines, with no timestamp parse failures. Post-window lines returned by the bounded Kubernetes logs command were discarded. No raw error text, SQL, URL, header, HTTP body or credential is retained. No upload, retry, database/storage query, fault injection or workload mutation was performed.
+
+The [sanitized error-window receipt](attic-upload-error-window-corrected-20261121.json) includes hashes of the immutable upstream error, upload and S3 source files and the deployed download diagnostic patch, plus the original capped-receipt hash.
+
+### Database pool follow-up
+
+The deployed application uses the pinned SQLx pool defaults: **maximum 10 connections, minimum 0, acquisition timeout 30 seconds, idle timeout 600 seconds and maximum connection lifetime 1,800 seconds**. Idle connections are tested before acquisition. The deployed database configuration supplies only heartbeat=true; Attic calls Database::connect with the connection URL and does not set pool overrides. This follows immutable Attic 12cbeca141f46e1ade76728bce8adc447f2166c6, SeaORM 1.1.13 and SQLx 0.8.6. Downloaded dependency sources were verified against the upstream lockfile checksums. No connection URL or secret was emitted or retained.
+
+An SQLx acquisition timeout can cover waiting for a permit, checking an idle connection or opening a new connection. The three observed errors therefore do **not** prove all ten connections were busy, that PostgreSQL reached its connection limit, or that increasing the application pool would help.
+
+The same **09:57–10:01 UTC** PostgreSQL log window contains only three checkpoint records:
+
+| Completed at (UTC) | Total seconds | Write seconds | Sync seconds |
+| ------------------ | ------------: | ------------: | -----------: |
+| 09:59:05.026138338 |       391.169 |       362.640 |        1.977 |
+| 10:00:31.116770294 |        86.091 |        66.436 |        6.010 |
+
+A new checkpoint starts immediately after the first completion. These elapsed times overlap the application failures, but checkpoint write time can include pacing and is not individual device latency. The window contains no logged slow statement, lock wait, deadlock or connection-limit event. Effective logging coverage could not be established: one READ ONLY query of 15 allowlisted pg_settings, bounded to three seconds, returned a statement-timeout error and no rows. It was not retried. This current latency observation does not reconstruct historical pool occupancy.
+
+A historical Mimir query at 09:58:30 found database-size metrics but no matching CNPG backend/activity/wait metric family. It supplies no connection-occupancy or wait-state explanation.
+
+The inspected upload, deduplication and garbage-collection code does not hold a SQL transaction across remote-storage waits. Uploads finish the remote transfer before beginning final database transactions; garbage collection completes its database reads before remote deletion. NarGuard and ChunkGuard retain a clone of the shared pool and application-level holder counters, not a checked-out connection. These guards should not be mistaken for SQL locks held throughout the transfer.
+
+**Supported conclusion:** database connection acquisition failures are established; the underlying cause remains unproved. No reproducible connection-lifetime defect or evidence-backed pool adjustment was identified. No pool, logging, source or workload change was made. There were no upload retries, workload injections or performance trials.
+
+The [pool-diagnosis receipt](attic-pool-diagnosis-20261121.json) links the sanitized log/config/metric observations and hashes ten immutable source files.
 
 ## Attic diagnostic rollout accepted — 2026-11-21
 

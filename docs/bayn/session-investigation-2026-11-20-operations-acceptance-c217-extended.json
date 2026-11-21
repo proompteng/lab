@@ -1,0 +1,456 @@
+{
+  "schemaVersion": 1,
+  "scope": "One later bounded read-only c217 collector and pipeline observation",
+  "sourceCommit": "c217c1ddcce8f87d6c4306de27a1894cf8afe4ec",
+  "generatedRevision": "e65f6af4869304ff8d0893584da0e2ac88e069d9",
+  "observationStartedAt": "2026-11-21 09:50:48 UTC",
+  "collectorObservedAt": "2026-11-21T09:52:00.039411234Z",
+  "metricsEvaluatedAt": "2026-11-21T09:56:23.112758+00:00",
+  "observationFinishedAt": "2026-11-21T09:57:43.979541+00:00",
+  "application": {
+    "revision": "e65f6af4869304ff8d0893584da0e2ac88e069d9",
+    "sync": "Synced",
+    "health": "Healthy"
+  },
+  "collector": {
+    "pod": "torghut-alloy-8484c5c5bb-snd2s",
+    "uid": "749193f0-1aea-47d9-918e-2803a3a9b648",
+    "ready": true,
+    "createdAt": "2026-11-21T08:46:51Z",
+    "sameUidAsBaseline": true,
+    "sameProcessAsBaseline": true,
+    "sameResourcesAsBaseline": true,
+    "resources": {
+      "limits": {
+        "cpu": "500m",
+        "memory": "512Mi"
+      },
+      "requests": {
+        "cpu": "100m",
+        "memory": "256Mi"
+      }
+    },
+    "restartCounts": [0],
+    "retainedTerminationStatesEmpty": true,
+    "runtimeIndexDigests": ["sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189"],
+    "mountedConfigSha256": "508994fdf02de19d8a1b279617e84616d7b6f63cfeae70877c3578c050497f83",
+    "configMapSha256": "508994fdf02de19d8a1b279617e84616d7b6f63cfeae70877c3578c050497f83",
+    "matchesOriginalConfig": true,
+    "podConfigAnnotationMatches": true,
+    "deploymentConfigAnnotationMatches": true,
+    "deploymentObservedGenerationMatches": true,
+    "observedEvents": [],
+    "eventQueryScopedToOriginalUid": true,
+    "baselineObservedAt": "2026-11-21T09:04:11.638611+00:00",
+    "elapsedSinceBaselineSeconds": 2868.4007999897003,
+    "current": {
+      "gcCount": 49,
+      "heapAllocatedBytes": 281332888,
+      "heapInUseBytes": 326213632,
+      "nextGcBytes": 407399749,
+      "goSystemBytes": 433670504,
+      "processResidentBytes": 471388160,
+      "goMemoryLimitBytes": 483183820,
+      "goGcPercent": 100,
+      "processStartedAtSeconds": 1795250812.33,
+      "sentSamples": 7432080,
+      "pendingSamples": 1041,
+      "failedSamples": 0,
+      "retriedSamples": 0,
+      "highestObservedTimestampSeconds": 1795254718,
+      "highestSentTimestampSeconds": 1795254718,
+      "activeShards": 1,
+      "shardCapacity": 10000
+    },
+    "baseline": {
+      "gcCount": 25,
+      "heapAllocatedBytes": 280144880,
+      "heapInUseBytes": 324632576,
+      "nextGcBytes": 407781007,
+      "goSystemBytes": 425281896,
+      "processResidentBytes": 465145856,
+      "goMemoryLimitBytes": 483183820,
+      "goGcPercent": 100,
+      "processStartedAtSeconds": 1795250812.33,
+      "sentSamples": 1895394,
+      "pendingSamples": 578,
+      "failedSamples": 0,
+      "retriedSamples": 0,
+      "highestObservedTimestampSeconds": 1795251849,
+      "highestSentTimestampSeconds": 1795251849,
+      "activeShards": 1,
+      "shardCapacity": 10000
+    },
+    "deltas": {
+      "gcCount": 24,
+      "heapAllocatedBytes": 1188008,
+      "processResidentBytes": 6242304,
+      "sentSamples": 5536686,
+      "pendingSamples": 463,
+      "failedSamples": 0,
+      "retriedSamples": 0
+    }
+  },
+  "cgroup": {
+    "memoryCurrentBytes": 432529408,
+    "memoryMaxBytes": 536870912,
+    "memoryPeakBytes": 432996352,
+    "limitMatches512Mi": true,
+    "headroomBytes": 104341504,
+    "peakHeadroomBytes": 103874560,
+    "memoryEvents": {
+      "low": 0,
+      "high": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0
+    },
+    "procSelfCgroupAvailable": true,
+    "procSelfCgroupSha256": "253b1e5b2310d659d69a642ce890bf5eaa5c515f0982d3a37d70c17fe62b8449",
+    "cgroupV2NamespaceRoot": true
+  },
+  "currentTaskManagers": {
+    "count": 12,
+    "samePodUidSetAsOriginalAcceptance": true,
+    "readyCount": 12,
+    "restartCount": 0,
+    "runtimeImageBoundCount": 12,
+    "promotedIndexDigest": "sha256:d63c751ab59d18acab61809724908d7c458de0d124d319108376d1552353bb14"
+  },
+  "telemetry": {
+    "up": {
+      "available": true,
+      "series": 12,
+      "coversAllCurrentTargetsExactly": true,
+      "allValuesFinite": true,
+      "allUp": true
+    },
+    "upTimestamp": {
+      "available": true,
+      "series": 12,
+      "coversAllCurrentTargetsExactly": true,
+      "allValuesFinite": true,
+      "oldestAgeSeconds": 29.448757886886597
+    },
+    "jvmHeapTimestamp": {
+      "available": true,
+      "series": 12,
+      "coversAllCurrentTargetsExactly": true,
+      "allValuesFinite": true,
+      "oldestAgeSeconds": 29.448757886886597
+    },
+    "postRelabelSamples": {
+      "available": true,
+      "series": 12,
+      "coversAllCurrentTargetsExactly": true,
+      "allValuesFinite": true,
+      "total": 41694,
+      "byPipeline": {
+        "market-data-archive": 23674,
+        "torghut-ta": 18020
+      }
+    },
+    "scrapeDuration": {
+      "available": true,
+      "series": 12,
+      "coversAllCurrentTargetsExactly": true,
+      "allValuesFinite": true,
+      "maximumSeconds": 0.143235028
+    },
+    "currentFlinkSeries": {
+      "available": true,
+      "coversBothPipelines": true,
+      "byPipeline": {
+        "market-data-archive": 23674,
+        "torghut-ta": 18020
+      },
+      "total": 41694
+    }
+  },
+  "pipelines": [
+    {
+      "name": "market-data-archive",
+      "generation": 181,
+      "jobId": "922291431717b7c9126c515dc671082a",
+      "state": "RUNNING",
+      "lifecycle": "STABLE",
+      "sameJobAsOriginalAcceptance": true,
+      "overviewAvailable": true,
+      "checkpointsAvailable": true,
+      "overviewObservedAt": "2026-11-21T09:56:23.143234+00:00",
+      "overviewMatchesExpectedJob": true,
+      "overviewState": "RUNNING",
+      "checkpointsObservedAt": "2026-11-21T09:56:23.143618+00:00",
+      "checkpointCounts": {
+        "restored": 1,
+        "total": 59,
+        "in_progress": 1,
+        "completed": 57,
+        "failed": 1
+      },
+      "restoredCheckpointId": 99215,
+      "latestCompletedCheckpoint": {
+        "id": 99272,
+        "status": "COMPLETED",
+        "triggeredAt": "2026-11-21T09:51:52.200+00:00",
+        "latestAcknowledgedAt": "2026-11-21T09:52:10.728+00:00",
+        "latestAcknowledgementAgeSeconds": 252.41561818122864,
+        "endToEndDurationMs": 18528,
+        "idAdvancedSinceOriginalAcceptance": true
+      },
+      "failedCheckpointCountDelta": 0
+    },
+    {
+      "name": "torghut-ta",
+      "generation": 250,
+      "jobId": "d736507b3f398766862c3ee492c35014",
+      "state": "RUNNING",
+      "lifecycle": "STABLE",
+      "sameJobAsOriginalAcceptance": true,
+      "overviewAvailable": true,
+      "checkpointsAvailable": true,
+      "overviewObservedAt": "2026-11-21T09:56:23.146158+00:00",
+      "overviewMatchesExpectedJob": true,
+      "overviewState": "RUNNING",
+      "checkpointsObservedAt": "2026-11-21T09:56:23.154081+00:00",
+      "checkpointCounts": {
+        "restored": 1,
+        "total": 24,
+        "in_progress": 1,
+        "completed": 22,
+        "failed": 1
+      },
+      "restoredCheckpointId": 168653,
+      "latestCompletedCheckpoint": {
+        "id": 168675,
+        "status": "COMPLETED",
+        "triggeredAt": "2026-11-21T09:43:42.125+00:00",
+        "latestAcknowledgedAt": "2026-11-21T09:47:57.229+00:00",
+        "latestAcknowledgementAgeSeconds": 505.9250810146332,
+        "endToEndDurationMs": 255104,
+        "idAdvancedSinceOriginalAcceptance": true
+      },
+      "failedCheckpointCountDelta": 0
+    }
+  ],
+  "unavailable": [],
+  "limitations": [
+    "This is one later observation, not continuous sampling. Collector, Kubernetes, metric and checkpoint reads have their own recorded times.",
+    "No forced GC, new debug container, synthetic load, restart, configuration change or repeated collector/checkpoint sample was performed. Malformed instant-query quoting was corrected at the same fixed metric evaluation time.",
+    "Cgroup values were read from the existing Alloy container via the kubectl_admin tool; memory.current is total charged cgroup usage and differs from process RSS.",
+    "The later cgroup sample has no earlier cgroup baseline. Memory events apply to the current cgroup lifetime; the Kubernetes event query covers only retained events for the unchanged collector UID.",
+    "Pending remote-write samples are an active queue gauge; endpoint comparison does not prove a monotonic queue trend or an intra-window maximum.",
+    "Freshness applies to current bound targets and the existing Flink jobs. Checkpoint age here uses the latest acknowledgement timestamp of a checkpoint already marked COMPLETED, not a reconstructed coordinator completion log.",
+    "This extends initial rollout evidence under ordinary observed workload; it is not a peak-market stress test, long-term leak guarantee or profitability measurement."
+  ],
+  "provenance": {
+    "baselineReceipt": {
+      "file": "torghut-alloy-gc-090411.json",
+      "sha256": "212c14445d28f9d2483093da8cd9fd4374898b17dd25e2b433bb4de6c4896765"
+    },
+    "originalAcceptanceReceipt": {
+      "file": "session-investigation-2026-11-20-operations-acceptance-c217.json",
+      "sha256": "671b4832969dab56188f13f6b8a079142ae7558bfc0e25e8c062dd6fd8128946"
+    },
+    "originalDetailedCapture": {
+      "file": "torghut-c217-acceptance-090005.json",
+      "sha256": "79842d9b88ee19bdfd41b0038ac9cb5886e8b65a2d55ed1dadbffeb046e0e379"
+    },
+    "toolReads": [
+      {
+        "kind": "collectorPods",
+        "jobId": "59a18f95-a57d-4764-9b69-43e5c8519271",
+        "commandHash": "c095f387e46d8438cba87a18804a47f72036a38e27bea05692da66de1adadcfd",
+        "stdoutBytes": 12778,
+        "exitCode": 0,
+        "captureComplete": true
+      },
+      {
+        "kind": "collectorDeployment",
+        "jobId": "bd3fe2e9-1103-4961-9b75-df40331df559",
+        "commandHash": "687ec8aa96ff814117eff8b3d526a2ebf73c542fa9bb6de4fbf47d66f3db0e01",
+        "stdoutBytes": 5535,
+        "exitCode": 0,
+        "captureComplete": true
+      },
+      {
+        "kind": "pipelines",
+        "jobId": "be844658-cdbc-497f-b776-762fbf81af99",
+        "commandHash": "f5da4fcbc667bae3cb87cc5b2ad0e1bcd316e0959f1af2631838d8b4fba622cc",
+        "stdoutBytes": 49808,
+        "exitCode": 0,
+        "captureComplete": true
+      },
+      {
+        "kind": "taskManagers",
+        "jobId": "9f4ae343-bead-40b3-aac2-7143959a3924",
+        "commandHash": "2e9c0f9044c231fd86b14fa5151aa2e408bcdcab2c47f45e25e2d8a92487245a",
+        "stdoutBytes": 219619,
+        "exitCode": 0,
+        "captureComplete": true
+      },
+      {
+        "kind": "application",
+        "jobId": "0205c59d-c7ea-44c8-824c-0a6f68ba92e0",
+        "commandHash": "edc0b8747daa284e4e11f9753e9370d5aadf1d6683dcdca5c990b7a9d4d0e979",
+        "stdoutBytes": 50476,
+        "exitCode": 0,
+        "captureComplete": true
+      },
+      {
+        "kind": "collectorEvents",
+        "jobId": "874dc97e-2540-4fe2-b60a-84d77bcedd79",
+        "commandHash": "6ed4229bba8cea35c69ca4e7036301def97ab36ad3cab8045ad827aa005730bf",
+        "stdoutBytes": 119,
+        "exitCode": 0,
+        "captureComplete": true
+      },
+      {
+        "kind": "collectorExec",
+        "jobId": "bf9697ca-f160-44c5-9833-16c915148025",
+        "commandHash": "347c1e44956737c4ec7ee2d381a38923c08bff955990e84e8b6b1624687385c1",
+        "stdoutBytes": 3170,
+        "exitCode": 0,
+        "captureComplete": true
+      },
+      {
+        "kind": "configMap",
+        "jobId": "633c4ff7-6c9d-40c2-b969-16bcb58c2e17",
+        "commandHash": "3c9de5e0525d8d46e32eee86d8f1679dac9bfeeb38418018369fda2f3dde0b86",
+        "stdoutBytes": 4225,
+        "exitCode": 0,
+        "captureComplete": true
+      }
+    ],
+    "networkReads": [
+      {
+        "read": "checkpoints:market-data-archive",
+        "available": true,
+        "observedAt": "2026-11-21T09:56:23.143618+00:00",
+        "bodyBytes": 7064,
+        "bodySha256": "8ec18d9ee052dc7d3f5c6dc3800b1f4dab6843c02cf9cb3c4901b9a09c9f8b8e"
+      },
+      {
+        "read": "checkpoints:torghut-ta",
+        "available": true,
+        "observedAt": "2026-11-21T09:56:23.154081+00:00",
+        "bodyBytes": 7236,
+        "bodySha256": "a5e2797d23ed58cdc096c3f093cdbc7391ef1960d50243296899732893984b64"
+      },
+      {
+        "read": "metric:currentFlinkSeries",
+        "available": false,
+        "observedAt": "2026-11-21T09:56:23.141963+00:00",
+        "bodyBytes": null,
+        "bodySha256": null
+      },
+      {
+        "read": "metric:jvmHeapTimestamp",
+        "available": false,
+        "observedAt": "2026-11-21T09:56:23.138716+00:00",
+        "bodyBytes": null,
+        "bodySha256": null
+      },
+      {
+        "read": "metric:postRelabelSamples",
+        "available": false,
+        "observedAt": "2026-11-21T09:56:23.142833+00:00",
+        "bodyBytes": null,
+        "bodySha256": null
+      },
+      {
+        "read": "metric:scrapeDuration",
+        "available": false,
+        "observedAt": "2026-11-21T09:56:23.138463+00:00",
+        "bodyBytes": null,
+        "bodySha256": null
+      },
+      {
+        "read": "metric:up",
+        "available": false,
+        "observedAt": "2026-11-21T09:56:23.138190+00:00",
+        "bodyBytes": null,
+        "bodySha256": null
+      },
+      {
+        "read": "metric:upTimestamp",
+        "available": false,
+        "observedAt": "2026-11-21T09:56:23.138955+00:00",
+        "bodyBytes": null,
+        "bodySha256": null
+      },
+      {
+        "read": "overview:market-data-archive",
+        "available": true,
+        "observedAt": "2026-11-21T09:56:23.143234+00:00",
+        "bodyBytes": 381,
+        "bodySha256": "5825df73462f4b6eab2d0041235b3741868da0c2dc09eba160da9391a358fab7"
+      },
+      {
+        "read": "overview:torghut-ta",
+        "available": true,
+        "observedAt": "2026-11-21T09:56:23.146158+00:00",
+        "bodyBytes": 389,
+        "bodySha256": "76b69dc22cd5bccc37a2267a223f0db9f43659895ee45851740a393c386ec273"
+      },
+      {
+        "read": "metric:currentFlinkSeries:corrected",
+        "available": true,
+        "observedAt": "2026-11-21T09:57:43.978534+00:00",
+        "bodyBytes": 250,
+        "bodySha256": "2b974c8a2abea507a29869a78aaf3fb9bbac88092883da98bcf57ad7b1aaa146",
+        "httpStatus": null
+      },
+      {
+        "read": "metric:jvmHeapTimestamp:corrected",
+        "available": true,
+        "observedAt": "2026-11-21T09:57:43.872080+00:00",
+        "bodyBytes": 3399,
+        "bodySha256": "d655ded510cd7e8fe5f3769e93971629d3a716032a641c4d891b70a863e200ab",
+        "httpStatus": null
+      },
+      {
+        "read": "metric:postRelabelSamples:corrected",
+        "available": true,
+        "observedAt": "2026-11-21T09:57:43.872527+00:00",
+        "bodyBytes": 3118,
+        "bodySha256": "0a15a1b1e647a718ee9ec4b9129aa3d61741c7389de725b86cb30aff1dd898e9",
+        "httpStatus": null
+      },
+      {
+        "read": "metric:scrapeDuration:corrected",
+        "available": true,
+        "observedAt": "2026-11-21T09:57:43.872967+00:00",
+        "bodyBytes": 3033,
+        "bodySha256": "2a72eae27cd504f44da37704e5f84d5154ca0b6f61d8d65f676dfe388cc5c333",
+        "httpStatus": null
+      },
+      {
+        "read": "metric:up:corrected",
+        "available": true,
+        "observedAt": "2026-11-21T09:57:43.873550+00:00",
+        "bodyBytes": 2662,
+        "bodySha256": "e3f45c6041480605d537e6a5ba017c4a94d9f8bc58accb377b16af0f88ef9b6b",
+        "httpStatus": null
+      },
+      {
+        "read": "metric:upTimestamp:corrected",
+        "available": true,
+        "observedAt": "2026-11-21T09:57:43.873144+00:00",
+        "bodyBytes": 2624,
+        "bodySha256": "5b409c95256396d499376156d38b1fca2933643d0db41546bbe141284e8a09f8",
+        "httpStatus": null
+      }
+    ],
+    "rawPayloadsRetained": false
+  },
+  "queryCorrection": {
+    "fixedEvaluationTime": "2026-11-21T09:56:23.112758+00:00",
+    "firstAttemptClientIssue": "Regex escape sequences were not encoded as PromQL string literals; corrected selector quoting.",
+    "originalHttpStatusNotRetained": true,
+    "correctedQueryCount": 6,
+    "collectorOrCheckpointReadsRepeated": false,
+    "preCorrectionReceiptSha256": "bf2bde5f31f62209b0efd8c29c5b86565ffb8656ea011fd5c680fd9667a830ad"
+  }
+}
