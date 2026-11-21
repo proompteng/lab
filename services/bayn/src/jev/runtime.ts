@@ -291,10 +291,22 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           ),
           readiness: DecisionReadinessReason.DecisionPending,
         })
-      if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
+      const beforeSourceAt = yield* Clock.currentTimeMillis
+      if (options.admissionDeadlineAt !== undefined && beforeSourceAt >= options.admissionDeadlineAt)
         return yield* new JevAwaitingEvidence({
           message: 'Entry admission expired before Jev observation dispatch',
           readiness: DecisionReadinessReason.DecisionPending,
+        })
+      // A nearly spent lease must leave the next minute unconsumed for its successor.
+      // Existing admitted work above retains its original, possibly shorter remaining lifetime.
+      if (
+        options.admissionDeadlineAt !== undefined &&
+        beforeSourceAt + input.protocol.inferenceValidityMs > options.admissionDeadlineAt
+      )
+        return yield* new JevAwaitingEvidence({
+          message: 'Entry admission cannot cover the original inference interval; awaiting its successor',
+          readiness: DecisionReadinessReason.DecisionPending,
+          availableAt: utcInstantFromEpochMillis(options.admissionDeadlineAt),
         })
       const { snapshot, observation, source, inputAvailableAt } = yield* loadNativeEntryObservation(
         input,
@@ -307,13 +319,16 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           message: 'Entry admission expired before Jev batch admission',
           readiness: DecisionReadinessReason.DecisionPending,
         })
+      const inferenceExpiresAt = Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs
+      if (options.admissionDeadlineAt !== undefined && inferenceExpiresAt > options.admissionDeadlineAt)
+        return yield* new JevAwaitingEvidence({
+          message: 'Entry admission cannot cover the original inference interval; awaiting its successor',
+          readiness: DecisionReadinessReason.DecisionPending,
+          availableAt: utcInstantFromEpochMillis(options.admissionDeadlineAt),
+        })
       const batch = yield* Effect.suspend(() =>
         Effect.fromResult(
-          prepareJevTradingSignalBatch(
-            source,
-            utcInstantFromEpochMillis(Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs),
-            planVersion,
-          ),
+          prepareJevTradingSignalBatch(source, utcInstantFromEpochMillis(inferenceExpiresAt), planVersion),
         ),
       ).pipe(
         Effect.tap(({ plan }) =>

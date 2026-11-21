@@ -37,6 +37,7 @@ const targets = {
   bayn: { workspaces: ['', 'services/bayn'], paths: ['services/bayn/**', 'bun.lock', '**/package.json'] },
   landing: { workspaces: ['', 'apps/landing'], paths: ['apps/landing/**', 'bun.lock', '**/package.json'] },
 }
+const tengriPublisherPath = '.github/workflows/tengri-images.yml'
 
 const publicationWorkflows = readdirSync('.github/workflows').filter((filename) => {
   if (!/\.ya?ml$/.test(filename)) return false
@@ -69,7 +70,11 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
       'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
     ])
       expect(matchesPaths(file, patterns)).toBe(
-        filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml',
+        (filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml') ||
+          (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath) ||
+          (event === 'pull_request' &&
+            filename === 'attic-build-push.yaml' &&
+            file === '.github/workflows/attic-build-push.yaml'),
       )
     for (const file of [
       'nix/cache-push.sh',
@@ -80,6 +85,64 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
       expect(matchesPaths(file, patterns)).toBe(
         event === 'push' && ['arc-runner-build-push.yml', 'opencode-build-push.yml'].includes(filename),
       )
+    }
+  }
+})
+
+test('native PR validation preserves image publication and cache warming boundaries', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/nix-oci-build-common.yml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  const steps = property(property(jobs, 'build-platform'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing native build steps')
+  const stepCondition = (name: string) =>
+    property(
+      steps.find((step) => property(step, 'name') === name),
+      'if',
+    )
+  const conditions = [
+    [stepCondition('Push platform image without Docker'), 'publish'],
+    [property(property(jobs, 'publish-index'), 'if'), 'publish'],
+    [stepCondition('Warm Nix build outputs in Attic'), 'warm'],
+  ] as const
+  for (const [event, ref, publishOnDispatch, publish, warm] of [
+    ['pull_request', 'refs/pull/1/merge', false, false, false],
+    ['pull_request', 'refs/heads/main', true, false, false],
+    ['push', 'refs/heads/main', false, true, true],
+    ['push', 'refs/heads/feature', true, false, false],
+    ['workflow_dispatch', 'refs/heads/main', false, true, true],
+    ['workflow_dispatch', 'refs/heads/feature', false, false, false],
+    ['workflow_dispatch', 'refs/heads/feature', true, true, false],
+  ] as const) {
+    for (const [condition, boundary] of conditions) {
+      const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+      expect(
+        runInNewContext(expression, {
+          github: { event_name: event, ref },
+          inputs: { publish_on_dispatch: publishOnDispatch },
+        }),
+      ).toBe(boundary === 'publish' ? publish : warm)
+    }
+  }
+})
+
+test('Attic PR validation receives no cache credential and pins its reviewed source', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/attic-build-push.yaml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  const validation = property(jobs, 'validate')
+  const publication = property(jobs, 'build-and-push')
+  expect(property(validation, 'secrets')).toBeUndefined()
+  expect(property(property(validation, 'with'), 'source_revision')).toBe('${{ github.event.pull_request.head.sha }}')
+  const credentials = property(publication, 'secrets')
+  expect(Object.keys(credentials as Record<string, unknown>)).toEqual(['ATTIC_TOKEN'])
+  const tokenExpression = text(property(credentials, 'ATTIC_TOKEN')).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+  for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
+    for (const ref of ['refs/pull/1/merge', 'refs/heads/feature', 'refs/heads/main']) {
+      const context = { github: { event_name: event, ref }, secrets: { ATTIC_TOKEN: 'synthetic-upload-token' } }
+      expect(runInNewContext(text(property(validation, 'if')), context)).toBe(event === 'pull_request')
+      const publishes = runInNewContext(text(property(publication, 'if')), context)
+      expect(publishes).toBe(event !== 'pull_request')
+      const forwardedToken = publishes ? runInNewContext(tokenExpression, context) : ''
+      expect(forwardedToken).toBe(event !== 'pull_request' && ref === 'refs/heads/main' ? 'synthetic-upload-token' : '')
     }
   }
 })
@@ -491,7 +554,7 @@ test.each(['orbit-salvage', 'ricochet-rush'])('%s does not rebuild for unrelated
   }
 })
 
-test('runtime-only PRs skip desktop builds while main publishes coordinated images', () => {
+test('Tengri runtime and publisher changes schedule desktop images on main only', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing planner steps')
@@ -511,7 +574,7 @@ test('runtime-only PRs skip desktop builds while main publishes coordinated imag
       .map((path) => [path, { name: path || 'root' }]),
   )
   const lock = { ...before, workspaces: { ...workspaces, ...before.workspaces } }
-  for (const source of ['services/tengri/src/slot/vmm.rs', 'services/tengri/network.sh']) {
+  for (const source of ['services/tengri/src/slot/vmm.rs', 'services/tengri/network.sh', tengriPublisherPath]) {
     for (const event of ['pull_request', 'push']) {
       const paths = property(property(property(workflow, 'on'), event), 'paths')
       if (!Array.isArray(paths)) throw new Error('Missing image trigger paths')
@@ -528,21 +591,20 @@ test('runtime-only PRs skip desktop builds while main publishes coordinated imag
 })
 
 test('Tengri frontend PRs skip native images while main publishes coordinated releases', () => {
-  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
+  const workflow: unknown = Bun.YAML.parse(readFileSync(tengriPublisherPath, 'utf8'))
+  const ofz: unknown = Bun.YAML.parse(readFileSync('.github/workflows/ofz.yaml', 'utf8'))
   const source = 'apps/landing/src/components/tengri/desktop-dock.tsx'
   for (const event of ['pull_request', 'push']) {
     const paths = property(property(property(workflow, 'on'), event), 'paths')
     if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
     expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(event === 'push')
-    for (const runtimeSource of [
-      'services/tengri/src/slot/vmm.rs',
-      'services/nanoagent/internal/service/service.go',
-      '.github/workflows/tengri-images.yml',
-    ]) {
-      expect(paths.some((pattern) => matchesGlob(runtimeSource, text(pattern)))).toBe(
-        !runtimeSource.startsWith('.github/'),
-      )
+    for (const runtimeSource of ['services/tengri/src/slot/vmm.rs', 'services/nanoagent/internal/service/service.go']) {
+      expect(paths.some((pattern) => matchesGlob(runtimeSource, text(pattern)))).toBe(true)
     }
+    expect(matchesPaths(tengriPublisherPath, paths.map(text))).toBe(event === 'push')
+    const ofzPaths = property(property(property(ofz, 'on'), event), 'paths')
+    if (!Array.isArray(ofzPaths)) throw new Error('Missing Ofz trigger paths')
+    expect(matchesPaths(tengriPublisherPath, ofzPaths.map(text))).toBe(event === 'push')
   }
 })
 

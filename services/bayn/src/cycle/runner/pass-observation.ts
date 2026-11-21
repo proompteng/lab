@@ -128,6 +128,13 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
             observation.nextWakeAt === undefined
           )
         if (observation.admissionProtection !== undefined) return false
+        if (observation.outcome === 'ALREADY_TERMINAL' && observation.readiness !== undefined)
+          return (
+            observation.waitReason === undefined &&
+            observation.readiness.reason === DecisionReadinessReason.SignalWindowObserved &&
+            observation.readiness.availableAt !== undefined &&
+            observation.readiness.availableAt > observation.observedAt
+          )
         if (observation.outcome === 'WAITING')
           return observation.waitReason === 'BROKER_OBSERVATION_PENDING' && observation.readiness === undefined
         if (observation.recoveryAction === 'WAITING')

@@ -439,9 +439,15 @@ A disconnect, dropped frame or unsupported correction makes the local activity h
 
 PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
-the same connection. Bayn fetches REST fee records on startup and when the streamed fee history changes. It
-checks that both sources agree on fee counts by booking date, fee kind, cash amount and coin quantity. REST
-supplies the existing ledger IDs, crypto symbols and exact prices. The capture waits for the two sources to agree.
+the same connection. Bayn fetches REST fee records on startup, when the streamed fee history changes, and during
+ordinary captures while fee settlement is pending. It checks both histories by booking date, fee kind, cash amount
+and coin quantity. REST supplies the existing ledger IDs, crypto symbols and exact prices.
+
+A stable stream that is ahead only by USD fee debits may publish current broker observations with a pending cash
+fee count. The gap stays pending across UTC rollover and capture restart. Full reconciliation, trading readiness,
+and ordinary submission wait for the matching REST records. Pending fees create no ledger postings. The separate
+protective close still needs the exact fenced cancel, filled inventory and reducing-order proof. Extra REST fees,
+missing crypto fees and unmatched fees with future booking dates reject publication.
 
 The capture uses REST for complete order history, account state, positions and fresh open-order eligibility. It
 compares complete histories around the account read and checks the filled quantity for every order and leg.
@@ -617,6 +623,13 @@ reference so a replacement worker can verify that same manifest
 without treating replayed bytes as a new live capture. Before binding or transmitting, the existing financial path
 rechecks the current account, reconciled positions and orders, authority generation, unknown mutations, current executable
 quote, risk and original admission/inference/submission deadlines. Late or stale completion cannot authorize an order.
+
+A new entry observation requires the original protocol inference interval to fit inside its existing admission lease.
+The owner checks before source and eligibility work and again against the acquired source's observation clock before
+batch admission. A nearly expired cycle waits for its original lease expiry, leaving the next signal window unconsumed
+for a freshly validated successor. Pending and completed admitted work retain their original resume and expiry paths.
+This does not extend a source, inference, admission, quote or submission deadline. Even a first observation waits when
+its lease cannot cover the original inference interval; a successor still needs current source, account and risk evidence.
 
 Fresh account, configuration and candidate-asset reads for short eligibility run only when admitting a new source;
 its observation clock is sampled after those reads. Completion retains the original eligibility evidence and avoids
@@ -1692,6 +1705,10 @@ lineage. Image publication alone does not authorize the revised strategy.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 
+When Activity SSE contains cash fees whose authoritative REST records are still pending, the broker projection
+reports `BROKER_CASH_FEES_PENDING`. This retains the typed observation failure without exposing provider payloads.
+Trading readiness and ordinary submission continue to wait for settlement; other broker failures remain distinct.
+
 The status process opens without a live broker HTTP preflight. Its health passes read the revision-bound canonical
 broker projection each time, so an unavailable broker remains visible as degraded status and can recover without a
 process restart. Execution workers retain their verified broker session and all existing order-admission checks.
@@ -2463,8 +2480,13 @@ The CI default test budget is 15 seconds for full research fixtures on shared ru
 Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
 four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
 runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. Never run concurrent shards against
-the same database. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
+the same database. The Jev batch suite requires a local PostgreSQL role with `CREATEDB`. It migrates a suite fixture
+once, then clones and removes a separate database for each test. ClickHouse/Java archive checks and
+PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
+
+Successful PostgreSQL CI shards upload their measured file durations as `bayn-postgres-timings-<shard>-<attempt>`
+artifacts for balancing future runs.
 
 Streaming failure integration runs in a separate required job with disposable PostgreSQL, Restate 1.8.1 and Kafka.
 Run `bash services/bayn/scripts/test-streaming-integrations.sh` from a local Docker host using the pinned toolchain.
@@ -2524,6 +2546,14 @@ with one hosted call per proposal and no paid fallback. Its actual provider inpu
 identity travel in the verified research receipt, with separate gateway and worker source revisions.
 See the runbook for native session and budget enforcement and the [standalone server](../opencode/README.md)
 for development access and the verified state migration.
+
+New Flamingo research registrations pin the vLLM 0.34.0 serving image introduced by
+[the reviewed Flamingo upgrade](https://github.com/proompteng/lab/commit/66badfc269c0cbaa69c150cd46cb35475e7b6890),
+while keeping the same Qwen 3.8 checkpoint, tokenizer and chat template. Retained receipt decoding freezes all four
+previous Flamingo identities with their original image so historical run, request, receipt and expense identities
+remain unchanged. The current worker allowlist admits only the new Flamingo image and the existing OpenCode policy.
+Existing approvals cannot be retargeted: a prospective run still needs its own frozen evidence, cost basis and valid
+signature through the normal research workflow. This compatibility update creates no run, approval or capital grant.
 
 The published research image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
 `bayn-jev-evaluate` is offline and never acquires provider credentials. Release and health verification must not issue

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { createServer } from 'node:http'
 
 import { NodeHttpClient, NodeHttpServer, NodeServices } from '@effect/platform-node'
-import { Clock, Deferred, Effect, FileSystem, Fiber, Layer, Schedule, Stream } from 'effect'
+import { Clock, Deferred, Effect, Exit, FileSystem, Fiber, Layer, Schedule, Stream } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { ChildProcessSpawner } from 'effect/process'
 
@@ -17,6 +17,28 @@ import { serveOpenCode } from './server'
 const binary = process.env['BAYN_TEST_OPENCODE_BINARY']
 const nativeTest = binary === undefined ? test.skip : test
 
+interface NativeStartupObservation {
+  readonly elapsedMs: number
+  readonly outcome: 'HTTP' | 'TRANSPORT_ERROR' | 'CLIENT_ERROR'
+  readonly status: number | null
+}
+
+const startupDiagnostics = (phase: 'initial' | 'restart', startedAtMs: number) => ({
+  phase,
+  startedAtMs,
+  spawnRequestedElapsedMs: null as number | null,
+  spawnAcquiredElapsedMs: null as number | null,
+  nativeRequests: 0,
+  nativeHttpResponses: 0,
+  nativeStartingResponses: 0,
+  nativeTransportErrors: 0,
+  nativeOtherErrors: 0,
+  firstNative: null as NativeStartupObservation | null,
+  lastNative: null as NativeStartupObservation | null,
+  gatewayAttempts: 0,
+  lastGatewayStatus: null as number | null,
+})
+
 nativeTest(
   'pinned native harness reuses one study session, refuses replay and releases its process scope',
   async () => {
@@ -24,6 +46,7 @@ nativeTest(
     const handles: ChildProcessSpawner.ChildProcessHandle[] = []
     let providerCalls = 0
     let nativeSessionCreations = 0
+    let firstAuthorization: string | undefined
     await Effect.runPromise(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
@@ -32,14 +55,16 @@ nativeTest(
         const port = 24096
         const client = yield* HttpClient.HttpClient
         const originalSpawner = yield* ChildProcessSpawner.ChildProcessSpawner
+        let startup = startupDiagnostics('initial', yield* Clock.currentTimeMillis)
         const spawner = ChildProcessSpawner.make((command) =>
-          originalSpawner.spawn(command).pipe(
-            Effect.tap((handle) =>
-              Effect.sync(() => {
-                handles.push(handle)
-              }),
-            ),
-          ),
+          Effect.gen(function* () {
+            const phase = startup
+            phase.spawnRequestedElapsedMs = (yield* Clock.currentTimeMillis) - phase.startedAtMs
+            const handle = yield* originalSpawner.spawn(command)
+            phase.spawnAcquiredElapsedMs = (yield* Clock.currentTimeMillis) - phase.startedAtMs
+            handles.push(handle)
+            return handle
+          }),
         )
         const cancelled = yield* Deferred.make<void>()
         const upstream = HttpClient.make((request) =>
@@ -71,10 +96,34 @@ nativeTest(
           }),
         )
         const nativeClient = HttpClient.make((request) =>
-          Effect.suspend(() => {
+          Effect.gen(function* () {
+            const phase = startup
+            const info = request.url === `http://127.0.0.1:${locations.nativePort}/api/info`
+            if (info) {
+              phase.nativeRequests += 1
+              if (firstAuthorization === undefined) firstAuthorization = request.headers['authorization']
+            }
             if (request.method === 'POST' && request.url === `http://127.0.0.1:${locations.nativePort}/api/session`)
               nativeSessionCreations += 1
-            return client.execute(request)
+            const observe = (outcome: NativeStartupObservation['outcome'], status: number | null) =>
+              Effect.gen(function* () {
+                const observation = { elapsedMs: (yield* Clock.currentTimeMillis) - phase.startedAtMs, outcome, status }
+                phase.firstNative ??= observation
+                phase.lastNative = observation
+                if (outcome === 'HTTP') {
+                  phase.nativeHttpResponses += 1
+                  if (status === 503) phase.nativeStartingResponses += 1
+                } else if (outcome === 'TRANSPORT_ERROR') phase.nativeTransportErrors += 1
+                else phase.nativeOtherErrors += 1
+              })
+            return yield* client.execute(request).pipe(
+              Effect.tap((response) => (info ? observe('HTTP', response.status) : Effect.void)),
+              Effect.tapError((error) =>
+                info
+                  ? observe(error.reason._tag === 'TransportError' ? 'TRANSPORT_ERROR' : 'CLIENT_ERROR', null)
+                  : Effect.void,
+              ),
+            )
           }),
         )
         const sourceRevision = 'a'.repeat(40)
@@ -84,15 +133,42 @@ nativeTest(
           Effect.provide(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port })),
         )
         let fiber = yield* server.pipe(Effect.forkScoped)
-        const ready = Effect.gen(function* () {
-          const response = yield* client.get(`http://127.0.0.1:${port}/readyz`).pipe(Effect.timeout('1 second'))
-          if (response.status !== 200)
-            return yield* Effect.fail(new Error(`Native harness not ready: HTTP ${response.status}`))
-        })
-        yield* ready.pipe(
-          Effect.retry({ schedule: Schedule.spaced('100 millis'), times: 200 }),
-          Effect.timeout('25 seconds'),
-        )
+        const waitReady = () => {
+          const phase = startup
+          const currentFiber = fiber
+          return Effect.gen(function* () {
+            const waitStartedAtMs = yield* Clock.currentTimeMillis
+            yield* Effect.gen(function* () {
+              phase.gatewayAttempts += 1
+              const response = yield* client.get(`http://127.0.0.1:${port}/readyz`).pipe(Effect.timeout('1 second'))
+              phase.lastGatewayStatus = response.status
+              if (response.status !== 200)
+                return yield* Effect.fail(new Error(`Native harness not ready: HTTP ${response.status}`))
+            }).pipe(
+              Effect.retry({ schedule: Schedule.spaced('100 millis'), times: 200 }),
+              Effect.timeout('25 seconds'),
+              Effect.raceFirst(Fiber.join(currentFiber)),
+              // Emit once per start, before the outer scope waits for child cleanup. Never include native request data.
+              Effect.onExit((exit) =>
+                Effect.gen(function* () {
+                  const now = yield* Clock.currentTimeMillis
+                  const { startedAtMs, ...observations } = phase
+                  yield* Effect.logInfo({
+                    event: 'bayn.opencode-native-startup-test.v1',
+                    ...observations,
+                    readiness: Exit.isSuccess(exit) ? 'READY' : 'FAILED',
+                    readinessElapsedMs: now - waitStartedAtMs,
+                    phaseElapsedMs: now - startedAtMs,
+                  })
+                }),
+              ),
+            )
+          })
+        }
+        yield* waitReady()
+        expect(handles.length).toBe(1)
+        const unauthenticated = yield* client.get(`http://127.0.0.1:${locations.nativePort}/api/info`)
+        expect(unauthenticated.status).toBe(401)
         const configurationHash = yield* Effect.fromResult(
           hashResearch(makeOpenCodeConfiguration(directory, `http://127.0.0.1:${locations.relayPort}`)),
         )
@@ -142,11 +218,16 @@ nativeTest(
         expect(replay.status).toBe(503)
         expect(providerCalls).toBe(1)
         yield* Fiber.interrupt(fiber)
+        startup = startupDiagnostics('restart', yield* Clock.currentTimeMillis)
         fiber = yield* server.pipe(Effect.forkScoped)
-        yield* ready.pipe(
-          Effect.retry({ schedule: Schedule.spaced('100 millis'), times: 200 }),
-          Effect.timeout('25 seconds'),
+        yield* waitReady()
+        if (firstAuthorization === undefined) return yield* Effect.fail(new Error('Native authentication missing'))
+        const staleAuthorization = yield* client.execute(
+          HttpClientRequest.get(`http://127.0.0.1:${locations.nativePort}/api/info`).pipe(
+            HttpClientRequest.setHeader('authorization', firstAuthorization),
+          ),
         )
+        expect(staleAuthorization.status).toBe(401)
         const secondFeedback = `second-proposal-only ${'b'.repeat(14000)}`
         const secondRun = {
           ...run,
@@ -196,7 +277,7 @@ nativeTest(
         expect(ambiguousReplay.status).toBe(503)
         expect(providerCalls).toBe(3)
         yield* Fiber.interrupt(fiber)
-        expect(handles.length).toBeGreaterThanOrEqual(2)
+        expect(handles.length).toBe(2)
         for (const handle of handles) expect(yield* handle.isRunning).toBe(false)
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     )

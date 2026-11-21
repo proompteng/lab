@@ -670,6 +670,34 @@ describePostgres('Durable per-account broker observations', () => {
         expect(Result.isFailure(yield* restarted.read.pipe(Effect.result))).toBe(true)
       }),
     ))
+  test('publishes current broker state during fee settlement and fences reconciliation and normal submission', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const held = yield* claim(store)
+        yield* advanceToTicket(held)
+        const pending = { ...snapshot(held), pendingCashFeeCount: 2 }
+        expect(yield* store.publish(held, pending, 0)).toBe(true)
+        const restarted = makeBrokerObservationStore(sql, accountId, revision, 60_000, cacheFixture.cache)
+        expect(yield* restarted.readState).toEqual(observedBrokerState(pending))
+        const readiness = yield* rolloutReadiness(sql, restarted)
+        expect(readiness.status.status).toBe(200)
+        expect(readiness.trading.status).toBe(503)
+        expect(readiness.current.broker?.readAvailable).toBe(false)
+        expect(yield* Effect.flip(restarted.read)).toMatchObject({
+          kind: BrokerReadErrorKind.ObservationPending,
+          observationFailure: 'CASH_FEES_PENDING',
+        })
+
+        const intentId = 'd'.repeat(64)
+        yield* reserve(sql, intentId, utcInstantFromEpochMillis(Date.parse(held.startedAt) + 1))
+        yield* advanceToTicket(held, 2)
+        expect(yield* Effect.flip(restarted.readForSubmit(intentId))).toMatchObject({
+          kind: BrokerReadErrorKind.ObservationPending,
+          observationFailure: 'CASH_FEES_PENDING',
+        })
+      }),
+    ))
   test('persists source precision and hashes across a reader restart', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
