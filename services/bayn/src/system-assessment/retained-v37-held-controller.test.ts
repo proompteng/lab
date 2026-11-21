@@ -4,7 +4,17 @@ import { Effect, Result, Schema } from 'effect'
 
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { canonicalJsonV1Result } from '../hash'
-import { decideJevPositionHold, JevPositionHoldSchema } from '../jev/hold'
+import { decideJevPositionHold, deriveJevPositionHoldMaterial, JevPositionHoldSchema } from '../jev/hold'
+import { OrderSide } from '../execution/contracts'
+import { nativeJevFixture } from '../jev/native.test-support'
+import { currentProtectionEvidenceVersion, decodeJevPortfolio, JevPortfolioSchema, JevPurpose } from '../jev/portfolio'
+import { shortNativeEntryFixture } from '../jev/short-entry.test-support'
+import { jevPricingQuery } from '../jev/runtime'
+import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
+import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
+import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { decodeJevProtocol, RetainedJevProtocolV37Schema } from '../jev/protocol'
 import { RetainedV37JevPositionHoldSchema } from '../jev/retained-v37-hold'
 import { strictParseOptions } from '../schemas'
@@ -25,14 +35,14 @@ const registration = Schema.decodeUnknownSync(OperationalRegistrationSchema)(reg
 const hold = original.pass.observation.positionHold
 const decodeHold = Schema.decodeUnknownResult(RetainedV37JevPositionHoldSchema, strictParseOptions)
 
-const stored = (pass: unknown = original.pass) => {
+const stored = (pass: unknown = original.pass, sourceId = original.controllerReceiptHash) => {
   const record = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, pass))
   const cut = {
     ...original.cut,
     records: [
       {
         kind: SystemSourceRecordKind.Controller,
-        sourceId: original.controllerReceiptHash,
+        sourceId,
         recordHash: record.recordHash,
       },
     ],
@@ -184,4 +194,161 @@ test('retained reader continues to reject noncanonical or altered archived sourc
       ),
     ).toBe(true)
   }
+})
+
+test('later protection-evidence fields cannot be resealed into an original v37 hold', async () => {
+  const originalEvidence = Result.getOrThrow(decodeHold(hold)).evidence
+  const portfolio = Schema.decodeUnknownSync(
+    JevPortfolioSchema,
+    strictParseOptions,
+  )({
+    ...originalEvidence.portfolio,
+    protectionEvidenceVersion: currentProtectionEvidenceVersion,
+  })
+  const forged = Result.getOrThrow(deriveJevPositionHoldMaterial({ ...originalEvidence, portfolio }))
+  expect(testHash(forged.evidence.protocol)).toBe(original.parameterHash)
+  expect(Result.isFailure(decodeHold(forged))).toBe(true)
+  const { receiptHash: _oldReceiptHash, ...originalPass } = original.pass
+  const passMaterial = {
+    ...originalPass,
+    observation: { ...original.pass.observation, positionHold: forged },
+  }
+  const pass = { ...passMaterial, receiptHash: testHash(passMaterial) }
+  const source = stored(pass, pass.receiptHash)
+  expect(
+    Result.isFailure(
+      await read(
+        readOperationalAssessmentSourceCut(source.sourceCutHash, registration, 'RETAINED_OPERATIONAL_V1'),
+        source,
+      ),
+    ),
+  ).toBe(true)
+})
+
+test('resealing a valid current short cannot create a historical long-only v37 hold', async () => {
+  const accountId = 'retained-v37-short-negative'
+  const opening = Result.getOrThrow(shortNativeEntryFixture(accountId))
+  const entryAt = opening.observation.observedAt
+  const at = new Date(Date.parse(entryAt) + 60_000).toISOString()
+  const managed = nativeJevFixture(JevPurpose.Manage, at, accountId)
+  if (managed.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected a managed fixture')
+  const plan = opening.decision.exitPolicy.plans['AAPL']
+  if (plan?.schemaVersion !== 'bayn.jev-short-funded-exit-plan.v1') throw new Error('Expected a native short plan')
+  const price = BigInt(plan.levels.minimumEntryPriceMicros)
+  const value = price * 5n
+  const previous = managed.portfolio.brokerState
+  const state = {
+    ...previous,
+    account: { ...previous.account, cashMicros: (BigInt(previous.account.equityMicros) + value).toString() },
+    positions: previous.positions.map((position) => ({
+      ...position,
+      quantityAtoms: '-5000000000',
+      averageEntryPriceMicros: price.toString(),
+      costBasisMicros: (-value).toString(),
+      marketPriceMicros: price.toString(),
+      marketValueMicros: (-value).toString(),
+      unrealizedPnlMicros: '0',
+    })),
+    orders: previous.orders.map((order) => ({ ...order, side: OrderSide.Sell })),
+  }
+  const stateHash = Result.getOrThrow(reconciledStateHash(state))
+  const portfolio = Result.getOrThrow(
+    decodeJevPortfolio({
+      ...managed.portfolio,
+      entryDecisionHash: testHash(opening.decision),
+      exitPolicy: opening.decision.exitPolicy,
+      entryFills: managed.portfolio.entryFills.map((fill) => ({
+        ...fill,
+        side: OrderSide.Sell,
+        priceAtoms: (price * 1000n).toString(),
+        occurredAt: entryAt,
+      })),
+      brokerState: {
+        ...state,
+        reconciliation: { ...previous.reconciliation, expectedHash: stateHash, observedHash: stateHash },
+      },
+    }),
+  )
+  const query = Result.getOrThrow(
+    jevPricingQuery(
+      managed.draft,
+      managed.protocol,
+      managed.snapshot.manifest.calendar,
+      at,
+      ['AAPL'],
+      IntradaySnapshotPurpose.Liquidation,
+    ),
+  )
+  const raw = makeIntradayMomentumTestSnapshot(managed.protocol, { ...query, archiveWatermarks: [] })
+
+  const ask = Number(price) / 1e6
+  const snapshot = streamingFixtureFromRaw(
+    {
+      ...raw,
+      quotes: raw.quotes.map((quote) => ({ ...quote, askPrice: ask, bidPrice: ask - 0.01 })),
+    },
+    query,
+  ).snapshot
+  const current = Result.getOrThrow(
+    decideJevPositionHold({
+      cycleId: managed.draft.identity.cycleId,
+      sessionDate: managed.snapshot.manifest.sessionDate,
+      protocol: managed.protocol,
+      portfolio,
+      observedAt: at,
+      authorityGenerationHash: managed.input.authorityGenerationHash,
+      source: { manifest: snapshot.manifest, rows: Result.getOrThrow(persistIntradayRecordRows(snapshot)) },
+    }),
+  )
+  expect(Result.isSuccess(Schema.decodeUnknownResult(JevPositionHoldSchema, strictParseOptions)(current))).toBe(true)
+  const protocol = Schema.decodeUnknownSync(RetainedJevProtocolV37Schema)(hold.evidence.protocol)
+  const market = protocol.marketProfiles.find((profile) => profile.market === 'EQUITY')
+  if (market === undefined || market.universeId !== 'torghut-core-equity-v2')
+    throw new Error('Expected the original frozen equity market')
+  const retainedQuery = {
+    ...query,
+    universeId: market.universeId,
+    universeSymbolHash: market.universeSymbolHash,
+    universe: market.universe,
+    feed: market.feed,
+    delayClass: market.delayClass,
+    sourceTopics: market.sourceTopics,
+  }
+  const retainedRaw = makeIntradayMomentumTestSnapshot(market, { ...retainedQuery, archiveWatermarks: [] })
+  const retainedSnapshot = streamingFixtureFromRaw(
+    {
+      ...retainedRaw,
+      quotes: retainedRaw.quotes.map((quote) => ({ ...quote, askPrice: ask, bidPrice: ask - 0.01 })),
+    },
+    retainedQuery,
+  ).snapshot
+  const forged = Result.getOrThrow(
+    deriveJevPositionHoldMaterial({
+      ...current.evidence,
+      protocol,
+      source: {
+        manifest: retainedSnapshot.manifest,
+        rows: Result.getOrThrow(persistIntradayRecordRows(retainedSnapshot)),
+      },
+    }),
+  )
+  expect(testHash(forged.evidence.protocol)).toBe(original.parameterHash)
+  expect(Result.isFailure(decodeHold(forged))).toBe(true)
+  const { receiptHash: _oldReceiptHash, ...originalPass } = original.pass
+  const passMaterial = {
+    ...originalPass,
+    completedAt: at,
+    observation: { ...original.pass.observation, executionIssuedAt: at, observedAt: at, positionHold: forged },
+  }
+  const pass = { ...passMaterial, receiptHash: testHash(passMaterial) }
+  const source = stored(pass, pass.receiptHash)
+  expect(source.record.recordHash).not.toBe(original.recordHash)
+  expect(
+    Result.isFailure(
+      await read(
+        readOperationalAssessmentSourceCut(source.sourceCutHash, registration, 'RETAINED_OPERATIONAL_V1'),
+        source,
+      ),
+    ),
+  ).toBe(true)
 })
