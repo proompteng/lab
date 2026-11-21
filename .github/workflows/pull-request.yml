@@ -110,6 +110,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: landing-editor-acceptance
+          save-if: false
           workspaces: |
             services/tengri -> target
             services/ofz -> target
