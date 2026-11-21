@@ -46,6 +46,7 @@ const projectedEvents = new Set([
 ])
 
 export enum BrokerStreamReconciliationReason {
+  LegacyReceipt = 'LEGACY_RECEIPT',
   SessionBoundary = 'SESSION_BOUNDARY',
   UnresolvedGap = 'UNRESOLVED_GAP',
   InvalidFrame = 'INVALID_FRAME',

@@ -46,6 +46,12 @@ export default Effect.gen(function* () {
   )`
   yield* sql`CREATE INDEX broker_source_event_projections_completed
     ON broker_source_event_projections(account_id,completed_at DESC)`
+  // The retired transport retained only event identity and arrival time. Give every migrated receipt a terminal
+  // projection decision so redelivery routes through canonical reconciliation instead of requiring an absent payload.
+  yield* sql`INSERT INTO broker_source_event_projections(
+    account_id,event_id,source_revision,outcome,reason,observed_at
+  ) SELECT account_id,event_id,source_revision,'RECONCILE_REQUIRED','LEGACY_RECEIPT',received_at
+    FROM broker_source_events WHERE event_kind = 'LEGACY_RECEIPT'`
   yield* sql`CREATE TRIGGER broker_source_event_projections_immutable
     BEFORE UPDATE OR DELETE ON broker_source_event_projections
     FOR EACH ROW EXECUTE FUNCTION reject_evidence_mutation()`

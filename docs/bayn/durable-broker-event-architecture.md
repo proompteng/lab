@@ -99,6 +99,10 @@ The direct path has four independent replay boundaries:
 3. PostgreSQL retains the exact source and first projection receipt indefinitely.
 4. Broker-event and TigerBeetle identities make a lost response safe to retry.
 
+Migration assigns every identity-only receipt from the retired Kafka path an immutable `LEGACY_RECEIPT`
+reconciliation decision. A redelivery can therefore request canonical recovery without entering the projector path
+that requires the newly retained raw notification.
+
 Unsupported frames, missing intent linkage and deterministic store conflicts never invent state. They append a
 `RECONCILE_REQUIRED` receipt and leave the canonical safety lane authoritative. Source-to-projection lag and outcome
 are exported without account or event IDs through `bayn_broker_source_projection_lag_seconds` and

@@ -4,7 +4,7 @@ import { valkeyFixture } from '../testing/valkey-fixture'
 import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { PgClient } from '@effect/sql-pg'
+import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Clock, Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Ref, Result, Schema, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 import type { Statement } from 'effect/sql/Statement'
@@ -35,6 +35,7 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from './broker-observations'
 import { postgresHealthCheck, PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { migrationLoader } from './migrations'
 
 let cacheFixture = valkeyFixture()
 const accountId = 'broker-observations-test-account'
@@ -373,6 +374,46 @@ describePostgres('Durable per-account broker observations', () => {
               WHERE account_id = ${accountId} AND event_id = ${event.eventId}`.pipe(Effect.result),
           ),
         ).toBe(true)
+      }),
+    ))
+
+  test('migrates legacy receipts to canonical reconciliation before any payload redelivery', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 206))),
+          table: 'schema_migrations',
+        })
+        const event = sourceEvent('5'.repeat(64), '2026-11-01T00:00:00.000Z')
+        yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at)
+          VALUES (${accountId},${event.eventId},${revision},${event.receivedAt}::timestamptz)`
+
+        yield* postgresMigrations
+
+        const store = makeBrokerObservationStore(sql, accountId, revision, 60_000, cacheFixture.cache)
+        expect(yield* store.recordNotification(event)).toEqual({ covered: false })
+        expect(yield* store.readSourceProjection(event.eventId)).toEqual({
+          _tag: 'ReconcileRequired',
+          eventId: event.eventId,
+          observedAt: event.receivedAt,
+          reason: BrokerStreamReconciliationReason.LegacyReceipt,
+        })
+        expect(Result.isFailure(yield* store.readNotification(event.eventId).pipe(Effect.result))).toBe(true)
+        expect(
+          yield* sql`SELECT event_kind, notification, outcome, reason
+            FROM broker_source_events JOIN broker_source_event_projections USING (account_id,event_id)
+            WHERE account_id = ${accountId} AND event_id = ${event.eventId}`,
+        ).toEqual([
+          {
+            event_kind: 'LEGACY_RECEIPT',
+            notification: null,
+            outcome: 'RECONCILE_REQUIRED',
+            reason: 'LEGACY_RECEIPT',
+          },
+        ])
       }),
     ))
 
