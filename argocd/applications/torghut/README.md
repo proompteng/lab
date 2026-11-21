@@ -89,6 +89,20 @@ Alloy scrapes `torghut-ta-metrics` and `market-data-archive-metrics`. The signal
 scrapes, a reachable JobManager without a running job, and stalled or missing checkpoints. Each routes to the existing
 critical email receiver. A Ready JobManager alone is insufficient; check the Flink REST job state and checkpoint age.
 
+The separate `torghut-ta-taskmanager-metrics` and `market-data-archive-taskmanager-metrics` Services select the
+corresponding TaskManager Pods. Existing Alloy endpoint discovery scrapes each Pod's named `metrics` port every
+30 seconds, preserving `pod`, `namespace` and `service` labels. These targets expose Kafka source lag, pending records,
+watermarks and task backpressure; JobManager metrics alone do not expose that pipeline work. The existing JobManager
+Services remain separate so running-job and checkpoint monitoring retain their original targets.
+
+After promotion through `torghut-release:torghut` to `kargo/torghut`, verify that
+`count by (service) (up{job="torghut",namespace="torghut",service=~".*-taskmanager-metrics"} == 1)` matches each
+deployment's running TaskManager count. Check `flink_taskmanager_job_task_operator_pendingRecords` and
+`flink_taskmanager_job_task_backPressuredTimeMsPerSecond` for the active jobs. A missing series is unobserved, not
+zero backlog; Kafka consumer lag can be `NaN` on idle or unassigned source subtasks. Alloy discovers these Services
+without restarting the collector or changing network permissions. Normal cohort promotion still updates its image
+metadata and follows the existing workload rollout and Flink checkpoint procedures.
+
 The behavior is documented in the
 [deployed operator's recovery contract](https://github.com/apache/flink-kubernetes-operator/blob/79d730bab4d8403f3a447fb027f879f5cbdc59ad/docs/content/docs/custom-resource/job-management.md#redeploy-using-the-savepointredeploynonce).
 

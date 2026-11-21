@@ -1,6 +1,7 @@
 import type { Effect } from 'effect'
 
 import type { BrokerReadShape } from '../broker/alpaca/model'
+import type { BrokerReadError } from '../broker/alpaca/failures'
 import type { RuntimeConfig } from '../config/model'
 import type { CycleOperationsProjection } from '../cycle/observability'
 import type { CycleObservabilityShape } from '../cycle/store/observability'
@@ -15,7 +16,11 @@ import type { UtcEpochMillisFailure } from '../time'
 
 export type ProbeResult<A> =
   | { readonly _tag: 'Available'; readonly value: A }
-  | { readonly _tag: 'Unavailable'; readonly error: string }
+  | {
+      readonly _tag: 'Unavailable'
+      readonly error: string
+      readonly observationFailure?: BrokerReadError['observationFailure']
+    }
 
 export type CycleObservationBinding =
   | { readonly _tag: 'Exact'; readonly bindingId: string }
