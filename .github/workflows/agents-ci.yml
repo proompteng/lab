@@ -91,7 +91,9 @@ jobs:
           set -euo pipefail
           changed_files="${RUNNER_TEMP}/agents-changed-files.txt"
 
-          if [ -n "${CHANGED_FILES_JSON}" ]; then
+          if [ "${EVENT_NAME}" = merge_group ]; then
+            git ls-files > "${changed_files}"
+          elif [ -n "${CHANGED_FILES_JSON}" ]; then
             jq -e 'type == "array" and all(.[]; type == "string")' <<< "${CHANGED_FILES_JSON}" >/dev/null
             jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${changed_files}"
           elif [ "${EVENT_NAME}" = workflow_dispatch ]; then
