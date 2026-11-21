@@ -64,6 +64,7 @@ fn reconciled_approval_publishes_the_deadline_that_stops_the_run() {
             reason: "dispatch reply lost".into(),
         },
         approval_deadline_ms: None,
+        accepted_message: None,
     };
     let mut window = None;
     snapshot.observe(
@@ -200,6 +201,7 @@ async fn status_reads_accept_delayed_authorized_responses() {
                             workspace_uid: query.workspace_uid,
                             digest: "fixture".into(),
                             approval_deadline_ms: None,
+                            accepted_message: None,
                             state: State::Succeeded {
                                 turn_id: "turn-fixture".into(),
                             },
@@ -263,7 +265,7 @@ async fn delayed_status_read_child() {
             .is_empty()
     );
     let id = Uuid::new_v4().to_string();
-    let snapshot = read(&principal(), &id, None).await.unwrap();
+    let snapshot = read(&principal(), &id, None, false).await.unwrap();
     assert_eq!(snapshot.run_id, id);
     assert!(matches!(snapshot.state, State::Succeeded { .. }));
 }
@@ -326,6 +328,7 @@ async fn active_recovery_isolates_conversations_without_hiding_selected_failures
                                 workspace_uid: query.workspace_uid,
                                 digest: "fixture".into(),
                                 approval_deadline_ms: None,
+                                accepted_message: None,
                                 state: State::Running {
                                     turn_id: "turn-working".into(),
                                 },
@@ -491,6 +494,7 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
                                 workspace_uid: query.workspace_uid,
                                 digest: "fixture".into(),
                                 approval_deadline_ms: None,
+                                accepted_message: None,
                                 state: State::Running {
                                     turn_id: "turn-current".into(),
                                 },
@@ -568,7 +572,7 @@ async fn recovering_status_read_child() {
         (422, tonic::Code::FailedPrecondition),
     ] {
         assert_eq!(
-            read(&principal(), &status.to_string(), None)
+            read(&principal(), &status.to_string(), None, false)
                 .await
                 .unwrap_err()
                 .code(),
@@ -1047,13 +1051,16 @@ async fn admission(service: &ControlPlane, input: Input) -> Envelope {
 }
 async fn status(client: &reader::Client, input: &Input, owner: &str) -> Result<Snapshot, Status> {
     client
-        .status(&Query {
-            run_id: input.id.clone(),
-            owner_hash: owner.into(),
-            workspace_uid: principal().context.workspace_uid,
-            digest: Some(input_digest(input).unwrap()),
-            expires_at_ms: crate::ofz::now_ms().unwrap() + 2000,
-        })
+        .status(
+            &Query {
+                run_id: input.id.clone(),
+                owner_hash: owner.into(),
+                workspace_uid: principal().context.workspace_uid,
+                digest: Some(input_digest(input).unwrap()),
+                expires_at_ms: crate::ofz::now_ms().unwrap() + 2000,
+            },
+            true,
+        )
         .await
 }
 
@@ -1091,6 +1098,9 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     ]);
     if cfg!(target_os = "linux") {
         command.args(["--add-host", "host.docker.internal:host-gateway"]);
+    }
+    if env::var_os("RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT").is_some() {
+        command.args(["--env", "RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT"]);
     }
     let output = command.arg(image).output().unwrap();
     assert!(
@@ -1279,6 +1289,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         if let Ok(snapshot) = status(&read_client, &input, &owner).await
             && matches!(snapshot.state, State::WaitingForGuest { .. })
         {
+            assert_eq!(snapshot.accepted_message.unwrap().text, input.text);
             break;
         }
         assert!(
@@ -1291,7 +1302,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         .post(format!("{admin}/query"))
         .header("accept", "application/json")
         .json(&serde_json::json!({"query": format!(
-            "SELECT index,entry_type,name FROM sys_journal WHERE id=(SELECT id FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{}') ORDER BY index LIMIT 8", input.id
+            "SELECT index,entry_type,name FROM sys_journal WHERE id=(SELECT id FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{}') ORDER BY index LIMIT 12", input.id
         )}))
         .send().await.unwrap();
     assert!(journal.status().is_success());
@@ -1394,7 +1405,12 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         digest: query.digest.clone(),
     };
     assert_eq!(
-        read_client.status(&expired).await.err().unwrap().code(),
+        read_client
+            .status(&expired, false)
+            .await
+            .err()
+            .unwrap()
+            .code(),
         tonic::Code::DeadlineExceeded
     );
     assert_eq!(

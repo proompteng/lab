@@ -529,6 +529,9 @@ beforeAll(async () => {
                   agentId: call.request.id,
                   threadId: 'thread-selected',
                   stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+                  ...(call.request.threadId === 'thread-selected' && {
+                    acceptedMessage: { text: 'Retained input', attachmentPaths: [] },
+                  }),
                 },
               ],
       })
@@ -888,6 +891,7 @@ describe('Tengri gRPC BFF transport', () => {
     expect(receivedRequest).toEqual({ id: 'agent-test', threadId: 'thread-selected' })
     expect(runs).toHaveLength(1)
     expect(runs[0]?.threadId).toBe('thread-selected')
+    expect(runs[0]?.acceptedMessage).toEqual({ text: 'Retained input', attachmentPaths: [] })
     const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.GetActiveCodexRuns
     expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
     expect(metadataValue('x-tengri-signature')).not.toBe(expectedSignature(method, { id: 'agent-test' }))

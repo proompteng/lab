@@ -82,6 +82,13 @@ pub(crate) struct Image {
     pub revision: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AcceptedMessage {
+    pub text: String,
+    pub attachment_paths: Vec<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Envelope {
@@ -246,6 +253,8 @@ pub(crate) struct Snapshot {
     pub state: State,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_deadline_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_message: Option<AcceptedMessage>,
 }
 
 impl Snapshot {
@@ -391,7 +400,7 @@ pub(crate) async fn submit(
                 .into_body()
                 .map_err(client_error)
         },
-        || read(&principal, &input.id, Some(digest.clone())),
+        || read(&principal, &input.id, Some(digest.clone()), false),
     )
     .await
 }
@@ -454,17 +463,21 @@ pub(crate) async fn read(
     principal: &Principal,
     id: &str,
     digest: Option<String>,
+    include_message: bool,
 ) -> Result<Snapshot, Status> {
     let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::RunStatus);
     recover_status("status", || async {
         reader::client()?
-            .status(&Query {
-                run_id: id.into(),
-                owner_hash: principal.owner_hash.clone(),
-                workspace_uid: principal.context.workspace_uid.clone(),
-                digest: digest.clone(),
-                expires_at_ms: crate::ofz::now_ms()? + 2000,
-            })
+            .status(
+                &Query {
+                    run_id: id.into(),
+                    owner_hash: principal.owner_hash.clone(),
+                    workspace_uid: principal.context.workspace_uid.clone(),
+                    digest: digest.clone(),
+                    expires_at_ms: crate::ofz::now_ms()? + 2000,
+                },
+                include_message,
+            )
             .await
     })
     .await
@@ -493,7 +506,7 @@ pub(crate) async fn active(
             .filter(|claim| claim.owner_hash == principal.owner_hash)
             .filter(|claim| thread_id.is_empty() || claim.thread_id == thread_id)
             .filter(|claim| exclude_thread_id != Some(claim.thread_id.as_str()))
-            .map(|claim| read(principal, &claim.run_id, None));
+            .map(|claim| read(principal, &claim.run_id, None, !thread_id.is_empty()));
         if exclude_thread_id.is_some() {
             // Discovery adds observed runs. An omitted run remains tracked by its exact reader.
             let mut pending = reads.collect::<FuturesUnordered<_>>();
@@ -660,7 +673,21 @@ impl TengriAgentRun {
             digest: admission.digest.clone(),
             state: State::Accepted,
             approval_deadline_ms: None,
+            accepted_message: None,
         };
+        // The message is immutable and must not be rewritten on each state update.
+        ctx.set(
+            "accepted_message",
+            Json(AcceptedMessage {
+                text: admission.input.text.trim().to_owned(),
+                attachment_paths: admission
+                    .input
+                    .images
+                    .iter()
+                    .map(|image| image.path.clone())
+                    .collect(),
+            }),
+        );
         // A slow cross-partition claim must not hide an already admitted run from its caller.
         ctx.set("snapshot", Json(snapshot.clone()));
         let workspace =

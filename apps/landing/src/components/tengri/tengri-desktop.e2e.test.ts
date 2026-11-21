@@ -4371,6 +4371,67 @@ test('retire a turn completed in recovered history after its live start arrived 
   }
 })
 
+test('restores an accepted message on reload and only matches its exact native echo', async ({ page }) => {
+  const text = 'Use the earlier example.'
+  const run: TengriCodexRun = {
+    runId: '88888888-8888-4888-8888-888888888888',
+    agentId: 'microvm-ada',
+    threadId: 'thread-accepted',
+    state: { phase: 'needs_reconciliation', turnId: null, reason: 'Waiting for the original receipt.' },
+    acceptedMessage: { text, attachmentPaths: [] },
+  }
+  const mock = await mockTengri(page, {
+    durableRun: run,
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-previous',
+            status: 'completed',
+            items: [{ id: 'earlier', type: 'userMessage', clientId: 'previous', content: [{ type: 'text', text }] }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-accepted'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const messages = chat.getByText(text, { exact: true })
+  await expect(messages).toHaveCount(2)
+  await page.reload()
+  await expect(messages).toHaveCount(2)
+  await emitCodexEvent(page, {
+    sequence: 42,
+    method: 'item/started',
+    kind: 'user-message',
+    threadId: run.threadId,
+    turnId: 'turn-native',
+    itemId: 'native-echo',
+    approvalId: '',
+    text,
+    rawJson: JSON.stringify({
+      params: {
+        item: { id: 'native-echo', type: 'userMessage', clientId: run.runId, content: [{ type: 'text', text }] },
+      },
+    }),
+  })
+  await emitCodexEvent(page, {
+    sequence: 43,
+    method: 'item/agentMessage/delta',
+    kind: 'assistant-text',
+    threadId: run.threadId,
+    turnId: 'turn-native',
+    itemId: 'native-reply',
+    approvalId: '',
+    text: 'The original run is responding.',
+    rawJson: '{}',
+  })
+  await expect(chat.getByText('The original run is responding.', { exact: true })).toBeVisible()
+  await expect(messages).toHaveCount(2)
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+})
+
 test('uses the current session to recover the accepted run without another send', async ({ page }) => {
   const run: TengriCodexRun = {
     runId: '88888888-8888-4888-8888-888888888888',

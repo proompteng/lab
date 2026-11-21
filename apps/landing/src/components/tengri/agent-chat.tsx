@@ -1207,6 +1207,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       return {
         id: item.id,
         kind: item.kind,
+        turnId: item.turnId,
+        clientId: item.clientId,
         imageGeneration: update?.imageGeneration ?? item.imageGeneration,
         text: update?.text ?? item.text,
         card: update ? (
@@ -1230,15 +1232,33 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       .map((update) => ({
         id: update.event.itemId || codexEventWrapperKey(update.event),
         kind: update.event.kind,
+        turnId: update.event.turnId || undefined,
+        clientId: update.event.kind === 'user-message' ? codexEventClientTurnIds(update.event)[0]?.[0] : undefined,
         imageGeneration: update.imageGeneration,
         text: update.text,
         card: renderTranscriptEvent(update),
       })),
   ]
   const currentSubmissions = submittedPrompts.filter((prompt) => prompt.threadId === threadId)
+  const accepted = runMatchesThread ? run?.acceptedMessage : undefined
+  const restoredSubmission: SubmittedPrompt | undefined =
+    accepted && !currentSubmissions.some((prompt) => prompt.clientId === runId)
+      ? {
+          id: runId,
+          clientId: runId,
+          threadId,
+          durable: true,
+          text: [accepted.text, ...accepted.attachmentPaths.map((path) => `[Local image: ${path}]`)]
+            .filter(Boolean)
+            .join('\n'),
+          previousItemIds: new Set(
+            transcriptCards.filter((item) => !runTurnId || item.turnId !== runTurnId).map((item) => item.id),
+          ),
+        }
+      : undefined
   const { pending: pendingPrompts, matches: livePromptMatches } = reconcileSubmittedPrompts(
     transcriptCards,
-    currentSubmissions,
+    restoredSubmission ? [...currentSubmissions, restoredSubmission] : currentSubmissions,
   )
   // A live echo can be evicted or excluded by a later snapshot. Retire our accepted
   // copy only once authoritative history contains it, while suppressing live duplicates.
@@ -1292,6 +1312,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     transcriptCards.splice(index < 0 ? transcriptCards.length : index, 0, {
       id: prompt.id,
       kind: 'user-message',
+      turnId: undefined,
+      clientId: prompt.clientId,
       text: prompt.text,
       imageGeneration: undefined,
       card: (
@@ -1528,7 +1550,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       }
       setSubmittedPrompts((current) =>
         current.map((submitted) =>
-          submitted.id === submissionId ? { ...submitted, threadId: currentThread.id } : submitted,
+          submitted.id === submissionId
+            ? { ...submitted, threadId: currentThread.id, clientId: operation.id }
+            : submitted,
         ),
       )
       if (operation.turnId) {
@@ -1558,6 +1582,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           )
           sentOperation = { key: operationKey, id: operation.id }
           submission.current = { threadId: currentThread.id, operation }
+          setSubmittedPrompts((current) =>
+            current.map((submitted) =>
+              submitted.id === submissionId ? { ...submitted, clientId: operation.id } : submitted,
+            ),
+          )
         }
       }
       if (!operation.turnId) {

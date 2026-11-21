@@ -44,16 +44,16 @@ pub mod proto {
 }
 
 use proto::{
-    Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
-    CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart, CodexImage, CodexLogin,
-    CodexModels, CodexRun, CodexRuns, CodexThread, CodexThreads, CodexTurn, CreateAgentRequest,
-    CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest,
-    Empty, FileEntry, FileEvent, FileEventKind, GetActiveCodexRunsRequest, GetAgentRequest,
-    GetCodexAccountRequest, GetCodexLoginRequest, GetCodexRunRequest, InterruptCodexTurnRequest,
-    IssueDesktopSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
-    ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListCodexThreadsRequest,
-    ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
-    MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
+    Agent, AgentCondition, AgentPhase, Architecture, CodexAcceptedMessage, CodexAccount,
+    CodexApprovalDecision, CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart,
+    CodexImage, CodexLogin, CodexModels, CodexRun, CodexRuns, CodexThread, CodexThreads, CodexTurn,
+    CreateAgentRequest, CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest,
+    DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind, GetActiveCodexRunsRequest,
+    GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest, GetCodexRunRequest,
+    InterruptCodexTurnRequest, IssueDesktopSessionRequest, IssuePreviewSessionRequest,
+    IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest,
+    ListCodexThreadsRequest, ListFilesRequest, ListFilesResponse, ListTerminalsRequest,
+    ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
     ResolveCodexApprovalRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest,
     SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest, SetCodexThreadArchivedRequest,
     StartCodexLoginRequest, StatFileRequest, SteerCodexInputRequest, TerminalSession,
@@ -1075,6 +1075,7 @@ impl MicroVmControlPlane for ControlPlane {
                 &principal,
                 &input.id,
                 Some(crate::runs::input_digest(&input)?),
+                false,
             )
             .await
             {
@@ -1136,7 +1137,7 @@ impl MicroVmControlPlane for ControlPlane {
         validate_codex_operation(&request.run_id)?;
         self.agent_access(&principal, &request.agent_id, &request.run_id)
             .await?;
-        let snapshot = crate::runs::read(&principal, &request.run_id, None).await?;
+        let snapshot = crate::runs::read(&principal, &request.run_id, None, true).await?;
         if snapshot.agent_id != request.agent_id {
             return Err(Status::permission_denied("run unavailable"));
         }
@@ -1242,7 +1243,7 @@ impl MicroVmControlPlane for ControlPlane {
         validate_codex_operation(&request.operation_id)?;
         self.agent_access(&principal, &request.agent_id, &request.run_id)
             .await?;
-        let run = crate::runs::read(&principal, &request.run_id, None).await?;
+        let run = crate::runs::read(&principal, &request.run_id, None, false).await?;
         let mut params = json!({"threadId":run.thread_id,"approvalId":request.approval_id,"clientUserMessageId":request.operation_id});
         if !request.response_json.is_empty() {
             if request.decision != CodexApprovalDecision::Unspecified as i32
@@ -2500,6 +2501,12 @@ fn codex_run(snapshot: crate::runs::Snapshot) -> Result<CodexRun, Status> {
         state_json: serde_json::to_string(&snapshot.state)
             .map_err(|_| Status::internal("encode run state"))?,
         approval_deadline_ms: snapshot.approval_deadline_ms,
+        accepted_message: snapshot
+            .accepted_message
+            .map(|message| CodexAcceptedMessage {
+                text: message.text,
+                attachment_paths: message.attachment_paths,
+            }),
     })
 }
 

@@ -305,7 +305,9 @@ message CodexRun {
   string thread_id = 3;
   string state_json = 4;
   optional uint64 approval_deadline_ms = 5;
+  CodexAcceptedMessage accepted_message = 6;
 }
+message CodexAcceptedMessage { string text = 1; repeated string attachment_paths = 2; }
 
 enum CodexEventKind {
   CODEX_EVENT_KIND_UNSPECIFIED = 0;

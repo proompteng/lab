@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::State as HttpState,
+    extract::{Query as HttpQuery, State as HttpState},
     http::StatusCode,
     routing::{get, post},
 };
@@ -95,8 +95,17 @@ impl Client {
         bounded_json(response).await
     }
 
-    pub(super) async fn status(&self, query: &Query) -> Result<Snapshot, Status> {
-        self.post("status", query).await
+    pub(super) async fn status(
+        &self,
+        query: &Query,
+        include_message: bool,
+    ) -> Result<Snapshot, Status> {
+        let path = if include_message {
+            "status?includeMessage=true"
+        } else {
+            "status"
+        };
+        self.post(path, query).await
     }
 
     pub(super) async fn active(&self, query: &Query) -> Result<Vec<Claim>, Status> {
@@ -139,6 +148,7 @@ struct Rows {
 }
 #[derive(Deserialize)]
 struct Row {
+    key: String,
     value_utf8: String,
 }
 
@@ -153,53 +163,48 @@ impl Backend {
         Ok(Self(client))
     }
 
-    async fn state<T: DeserializeOwned>(
+    async fn state_rows(
         &self,
         service: &'static str,
         key: &str,
-        field: &'static str,
-    ) -> Result<Option<T>, Status> {
+        fields: &'static str,
+    ) -> Result<Vec<Row>, Status> {
         // Only canonical UUIDs enter the fixed query. Callers cannot supply SQL, table names, or state fields.
         let key = canonical_uuid(key)?;
         let query = format!(
-            "SELECT value_utf8 FROM state WHERE service_name='{service}' AND service_key='{key}' AND key='{field}' LIMIT 2"
+            "SELECT key, value_utf8 FROM state WHERE service_name='{service}' AND service_key='{key}' AND key IN ({fields}) LIMIT 3"
         );
         let rows: Rows = self
             .0
             .post("query", &serde_json::json!({"query": query}))
             .await?;
-        if rows.rows.len() > 1 {
-            return Err(Status::internal("ambiguous run state"));
-        }
-        rows.rows
-            .into_iter()
-            .next()
-            .map(|row| {
-                serde_json::from_str(&row.value_utf8)
-                    .map_err(|_| Status::internal("invalid stored run state"))
-            })
-            .transpose()
+        Ok(rows.rows)
     }
 
     async fn claims(&self, query: &Query) -> Result<Vec<Claim>, Status> {
         admit(query)?;
-        let active: BTreeMap<String, Claim> = self
-            .state("TengriWorkspaceRuns", &query.workspace_uid, "active")
-            .await?
-            .unwrap_or_default();
+        let rows = self
+            .state_rows("TengriWorkspaceRuns", &query.workspace_uid, "'active'")
+            .await?;
+        let active: BTreeMap<String, Claim> = decode_state(&rows, "active")?.unwrap_or_default();
         Ok(active
             .into_values()
             .filter(|claim| claim.workspace_uid == query.workspace_uid)
             .collect())
     }
 
-    async fn snapshot(&self, query: &Query) -> Result<Snapshot, Status> {
+    async fn snapshot(&self, query: &Query, include_message: bool) -> Result<Snapshot, Status> {
         admit(query)?;
         canonical_uuid(&query.run_id)?;
-        let snapshot: Option<Snapshot> = self
-            .state("TengriAgentRun", &query.run_id, "snapshot")
+        let fields = if include_message {
+            "'snapshot', 'accepted_message'"
+        } else {
+            "'snapshot'"
+        };
+        let rows = self
+            .state_rows("TengriAgentRun", &query.run_id, fields)
             .await?;
-        let Some(snapshot) = snapshot else {
+        let Some(mut snapshot): Option<Snapshot> = decode_state(&rows, "snapshot")? else {
             // A durable admission or workspace claim can precede the first snapshot. Reconcile it without resending.
             if query.digest.is_some()
                 || self
@@ -229,8 +234,26 @@ impl Backend {
                 "operation ID already has different input",
             ));
         }
+        snapshot.accepted_message = if include_message {
+            decode_state(&rows, "accepted_message")?
+        } else {
+            None
+        };
         Ok(snapshot)
     }
+}
+
+fn decode_state<T: DeserializeOwned>(rows: &[Row], key: &str) -> Result<Option<T>, Status> {
+    let mut entries = rows.iter().filter(|row| row.key == key);
+    let Some(row) = entries.next() else {
+        return Ok(None);
+    };
+    if entries.next().is_some() {
+        return Err(Status::internal("ambiguous run state"));
+    }
+    serde_json::from_str(&row.value_utf8)
+        .map(Some)
+        .map_err(|_| Status::internal("invalid stored run state"))
 }
 
 fn canonical_uuid(value: &str) -> Result<String, Status> {
@@ -266,12 +289,24 @@ fn http_error(error: Status) -> (StatusCode, String) {
 
 // The mesh admits only the existing Tengri controller identity. User authority is checked by Ofz before these reads.
 pub(super) fn router(backend: Backend) -> Router {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct StatusOptions {
+        #[serde(default)]
+        include_message: bool,
+    }
     Router::new()
         .route(
             "/status",
             post(
-                |HttpState(backend): HttpState<Backend>, Json(query): Json<Query>| async move {
-                    backend.snapshot(&query).await.map(Json).map_err(http_error)
+                |HttpState(backend): HttpState<Backend>,
+                 HttpQuery(options): HttpQuery<StatusOptions>,
+                 Json(query): Json<Query>| async move {
+                    backend
+                        .snapshot(&query, options.include_message)
+                        .await
+                        .map(Json)
+                        .map_err(http_error)
                 },
             ),
         )
@@ -344,15 +379,24 @@ mod tests {
             post(
                 move |headers: axum::http::HeaderMap, Json(body): Json<serde_json::Value>| {
                     assert_eq!(headers[reqwest::header::ACCEPT], "application/json");
-                    captured
-                        .lock()
-                        .unwrap()
-                        .push(body["query"].as_str().unwrap().to_owned());
-                    let rows = value
+                    let query = body["query"].as_str().unwrap();
+                    captured.lock().unwrap().push(query.to_owned());
+                    let key = if query.contains("'active'") {
+                        "active"
+                    } else {
+                        "snapshot"
+                    };
+                    let mut rows = value
                         .clone()
-                        .map(|value| serde_json::json!({"value_utf8":value.to_string()}))
+                        .map(|value| serde_json::json!({"key":key,"value_utf8":value.to_string()}))
                         .into_iter()
                         .collect::<Vec<_>>();
+                    if query.contains("'accepted_message'") && value.is_some() {
+                        rows.push(serde_json::json!({
+                            "key":"accepted_message",
+                            "value_utf8":"{\"text\":\"accepted input\",\"attachment_paths\":[]}"
+                        }));
+                    }
                     async move { Json(serde_json::json!({"rows":rows})) }
                 },
             ),
@@ -380,31 +424,55 @@ mod tests {
         let mut query = query();
         let snapshot = serde_json::json!({"run_id":query.run_id,"workspace_uid":query.workspace_uid,"owner_hash":query.owner_hash,"agent_id":"fixture","thread_id":"thread","digest":"original","state":{"phase":"running","turnId":"accepted"}});
         let (backend, queries, task) = backend(Some(snapshot)).await;
-        let app = router(backend);
+        let app = router(backend.clone());
+        assert!(
+            backend
+                .snapshot(&query, false)
+                .await
+                .unwrap()
+                .accepted_message
+                .is_none()
+        );
         assert_eq!(
-            request(app.clone(), "/status", &query).await,
+            backend
+                .snapshot(&query, true)
+                .await
+                .unwrap()
+                .accepted_message
+                .unwrap()
+                .text,
+            "accepted input"
+        );
+        assert_eq!(
+            request(app.clone(), "/status?includeMessage=true", &query).await,
             StatusCode::OK
         );
         query.digest = Some("changed".into());
         assert_eq!(
-            request(app.clone(), "/status", &query).await,
+            request(app.clone(), "/status?includeMessage=true", &query).await,
             StatusCode::CONFLICT
         );
         query.digest = None;
         let workspace = query.workspace_uid.clone();
         query.workspace_uid = Uuid::new_v4().to_string();
         assert_eq!(
-            request(app.clone(), "/status", &query).await,
+            request(app.clone(), "/status?includeMessage=true", &query).await,
             StatusCode::FORBIDDEN
         );
         query.workspace_uid = workspace;
         query.owner_hash = "b".repeat(64);
-        assert_eq!(request(app, "/status", &query).await, StatusCode::FORBIDDEN);
-        let expected = format!(
-            "SELECT value_utf8 FROM state WHERE service_name='TengriAgentRun' AND service_key='{}' AND key='snapshot' LIMIT 2",
-            query.run_id
+        assert_eq!(
+            request(app, "/status?includeMessage=true", &query).await,
+            StatusCode::FORBIDDEN
         );
-        assert_eq!(*queries.lock().unwrap(), vec![expected; 4]);
+        let recorded = queries.lock().unwrap();
+        assert_eq!(recorded.len(), 6);
+        assert!(recorded[0].ends_with("key IN ('snapshot') LIMIT 3"));
+        assert!(
+            recorded[1..]
+                .iter()
+                .all(|query| query.ends_with("key IN ('snapshot', 'accepted_message') LIMIT 3"))
+        );
         task.abort();
     }
 
@@ -473,12 +541,12 @@ mod tests {
         let (backend, _, task) = backend(None).await;
         let mut query = query();
         assert_eq!(
-            backend.snapshot(&query).await.unwrap_err().code(),
+            backend.snapshot(&query, false).await.unwrap_err().code(),
             tonic::Code::NotFound
         );
         query.digest = Some("submitted-input".into());
         assert_eq!(
-            backend.snapshot(&query).await.unwrap_err().code(),
+            backend.snapshot(&query, false).await.unwrap_err().code(),
             tonic::Code::Unavailable
         );
         assert!(backend.claims(&query).await.unwrap().is_empty());
@@ -498,7 +566,7 @@ mod tests {
             .unwrap()
         });
         assert_eq!(
-            client.status(&query()).await.unwrap_err().code(),
+            client.status(&query(), false).await.unwrap_err().code(),
             tonic::Code::Internal
         );
         task.abort();

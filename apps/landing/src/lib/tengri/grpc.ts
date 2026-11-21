@@ -755,6 +755,7 @@ function normalizeRun(value: RawRecord): TengriCodexRun {
     threadId: value.threadId,
     state,
     ...(value.approvalDeadlineMs !== undefined && { approvalDeadlineMs: Number(value.approvalDeadlineMs) }),
+    ...(value.acceptedMessage != null && { acceptedMessage: value.acceptedMessage }),
   })
   if (!parsed.success) throw new TengriUnavailableError('Invalid durable run state')
   return parsed.data
