@@ -100,9 +100,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-re
 
 FROM ${DEBIAN_BASE_IMAGE}:bookworm-slim AS runtime
 
-ARG SOURCE_REVISION=development
-ENV APP_SOURCE_REVISION=${SOURCE_REVISION}
-
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates e2fsprogs iproute2 nftables && \
     rm -rf /var/lib/apt/lists/* && \
@@ -114,6 +111,9 @@ COPY --from=firecracker-build /out-firecracker /usr/local/bin/firecracker
 COPY --from=firecracker-build /firecracker/LICENSE /firecracker/NOTICE /usr/share/doc/tengri/firecracker/
 COPY --from=firecracker-build /libseccomp/LICENSE /usr/share/doc/tengri/firecracker/libseccomp-LICENSE
 COPY --chmod=0555 network.sh /usr/local/bin/tengri-network
+
+ARG SOURCE_REVISION=development
+ENV APP_SOURCE_REVISION=${SOURCE_REVISION}
 
 USER 65532:65532
 EXPOSE 50051 8080

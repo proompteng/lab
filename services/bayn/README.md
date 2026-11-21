@@ -2542,6 +2542,14 @@ identity travel in the verified research receipt, with separate gateway and work
 See the runbook for native session and budget enforcement and the [standalone server](../opencode/README.md)
 for development access and the verified state migration.
 
+New Flamingo research registrations pin the vLLM 0.34.0 serving image introduced by
+[the reviewed Flamingo upgrade](https://github.com/proompteng/lab/commit/66badfc269c0cbaa69c150cd46cb35475e7b6890),
+while keeping the same Qwen 3.8 checkpoint, tokenizer and chat template. Retained receipt decoding freezes all four
+previous Flamingo identities with their original image so historical run, request, receipt and expense identities
+remain unchanged. The current worker allowlist admits only the new Flamingo image and the existing OpenCode policy.
+Existing approvals cannot be retargeted: a prospective run still needs its own frozen evidence, cost basis and valid
+signature through the normal research workflow. This compatibility update creates no run, approval or capital grant.
+
 The published research image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
 `bayn-jev-evaluate` is offline and never acquires provider credentials. Release and health verification must not issue
 paid inference outside admitted trading work or explicitly budgeted research with durable requests and receipts.
