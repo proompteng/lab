@@ -26,6 +26,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [205, 'inference_source_seals'],
     [206, 'durable_broker_source_events'],
     [207, 'support_recovery_observe_cutover'],
+    [208, 'durable_broker_activities'],
   ])
   const pending = migrations.filter(([id]) => id > 187).map(([id, name]) => [id, name])
 
@@ -49,6 +50,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [205, 'inference_source_seals'],
     [206, 'durable_broker_source_events'],
     [207, 'support_recovery_observe_cutover'],
+    [208, 'durable_broker_activities'],
   ])
 })
 

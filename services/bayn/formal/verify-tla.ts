@@ -103,7 +103,14 @@ const check = (name: string, directory: string, expectedViolation?: string) => {
   }
 }
 
-for (const name of ['Controller', 'EntryRecovery', 'MutationLedger', 'RecoveryScheduler', 'CancellationAdmission']) {
+for (const name of [
+  'Controller',
+  'EntryRecovery',
+  'MutationLedger',
+  'RecoveryScheduler',
+  'CancellationAdmission',
+  'ActivityCursor',
+]) {
   const directory = join(output, name)
   mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, `${name}.tla`), readFileSync(join(models, `${name}.tla`)))
@@ -112,6 +119,76 @@ for (const name of ['Controller', 'EntryRecovery', 'MutationLedger', 'RecoverySc
 }
 
 const faults = [
+  {
+    model: 'ActivityCursor',
+    name: 'regressed-activity-cursor',
+    before: 'cursor\' = IF EventDecision = "APPEND" THEN eventCursor ELSE cursor',
+    after: "cursor' = eventCursor",
+    violation: 'Invariant CursorNeverRegresses is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'inexact-activity-replay',
+    before: 'THEN IF retained /\\ hashMatches THEN "REPLAY" ELSE "REJECT"',
+    after: 'THEN "REPLAY"',
+    violation: 'Invariant ReplayRequiresExactRetainedSource is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'changed-activity-catchup-boundary',
+    before: ' /\\ CatchupBoundaryMatches',
+    after: '',
+    violation: 'Invariant CatchupBoundaryIsImmutable is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'unproved-activity-catchup',
+    before: ' /\\ CatchupProofIsValid',
+    after: '',
+    violation: 'Invariant CatchupRequiresMatchingEvidence is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'catchup-pretends-live',
+    before: " /\\ session' = 0 /\\ fresh' = FALSE",
+    after: " /\\ session' = 1 /\\ fresh' = TRUE",
+    violation: 'Invariant CatchupDoesNotEstablishLiveness is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'activity-heartbeat-before-catchup',
+    before: 'CanHeartbeat == caughtUp /\\ heartbeatCursor = cursor',
+    after: 'CanHeartbeat == heartbeatCursor = cursor',
+    violation: 'Invariant HeartbeatRequiresCatchup is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'activity-completeness-recovery',
+    before: 'THEN complete /\\ supported ELSE complete',
+    after: 'THEN supported ELSE complete',
+    violation: 'Invariant IncompleteProjectionStaysIncomplete is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'late-activity-publication-stays-covered',
+    before: "caughtUp' = IF InvalidatesCoverage THEN FALSE ELSE caughtUp",
+    after: "caughtUp' = caughtUp",
+    violation: 'Invariant LatePublicationInvalidatesCoverage is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'retained-stale-activity-session',
+    before: 'PreserveSession == session = eventSession /\\ ~InvalidatesCoverage',
+    after: 'PreserveSession == ~InvalidatesCoverage',
+    violation: 'Invariant ChangedSessionIsNotLive is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'unready-activity-projection-read',
+    before: 'ReadProjection ==\n  /\\ Ready',
+    after: 'ReadProjection ==\n  /\\ TRUE',
+    violation: 'Invariant ProjectionReadsRequireReady is violated.',
+  },
   {
     model: 'CancellationAdmission',
     name: 'stale-cancellation-admission',

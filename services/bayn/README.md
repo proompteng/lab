@@ -432,14 +432,32 @@ quota reservations and replay protection retain their existing durable semantics
 
 Each capture brackets account and position reads with matching complete order, fill and fee histories. Consecutive
 successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
-Each PAPER execution-controller process currently verifies the account and opens an Alpaca Activity SSE connection for
-both startup replay and live delivery. Its cursor and activity materialization are process-local. It resumes from the
-last locally validated event ID on reconnect; a pod restart replays from the configured history boundary. Alpaca sends
-the reconnect cursor again, so the reader verifies its payload before advancing. It waits for a stream heartbeat before
-admitting the activity history. A disconnect, dropped frame or unsupported correction makes the local activity history
-unavailable. This replica-local ownership is retained only until the
-[single-owner durable cursor migration](../../docs/bayn/durable-broker-event-architecture.md#target-financial-state-path)
-is deployed and proven equivalent.
+The single Dorvud PAPER feed process owns both Alpaca `trade_updates` and Activity SSE. It verifies the configured
+account before each connection. A new account cursor first runs a finite publication-order replay from the February 12
+history floor through a clock-safe `until_id`. Only clean EOF plus a durable receipt containing the lower frontier,
+upper frontier, last cursor, event count, prefix hash, range-request hash and completion hash makes that prefix
+complete. The owner then opens one long-lived request and resumes from the durable `event_id` ULID with `since_id`; an
+empty prefix resumes from the proved upper frontier. Because Alpaca only exposes activities booked after February 11, 2026, the owner rejects accounts
+created before February 12 UTC instead of certifying an incomplete prefix. It awaits a Restate receipt before reading
+the next event. Bayn retains the exact source text and
+content hash before applying a deterministic
+projection. `ref_id` is the activity identity; a valid `previous_id` reverses exactly one active fill or fee before a
+correction or bust becomes active. Reconnect delivery returns the first retained projection instead of rebuilding
+replica memory.
+
+The signed clean-EOF receipt and live heartbeat are distinct contracts: a heartbeat cannot declare historical replay
+complete. Bayn independently recomputes every range receipt against its immutable event ledger and permanently retains
+claimed and observed hashes. A mismatch is `POISONED`, revokes the observation generation, and is idempotent on retry.
+If a later publication falls inside a retained clean-EOF range, Bayn retains the event and a `LATE_PUBLICATION`
+claimed-versus-observed proof, clears coverage and liveness under the execution writer fence, and schedules canonical
+reconciliation. The poisoned receipt remains a final-submit blocker even if a later range can be replayed cleanly.
+Live heartbeats retain the current stream request and cursor. Only the first heartbeat of
+a replacement session requests canonical gap reconciliation. Later heartbeats refresh liveness without creating
+reconciliation work. Documented non-fill/non-fee events remain immutable canonical-only evidence; the independent REST
+account and position reads remain authoritative for their cash and inventory effects. A missing clean-EOF receipt,
+stale heartbeat, unknown activity, cross-view correction, broken correction chain, dropped-frame comment or
+incomplete prefix makes the durable activity view unavailable; capture then uses the canonical REST history path.
+This keeps the streaming path an optimization over the same financial verifier instead of a second authority.
 
 PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
@@ -456,7 +474,8 @@ missing crypto fees and unmatched fees with future booking dates reject publicat
 The capture uses REST for complete order history, account state, positions and fresh open-order eligibility. It
 compares complete histories around the account read and checks the filled quantity for every order and leg.
 The order WebSocket carries cancellations and other order lifecycle events.
-See [Activity SSE ownership](src/broker/alpaca/activity-stream.ts),
+See [Activity SSE protocol](src/broker/activities.ts),
+[durable activity storage](src/db/broker-observations.ts),
 [capture ownership](src/broker/alpaca/snapshot-cache.ts) and
 [history verification](src/simulation-reconciliation/broker-history.ts).
 
@@ -526,14 +545,16 @@ with `CLOSE_RECONCILIATION_PENDING`; it does not bind an empty close plan, termi
 or authorize an order. The next exact cut can resume the same bounded close path.
 
 Verified Dorvud broker notifications enter the account-keyed `BaynBrokerObservations/notify` handler directly through
-Restate HTTP ingress. The stable source event ID is the transport idempotency key. Bayn verifies the exact signed payload
+Restate HTTP ingress. The transport idempotency key is a delivery ID bound to source revision, credential generation,
+connection session, handler and source event. The provider event identity remains stable across delivery sessions.
+Bayn verifies the exact signed payload
 against its loaded broker account and credentials in a journaled step, then commits the entire notification to
 `broker_source_events` before acknowledgement. The separate account-keyed `BaynBrokerSourceProjector` serializes the
 immutable source in delivery order without sharing the slow snapshot owner's queue. It normalizes known order and fill
 events, runs the existing idempotent broker-event store, appends the first immutable projection receipt, and wakes
 execution without waiting for the canonical snapshot. It does not post money because WebSocket delivery cannot prove
 that an unseen economic predecessor does not exist; complete-history reconciliation retains sole TigerBeetle
-authority until Activity SSE provides a durable ordered prefix. Replays return that first receipt
+authority while the durable Activity SSE prefix is independently checked against canonical snapshots. Replays return that first receipt
 instead of recomputing it against later intent bindings. A new broker session remains fail-closed after capture
 publication. It opens only after complete-history persistence and accounting are exact and a completion bound to the
 same source revision, observation generation and snapshot hash advances the financial-reconciliation fence past its

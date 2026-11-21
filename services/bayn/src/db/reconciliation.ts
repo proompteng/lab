@@ -519,6 +519,11 @@ export const verifyBrokerStateVersion = (
       AND (${currentAccountPostingBasis(sql, accountId, version.reconciledAt)})
       AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
         AND observed_at > ${version.reconciledAt}::timestamptz)
+      AND NOT EXISTS (SELECT 1 FROM broker_activity_events WHERE account_id = ${accountId}
+        AND recorded_at > ${version.reconciledAt}::timestamptz)
+      AND NOT EXISTS (SELECT 1 FROM broker_activity_source_conflicts WHERE account_id = ${accountId})
+      AND NOT EXISTS (SELECT 1 FROM broker_activity_coverage_receipts WHERE account_id = ${accountId}
+        AND status = 'POISONED')
     ) AS valid
   `.pipe(
         Effect.flatMap(

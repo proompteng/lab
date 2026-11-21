@@ -4,6 +4,12 @@ import { join } from 'node:path'
 import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../../src/broker/alpaca-mutations/model'
+import {
+  brokerActivityCursorIsReady,
+  decideBrokerActivityCatchup,
+  decideBrokerActivityEvent,
+  decideBrokerActivityHeartbeat,
+} from '../../src/broker/activities'
 import { AutonomousCycleSchema, CycleState } from '../../src/cycle/model'
 import { DecisionReadinessReason, type DecisionReadiness } from '../../src/cycle/runner/readiness'
 import { Authority, KillState, OrderSide } from '../../src/execution/contracts'
@@ -154,11 +160,137 @@ const CancellationAdmissionState = Schema.Struct({
   eligible: bool,
   canAdmit: bool,
 })
+const ActivityCursorState = Schema.Struct({
+  cursor: int,
+  caughtUp: bool,
+  replayFrom: int,
+  replayUntil: int,
+  complete: bool,
+  session: int,
+  fresh: bool,
+  mode: Schema.Literals(['NONE', 'EVENT', 'CATCHUP', 'HEARTBEAT']),
+  eventCursor: int,
+  retained: bool,
+  hashMatches: bool,
+  supported: bool,
+  eventSession: int,
+  boundaryCursor: int,
+  boundaryReplayFrom: int,
+  boundaryReplayUntil: int,
+  boundaryEvidenceMatches: bool,
+  heartbeatCursor: int,
+  heartbeatSession: int,
+  revisionMatches: bool,
+  eventDecision: Schema.Literals(['REJECT', 'REPLAY', 'APPEND']),
+  canCatchup: bool,
+  canHeartbeat: bool,
+  invalidatesCoverage: bool,
+  preserveSession: bool,
+  ready: bool,
+  regressed: bool,
+  badReplayAccepted: bool,
+  boundaryConflictAccepted: bool,
+  unprovedCatchupAccepted: bool,
+  catchupEstablishedLiveness: bool,
+  prematureHeartbeat: bool,
+  recoveredCompleteness: bool,
+  staleSessionLive: bool,
+  latePublicationStayedCovered: bool,
+  projectionReadAccepted: bool,
+  unsafeProjectionRead: bool,
+})
 const hash = 'a'.repeat(64)
 const revision = (source: number) => String(source).repeat(40)
 const at = (seconds: number) => new Date(Date.parse('2026-09-04T14:31:02.000Z') + seconds * 1_000).toISOString()
+const activityCursor = (cursor: number) => (cursor === 0 ? null : String(cursor).padStart(26, '0'))
+const activitySession = (session: number) => (session === 0 ? null : `activity-session-${session}`)
+const activityRequest = (session: number) => (session === 0 ? null : `activity-request-${session}`)
 
 describe.skipIf(directory === undefined)('TLC reachable states conform to production', () => {
+  test('activity cursor admission, catchup, liveness and readiness agree with production', () => {
+    const cases = Schema.decodeUnknownSync(
+      Schema.Array(ActivityCursorState),
+      strictParseOptions,
+    )(states('ActivityCursor'))
+    expect(cases.some((state) => state.eventDecision === 'APPEND')).toBe(true)
+    expect(cases.some((state) => state.eventDecision === 'REPLAY')).toBe(true)
+    expect(cases.some((state) => state.eventDecision === 'REJECT')).toBe(true)
+    expect(cases.some((state) => state.ready)).toBe(true)
+    expect(cases.some((state) => !state.complete && state.caughtUp)).toBe(true)
+    expect(cases.some((state) => state.invalidatesCoverage)).toBe(true)
+    expect(cases.every((state) => !state.latePublicationStayedCovered)).toBe(true)
+    expect(cases.some((state) => state.projectionReadAccepted)).toBe(true)
+    expect(cases.every((state) => !state.unsafeProjectionRead)).toBe(true)
+    for (const state of cases) {
+      const current = {
+        cursor: activityCursor(state.cursor),
+        caughtUp: state.caughtUp,
+        replayFromId: activityCursor(state.replayFrom),
+        replayUntilId: activityCursor(state.replayUntil),
+        fillFeeComplete: state.complete,
+        sessionId: activitySession(state.session),
+        requestId: activityRequest(state.session),
+      }
+      const event = decideBrokerActivityEvent(
+        current,
+        {
+          sourceEventId: activityCursor(state.eventCursor)!,
+          contentHash: hash,
+          session: {
+            sessionId: activitySession(state.eventSession)!,
+            requestId: activityRequest(state.eventSession)!,
+          },
+        },
+        state.retained ? (state.hashMatches ? hash : 'b'.repeat(64)) : undefined,
+        state.supported,
+      )
+      expect(Result.isSuccess(event)).toBe(state.eventDecision !== 'REJECT')
+      if (Result.isSuccess(event)) {
+        expect(event.success._tag.toUpperCase()).toBe(state.eventDecision)
+        if (event.success._tag === 'Append') {
+          expect(event.success.fillFeeComplete).toBe(state.complete && state.supported)
+          expect(event.success.invalidatesCoverage).toBe(state.invalidatesCoverage)
+          expect(event.success.preserveHeartbeat).toBe(state.preserveSession)
+        }
+      }
+
+      const catchup = decideBrokerActivityCatchup(
+        current,
+        {
+          cursor: activityCursor(state.boundaryCursor),
+          replayFromId: activityCursor(state.boundaryReplayFrom)!,
+          replayUntilId: activityCursor(state.boundaryReplayUntil)!,
+        },
+        state.boundaryEvidenceMatches,
+      )
+      expect(Result.isSuccess(catchup)).toBe(state.canCatchup)
+      if (Result.isSuccess(catchup)) {
+        expect(catchup.success.replayFromId).toBe(activityCursor(state.boundaryReplayFrom))
+        expect(catchup.success.replayUntilId).toBe(activityCursor(state.boundaryReplayUntil))
+      }
+
+      const heartbeat = decideBrokerActivityHeartbeat(current, {
+        cursor: activityCursor(state.heartbeatCursor),
+        session: {
+          sessionId: activitySession(state.heartbeatSession)!,
+          requestId: activityRequest(state.heartbeatSession)!,
+        },
+      })
+      expect(Result.isSuccess(heartbeat)).toBe(state.canHeartbeat)
+
+      expect(
+        brokerActivityCursorIsReady(
+          {
+            ...current,
+            sourceRevision: state.revisionMatches ? revision(1) : revision(2),
+            fresh: state.fresh,
+          },
+          revision(1),
+        ),
+      ).toBe(state.ready)
+    }
+  })
+
   test('expired entry cancellation rechecks current authority, identity and freshness at admission', () => {
     const cases = Schema.decodeUnknownSync(
       Schema.Array(CancellationAdmissionState),

@@ -1,7 +1,8 @@
 # Bayn formal model
 
 This directory contains the offline Lean model and executable used to check Bayn's production decisions, plus
-[TLA+ models](tla/README.md) for controller, entry recovery and mutation/ledger interleavings. It is excluded
+[TLA+ models](tla/README.md) for controller, entry recovery, durable Activity cursors and mutation/ledger
+interleavings. It is excluded
 from the trading image. `lean-toolchain` pins Lean 4.35.0; `lake-manifest.json` pins Mathlib and its dependencies.
 
 From the repository root, run the same proof and conformance command as CI:

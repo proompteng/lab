@@ -1,6 +1,7 @@
 # Bayn durable broker event architecture
 
-Status: direct trade-update projection implemented; Activity SSE ownership migration remains required.
+Status: direct trade-update projection and durable Activity SSE ownership are implemented in source; live release
+acceptance remains required before any latency, request-count, or reliability improvement is claimed.
 
 ## Decision
 
@@ -21,8 +22,8 @@ with its workload instead of imposing one bus everywhere.
 
 The November 20 PAPER investigation measured broker capture at approximately 4.32 s p50 / 9.54 s p95, broker
 publication at 321 ms p50 / 489 ms p95, and reconciliation persistence at 770 ms p50 / 1.50 s p95. One retained
-request illustrates the serial critical path below. These seconds are real because complete provider reads and
-reconciliation were on the path; they were not network transmission time.
+request illustrates the boundary timestamps below. These seconds are real because complete provider reads and
+reconciliation were on the path; they were not network transmission time. The single request is not a percentile.
 
 ```mermaid
 sequenceDiagram
@@ -41,20 +42,24 @@ sequenceDiagram
   X->>A: Submit order
   A-->>X: Broker accepts
   Note over X,A: 77 ms dispatch-to-accept
-  W->>K: Fill update
+  W->>K: Last fill update at about 20:00:17.321
   K->>R: Durable notification
   R->>H: Full account/order/fill/fee reads
   H-->>R: Converged snapshot
   R->>P: Reconcile canonical fill
-  Note over W,P: 9.433 s accept-to-last-canonical-fill in retained request
+  Note over W,P: 9.433 s last-fill-source to canonical
   P->>P: Post accounting
   Note over P: 1.545 s canonical-to-posted
 ```
 
-The 5.974 s pre-dispatch interval and the 9.433 s fill-canonicalization interval are both economically relevant, but
-they have different owners. Removing the broker adapter cannot fix Jev/scheduling time. Immediate source projection
-can remove the full snapshot from the ordinary fill path. The retained example totals about 17.0 s across the labeled
-segments; session distributions, not this single request, determine the release result.
+The retained timestamps are `20:00:12.147` for durable `SUBMIT_STARTED`, `20:00:12.331` for physical dispatch,
+`20:00:12.408` for broker acceptance, `20:00:26.754` for the last canonical fill, and `20:00:28.299` for posting. Thus
+submit-start to dispatch is 184 ms, dispatch to acceptance is 77 ms, and acceptance to canonicalization is 14.346 s.
+The labeled 9.433 s is the nested last-fill-source-to-canonical segment, not acceptance-to-canonical. The intervals
+must not be added as if they were adjacent. Jev-batch-to-dispatch is on the order-acceptance critical path;
+fill-source-to-canonical and canonical-to-posted are on completion and realized-economics critical paths. Removing the
+broker adapter cannot fix Jev or scheduling time. Immediate source projection can remove the full snapshot from the
+ordinary fill path. Session distributions, not this request, determine the release result.
 
 ## Implemented direct path
 
@@ -72,7 +77,7 @@ sequenceDiagram
   participant T as TigerBeetle
 
   W->>D: SessionReady or TradeUpdate
-  D->>R: Signed POST + event ID idempotency key
+  D->>R: Signed POST + revision/session delivery ID
   R->>S: Insert exact verified notification
   S-->>R: Durable or already retained
   R-->>D: accepted receipt
@@ -95,13 +100,14 @@ sequenceDiagram
 
 The direct path has four independent replay boundaries:
 
-1. Dorvud retries transient HTTP failures with the same event ID.
+1. Dorvud retries one delivery with the same revision-, credential-, session- and handler-bound delivery ID.
 2. Restate retains ingress and continuation idempotency for seven days.
 3. PostgreSQL retains the exact source and first projection receipt indefinitely.
 4. Broker-event and TigerBeetle identities make a lost response safe to retry.
 
 Dorvud becomes ready only when the receipt names the current source revision and
-`bayn.broker-source-projection.v1`. An acceptance from the retired identity-only handler fails the session and creates
+`bayn.broker-source-projection.v1`. Activity receipts independently require
+`bayn.broker-activity-projection.v2`. An acceptance from the retired identity-only handler fails the session and creates
 a new session boundary on reconnect, so an old cached acknowledgement cannot masquerade as the new persistence
 contract. Retaining a new source event and revoking the readable broker-observation generation share one PostgreSQL
 transaction. Restate may route the new shared handler before exclusive observation ownership rotates, but no
@@ -150,14 +156,16 @@ serialized delivery alone cannot prove an economic prefix. The projector retains
 controller immediately, while complete-history reconciliation remains the only TigerBeetle writer. Activity SSE can
 move accounting onto the streaming path only after its replay cursor and correction chain establish that prefix.
 
-## Target financial-state path
+## Durable financial-state path
 
 Alpaca's current [Activity SSE guide](https://docs.alpaca.markets/us/docs/activity-sse) defines the financial-state
 replication contract: persist the last `event_id` ULID, reconnect with `since_id`, deduplicate with `ref_id`, and reverse
 the activity named by `previous_id` before applying a correction or bust. The Trading API now exposes the
 [same endpoint](https://docs.alpaca.markets/us/reference/subscribetoactivitiessse). The lower-latency
 [`trade_updates` WebSocket](https://docs.alpaca.markets/us/docs/websocket-streaming) remains necessary for non-financial
-order lifecycle events.
+order lifecycle events. The provider only exposes activities booked after February 11, 2026. Bayn therefore refuses
+to declare a complete prefix for accounts created before February 12, 2026 UTC; those accounts require a separately
+verified opening snapshot or another complete source before this path can be enabled.
 
 ```mermaid
 flowchart TB
@@ -165,42 +173,128 @@ flowchart TB
     TU[trade_updates: order lifecycle]
     AS[Activity SSE: fills, fees, cash, corrections, busts]
     REST[REST account/order/position snapshot]
+    API[Order API]
   end
 
+  Catchup[Finite publication ULID range and clean EOF]
   Owner[One Dorvud broker connection owner]
   Ingress[Restate per-account ingress]
-  Source[(Immutable source events + durable SSE cursor)]
-  Reducer[Versioned deterministic financial reducer]
+  Source[(Immutable events, proof receipts, conflicts and cursor)]
+  Lifecycle[Ordered lifecycle projector]
+  Reducer[Versioned deterministic activity reducer]
+  Projection[(Durable fill and fee view)]
   Order[(Orders and fills)]
   Money[(TigerBeetle money)]
-  Verify[Independent convergence verifier]
+  Verify[Canonical convergence verifier]
   Strategy[Jev + deterministic strategy]
   Risk[Risk and capital authority]
+  Mutation[Single execution mutation owner]
 
   TU --> Owner
-  AS --> Owner
-  Owner --> Ingress --> Source --> Reducer
-  Reducer --> Order
-  Reducer --> Money
+  AS --> Catchup --> Owner
+  Owner --> Ingress --> Source
+  Source --> Lifecycle --> Order
+  Source --> Reducer --> Projection --> Verify
   REST --> Verify
+  Verify --> Money
   Order --> Verify
   Money --> Verify
   Strategy --> Risk
   Verify --> Risk
-  Risk -->|approved intents only| Owner
+  Risk -->|approved intents only| Mutation --> API
 ```
 
-The remaining hard migration is therefore explicit:
+The source hard migration is explicit:
 
-- move Activity SSE from replica-local Bayn memory into the single Dorvud owner;
-- persist the last successfully retained ULID and resume only with `since_id`;
-- preserve raw Activity JSON and `ref_id`/`previous_id` before projection;
-- implement correction/bust reversal as immutable compensating entries;
-- serve snapshot reconciliation from the durable activity projection, using provider REST only for startup, periodic
-  independent verification, a reported stream gap, an unsupported activity, or a failed invariant;
-- delete the in-process Activity SSE implementation and its fixed timestamp replay once live equivalence is proven.
+- the single Dorvud process owns Activity SSE beside `trade_updates`;
+- the first session performs a finite `since_id`/`until_id` publication-order replay from the provider history floor;
+  PostgreSQL makes the prefix usable only after clean EOF and independent recomputation of its event count, prefix hash,
+  range-request hash and completion hash;
+- account creation must be inside the provider's complete-history window, otherwise the owner fails before reading or
+  retaining a cursor;
+- PostgreSQL persists the last retained ULID and later live owners resume with `since_id` (or the proved upper frontier
+  for an empty prefix);
+- immutable rows preserve exact Activity JSON text, its hash, `ref_id`, and `previous_id` before projection;
+- correction and bust chains reverse one active predecessor through append-only projection rows;
+- historical replay appends without scheduling one reconciliation per event; the first acknowledged live heartbeat
+  activates one coalesced canonical capture, while later live events retain event-driven invalidation;
+- documented non-fill/non-fee activities are retained as canonical-only evidence and advance the cursor without
+  pretending to project cash or positions; independent REST account and position reads remain authoritative for them;
+- the complete cursor versions the fill cut, while a separate hash of active fee source identities versions REST fee
+  verification; fills, heartbeats and canonical-only journals therefore cannot trigger an unchanged full fee-history
+  scan, while every fee correction or bust invalidates that verification;
+- catch-up completion and live liveness are separate signed messages, so a heartbeat cannot certify history;
+- signed live heartbeats prevent a disconnected prefix from appearing current;
+- provider reuse of one publication ULID with different authenticated content is retained as immutable conflict
+  evidence, revokes the observation generation, and permanently closes financial completeness;
+- a later publication whose ULID falls inside a retained clean-EOF range is retained, but its independently recomputed
+  count, prefix and completion hashes become an immutable `LATE_PUBLICATION` conflict; coverage and liveness close under
+  the writer fence, canonical reconciliation runs, and final submission remains blocked on the poisoned receipt;
+- Activity append and final order authorization acquire the same PostgreSQL writer fence, so a fetched observation is
+  either revalidated after the append or the append commits after that one submit linearization point;
+- an unknown activity, a cross-view correction, or a failed invariant closes the fill/fee projection and uses canonical REST
+  reconciliation;
+- the replica-local Activity SSE implementation and its process-local replay state are deleted.
 
-Until this migration is deployed, no reduction in Activity SSE connection count or provider REST calls is claimed.
+The finite range is a startup and recovery readiness path, not a per-order request. Heartbeats are not on the ordinary
+order or fill critical path after readiness, but their freshness gates use of the streaming projection. The shared
+writer fence is on the critical path only when an Activity append and final broker submit overlap. That contention is
+intentional: eliminating it would reintroduce the stale-observation race. Its wait time must be measured separately
+from provider capture, Jev inference, broker acceptance and canonical accounting.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as Alpaca Activity SSE
+  participant D as Dorvud owner
+  participant R as Restate account owner
+  participant P as PostgreSQL
+  participant X as Final submit authorization
+  participant C as Canonical reconciliation
+
+  rect rgb(235, 242, 255)
+    Note over A,P: Startup or recovery readiness path
+    D->>A: GET since_id=floor and until_id=ULID(now-5s)
+    loop Publication-order history
+      A-->>D: event_id plus exact activity
+      D->>R: signed source event plus delivery ID
+      R->>P: append immutable event and projection
+      P-->>D: durable cursor receipt
+    end
+    A-->>D: clean EOF
+    D->>R: signed range completion receipt
+    R->>P: recompute count and hashes, retain COMPLETE or POISONED
+    P-->>D: durable coverage receipt
+  end
+  rect rgb(238, 250, 240)
+    Note over A,C: Long-lived live path
+    D->>A: GET since_id=durable cursor
+    A-->>D: heartbeat
+    D->>R: signed liveness heartbeat
+    R->>C: first live-session reconciliation only
+    A-->>D: new financial event
+    D->>R: signed source event plus fresh delivery ID
+    R->>P: append and revoke observation under writer fence
+    alt Event contradicts a retained clean-EOF interval
+      P->>P: retain event and claimed-versus-observed POISONED receipt
+      P->>C: canonical reconciliation and manual evidence boundary
+    else Event is after the proved upper frontier
+      P->>P: advance the live cursor
+    end
+    alt Append wins fence
+      P-->>X: cached observation is invalid
+    else Submit already owns fence
+      X-->>P: one submit linearizes before append
+    end
+  end
+```
+
+The next boundary is live equivalence: exact images, migration, finite catch-up, source rows, cursor replay, heartbeats,
+correction/bust
+projection, stale-stream fallback, canonical convergence, and restart recovery must all be observed on PAPER. Until
+that deployment proof exists, no reduction in Activity SSE connection count or provider REST calls is claimed. Moving
+TigerBeetle posting onto the reducer is a separate change and remains prohibited until the durable prefix is proven
+against independent canonical snapshots.
 
 ## Profitability boundary
 
