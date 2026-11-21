@@ -1,0 +1,971 @@
+{
+  "schema": "bayn-pr16145-followup-acceptance.v1",
+  "repository": "proompteng/lab",
+  "pullRequest": 16145,
+  "scope": "Current-main composition, later AMD native failure, and correction of retained failure diagnostics. CI and delivery acceptance are separate.",
+  "composition": [
+    {
+      "name": "bayn-pr16145-current-main-native-composition-20261121.json",
+      "sourcePath": "/tmp/bayn-pr16145-current-main-native-composition-20261121.json",
+      "originalSha256": "ad7dcce7925107e76a247442dd30d009b7adbd0b3b5c44bb9266d542dae566a0",
+      "evidence": {
+        "base": "601d54608971a7f37421dec979d4e1465b68abd3",
+        "currentMain": "215cd89d92cb1b29ba68633ba24be9df7bc4b47d",
+        "prHead": "13ea59cbabec32a5560ec0e52f543749166c9c8d",
+        "nativeAndDiagnosticIdentity": [
+          {
+            "path": "services/bayn/src/opencode",
+            "baseline": "74bddcfcf7752049185e196f126cf3d984113fa5",
+            "currentMain": "74bddcfcf7752049185e196f126cf3d984113fa5",
+            "prHead": "c3923ed387e2c6d49367a3b78640537c74a2da4a",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "services/bayn/src/research-inference",
+            "baseline": "57a5c71c867e82d28f8596ca902e7072efa2005b",
+            "currentMain": "57a5c71c867e82d28f8596ca902e7072efa2005b",
+            "prHead": "57a5c71c867e82d28f8596ca902e7072efa2005b",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "services/bayn/src/opencode/server.integration.test.ts",
+            "baseline": "800fc2882b74b88acc91cd2a1e4529f6689d33f8",
+            "currentMain": "800fc2882b74b88acc91cd2a1e4529f6689d33f8",
+            "prHead": "ff01a25962cfea3bfcf441943e9dcb957d17e827",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "services/bayn/tools/test-native-process-diagnostics.ts",
+            "baseline": null,
+            "currentMain": null,
+            "prHead": "ee7b18ed4dc6d854c69bdde857b3a23738b92e15",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+            "baseline": null,
+            "currentMain": null,
+            "prHead": "2b5660843f4086691eb0f730bb2d6690a0ed6bbb",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "services/bayn/README.md",
+            "baseline": "dd91d5938fb6e3f9893781af60c8956db3996f44",
+            "currentMain": "983ef5d5c1a6336be9d93292a2ceb3ef8e9f6b7e",
+            "prHead": "ad26ed494de79699a503db572ad6c2489ba33129",
+            "mainUnchangedFrom601d": false
+          },
+          {
+            "path": "services/bayn/package.json",
+            "baseline": "48725b217fabdb66652a47b8a6bd703a34d89b57",
+            "currentMain": "48725b217fabdb66652a47b8a6bd703a34d89b57",
+            "prHead": "48725b217fabdb66652a47b8a6bd703a34d89b57",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "package.json",
+            "baseline": "ffa62ac206e2c4a46466ef542d6abe01a81f56ab",
+            "currentMain": "ffa62ac206e2c4a46466ef542d6abe01a81f56ab",
+            "prHead": "ffa62ac206e2c4a46466ef542d6abe01a81f56ab",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "bun.lock",
+            "baseline": "a05771d7eb8f5f27169a4d281bfddb6a54a0b3b1",
+            "currentMain": "bed738449bede50a80e23023aa2faf8bdd027b52",
+            "prHead": "a05771d7eb8f5f27169a4d281bfddb6a54a0b3b1",
+            "mainUnchangedFrom601d": false
+          },
+          {
+            "path": "nix",
+            "baseline": "5a0deb4c8619a111f964d94a71a43ab91406ffc6",
+            "currentMain": "5a0deb4c8619a111f964d94a71a43ab91406ffc6",
+            "prHead": "5a0deb4c8619a111f964d94a71a43ab91406ffc6",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "flake.nix",
+            "baseline": "6ae4b2ed3a2b99a01a6d17421a7e8d668b9c05ac",
+            "currentMain": "6ae4b2ed3a2b99a01a6d17421a7e8d668b9c05ac",
+            "prHead": "6ae4b2ed3a2b99a01a6d17421a7e8d668b9c05ac",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "flake.lock",
+            "baseline": "2f7d897b852016bfdbbcf8505f53ef77861c20c9",
+            "currentMain": "2f7d897b852016bfdbbcf8505f53ef77861c20c9",
+            "prHead": "2f7d897b852016bfdbbcf8505f53ef77861c20c9",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": ".github/actions",
+            "baseline": "080e87f3e5ce5d2707d024f8bc41f7ae50b4893a",
+            "currentMain": "080e87f3e5ce5d2707d024f8bc41f7ae50b4893a",
+            "prHead": "080e87f3e5ce5d2707d024f8bc41f7ae50b4893a",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": ".github/workflows/opencode-ci.yml",
+            "baseline": "4ff1dd931111c772a2dcc5639f665d9c8a8d7f8b",
+            "currentMain": "4ff1dd931111c772a2dcc5639f665d9c8a8d7f8b",
+            "prHead": "4ff1dd931111c772a2dcc5639f665d9c8a8d7f8b",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": ".github/workflows/nix-oci-build-common.yml",
+            "baseline": "c38283fa1fd2886b14044abf939075e15fe9b028",
+            "currentMain": "c38283fa1fd2886b14044abf939075e15fe9b028",
+            "prHead": "f6813910ebafe4d154ef6a79ea9717f2a32ae814",
+            "mainUnchangedFrom601d": true
+          },
+          {
+            "path": "argocd/applications/arc",
+            "baseline": "fccea69efe4db98b0801756dd686c724f7525d6c",
+            "currentMain": "fccea69efe4db98b0801756dd686c724f7525d6c",
+            "prHead": "fccea69efe4db98b0801756dd686c724f7525d6c",
+            "mainUnchangedFrom601d": true
+          }
+        ],
+        "changedLockWorkspaceScopes": [
+          {
+            "line": 839,
+            "workspace": "services/golink"
+          },
+          {
+            "line": 862,
+            "workspace": "services/golink"
+          }
+        ],
+        "directOverlaps": {
+          "readme": "Only broker-observation documentation hunks at baseline lines432 and521 changed; native diagnostic addition near2574 is outside those hunks.",
+          "publicationWorkflow": "Only two added main push exclusions for native.test-support.ts and streaming-market-fixture.ts; queue and publication job sections are unchanged from601d.",
+          "affectedInputs": "Additive Ofz-selection test plus those two Bayn exclusion fixtures.",
+          "ociTests": "Additive Agents CI named-secret contract only."
+        },
+        "qualification": "The broader Bayn broker-event runtime changed on main under PR16110 and is outside this narrow diagnostic/native-input comparison. The previous265-test prospective composition proof covers601d only; these source comparisons do not create a new merged-tree test run.",
+        "sourceComparisonLimit": "The actions directory tree is compared as a whole; the earlier guessed setup-nix-build path did not exist and is not used as evidence."
+      }
+    },
+    {
+      "name": "bayn-pr16145-215cd-composition-checks-20261121.json",
+      "sourcePath": "/tmp/bayn-pr16145-215cd-composition-checks-20261121.json",
+      "originalSha256": "61aefd3ab4b776d6a6a0daf40754dabcfdf0458d567362d14c9a77a7e465005c",
+      "evidence": {
+        "head": "13ea59cbabec32a5560ec0e52f543749166c9c8d",
+        "composedMain": "215cd89d92cb1b29ba68633ba24be9df7bc4b47d",
+        "prospectiveTree": "828b924ddf6074465161b12051d192cbd77f8b63",
+        "checks": [
+          {
+            "name": "publication-selector-oci",
+            "command": [
+              "bun",
+              "test",
+              "packages/scripts/src/bayn/prepare-image-cohort.test.ts",
+              "packages/scripts/src/bayn/image-cohort.test.ts",
+              "packages/scripts/src/bayn/publication-source.test.ts",
+              "packages/scripts/src/bayn/kargo.test.ts",
+              "packages/scripts/src/shared/__tests__/nix-oci-workflow.test.ts",
+              "packages/scripts/src/shared/__tests__/oci.test.ts",
+              "packages/scripts/src/ci/__tests__/affected-inputs.test.ts"
+            ],
+            "startedAt": "2026-11-21T13:05:25.156284+00:00",
+            "elapsedSeconds": 9.083,
+            "exitCode": 0,
+            "log": "/tmp/bayn-pr16145-215cd-publication-selector-oci-20261121.log",
+            "logSha256": "bd3048aec8e88eafa564040c0ea8c3f085ceec53e21343451da8d7fa82eae726",
+            "tail": "nputs change [0.14ms]\n(pass) native OCI build workflows > validates Bumba pull requests when the Temporal SDK changes [0.05ms]\n(pass) native OCI build workflows > allows Nix dockerTools archives without Docker repo tags [0.04ms]\n(pass) native OCI build workflows > gives Skopeo an explicit containers policy on ARC runners [0.01ms]\n(pass) native OCI build workflows > only lets the manual mirror write non-reserved tags\n(pass) native OCI build workflows > serializes layer uploads against the shaped registry writer\n(pass) native OCI build workflows > precomputes destination digests to avoid redundant registry writes\n(pass) native OCI build workflows > tags platform latest refs without re-copying image layers [0.01ms]\n(pass) native OCI build workflows > does not use Docker Buildx or docker daemon commands in migrated workflows [0.12ms]\n(pass) native OCI build workflows > removes synthetic Nix cache and Docker-backed native workflow files [0.08ms]\n(pass) native OCI build workflows > routes enabled simple app image builds through real Nix OCI attrs [0.10ms]\n(pass) native OCI build workflows > publishes immutable Kargo aliases only for enrolled image builds [0.08ms]\n(pass) native OCI build workflows > routes the enabled Headlamp image through a real Nix OCI attr [0.12ms]\n(pass) native OCI build workflows > routes the enabled Symphony fleet image through a real Nix OCI attr [0.05ms]\n(pass) native OCI build workflows > keeps Symphony post-deploy verification observe-only on the Kargo branch [0.04ms]\n(pass) native OCI build workflows > routes the enabled Sag image through a real Nix OCI attr [0.06ms]\n(pass) native OCI build workflows > routes the enabled Jangar image through a real Nix OCI attr [0.08ms]\n(pass) native OCI build workflows > keeps Jangar post-deploy verification observe-only without rollback PR automation [0.05ms]\n(pass) native OCI build workflows > routes the enabled Torghut family images through real Nix OCI attrs [0.23ms]\n(pass) native OCI build workflows > routes the enabled Agents service images through real Nix OCI attrs [0.27ms]\n(pass) native OCI build workflows > preserves isolated Bun workspace runtime dependencies in Agents images [0.03ms]\n(pass) native OCI build workflows > routes enabled product app image builds through real Nix OCI attrs [0.18ms]\n(pass) native OCI build workflows > rebuilds migrated simple app images for GitOps-only manifest changes [0.02ms]\n(pass) native OCI build workflows > keeps manual migrated app deploy scripts on the shared Nix image helper [0.31ms]\n(pass) native OCI build workflows > keeps Bumba image content independent from GitOps-only release commits [0.07ms]\n(pass) native OCI build workflows > keeps Froussard Knative digest rollouts from respecting ignored live annotations during apply [0.05ms]\n(pass) native OCI build workflows > disables AWS metadata lookups for the Attic S3 client without changing storage resources [0.03ms]\n\n 267 pass\n 0 fail\n 2849 expect() calls\nRan 267 tests across 7 files. [9.06s]\n"
+          },
+          {
+            "name": "actionlint",
+            "command": [
+              "/tmp/bayn-actionlint-recovery-20261121/actionlint-1.7.7",
+              "-shellcheck",
+              "",
+              "-pyflakes",
+              "",
+              ".github/workflows/bayn-build-push.yml",
+              ".github/workflows/nix-oci-build-common.yml"
+            ],
+            "startedAt": "2026-11-21T13:05:34.239022+00:00",
+            "elapsedSeconds": 0.016,
+            "exitCode": 0,
+            "log": "/tmp/bayn-pr16145-215cd-actionlint-20261121.log",
+            "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "tail": ""
+          }
+        ],
+        "composedBlobs": {
+          ".github/workflows/bayn-build-push.yml": "7652aa46d9b6d30821a9b6bc404024166518f26c",
+          ".github/workflows/nix-oci-build-common.yml": "f6813910ebafe4d154ef6a79ea9717f2a32ae814",
+          "packages/scripts/src/bayn/prepare-image-cohort.ts": "ffa931442e6428ce5aa0035906337b7fd344e8b9",
+          "packages/scripts/src/bayn/prepare-image-cohort.test.ts": "e45bd349dbcfef03419b42ce715a4fba66ca4843",
+          "packages/scripts/src/bayn/publication-source.test.ts": "2ac8af635f8b8d9b8334e668f889ae415d03b60d",
+          "packages/scripts/src/shared/__tests__/nix-oci-workflow.test.ts": "9ba6eba81ee3c3119764d23f7fea66a49b3d411b",
+          "packages/scripts/src/ci/__tests__/affected-inputs.test.ts": "c74e1956b7ea19124a01f9f7ef39f0125936b55f",
+          "packages/scripts/src/shared/__tests__/oci.test.ts": "eabcb52cfa7ad560965cc3f852c804af222928fb",
+          "services/bayn/tools/test-native-process-diagnostics.ts": "ee7b18ed4dc6d854c69bdde857b3a23738b92e15",
+          "services/bayn/src/opencode/native-process-diagnostics.test.ts": "2b5660843f4086691eb0f730bb2d6690a0ed6bbb",
+          "services/bayn/src/opencode/server.integration.test.ts": "ff01a25962cfea3bfcf441943e9dcb957d17e827",
+          "services/bayn/README.md": "578f2556a7152b7915fe58276e47f65433f434e7"
+        },
+        "testSummary": {
+          "pass": 267,
+          "fail": 0,
+          "assertions": 2849,
+          "files": 7
+        },
+        "qualification": "Focused prospective composition only, not a broad full-main service or native test result.",
+        "restoration": {
+          "observedAt": "2026-11-21T13:06:08.707711+00:00",
+          "head": "13ea59cbabec32a5560ec0e52f543749166c9c8d",
+          "tree": "54012a84d47e7581878d1a4eaf2e4c50c83769ce",
+          "workingTreeClean": true,
+          "mergeInProgress": false,
+          "abortExitCode": 0,
+          "abortToolJobId": "592924d6-cd23-44f7-a75a-138145437384"
+        }
+      }
+    }
+  ],
+  "nativeFailure13ea": {
+    "name": "bayn-pr16145-13ea-amd-native-blocks-20261121.json",
+    "sourcePath": "/tmp/bayn-pr16145-13ea-amd-native-blocks-20261121.json",
+    "originalSha256": "a51bca71a56776b2f7c0b55ac5ad6cf8f9482a1046b425872293aed5bb5a9b2d",
+    "evidence": {
+      "rawLogSha256": "815d4b220fff2555dee8b506620b0bca8dac427a67db18762999719ba822c682",
+      "selectedLines": [
+        {
+          "line": 638,
+          "text": "2026-11-21T13:05:02.8148328Z copying path '/nix/store/vr15iyyykg9zai6fpgvhcgyw7gckl78w-gcc-wrapper-14.3.0' from '[URL]'..."
+        },
+        {
+          "line": 639,
+          "text": "2026-11-21T13:05:03.0849023Z copying path '/nix/store/wxjcx5fis4bygw7bywg2jkjs4cliw3jd-make-binary-wrapper-hook' from '[URL]'..."
+        },
+        {
+          "line": 640,
+          "text": "2026-11-21T13:05:03.7741565Z bayn-runtime-root> Running phase: buildPhase"
+        },
+        {
+          "line": 641,
+          "text": "2026-11-21T13:05:04.3076866Z copying path '/nix/store/i6xakg19vy8vc2g211yr9d5nmb0wk7v0-rustc-1.91.1' from '[URL]'..."
+        },
+        {
+          "line": 642,
+          "text": "2026-11-21T13:05:09.0137869Z bayn-runtime-root> bun test v1.4.2 (744846f84)"
+        },
+        {
+          "line": 643,
+          "text": "2026-11-21T13:05:09.0251541Z bayn-runtime-root> "
+        },
+        {
+          "line": 644,
+          "text": "2026-11-21T13:05:09.0251825Z bayn-runtime-root> services/bayn/src/opencode/server.integration.test.ts:"
+        },
+        {
+          "line": 645,
+          "text": "2026-11-21T13:05:21.6135179Z warning: download buffer is full; consider increasing the 'download-buffer-size' setting"
+        },
+        {
+          "line": 646,
+          "text": "2026-11-21T13:05:30.0448115Z copying path '/nix/store/5y00kqp8qlmjwvm5h607n6jnmqr75dnk-clippy-1.91.1' from '[URL]'..."
+        },
+        {
+          "line": 647,
+          "text": "2026-11-21T13:05:30.0450287Z copying path '/nix/store/4sj19dch0zhnhhdsbrz9pxz55bc2xhb9-rustc-wrapper-1.91.1' from '[URL]'..."
+        },
+        {
+          "line": 648,
+          "text": "2026-11-21T13:05:30.0571453Z copying path '/nix/store/742kq790y4nd92s4l4arg7ij8h7is5ar-cargo-1.91.1' from '[URL]'..."
+        },
+        {
+          "line": 649,
+          "text": "2026-11-21T13:05:32.6328472Z copying path '/nix/store/vg39s21pcy070xpacc1pizy469vbfpxc-rustfmt-1.91.1' from '[URL]'..."
+        },
+        {
+          "line": 650,
+          "text": "2026-11-21T13:05:34.3482996Z bayn-runtime-root> [13:05:34.347] INFO (#2): {"
+        },
+        {
+          "line": 651,
+          "text": "2026-11-21T13:05:34.3483400Z bayn-runtime-root>   event: \"bayn.opencode-native-startup-test.v1\","
+        },
+        {
+          "line": 652,
+          "text": "2026-11-21T13:05:34.3483705Z bayn-runtime-root>   phase: \"initial\","
+        },
+        {
+          "line": 653,
+          "text": "2026-11-21T13:05:34.3483927Z bayn-runtime-root>   spawnRequestedElapsedMs: 22,"
+        },
+        {
+          "line": 654,
+          "text": "2026-11-21T13:05:34.3484198Z bayn-runtime-root>   spawnAcquiredElapsedMs: 25,"
+        },
+        {
+          "line": 655,
+          "text": "2026-11-21T13:05:34.3484416Z bayn-runtime-root>   nativeRequests: 22,"
+        },
+        {
+          "line": 656,
+          "text": "2026-11-21T13:05:34.3484625Z bayn-runtime-root>   nativeHttpResponses: 0,"
+        },
+        {
+          "line": 657,
+          "text": "2026-11-21T13:05:34.3484847Z bayn-runtime-root>   nativeStartingResponses: 0,"
+        },
+        {
+          "line": 658,
+          "text": "2026-11-21T13:05:34.3485075Z bayn-runtime-root>   nativeTransportErrors: 1,"
+        },
+        {
+          "line": 659,
+          "text": "2026-11-21T13:05:34.3485308Z bayn-runtime-root>   nativeRequestCancellations: 20,"
+        },
+        {
+          "line": 660,
+          "text": "2026-11-21T13:05:34.3485539Z bayn-runtime-root>   nativeOtherErrors: 0,"
+        },
+        {
+          "line": 661,
+          "text": "2026-11-21T13:05:34.3485737Z bayn-runtime-root>   firstNative: {"
+        },
+        {
+          "line": 662,
+          "text": "2026-11-21T13:05:34.3485921Z bayn-runtime-root>     elapsedMs: 27,"
+        },
+        {
+          "line": 663,
+          "text": "2026-11-21T13:05:34.3486122Z bayn-runtime-root>     outcome: \"TRANSPORT_ERROR\","
+        },
+        {
+          "line": 664,
+          "text": "2026-11-21T13:05:34.3487213Z bayn-runtime-root>     status: null,"
+        },
+        {
+          "line": 665,
+          "text": "2026-11-21T13:05:34.3487394Z bayn-runtime-root>   },"
+        },
+        {
+          "line": 666,
+          "text": "2026-11-21T13:05:34.3487563Z bayn-runtime-root>   lastNative: {"
+        },
+        {
+          "line": 667,
+          "text": "2026-11-21T13:05:34.3487743Z bayn-runtime-root>     elapsedMs: 27,"
+        },
+        {
+          "line": 668,
+          "text": "2026-11-21T13:05:34.3488134Z bayn-runtime-root>     outcome: \"TRANSPORT_ERROR\","
+        },
+        {
+          "line": 669,
+          "text": "2026-11-21T13:05:34.3488345Z bayn-runtime-root>     status: null,"
+        },
+        {
+          "line": 670,
+          "text": "2026-11-21T13:05:34.3488522Z bayn-runtime-root>   },"
+        },
+        {
+          "line": 671,
+          "text": "2026-11-21T13:05:34.3488693Z bayn-runtime-root>   gatewayAttempts: 24,"
+        },
+        {
+          "line": 672,
+          "text": "2026-11-21T13:05:34.3488905Z bayn-runtime-root>   lastGatewayStatus: null,"
+        },
+        {
+          "line": 673,
+          "text": "2026-11-21T13:05:34.3489115Z bayn-runtime-root>   readiness: \"FAILED\","
+        },
+        {
+          "line": 674,
+          "text": "2026-11-21T13:05:34.3489320Z bayn-runtime-root>   readinessElapsedMs: 25011,"
+        },
+        {
+          "line": 675,
+          "text": "2026-11-21T13:05:34.3489534Z bayn-runtime-root>   phaseElapsedMs: 25012,"
+        },
+        {
+          "line": 676,
+          "text": "2026-11-21T13:05:34.3489727Z bayn-runtime-root> }"
+        },
+        {
+          "line": 677,
+          "text": "2026-11-21T13:05:34.3535123Z bayn-runtime-root> [13:05:34.353] INFO (#255): {"
+        },
+        {
+          "line": 678,
+          "text": "2026-11-21T13:05:34.3535517Z bayn-runtime-root>   event: \"bayn.opencode-native-process-failure-test.v1\","
+        },
+        {
+          "line": 679,
+          "text": "2026-11-21T13:05:34.3535826Z bayn-runtime-root>   phase: \"initial\","
+        },
+        {
+          "line": 680,
+          "text": "2026-11-21T13:05:34.3536039Z bayn-runtime-root>   beforeOuterScopeCleanup: true,"
+        },
+        {
+          "line": 681,
+          "text": "2026-11-21T13:05:34.3536267Z bayn-runtime-root>   captureElapsedMs: 5,"
+        },
+        {
+          "line": 682,
+          "text": "2026-11-21T13:05:34.3536461Z bayn-runtime-root>   limits: {"
+        },
+        {
+          "line": 683,
+          "text": "2026-11-21T13:05:34.3536653Z bayn-runtime-root>     captureBudgetMs: 200,"
+        },
+        {
+          "line": 684,
+          "text": "2026-11-21T13:05:34.3536872Z bayn-runtime-root>     observationBudgetMs: 250,"
+        },
+        {
+          "line": 685,
+          "text": "2026-11-21T13:05:34.3537096Z bayn-runtime-root>     maximumFileBytes: 4096,"
+        },
+        {
+          "line": 686,
+          "text": "2026-11-21T13:05:34.3537306Z bayn-runtime-root>     maximumFileReads: 5,"
+        },
+        {
+          "line": 687,
+          "text": "2026-11-21T13:05:34.3537494Z bayn-runtime-root>   },"
+        },
+        {
+          "line": 688,
+          "text": "2026-11-21T13:05:34.3537656Z bayn-runtime-root>   snapshot: {"
+        },
+        {
+          "line": 689,
+          "text": "2026-11-21T13:05:34.3537852Z bayn-runtime-root>     availability: \"AVAILABLE\","
+        },
+        {
+          "line": 690,
+          "text": "2026-11-21T13:05:34.3538056Z bayn-runtime-root>     value: {"
+        },
+        {
+          "line": 691,
+          "text": "2026-11-21T13:05:34.3538242Z bayn-runtime-root>       process: [Object ...],"
+        },
+        {
+          "line": 692,
+          "text": "2026-11-21T13:05:34.3538498Z bayn-runtime-root>       processAndWaitedChildrenIo: [Object ...],"
+        },
+        {
+          "line": 693,
+          "text": "2026-11-21T13:05:34.3538760Z bayn-runtime-root>       status: [Object ...],"
+        },
+        {
+          "line": 694,
+          "text": "2026-11-21T13:05:34.3538992Z bayn-runtime-root>       mainTaskScheduler: [Object ...],"
+        },
+        {
+          "line": 695,
+          "text": "2026-11-21T13:05:34.3539217Z bayn-runtime-root>     },"
+        },
+        {
+          "line": 696,
+          "text": "2026-11-21T13:05:34.3539374Z bayn-runtime-root>   },"
+        },
+        {
+          "line": 697,
+          "text": "2026-11-21T13:05:34.3539525Z bayn-runtime-root> }"
+        },
+        {
+          "line": 698,
+          "text": "2026-11-21T13:05:34.3539697Z bayn-runtime-root> [13:05:34.353] INFO (#2): {"
+        },
+        {
+          "line": 699,
+          "text": "2026-11-21T13:05:34.3539957Z bayn-runtime-root>   event: \"bayn.opencode-native-lifecycle-test.v1\","
+        },
+        {
+          "line": 700,
+          "text": "2026-11-21T13:05:34.3540237Z bayn-runtime-root>   phase: \"assertions-failed\","
+        },
+        {
+          "line": 701,
+          "text": "2026-11-21T13:05:34.3540449Z bayn-runtime-root>   elapsedMs: 25024,"
+        },
+        {
+          "line": 702,
+          "text": "2026-11-21T13:05:34.3540639Z bayn-runtime-root>   providerCalls: 0,"
+        },
+        {
+          "line": 703,
+          "text": "2026-11-21T13:05:34.3540846Z bayn-runtime-root>   nativeSessionCreations: 0,"
+        },
+        {
+          "line": 704,
+          "text": "2026-11-21T13:05:34.3541065Z bayn-runtime-root>   nativeOperations: [],"
+        },
+        {
+          "line": 705,
+          "text": "2026-11-21T13:05:34.3541250Z bayn-runtime-root> }"
+        },
+        {
+          "line": 706,
+          "text": "2026-11-21T13:05:44.8216330Z bayn-runtime-root> [13:05:44.821] INFO (#2): {"
+        },
+        {
+          "line": 707,
+          "text": "2026-11-21T13:05:44.8216775Z bayn-runtime-root>   event: \"bayn.opencode-native-lifecycle-test.v1\","
+        },
+        {
+          "line": 708,
+          "text": "2026-11-21T13:05:44.8217093Z bayn-runtime-root>   phase: \"scope-failed\","
+        },
+        {
+          "line": 709,
+          "text": "2026-11-21T13:05:44.8217308Z bayn-runtime-root>   elapsedMs: 35492,"
+        },
+        {
+          "line": 710,
+          "text": "2026-11-21T13:05:44.8217513Z bayn-runtime-root>   providerCalls: 0,"
+        },
+        {
+          "line": 711,
+          "text": "2026-11-21T13:05:44.8217735Z bayn-runtime-root>   nativeSessionCreations: 0,"
+        },
+        {
+          "line": 712,
+          "text": "2026-11-21T13:05:44.8217976Z bayn-runtime-root>   lastNativeOperation: undefined,"
+        },
+        {
+          "line": 713,
+          "text": "2026-11-21T13:05:44.8218194Z bayn-runtime-root> }"
+        },
+        {
+          "line": 714,
+          "text": "2026-11-21T13:05:44.8223004Z bayn-runtime-root> 1729 | /** @internal */"
+        },
+        {
+          "line": 715,
+          "text": "2026-11-21T13:05:44.8223436Z bayn-runtime-root> 1730 | export const delay = /*#__PURE__*/dual(2, (self, duration) => andThen(sleep(duration), self));"
+        },
+        {
+          "line": 716,
+          "text": "2026-11-21T13:05:44.8223799Z bayn-runtime-root> 1731 | /** @internal */"
+        },
+        {
+          "line": 717,
+          "text": "2026-11-21T13:05:44.8224369Z bayn-runtime-root> 1732 | export const timeoutOrElse = /*#__PURE__*/dual(2, (self, options) => flatMap(timeoutOption(self, options.duration), option => Option.isNone(option) ? options.orElse() : succeed(option.value)));"
+        },
+        {
+          "line": 718,
+          "text": "2026-11-21T13:05:44.8225499Z bayn-runtime-root> 1733 | /** @internal */"
+        },
+        {
+          "line": 719,
+          "text": "2026-11-21T13:05:44.8225921Z bayn-runtime-root> 1734 | const timeoutErrorFromDuration = duration => new TimeoutError(`Operation timed out after '${Duration.format(duration)}'`);"
+        },
+        {
+          "line": 720,
+          "text": "2026-11-21T13:05:44.8226554Z bayn-runtime-root>                                                     ^"
+        },
+        {
+          "line": 721,
+          "text": "2026-11-21T13:05:44.8226832Z bayn-runtime-root> error: Operation timed out after '25s'"
+        },
+        {
+          "line": 722,
+          "text": "2026-11-21T13:05:44.8227078Z bayn-runtime-root>        _tag: \"TimeoutError\","
+        },
+        {
+          "line": 723,
+          "text": "2026-11-21T13:05:44.8227357Z bayn-runtime-root>  ~effect/Cause/TimeoutError: \"~effect/Cause/TimeoutError\","
+        },
+        {
+          "line": 724,
+          "text": "2026-11-21T13:05:44.8227621Z bayn-runtime-root> "
+        },
+        {
+          "line": 725,
+          "text": "2026-11-21T13:05:44.8228101Z bayn-runtime-root>       at timeoutErrorFromDuration (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:1734:46)"
+        },
+        {
+          "line": 726,
+          "text": "2026-11-21T13:05:44.8228855Z bayn-runtime-root>       at orElse (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:1740:24)"
+        },
+        {
+          "line": 727,
+          "text": "2026-11-21T13:05:44.8229557Z bayn-runtime-root>       at runLoop (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:493:90)"
+        },
+        {
+          "line": 728,
+          "text": "2026-11-21T13:05:44.8230254Z bayn-runtime-root>       at evaluate (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:426:23)"
+        },
+        {
+          "line": 729,
+          "text": "2026-11-21T13:05:44.8230751Z bayn-runtime-root>       at runInAsyncScope (node:async_hooks:207:23)"
+        },
+        {
+          "line": 730,
+          "text": "2026-11-21T13:05:44.8231246Z bayn-runtime-root>       at evaluate (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:415:29)"
+        },
+        {
+          "line": 731,
+          "text": "2026-11-21T13:05:44.8231944Z bayn-runtime-root>       at <anonymous> (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:858:17)"
+        },
+        {
+          "line": 732,
+          "text": "2026-11-21T13:05:44.8232777Z bayn-runtime-root>       at <anonymous> (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:1198:9)"
+        },
+        {
+          "line": 733,
+          "text": "2026-11-21T13:05:44.8233482Z bayn-runtime-root>       at evaluate (/tmp/nix-build-bayn-runtime-root-0.drv-0/work/node_modules/.bun/effect@4.1.4/node_modules/effect/dist/internal/effect.js:447:19)"
+        },
+        {
+          "line": 734,
+          "text": "2026-11-21T13:05:44.8233986Z bayn-runtime-root>       at runInAsyncScope (node:async_hooks:207:23)"
+        },
+        {
+          "line": 735,
+          "text": "2026-11-21T13:05:44.8234739Z bayn-runtime-root> ✗ pinned native harness reuses one study session, refuses replay and releases its process scope [35492.93ms]"
+        },
+        {
+          "line": 736,
+          "text": "2026-11-21T13:05:44.8235112Z bayn-runtime-root> "
+        },
+        {
+          "line": 737,
+          "text": "2026-11-21T13:05:44.8235272Z bayn-runtime-root>  0 pass"
+        },
+        {
+          "line": 738,
+          "text": "2026-11-21T13:05:44.8235440Z bayn-runtime-root>  1 fail"
+        },
+        {
+          "line": 739,
+          "text": "2026-11-21T13:05:44.8235634Z bayn-runtime-root> Ran 1 test across 1 file. [35.81s]"
+        },
+        {
+          "line": 740,
+          "text": "2026-11-21T13:05:45.2921647Z error: builder for '/nix/store/gh4nfw3nygzcxxdh3wc4fk331i91m7yx-bayn-runtime-root-0.drv' failed with exit code 1"
+        }
+      ]
+    },
+    "rawLog": {
+      "sha256": "815d4b220fff2555dee8b506620b0bca8dac427a67db18762999719ba822c682",
+      "bytes": 73492
+    }
+  },
+  "serializerCorrection": {
+    "sourcePath": "/tmp/bayn-native-diagnostic-serialization-validation-20261121.json",
+    "originalSha256": "e84798e4086579013510dff349cead10b16d8c58e4bf18cacf4510f33102c000",
+    "originalBytes": 8679,
+    "evidence": {
+      "schema": "bayn-native-diagnostic-serialization-validation.v1",
+      "recordedAt": "2026-11-21T13:21:05.520939+00:00",
+      "repository": "proompteng/lab",
+      "pullRequest": 16145,
+      "sourceCommit": "7a60a9e32489e3b033685ffe26e7e85f28ea6316",
+      "parentCommit": "13ea59cbabec32a5560ec0e52f543749166c9c8d",
+      "tree": "5eb2afef7bac550b293d50135a33c9588cd41bcc",
+      "authorAndCommitter": "Greg Konush <12027037+gregkonush@users.noreply.github.com>",
+      "changedPaths": [
+        "services/bayn/README.md",
+        "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+        "services/bayn/tools/test-native-process-diagnostics.ts"
+      ],
+      "sources": [
+        {
+          "path": "services/bayn/tools/test-native-process-diagnostics.ts",
+          "gitBlob": "25808ee21effd4ad92a5099bbdb102b2e438314b",
+          "sha256": "3270f74991f981eb682866864dae7b88685929604418d5bc495e2ec4a758c3d0"
+        },
+        {
+          "path": "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+          "gitBlob": "4fd2554324217b98cfc41a7cb64a3fb43b8b638e",
+          "sha256": "e0fb9d2529ef3b9d3e77b6bbbac29a1f0d8494ae913a9d505e080b42d9e7033b"
+        },
+        {
+          "path": "services/bayn/README.md",
+          "gitBlob": "617c55e2bdc0f99833f83b20311ab540e0f617ed",
+          "sha256": "92e8bc2064f54f7a65f1ef47d5b1137c9898411aa84797ff5f554890a0afcc87"
+        },
+        {
+          "path": "services/bayn/src/opencode/server.integration.test.ts",
+          "gitBlob": "ff01a25962cfea3bfcf441943e9dcb957d17e827",
+          "sha256": "eb9c34612b74bde50ccd130627617d82f59df6f9d01a48e13b5e83d5035d343e"
+        }
+      ],
+      "diagnosedDefect": {
+        "priorRun": 44906136152,
+        "priorJob": 136852001209,
+        "priorHead": "13ea59cbabec32a5560ec0e52f543749166c9c8d",
+        "diagnosticAt": "2026-11-21T13:05:34.353Z",
+        "topLevelAvailability": "AVAILABLE",
+        "fourNestedSectionsElided": true,
+        "captureElapsedMs": 5,
+        "nativeFailure": "unchanged initial readiness TimeoutError after 25011 ms; this defect did not establish its cause",
+        "rawLog": {
+          "path": "/tmp/bayn-pr16145-13ea-amd136852001209-full-20261121.log",
+          "sha256": "815d4b220fff2555dee8b506620b0bca8dac427a67db18762999719ba822c682",
+          "bytes": 73492
+        }
+      },
+      "red": {
+        "command": [
+          "bun",
+          "test",
+          "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+          "--test-name-pattern",
+          "default logger and Bun console"
+        ],
+        "startedAt": "2026-11-21T13:14:28.715Z",
+        "finishedAt": "2026-11-21T13:14:29.221Z",
+        "exitCode": 1,
+        "passed": 0,
+        "failed": 2,
+        "filtered": 36,
+        "assertions": 6,
+        "failure": "Both ordinary Bun children exited0; actual default-console output contained [Object ...] before the helper serialization change.",
+        "log": {
+          "path": "/tmp/bayn-native-diagnostic-console-render-red-20261121.log",
+          "sha256": "8b60db622960f8d76a9ed7287f9c6931638202544ab6e271cb90c8fd1309eeb0",
+          "bytes": 2564
+        },
+        "excludedPreliminaryAttempt": "A separate earlier fixture attempt used nonexistent Stream.runString and is not the renderer reproduction."
+      },
+      "green": {
+        "command": ["bun", "test", "services/bayn/src/opencode/native-process-diagnostics.test.ts"],
+        "startedAt": "2026-11-21T13:19:09.869909+00:00",
+        "finishedAt": "2026-11-21T13:19:10.347409+00:00",
+        "exitCode": 0,
+        "log": "/tmp/bayn-native-diagnostic-serialization-final-focused-20261121.log",
+        "sha256": "a9034f84baf9383612ce312d6a5fdcc9ece9bd4fcc45e87a9c04103a4d308725",
+        "bytes": 3822,
+        "passed": 39,
+        "failed": 0,
+        "assertions": 85,
+        "scope": "One focused unit file; includes actual default Bun console with mocked proc data for available/unavailable leaves, privacy/bounds/identity/original-Cause cases and a throwing serializer."
+      },
+      "statics": [
+        {
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "tsc"],
+          "startedAt": "2026-11-21T13:19:11.542931+00:00",
+          "finishedAt": "2026-11-21T13:19:24.648243+00:00",
+          "exitCode": 0,
+          "log": "/tmp/bayn-native-diagnostic-serialization-final-tsc-20261121.log",
+          "sha256": "064a36beb2e7eaebcd8ab2caf38ce24a9afa8bb8d919080088e148c3323328ba",
+          "bytes": 431
+        },
+        {
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "lint"],
+          "startedAt": "2026-11-21T13:19:24.648443+00:00",
+          "finishedAt": "2026-11-21T13:19:25.702503+00:00",
+          "exitCode": 0,
+          "log": "/tmp/bayn-native-diagnostic-serialization-final-lint-20261121.log",
+          "sha256": "8c315ccb6728ea810d9181c9ca8dc0f259713b3308fc7a4c6beb4df234e54e76",
+          "bytes": 251
+        },
+        {
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "lint:oxlint"],
+          "startedAt": "2026-11-21T13:19:25.702710+00:00",
+          "finishedAt": "2026-11-21T13:19:25.918744+00:00",
+          "exitCode": 0,
+          "log": "/tmp/bayn-native-diagnostic-serialization-final-lint-oxlint-20261121.log",
+          "sha256": "ea86679045887b2264bd64c1dfed1b2df1cbd6b97fd803077e03d4d977acef75",
+          "bytes": 7519
+        },
+        {
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "lint:oxlint:type"],
+          "startedAt": "2026-11-21T13:19:25.918926+00:00",
+          "finishedAt": "2026-11-21T13:19:32.730510+00:00",
+          "exitCode": 0,
+          "log": "/tmp/bayn-native-diagnostic-serialization-final-lint-oxlint-type-20261121.log",
+          "sha256": "276a924ed2f1451227b1da61f156c9307b9afbba52bbedc29afe9fc02111f30d",
+          "bytes": 28669
+        },
+        {
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "build"],
+          "startedAt": "2026-11-21T13:19:32.730754+00:00",
+          "finishedAt": "2026-11-21T13:19:32.970270+00:00",
+          "exitCode": 0,
+          "log": "/tmp/bayn-native-diagnostic-serialization-final-build-20261121.log",
+          "sha256": "80c841c3065ef31c707194ab9748502269322aacf3e0ff17d6fcb0ae80e84c24",
+          "bytes": 2047
+        }
+      ],
+      "preliminaryTypeCheck": {
+        "status": "Two fixture typing errors corrected before final green",
+        "issues": [
+          "Expected exit code uses official branded ExitCode(0).",
+          "Stringify spy delegates both replacer overloads."
+        ],
+        "log": {
+          "path": "/tmp/bayn-native-diagnostic-serialization-tsc-20261121.log",
+          "sha256": "aa678f2324a1a58ea42cc77cdb38a75072312b7d0b904cbbd382610010a5d759",
+          "bytes": 1635
+        }
+      },
+      "preservedLimits": {
+        "captureMs": 200,
+        "observationMs": 250,
+        "maximumFileReads": 5,
+        "maximumFileBytes": 4096,
+        "readLimitBytes": 4097,
+        "nativeReadinessMs": 25000,
+        "nativeProbeMs": 1000,
+        "nativeOuterTestMs": 90000,
+        "nativeTerminationGraceMs": 25000
+      },
+      "ordinaryFormatterFixtureTimeoutMs": 3000,
+      "normalHooksPassed": true,
+      "independentReview": "source_audit approved the exact source blobs and then exact commit7a60a9e32489e3b033685ffe26e7e85f28ea6316",
+      "limitations": [
+        "This changes diagnostic rendering only; it does not establish or fix the cause of intermittent native startup readiness failures.",
+        "No native OpenCode process was launched during this local correction; formatter child processes used mocked proc data.",
+        "The prior broad local900-second suite remains incomplete, with no terminal suite summary; it was not repeated.",
+        "Normal exact-head CI is required and was not yet accepted when this receipt was written."
+      ],
+      "executionReceipts": [
+        {
+          "key": "nativeDiagSerializationRenderRed",
+          "jobId": "1a9903ae-31c4-47c3-8ca9-fdedda6a8e75",
+          "commandHash": "95b554c81ae42921ffebc06c3bc7aa68dc535d9445683896388cca0649ebf522",
+          "startedAt": "2026-11-21T13:14:28.715Z",
+          "finishedAt": "2026-11-21T13:14:29.221Z",
+          "exitCode": 1,
+          "signal": null,
+          "captureIncomplete": false
+        },
+        {
+          "key": "nativeDiagSerializationFinalFocused",
+          "jobId": "986135ae-9003-4417-b2b4-af70139fc284",
+          "commandHash": "ac78e64f52db5a7e8362ea98418a1585de82a59d67b8c269e50305ca29ab9a7e",
+          "startedAt": "2026-11-21T13:19:09.839Z",
+          "finishedAt": "2026-11-21T13:19:10.354Z",
+          "exitCode": 0,
+          "signal": null,
+          "captureIncomplete": false
+        },
+        {
+          "key": "nativeDiagSerializationFinalStatics",
+          "jobId": "e2d9f3e7-b84f-4587-9335-786476a476f2",
+          "commandHash": "984caf200827e3316a7b601987f0285035f65351b4d1416ce47a362d00711e5d",
+          "startedAt": "2026-11-21T13:19:11.511Z",
+          "finishedAt": "2026-11-21T13:19:32.977Z",
+          "exitCode": 0,
+          "signal": null,
+          "captureIncomplete": false
+        }
+      ]
+    },
+    "rootVerification": {
+      "receiptSha256": "e84798e4086579013510dff349cead10b16d8c58e4bf18cacf4510f33102c000",
+      "sources": [
+        {
+          "path": "services/bayn/tools/test-native-process-diagnostics.ts",
+          "blobMatches": true,
+          "shaMatches": true
+        },
+        {
+          "path": "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+          "blobMatches": true,
+          "shaMatches": true
+        },
+        {
+          "path": "services/bayn/README.md",
+          "blobMatches": true,
+          "shaMatches": true
+        },
+        {
+          "path": "services/bayn/src/opencode/server.integration.test.ts",
+          "blobMatches": true,
+          "shaMatches": true
+        }
+      ],
+      "logs": [
+        {
+          "path": "/tmp/bayn-native-diagnostic-console-render-red-20261121.log",
+          "shaMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-native-diagnostic-serialization-final-focused-20261121.log",
+          "shaMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-pr16145-13ea-amd136852001209-full-20261121.log",
+          "shaMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-native-diagnostic-serialization-tsc-20261121.log",
+          "shaMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-native-diagnostic-serialization-final-tsc-20261121.log",
+          "shaMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-native-diagnostic-serialization-final-lint-20261121.log",
+          "shaMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-native-diagnostic-serialization-final-lint-oxlint-20261121.log",
+          "shaMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-native-diagnostic-serialization-final-lint-oxlint-type-20261121.log",
+          "shaMatches": true,
+          "sizeMatches": true
+        },
+        {
+          "path": "/tmp/bayn-native-diagnostic-serialization-final-build-20261121.log",
+          "shaMatches": true,
+          "sizeMatches": true
+        }
+      ],
+      "commit": [
+        "7a60a9e32489e3b033685ffe26e7e85f28ea6316",
+        "13ea59cbabec32a5560ec0e52f543749166c9c8d",
+        "5eb2afef7bac550b293d50135a33c9588cd41bcc",
+        "Greg Konush <12027037+gregkonush@users.noreply.github.com>",
+        "Greg Konush <12027037+gregkonush@users.noreply.github.com>"
+      ],
+      "changedPaths": [
+        "services/bayn/README.md",
+        "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+        "services/bayn/tools/test-native-process-diagnostics.ts"
+      ],
+      "redLog": "bun test v1.4.2 (744846f84)\n\nservices/bayn/src/opencode/native-process-diagnostics.test.ts:\n101 |         )\n102 |       }).pipe(Effect.timeout('3 seconds'), Effect.scoped, Effect.provide(NodeServices.layer)),\n103 |     )\n104 |     expect(output.exitCode).toBe(0)\n105 |     expect(output.stderr).toBe('')\n106 |     expect(output.stdout).not.toContain('[Object')\n                                    ^\nerror: expect(received).not.toContain(expected)\n\nExpected to not contain: \"[Object\"\nReceived: \"[13:14:29.092] INFO (#2): {\\n  event: \\\"bayn.opencode-native-process-failure-test.v1\\\",\\n  phase: \\\"initial\\\",\\n  beforeOuterScopeCleanup: true,\\n  captureElapsedMs: 4,\\n  limits: {\\n    captureBudgetMs: 200,\\n    observationBudgetMs: 250,\\n    maximumFileBytes: 4096,\\n    maximumFileReads: 5,\\n  },\\n  snapshot: {\\n    availability: \\\"AVAILABLE\\\",\\n    value: {\\n      process: [Object ...],\\n      processAndWaitedChildrenIo: [Object ...],\\n      status: [Object ...],\\n      mainTaskScheduler: [Object ...],\\n    },\\n  },\\n}\\n\"\n\n      at <anonymous> (/workspace/worktrees/lab/bayn-native-diag-recovery-c4b52ba3/services/bayn/src/opencode/native-process-diagnostics.test.ts:106:31)\n(fail) default logger and Bun console preserve every allowlisted diagnostic leaf: available [120.16ms]\n101 |         )\n102 |       }).pipe(Effect.timeout('3 seconds'), Effect.scoped, Effect.provide(NodeServices.layer)),\n103 |     )\n104 |     expect(output.exitCode).toBe(0)\n105 |     expect(output.stderr).toBe('')\n106 |     expect(output.stdout).not.toContain('[Object')\n                                    ^\nerror: expect(received).not.toContain(expected)\n\nExpected to not contain: \"[Object\"\nReceived: \"[13:14:29.200] INFO (#2): {\\n  event: \\\"bayn.opencode-native-process-failure-test.v1\\\",\\n  phase: \\\"initial\\\",\\n  beforeOuterScopeCleanup: true,\\n  captureElapsedMs: 4,\\n  limits: {\\n    captureBudgetMs: 200,\\n    observationBudgetMs: 250,\\n    maximumFileBytes: 4096,\\n    maximumFileReads: 5,\\n  },\\n  snapshot: {\\n    availability: \\\"AVAILABLE\\\",\\n    value: {\\n      process: [Object ...],\\n      processAndWaitedChildrenIo: [Object ...],\\n      status: [Object ...],\\n      mainTaskScheduler: [Object ...],\\n    },\\n  },\\n}\\n\"\n\n      at <anonymous> (/workspace/worktrees/lab/bayn-native-diag-recovery-c4b52ba3/services/bayn/src/opencode/native-process-diagnostics.test.ts:106:31)\n(fail) default logger and Bun console preserve every allowlisted diagnostic leaf: unavailable [102.47ms]\n\n 0 pass\n 36 filtered out\n 2 fail\n 6 expect() calls\nRan 2 tests across 1 file. [461.00ms]\n",
+      "greenLog": "bun test v1.4.2 (744846f84)\n\nservices/bayn/src/opencode/native-process-diagnostics.test.ts:\n(pass) default logger and Bun console preserve every allowlisted diagnostic leaf: available [111.89ms]\n(pass) default logger and Bun console preserve every allowlisted diagnostic leaf: unavailable [100.98ms]\n(pass) stat parser strips the complete comm and preserves only validated numeric fields and task state [0.29ms]\n(pass) stat parser rejects malformed, truncated or unsafe values without retaining raw input: case 0 [0.44ms]\n(pass) stat parser rejects malformed, truncated or unsafe values without retaining raw input: case 1 [0.05ms]\n(pass) stat parser rejects malformed, truncated or unsafe values without retaining raw input: case 2 [0.05ms]\n(pass) stat parser rejects malformed, truncated or unsafe values without retaining raw input: case 3 [0.02ms]\n(pass) stat parser rejects malformed, truncated or unsafe values without retaining raw input: case 4 [0.03ms]\n(pass) stat parser rejects malformed, truncated or unsafe values without retaining raw input: case 5 [0.02ms]\n(pass) counter parsers allowlist values, distinguish units and preserve actual zero storage reads [0.16ms]\n(pass) invalid missing I/O remains unavailable instead of becoming zero [0.11ms]\n(pass) invalid duplicate I/O remains unavailable instead of becoming zero [0.08ms]\n(pass) invalid negative I/O remains unavailable instead of becoming zero [0.08ms]\n(pass) invalid unsafe I/O remains unavailable instead of becoming zero [0.07ms]\n(pass) invalid wrong memory units remains unavailable instead of becoming zero [0.04ms]\n(pass) invalid duplicate memory remains unavailable instead of becoming zero [0.04ms]\n(pass) invalid missing context switches remains unavailable instead of becoming zero [0.05ms]\n(pass) invalid truncated scheduler remains unavailable instead of becoming zero [0.03ms]\n(pass) invalid extra scheduler fields remains unavailable instead of becoming zero [0.02ms]\n(pass) invalid invalid scheduler remains unavailable instead of becoming zero [0.02ms]\n(pass) stable owned child emits five bounded allowlisted reads and preserves the original failure [2.63ms]\n(pass) successful readiness performs no diagnostic reads or logging [0.21ms]\n(pass) absent, exited or invalid child is unavailable without reading proc: case 0 [0.32ms]\n(pass) absent, exited or invalid child is unavailable without reading proc: case 1 [0.18ms]\n(pass) absent, exited or invalid child is unavailable without reading proc: case 2 [0.13ms]\n(pass) rejects a child identity mismatch before reading counters: {\"pid\":43763} [0.44ms]\n(pass) rejects a child identity mismatch before reading counters: {\"parent\":33763} [0.28ms]\n(pass) rejects a child identity mismatch before reading counters: {\"state\":\"Z\"} [0.20ms]\n(pass) discards all counters when final identity changed: {\"start\":123457} [0.68ms]\n(pass) discards all counters when final identity changed: {\"pid\":43763} [0.40ms]\n(pass) discards all counters when final identity changed: {\"parent\":33763} [0.39ms]\n(pass) discards all counters when final identity changed: {\"state\":\"X\"} [0.33ms]\n(pass) discards counters if the owned handle exits during collection [0.66ms]\n(pass) bounded streams reject oversized input before parsing and retain optional read failures explicitly [0.71ms]\n(pass) a never-completing proc reader is interrupted and finalized once inside the uninterruptible onExit hook [3.28ms]\n(pass) a throwing reader cannot replace or append to the original failure [0.51ms]\n(pass) a throwing logger cannot replace or append to the original failure [0.45ms]\n(pass) a serialization defect cannot replace or append to the original failure [0.64ms]\n(pass) an original defect and interruption retain their exact causes [0.85ms]\n\n 39 pass\n 0 fail\n 85 expect() calls\nRan 39 tests across 1 file. [468.00ms]\n",
+      "canonicalTypeScriptLog": "@proompteng/bayn tsc: $ find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; \"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.json\n@proompteng/bayn tsc: $ \"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.production.json\n@proompteng/bayn tsc: Exited with code 0\n",
+      "execution": {
+        "jobId": "bd4e0c35-157c-40ca-900d-76b117ce686c",
+        "commandHash": "52530a0d808665cc3db6a9ed252b9208f8a17969a6fd2a0fa2ce6763f1028038",
+        "startedAt": "2026-11-21T13:26:44.017Z",
+        "finishedAt": "2026-11-21T13:26:44.087Z",
+        "exitCode": 0,
+        "captureIncomplete": false
+      }
+    }
+  },
+  "exactHeadCi": {
+    "sourceCommit": "7a60a9e32489e3b033685ffe26e7e85f28ea6316",
+    "state": "PENDING",
+    "nativeRun": 44908364291,
+    "amdJob": 136858850647,
+    "armJob": 136858850560,
+    "limitation": "Normal new-head workflows were still queued/running when this draft evidence was assembled; no passing CI or merge is claimed."
+  },
+  "limitations": [
+    "The 267-test / 2849-assertion composition execution used temporary merge tree828b924ddf6074465161b12051d192cbd77f8b63 (13ea59 + main215cd89), not final7a60 and not a full-main suite. Later7a60 changes only the failure diagnostic helper, its tests and README.",
+    "The13ea AMD failure supplies top-level diagnostic availability and elapsed capture time but no readable nested counters; no CPU, storage, memory or scheduler cause is established.",
+    "The serialization correction preserves original timing and failure semantics; the intermittent native-readiness cause remains unresolved.",
+    "The prior900-second broad local suite remains incomplete and was not repeated.",
+    "Neither source/PR validation nor the accepted earlier6d release exercises the new consolidated Bayn publisher; only a later ordinary eligible Bayn release can establish that.",
+    "No financial authority, trading policy, risk limit, paid inference, qualification registration or historical evidence was modified."
+  ]
+}
