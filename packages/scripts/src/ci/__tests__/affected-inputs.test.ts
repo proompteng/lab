@@ -162,6 +162,47 @@ test('OpenCode CLI changes publish only the owning image', () => {
   }
 })
 
+test('OpenCode PR validation selects the PR head without publication secrets', () => {
+  const validation: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-ci.yml', 'utf8'))
+  const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-build-push.yml', 'utf8'))
+  const image = property(property(validation, 'jobs'), 'image')
+  expect(property(image, 'secrets')).toBeUndefined()
+  expect(property(image, 'if')).toBeUndefined()
+  expect(property(property(property(publication, 'jobs'), 'image'), 'if')).toBeUndefined()
+  expect(property(property(validation, 'permissions'), 'contents')).toBe('read')
+  const source = text(property(property(image, 'with'), 'source_revision')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  expect(
+    runInNewContext(source, {
+      github: { sha: 'merge-commit', event: { pull_request: { head: { sha: 'reviewed-pr-head' } } } },
+    }),
+  ).toBe('reviewed-pr-head')
+
+  const selected = (workflow: unknown, event: string, ref: string, file: string) => {
+    const trigger = property(property(workflow, 'on'), event)
+    if (trigger === undefined) return false
+    const paths = property(trigger, 'paths')
+    const branches = property(trigger, 'branches')
+    if (!Array.isArray(paths)) throw new Error('Missing OpenCode input paths')
+    return (
+      matchesPaths(file, paths.map(text)) &&
+      (!Array.isArray(branches) || matchesPaths(ref.replace(/^refs\/heads\//, ''), branches.map(text)))
+    )
+  }
+  for (const [event, ref, file, validate, publish] of [
+    ['pull_request', 'refs/pull/42/merge', '.github/workflows/opencode-ci.yml', true, false],
+    ['pull_request', 'refs/pull/42/merge', '.github/workflows/nix-oci-build-common.yml', true, false],
+    ['pull_request', 'refs/pull/42/merge', 'services/opencode/start.sh', true, false],
+    ['pull_request_target', 'refs/heads/main', 'services/opencode/start.sh', false, false],
+    ['push', 'refs/heads/main', 'services/opencode/start.sh', false, true],
+    ['push', 'refs/heads/feature', 'services/opencode/start.sh', false, false],
+    ['push', 'refs/heads/main', '.github/workflows/nix-oci-build-common.yml', false, false],
+    ['workflow_dispatch', 'refs/heads/main', 'services/opencode/start.sh', false, false],
+  ] as const) {
+    expect(selected(validation, event, ref, file)).toBe(validate)
+    expect(selected(publication, event, ref, file)).toBe(publish)
+  }
+})
+
 test('Bayn CI does not run trading qualification for orchestration and documentation changes', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
