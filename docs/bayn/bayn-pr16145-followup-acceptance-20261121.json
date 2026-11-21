@@ -2,7 +2,7 @@
   "schema": "bayn-pr16145-followup-acceptance.v1",
   "repository": "proompteng/lab",
   "pullRequest": 16145,
-  "scope": "Current-main composition, retained native startup failures, corrected failure-record rendering and bounded kernel-wait diagnostics. Source validation, normal CI and delivery acceptance are separate.",
+  "scope": "Current-main composition, retained native startup failures, corrected failure-record rendering, bounded kernel-wait diagnostics and fingerprints for strictly eligible unknown wait-channel identifiers. Source validation, normal CI and delivery acceptance are separate.",
   "composition": [
     {
       "name": "bayn-pr16145-current-main-native-composition-20261121.json",
@@ -953,26 +953,25 @@
     }
   },
   "exactHeadCi": {
-    "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
-    "state": "FAILED",
-    "nativeRun": 44914277712,
-    "runAttempt": 1,
-    "amdJob": 136876434674,
-    "armJob": 136876434948,
-    "observedAt": "2026-11-21T14:54:55.582322+00:00",
+    "sourceCommit": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+    "state": "PENDING",
+    "nativeRun": 44917443114,
+    "amdJob": 136885975590,
+    "armJob": 136885975885,
+    "observedAt": "2026-11-21T15:07:22.146813+00:00",
     "counts": {
-      "SUCCESS": 37,
-      "FAILURE": 2,
-      "SKIPPED": 25
+      "QUEUED": 13,
+      "IN_PROGRESS": 1
     },
-    "nativeWorkflowConclusion": "failure",
-    "fullPrRollupTerminal": true,
+    "nativeWorkflowStatus": "queued",
+    "nativeWorkflowConclusion": null,
+    "fullPrRollupTerminal": false,
     "mergeHeld": true,
-    "limitation": "The full current-head PR rollup is terminal. Both required native jobs failed; all other intended checks are successful or skipped. No merge or new release acceptance is claimed.",
-    "mergeState": "UNSTABLE"
+    "mergeState": "UNSTABLE",
+    "limitation": "Initial exact-head observation only; the native jobs were queued. The retained cut does not expose a run attempt or establish later execution, terminal CI, merge or release acceptance."
   },
   "limitations": [
-    "The 267-test / 2849-assertion composition execution used temporary merge tree828b924ddf6074465161b12051d192cbd77f8b63 (13ea59 + main215cd89), not finalb833 and not a full-main suite. Later7a60 andb833 changes are confined to the failure diagnostic helper, its tests and README.",
+    "The 267-test / 2,849-assertion composition execution used temporary merge tree 828b924ddf6074465161b12051d192cbd77f8b63 (13ea59 + main 215cd89), not final c9c746 and not a full-main suite. Later 7a60, b833 and c9 diagnostic changes are confined to the failure diagnostic helper, its tests and README.",
     "The13ea AMD failure supplies top-level diagnostic availability and elapsed capture time but no readable nested counters; no CPU, storage, memory or scheduler cause is established.",
     "The serialization correction preserves original timing and failure semantics; the intermittent native-readiness cause remains unresolved.",
     "The prior900-second broad local suite remains incomplete and was not repeated.",
@@ -9046,6 +9045,872 @@
     }
   },
   "priorNativeFailureCiB833": {
+    "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
+    "state": "FAILED",
+    "nativeRun": 44914277712,
+    "runAttempt": 1,
+    "amdJob": 136876434674,
+    "armJob": 136876434948,
+    "observedAt": "2026-11-21T14:54:55.582322+00:00",
+    "counts": {
+      "SUCCESS": 37,
+      "FAILURE": 2,
+      "SKIPPED": 25
+    },
+    "nativeWorkflowConclusion": "failure",
+    "fullPrRollupTerminal": true,
+    "mergeHeld": true,
+    "limitation": "The full current-head PR rollup is terminal. Both required native jobs failed; all other intended checks are successful or skipped. No merge or new release acceptance is claimed.",
+    "mergeState": "UNSTABLE"
+  },
+  "waitChannelFingerprintC9": {
+    "sourceCommit": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+    "parentCommit": "b83331091527db4166e9bfccd78e8d8065610077",
+    "tree": "c4a187ebf58e69e18c523c60bf2ba5da35029e55",
+    "inputs": [
+      {
+        "sourcePath": "/tmp/bayn-native-wchan-fingerprint-validation-20261121.json",
+        "originalSha256": "6914edbe86aac62ff1d596a119d91532a30739824e91e971c3592ee250069655",
+        "originalBytes": 10689,
+        "evidence": {
+          "schemaVersion": 1,
+          "observedAt": "2026-11-21T15:04:16.954420+00:00",
+          "baselineCommit": "b83331091527db4166e9bfccd78e8d8065610077",
+          "sessionId": "repo-bayn-native-diag-recovery-c4b52ba3",
+          "scope": "Failure-only fingerprint for strictly eligible unknown wait-channel identifiers; no production startup or timeout correction.",
+          "files": [
+            {
+              "path": "services/bayn/tools/test-native-process-diagnostics.ts",
+              "bytes": 12876,
+              "sha256": "a1b303ccf54ebe0500c3e86236120cd4f483e2bf4cff69906e4e39364d504c53",
+              "gitBlob": "1e1810d53967dda3b76596f4d2243e741b4dd2b7"
+            },
+            {
+              "path": "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+              "bytes": 29459,
+              "sha256": "c21350ec3484642a69086fd75f24f7bbf4beded300cf728d6bb04b9cfe97f286",
+              "gitBlob": "287aa08e448a4a327e2440b28d43bcb4cf62df82"
+            },
+            {
+              "path": "services/bayn/README.md",
+              "bytes": 253858,
+              "sha256": "5698a138149e95c1a45723f2035a110398d54ae846185b5c5e2d07d428b51f92",
+              "gitBlob": "6124a6efd7c36825fb11ca8ee7a7a58a513580a5"
+            },
+            {
+              "path": "services/bayn/src/opencode/server.integration.test.ts",
+              "bytes": 18454,
+              "sha256": "eb9c34612b74bde50ccd130627617d82f59df6f9d01a48e13b5e83d5035d343e",
+              "gitBlob": "ff01a25962cfea3bfcf441943e9dcb957d17e827"
+            }
+          ],
+          "exports": [
+            {
+              "path": "/tmp/bayn-native-wchan-fingerprint-final-helper-20261121.ts",
+              "bytes": 12876,
+              "sha256": "a1b303ccf54ebe0500c3e86236120cd4f483e2bf4cff69906e4e39364d504c53"
+            },
+            {
+              "path": "/tmp/bayn-native-wchan-fingerprint-final-diff-20261121.patch",
+              "bytes": 13312,
+              "sha256": "6f682184fa9a31d4d4d3dc7993f93e3b4113be0194b77e71d4a92685f2374b67"
+            }
+          ],
+          "checks": [
+            {
+              "label": "format",
+              "command": [
+                "bun",
+                "node_modules/oxfmt/bin/oxfmt",
+                "--write",
+                "services/bayn/tools/test-native-process-diagnostics.ts",
+                "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+                "services/bayn/README.md"
+              ],
+              "startedAt": "2026-11-21T14:59:53.216228+00:00",
+              "finishedAt": "2026-11-21T14:59:54.082365+00:00",
+              "elapsedSeconds": 0.866,
+              "exitCode": 0,
+              "logPath": "/tmp/bayn-native-wchan-fingerprint-format-20261121.log",
+              "bytes": 48,
+              "sha256": "f46e18779ed93114a75b5eb93b778f9433a80e190385e087396b80b5cfa096bc"
+            },
+            {
+              "label": "focused",
+              "command": ["bun", "test", "services/bayn/src/opencode/native-process-diagnostics.test.ts"],
+              "startedAt": "2026-11-21T14:59:54.082799+00:00",
+              "finishedAt": "2026-11-21T14:59:54.697817+00:00",
+              "elapsedSeconds": 0.615,
+              "exitCode": 0,
+              "logPath": "/tmp/bayn-native-wchan-fingerprint-focused-20261121.log",
+              "bytes": 11783,
+              "sha256": "57123e9dc6adbd0c02112104f5ba1804cbe1f4806718a668a95001a7ee50fd2f"
+            },
+            {
+              "label": "format-check",
+              "command": [
+                "bun",
+                "node_modules/oxfmt/bin/oxfmt",
+                "--check",
+                "services/bayn/tools/test-native-process-diagnostics.ts",
+                "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+                "services/bayn/README.md"
+              ],
+              "startedAt": "2026-11-21T15:00:33.398953+00:00",
+              "finishedAt": "2026-11-21T15:00:34.315690+00:00",
+              "elapsedSeconds": 0.917,
+              "exitCode": 0,
+              "logPath": "/tmp/bayn-native-wchan-fingerprint-format-check-20261121.log",
+              "bytes": 114,
+              "sha256": "c1d3a6c54e8a5ffd00f2646e87c39996f7182eba06f63c5b2fb75a7da3335d83"
+            },
+            {
+              "label": "tsc",
+              "command": ["bun", "run", "--filter", "@proompteng/bayn", "tsc"],
+              "startedAt": "2026-11-21T15:00:34.316149+00:00",
+              "finishedAt": "2026-11-21T15:00:47.324456+00:00",
+              "elapsedSeconds": 13.008,
+              "exitCode": 0,
+              "logPath": "/tmp/bayn-native-wchan-fingerprint-tsc-20261121.log",
+              "bytes": 431,
+              "sha256": "064a36beb2e7eaebcd8ab2caf38ce24a9afa8bb8d919080088e148c3323328ba"
+            },
+            {
+              "label": "lint",
+              "command": ["bun", "run", "--filter", "@proompteng/bayn", "lint"],
+              "startedAt": "2026-11-21T15:00:47.324863+00:00",
+              "finishedAt": "2026-11-21T15:00:48.391218+00:00",
+              "elapsedSeconds": 1.066,
+              "exitCode": 0,
+              "logPath": "/tmp/bayn-native-wchan-fingerprint-lint-20261121.log",
+              "bytes": 251,
+              "sha256": "5deeff7b52be6fed7be75804395435e5b20849e547965ebba6d790421d0c0737"
+            },
+            {
+              "label": "oxlint",
+              "command": ["bun", "run", "--filter", "@proompteng/bayn", "lint:oxlint"],
+              "startedAt": "2026-11-21T15:00:48.391649+00:00",
+              "finishedAt": "2026-11-21T15:00:48.656345+00:00",
+              "elapsedSeconds": 0.265,
+              "exitCode": 0,
+              "logPath": "/tmp/bayn-native-wchan-fingerprint-oxlint-20261121.log",
+              "bytes": 7520,
+              "sha256": "9f888a0cddedc2f86ad5a77a1571f006d7e10571e6ca9ae9662ce9f5e3f8961d"
+            },
+            {
+              "label": "oxlint-type",
+              "command": ["bun", "run", "--filter", "@proompteng/bayn", "lint:oxlint:type"],
+              "startedAt": "2026-11-21T15:00:48.656946+00:00",
+              "finishedAt": "2026-11-21T15:00:55.639778+00:00",
+              "elapsedSeconds": 6.983,
+              "exitCode": 0,
+              "logPath": "/tmp/bayn-native-wchan-fingerprint-oxlint-type-20261121.log",
+              "bytes": 28669,
+              "sha256": "69e006ae84086a782e1311de090eb06fda5ebd85254180983c167e68bce0925d"
+            },
+            {
+              "label": "build",
+              "command": ["bun", "run", "--filter", "@proompteng/bayn", "build"],
+              "startedAt": "2026-11-21T15:00:55.640206+00:00",
+              "finishedAt": "2026-11-21T15:00:55.854966+00:00",
+              "elapsedSeconds": 0.215,
+              "exitCode": 0,
+              "logPath": "/tmp/bayn-native-wchan-fingerprint-build-20261121.log",
+              "bytes": 2047,
+              "sha256": "04d2d59b51d67410bbb008ce221b6419383315f6c60c603dbeecda4e7a79a5ae"
+            },
+            {
+              "label": "readme-format",
+              "command": ["bun", "node_modules/oxfmt/bin/oxfmt", "--check", "services/bayn/README.md"],
+              "startedAt": "2026-11-21T15:04:16.007103+00:00",
+              "finishedAt": "2026-11-21T15:04:16.923585+00:00",
+              "elapsedSeconds": 0.916,
+              "exitCode": 0,
+              "logPath": "/tmp/bayn-native-wchan-fingerprint-readme-format-20261121.log",
+              "bytes": 114,
+              "sha256": "d9d397499f67ec48474772a296aceac10db4fc0ce43de41e31f07d76a4c10dbf"
+            }
+          ],
+          "focusedSummary": {
+            "pass": 117,
+            "fail": 0,
+            "assertions": 325
+          },
+          "checksSourceBinding": {
+            "helperAndTestsUnchangedAcrossAllChecks": true,
+            "canonicalTypeScriptProjects": ["tsconfig.json", "tsconfig.production.json"],
+            "ordinaryLintWarnings": 7,
+            "typedLintWarnings": 28,
+            "lintErrors": 0,
+            "lastChange": "README only: module names -> module annotations; final README formatter check passed; no code-suite rerun."
+          },
+          "goldenProvenance": {
+            "method": "Python standard-library hashlib independently computed before implementation and stored as fixed literal expected values; independently recomputed by source reviewer.",
+            "toolJobId": "c1ded6ce-92f9-4ce6-b2c0-398c3285e965",
+            "commandSha256": "5f5b2d1951f10b35ee1031a907a0ad75136fbe063d7d0b5996969cec53d4644d",
+            "domain": "bayn.opencode-native-wchan-symbol.v1",
+            "preimage": "UTF-8(domain) || 0x00 || UTF-8(trimmed-symbol)",
+            "vectors": [
+              {
+                "symbol": "private_wait_channel",
+                "sha256": "e5c886491fb18da4d6b03753ac82ffe714a22ab3f5d78901db40146276cb12f6"
+              },
+              {
+                "symbol": "unlisted_kernel_wait",
+                "sha256": "ce4d509c4a3e5cf47f2c6bbb281feba88b34850142d6b65984d19a97d26a4848"
+              }
+            ]
+          },
+          "validationJobs": [
+            {
+              "toolJobId": "01fc4243-ff95-41b8-90ea-7b9a4e0a11f8",
+              "commandSha256": "4eb3bf8a730da1714c7cc0460a85c06a759dadfb8f0a9d6681ba5857b4157664",
+              "exitCode": 0
+            },
+            {
+              "toolJobId": "646cd4e2-578d-45c8-8db7-90fd68bdbda0",
+              "commandSha256": "651c1865246bb1108049ec8f05a684f19a070373f1c06fbfc487a97708121b4d",
+              "exitCode": 0
+            }
+          ],
+          "unchangedBounds": {
+            "maximumFileReads": 7,
+            "maximumAcceptedBytesPerFile": 4096,
+            "maximumReadBytesPerFile": 4097,
+            "captureMs": 200,
+            "observationMs": 250,
+            "nativeProbeMs": 1000,
+            "nativeReadinessMs": 25000,
+            "nativeOuterTestMs": 90000,
+            "nativeTerminationGraceMs": 25000,
+            "successPathReads": 0,
+            "successPathHashing": false
+          },
+          "preservedBehaviors": [
+            "Known wait-channel enum output and zero/unrecognized parser statuses remain unchanged.",
+            "Hash computed only from already-read eligible unknown wait-channel bytes.",
+            "Owned PID, parent, start-time and running-state guards remain unchanged.",
+            "Original native Cause and finalizers remain intact even if capture/hash/serialization/logger fails.",
+            "One-line JSON logger and native integration test remain unchanged."
+          ],
+          "limitations": [
+            "Fingerprint identifies normalized bytes only; no host-kernel version, syscall, storage operation or root cause is established.",
+            "Current observations remain sequential, not an atomic process or stack snapshot.",
+            "Native startup cause remains unresolved; this is evidence capture only.",
+            "No local native OpenCode launch, runtime query, broad local suite, manual CI retry or pipeline dispatch occurred for this change.",
+            "The earlier 900-second broad local suite remains incomplete; it was not rerun or relabeled as passing."
+          ],
+          "priorHeadCI": {
+            "source": "b83331091527db4166e9bfccd78e8d8065610077",
+            "nativeWorkflowRunId": 44914277712,
+            "success": 37,
+            "failure": 2,
+            "skipped": 25,
+            "pending": 0,
+            "state": "Terminal failure; both native architectures failed.",
+            "receipt": {
+              "path": "/tmp/bayn-pr16145-b833-terminal-ci-root-20261121.json",
+              "bytes": 39516,
+              "sha256": "8fc584b90c8d38374a13cab33ad841b77dcc39bfaa22fd8979eb5952ceaf04d8"
+            }
+          },
+          "reviewState": "Pending final root review and final source-review binding; commit and push held.",
+          "gitState": {
+            "head": "b83331091527db4166e9bfccd78e8d8065610077",
+            "branch": "codex/bayn-native-diag-recovery-c4b52ba3",
+            "stagedChanges": false,
+            "changedPaths": [
+              "services/bayn/tools/test-native-process-diagnostics.ts",
+              "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+              "services/bayn/README.md"
+            ],
+            "untrackedFiles": false,
+            "diffCheckPassed": true
+          }
+        }
+      },
+      {
+        "sourcePath": "/tmp/bayn-native-wchan-fingerprint-commit-proof-20261121.json",
+        "originalSha256": "3e87ad7f65eec3dd18b40aedcfc751bb15fcdee2dd0a00ef621c9282b1a72514",
+        "originalBytes": 2476,
+        "evidence": {
+          "schemaVersion": 1,
+          "observedAt": "2026-11-21T15:06:39.029610+00:00",
+          "commit": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+          "parent": "b83331091527db4166e9bfccd78e8d8065610077",
+          "tree": "c4a187ebf58e69e18c523c60bf2ba5da35029e55",
+          "author": "Greg Konush <12027037+gregkonush@users.noreply.github.com>",
+          "committer": "Greg Konush <12027037+gregkonush@users.noreply.github.com>",
+          "commitTime": "2026-11-21T15:06:04Z",
+          "subject": "test(bayn): fingerprint unknown native wait channels",
+          "changedPaths": [
+            "services/bayn/README.md",
+            "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+            "services/bayn/tools/test-native-process-diagnostics.ts"
+          ],
+          "files": [
+            {
+              "path": "services/bayn/tools/test-native-process-diagnostics.ts",
+              "gitBlob": "1e1810d53967dda3b76596f4d2243e741b4dd2b7",
+              "bytes": 12876,
+              "sha256": "a1b303ccf54ebe0500c3e86236120cd4f483e2bf4cff69906e4e39364d504c53"
+            },
+            {
+              "path": "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+              "gitBlob": "287aa08e448a4a327e2440b28d43bcb4cf62df82",
+              "bytes": 29459,
+              "sha256": "c21350ec3484642a69086fd75f24f7bbf4beded300cf728d6bb04b9cfe97f286"
+            },
+            {
+              "path": "services/bayn/README.md",
+              "gitBlob": "6124a6efd7c36825fb11ca8ee7a7a58a513580a5",
+              "bytes": 253858,
+              "sha256": "5698a138149e95c1a45723f2035a110398d54ae846185b5c5e2d07d428b51f92"
+            },
+            {
+              "path": "services/bayn/src/opencode/server.integration.test.ts",
+              "gitBlob": "ff01a25962cfea3bfcf441943e9dcb957d17e827",
+              "bytes": 18454,
+              "sha256": "eb9c34612b74bde50ccd130627617d82f59df6f9d01a48e13b5e83d5035d343e"
+            }
+          ],
+          "approvedBlobsUnchangedByHooks": true,
+          "integrationUnchanged": true,
+          "worktreeClean": true,
+          "commitTool": {
+            "jobId": "2d09bf83-552d-42d5-bc42-86cd495d5b0d",
+            "commandSha256": "ea0107a33d7c9c966231f9379eb73fa14582d1971d9e6a414d04e79539597d22",
+            "argv": ["commit", "-m", "test(bayn): fingerprint unknown native wait channels"],
+            "exitCode": 0,
+            "normalHooks": [
+              "lefthook pre-commit: lint-staged, oxlint, oxfmt succeeded",
+              "lefthook commit-msg: commitlint succeeded"
+            ],
+            "bypassedHooks": false
+          },
+          "validationReceipt": {
+            "path": "/tmp/bayn-native-wchan-fingerprint-validation-20261121.json",
+            "sha256": "6914edbe86aac62ff1d596a119d91532a30739824e91e971c3592ee250069655"
+          },
+          "publicationState": "not_yet_pushed"
+        }
+      },
+      {
+        "sourcePath": "/tmp/bayn-pr16145-c9c746-publication-observation-20261121.json",
+        "originalSha256": "2043ebb93c17fa671f9749f50a0ea450c0f88d0193538e410e351f6bf1d07e15",
+        "originalBytes": 10615,
+        "evidence": {
+          "schemaVersion": 1,
+          "observedAt": "2026-11-21T15:07:22.146813+00:00",
+          "sourceCommit": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+          "prNumber": 16145,
+          "remoteBranch": "codex/bayn-cohort-index-publication-f8ab87c8",
+          "push": {
+            "ok": true,
+            "commandPreview": "git push origin HEAD:refs/heads/codex/bayn-cohort-index-publication-f8ab87c8",
+            "commandHash": "632c5d0f9319f8af3ba65ef26c4fd1a495ec566d9129635ccd663caf8b22ab25",
+            "jobId": "171441fa-2d01-4ee3-923a-21a784b1fee7",
+            "sessionId": "repo-bayn-native-diag-recovery-c4b52ba3",
+            "outputCaptureError": null,
+            "auditErrors": 0,
+            "taskId": "repo-bayn-native-diag-recovery-c4b52ba3",
+            "captureIncomplete": false,
+            "cwd": "/workspace/worktrees/lab/bayn-native-diag-recovery-c4b52ba3",
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false,
+            "stdout": "",
+            "stderr": "To https://github.com/proompteng/lab.git\n   b833310915..c9c7463d3b  HEAD -> codex/bayn-cohort-index-publication-f8ab87c8\n",
+            "stdoutBytes": 0,
+            "stderrBytes": 121,
+            "stdoutTruncated": false,
+            "stderrTruncated": false
+          },
+          "pushCompletionTime": null,
+          "pushCompletionTimeLimitation": "The git_write receipt did not expose a UTC completion timestamp; the subsequent exact-head PR observation establishes publication by observedAt.",
+          "pushWasNonForce": true,
+          "manualRerunOrDispatch": false,
+          "initialCISnapshot": {
+            "path": "/tmp/bayn-pr16145-c9c746-initial-ci-20261121.json",
+            "bytes": 8333,
+            "sha256": "46e5772507b78124081d8eaeb3e08549870f49e4f43bbe2c378efce313228e57"
+          },
+          "initialCI": {
+            "observedAt": "2026-11-21T15:07:22.146813+00:00",
+            "expectedHead": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+            "observedRemotePRHead": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+            "prState": "OPEN",
+            "mergeState": "UNSTABLE",
+            "prUrl": "https://github.com/proompteng/lab/pull/16145",
+            "checkCounts": {
+              "QUEUED": 13,
+              "IN_PROGRESS": 1
+            },
+            "checks": [
+              {
+                "name": "Plan changed-area validation",
+                "workflow": "CI",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443121/job/136885975533"
+              },
+              {
+                "name": "changes",
+                "workflow": "Restate images",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443105/job/136885975241"
+              },
+              {
+                "name": "Lint commit messages",
+                "workflow": "Semantic Commits",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443067/job/136885974969"
+              },
+              {
+                "name": "Validate PR title",
+                "workflow": "Semantic Pull Request",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443008/job/136885975114"
+              },
+              {
+                "name": "changes",
+                "workflow": "bayn",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443016/job/136885975214"
+              },
+              {
+                "name": "changes",
+                "workflow": "froussard",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443141/job/136885975542"
+              },
+              {
+                "name": "changes",
+                "workflow": "oirat",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443284/job/136885975797"
+              },
+              {
+                "name": "migration",
+                "workflow": "opencode",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443114/job/136885975422"
+              },
+              {
+                "name": "lint-and-test / run",
+                "workflow": "packages-scripts",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443058/job/136885975220"
+              },
+              {
+                "name": "changes",
+                "workflow": "product-nix-images",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443077/job/136885975646"
+              },
+              {
+                "name": "changes",
+                "workflow": "signal-publisher-build-push",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443251/job/136885975983"
+              },
+              {
+                "name": "changes",
+                "workflow": "bumba",
+                "status": "IN_PROGRESS",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443009/job/136885975172"
+              },
+              {
+                "name": "image / build-platform (linux/amd64, amd64, arc-amd64)",
+                "workflow": "opencode",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443114/job/136885975590"
+              },
+              {
+                "name": "image / build-platform (linux/arm64, arm64, arc-arm64)",
+                "workflow": "opencode",
+                "status": "QUEUED",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443114/job/136885975885"
+              }
+            ],
+            "runs": [
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:58Z",
+                "databaseId": 44917443251,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:58Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443251",
+                "workflowName": "signal-publisher-build-push"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:58Z",
+                "databaseId": 44917443284,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:58Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443284",
+                "workflowName": "oirat"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443008,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:57Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443008",
+                "workflowName": "Semantic Pull Request"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443016,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:57Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443016",
+                "workflowName": "bayn"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443067,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:57Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443067",
+                "workflowName": "Semantic Commits"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443077,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:57Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443077",
+                "workflowName": "product-nix-images"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443009,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "in_progress",
+                "updatedAt": "2026-11-21T15:07:19Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443009",
+                "workflowName": "bumba"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443141,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:57Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443141",
+                "workflowName": "froussard"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443114,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:57Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443114",
+                "workflowName": "opencode"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443058,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:57Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443058",
+                "workflowName": "packages-scripts"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443121,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:57Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443121",
+                "workflowName": "CI"
+              },
+              {
+                "conclusion": "",
+                "createdAt": "2026-11-21T15:06:57Z",
+                "databaseId": 44917443105,
+                "event": "pull_request",
+                "headSha": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "status": "queued",
+                "updatedAt": "2026-11-21T15:06:57Z",
+                "url": "https://github.com/proompteng/lab/actions/runs/44917443105",
+                "workflowName": "Restate images"
+              }
+            ],
+            "readOnlyCommands": [
+              [
+                "gh",
+                "pr",
+                "view",
+                "16145",
+                "--repo",
+                "proompteng/lab",
+                "--json",
+                "headRefOid,state,statusCheckRollup,mergeStateStatus,url"
+              ],
+              [
+                "gh",
+                "run",
+                "list",
+                "--repo",
+                "proompteng/lab",
+                "--commit",
+                "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+                "--limit",
+                "30",
+                "--json",
+                "databaseId,workflowName,headSha,status,conclusion,createdAt,updatedAt,event,url"
+              ]
+            ]
+          },
+          "commitProof": {
+            "path": "/tmp/bayn-native-wchan-fingerprint-commit-proof-20261121.json",
+            "sha256": "3e87ad7f65eec3dd18b40aedcfc751bb15fcdee2dd0a00ef621c9282b1a72514"
+          }
+        }
+      },
+      {
+        "sourcePath": "/tmp/bayn-native-wchan-fingerprint-root-verification-20261121.json",
+        "originalSha256": "e1da7c9401b91f641771d1227fa7698f057969fe6abd41462a36f239ae8a4996",
+        "originalBytes": 8651,
+        "evidence": {
+          "sourceReview": {
+            "receiptSha256": "6914edbe86aac62ff1d596a119d91532a30739824e91e971c3592ee250069655",
+            "sourceFiles": [
+              {
+                "path": "services/bayn/tools/test-native-process-diagnostics.ts",
+                "blob": "1e1810d53967dda3b76596f4d2243e741b4dd2b7",
+                "sha256": "a1b303ccf54ebe0500c3e86236120cd4f483e2bf4cff69906e4e39364d504c53",
+                "verified": true
+              },
+              {
+                "path": "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+                "blob": "287aa08e448a4a327e2440b28d43bcb4cf62df82",
+                "sha256": "c21350ec3484642a69086fd75f24f7bbf4beded300cf728d6bb04b9cfe97f286",
+                "verified": true
+              },
+              {
+                "path": "services/bayn/README.md",
+                "blob": "6124a6efd7c36825fb11ca8ee7a7a58a513580a5",
+                "sha256": "5698a138149e95c1a45723f2035a110398d54ae846185b5c5e2d07d428b51f92",
+                "verified": true
+              },
+              {
+                "path": "services/bayn/src/opencode/server.integration.test.ts",
+                "blob": "ff01a25962cfea3bfcf441943e9dcb957d17e827",
+                "sha256": "eb9c34612b74bde50ccd130627617d82f59df6f9d01a48e13b5e83d5035d343e",
+                "verified": true
+              }
+            ],
+            "validationLogs": [
+              {
+                "label": "format",
+                "sha256": "f46e18779ed93114a75b5eb93b778f9433a80e190385e087396b80b5cfa096bc",
+                "bytes": 48,
+                "verified": true
+              },
+              {
+                "label": "focused",
+                "sha256": "57123e9dc6adbd0c02112104f5ba1804cbe1f4806718a668a95001a7ee50fd2f",
+                "bytes": 11783,
+                "verified": true
+              },
+              {
+                "label": "format-check",
+                "sha256": "c1d3a6c54e8a5ffd00f2646e87c39996f7182eba06f63c5b2fb75a7da3335d83",
+                "bytes": 114,
+                "verified": true
+              },
+              {
+                "label": "tsc",
+                "sha256": "064a36beb2e7eaebcd8ab2caf38ce24a9afa8bb8d919080088e148c3323328ba",
+                "bytes": 431,
+                "verified": true
+              },
+              {
+                "label": "lint",
+                "sha256": "5deeff7b52be6fed7be75804395435e5b20849e547965ebba6d790421d0c0737",
+                "bytes": 251,
+                "verified": true
+              },
+              {
+                "label": "oxlint",
+                "sha256": "9f888a0cddedc2f86ad5a77a1571f006d7e10571e6ca9ae9662ce9f5e3f8961d",
+                "bytes": 7520,
+                "verified": true
+              },
+              {
+                "label": "oxlint-type",
+                "sha256": "69e006ae84086a782e1311de090eb06fda5ebd85254180983c167e68bce0925d",
+                "bytes": 28669,
+                "verified": true
+              },
+              {
+                "label": "build",
+                "sha256": "04d2d59b51d67410bbb008ce221b6419383315f6c60c603dbeecda4e7a79a5ae",
+                "bytes": 2047,
+                "verified": true
+              },
+              {
+                "label": "readme-format",
+                "sha256": "d9d397499f67ec48474772a296aceac10db4fc0ce43de41e31f07d76a4c10dbf",
+                "bytes": 114,
+                "verified": true
+              }
+            ],
+            "onlyChangeFromRootReviewedDiff": "README module names -> module annotations; code/test/integration unchanged",
+            "focusedFirstLines": [
+              "bun test v1.4.2 (744846f84)",
+              "",
+              "services/bayn/src/opencode/native-process-diagnostics.test.ts:",
+              "(pass) default logger and Bun console preserve every allowlisted diagnostic leaf: available [119.29ms]",
+              "(pass) default logger and Bun console preserve every allowlisted diagnostic leaf: fingerprinted [107.85ms]",
+              "(pass) default logger and Bun console preserve every allowlisted diagnostic leaf: invalid [108.48ms]",
+              "(pass) stat parser strips the complete comm and preserves only validated numeric fields and task state [0.25ms]",
+              "(pass) stat parser rejects malformed, truncated or unsafe values without retaining raw input: case 0 [0.41ms]"
+            ],
+            "focusedLastLines": [
+              "(pass) a throwing reader cannot replace or append to the original failure [0.33ms]",
+              "(pass) a throwing logger cannot replace or append to the original failure [0.28ms]",
+              "(pass) a serialization defect cannot replace or append to the original failure [0.49ms]",
+              "(pass) an original defect and interruption retain their exact causes [0.58ms]",
+              "",
+              " 117 pass",
+              " 0 fail",
+              " 325 expect() calls",
+              "Ran 117 tests across 1 file. [603.00ms]"
+            ],
+            "canonicalTypeScriptLog": "@proompteng/bayn tsc: $ find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; \"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.json\n@proompteng/bayn tsc: $ \"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.production.json\n@proompteng/bayn tsc: Exited with code 0\n",
+            "goldenVectorsRecomputed": true,
+            "readmeDiff": "diff --git a/services/bayn/README.md b/services/bayn/README.md\nindex ae4c97c093..6124a6efd7 100644\n--- a/services/bayn/README.md\n+++ b/services/bayn/README.md\n@@ -2592,6 +2592,15 @@ is checked against [Linux v6.18 source](https://github.com/torvalds/linux/blob/7\n which is format provenance, not a claim about the CI host's kernel version. Reads are sequential within the identity\n bracket, not an atomic stack snapshot; a wait symbol and syscall number cannot establish a particular file, device or cause.\n \n+An otherwise unknown wait-channel value can carry a fingerprint while remaining `UNRECOGNIZED_WAIT_CHANNEL`.\n+Only a trimmed ASCII C identifier of 1–128 characters qualifies. Pure hexadecimal or address-like forms, zero,\n+fixed placeholders, offsets, module annotations, paths, embedded whitespace and decorated names receive no fingerprint.\n+The record contains only the domain `bayn.opencode-native-wchan-symbol.v1` and a lowercase SHA-256 digest of\n+`UTF-8(domain) || 0x00 || UTF-8(trimmed-symbol)`. Known symbols retain their existing output without hashing.\n+Candidate public kernel symbols can be compared offline using the same recipe; a match identifies normalized bytes,\n+not the host's kernel version, a blocking operation or a cause. The helper reuses the already-read bytes within the\n+same seven-read and time budgets. Hashing failures preserve the original test failure, and raw unknown content is never emitted.\n+\n The allowlisted [process counters](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html) retain raw CPU clock ticks,\n fault counts, thread count, virtual bytes and resident pages without assuming a tick frequency or page size.\n [Status](https://man7.org/linux/man-pages/man5/proc_pid_status.5.html) memory values are approximate KiB; context switches\n",
+            "status": " M services/bayn/README.md\n M services/bayn/src/opencode/native-process-diagnostics.test.ts\n M services/bayn/tools/test-native-process-diagnostics.ts\n"
+          },
+          "committedSource": {
+            "commit": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+            "parent": "b83331091527db4166e9bfccd78e8d8065610077",
+            "tree": "c4a187ebf58e69e18c523c60bf2ba5da35029e55",
+            "author": "Greg Konush <12027037+gregkonush@users.noreply.github.com>",
+            "committer": "Greg Konush <12027037+gregkonush@users.noreply.github.com>",
+            "paths": [
+              "services/bayn/README.md",
+              "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+              "services/bayn/tools/test-native-process-diagnostics.ts"
+            ],
+            "files": [
+              {
+                "path": "services/bayn/tools/test-native-process-diagnostics.ts",
+                "gitBlob": "1e1810d53967dda3b76596f4d2243e741b4dd2b7",
+                "sha256": "a1b303ccf54ebe0500c3e86236120cd4f483e2bf4cff69906e4e39364d504c53",
+                "verified": true
+              },
+              {
+                "path": "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+                "gitBlob": "287aa08e448a4a327e2440b28d43bcb4cf62df82",
+                "sha256": "c21350ec3484642a69086fd75f24f7bbf4beded300cf728d6bb04b9cfe97f286",
+                "verified": true
+              },
+              {
+                "path": "services/bayn/README.md",
+                "gitBlob": "6124a6efd7c36825fb11ca8ee7a7a58a513580a5",
+                "sha256": "5698a138149e95c1a45723f2035a110398d54ae846185b5c5e2d07d428b51f92",
+                "verified": true
+              },
+              {
+                "path": "services/bayn/src/opencode/server.integration.test.ts",
+                "gitBlob": "ff01a25962cfea3bfcf441943e9dcb957d17e827",
+                "sha256": "eb9c34612b74bde50ccd130627617d82f59df6f9d01a48e13b5e83d5035d343e",
+                "verified": true
+              }
+            ]
+          },
+          "sourceCommit": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+          "independentSourceReview": "source_audit cleared exact final helper1e1810d53967dda3b76596f4d2243e741b4dd2b7/tests287aa08e448a4a327e2440b28d43bcb4cf62df82/README6124a6efd7c36825fb11ca8ee7a7a58a513580a5; integrationff01a259 unchanged; all final bytes verified against committed c9c7463."
+        }
+      }
+    ],
+    "eligibility": {
+      "statusPreserved": "UNRECOGNIZED_WAIT_CHANNEL",
+      "normalization": "Trim surrounding whitespace before eligibility validation.",
+      "identifier": "ASCII C identifier, 1–128 characters.",
+      "excluded": "Pure hexadecimal or address-like forms, zero, fixed placeholders, offsets, module annotations, paths, embedded whitespace and decorated names.",
+      "domain": "bayn.opencode-native-wchan-symbol.v1",
+      "preimage": "UTF-8(domain) || 0x00 || UTF-8(trimmed-symbol)",
+      "output": "Only the domain and lowercase SHA-256 digest; no raw unknown content. Known symbols retain their previous output without hashing."
+    },
+    "limits": {
+      "maximumFileReads": 7,
+      "maximumAcceptedBytesPerFile": 4096,
+      "maximumReadBytesPerFile": 4097,
+      "captureMs": 200,
+      "observationMs": 250,
+      "nativeProbeMs": 1000,
+      "nativeReadinessMs": 25000,
+      "nativeOuterTestMs": 90000,
+      "nativeTerminationGraceMs": 25000,
+      "successPathReads": 0,
+      "successPathHashing": false
+    },
+    "validationSummary": {
+      "testsPassed": 117,
+      "testsFailed": 0,
+      "assertions": 325,
+      "realConsoleCases": 3,
+      "nonHashCases": 39,
+      "canonicalTypeScriptProjects": ["tsconfig.json", "tsconfig.production.json"],
+      "validationLogsVerifiedByRoot": 9,
+      "ordinaryLintWarnings": 7,
+      "typedLintWarnings": 28,
+      "lintErrors": 0,
+      "normalCommitHooksPassed": true,
+      "helperAndTestsUnchangedAcrossChecks": true,
+      "finalReadmeOnlyChange": "module names -> module annotations; final README formatter check passed."
+    },
+    "historicalReceiptState": {
+      "validation": "The original 15:04:16 receipt retains pending final review and held commit/push.",
+      "commitProof": "The original 15:06:39 receipt retains not_yet_pushed; the later publication observation establishes the successful nonforce push by 15:07:22.",
+      "pushCompletion": "No UTC push-completion timestamp was exposed; none is invented.",
+      "priorFailedCi": "priorTerminalCiB833 preserves the preceding fully terminal37-success/2-failure/25-skip exact-head cut unchanged. priorNativeFailureCiB833 separately retains the earlier cut with four checks still active.",
+      "priorPlannedBoundary": "nativeFailureB833.nextDiagnosticBoundary remains the unchanged pre-implementation record; this section supplies later source and publication evidence."
+    },
+    "interpretationLimits": [
+      "Fingerprints identify normalized bytes only and are not anonymization; offline candidate matching need not succeed.",
+      "No fingerprint can recover the discarded b833 wait-channel content.",
+      "No host-kernel version, ABI, syscall, storage operation, wait duration or startup root cause is established.",
+      "The current measurements remain sequential, not an atomic process or stack snapshot.",
+      "This is failure-evidence capture, not a production startup correction or a passing native CI result.",
+      "The original Cause and finalizers remain intact if capture, hashing, serialization or logging fails; successful startup performs no diagnostic reads or hashing."
+    ]
+  },
+  "priorTerminalCiB833": {
     "sourceCommit": "b83331091527db4166e9bfccd78e8d8065610077",
     "state": "FAILED",
     "nativeRun": 44914277712,
