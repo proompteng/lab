@@ -268,7 +268,7 @@
     },
     {
       "id": "catalog",
-      "pattern": "^Validate Talos 1\\.14 catalog(?: \\(.*\\))?$"
+      "pattern": "^catalog(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "publish-catalog",
@@ -276,7 +276,7 @@
     },
     {
       "id": "build",
-      "pattern": "^Build .* extension(?: \\(.*\\))?$"
+      "pattern": "^build(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "publish",
@@ -285,6 +285,16 @@
     {
       "id": "installers",
       "pattern": "^Build .* installer(?: \\(.*\\))?$"
+    }
+  ],
+  "kata-validation.yml": [
+    {
+      "id": "catalog",
+      "pattern": "^Validate Talos 1\\.14 catalog(?: \\(.*\\))?$"
+    },
+    {
+      "id": "build",
+      "pattern": "^Build .* extension(?: \\(.*\\))?$"
     }
   ],
   "manual-docker-build-push.yaml": [
@@ -515,6 +525,10 @@
     {
       "id": "karapace",
       "pattern": "^karapace(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "kata",
+      "pattern": "^kata(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "khoshut",
