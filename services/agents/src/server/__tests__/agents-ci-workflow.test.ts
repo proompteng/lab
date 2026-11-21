@@ -17,6 +17,13 @@ describe('agents-ci workflow', () => {
     expect(pullRequestWorkflow).toContain('changed_files_json: ${{ needs.plan.outputs.changed_files }}')
   })
 
+  it('uses all tracked files on merge groups even when the caller passes a changed-file array', () => {
+    const workflow = readWorkflow('agents-ci.yml')
+
+    expect(workflow).toContain('if [ "${EVENT_NAME}" = merge_group ]; then\n            git ls-files')
+    expect(workflow).toContain('elif [ -n "${CHANGED_FILES_JSON}" ]; then')
+  })
+
   it('runs validation on hosted runners and gates integration on cheap checks', () => {
     const workflow = readWorkflow('agents-ci.yml')
 
