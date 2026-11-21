@@ -115,7 +115,7 @@ internal fun signBrokerNotification(
 internal class VerifiedBrokerFeed(
   private val connection: BrokerFeedConnection,
   private val client: HttpClient,
-  private val publish: suspend (String, SignedBrokerNotification) -> Unit,
+  private val publish: suspend (String, String, SignedBrokerNotification) -> Unit,
   private val now: () -> Instant = Instant::now,
   private val newSessionId: () -> String = { UUID.randomUUID().toString() },
 ) {
@@ -155,6 +155,7 @@ internal class VerifiedBrokerFeed(
           )
         publish(
           identityHash,
+          brokerFeedSha256("$identityHash\n$sessionId\nready"),
           signBrokerNotification(
             BrokerFeedNotification.SessionReady(
               eventId = brokerFeedSha256("$identityHash\n$sessionId\nready"),
@@ -178,7 +179,7 @@ internal class VerifiedBrokerFeed(
           )
         // Publication must finish durably before consuming the next update. A failure ends the
         // session; its replacement publishes a new verified readiness event for canonical gap repair.
-        publish(identityHash, signBrokerNotification(notification, connection.secretKey))
+        publish(identityHash, notification.eventId, signBrokerNotification(notification, connection.secretKey))
       },
     )
   }

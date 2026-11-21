@@ -108,6 +108,10 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
           },
           probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
+          isNotificationCovered: async () => false,
+          project: async () => {
+            throw new Error('controller integration does not project broker source events')
+          },
           invalidate: async () => undefined,
           activate: async () => {
             brokerActivations += 1
@@ -475,6 +479,10 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
                   },
                   probeProtection: async () => undefined,
                   recordNotification: async () => ({ covered: false }),
+                  isNotificationCovered: async () => false,
+                  project: async () => {
+                    throw new Error('controller integration does not project broker source events')
+                  },
                   invalidate: async () => undefined,
                   activate: () => Promise.resolve(),
                   poll: async () => {
