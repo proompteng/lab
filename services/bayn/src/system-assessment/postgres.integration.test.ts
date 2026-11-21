@@ -17,7 +17,7 @@ import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
 import { readSystemExecutionOrders } from './execution-capture'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
@@ -28,6 +28,11 @@ import { migrationLoader } from '../db/migrations'
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import { IsoDateSchema, UtcInstantSchema } from '../schemas'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import {
   activeEvaluationSessions,
   assessmentFixture,
@@ -98,7 +103,6 @@ import {
 } from './source-records'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const role = 'bayn_assessment_test_app'
 const history = {
   schemaVersion: 'bayn.system-qualification-history.v1',
   program: 'BAYN_SYSTEM_QUALIFICATION',
@@ -158,6 +162,11 @@ const makeRuntime = (url: string) =>
   )
 
 postgres('PostgreSQL prospective system qualification', () => {
+  const testUrl = baynTestPostgresUrl ?? ''
+  const role = `bayn_assessment_test_app_${crypto.randomUUID().replaceAll('-', '')}`
+  let roleCreated = false
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
   let databaseObservedAt: string | undefined
   const registration = (
@@ -176,40 +185,52 @@ postgres('PostgreSQL prospective system qualification', () => {
       priorAttemptHash: testHash(history),
     }
   }
-  beforeAll(() => {
-    const url = baynTestPostgresUrl ?? ''
-    const parsed = new URL(url)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw new Error('System qualification tests require an isolated local _test database')
-    runtime = makeRuntime(url)
-  })
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const schema = makeRuntime(url)
+      try {
+        await schema.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* postgresMigrations
+            yield* sql`CREATE ROLE ${sql(role)} NOLOGIN`
+            roleCreated = true
+            yield* sql`GRANT USAGE ON SCHEMA public TO ${sql(role)}`
+            yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO ${sql(role)}`
+            yield* sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${sql(role)}`
+          }),
+        )
+      } finally {
+        await schema.dispose()
+      }
+    })
+  }, 30000)
   beforeEach(async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-        yield* sql`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bayn_assessment_test_app') THEN
-        CREATE ROLE bayn_assessment_test_app NOLOGIN; END IF; END $$`
-        yield* sql`GRANT USAGE ON SCHEMA public TO bayn_assessment_test_app`
-        yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO bayn_assessment_test_app`
-        yield* sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO bayn_assessment_test_app`
-        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
-        databaseObservedAt = yield* databaseNow
-      }),
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
+    databaseObservedAt = await runtime.runPromise(
+      initializeQualificationHistory(history, new Set([history.historySourceHash])).pipe(Effect.andThen(databaseNow)),
     )
   }, 30000)
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
+  })
   afterAll(async () => {
-    if (runtime !== undefined) {
-      await runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          yield* sql`DROP OWNED BY bayn_assessment_test_app`
-          yield* sql`DROP ROLE bayn_assessment_test_app`
-        }),
-      )
-      await runtime.dispose()
+    try {
+      await template?.dispose()
+    } finally {
+      if (roleCreated) {
+        const admin = makeRuntime(testUrl)
+        try {
+          await admin.runPromise(Effect.flatMap(PgClient.PgClient, (sql) => sql`DROP ROLE ${sql(role)}`))
+        } finally {
+          await admin.dispose()
+        }
+      }
     }
   })
   const asApplication = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient>) =>
@@ -217,7 +238,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       const sql = yield* PgClient.PgClient
       return yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* sql.unsafe(`SET LOCAL ROLE ${role}`)
+          yield* sql`SET LOCAL ROLE ${sql(role)}`
           return yield* program
         }),
       )
