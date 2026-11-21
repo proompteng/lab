@@ -29,7 +29,6 @@ case "$(lean --version)" in
     ;;
 esac
 lean_prefix="$(lean --print-prefix)"
-"$lean_prefix/bin/lake" -q build
 bash check.sh
 
 export BAYN_FORMAL_EXECUTABLE="$project_dir/.lake/build/bin/bayn-model"
