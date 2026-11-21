@@ -1,0 +1,103 @@
+{
+  "name": "Compare hosted native Restate fault and image validation",
+  "on": {
+    "push": {
+      "branches": [
+        "codex/ci-restate-native-hosted-8f9dwp"
+      ]
+    }
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "env": {
+    "IMAGE": "registry.ide-newton.ts.net/lab/restate"
+  },
+  "jobs": {
+    "build": {
+      "name": "Restate native fault and image validation (${{ matrix.architecture }})",
+      "runs-on": "${{ matrix.runner }}",
+      "timeout-minutes": 180,
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {
+          "include": [
+            {
+              "architecture": "amd64",
+              "runner": "ubuntu-24.04"
+            },
+            {
+              "architecture": "arm64",
+              "runner": "ubuntu-24.04-arm"
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v6"
+        },
+        {
+          "uses": "oven-sh/setup-bun@v2",
+          "with": {
+            "bun-version": "1.4.2"
+          }
+        },
+        {
+          "name": "Install script dependencies",
+          "run": "bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts"
+        },
+        {
+          "name": "Resolve source metadata",
+          "id": "source",
+          "run": "set -euo pipefail\ntest \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\"\necho \"timestamp=$(git show -s --format=%cI HEAD)\" >> \"$GITHUB_OUTPUT\"\n"
+        },
+        {
+          "uses": "./.github/actions/setup-buildkit"
+        },
+        {
+          "uses": "imjasonh/setup-crane@v0.4"
+        },
+        {
+          "uses": "sigstore/cosign-installer@v3.10.0"
+        },
+        {
+          "name": "Prove metadata writes and cold-peer elections",
+          "uses": "docker/build-push-action@v6",
+          "with": {
+            "context": "services/restate",
+            "target": "evidence",
+            "platforms": "linux/${{ matrix.architecture }}",
+            "outputs": "type=local,dest=.artifacts/restate",
+            "provenance": false,
+            "cache-from": "type=gha,scope=restate-test-${{ matrix.architecture }}"
+          }
+        },
+        {
+          "name": "Build runtime",
+          "uses": "docker/build-push-action@v6",
+          "with": {
+            "context": "services/restate",
+            "platforms": "linux/${{ matrix.architecture }}",
+            "push": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}",
+            "outputs": "type=image,oci-mediatypes=true",
+            "provenance": false,
+            "tags": "${{ env.IMAGE }}:prepare-sha-${{ github.sha }}-run-${{ github.run_id }}-${{ matrix.architecture }}",
+            "labels": "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}\norg.opencontainers.image.revision=${{ github.sha }}\norg.opencontainers.image.created=${{ steps.source.outputs.timestamp }}\n",
+            "cache-from": "type=gha,scope=restate-runtime-${{ matrix.architecture }}"
+          }
+        },
+        {
+          "uses": "actions/upload-artifact@v4",
+          "id": "artifact",
+          "if": "always()",
+          "with": {
+            "name": "restate-proof-${{ matrix.architecture }}-${{ github.run_id }}",
+            "path": ".artifacts/restate",
+            "if-no-files-found": "error"
+          }
+        }
+      ]
+    }
+  }
+}
