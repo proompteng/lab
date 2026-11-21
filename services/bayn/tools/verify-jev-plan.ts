@@ -2,9 +2,7 @@ import { readFileSync } from 'node:fs'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../src/hash'
-import { JevEntryTargetSchema } from '../src/jev/decision'
-import { selectSupportedEntryProposal } from '../src/jev/entry-questions'
-import { nativeEntryProposalExitPlan } from '../src/jev/native-entry-proposal'
+import { decideJevEntry, JevEntryTargetSchema } from '../src/jev/decision'
 import { JevCandidatePlanStatus, JevCandidateResultStatus } from '../src/jev/batch'
 import { JevOutcome } from '../src/jev/evidence'
 import { Sha256Schema } from '../src/schemas'
@@ -21,6 +19,10 @@ export const verifyJevPlan = (input: unknown) => {
   if (target.evidence.observation.cycleId !== evidence.bindings.cycleId)
     throw new Error('The decision and source observation identify different cycles')
 
+  const reproduced = Result.getOrThrow(decideJevEntry(target.evidence))
+  if (Result.getOrThrow(canonicalHashV1Result(reproduced)) !== Result.getOrThrow(canonicalHashV1Result(target)))
+    throw new Error('Stored entry target differs from the single source-derived selector')
+
   for (const symbol of target.selectedSymbols) {
     const request = target.evidence.batchPlan.candidates.find((candidate) => candidate.symbol === symbol)
     const result = target.evidence.batchResult.candidates.find((candidate) => candidate.symbol === symbol)
@@ -31,23 +33,8 @@ export const verifyJevPlan = (input: unknown) => {
     )
       throw new Error('Selected entry lacks the sealed source request and completed provider evidence')
     const completion = result.receipt.outcome.completion
-    const disposition = completion.handoff.disposition
-    if (disposition.status !== 'READY' || completion.jev.status !== 'RECEIVED')
+    if (completion.handoff.disposition.status !== 'READY' || completion.jev.status !== 'RECEIVED')
       throw new Error('Selected entry has no complete sequential provider handoff')
-    const selected = Result.getOrThrow(
-      selectSupportedEntryProposal({
-        proposals: disposition.evaluation.proposals,
-        response: completion.jev.inference.response,
-      }),
-    ).selected
-    const bound = target.exitPolicy.plans[symbol]
-    if (
-      selected === null ||
-      bound === undefined ||
-      Result.getOrThrow(canonicalHashV1Result(nativeEntryProposalExitPlan(selected.proposal))) !==
-        Result.getOrThrow(canonicalHashV1Result(bound))
-    )
-      throw new Error('Bound protection differs from the source-anchored proposal selected by code')
   }
 
   return {

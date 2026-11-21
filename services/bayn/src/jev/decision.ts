@@ -10,7 +10,7 @@ import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import type { StrategyDefinition } from '../strategy/core'
 import { JevBatchPlanSchema, JevBatchResultSchema, usableEntryBatchInferences } from './batch'
 import { JevContractError } from './contract'
-import { selectSupportedEntryProposal } from './entry-questions'
+import { evaluateSupportedEntryProposals } from './entry-questions'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
@@ -34,6 +34,35 @@ export const JevDecisionEvidenceSchema = Schema.Struct({
 export type JevDecisionEvidence = typeof JevDecisionEvidenceSchema.Type
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
+
+type SupportedEntryCandidate = {
+  readonly symbol: string
+  readonly proposalId: string
+  readonly structuralSupport: number
+  readonly modeledLossMicros: bigint
+}
+
+const compareSupportedEntryCandidates = (left: SupportedEntryCandidate, right: SupportedEntryCandidate) => {
+  const supportOrder = right.structuralSupport - left.structuralSupport
+  if (supportOrder !== 0) return supportOrder
+  if (left.modeledLossMicros < right.modeledLossMicros) return -1
+  if (left.modeledLossMicros > right.modeledLossMicros) return 1
+  const symbolOrder = left.symbol.localeCompare(right.symbol)
+  return symbolOrder !== 0 ? symbolOrder : left.proposalId.localeCompare(right.proposalId)
+}
+
+export const selectJevEntryCandidatesFromSupported = <Candidate extends SupportedEntryCandidate>(
+  candidates: readonly Candidate[],
+  maximumPositions: number,
+) => {
+  const selected: Candidate[] = []
+  for (const candidate of candidates.toSorted(compareSupportedEntryCandidates)) {
+    if (selected.some((entry) => entry.symbol === candidate.symbol)) continue
+    selected.push(candidate)
+    if (selected.length === maximumPositions) break
+  }
+  return selected
+}
 
 const decisionPreparations = new WeakMap<object, { evidence: JevDecisionEvidence; batch: PreparedJevBatch }>()
 
@@ -109,7 +138,8 @@ export const selectJevEntryCandidates = (
     const entryPlanRejections: Record<string, 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS' | 'NO_FUNDED_CANDIDATES'> = {}
     const eligible: {
       symbol: string
-      judgmentSupport: number
+      proposalId: string
+      structuralSupport: number
       modeledLossMicros: bigint
       weight: number
       exitPlan: JevFundedExitPlan | ShortFundedExitPlan
@@ -126,35 +156,31 @@ export const selectJevEntryCandidates = (
       }
       if (disposition.status !== 'READY' || inference.jev.status !== 'RECEIVED')
         return yield* unavailable('Entry inference has no complete source-bound provider judgments')
-      const choice = yield* selectSupportedEntryProposal({
+      const evaluation = yield* evaluateSupportedEntryProposals({
         proposals: disposition.evaluation.proposals,
         response: inference.jev.inference.response,
       })
-      if (choice.selected === null) {
+      if (evaluation.supported.length === 0) {
         entryPlanRejections[symbol] = 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS'
         continue
       }
       if ((yield* jevEntryQuoteExclusion(quote)) !== null) continue
-      const { proposal, judgmentSupport, modeledLossMicros } = choice.selected
-      if (proposal.symbol !== symbol) return yield* unavailable('Selected proposal belongs to another symbol')
-      eligible.push({
-        symbol,
-        judgmentSupport,
-        modeledLossMicros,
-        weight: proposal.funding.maximumTargetWeight * (isShortEntryProposal(proposal) ? -1 : 1),
-        exitPlan: nativeEntryProposalExitPlan(proposal),
-      })
+      for (const { proposal, structuralSupport, modeledLossMicros } of evaluation.supported) {
+        if (proposal.symbol !== symbol) return yield* unavailable('Supported proposal belongs to another symbol')
+        eligible.push({
+          symbol,
+          proposalId: proposal.proposalId,
+          structuralSupport,
+          modeledLossMicros,
+          weight: proposal.funding.maximumTargetWeight * (isShortEntryProposal(proposal) ? -1 : 1),
+          exitPlan: nativeEntryProposalExitPlan(proposal),
+        })
+      }
     }
-    eligible.sort(
-      (left, right) =>
-        right.judgmentSupport - left.judgmentSupport ||
-        (left.modeledLossMicros < right.modeledLossMicros
-          ? -1
-          : left.modeledLossMicros > right.modeledLossMicros
-            ? 1
-            : left.symbol.localeCompare(right.symbol)),
-    )
-    return { entryPlanRejections, selected: eligible.slice(0, observation.protocol.maximumPositions) }
+    return {
+      entryPlanRejections,
+      selected: selectJevEntryCandidatesFromSupported(eligible, observation.protocol.maximumPositions),
+    }
   })
 
 export const makeChartEntryTargetMaterial = <Evidence extends { readonly decidedAt: string }>(
