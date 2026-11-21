@@ -1,6 +1,8 @@
 name: Tengri images
 
 on:
+  merge_group:
+    types: [checks_requested]
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, edited]
     paths:
@@ -30,6 +32,7 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/tengri-images.yml'
       - 'apps/landing/**'
       - 'apps/landing/package.json'
       - 'apps/landing/src/app/api/auth/**'
@@ -79,6 +82,10 @@ on:
       - tsconfig.base.json
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
+      - '!apps/landing/README.md'
+      - '!services/ofz/README.md'
+      - '!services/tengri/README.md'
+      - '!services/nanoagent/README.md'
   workflow_dispatch:
 
 concurrency:
@@ -118,7 +125,7 @@ jobs:
       - name: Install native build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler
+          sudo apt-get install --yes --no-install-recommends build-essential e2fsprogs protobuf-compiler
 
       - name: Set up Go for seccomp and guest interoperability
         uses: actions/setup-go@v6
@@ -209,18 +216,23 @@ jobs:
           GOWORK=off go vet ./...
 
   build:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    name: Build native (${{ matrix.architecture }})
-    timeout-minutes: 90
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    name: Build native (${{ format('{0}, {1}', matrix.image, matrix.architecture) }})
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
+        architecture: [amd64, arm64]
+        image: [nanoagent, tengri]
         include:
-          - architecture: amd64
-            runner: arc-amd64
-          - architecture: arm64
-            runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
+          - image: tengri
+            build_contexts: |
+              ofz-proto=proto
+              ofz-catalog=services/ofz
+              nanoagent-src=services/nanoagent
+    runs-on: arc-${{ matrix.architecture }}
+    env:
+      IMAGE: registry.ide-newton.ts.net/lab/${{ matrix.image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -228,51 +240,47 @@ jobs:
       - name: Set up Docker Buildx
         uses: ./.github/actions/setup-buildkit
 
-      - name: Build nanoagent image
+      - name: Read source timestamp
+        id: source
+        run: |
+          set -euo pipefail
+          timestamp="$(git show -s --format=%cI HEAD)"
+          printf 'timestamp=%s\n' "$timestamp" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push native image
         uses: docker/build-push-action@v6
         with:
-          context: services/nanoagent
-          build-args: SOURCE_REVISION=${{ github.sha }}
+          context: services/${{ matrix.image }}
+          build-args: ${{ matrix.image == 'tengri' && format('SOURCE_REVISION={0}', github.sha) || '' }}
+          build-contexts: ${{ matrix.build_contexts }}
           platforms: linux/${{ matrix.architecture }}
           push: true
-          tags: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
-          cache-from: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }}
-          cache-to: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          labels: |
+            org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
+          # The release images copy build artifacts out of their package and compiler stages.
+          # Keep those stages reusable across releases, including when the final artifact changes.
+          cache-to: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
           provenance: mode=max
           sbom: true
 
       - name: Verify paired boot artifact checksums
+        if: matrix.image == 'nanoagent'
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
         run: |
           set -euo pipefail
-          guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
+          guest="${IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
           directory="$(mktemp -d)"
           trap 'rm -rf "$directory"' EXIT
-          crane export --platform "linux/${ARCHITECTURE}" "$guest" "$directory/rootfs.tar"
-          tar -xf "$directory/rootfs.tar" -C "$directory" guest/
+          crane export --platform "linux/${ARCHITECTURE}" "$guest" - | tar -xf - -C "$directory" guest/
           sed 's| /guest/| ./guest/|' "$directory/guest/SHA256SUMS" > "$directory/SHA256SUMS"
           (cd "$directory" && sha256sum --check SHA256SUMS)
 
-      - name: Build tengri image
-        uses: docker/build-push-action@v6
-        with:
-          context: services/tengri
-          file: services/tengri/Dockerfile
-          build-args: SOURCE_REVISION=${{ github.sha }}
-          build-contexts: |
-            ofz-proto=proto
-            ofz-catalog=services/ofz
-          platforms: linux/${{ matrix.architecture }}
-          push: true
-          tags: ${{ env.TENGRI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
-          cache-from: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
-          cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
-          provenance: mode=max
-          sbom: true
-
   publish:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs:
       - build
       - validate-tengri
@@ -324,10 +332,6 @@ jobs:
 
             for architecture in amd64 arm64; do
               local reference="${image}:${tag}-${architecture}"
-              crane mutate --platform "linux/${architecture}" "${reference}" \
-                --label "org.opencontainers.image.created=${SOURCE_TIMESTAMP}" \
-                --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
-                --tag "${reference}" >/dev/null
               crane config --platform "linux/${architecture}" "${reference}" | jq -e \
                 --arg source_timestamp "${SOURCE_TIMESTAMP}" \
                 --arg source_sha "${SOURCE_SHA}" \

@@ -12,7 +12,7 @@ export const submissionProjectionFixture = (read: BrokerReadShape): BrokerReadSh
     fresh: read,
     invalidate: Effect.void,
     withMutation: (effect) => effect,
-    snapshot: Effect.die('This final-submission fixture does not supply reconciliation history'),
+    reconciliationSnapshot: Effect.die('This final-submission fixture does not supply reconciliation history'),
     submissionSnapshot: () =>
       Effect.all([read.positions, read.orders({ status: OrderCollection.Open, limit: 1 }), read.account], {
         concurrency: 3,

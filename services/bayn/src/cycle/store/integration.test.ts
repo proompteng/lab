@@ -10,6 +10,7 @@ import type { Statement } from 'effect/sql/Statement'
 
 import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
 import { discoverAutonomousCyclePass } from '../runner/program'
+import { DecisionReadinessReason } from '../runner/readiness'
 import { selectCycleRecovery } from '../runner/recovery-selection'
 
 import { CycleState, CycleTerminalReason, type CycleDraft } from '../model'
@@ -392,7 +393,26 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     })
   })
 
-  test('discovery preserves the pre-open block and converges on one new unbound attempt', async () => {
+  test.each([
+    {
+      name: 'pre-open block with no consumed entry window',
+      acquiredAt,
+      blockedAt: '2026-08-28T13:10:00.000Z',
+      reason: CycleTerminalReason.ProvenanceMismatch,
+      observedAt: '2026-08-28T14:12:00.000Z',
+      nextWindowDueAt: undefined,
+      expiresAt: '2026-08-28T14:13:00.000Z',
+    },
+    {
+      name: 'expired entry whose current signal window is consumed',
+      acquiredAt: '2026-08-28T14:11:11.612Z',
+      blockedAt: '2026-08-28T14:12:13.040Z',
+      reason: CycleTerminalReason.UnusedEntryExpired,
+      observedAt: '2026-08-28T14:12:13.236Z',
+      nextWindowDueAt: '2026-08-28T14:13:02.000Z',
+      expiresAt: '2026-08-28T14:14:02.000Z',
+    },
+  ])('discovery preserves $name and converges on one new unbound attempt', async (timing) => {
     const candidate = draft()
     const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
     if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('invalid policy')
@@ -428,13 +448,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
-        yield* store.acquire(candidate, acquiredAt)
-        const blocked = yield* store.block(
-          candidate.identity.cycleId,
-          CycleTerminalReason.ProvenanceMismatch,
-          '2026-08-28T13:10:00.000Z',
-        )
-        yield* TestClock.setTime(Date.parse('2026-08-28T14:12:00.000Z'))
+        yield* store.acquire(candidate, timing.acquiredAt)
+        const blocked = yield* store.block(candidate.identity.cycleId, timing.reason, timing.blockedAt)
+        yield* TestClock.setTime(Date.parse(timing.observedAt))
         const discover = discoverAutonomousCyclePass({
           cycleBindingId: qualificationRunId,
           accountId,
@@ -442,9 +458,24 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           strategyProtocolHash: candidate.identity.strategyProtocolHash,
           authorityGenerationHash: '7'.repeat(64),
           executionPolicy,
+          nextEntryWindowDueAt: () => Effect.succeed(Option.fromUndefinedOr(timing.nextWindowDueAt)),
           buildDecision: forbidden,
           buildDecisionEvidence: forbidden,
         })
+        if (timing.nextWindowDueAt !== undefined) {
+          expect(yield* discover).toMatchObject({
+            outcome: 'ALREADY_TERMINAL',
+            cycle: blocked.cycle,
+            readiness: {
+              reason: DecisionReadinessReason.SignalWindowObserved,
+              availableAt: timing.nextWindowDueAt,
+            },
+          })
+          expect(Option.getOrThrow(yield* store.read(candidate.identity.cycleId))).toEqual(blocked.cycle)
+          const sql = yield* PgClient.PgClient
+          expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_cycles`).toEqual([{ count: 1 }])
+          yield* TestClock.setTime(Date.parse(timing.nextWindowDueAt))
+        }
         const attempts = yield* Effect.all([discover, discover], { concurrency: 'unbounded' })
         const sql = yield* PgClient.PgClient
         const [intents] = yield* sql<{ count: string }>`SELECT count(*)::text AS count FROM intents`
@@ -469,7 +500,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(current.bindings).toEqual({})
     expect(current.window.executionCalendarSchemaVersion).toBe('bayn.alpaca-market-calendar-observation.v2')
     expect(current.window.submissionCutoffAt).toBe('2026-08-28T19:55:00.000Z')
-    expect(unusedEntryExpiresAt(current)).toBe(Date.parse('2026-08-28T14:13:00.000Z'))
+    expect(current.createdAt).toBe(timing.nextWindowDueAt ?? timing.observedAt)
+    expect(unusedEntryExpiresAt(current)).toBe(Date.parse(timing.expiresAt))
     expect(result.attempts.filter((attempt) => attempt.outcome === 'ACQUIRED')).toHaveLength(1)
     expect(result.intentCount).toBe('0')
   })

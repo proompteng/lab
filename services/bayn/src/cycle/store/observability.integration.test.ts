@@ -594,16 +594,19 @@ describePostgres('PostgreSQL intraday observability projection', () => {
             source_event_id, source_sequence, occurred_at, observed_at
           ) VALUES
             (${'e'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'e'.repeat(64)}, 'ORDER', 'ALPACA', ${accountId},
-              'latency-order-observed', 1, '2026-08-28T14:32:00.350Z', '2026-08-28T14:32:01.500Z'),
+              'order:latency-order:2026-08-28T14:32:00.350000000Z', 1,
+              '2026-08-28T14:32:00.350Z', '2026-08-28T14:32:01.500Z'),
             (${'f'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'f'.repeat(64)}, 'FILL', 'ALPACA', ${accountId},
               'latency-fill-observed', 2, '2026-08-28T14:32:00.800Z', '2026-08-28T14:32:02.000Z')`
               yield* sql`
           INSERT INTO orders (
             event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
-            side, order_type, time_in_force, quantity_atoms, filled_quantity_atoms, limit_price_micros, status
+            side, order_type, time_in_force, quantity_atoms, filled_quantity_atoms, limit_price_micros, status,
+            broker_updated_at
           ) VALUES (
             ${'e'.repeat(64)}, ${accountId}, 'bayn.order.v3', 'latency-order', 'bayn-observability-unresolved',
-            ${'6'.repeat(64)}, 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 500000, 1000000, 'CANCELED'
+            ${'6'.repeat(64)}, 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 500000, 1000000, 'CANCELED',
+            '2026-08-28T14:32:00.350000000Z'
           )`
               yield* sql`
           INSERT INTO fills (

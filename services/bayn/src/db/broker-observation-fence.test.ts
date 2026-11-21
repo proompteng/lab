@@ -36,7 +36,7 @@ const projectedRead = (fences: readonly PendingFences[], admitted = false, broke
     const snapshot = observedBrokerSnapshotFixture(accountId, at)
     const snapshotHash = Result.getOrThrow(canonicalHashV1Result(snapshot))
     const stateHash = Result.getOrThrow(canonicalHashV1Result({ snapshotHash, state: observedBrokerState(snapshot) }))
-    const row = { snapshot_hash: snapshotHash, state_hash: stateHash, observedAt: at }
+    const row = { generation: 1, snapshot_hash: snapshotHash, state_hash: stateHash, observedAt: at }
     let publishing = true
     let reads = 0
     let span: Tracer.Span | undefined

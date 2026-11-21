@@ -6,7 +6,7 @@ import type { BrokerEventInput, PositionSnapshotInput, ValuationInput } from '..
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../../hash'
 import type { AccountingReceipt, Valuation } from '../../execution/contracts'
 import type { EventReceipt, PositionSnapshotReceipt } from './contract'
-import type { AccountRow, EventIdRow, EventRow, PositionRow, PositionSnapshotRow } from './rows'
+import type { AccountRow, CurrentOrderVersionRow, EventIdRow, EventRow, PositionRow, PositionSnapshotRow } from './rows'
 import { EventKind } from './rows'
 
 import { utcInstantFromEpochMillisResult } from '../../time'
@@ -166,6 +166,47 @@ export const decideBrokerEventAppend = (
       deduplicated: true,
     },
   })
+}
+
+export type OrderVersionDecision =
+  | { readonly _tag: 'AcceptOrderVersion' }
+  | { readonly _tag: 'SupersedeOrderVersion'; readonly receipt: EventReceipt }
+
+export const decideOrderVersion = (
+  input: Extract<BrokerEventInput, { readonly _tag: 'Order' }>,
+  current: CurrentOrderVersionRow | undefined,
+): Result.Result<OrderVersionDecision, ExecutionStoreDecisionFailure> => {
+  if (current === undefined || current.broker_updated_at < input.sourceTimestamp)
+    return Result.succeed({ _tag: 'AcceptOrderVersion' })
+  if (current.broker_updated_at > input.sourceTimestamp)
+    return Result.succeed({
+      _tag: 'SupersedeOrderVersion',
+      receipt: {
+        eventId: current.event_id,
+        sourceSequence: current.source_sequence,
+        deduplicated: true,
+        superseded: true,
+      },
+    })
+  return current.source_event_id === input.sourceEventId
+    ? Result.succeed({ _tag: 'AcceptOrderVersion' })
+    : fail('conflict', 'broker order provider version was reused with a different source identity')
+}
+
+export const selectLatestOrderVersions = (
+  inputs: readonly Extract<BrokerEventInput, { readonly _tag: 'Order' }>[],
+): Result.Result<readonly Extract<BrokerEventInput, { readonly _tag: 'Order' }>[], ExecutionStoreDecisionFailure> => {
+  const latest = new Map<string, Extract<BrokerEventInput, { readonly _tag: 'Order' }>>()
+  for (const input of inputs) {
+    const current = latest.get(input.order.brokerOrderId)
+    if (current === undefined || current.sourceTimestamp < input.sourceTimestamp) {
+      latest.set(input.order.brokerOrderId, input)
+      continue
+    }
+    if (current.sourceTimestamp === input.sourceTimestamp && current.sourceEventId !== input.sourceEventId)
+      return fail('conflict', 'broker order provider version was reused with a different source identity')
+  }
+  return Result.succeed([...latest.values()])
 }
 
 export const decideNextSourceSequence = (lastSequence: string): Result.Result<string, ExecutionStoreDecisionFailure> =>
