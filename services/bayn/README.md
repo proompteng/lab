@@ -2480,8 +2480,8 @@ The CI default test budget is 15 seconds for full research fixtures on shared ru
 Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
 four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
 runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. Never run concurrent shards against
-the same database. The Jev batch suite requires a local PostgreSQL role with `CREATEDB`. It migrates a suite fixture
-once, then clones and removes a separate database for each test. ClickHouse/Java archive checks and
+the same database. The Jev batch and migration cutover suites require a local PostgreSQL role with `CREATEDB`.
+They migrate each suite fixture once, then clone and remove a separate database for each test. ClickHouse/Java archive checks and
 PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
 
