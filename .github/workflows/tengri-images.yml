@@ -107,21 +107,23 @@ jobs:
   build:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     name: Build native (${{ format('{0}, {1}', matrix.image, matrix.architecture) }})
-    timeout-minutes: ${{ matrix.image == 'nanoagent' && 360 || 240 }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         architecture: [amd64, arm64]
         image: [nanoagent, tengri]
         include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
           - image: tengri
             build_contexts: |
               ofz-proto=proto
               ofz-catalog=services/ofz
               nanoagent-src=services/nanoagent
-    runs-on: arc-${{ matrix.architecture }}
-    env:
-      IMAGE: registry.ide-newton.ts.net/lab/${{ matrix.image }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -136,37 +138,29 @@ jobs:
           timestamp="$(git show -s --format=%cI HEAD)"
           printf 'timestamp=%s\n' "$timestamp" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push native image
+      - name: Build native image archive
         uses: docker/build-push-action@v6
         with:
           context: services/${{ matrix.image }}
           build-args: ${{ matrix.image == 'tengri' && format('SOURCE_REVISION={0}', github.sha) || '' }}
           build-contexts: ${{ matrix.build_contexts }}
           platforms: linux/${{ matrix.architecture }}
-          push: true
-          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          outputs: type=oci,dest=${{ runner.temp }}/${{ matrix.image }}-${{ matrix.architecture }}.tar
           labels: |
             org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
-          # The release images copy build artifacts out of their package and compiler stages.
-          # Keep those stages reusable across releases, including when the final artifact changes.
-          cache-to: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
           provenance: mode=max
           sbom: true
 
-      - name: Verify paired boot artifact checksums
-        if: matrix.image == 'nanoagent'
-        env:
-          ARCHITECTURE: ${{ matrix.architecture }}
-        run: |
-          set -euo pipefail
-          guest="${IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
-          directory="$(mktemp -d)"
-          trap 'rm -rf "$directory"' EXIT
-          crane export --platform "linux/${ARCHITECTURE}" "$guest" - | tar -xf - -C "$directory" guest/
-          sed 's| /guest/| ./guest/|' "$directory/guest/SHA256SUMS" > "$directory/SHA256SUMS"
-          (cd "$directory" && sha256sum --check SHA256SUMS)
+      - name: Hand native image to publisher
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-native-${{ matrix.image }}-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/${{ matrix.image }}-${{ matrix.architecture }}.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+          overwrite: true
 
   publish:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
@@ -174,7 +168,7 @@ jobs:
       - build
       - validate
     runs-on: arc-amd64
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -196,6 +190,42 @@ jobs:
 
       - name: Verify pinned Cosign
         run: cosign version
+
+      - name: Download native image archives
+        uses: actions/download-artifact@v5
+        with:
+          pattern: tengri-native-*
+          path: ${{ runner.temp }}/tengri-native
+          merge-multiple: true
+
+      - name: Import native images into the private registry
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          for image in "$TENGRI_IMAGE" "$NANOAGENT_IMAGE"; do
+            service="${image##*/}"
+            for architecture in amd64 arm64; do
+              archive="$RUNNER_TEMP/tengri-native/$service-$architecture.tar"
+              regctl image import "$image:sha-$SOURCE_SHA-$architecture" "$archive"
+              rm "$archive"
+            done
+          done
+
+      - name: Verify paired boot artifact checksums
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          directory="$(mktemp -d)"
+          trap 'rm -rf "$directory"' EXIT
+          for architecture in amd64 arm64; do
+            guest="$NANOAGENT_IMAGE:sha-$SOURCE_SHA-$architecture"
+            crane export --platform "linux/$architecture" "$guest" - | tar -xf - -C "$directory" guest/
+            sed 's| /guest/| ./guest/|' "$directory/guest/SHA256SUMS" > "$directory/SHA256SUMS"
+            (cd "$directory" && sha256sum --check SHA256SUMS)
+            rm -r "$directory/guest"
+          done
 
       - name: Publish, verify, and sign multi-architecture images
         id: images

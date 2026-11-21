@@ -52,11 +52,14 @@ describe('Tengri image workflow', () => {
     expect(workflow.on).not.toHaveProperty('merge_group')
     expect(workflow.jobs.build?.if).toBe(mainPublication)
     expect(workflow.jobs.publish?.if).toBe(mainPublication)
-    expect(workflow.jobs.build?.['runs-on']).toBe('arc-${{ matrix.architecture }}')
+    expect(workflow.jobs.build?.['runs-on']).toBe('${{ matrix.runner }}')
+    expect(workflow.jobs.publish?.['runs-on']).toBe('arc-amd64')
     expect(workflow.jobs.build?.strategy?.matrix).toEqual({
       architecture: ['amd64', 'arm64'],
       image: ['nanoagent', 'tengri'],
       include: [
+        { architecture: 'amd64', runner: 'ubuntu-24.04' },
+        { architecture: 'arm64', runner: 'ubuntu-24.04-arm' },
         {
           image: 'tengri',
           build_contexts: 'ofz-proto=proto\nofz-catalog=services/ofz\nnanoagent-src=services/nanoagent\n',
@@ -67,23 +70,34 @@ describe('Tengri image workflow', () => {
     expect(workflow.jobs.validate?.if).toBe("github.event.action != 'edited' || github.event.changes.base")
     expect(workflow.jobs.validate?.uses).toBe('./.github/workflows/tengri-validation.yml')
     const steps = workflow.jobs.build.steps
+    const publisher = workflow.jobs.publish.steps
     expect(steps.filter((step) => step.uses === './.github/actions/setup-buildkit')).toHaveLength(1)
     const build = steps.find((step) => step.uses === 'docker/build-push-action@v6')
-    const pairedBoot = steps.find((step) => step.name === 'Verify paired boot artifact checksums')
-    if (!build || !pairedBoot) throw new Error('Native build or guest verification step is missing')
+    const upload = steps.find((step) => step.uses === 'actions/upload-artifact@v4')
+    const importImages = publisher.find((step) => step.name === 'Import native images into the private registry')
+    const pairedBoot = publisher.find((step) => step.name === 'Verify paired boot artifact checksums')
+    const sign = publisher.find((step) => step.name === 'Publish, verify, and sign multi-architecture images')
+    if (!build || !upload || !importImages || !pairedBoot || !sign) {
+      throw new Error('Native image handoff or publication step is missing')
+    }
     expect(build.with?.context).toBe('services/${{ matrix.image }}')
-    expect(build.with?.push).toBe(true)
+    expect(build.with?.outputs).toBe(
+      'type=oci,dest=${{ runner.temp }}/${{ matrix.image }}-${{ matrix.architecture }}.tar',
+    )
+    expect(build.with?.push).toBeUndefined()
+    expect(build.with?.['cache-to']).toBeUndefined()
+    expect(build.with?.sbom).toBe(true)
+    expect(build.with?.provenance).toBe('mode=max')
     expect(build.with?.['build-contexts']).toBe('${{ matrix.build_contexts }}')
     expect(build.with?.['build-args']).toContain(
       "matrix.image == 'tengri' && format('SOURCE_REVISION={0}', github.sha)",
     )
-    const cache = 'type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}'
-    expect(build.with?.['cache-from']).toBe(cache)
-    expect(build.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
     expect(build['continue-on-error']).not.toBe(true)
-    expect(pairedBoot.if).toBe("matrix.image == 'nanoagent'")
-    expect(steps.indexOf(pairedBoot)).toBeGreaterThan(steps.indexOf(build))
-    expect(pairedBoot.run).toContain('crane export --platform "linux/${ARCHITECTURE}" "$guest" - | tar -xf -')
+    expect(upload.with?.['if-no-files-found']).toBe('error')
+    expect(upload.with?.['compression-level']).toBe(0)
+    expect(publisher.indexOf(pairedBoot)).toBeGreaterThan(publisher.indexOf(importImages))
+    expect(publisher.indexOf(sign)).toBeGreaterThan(publisher.indexOf(pairedBoot))
+    expect(pairedBoot.run).toContain('crane export --platform "linux/$architecture" "$guest" - | tar -xf -')
     expect(pairedBoot.run).toContain('sha256sum --check SHA256SUMS')
     expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
 
