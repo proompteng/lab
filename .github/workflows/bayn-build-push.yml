@@ -18,9 +18,12 @@ on:
       - 'services/bayn/**'
       # Tests and operating guides do not reactivate the production controller.
       - '!services/bayn/**/*.test.ts'
+      - '!services/bayn/src/testing/postgres-template.test-support.ts'
       - '!services/bayn/formal/**'
       - '!services/bayn/README.md'
       - '!services/bayn/tools/test-*.ts'
+      - '!services/bayn/tools/postgres-file-preload.ts'
+      - '!services/bayn/tools/postgres-test-databases.ts'
       - '!services/bayn/tools/ci-*-timings.json'
       - '!services/bayn/tools/verify-image-metadata.ts'
       - '!services/bayn/scripts/test-streaming-integrations.sh'
