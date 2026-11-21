@@ -2574,6 +2574,25 @@ binding its socket and attaching its request handler without extending readiness
 shutdown allows 25 seconds for SIGTERM, including the native server's 20-second graceful drain, before escalating
 to SIGKILL for a child that has not exited.
 
+The native integration test records one failure-only process snapshot before outer test-scope cleanup. It checks that its owned
+child is still running before and after five bounded reads, and requires the PID, parent and kernel start time to agree.
+The capture has a 200 ms budget inside a 250 ms observation budget; each read stops at 4,097 bytes and rejects content
+above 4,096 bytes. Missing, malformed, oversized, changed-identity and timed-out observations remain explicitly
+unavailable. Diagnostic read, parser and logger failures preserve the original test failure. Successful starts perform
+no additional reads; all readiness, probe, outer-test and shutdown deadlines remain unchanged.
+
+The allowlisted [process counters](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html) retain raw CPU clock ticks,
+fault counts, thread count, virtual bytes and resident pages without assuming a tick frequency or page size.
+[Status](https://man7.org/linux/man-pages/man5/proc_pid_status.5.html) memory values are approximate KiB; context switches
+and [scheduler counters](https://docs.kernel.org/scheduler/sched-stats.html) describe the main task, not every worker.
+Scheduler counters can remain zero when accounting is disabled; their presence does not establish that it is enabled.
+[I/O accounting](https://man7.org/linux/man-pages/man5/proc_pid_io.5.html) includes the process and its waited-for children;
+syscall bytes differ from storage bytes, and zero storage reads do not prove absence of filesystem work. A single
+cumulative sample cannot establish utilization, latency, an initialization stage or a storage cause. It is not a cgroup
+measurement or a pre-spawn identity baseline. No command, environment, pathname, process name, file body or arbitrary
+error text is emitted, and native child stdout/stderr remain suppressed. If the observation or its logger cannot finish,
+the extra record can be absent; the original test failure still takes precedence.
+
 New Flamingo research registrations pin the vLLM 0.34.0 serving image introduced by
 [the reviewed Flamingo upgrade](https://github.com/proompteng/lab/commit/66badfc269c0cbaa69c150cd46cb35475e7b6890),
 while keeping the same Qwen 3.8 checkpoint, tokenizer and chat template. Retained receipt decoding freezes all four
