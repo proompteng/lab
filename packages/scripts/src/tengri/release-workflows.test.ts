@@ -97,8 +97,8 @@ describe('Tengri image workflow', () => {
     expect(upload.with?.['compression-level']).toBe(0)
     expect(publisher.indexOf(pairedBoot)).toBeGreaterThan(publisher.indexOf(importImages))
     expect(publisher.indexOf(sign)).toBeGreaterThan(publisher.indexOf(pairedBoot))
-    expect(pairedBoot.run).toContain('crane export --platform "linux/$architecture" "$guest" - | tar -xf -')
-    expect(pairedBoot.run).toContain('sha256sum --check SHA256SUMS')
+    expect(pairedBoot.run).toContain('crane export --platform "linux/$architecture" "$guest" - |')
+    expect(pairedBoot.run).toContain('python3 services/nanoagent/verify-boot-archive.py')
     expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
 
     const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
