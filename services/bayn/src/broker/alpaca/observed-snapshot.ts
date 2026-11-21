@@ -314,8 +314,13 @@ export interface BrokerObservationTicket {
   readonly generation: number
   readonly startedAt: string
 }
+export interface ReconciliableBrokerObservation {
+  readonly observation: ObservedBrokerSnapshot
+  readonly complete: Effect.Effect<void, BrokerReadError>
+}
 export interface BrokerObservationsShape {
   readonly read: Effect.Effect<ObservedBrokerSnapshot, BrokerReadError>
+  readonly readForReconciliation: Effect.Effect<ReconciliableBrokerObservation, BrokerReadError>
   readonly readState: Effect.Effect<ObservedBrokerState, BrokerReadError>
   readonly readForSubmit: (intentId: string) => Effect.Effect<ObservedBrokerState, BrokerReadError>
   readonly invalidate: Effect.Effect<void, BrokerReadError>
