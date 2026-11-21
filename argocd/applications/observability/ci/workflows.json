@@ -425,6 +425,10 @@
       "pattern": "^Torghut notebooks(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "queue-services",
+      "pattern": "^Queue service validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "ci-pr",
       "pattern": "^ci-pr(?: \\(.*\\))?$"
     }
