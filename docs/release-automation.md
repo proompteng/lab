@@ -82,6 +82,12 @@ Ofz, Tengri, Nanoagent and Proompteng form one release cohort in the `ofz` Wareh
 must name the same source commit and publish the same `ai.proompteng.tengri-schema` fingerprint. Ofz retains its
 successful run-qualified build receipt; Tengri and Nanoagent retain their paired native qualification gate. The three
 production workflows watch the same cohort inputs so a component change cannot strand a partially built release.
+The four component READMEs are excluded from publication triggers. A push with a changed runtime input still
+publishes the full cohort.
+
+Tengri and Nanoagent build on native GitHub-hosted Linux runners. Each build hands an OCI archive with its
+provenance and SBOM to the private publisher. The publisher imports all four architecture images, verifies
+the paired guest boot checksums and source labels, and signs the indexes before exposing Kargo aliases.
 
 The `ofz` Stage promotes first. Its Argo sync must finish the checksum-bound `migrate-runtime` hook and the healthy
 Ofz rollout before Freight is verified. The `tengri` Stage accepts only that verified upstream Freight, and

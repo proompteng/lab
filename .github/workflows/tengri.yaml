@@ -10,6 +10,8 @@ on:
       - 'packages/design/**'
       - 'services/nanoagent/**'
       - 'services/tengri/**'
+      - 'services/ofz/Cargo.lock'
+      - 'services/ofz/Cargo.toml'
       - 'bun.lock'
       - '.github/workflows/tengri.yaml'
       - '.github/scripts/install-tengri-chromium.mjs'
@@ -61,10 +63,21 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: landing-editor-acceptance
-          workspaces: services/tengri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+          workspaces: |
+            services/tengri -> target
+            services/ofz -> target
 
       - name: Install browser acceptance prerequisites
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler iproute2
+
+      - name: Compile editor acceptance Rust dependencies
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          (cd services/ofz && cargo build --locked)
+          cargo test --locked --manifest-path services/tengri/Cargo.toml editor_browser_acceptance_fixture --no-run
 
       - name: Build desktop for browser acceptance
         run: bun run --cwd apps/landing build

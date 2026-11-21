@@ -17,7 +17,7 @@ import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
 import { readSystemExecutionOrders } from './execution-capture'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
@@ -28,6 +28,11 @@ import { migrationLoader } from '../db/migrations'
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import { IsoDateSchema, UtcInstantSchema } from '../schemas'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import {
   activeEvaluationSessions,
   assessmentFixture,
@@ -72,6 +77,7 @@ import { makePostgresMutationStore } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { formalModelExecutable, runFormalModel } from './formal-model.test-support'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { sourceTimestamp } from '../broker/observations'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument, retainedJevProtocolV40Document } from '../jev/protocol'
@@ -104,7 +110,6 @@ import {
 } from './source-records'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const role = 'bayn_assessment_test_app'
 const history = {
   schemaVersion: 'bayn.system-qualification-history.v1',
   program: 'BAYN_SYSTEM_QUALIFICATION',
@@ -163,6 +168,11 @@ const makeRuntime = (url: string) =>
   )
 
 postgres('PostgreSQL prospective system qualification', () => {
+  const testUrl = baynTestPostgresUrl ?? ''
+  const role = `bayn_assessment_test_app_${crypto.randomUUID().replaceAll('-', '')}`
+  let roleCreated = false
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
   let databaseObservedAt: string | undefined
   const retainedRegistration = (
@@ -192,46 +202,59 @@ postgres('PostgreSQL prospective system qualification', () => {
           loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= lastMigration))),
           table: 'schema_migrations',
         })
-        yield* sql`GRANT USAGE ON SCHEMA public TO bayn_assessment_test_app`
-        yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO bayn_assessment_test_app`
+        yield* sql`GRANT USAGE ON SCHEMA public TO ${sql(role)}`
+        yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO ${sql(role)}`
+        yield* sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${sql(role)}`
         yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
         databaseObservedAt = yield* databaseNow
       }),
     )
-  beforeAll(() => {
-    const url = baynTestPostgresUrl ?? ''
-    const parsed = new URL(url)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw new Error('System qualification tests require an isolated local _test database')
-    runtime = makeRuntime(url)
-  })
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const schema = makeRuntime(url)
+      try {
+        await schema.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* postgresMigrations
+            yield* sql`CREATE ROLE ${sql(role)} NOLOGIN`
+            roleCreated = true
+            yield* sql`GRANT USAGE ON SCHEMA public TO ${sql(role)}`
+            yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO ${sql(role)}`
+            yield* sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${sql(role)}`
+          }),
+        )
+      } finally {
+        await schema.dispose()
+      }
+    })
+  }, 30000)
   beforeEach(async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-        yield* sql`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bayn_assessment_test_app') THEN
-        CREATE ROLE bayn_assessment_test_app NOLOGIN; END IF; END $$`
-        yield* sql`GRANT USAGE ON SCHEMA public TO bayn_assessment_test_app`
-        yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO bayn_assessment_test_app`
-        yield* sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO bayn_assessment_test_app`
-        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
-        databaseObservedAt = yield* databaseNow
-      }),
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
+    databaseObservedAt = await runtime.runPromise(
+      initializeQualificationHistory(history, new Set([history.historySourceHash])).pipe(Effect.andThen(databaseNow)),
     )
   }, 30000)
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
+  })
   afterAll(async () => {
-    if (runtime !== undefined) {
-      await runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          yield* sql`DROP OWNED BY bayn_assessment_test_app`
-          yield* sql`DROP ROLE bayn_assessment_test_app`
-        }),
-      )
-      await runtime.dispose()
+    try {
+      await template?.dispose()
+    } finally {
+      if (roleCreated) {
+        const admin = makeRuntime(testUrl)
+        try {
+          await admin.runPromise(Effect.flatMap(PgClient.PgClient, (sql) => sql`DROP ROLE ${sql(role)}`))
+        } finally {
+          await admin.dispose()
+        }
+      }
     }
   })
   const asApplication = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient>) =>
@@ -239,7 +262,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       const sql = yield* PgClient.PgClient
       return yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* sql.unsafe(`SET LOCAL ROLE ${role}`)
+          yield* sql`SET LOCAL ROLE ${sql(role)}`
           return yield* program
         }),
       )
@@ -1487,7 +1510,7 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   test.each([
     ['conditional confidence', 181, JevAcceptanceVersion.RetainedV5, 'bayn.system-registration.v3'],
-    ['native calendar', 205, JevAcceptanceVersion.Current, 'bayn.system-registration.v4'],
+    ['native calendar', 206, JevAcceptanceVersion.Current, 'bayn.system-registration.v4'],
   ] as const)(
     '%s migration preserves the previous registration, receipt and attempt chain',
     async (_, prior, version, schema) => {
@@ -2029,7 +2052,7 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('the deferred deadline rejects a transaction that crosses the first market open', async () => {
-    await restorePriorAdmission(205)
+    await restorePriorAdmission(206)
     const first = retainedRegistration()
     const now = Date.parse(await runtime.runPromise(databaseNow))
     const openAt = new Date(now + 2000).toISOString()
@@ -2403,18 +2426,21 @@ postgres('PostgreSQL prospective system qualification', () => {
         ]
         for (const [sequence, row] of observations.entries()) {
           const order = row.order
+          const providerUpdatedAt = Result.getOrThrow(sourceTimestamp(row.occurredAt))
+          const sourceEventId = `order:${order.brokerOrderId}:${providerUpdatedAt}`
           yield* sql.withTransaction(
             Effect.gen(function* () {
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
           source_event_id,source_sequence,occurred_at,observed_at)
           VALUES(${row.eventId},'bayn.paper-broker-event.v1',${row.eventId},'ORDER','ALPACA',${account},
-            ${row.eventId},${sequence},${row.occurredAt},${order.observedAt})`
+            ${sourceEventId},${sequence},${row.occurredAt},${order.observedAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
           symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,
-          parent_broker_order_id,status)
+          parent_broker_order_id,status,broker_updated_at)
           VALUES(${row.eventId},${account},${order.schemaVersion},${order.brokerOrderId},${order.clientOrderId},${intentId},
             ${order.symbol},${order.side},${order.orderType},${order.timeInForce},${order.quantityAtoms},${order.filledQuantityAtoms},
-            ${order.limitPriceMicros},${order.stopPriceMicros ?? null},${order.parentBrokerOrderId ?? null},${order.status})`
+            ${order.limitPriceMicros},${order.stopPriceMicros ?? null},${order.parentBrokerOrderId ?? null},${order.status},
+            ${providerUpdatedAt})`
             }),
           )
         }
@@ -2831,7 +2857,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     })
 
   const activeEvaluation = async (retained = false) => {
-    if (!retained) await restorePriorAdmission(205)
+    if (!retained) await restorePriorAdmission(206)
     const base = retainedRegistration(20, retained ? JevAcceptanceVersion.RetainedV3 : JevAcceptanceVersion.Current)
     const { opens, sessions } = activeEvaluationSessions(Date.now())
     const value = withRegistrationCommitments({ ...base, calendar: { ...base.calendar, sessions } })

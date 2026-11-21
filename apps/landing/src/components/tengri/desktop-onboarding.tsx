@@ -414,7 +414,7 @@ function SleepingAgentWindow({
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <Moon className="h-7 w-7 text-[#b7a6ff]" />}
       title={busy ? 'Waking your agent' : `${agent.displayName} is sleeping`}
-      detail="Your workspace, running processes, and Codex state are saved to disk."
+      detail="Your files and chat history are saved."
       error={error}
       actionIcon={<Play aria-hidden="true" className="h-4 w-4 fill-current" />}
       actionBusy={busy}

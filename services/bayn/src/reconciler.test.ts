@@ -838,6 +838,55 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual([])
   })
 
+  test.each([true, false])(
+    'advances projected stream coverage only after financially exact persistence: %s',
+    async (accountingExact) => {
+      const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+      const baseStore = makeStore(control)
+      const store: TestStore = accountingExact
+        ? baseStore
+        : {
+            ...baseStore,
+            reconcile: (accountId, snapshot) =>
+              baseStore.reconcile(accountId, snapshot).pipe(
+                Effect.map(({ snapshot: reconciled, persisted }) => ({
+                  snapshot: reconciled,
+                  persisted: {
+                    ...persisted,
+                    metrics: { ...persisted.metrics, accountingExact: false },
+                  },
+                })),
+              ),
+          }
+      const fresh = emptyRead()
+      const stable = {
+        account: { value: account, evidence: evidence('projected-account') },
+        positions: { value: [], evidence: evidence('projected-positions') },
+        history: { orders: { rows: [], observedAt }, fills: [], fees: [] },
+      }
+      let completions = 0
+      const read: BrokerReadShape = {
+        ...fresh,
+        projection: {
+          fresh,
+          reconciliationSnapshot: Effect.succeed({
+            snapshot: stable,
+            complete: Effect.sync(() => {
+              expect(control.reconciliations).toHaveLength(1)
+              completions += 1
+            }),
+          }),
+          submissionSnapshot: () => Effect.die('unexpected submission snapshot'),
+          invalidate: Effect.void,
+          withMutation: (effect) => effect,
+        },
+      }
+
+      await Effect.runPromise(provide(read, store))
+      expect(completions).toBe(accountingExact ? 1 : 0)
+    },
+  )
+
   test('captures a complete 500-order history when the newest order has different cache and database precision', async () => {
     const cut = '2026-10-18T21:33:41.010Z'
     const newest = {

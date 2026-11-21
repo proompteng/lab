@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema, Stream } from 'effect'
@@ -20,6 +20,11 @@ import {
 } from '../market-data/streaming/native-arrival.test-support'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { makeNativeArrivalStore, streamNativeArrivalChunkPage, readNativeArrivalEpoch } from './native-arrival-postgres'
 import { nativeArrivalPostgresFailure } from './native-arrival-postgres.test-support'
 import { PostgresClientLive } from './postgres-client'
@@ -39,11 +44,11 @@ const readNativeArrivalChunks = (sql: PgClient.PgClient, captureId: string, afte
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_native_arrival_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const makeRuntime = (operationTimeoutMs: number) =>
+const makeRuntime = (url: string, operationTimeoutMs: number) =>
   ManagedRuntime.make(
     PostgresClientLive({
       operationTimeoutMs,
-      postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+      postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
     }).pipe(Layer.provideMerge(NodeServices.layer)),
   )
 const chunk = (ordinal: number, previousHash: string | null) =>
@@ -52,26 +57,31 @@ const chunk = (ordinal: number, previousHash: string | null) =>
   )
 
 describePostgres('PostgreSQL native arrival retention', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw new Error('Native arrival integration tests require a local _test database')
-    runtime = makeRuntime(5000)
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const initializer = makeRuntime(url, 5000)
+      try {
+        await initializer.runPromise(postgresMigrations)
+      } finally {
+        await initializer.dispose()
+      }
+    })
   })
   beforeEach(async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-      }),
-    )
+    database = await template.clone()
+    runtime = makeRuntime(database.url, 5000)
   })
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+  afterAll(async () => template?.dispose())
 
   test('records native arrivals alongside the existing financial schema without changing its migrations', async () => {
     await runtime.runPromise(
@@ -683,7 +693,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
           FOR EACH ROW EXECUTE FUNCTION native_arrival_test_insert_delay()`
       }),
     )
-    const bounded = makeRuntime(2000)
+    const bounded = makeRuntime(database.url, 2000)
     try {
       await bounded.runPromise(
         Effect.gen(function* () {

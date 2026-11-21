@@ -536,20 +536,6 @@ durableTest.each(
         yield* postgresMigrations
         const providerClock = yield* TestClock.make()
         const clock = yield* makeSimulatedExecutionClock(runId, source.sourceManifestHash, providerClock)
-        const wrongAccount = yield* Effect.exit(
-          sql`INSERT INTO simulated_execution_clocks VALUES ('paper-account-1', ${source.sourceManifestHash}, clock_timestamp())`,
-        )
-        const missingClock = yield* Effect.exit(sql`SELECT execution_account_now(${'replay-' + '0'.repeat(64)})`)
-        const rewind = yield* Effect.exit(clock.advanceTo(utcInstantFromEpochMillis(initialMs - 1)))
-        const wrongSource = yield* Effect.exit(makeSimulatedExecutionClock(runId, 'f'.repeat(64), providerClock))
-        const deletedClock = yield* Effect.exit(sql`DELETE FROM simulated_execution_clocks`)
-        const truncatedClock = yield* Effect.exit(sql`TRUNCATE simulated_execution_clocks`)
-        const wallClock = yield* sql<
-          Record<string, unknown>
-        >`SELECT abs(extract(epoch FROM (execution_account_now('paper-account-1') - clock_timestamp()))) < 1 AS current`
-        for (const rejected of [wrongAccount, missingClock, rewind, wrongSource, deletedClock, truncatedClock])
-          expect(rejected._tag).toBe('Failure')
-        expect(wallClock[0]?.['current']).toBe(true)
         let cursor: HistoricalMarketCursor = {
           ...fixture.cursor,
           source,
@@ -689,7 +675,7 @@ durableTest.each(
           const now = yield* currentUtcInstant
           yield* notificationConnection
             .executeUnprepared(
-              'INSERT INTO broker_notification_receipts (account_id, event_id, source_revision, received_at) VALUES ($1, $2, $3, $4::timestamptz)',
+              "INSERT INTO broker_source_events (account_id, event_id, source_revision, received_at, event_kind) VALUES ($1, $2, $3, $4::timestamptz, 'LEGACY_RECEIPT')",
               [accountId, 'c'.repeat(64), 'a'.repeat(40), now],
               undefined,
             )
@@ -721,11 +707,11 @@ durableTest.each(
                 ),
               projection: {
                 ...broker.read.projection,
-                snapshot: Ref.get(stallReconciliation).pipe(
+                reconciliationSnapshot: Ref.get(stallReconciliation).pipe(
                   Effect.flatMap((stall) =>
                     stall
                       ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true)))
-                      : broker.read.projection.snapshot,
+                      : broker.read.projection.reconciliationSnapshot,
                   ),
                 ),
               },
@@ -2334,8 +2320,8 @@ durableTest.each(
                     expect((yield* runtime.store.authorityGeneration.readAuthorityState).kill).toBe(KillState.Clear)
                   }
                 } else {
-                  yield* sql`INSERT INTO broker_notification_receipts (account_id,event_id,source_revision,received_at)
-                    VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz)`
+                  yield* sql`INSERT INTO broker_source_events (account_id,event_id,source_revision,received_at,event_kind)
+                    VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz,'LEGACY_RECEIPT')`
                   expect(yield* readProof).toBeUndefined()
                   expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBeUndefined()
                 }

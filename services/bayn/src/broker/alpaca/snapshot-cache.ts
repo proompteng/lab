@@ -190,7 +190,9 @@ export const makeProjectedBrokerRead = (
         healthSnapshot: cached.pipe(Effect.tap(requireSettledCashFees)),
         fresh,
         invalidate,
-        snapshot: observations.read.pipe(Effect.map((value) => value.snapshot)),
+        reconciliationSnapshot: observations.readForReconciliation.pipe(
+          Effect.map(({ observation, complete }) => ({ snapshot: observation.snapshot, complete })),
+        ),
         submissionSnapshot: (intentId) =>
           observations.readForSubmit(intentId).pipe(
             Effect.map((value) => ({
