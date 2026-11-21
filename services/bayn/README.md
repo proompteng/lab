@@ -2522,8 +2522,9 @@ observation suites migrate each fixture once, then clone and remove a separate d
 archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
 
-Successful PostgreSQL CI shards upload their measured file durations as `bayn-postgres-timings-<shard>-<attempt>`
-artifacts for balancing future runs.
+The PostgreSQL runner assigns the longest measured files to the least-loaded shards using the same checked-in timing
+snapshot on every worker. Each shard verifies its exact file list against Bun's JUnit report. Refresh the snapshot
+from the `bayn-postgres-timings-<shard>-<attempt>` artifacts of a successful full main run.
 
 Streaming failure integration runs in a separate required job with disposable PostgreSQL, Restate 1.8.1 and Kafka.
 Run `bash services/bayn/scripts/test-streaming-integrations.sh` from a local Docker host using the pinned toolchain.
