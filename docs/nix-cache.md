@@ -46,7 +46,9 @@ chain. Raw causes, S3 URLs, object keys, headers and credentials are not logged.
 These labels describe observed errors, not a proven storage or network cause.
 The image build is configured to run focused Rust tests for classification, bounded traversal,
 log privacy and preservation of partial bodies and original errors in both
-stream modes. Pull requests build both architectures without publishing images.
+stream modes. Pull requests build both architectures at the exact reviewed head
+without publishing images or receiving the cache-upload credential. The separate
+publication job forwards only `ATTIC_TOKEN`, and only on `main`.
 
 The API deployment runs database migrations in an init container, then starts
 `atticd --mode api-server`. Garbage collection runs separately through

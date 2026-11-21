@@ -125,6 +125,28 @@ test('native PR validation preserves image publication and cache warming boundar
   }
 })
 
+test('Attic PR validation receives no cache credential and pins its reviewed source', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/attic-build-push.yaml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  const validation = property(jobs, 'validate')
+  const publication = property(jobs, 'build-and-push')
+  expect(property(validation, 'secrets')).toBeUndefined()
+  expect(property(property(validation, 'with'), 'source_revision')).toBe('${{ github.event.pull_request.head.sha }}')
+  const credentials = property(publication, 'secrets')
+  expect(Object.keys(credentials as Record<string, unknown>)).toEqual(['ATTIC_TOKEN'])
+  const tokenExpression = text(property(credentials, 'ATTIC_TOKEN')).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+  for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
+    for (const ref of ['refs/pull/1/merge', 'refs/heads/feature', 'refs/heads/main']) {
+      const context = { github: { event_name: event, ref }, secrets: { ATTIC_TOKEN: 'synthetic-upload-token' } }
+      expect(runInNewContext(text(property(validation, 'if')), context)).toBe(event === 'pull_request')
+      const publishes = runInNewContext(text(property(publication, 'if')), context)
+      expect(publishes).toBe(event !== 'pull_request')
+      const forwardedToken = publishes ? runInNewContext(tokenExpression, context) : ''
+      expect(forwardedToken).toBe(event !== 'pull_request' && ref === 'refs/heads/main' ? 'synthetic-upload-token' : '')
+    }
+  }
+})
+
 test('OpenCode CLI changes publish only the owning image', () => {
   for (const [filename, expected] of [
     ['bayn-build-push.yml', false],
