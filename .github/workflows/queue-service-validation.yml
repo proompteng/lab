@@ -91,6 +91,9 @@ jobs:
   signal-publisher:
     uses: ./.github/workflows/signal-publisher-ci.yml
 
+  signal-publisher-image:
+    uses: ./.github/workflows/signal-publisher-build-push.yml
+
   spire-migration:
     uses: ./.github/workflows/spire-migration.yml
 

@@ -236,6 +236,33 @@ test.each([
   }
 })
 
+test('Signal Publisher validates the queued image revision without publication', () => {
+  const path = './.github/workflows/signal-publisher-build-push.yml'
+  const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  const image = property(jobs, 'image')
+  const closure = property(jobs, 'dependency-closure')
+  expect(property(property(queue, 'jobs'), 'signal-publisher-image')).toEqual({ uses: path })
+  expect(property(image, 'needs')).toBe('dependency-closure')
+  expect(property(closure, 'secrets')).toBeUndefined()
+
+  const child: unknown = Bun.YAML.parse(readFileSync('.github/workflows/nix-oci-build-common.yml', 'utf8'))
+  const context = {
+    github: { event_name: 'merge_group', ref: 'refs/heads/main', sha: 'queued-image-commit' },
+    needs: { changes: { result: 'skipped', outputs: {} } },
+    inputs: { publish_on_dispatch: true },
+    secrets: { ATTIC_TOKEN: 'publication-token' },
+    cancelled: () => false,
+  }
+  const evaluate = (value: unknown) => runInNewContext(text(value).replace(/^\$\{\{\s*|\s*\}\}$/g, ''), context)
+  expect(evaluate(property(property(jobs, 'changes'), 'if'))).toBe(false)
+  expect(evaluate(property(closure, 'if'))).toBe(true)
+  expect(evaluate(property(property(image, 'with'), 'source_revision'))).toBe('queued-image-commit')
+  expect(evaluate(property(property(image, 'secrets'), 'ATTIC_TOKEN'))).toBe('')
+  expect(evaluate(property(property(property(child, 'jobs'), 'publish-index'), 'if'))).toBe(false)
+})
+
 test('Devbox requires native validation in the queue with publication confined to main', () => {
   const caller: unknown = Bun.YAML.parse(readFileSync('.github/workflows/codex-devbox.yml', 'utf8'))
   const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
