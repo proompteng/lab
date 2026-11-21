@@ -1,1 +1,0 @@
-"""Whitepaper autoresearch runner tests."""
