@@ -162,6 +162,13 @@ const faults = [
     violation: 'Invariant ChangedSessionIsNotLive is violated.',
   },
   {
+    model: 'ActivityCursor',
+    name: 'unready-activity-projection-read',
+    before: 'ReadProjection ==\n  /\\ Ready',
+    after: 'ReadProjection ==\n  /\\ TRUE',
+    violation: 'Invariant ProjectionReadsRequireReady is violated.',
+  },
+  {
     model: 'CancellationAdmission',
     name: 'stale-cancellation-admission',
     before: 'Admit == /\\ CanAdmit',

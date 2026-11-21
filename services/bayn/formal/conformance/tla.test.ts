@@ -189,6 +189,8 @@ const ActivityCursorState = Schema.Struct({
   prematureHeartbeat: bool,
   recoveredCompleteness: bool,
   staleSessionLive: bool,
+  projectionReadAccepted: bool,
+  unsafeProjectionRead: bool,
 })
 const hash = 'a'.repeat(64)
 const revision = (source: number) => String(source).repeat(40)
@@ -208,6 +210,8 @@ describe.skipIf(directory === undefined)('TLC reachable states conform to produc
     expect(cases.some((state) => state.eventDecision === 'REJECT')).toBe(true)
     expect(cases.some((state) => state.ready)).toBe(true)
     expect(cases.some((state) => !state.complete && state.caughtUp)).toBe(true)
+    expect(cases.some((state) => state.projectionReadAccepted)).toBe(true)
+    expect(cases.every((state) => !state.unsafeProjectionRead)).toBe(true)
     for (const state of cases) {
       const current = {
         cursor: activityCursor(state.cursor),

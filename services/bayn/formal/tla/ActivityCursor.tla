@@ -5,16 +5,19 @@ VARIABLES cursor, caughtUp, coverage, complete, session, fresh, mode,
           eventCursor, retained, hashMatches, supported, eventSession,
           boundaryCursor, boundaryCoverage, heartbeatCursor, heartbeatSession,
           revisionMatches, regressed, badReplayAccepted, boundaryConflictAccepted,
-          prematureHeartbeat, recoveredCompleteness, staleSessionLive
+          prematureHeartbeat, recoveredCompleteness, staleSessionLive,
+          projectionReadAccepted, unsafeProjectionRead
 
 vars == <<cursor, caughtUp, coverage, complete, session, fresh, mode,
           eventCursor, retained, hashMatches, supported, eventSession,
           boundaryCursor, boundaryCoverage, heartbeatCursor, heartbeatSession,
           revisionMatches, regressed, badReplayAccepted, boundaryConflictAccepted,
-          prematureHeartbeat, recoveredCompleteness, staleSessionLive>>
+          prematureHeartbeat, recoveredCompleteness, staleSessionLive,
+          projectionReadAccepted, unsafeProjectionRead>>
 durable == <<cursor, caughtUp, coverage, complete, session, fresh,
              regressed, badReplayAccepted, boundaryConflictAccepted,
-             prematureHeartbeat, recoveredCompleteness, staleSessionLive>>
+             prematureHeartbeat, recoveredCompleteness, staleSessionLive,
+             projectionReadAccepted, unsafeProjectionRead>>
 
 EventDecision ==
   IF eventCursor <= cursor
@@ -35,6 +38,7 @@ Init == /\ cursor = 0 /\ caughtUp = FALSE /\ coverage = 0 /\ complete = TRUE
         /\ regressed = FALSE /\ badReplayAccepted = FALSE
         /\ boundaryConflictAccepted = FALSE /\ prematureHeartbeat = FALSE
         /\ recoveredCompleteness = FALSE /\ staleSessionLive = FALSE
+        /\ projectionReadAccepted = FALSE /\ unsafeProjectionRead = FALSE
 
 ChooseEvent ==
   /\ mode' = "EVENT"
@@ -78,7 +82,7 @@ ApplyEvent ==
   /\ UNCHANGED <<caughtUp, coverage, eventCursor, retained, hashMatches, supported,
                   eventSession, boundaryCursor, boundaryCoverage, heartbeatCursor,
                   heartbeatSession, revisionMatches, mode, boundaryConflictAccepted,
-                  prematureHeartbeat>>
+                  prematureHeartbeat, projectionReadAccepted, unsafeProjectionRead>>
 
 ApplyCatchup ==
   /\ mode = "CATCHUP" /\ CanCatchup
@@ -90,7 +94,7 @@ ApplyCatchup ==
                   supported, eventSession, boundaryCursor, boundaryCoverage, mode,
                   heartbeatCursor, heartbeatSession, revisionMatches, regressed,
                   badReplayAccepted, prematureHeartbeat, recoveredCompleteness,
-                  staleSessionLive>>
+                  staleSessionLive, projectionReadAccepted, unsafeProjectionRead>>
 
 ApplyHeartbeat ==
   /\ mode = "HEARTBEAT" /\ CanHeartbeat
@@ -100,7 +104,8 @@ ApplyHeartbeat ==
                   hashMatches, supported, eventSession, boundaryCursor,
                   boundaryCoverage, heartbeatCursor, heartbeatSession, mode,
                   revisionMatches, regressed, badReplayAccepted,
-                  boundaryConflictAccepted, recoveredCompleteness, staleSessionLive>>
+                  boundaryConflictAccepted, recoveredCompleteness, staleSessionLive,
+                  projectionReadAccepted, unsafeProjectionRead>>
 
 AgeHeartbeat ==
   /\ fresh /\ fresh' = FALSE
@@ -109,9 +114,20 @@ AgeHeartbeat ==
                   boundaryCoverage, heartbeatCursor, heartbeatSession,
                   revisionMatches, regressed, badReplayAccepted,
                   boundaryConflictAccepted, prematureHeartbeat,
-                  recoveredCompleteness, staleSessionLive>>
+                  recoveredCompleteness, staleSessionLive,
+                  projectionReadAccepted, unsafeProjectionRead>>
 
-Next == ChooseEvent \/ ChooseCatchup \/ ChooseHeartbeat \/ ApplyEvent \/ ApplyCatchup \/ ApplyHeartbeat \/ AgeHeartbeat
+ReadProjection ==
+  /\ Ready
+  /\ projectionReadAccepted' = TRUE
+  /\ unsafeProjectionRead' = (unsafeProjectionRead \/ ~Ready)
+  /\ UNCHANGED <<cursor, caughtUp, coverage, complete, session, fresh, mode,
+                  eventCursor, retained, hashMatches, supported, eventSession,
+                  boundaryCursor, boundaryCoverage, heartbeatCursor, heartbeatSession,
+                  revisionMatches, regressed, badReplayAccepted, boundaryConflictAccepted,
+                  prematureHeartbeat, recoveredCompleteness, staleSessionLive>>
+
+Next == ChooseEvent \/ ChooseCatchup \/ ChooseHeartbeat \/ ApplyEvent \/ ApplyCatchup \/ ApplyHeartbeat \/ AgeHeartbeat \/ ReadProjection
 Spec == Init /\ [][Next]_vars
 
 TypeOK == /\ cursor \in 0..2 /\ caughtUp \in BOOLEAN /\ coverage \in 0..2
@@ -124,7 +140,8 @@ TypeOK == /\ cursor \in 0..2 /\ caughtUp \in BOOLEAN /\ coverage \in 0..2
           /\ revisionMatches \in BOOLEAN /\ regressed \in BOOLEAN
           /\ badReplayAccepted \in BOOLEAN /\ boundaryConflictAccepted \in BOOLEAN
           /\ prematureHeartbeat \in BOOLEAN /\ recoveredCompleteness \in BOOLEAN
-          /\ staleSessionLive \in BOOLEAN
+          /\ staleSessionLive \in BOOLEAN /\ projectionReadAccepted \in BOOLEAN
+          /\ unsafeProjectionRead \in BOOLEAN
 StateShape == caughtUp = (coverage # 0) /\ (fresh => session # 0)
 CursorNeverRegresses == ~regressed
 ReplayRequiresExactRetainedSource == ~badReplayAccepted
@@ -132,8 +149,7 @@ CatchupBoundaryIsImmutable == ~boundaryConflictAccepted
 HeartbeatRequiresCatchup == ~prematureHeartbeat
 IncompleteProjectionStaysIncomplete == ~recoveredCompleteness
 ChangedSessionIsNotLive == ~staleSessionLive
-ReadyIsSound == Ready =>
-  (revisionMatches /\ caughtUp /\ complete /\ session # 0 /\ fresh)
+ProjectionReadsRequireReady == ~unsafeProjectionRead
 
 ConformanceView == [cursor |-> cursor, caughtUp |-> caughtUp, coverage |-> coverage,
   complete |-> complete, session |-> session, fresh |-> fresh, mode |-> mode,
@@ -148,5 +164,7 @@ ConformanceView == [cursor |-> cursor, caughtUp |-> caughtUp, coverage |-> cover
   boundaryConflictAccepted |-> boundaryConflictAccepted,
   prematureHeartbeat |-> prematureHeartbeat,
   recoveredCompleteness |-> recoveredCompleteness,
-  staleSessionLive |-> staleSessionLive]
+  staleSessionLive |-> staleSessionLive,
+  projectionReadAccepted |-> projectionReadAccepted,
+  unsafeProjectionRead |-> unsafeProjectionRead]
 =============================================================================
