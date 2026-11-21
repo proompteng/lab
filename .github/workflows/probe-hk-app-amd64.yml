@@ -1,0 +1,30 @@
+name: App AMD64 closure diagnostic
+
+on:
+  pull_request:
+    branches: [codex/ci-share-lint-with-hk]
+    paths: [.github/workflows/probe-hk-app-amd64.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    if: github.head_ref == 'codex/ci-hk-amd64-fod-proof-8f9dwp'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ github.token }}
+          install-ci-toolchain: 'false'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = https://cache.nixos.org/
+      - name: Measure the exact AMD64 App dependency closure
+        env:
+          NIX_BUN_FOD_TIMEOUT: 10m
+        run: bash nix/check-bun-dependency-closure.sh app x86_64-linux
