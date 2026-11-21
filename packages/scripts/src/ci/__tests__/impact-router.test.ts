@@ -58,6 +58,8 @@ test('queued revisions require scripts and protobuf validation without sharing a
         BUF_RESULT: buf,
         SCRIPTS_RESULT: scripts,
         TORGHUT_RESULT: 'success',
+        TORGHUT_SCHEMA_RESULT: 'success',
+        TORGHUT_NOTEBOOKS_RESULT: 'success',
         FULL_VALIDATION: full,
         DELEGATED: '[]',
       },
