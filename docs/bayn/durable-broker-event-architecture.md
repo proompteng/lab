@@ -103,9 +103,20 @@ The direct path has four independent replay boundaries:
 Dorvud becomes ready only when the receipt names the current source revision and
 `bayn.broker-source-projection.v1`. An acceptance from the retired identity-only handler fails the session and creates
 a new session boundary on reconnect, so an old cached acknowledgement cannot masquerade as the new persistence
-contract. Migration keeps an isolated append-only legacy receipt sink solely while Restate drains accepted old-worker
+contract. Retaining a new source event and revoking the readable broker-observation generation share one PostgreSQL
+transaction. Restate may route the new shared handler before exclusive observation ownership rotates, but no
+predecessor revision can keep admitting its earlier snapshot after the acknowledgement. Migration keeps an isolated
+append-only legacy receipt sink solely while Restate drains accepted old-worker
 invocations; no current code uses it. Post-cutover cleanup merges any late identities and deletes that sink together
 with the inert broker topic.
+
+The same overlap applies to order evidence. Migration 206 adds the required full-precision provider version, but an
+already prepared predecessor insert does not name that column. A temporary `orders` admission trigger derives the
+canonical version from the immutable `order:<broker-order-id>:<updated-at>` source identity under the account writer
+lock. It rejects older versions, timestamp reuse with another identity, mismatched explicit values and malformed
+source identities. Thus a predecessor can append a genuinely newer observation without a `NOT NULL` failure, but it
+cannot bypass the new monotonic-current-state rule. The post-cutover cleanup removes this predecessor insert branch
+only after the old revision and prepared statements have drained; current writers already supply the column directly.
 
 Migration assigns every identity-only receipt from the retired Kafka path an immutable `LEGACY_RECEIPT`
 reconciliation decision. A redelivery can therefore request canonical recovery without entering the projector path
@@ -115,8 +126,10 @@ Unsupported frames, missing intent linkage and deterministic store conflicts nev
 `RECONCILE_REQUIRED` receipt and leave the canonical safety lane authoritative. Source-to-projection lag and outcome
 are exported without account or event IDs through `bayn_broker_source_projection_lag_seconds` and
 `bayn_broker_source_projection_total`. A database-backed pending count and oldest age expose a stalled first projection,
-which completion histograms cannot see. The projector is a separate exclusive Restate object keyed by account: source
-delivery stays ordered, but a multi-second canonical capture cannot block this queue. After reconnect, the fast path
+which completion histograms cannot see. That backlog spans retained source revisions, and an explicit observation
+success gauge makes database sampling failure visible instead of preserving a stale zero. The projector is a separate
+exclusive Restate object keyed by account with a projection-only PostgreSQL store: source delivery stays ordered, but
+a multi-second canonical capture cannot block this queue. After reconnect, the fast path
 remains closed until a published capture's immutable notification fence covers that session's `SessionReady` event.
 Canonical coverage is checked inside the same PostgreSQL writer fence as order/fill ingestion, so reconciliation and
 the stream cannot race to make a delayed order state newest. Order current state is selected by Alpaca's full

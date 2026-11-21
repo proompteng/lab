@@ -417,7 +417,7 @@ export const makeBaynBrokerSourceProjector = (
       'bayn.broker-identity-hash': config.controllerKey,
     },
     handlers: {
-      // This object is independent of the snapshot owner so slow provider reads cannot block ordered fill accounting.
+      // This object is independent of the snapshot owner so slow provider reads cannot block ordered source evidence.
       project: restate.handlers.object.exclusive(
         { ingressPrivate: true, idempotencyRetention: { days: 7 } },
         async (ctx: restate.ObjectContext, candidate: unknown) => {

@@ -7,7 +7,7 @@ export default Effect.gen(function* () {
   // lower timestamp precision. Every historical source identity already retains that version; materialize its canonical
   // nine-digit form once so stream and snapshot ingestion share one monotonic boundary.
   yield* sql`ALTER TABLE orders ADD COLUMN broker_updated_at text`
-  // The evidence table is normally immutable. Open only the existing UPDATE guard for this one deterministic
+  // The evidence table is normally immutable. Open only the existing UPDATE/DELETE guard for this one deterministic
   // materialization; the migration transaction restores it before any new schema can become visible.
   yield* sql`ALTER TABLE orders DISABLE TRIGGER orders_append_only`
   yield* sql`WITH versions AS (
@@ -27,6 +27,60 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE orders ADD CONSTRAINT orders_broker_updated_at_check CHECK (
     broker_updated_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{9}Z$'
   )`
+  // Restate can keep a predecessor invocation alive while this revision starts. Put the provider-version invariant at
+  // the shared database boundary so that predecessor inserts derive the required value and cannot append an older
+  // order state. The compatibility branch is removed after the predecessor revision and its prepared statements drain.
+  yield* sql`CREATE FUNCTION enforce_order_provider_version() RETURNS trigger AS $function$
+  DECLARE
+    source_id text;
+    source_parts text[];
+    canonical_updated_at text;
+    current_updated_at text;
+    current_source_id text;
+  BEGIN
+    SELECT source_event_id INTO source_id
+    FROM broker_events
+    WHERE event_id = NEW.event_id AND account_id = NEW.account_id AND event_kind = 'ORDER' AND broker = 'ALPACA';
+    IF source_id IS NULL THEN
+      RAISE EXCEPTION 'order event does not identify an ALPACA order source' USING ERRCODE = '23514';
+    END IF;
+
+    source_parts := regexp_match(
+      source_id,
+      '^(order:.*):([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:[.]([0-9]{1,9}))?Z$'
+    );
+    IF source_parts IS NULL OR source_parts[1] <> 'order:' || NEW.broker_order_id THEN
+      RAISE EXCEPTION 'order source identity does not match the order payload' USING ERRCODE = '23514';
+    END IF;
+    canonical_updated_at := source_parts[2] || '.' || rpad(COALESCE(source_parts[3],''),9,'0') || 'Z';
+    IF NEW.broker_updated_at IS NOT NULL THEN
+      IF NEW.broker_updated_at <> canonical_updated_at THEN
+        RAISE EXCEPTION 'order provider version does not match the source identity' USING ERRCODE = '23514';
+      END IF;
+      RETURN NEW;
+    END IF;
+
+    PERFORM pg_advisory_xact_lock(hashtextextended('ALPACA:' || NEW.account_id,0));
+    SELECT observed.broker_updated_at,event.source_event_id
+      INTO current_updated_at,current_source_id
+    FROM orders AS observed
+    JOIN broker_events AS event USING (event_id)
+    WHERE observed.account_id = NEW.account_id AND observed.broker_order_id = NEW.broker_order_id
+    ORDER BY observed.broker_updated_at COLLATE "C" DESC,event.source_sequence DESC,event.event_id COLLATE "C" DESC
+    LIMIT 1;
+    IF (current_updated_at COLLATE "C") > (canonical_updated_at COLLATE "C") THEN
+      RAISE EXCEPTION 'order provider version is older than retained state' USING ERRCODE = '23514';
+    END IF;
+    IF current_updated_at = canonical_updated_at AND current_source_id <> source_id THEN
+      RAISE EXCEPTION 'order provider version was reused with a different source identity' USING ERRCODE = '23514';
+    END IF;
+
+    NEW.broker_updated_at := canonical_updated_at;
+    RETURN NEW;
+  END
+  $function$ LANGUAGE plpgsql`
+  yield* sql`CREATE TRIGGER orders_provider_version
+    BEFORE INSERT ON orders FOR EACH ROW EXECUTE FUNCTION enforce_order_provider_version()`
   yield* sql`CREATE INDEX orders_current_provider_version
     ON orders(account_id,broker_order_id,broker_updated_at COLLATE "C" DESC)`
   // Restate keeps the replaced worker revision while accepted invocations drain. Its only remaining write is the

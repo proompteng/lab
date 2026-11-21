@@ -44,11 +44,12 @@ import {
   AuthorityRestrictionStore,
   BrokerEventStore,
   FillAccountingStore,
+  IntentBindingStore,
   ReconciliationStore,
   type ReconciliationStoreShape,
   ValuationStore,
 } from './execution-store/contract'
-import { ExecutionStoreLive } from './execution-store'
+import { BrokerProjectionStoreLive, ExecutionStoreLive } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 import cashSettlementMigration from '../../migrations/0112_broker_cash_settlements'
@@ -209,7 +210,7 @@ const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => 
     _tag: 'Order',
     broker: Broker.Alpaca,
     accountId,
-    sourceEventId: 'order-observation-1',
+    sourceEventId: 'order:order-1:2026-08-28T14:30:59.000000000Z',
     contentHash: Result.getOrThrow(canonicalHashV1Result(observedOrder)),
     occurredAt,
     observedAt,
@@ -366,6 +367,28 @@ describePostgres('PostgreSQL execution persistence', () => {
   })
 
   afterAll(async () => template?.dispose())
+
+  test('builds the broker projector store without a financial journal', async () => {
+    const projection = ManagedRuntime.make(
+      BrokerProjectionStoreLive.pipe(
+        Layer.provideMerge(WriterFenceLive),
+        Layer.provideMerge(PostgresClientLive(config)),
+        Layer.provide(NodeServices.layer),
+      ),
+    )
+    try {
+      expect(
+        await projection.runPromise(
+          Effect.gen(function* () {
+            yield* BrokerEventStore
+            return yield* (yield* IntentBindingStore).bindings(accountId)
+          }),
+        ),
+      ).toEqual([])
+    } finally {
+      await projection.dispose()
+    }
+  })
 
   test('initializes, replays, and restricts one broker-bound OBSERVE generation', async () => {
     const generationHash = hash('observe-generation')

@@ -44,6 +44,8 @@ flowchart LR
 The receiver independently checks the current account, credentials, HMAC, object identity and session timestamps before
 acknowledging ingress. The public `notify` receipt and private projector/reconciliation continuations retain seven-day
 Restate idempotency. PostgreSQL retains the exact verified notification and the first projection receipt indefinitely;
+a source insert atomically revokes any readable predecessor-revision snapshot before acknowledgement, so shared-handler
+routing during deployment cannot leave the old controller's cut admissible;
 a replay returns that receipt instead of recomputing against later intent bindings. Known order lifecycle events project
 immediately. Fill and partial-fill events use event-level quantity, price and execution identity to retain broker-event
 evidence, but the projector never posts money: WebSocket delivery cannot prove that an unseen economic predecessor does
@@ -59,7 +61,11 @@ Feed readiness also requires the acknowledgement to name the exact promoted sour
 next attempt emits a new session boundary instead of trusting a cached old acknowledgement. Migration 206 retains a
 separate append-only `broker_notification_receipts` sink only while Restate drains already accepted old-worker
 invocations. Current code has no caller for it. After live acceptance, the cleanup migration merges any late identities
-into `broker_source_events` before dropping the sink.
+into `broker_source_events` before dropping the sink. The migration also installs a temporary shared-database order
+version fence for the same overlap: a prepared predecessor insert derives the canonical nine-digit provider version
+from its immutable source identity, while stale or conflicting provider versions fail before insertion. Current code
+supplies that value directly and applies the same rule. The cleanup migration removes the predecessor insert branch and
+its trigger only after the old revision drains.
 
 This hard migration removes the broker-only Kafka adapter, producer, consumer group, health script and Bayn Kafka
 credentials. It intentionally retains the now-inert topic during cutover: the Kafka application tracks `main`, while
@@ -131,8 +137,8 @@ The existing observability Alloy scrapes the feed every fifteen seconds and coll
 process and acknowledged-session availability only; source-ledger, projection, accounting and execution evidence are
 required acceptance boundaries. `BaynBrokerFeedUnavailable`, `BaynBrokerSourceProjectionFallbackHigh`,
 `BaynBrokerSourceProjectionLatencyHigh` and `BaynBrokerSourceProjectionStalled` cover connection loss, excessive
-fail-closed projection, completed latency and an oldest durable event that never completes. No latency improvement is
-assumed from readiness.
+fail-closed projection, completed latency, an oldest durable event from any retained revision that never completes,
+and failure of the PostgreSQL backlog observation itself. No latency improvement is assumed from readiness.
 
 If the new stream fails, deploy a reviewed streaming fix or restore a compatible, verified three-image Bayn Freight
 through Kargo and verify canonical reconciliation against the same PAPER account. Do not start an ordinary polling path,

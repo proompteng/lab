@@ -192,18 +192,26 @@ export const makeBrokerObservationStore = (
   const isNotificationCovered = (eventId: string) => run(notificationCovered(eventId))
   const recordNotification = (notification: BrokerNotification) =>
     run(
-      Effect.gen(function* () {
-        // Commit the verified source payload before acknowledging ingress. The immutable event is the recovery source;
-        // Restate owner state retains only its stable identity.
-        yield* sql`INSERT INTO broker_source_events(
-          account_id,event_id,source_revision,received_at,event_kind,session_id,notification
-        ) VALUES (
-          ${accountId},${notification.eventId},${notification.session.sourceRevision},${notification.receivedAt}::timestamptz,
-          ${notification._tag},${notification.session.sessionId},${JSON.stringify(notification)}::jsonb
-        )
-          ON CONFLICT (account_id,event_id) DO NOTHING`
-        return { covered: yield* notificationCovered(notification.eventId) }
-      }),
+      sql.withTransaction(
+        Effect.gen(function* () {
+          // Commit the verified source payload and revoke any older revision's readable cut before acknowledging
+          // ingress. Restate can route a new shared handler before its exclusive owner is activated; the database
+          // generation is the common fence that every deployed reader already honors.
+          const inserted = yield* sql`INSERT INTO broker_source_events(
+            account_id,event_id,source_revision,received_at,event_kind,session_id,notification
+          ) VALUES (
+            ${accountId},${notification.eventId},${notification.session.sourceRevision},${notification.receivedAt}::timestamptz,
+            ${notification._tag},${notification.session.sessionId},${JSON.stringify(notification)}::jsonb
+          )
+            ON CONFLICT (account_id,event_id) DO NOTHING
+            RETURNING event_id`
+          const covered = yield* notificationCovered(notification.eventId)
+          if (inserted.length === 1 && !covered)
+            yield* sql`UPDATE broker_observations SET generation = generation + 1, available = false
+              WHERE account_id = ${accountId}`
+          return { covered }
+        }),
+      ),
     )
   const isSessionBoundaryCovered = (sessionId: string) =>
     run(
@@ -281,8 +289,7 @@ export const makeBrokerObservationStore = (
       COALESCE(EXTRACT(EPOCH FROM clock_timestamp() - MIN(event.recorded_at)),0)::double precision AS "oldestPendingSeconds"
       FROM broker_source_events AS event
       LEFT JOIN broker_source_event_projections AS projection USING (account_id,event_id)
-      WHERE event.account_id = ${accountId} AND event.source_revision = ${sourceRevision}
-        AND projection.event_id IS NULL`.pipe(
+      WHERE event.account_id = ${accountId} AND projection.event_id IS NULL`.pipe(
       Effect.flatMap(
         Schema.decodeUnknownEffect(
           Schema.Tuple([

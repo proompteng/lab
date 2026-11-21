@@ -10,12 +10,8 @@ import type {
   ResearchCapitalGrantProofBinding,
   Valuation,
 } from '../../execution/contracts'
-import type {
-  BrokerSnapshot,
-  IntentBinding,
-  ReconciledBrokerSnapshot,
-  ReconciliationIngestion,
-} from '../reconciliation'
+import type { BrokerSnapshot, ReconciledBrokerSnapshot, ReconciliationIngestion } from '../reconciliation'
+import type { IntentBinding } from '../intent-bindings'
 
 export const VALUATION_SNAPSHOT_MAX_SKEW_MS = 30_000
 
@@ -93,6 +89,10 @@ export interface ReconciliationStoreShape {
   ) => Effect.Effect<ReconciledBrokerSnapshot, E | ExecutionStoreError, R>
 }
 
+export interface IntentBindingStoreShape {
+  readonly bindings: (accountId: string) => Effect.Effect<readonly IntentBinding[], ExecutionStoreError>
+}
+
 export interface AuthorityGenerationStoreShape {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
@@ -140,6 +140,9 @@ export class ValuationStore extends Context.Service<ValuationStore, ValuationSto
 ) {}
 export class ReconciliationStore extends Context.Service<ReconciliationStore, ReconciliationStoreShape>()(
   '@proompteng/bayn/db/execution-store/contract/ReconciliationStore',
+) {}
+export class IntentBindingStore extends Context.Service<IntentBindingStore, IntentBindingStoreShape>()(
+  '@proompteng/bayn/db/execution-store/contract/IntentBindingStore',
 ) {}
 export class AuthorityGenerationStore extends Context.Service<
   AuthorityGenerationStore,

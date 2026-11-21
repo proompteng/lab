@@ -341,6 +341,65 @@ describePostgres('Durable per-account broker observations', () => {
       }),
     ))
 
+  test('new-revision ingress revokes the predecessor cut before Restate ownership handoff', async () =>
+    run((sql, predecessor) =>
+      Effect.gen(function* () {
+        yield* predecessor.activate(0)
+        const published = yield* claim(predecessor)
+        yield* advanceToTicket(published)
+        expect(yield* predecessor.publish(published, snapshot(published), 0)).toBe(true)
+
+        const stale = yield* claim(predecessor)
+        yield* advanceToTicket(stale)
+        const successorRevision = 'b'.repeat(40)
+        const successor = makeBrokerObservationStore(sql, accountId, successorRevision, 60_000, cacheFixture.cache)
+        const notification = sourceEvent('5'.repeat(64), stale.startedAt)
+        const successorNotification = {
+          ...notification,
+          session: { ...notification.session, sourceRevision: successorRevision },
+        }
+        expect(yield* successor.recordNotification(successorNotification)).toEqual({ covered: false })
+        expect(
+          yield* sql`SELECT source_revision,available,generation FROM broker_observations
+            WHERE account_id = ${accountId}`,
+        ).toEqual([{ source_revision: revision, available: false, generation: stale.generation + 1 }])
+        expect(Result.isFailure(yield* predecessor.readState.pipe(Effect.result))).toBe(true)
+        expect(yield* predecessor.publish(stale, snapshot(stale), 0)).toBe(false)
+
+        yield* successor.activate(0)
+        const recovered = yield* claim(successor)
+        yield* advanceToTicket(recovered)
+        expect(yield* successor.publish(recovered, snapshot(recovered), 0)).toBe(true)
+        expect(yield* successor.isNotificationCovered(successorNotification.eventId)).toBe(true)
+        expect(yield* successor.readState).toEqual(observedBrokerState(snapshot(recovered)))
+      }),
+    ))
+
+  test('new-revision ingress fences an unavailable predecessor capture exactly once', async () =>
+    run((sql, predecessor) =>
+      Effect.gen(function* () {
+        yield* predecessor.activate(0)
+        const inFlight = yield* claim(predecessor)
+        yield* advanceToTicket(inFlight)
+        const successorRevision = 'b'.repeat(40)
+        const successor = makeBrokerObservationStore(sql, accountId, successorRevision, 60_000, cacheFixture.cache)
+        const notification = sourceEvent('6'.repeat(64), inFlight.startedAt)
+        const successorNotification = {
+          ...notification,
+          session: { ...notification.session, sourceRevision: successorRevision },
+        }
+
+        expect(yield* successor.recordNotification(successorNotification)).toEqual({ covered: false })
+        const [{ generation }] = yield* sql`SELECT generation FROM broker_observations WHERE account_id = ${accountId}`
+        expect(generation).toBe(inFlight.generation + 1)
+        expect(yield* predecessor.publish(inFlight, snapshot(inFlight), 0)).toBe(false)
+        expect(yield* successor.recordNotification(successorNotification)).toEqual({ covered: false })
+        expect(yield* sql`SELECT generation FROM broker_observations WHERE account_id = ${accountId}`).toEqual([
+          { generation },
+        ])
+      }),
+    ))
+
   test('replays the first immutable source projection receipt instead of recomputing it', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
@@ -348,6 +407,10 @@ describePostgres('Durable per-account broker observations', () => {
         yield* store.recordNotification(event)
         expect(yield* store.readNotification(event.eventId)).toEqual(event)
         expect(yield* store.readProjectionBacklog).toMatchObject({ pending: 1 })
+        expect(
+          yield* makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000, cacheFixture.cache)
+            .readProjectionBacklog,
+        ).toMatchObject({ pending: 1 })
 
         const first = {
           _tag: 'Projected',
@@ -378,7 +441,7 @@ describePostgres('Durable per-account broker observations', () => {
       }),
     ))
 
-  test('migrates legacy receipts to canonical reconciliation before any payload redelivery', async () =>
+  test('migrates legacy receipts and fences predecessor order writes before any payload redelivery', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -414,7 +477,63 @@ describePostgres('Durable per-account broker observations', () => {
         const [{ receiptTableOid }] =
           yield* sql`SELECT 'broker_notification_receipts'::regclass::oid::integer AS "receiptTableOid"`
 
-        yield* postgresMigrations
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const predecessor = yield* sql.reserve
+            yield* predecessor.executeUnprepared(
+              `PREPARE predecessor_order_insert(text,text,text,text,text,text,text,text,text,numeric,numeric,text) AS
+                INSERT INTO orders(
+                  event_id,account_id,schema_version,broker_order_id,client_order_id,symbol,side,order_type,
+                  time_in_force,quantity_atoms,filled_quantity_atoms,status
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+              [],
+              undefined,
+            )
+            yield* postgresMigrations
+
+            const predecessorInsert = (
+              eventId: string,
+              contentHash: string,
+              updatedAt: string,
+              status: 'PENDING' | 'CANCELED',
+            ) =>
+              Effect.gen(function* () {
+                yield* predecessor.executeValues('BEGIN', [])
+                const result = yield* Effect.gen(function* () {
+                  yield* predecessor.executeValues(
+                    `INSERT INTO broker_events(
+                      event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,
+                      source_sequence,occurred_at,observed_at
+                    ) VALUES ($1,'bayn.paper-broker-event.v1',$2,'ORDER','ALPACA',$3,$4,1,$5::timestamptz,$5::timestamptz)`,
+                    [eventId, contentHash, accountId, `order:legacy-order:${updatedAt}`, event.receivedAt],
+                  )
+                  yield* predecessor.executeUnprepared(
+                    `EXECUTE predecessor_order_insert(
+                      '${eventId}','broker-observations-test-account','bayn.order.v3','legacy-order',
+                      'legacy-client-${status.toLowerCase()}','AAPL','BUY','MARKET','DAY',1000000000,0,'${status}'
+                    )`,
+                    [],
+                    undefined,
+                  )
+                }).pipe(Effect.result)
+                yield* predecessor.executeValues(Result.isSuccess(result) ? 'COMMIT' : 'ROLLBACK', [])
+                return result
+              })
+
+            expect(
+              Result.isFailure(
+                yield* predecessorInsert('8'.repeat(64), '9'.repeat(64), '2026-11-01T00:00:00.000100Z', 'PENDING'),
+              ),
+            ).toBe(true)
+            const successor = yield* predecessorInsert(
+              'a'.repeat(64),
+              'b'.repeat(64),
+              '2026-11-01T00:00:00.001Z',
+              'CANCELED',
+            )
+            expect(Result.isSuccess(successor)).toBe(true)
+          }),
+        )
 
         const store = makeBrokerObservationStore(sql, accountId, revision, 60_000, cacheFixture.cache)
         expect(yield* sql`SELECT 'broker_notification_receipts'::regclass::oid::integer AS "receiptTableOid"`).toEqual([
@@ -422,6 +541,14 @@ describePostgres('Durable per-account broker observations', () => {
         ])
         expect(yield* sql`SELECT broker_updated_at FROM orders WHERE event_id = ${legacyOrderEventId}`).toEqual([
           { broker_updated_at: '2026-11-01T00:00:00.000900000Z' },
+        ])
+        expect(
+          yield* sql`SELECT status,broker_updated_at FROM orders
+            WHERE account_id = ${accountId} AND broker_order_id = 'legacy-order'
+            ORDER BY broker_updated_at COLLATE "C"`,
+        ).toEqual([
+          { status: 'NEW', broker_updated_at: '2026-11-01T00:00:00.000900000Z' },
+          { status: 'CANCELED', broker_updated_at: '2026-11-01T00:00:00.001000000Z' },
         ])
         const drainingEventId = '3'.repeat(64)
         yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at)
