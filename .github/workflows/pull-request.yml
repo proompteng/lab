@@ -485,6 +485,16 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/torghut-ci.yml
 
+  torghut-schema:
+    name: Torghut ClickHouse schema
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/torghut-schema.yml
+
+  torghut-notebooks:
+    name: Torghut notebooks
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/torghut-notebooks-ci.yml
+
   ci-pr:
     name: ci-pr
     if: ${{ always() }}
@@ -501,6 +511,8 @@ jobs:
       - buf
       - scripts
       - torghut
+      - torghut-schema
+      - torghut-notebooks
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
@@ -518,6 +530,8 @@ jobs:
           BUF_RESULT: ${{ needs.buf.result }}
           SCRIPTS_RESULT: ${{ needs.scripts.result }}
           TORGHUT_RESULT: ${{ needs.torghut.result }}
+          TORGHUT_SCHEMA_RESULT: ${{ needs.torghut-schema.result }}
+          TORGHUT_NOTEBOOKS_RESULT: ${{ needs.torghut-notebooks.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
           FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
@@ -546,8 +560,8 @@ jobs:
             echo "Tooling validation failed: buf=${BUF_RESULT}, scripts=${SCRIPTS_RESULT}" >&2
             exit 1
           fi
-          if [[ "${FULL_VALIDATION}" == true && "${TORGHUT_RESULT}" != success ]]; then
-            echo "Torghut validation failed: torghut=${TORGHUT_RESULT}" >&2
+          if [[ "${FULL_VALIDATION}" == true && ( "${TORGHUT_RESULT}" != success || "${TORGHUT_SCHEMA_RESULT}" != success || "${TORGHUT_NOTEBOOKS_RESULT}" != success ) ]]; then
+            echo "Torghut validation failed: core=${TORGHUT_RESULT}, schema=${TORGHUT_SCHEMA_RESULT}, notebooks=${TORGHUT_NOTEBOOKS_RESULT}" >&2
             exit 1
           fi
           echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
