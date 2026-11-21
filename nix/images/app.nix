@@ -14,7 +14,7 @@ import ./bun-workspace-service.nix {
     x86_64-linux = "sha256-6jsxyrdQYGUuFHMN9iatlUNz+hDhQ76yyW7rq2yv3ZE=";
     aarch64-linux = "sha256-23qfBIEoMTH7I7MR0GN2sd6mqO1q/d7IVcvP50RFh2M=";
   };
-  dependencyClosure = "bunCache";
+  dependencyClosure = "bunCacheArchive";
   installFilters = [
     "@proompteng/source"
     "@proompteng/design"
