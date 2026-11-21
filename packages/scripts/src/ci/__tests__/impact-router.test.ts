@@ -300,15 +300,15 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
-  test('routes Nix lock changes through compatibility and Agents image validation', () => {
+  test('routes Nix lock changes through compatibility, manifest, and Agents image validation', () => {
     const plan = selectImpactPlan(['flake.lock'], map)
-    expect(plan.validationTargets).toEqual(['shared-compat'])
+    expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
-  test('routes per-service Nix image changes to compatibility validation', () => {
+  test('routes per-service Nix image changes to compatibility and manifest validation', () => {
     const plan = selectImpactPlan(['nix/images/jangar.nix'], map)
-    expect(plan.validationTargets).toEqual(['shared-compat'])
+    expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
@@ -321,7 +321,7 @@ describe('impact router', () => {
       'nix/packages.nix',
     ]) {
       const plan = selectImpactPlan([path], map)
-      expect(plan.validationTargets).toEqual(['shared-compat'])
+      expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
       expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
     }
   })
@@ -340,6 +340,12 @@ describe('impact router', () => {
   test('routes Kubernetes YAML to schema validation', () => {
     const plan = selectImpactPlan(['kubernetes/base/deployment.yaml'], map)
     expect(plan.validationTargets).toEqual(['kubeconform'])
+  })
+
+  test('validates standalone kubeconform workflow changes through the PR router', () => {
+    expect(Object.keys(yaml('kubeconform.yml').on)).toEqual(['push'])
+    const plan = selectImpactPlan(['.github/workflows/kubeconform.yml'], map)
+    expect(plan.validationTargets).toContain('kubeconform')
   })
 
   test('routes the Bayn rendered secret-mode regression through schema validation', () => {
