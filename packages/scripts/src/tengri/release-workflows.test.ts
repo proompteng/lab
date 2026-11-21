@@ -78,7 +78,7 @@ describe('Tengri image workflow', () => {
     )
     const cache = 'type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}'
     expect(build.with?.['cache-from']).toBe(cache)
-    expect(build.with?.['cache-to']).toBe(`${cache},mode=min,ignore-error=true`)
+    expect(build.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
     expect(build['continue-on-error']).not.toBe(true)
     expect(pairedBoot.if).toBe("matrix.image == 'nanoagent'")
     expect(steps.indexOf(pairedBoot)).toBeGreaterThan(steps.indexOf(build))

@@ -218,7 +218,7 @@ jobs:
   build:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     name: Build native (${{ format('{0}, {1}', matrix.image, matrix.architecture) }})
-    timeout-minutes: 120
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -260,8 +260,9 @@ jobs:
             org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
-          # Intermediate cache export can outlast publication of the image itself.
-          cache-to: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }},mode=min,ignore-error=true
+          # The release images copy build artifacts out of their package and compiler stages.
+          # Keep those stages reusable across releases, including when the final artifact changes.
+          cache-to: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
           provenance: mode=max
           sbom: true
 
