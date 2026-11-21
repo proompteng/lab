@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
@@ -33,6 +33,11 @@ import { canonicalHashV1Result } from '../hash'
 import { Journal, type JournalService } from '../ledger'
 import { makeExecutionPersistence } from './execution-store/postgres'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { config as fixtureConfig } from '../testing/runtime-fixtures'
 import {
   AuthorityGenerationStore,
@@ -101,7 +106,7 @@ const brokerIdentity = Result.getOrThrow(
     accountId,
   }),
 )
-const config: RuntimeConfig = {
+const makeConfig = (url: string): RuntimeConfig => ({
   ...fixtureConfig,
   operationTimeoutMs: 5_000,
   execution: {
@@ -109,8 +114,8 @@ const config: RuntimeConfig = {
     brokerAccess: BrokerAccess.ReadOnly,
     capitalAuthority: noCapitalAuthority,
   },
-  postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
-}
+  postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
+})
 
 interface JournalControl {
   failPosts: boolean
@@ -137,7 +142,7 @@ const journal = (control: JournalControl): JournalService => ({
   checkRun: () => Effect.void,
 })
 
-const makeRuntime = (control: JournalControl) =>
+const makeRuntime = (config: RuntimeConfig, control: JournalControl) =>
   ManagedRuntime.make(
     ExecutionStoreLive(config).pipe(
       Layer.provideMerge(WriterFenceLive),
@@ -146,13 +151,6 @@ const makeRuntime = (control: JournalControl) =>
       Layer.provide(NodeServices.layer),
     ),
   )
-
-const resetDatabase = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`DROP SCHEMA public CASCADE`
-  yield* sql`CREATE SCHEMA public`
-  yield* postgresMigrations
-})
 
 const accountEvent = (
   sourceEventId = 'account-response-1',
@@ -332,14 +330,20 @@ const committedPreparationCounts = Effect.scoped(
 
 describePostgres('PostgreSQL execution persistence', () => {
   const journalControl: JournalControl = { failPosts: false, postCount: 0 }
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
+  let config: RuntimeConfig
   let runtime: ReturnType<typeof makeRuntime>
 
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
-      throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
-    }
-    runtime = makeRuntime(journalControl)
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const initializer = makeRuntime(makeConfig(url), journalControl)
+      try {
+        await initializer.runPromise(postgresMigrations.pipe(Effect.provide(NodeServices.layer)))
+      } finally {
+        await initializer.dispose()
+      }
+    })
   })
 
   beforeEach(async () => {
@@ -347,12 +351,20 @@ describePostgres('PostgreSQL execution persistence', () => {
     journalControl.postCount = 0
     delete journalControl.beforePost
     delete journalControl.verifyAccount
-    await runtime.runPromise(resetDatabase.pipe(Effect.provide(NodeServices.layer)))
+    database = await template.clone()
+    config = makeConfig(database.url)
+    runtime = makeRuntime(config, journalControl)
   })
 
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+
+  afterAll(async () => template?.dispose())
 
   test('initializes, replays, and restricts one broker-bound OBSERVE generation', async () => {
     const generationHash = hash('observe-generation')
