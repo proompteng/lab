@@ -6,8 +6,10 @@ Bayn is a single-writer intraday trading service. The execution path is account-
 the same strategy, intent, risk, mutation, recovery, accounting, and reconciliation code. Broker environment and a
 durable capital activation determine where an otherwise identical execution plan may run.
 
-The active runtime selects `jev`, using `bayn.jev.protocol.v40`, numerical input v24 and pinned `jev-1.14.0`.
-New entries are equity-only. Existing crypto positions retain risk-reducing exits, protection and recovery.
+The active source selects `jev`, using `bayn.jev.protocol.v41`, numerical input v24 and pinned `jev-1.14.0`.
+New entries are whole-share equities and may be long or short. A short requires a fresh broker account-configuration
+read plus symbol-specific `shortable` and `easy_to_borrow` evidence; sale proceeds never increase its allocation
+budget. Existing crypto positions retain risk-reducing exits, protection and recovery.
 Historical strategy and decision schemas remain readable where persisted financial records require them; they cannot
 start new cycles. Research control strategies are separate consumers, not additional active entry strategies.
 
@@ -25,13 +27,73 @@ It distinguishes observed excess from changes that still require performance or 
 - PostgreSQL is the authoritative ledger for activations, cycles, decisions, intents, mutations, reconciliation, and
   the compact controller status projection.
 - TigerBeetle is the authoritative accounting ledger for cash, fees, cost basis, and realized P&L.
+- Dorvud owns the Alpaca IEX market WebSocket, publishes exact bars, quotes and trades to Kafka, and owns the separate
+  account-scoped `trade_updates` WebSocket and Activity SSE connection. Broker events go directly to Restate and do
+  not traverse the market-data bus.
 - Dorvud/Flink consumes original Kafka bars and publishes versioned rolling features. Each execution worker owns a
   separate projection thread with scoped `@platformatic/kafka` consumers. Original arrivals are appended to the
   same PostgreSQL database as financial persistence, with immutable capture and ordered-prefix guards.
 - ClickHouse is the read-only archive for raw events and complete feature revisions, including Kafka provenance.
-- The broker adapter performs account-environment-neutral reads and mutations through the restricted egress proxy.
+- The broker read adapter supplies independent canonical account, order, position, fill, fee and borrow-eligibility
+  observations through the restricted egress proxy. Only the mutation coordinator may submit or cancel orders.
 - The public Bayn deployment serves read-only liveness, readiness, status, metrics, and traces. It does not schedule
   execution or own broker mutation authority.
+
+## System shape and dependency rule
+
+```mermaid
+flowchart TB
+  subgraph M[Market evidence plane]
+    IEX[Alpaca IEX bars, quotes and trades] --> Dorvud[Dorvud market owner]
+    Dorvud --> Raw[Kafka immutable raw events]
+    Raw --> Flink[Flink versioned features]
+    Raw --> Projection[Worker verified projection]
+    Flink --> Projection
+    Webull[Webull supplementary minute bar] --> Projection
+    Raw --> Archive[(ClickHouse read-only archive)]
+    Flink --> Archive
+  end
+
+  subgraph D[Decision plane]
+    Projection --> Cut[Immutable observation cut]
+    Cut --> Jev[Jev structural proposals]
+    Jev --> Selector[Current deterministic structural selector]
+    Selector --> Choice[One long, one short, or CASH]
+    Choice --> Planner[Target planner and risk]
+  end
+
+  subgraph E[Execution and accounting plane]
+    Planner --> Intent[(Committed PostgreSQL intent)]
+    Intent --> Mutation[Single mutation coordinator]
+    Mutation --> API[Alpaca order API]
+    API --> Streams[trade_updates plus Activity SSE]
+    Streams --> Source[(Immutable broker source ledgers)]
+    Source --> Reducers[Deterministic projections]
+    Reducers --> Verify[Canonical convergence verifier]
+    Verify --> Money[(TigerBeetle accounting)]
+    Verify --> Planner
+  end
+
+  subgraph Q[Read-only qualification plane]
+    Archive --> Frozen[Frozen prospective evidence cut]
+    Source --> Frozen
+    Money --> Frozen
+    Frozen --> Compare[Candidate vs registered incumbent vs costed CASH]
+    Compare --> Gate[Positive fully costed lower bounds]
+  end
+
+  Gate -. reviewed source and GitOps only .-> Selector
+```
+
+Dependencies move from immutable facts to pure decisions to committed intents to side effects, then back as new
+immutable facts. No reducer calls the strategy, no strategy calls the broker, and no model response grants capital
+authority. Research may read frozen evidence but cannot write execution state. Its only route into trading is a new
+source-controlled protocol and authorization delivered through the normal review, Kargo and reconciliation gates.
+
+Keep one owner for each mutable fact: Dorvud owns each provider connection, Restate owns account serialization,
+PostgreSQL owns execution evidence, TigerBeetle owns posted money, and the selector owns the single trade-or-cash
+choice. A second cursor, selector, mutation loop, accounting projection, or executable compatibility path is a defect,
+not redundancy. Historical decoders may reproduce retained evidence but never start a current cycle.
 
 ## Intraday flow
 
@@ -74,14 +136,17 @@ without an extra clock warmup. It supplies a deterministic candlestick image and
 Bayn owns arithmetic, timing, sizing, risk and accounting.
 
 One CHART call asks independent presence questions and Boxes for defended support, observed overhead resistance,
-and a completed consolidation base. Code maps valid Boxes to original candle IDs and constructs at most one funded
-support-recovery proposal and one funded base-breakout proposal. The base excludes the newest candle, spans at least
-two completed candles, and cannot contain a source-time gap. Its bid must exceed the base high.
+and a completed consolidation base. Code maps valid Boxes to original candle IDs. For eligible v41 equities it can
+construct funded support-recovery and base-breakout long proposals plus resistance-rejection and base-breakdown short
+proposals. The base excludes the newest candle, spans at least two completed candles, and cannot contain a source-time
+gap. A long breakout bid must exceed its base high; a short breakdown ask must be below its base low.
 
 The support proposal places its stop below the source support candle's low and its target below the observed
-resistance candle's high, rounded to instrument precision. The base proposal places its stop below the base low and
-its target at `2 * baseHigh - baseLow`, rounded down. Source feasibility and fee-inclusive funding can reject a
-proposal before paid final judgment. Jev does not generate prices or quantities.
+resistance candle's high, rounded to instrument precision. The long base proposal places its stop below the base low
+and projects the base range upward. The short proposals mirror the price geometry without mirroring model
+probabilities: their stop is above the observed resistance or base and their target is below entry. Source feasibility,
+fee-inclusive funding, collateral and fresh borrow eligibility can reject a proposal before paid final judgment. Jev
+does not generate prices or quantities.
 
 The final JEV call asks whether each setup is confirmed and whether its stop invalidates the setup. Both judgments
 must be at least 0.70. Within a symbol, selection ranks eligible proposals by the lower of those judgments, then lower
@@ -94,8 +159,8 @@ evidence lifetime. There is no new budget at the handoff and no generic paid-cal
 receipts are retained before authorization. Entry risk binds a fresh execution quote for at most ten seconds from its
 event time.
 
-The strategy selects at most one long position and caps it at 20% of account equity. Allocation bounds the actual
-weighted target by order, symbol, gross and net exposure limits and remaining daily buy-plus-sell turnover. It
+The strategy selects at most one equity position and caps its absolute weight at 20% of account equity. Allocation
+bounds the actual weighted target by order, symbol, gross and net exposure limits and remaining daily buy-plus-sell turnover. It
 reserves slippage and current exposure's liquidation notional before sizing the target. The planner and allocation
 bounds use the same fixed-point weight precision.
 
@@ -125,8 +190,38 @@ Mutation is capability-gated, not account-type-gated:
 6. Recovery performs deterministic read-by-client-order-ID. Broker POST and DELETE operations are never wrapped in a
    generic retry.
 
-Execution is long-only. Sells cannot exceed reconciled inventory. Symbol exposure, gross and net exposure, turnover,
-loss, drawdown, open-order count, slippage, staleness, and cutoff limits fail closed.
+Long sells cannot exceed reconciled long inventory. A new short requires whole-share sizing, 150% initial collateral,
+fresh easy-to-borrow eligibility and a cover bracket; sale proceeds do not become buying power. Symbol exposure, gross
+and net exposure, turnover, loss, drawdown, open-order count, slippage, staleness, and cutoff limits fail closed.
+
+## Target profitability architecture
+
+The current selector ranks structurally supported proposals by model-judgment support and modeled stop loss. That is
+deterministic, but it is not a proof of expected profit. Latency work can reduce stale fills and operating expense; it
+cannot turn a negative strategy into an edge. A successor selector may ship only with the following architecture and
+prospective qualification; these bullets do not describe a currently qualified edge:
+
+1. Jev identifies and invalidates source-bound long and short structures. It does not rank expected returns.
+2. A single versioned selector prices spread, slippage, broker and regulatory fees, borrow, inference, data and
+   infrastructure costs without counting costs already reflected in broker equity twice.
+3. The selector emits exactly one proposal or `CASH`. A quarantined setup is a post-selection cash veto; it never
+   promotes a runner-up and therefore cannot create an unregistered policy through fallback behavior.
+4. Risk and capital authority may only reduce the selected exposure. They cannot substitute another symbol or side.
+5. Outcomes append to evidence and accounting. They do not tune the running policy. Any learned change becomes a new
+   preregistered protocol evaluated prospectively.
+
+One session's primary economic outcome is
+`close broker equity - open broker equity - external funding - costs not yet recognized in broker equity`. The
+candidate is compared on matched prospective sessions against `INCUMBENT_AT_REGISTRATION` and `COSTED_CASH`.
+`LEGACY_PRE_JEV_CONTROL` remains historical context only. Independent virtual shadows may discover hypotheses, but
+they cannot qualify PAPER because they do not reproduce the account, rejection, borrow, queueing and capital path.
+
+Qualification requires positive lower confidence bounds for candidate absolute net return, candidate minus the
+registered incumbent, and candidate minus costed cash. Those bounds are reported separately for rising and falling
+market regimes and for long and short opportunities, with the protocol, universe, cost model, calendar, sample size,
+stopping rule and multiplicity policy frozen before the first observation. Failure of any bound means `CASH`/OBSERVE,
+not a threshold retune. Formal proofs cover determinism, fencing and accounting conservation; only prospective broker
+outcomes can establish edge.
 
 ## Effect composition
 

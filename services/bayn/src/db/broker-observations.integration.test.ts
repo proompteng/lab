@@ -1,4 +1,4 @@
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import { ValkeyCacheError } from '../valkey-cache'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import { randomUUID } from 'node:crypto'
@@ -29,6 +29,13 @@ import { config as runtimeConfig } from '../testing/runtime-fixtures'
 import { BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerEnvironment } from '../broker/identity'
 import type { BrokerNotification } from '../broker/notifications'
+import {
+  brokerActivityVersion,
+  projectBrokerActivity,
+  type BrokerActivityCatchupComplete,
+  type BrokerActivityEvent,
+  type BrokerActivityHeartbeat,
+} from '../broker/activities'
 import { BrokerStreamReconciliationReason } from '../broker/trade-update-projection'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
@@ -87,6 +94,124 @@ const tradeSourceEvent = (eventId: string, receivedAt: string, sessionId: string
   _tag: 'TradeUpdate',
   frameJson: '{"stream":"trade_updates","data":{}}',
 })
+const activityRef = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`
+const activityCursor = (value: number) => value.toString().padStart(26, '0')
+const activitySession = {
+  identityHash: '1'.repeat(64),
+  accountId,
+  environment: BrokerEnvironment.Sandbox,
+  credentialHash: '2'.repeat(64),
+  sessionId: 'durable-activity-session',
+  sourceRevision: revision,
+  verifiedAt: '2026-11-21T16:00:00.000Z',
+  connectedAt: '2026-11-21T16:00:00.000Z',
+  requestId: 'durable-activity-request',
+} as const
+const activityEvent = (
+  sequence: number,
+  reference: number,
+  executionType: 'fill' | 'trade_correct' | 'trade_bust',
+  previous?: number,
+): BrokerActivityEvent => {
+  const sourceEventId = activityCursor(sequence)
+  const activityJson = JSON.stringify({
+    activity_type: 'TRD',
+    event_id: sourceEventId,
+    ref_id: activityRef(reference),
+    ...(previous === undefined ? {} : { previous_id: activityRef(previous) }),
+    executed_at: `2026-11-21T16:00:0${sequence}.123456789Z`,
+    price: String(100 + sequence),
+    qty: '1',
+    details: {
+      order_id: activityRef(99),
+      cum_qty: '1',
+      leaves_qty: '0',
+      symbol: 'AAPL',
+      side: 'buy',
+      execution_type: executionType,
+      order_status: 'filled',
+    },
+  })
+  const contentHash = sha256(activityJson)
+  return {
+    _tag: 'Event',
+    schemaVersion: brokerActivityVersion,
+    eventId: sha256(`${activitySession.identityHash}\nactivity\n${sourceEventId}\n${contentHash}`),
+    session: activitySession,
+    receivedAt: `2026-11-21T16:00:0${sequence}.500Z`,
+    sourceEventId,
+    contentHash,
+    refId: activityRef(reference),
+    ...(previous === undefined ? {} : { previousRefId: activityRef(previous) }),
+    activityType: 'TRD',
+    activityJson,
+  }
+}
+const canonicalActivityEvent = (sequence: number, reference: number): BrokerActivityEvent => {
+  const sourceEventId = activityCursor(sequence)
+  const activityJson = JSON.stringify({
+    activity_type: 'JNLC',
+    event_id: sourceEventId,
+    ref_id: activityRef(reference),
+    account_id: accountId,
+    status: 'executed',
+    executed_at: `2026-11-21T16:00:0${sequence}.123456789Z`,
+    settle_date: '2026-11-21',
+    currency: 'USD',
+    net_amount: '100.00',
+    details: { system_date: '2026-11-21' },
+  })
+  const contentHash = sha256(activityJson)
+  return {
+    _tag: 'Event',
+    schemaVersion: brokerActivityVersion,
+    eventId: sha256(`${activitySession.identityHash}\nactivity\n${sourceEventId}\n${contentHash}`),
+    session: activitySession,
+    receivedAt: `2026-11-21T16:00:0${sequence}.500Z`,
+    sourceEventId,
+    contentHash,
+    refId: activityRef(reference),
+    activityType: 'JNLC',
+    activityJson,
+  }
+}
+const redeliveredActivity = (event: BrokerActivityEvent, sequence: number): BrokerActivityEvent => {
+  const sourceEventId = activityCursor(sequence)
+  const activityJson = JSON.stringify({ ...(JSON.parse(event.activityJson) as object), event_id: sourceEventId })
+  const contentHash = sha256(activityJson)
+  return {
+    ...event,
+    sourceEventId,
+    contentHash,
+    activityJson,
+    receivedAt: `2026-11-21T16:00:0${sequence}.500Z`,
+    eventId: sha256(`${event.session.identityHash}\nactivity\n${sourceEventId}\n${contentHash}`),
+  }
+}
+const activityCatchup = (cursor: string | null): BrokerActivityCatchupComplete => ({
+  _tag: 'CatchupComplete',
+  schemaVersion: brokerActivityVersion,
+  eventId: sha256(
+    `${activitySession.identityHash}\nactivity-catchup\n${activitySession.sessionId}\n${cursor ?? 'empty'}\n2026-11-21T16:00:00.000Z\n2026-11-21T16:00:09.000Z`,
+  ),
+  session: activitySession,
+  receivedAt: '2026-11-21T16:00:09.000Z',
+  cursor,
+  coveredThrough: '2026-11-21T16:00:00.000Z',
+})
+const activityHeartbeat = (cursor: string | null): BrokerActivityHeartbeat => {
+  const receivedAt = new Date().toISOString()
+  return {
+    _tag: 'Heartbeat',
+    schemaVersion: brokerActivityVersion,
+    eventId: sha256(
+      `${activitySession.identityHash}\nactivity-heartbeat\n${activitySession.sessionId}\n${cursor ?? 'empty'}\n${receivedAt}`,
+    ),
+    session: activitySession,
+    receivedAt,
+    cursor,
+  }
+}
 const advanceToTicket = (ticket: BrokerObservationTicket, delta = 0) =>
   TestClock.setTime(Date.parse(ticket.startedAt) + delta)
 
@@ -471,6 +596,142 @@ describePostgres('Durable per-account broker observations', () => {
               WHERE account_id = ${accountId} AND event_id = ${event.eventId}`.pipe(Effect.result),
           ),
         ).toBe(true)
+      }),
+    ))
+
+  test('durably resumes the activity prefix and applies correction and bust reversal without replica history', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        const original = activityEvent(1, 1, 'fill')
+        const originalReceipt = yield* store.recordActivity(original, projectBrokerActivity(original))
+        expect(originalReceipt).toMatchObject({ cursor: original.sourceEventId, replayed: false, projection: 'Fill' })
+        expect(yield* store.recordActivityCatchup(activityCatchup(original.sourceEventId))).toEqual({
+          cursor: original.sourceEventId,
+          caughtUp: true,
+          coveredThrough: '2026-11-21T16:00:00.000Z',
+          fillFeeComplete: true,
+          sourceRevision: revision,
+        })
+        expect(yield* store.recordActivityHeartbeat(activityHeartbeat(original.sourceEventId))).toEqual({
+          cursor: original.sourceEventId,
+          caughtUp: true,
+          coveredThrough: '2026-11-21T16:00:00.000Z',
+          fillFeeComplete: true,
+          sourceRevision: revision,
+          activated: true,
+        })
+        expect((yield* store.readAccountActivity).fills.map(({ value }) => value.priceAtoms)).toEqual(['101000000000'])
+        yield* sql`UPDATE broker_activity_cursors SET heartbeat_at = clock_timestamp() - interval '2 minutes'
+          WHERE account_id = ${accountId}`
+        expect(Result.isFailure(yield* store.readAccountActivity.pipe(Effect.result))).toBe(true)
+        expect(yield* store.recordActivityHeartbeat(activityHeartbeat(original.sourceEventId))).toMatchObject({
+          activated: false,
+        })
+        expect((yield* store.readAccountActivity).fills).toHaveLength(1)
+
+        const correction = activityEvent(2, 2, 'trade_correct', 1)
+        expect(yield* store.recordActivity(correction, projectBrokerActivity(correction))).toMatchObject({
+          cursor: correction.sourceEventId,
+          projection: 'Fill',
+        })
+        const corrected = yield* store.readAccountActivity
+        expect(corrected.fills.map(({ value }) => [value.activityId, value.priceAtoms])).toEqual([
+          [`20261121110002123::${activityRef(2)}`, '102000000000'],
+        ])
+
+        const bust = activityEvent(3, 3, 'trade_bust', 2)
+        expect(yield* store.recordActivity(bust, projectBrokerActivity(bust))).toMatchObject({
+          cursor: bust.sourceEventId,
+          projection: 'Bust',
+        })
+        expect((yield* store.readAccountActivity).fills).toEqual([])
+        expect(yield* store.readActivityCursor).toEqual({
+          cursor: bust.sourceEventId,
+          caughtUp: true,
+          coveredThrough: '2026-11-21T16:00:00.000Z',
+          fillFeeComplete: true,
+          sourceRevision: revision,
+        })
+
+        expect(yield* store.recordActivity(bust, projectBrokerActivity(bust))).toMatchObject({
+          cursor: bust.sourceEventId,
+          replayed: true,
+          projection: 'Bust',
+        })
+        expect(
+          yield* sql`SELECT source_event_id,outcome,ref_id::text AS ref_id,previous_ref_id::text AS previous_ref_id
+            FROM broker_activity_event_projections WHERE account_id = ${accountId}
+            ORDER BY source_event_id COLLATE "C"`,
+        ).toEqual([
+          { source_event_id: activityCursor(1), outcome: 'FILL', ref_id: activityRef(1), previous_ref_id: null },
+          {
+            source_event_id: activityCursor(2),
+            outcome: 'FILL',
+            ref_id: activityRef(2),
+            previous_ref_id: activityRef(1),
+          },
+          {
+            source_event_id: activityCursor(3),
+            outcome: 'BUST',
+            ref_id: activityRef(3),
+            previous_ref_id: activityRef(2),
+          },
+        ])
+        expect(
+          Result.isFailure(
+            yield* sql`UPDATE broker_activity_events SET activity_json = activity_json
+              WHERE account_id = ${accountId} AND source_event_id = ${original.sourceEventId}`.pipe(Effect.result),
+          ),
+        ).toBe(true)
+        expect(
+          yield* sql`SELECT activity_json AS "activityJson" FROM broker_activity_events
+            WHERE account_id = ${accountId} AND source_event_id = ${original.sourceEventId}`,
+        ).toEqual([{ activityJson: original.activityJson }])
+      }),
+    ))
+
+  test('deduplicates only an economically identical activity reference and closes on a conflict', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        const original = activityEvent(1, 1, 'fill')
+        yield* store.recordActivity(original, projectBrokerActivity(original))
+        yield* store.recordActivityCatchup(activityCatchup(original.sourceEventId))
+        yield* store.recordActivityHeartbeat(activityHeartbeat(original.sourceEventId))
+
+        const duplicate = redeliveredActivity(original, 2)
+        expect(yield* store.recordActivity(duplicate, projectBrokerActivity(duplicate))).toMatchObject({
+          projection: 'Duplicate',
+          fillFeeComplete: true,
+        })
+        expect((yield* store.readAccountActivity).fills).toHaveLength(1)
+
+        const conflict = activityEvent(3, 1, 'fill')
+        expect(yield* store.recordActivity(conflict, projectBrokerActivity(conflict))).toMatchObject({
+          projection: 'ReconcileRequired',
+          fillFeeComplete: false,
+        })
+        expect(Result.isFailure(yield* store.readAccountActivity.pipe(Effect.result))).toBe(true)
+      }),
+    ))
+
+  test('keeps the fill and fee cut complete across a documented cash journal', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        const journal = canonicalActivityEvent(1, 1)
+        expect(yield* store.recordActivity(journal, projectBrokerActivity(journal))).toMatchObject({
+          cursor: journal.sourceEventId,
+          projection: 'CanonicalOnly',
+          fillFeeComplete: true,
+        })
+        yield* store.recordActivityCatchup(activityCatchup(journal.sourceEventId))
+        yield* store.recordActivityHeartbeat(activityHeartbeat(journal.sourceEventId))
+        const cut = yield* store.readAccountActivity
+        expect(cut.fills).toEqual([])
+        expect([...cut.feeCounts]).toEqual([])
+        expect(
+          yield* sql`SELECT outcome,reason FROM broker_activity_event_projections
+            WHERE account_id = ${accountId} AND source_event_id = ${journal.sourceEventId}`,
+        ).toEqual([{ outcome: 'CANONICAL_ONLY', reason: 'OUTSIDE_FILL_FEE_VIEW' }])
       }),
     ))
 

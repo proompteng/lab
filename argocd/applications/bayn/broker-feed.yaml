@@ -10,7 +10,7 @@ metadata:
 spec:
   replicas: 1
   revisionHistoryLimit: 2
-  # One verified account socket; reconnect emits a session boundary for gap repair.
+  # One verified process owns trade_updates and Activity SSE; reconnect emits durable gap-repair boundaries.
   strategy:
     type: Recreate
   selector:

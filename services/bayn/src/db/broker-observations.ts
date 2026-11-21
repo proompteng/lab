@@ -19,7 +19,7 @@ import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { protectionReleaseReadCount, type ProtectionReadAllowance } from '../broker/alpaca/poll-budget'
 import type { NativeProtectionCancelCommand } from '../execution/intents/domain'
 import { currentUtcInstant } from '../time'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import { ValkeyCache } from '../valkey-cache'
 import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -28,12 +28,83 @@ import {
   BrokerSourceProjectionReceiptSchema,
   type BrokerSourceProjectionReceipt,
 } from '../broker/trade-update-projection'
+import {
+  FillActivitySchema,
+  brokerActivityCursorIsReady,
+  brokerActivityHeartbeatFreshnessMs,
+  brokerActivityProjectionContract,
+  decideBrokerActivityCatchup,
+  decideBrokerActivityEvent,
+  decideBrokerActivityHeartbeat,
+  type AccountActivityCut,
+  type BrokerActivityCatchupComplete,
+  type BrokerActivityCursorState,
+  type BrokerActivityEvent,
+  type BrokerActivityHeartbeat,
+  type BrokerActivityHeartbeatReceipt,
+  type BrokerActivityProjection,
+  type BrokerActivityReceipt,
+} from '../broker/activities'
 
 const materializationBytes = Metric.histogram('bayn_broker_materialization_bytes', {
   boundaries: [4096, 16384, 65536, 262144, 1048576, 4194304],
 })
 
 const StateMaterialization = Schema.Struct({ snapshotHash: Sha256Schema, state: ObservedBrokerStateSchema })
+
+const ActivityCursorRows = Schema.Array(
+  Schema.Struct({
+    cursor: Schema.NullOr(Schema.String),
+    sourceRevision: Schema.String,
+    caughtUp: Schema.Boolean,
+    coveredThrough: Schema.NullOr(UtcInstantSchema),
+    fillFeeComplete: Schema.Boolean,
+    fresh: Schema.Boolean,
+    sessionId: Schema.NullOr(Schema.String),
+    requestId: Schema.NullOr(Schema.String),
+  }),
+).check(Schema.isMaxLength(1))
+
+const ActivityProjectionRows = Schema.Array(
+  Schema.Struct({
+    projection: Schema.Literals(['FILL', 'FEE', 'BUST', 'CANONICAL_ONLY', 'DUPLICATE', 'RECONCILE_REQUIRED']),
+    sourceEventHash: Schema.String,
+  }),
+).check(Schema.isMaxLength(1))
+
+const ActivityPriorRows = Schema.Array(Schema.Struct({ outcome: Schema.String, active: Schema.Boolean })).check(
+  Schema.isMaxLength(1),
+)
+
+const ActivityFillRows = Schema.Array(
+  Schema.Struct({
+    fill: FillActivitySchema,
+    requestId: Schema.String,
+    contentHash: Schema.String,
+    observedAt: UtcInstantSchema,
+  }),
+)
+
+const ActivityFeeRows = Schema.Array(Schema.Struct({ sourceEventId: Schema.String, key: Schema.String }))
+
+const activityProjectionReceipt = (
+  outcome: 'FILL' | 'FEE' | 'BUST' | 'CANONICAL_ONLY' | 'DUPLICATE' | 'RECONCILE_REQUIRED',
+): BrokerActivityReceipt['projection'] => {
+  switch (outcome) {
+    case 'FILL':
+      return 'Fill'
+    case 'FEE':
+      return 'Fee'
+    case 'BUST':
+      return 'Bust'
+    case 'CANONICAL_ONLY':
+      return 'CanonicalOnly'
+    case 'DUPLICATE':
+      return 'Duplicate'
+    case 'RECONCILE_REQUIRED':
+      return 'ReconcileRequired'
+  }
+}
 
 const maximumRetainedSnapshotBytes = 8 * 1024 * 1024
 
@@ -220,6 +291,338 @@ export const makeBrokerObservationStore = (
         }),
       ),
     )
+  const cursorRows = sql`SELECT last_source_event_id AS cursor, source_revision AS "sourceRevision",
+      caught_up AS "caughtUp",
+      CASE WHEN covered_through_at IS NULL THEN NULL
+        ELSE to_char(covered_through_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "coveredThrough",
+      fill_fee_complete AS "fillFeeComplete",
+      heartbeat_at IS NOT NULL AND heartbeat_at >= clock_timestamp() - (${brokerActivityHeartbeatFreshnessMs} * interval '1 millisecond') AS fresh,
+      session_id AS "sessionId", request_id AS "requestId"
+    FROM broker_activity_cursors WHERE account_id = ${accountId}`.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(ActivityCursorRows, strictParseOptions)),
+  )
+  const readActivityCursor: Effect.Effect<BrokerActivityCursorState, BrokerReadError> = run(
+    cursorRows.pipe(
+      Effect.map((rows) => ({
+        cursor: rows[0]?.cursor ?? null,
+        caughtUp: rows[0]?.caughtUp ?? false,
+        coveredThrough: rows[0]?.coveredThrough ?? null,
+        fillFeeComplete: rows[0]?.fillFeeComplete ?? true,
+        sourceRevision,
+      })),
+    ),
+  )
+  const retainedActivityProjection = (sourceEventId: string) =>
+    sql`SELECT projection.outcome AS projection, event.source_event_hash AS "sourceEventHash"
+      FROM broker_activity_events AS event
+      JOIN broker_activity_event_projections AS projection USING (account_id,source_event_id)
+      WHERE event.account_id = ${accountId} AND event.source_event_id = ${sourceEventId}`.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(ActivityProjectionRows, strictParseOptions)),
+      Effect.map((rows) => rows[0]),
+    )
+  const recordActivity = (event: BrokerActivityEvent, requested: BrokerActivityProjection) =>
+    run(
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`INSERT INTO broker_activity_cursors(account_id,source_revision)
+            VALUES (${accountId},${sourceRevision}) ON CONFLICT (account_id) DO NOTHING`
+          const locked = yield* sql`SELECT last_source_event_id AS cursor, source_revision AS "sourceRevision",
+              caught_up AS "caughtUp",
+              CASE WHEN covered_through_at IS NULL THEN NULL
+                ELSE to_char(covered_through_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "coveredThrough",
+              fill_fee_complete AS "fillFeeComplete",
+              heartbeat_at IS NOT NULL AND heartbeat_at >= clock_timestamp() - (${brokerActivityHeartbeatFreshnessMs} * interval '1 millisecond') AS fresh,
+              session_id AS "sessionId", request_id AS "requestId"
+            FROM broker_activity_cursors WHERE account_id = ${accountId} FOR UPDATE`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(ActivityCursorRows, strictParseOptions)),
+          )
+          const current = locked[0]
+          if (current === undefined) return yield* observationUnavailable('Durable activity cursor is absent')
+          const retained =
+            current.cursor !== null && event.sourceEventId <= current.cursor
+              ? yield* retainedActivityProjection(event.sourceEventId)
+              : undefined
+          const admission = decideBrokerActivityEvent(current, event, retained?.sourceEventHash, true)
+          if (Result.isFailure(admission))
+            return yield* observationUnavailable('Activity replay regressed or changed its retained source event')
+          if (admission.success._tag === 'Replay') {
+            if (retained === undefined)
+              return yield* observationUnavailable('Activity replay is missing its retained projection')
+            return {
+              accepted: true,
+              eventId: event.eventId,
+              cursor: current.cursor,
+              caughtUp: current.caughtUp,
+              coveredThrough: current.coveredThrough,
+              sourceRevision,
+              fillFeeComplete: current.fillFeeComplete,
+              replayed: true,
+              projection: activityProjectionReceipt(retained.projection),
+              projectionContract: brokerActivityProjectionContract,
+            } as BrokerActivityReceipt
+          }
+
+          yield* sql`INSERT INTO broker_activity_events(
+            account_id,source_event_id,transport_event_id,source_event_hash,source_revision,ref_id,previous_ref_id,
+            activity_type,session_id,request_id,received_at,activity_json
+          ) VALUES (
+            ${accountId},${event.sourceEventId},${event.eventId},${event.contentHash},${sourceRevision},${event.refId},
+            ${event.previousRefId ?? null},${event.activityType},${event.session.sessionId},${event.session.requestId},
+            ${event.receivedAt}::timestamptz,${event.activityJson}
+          )`
+
+          const requestedPrevious = 'previousRefId' in requested ? requested.previousRefId : null
+          const reference = yield* sql`SELECT
+            EXISTS (
+              SELECT 1 FROM broker_activity_event_projections
+              WHERE account_id = ${accountId} AND ref_id = ${event.refId}
+                AND outcome IN ('FILL','FEE','BUST','CANONICAL_ONLY')
+            ) AS existing,
+            EXISTS (
+              SELECT 1 FROM broker_activity_event_projections AS projection
+              WHERE projection.account_id = ${accountId} AND projection.ref_id = ${event.refId}
+                AND projection.previous_ref_id IS NOT DISTINCT FROM ${requestedPrevious}::uuid
+                AND (
+                  (${requested._tag === 'Fill'} AND projection.outcome = 'FILL'
+                    AND projection.fill = ${requested._tag === 'Fill' ? JSON.stringify(requested.fill) : null}::jsonb) OR
+                  (${requested._tag === 'Fee'} AND projection.outcome = 'FEE'
+                    AND projection.fee_key = ${requested._tag === 'Fee' ? requested.feeKey : null}) OR
+                  (${requested._tag === 'Bust'} AND projection.outcome = 'BUST')
+                )
+            ) AS identical`.pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(
+                Schema.Tuple([Schema.Struct({ existing: Schema.Boolean, identical: Schema.Boolean })]),
+                strictParseOptions,
+              ),
+            ),
+            Effect.map(([row]) => row),
+          )
+          let projection: BrokerActivityProjection | { readonly _tag: 'Duplicate'; readonly refId: string } =
+            !reference.existing
+              ? requested
+              : reference.identical
+                ? { _tag: 'Duplicate', refId: event.refId }
+                : { _tag: 'ReconcileRequired', refId: event.refId, reason: 'UNSUPPORTED_ACTIVITY' }
+          if (projection._tag === 'CanonicalOnly' && projection.previousRefId !== undefined)
+            projection = {
+              _tag: 'ReconcileRequired',
+              refId: event.refId,
+              reason: 'UNSUPPORTED_ACTIVITY',
+            }
+          if (
+            (projection._tag === 'Fill' || projection._tag === 'Fee' || projection._tag === 'Bust') &&
+            'previousRefId' in projection
+          ) {
+            const prior = yield* sql`SELECT prior.outcome,
+                NOT EXISTS (
+                  SELECT 1 FROM broker_activity_event_projections AS reversal
+                  WHERE reversal.account_id = prior.account_id AND reversal.previous_ref_id = prior.ref_id
+                    AND reversal.outcome IN ('FILL','FEE','BUST')
+                ) AS active
+              FROM broker_activity_event_projections AS prior
+              WHERE prior.account_id = ${accountId} AND prior.ref_id = ${projection.previousRefId}
+                AND prior.outcome IN ('FILL','FEE')`.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(ActivityPriorRows, strictParseOptions)),
+              Effect.map((rows) => rows[0]),
+            )
+            const expected = projection._tag === 'Fee' ? 'FEE' : 'FILL'
+            if (prior === undefined || !prior.active || prior.outcome !== expected)
+              projection = {
+                _tag: 'ReconcileRequired',
+                refId: event.refId,
+                reason: 'UNSUPPORTED_ACTIVITY',
+              }
+          }
+          const outcome =
+            projection._tag === 'Duplicate'
+              ? 'DUPLICATE'
+              : projection._tag === 'ReconcileRequired'
+                ? 'RECONCILE_REQUIRED'
+                : projection._tag === 'CanonicalOnly'
+                  ? 'CANONICAL_ONLY'
+                  : projection._tag.toUpperCase()
+          yield* sql`INSERT INTO broker_activity_event_projections(
+            account_id,source_event_id,source_revision,outcome,ref_id,previous_ref_id,fill,fee_key,reason
+          ) VALUES (
+            ${accountId},${event.sourceEventId},${sourceRevision},${outcome},${projection.refId},
+            ${'previousRefId' in projection ? projection.previousRefId : null},
+            ${projection._tag === 'Fill' ? JSON.stringify(projection.fill) : null}::jsonb,
+            ${projection._tag === 'Fee' ? projection.feeKey : null},
+            ${projection._tag === 'ReconcileRequired' || projection._tag === 'CanonicalOnly' ? projection.reason : null}
+          )`
+          const append = decideBrokerActivityEvent(current, event, undefined, projection._tag !== 'ReconcileRequired')
+          if (Result.isFailure(append) || append.success._tag !== 'Append')
+            return yield* observationUnavailable('Activity append no longer advances the durable cursor')
+          const { fillFeeComplete, preserveHeartbeat } = append.success
+          yield* sql`UPDATE broker_activity_cursors SET
+              source_revision = ${sourceRevision}, last_source_event_id = ${event.sourceEventId},
+              last_source_event_hash = ${event.contentHash}, last_activity_received_at = ${event.receivedAt}::timestamptz,
+              fill_fee_complete = ${fillFeeComplete},
+              session_id = CASE
+                WHEN ${preserveHeartbeat}
+                THEN session_id ELSE NULL END,
+              request_id = CASE
+                WHEN ${preserveHeartbeat}
+                THEN request_id ELSE NULL END,
+              heartbeat_at = CASE
+                WHEN ${preserveHeartbeat}
+                THEN heartbeat_at ELSE NULL END,
+              updated_at = clock_timestamp()
+            WHERE account_id = ${accountId}`
+          return {
+            accepted: true,
+            eventId: event.eventId,
+            cursor: event.sourceEventId,
+            caughtUp: current.caughtUp,
+            coveredThrough: current.coveredThrough,
+            sourceRevision,
+            fillFeeComplete,
+            replayed: false,
+            projection: projection._tag,
+            projectionContract: brokerActivityProjectionContract,
+          } satisfies BrokerActivityReceipt
+        }),
+      ),
+    )
+  const recordActivityCatchup = (boundary: BrokerActivityCatchupComplete) =>
+    run(
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`INSERT INTO broker_activity_cursors(account_id,source_revision)
+            VALUES (${accountId},${sourceRevision}) ON CONFLICT (account_id) DO NOTHING`
+          const locked = yield* sql`SELECT last_source_event_id AS cursor, source_revision AS "sourceRevision",
+              caught_up AS "caughtUp",
+              CASE WHEN covered_through_at IS NULL THEN NULL
+                ELSE to_char(covered_through_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "coveredThrough",
+              fill_fee_complete AS "fillFeeComplete",
+              heartbeat_at IS NOT NULL AND heartbeat_at >= clock_timestamp() - (${brokerActivityHeartbeatFreshnessMs} * interval '1 millisecond') AS fresh,
+              session_id AS "sessionId", request_id AS "requestId"
+            FROM broker_activity_cursors WHERE account_id = ${accountId} FOR UPDATE`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(ActivityCursorRows, strictParseOptions)),
+          )
+          const current = locked[0]
+          if (current === undefined) return yield* observationUnavailable('Durable activity cursor is absent')
+          const admission = decideBrokerActivityCatchup(current, boundary)
+          if (Result.isFailure(admission))
+            return yield* observationUnavailable(
+              admission.failure === 'CATCHUP_CURSOR_MISMATCH'
+                ? 'Activity catchup does not cover the durable cursor'
+                : 'Activity catchup conflicts with the retained historical boundary',
+            )
+          yield* sql`UPDATE broker_activity_cursors SET source_revision = ${sourceRevision},
+              caught_up = true, covered_through_at = ${admission.success.coveredThrough}::timestamptz,
+              updated_at = clock_timestamp()
+            WHERE account_id = ${accountId}`
+          return {
+            cursor: current.cursor,
+            caughtUp: true,
+            coveredThrough: boundary.coveredThrough,
+            fillFeeComplete: current.fillFeeComplete,
+            sourceRevision,
+          } satisfies BrokerActivityCursorState
+        }),
+      ),
+    )
+  const recordActivityHeartbeat = (heartbeat: BrokerActivityHeartbeat) =>
+    run(
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const locked = yield* sql`SELECT last_source_event_id AS cursor, source_revision AS "sourceRevision",
+              caught_up AS "caughtUp",
+              CASE WHEN covered_through_at IS NULL THEN NULL
+                ELSE to_char(covered_through_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "coveredThrough",
+              fill_fee_complete AS "fillFeeComplete",
+              heartbeat_at IS NOT NULL AND heartbeat_at >= clock_timestamp() - (${brokerActivityHeartbeatFreshnessMs} * interval '1 millisecond') AS fresh,
+              session_id AS "sessionId", request_id AS "requestId"
+            FROM broker_activity_cursors WHERE account_id = ${accountId} FOR UPDATE`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(ActivityCursorRows, strictParseOptions)),
+          )
+          const current = locked[0]
+          if (current === undefined)
+            return yield* observationUnavailable('Activity heartbeat does not cover a caught-up durable cursor')
+          const admission = decideBrokerActivityHeartbeat(current, heartbeat)
+          if (Result.isFailure(admission))
+            return yield* observationUnavailable('Activity heartbeat does not cover a caught-up durable cursor')
+          const { activated } = admission.success
+          yield* sql`UPDATE broker_activity_cursors SET source_revision = ${sourceRevision},
+              session_id = ${heartbeat.session.sessionId}, request_id = ${heartbeat.session.requestId},
+              heartbeat_at = CASE
+                WHEN session_id = ${heartbeat.session.sessionId} AND request_id = ${heartbeat.session.requestId}
+                THEN GREATEST(heartbeat_at, ${heartbeat.receivedAt}::timestamptz)
+                ELSE ${heartbeat.receivedAt}::timestamptz END,
+              updated_at = clock_timestamp()
+            WHERE account_id = ${accountId}`
+          return {
+            cursor: current.cursor,
+            caughtUp: current.caughtUp,
+            coveredThrough: current.coveredThrough,
+            fillFeeComplete: current.fillFeeComplete,
+            sourceRevision,
+            activated,
+          } satisfies BrokerActivityHeartbeatReceipt
+        }),
+      ),
+    )
+  const readAccountActivity: Effect.Effect<AccountActivityCut, BrokerReadError> = run(
+    Effect.gen(function* () {
+      const cursor = (yield* cursorRows)[0]
+      if (cursor === undefined || !brokerActivityCursorIsReady(cursor, sourceRevision))
+        return yield* observationUnavailable('Durable Activity SSE fill and fee projection is not ready and complete')
+      const fills = yield* sql`SELECT projection.fill, event.request_id AS "requestId",
+          event.source_event_hash AS "contentHash",
+          to_char(event.received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
+        FROM broker_activity_event_projections AS projection
+        JOIN broker_activity_events AS event USING (account_id,source_event_id)
+        WHERE projection.account_id = ${accountId} AND projection.outcome = 'FILL'
+          AND NOT EXISTS (
+            SELECT 1 FROM broker_activity_event_projections AS reversal
+            WHERE reversal.account_id = projection.account_id AND reversal.previous_ref_id = projection.ref_id
+              AND reversal.outcome IN ('FILL','FEE','BUST')
+          )
+        ORDER BY projection.source_event_id COLLATE "C"`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(ActivityFillRows, strictParseOptions)),
+      )
+      const fees = yield* sql`SELECT projection.source_event_id AS "sourceEventId", projection.fee_key AS key
+        FROM broker_activity_event_projections AS projection
+        WHERE projection.account_id = ${accountId} AND projection.outcome = 'FEE'
+          AND NOT EXISTS (
+            SELECT 1 FROM broker_activity_event_projections AS reversal
+            WHERE reversal.account_id = projection.account_id AND reversal.previous_ref_id = projection.ref_id
+              AND reversal.outcome IN ('FILL','FEE','BUST')
+          )
+        ORDER BY projection.source_event_id COLLATE "C"`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(ActivityFeeRows, strictParseOptions)),
+      )
+      const confirmedCursor = (yield* cursorRows)[0]
+      if (
+        confirmedCursor === undefined ||
+        !brokerActivityCursorIsReady(confirmedCursor, sourceRevision) ||
+        confirmedCursor.cursor !== cursor.cursor
+      )
+        return yield* observationUnavailable('Durable Activity SSE prefix changed while materializing its projection')
+      const observedAt = yield* currentUtcInstant
+      const version = sha256(`${confirmedCursor.cursor ?? 'empty'}\n${confirmedCursor.sourceRevision}`)
+      const feeVersion = sha256(fees.map(({ sourceEventId, key }) => `${sourceEventId}\n${key}`).join('\n\n'))
+      const feeCounts = new Map<string, number>()
+      for (const { key } of fees) feeCounts.set(key, (feeCounts.get(key) ?? 0) + 1)
+      return {
+        version,
+        feeVersion,
+        fills: fills.map(({ fill, requestId, contentHash, observedAt }) => ({
+          value: fill,
+          evidence: { status: 200, requestId, contentHash, observedAt },
+        })),
+        feeCounts,
+        evidence: {
+          status: 200,
+          requestId: confirmedCursor.requestId,
+          contentHash: version,
+          observedAt,
+        },
+      }
+    }),
+  )
   const isSessionBoundaryCovered = (sessionId: string) =>
     run(
       sql`SELECT EXISTS (
@@ -729,6 +1132,11 @@ export const makeBrokerObservationStore = (
     interrupt: recoverUnfinished,
     invalidate,
     recordNotification,
+    readActivityCursor,
+    recordActivity,
+    recordActivityCatchup,
+    recordActivityHeartbeat,
+    readAccountActivity,
     isNotificationCovered,
     isSessionBoundaryCovered,
     readNotification,

@@ -18,18 +18,27 @@ and reconciliation. Dorvud does not grant trading authority or establish strateg
 ## Bayn broker notifications
 
 The separate `bayn-broker-feed` image runs `ai.proompteng.dorvud.ws.BrokerFeedMain` from the websockets module.
-It uses Bayn's existing paper account secret and egress proxy. Before opening each socket, it calls Alpaca's account
-endpoint with the loaded credentials and requires the returned account ID to match Bayn's configured account.
-It then authenticates the socket and verifies the `trade_updates` subscription acknowledgement. The shared session
-parser accepts Alpaca's text and binary JSON frames; the original update JSON retains decimal and timestamp precision.
+It uses Bayn's existing paper account secret and egress proxy. Before opening either source, it calls Alpaca's account
+endpoint with the loaded credentials and requires the returned account ID to match Bayn's configured account. It then
+authenticates the `trade_updates` WebSocket. A new Activity cursor first runs a finite
+`since=account.created_at` / `until=cutoff` replay and durably records that cutoff before opening the long-lived
+request. Later sessions resume from the retained `event_id` with `since_id`; an empty history resumes from the
+retained cutoff. Alpaca only exposes activities booked after February 11, 2026, so accounts created before February
+12 UTC fail before cursor access rather than being mislabeled complete. The WebSocket retains the original update JSON. Activity SSE retains its exact source text, content
+hash, ULID cursor, `ref_id`, and `previous_id`.
 
 ```mermaid
-flowchart LR
-  A[Verify Bayn account] --> B[Authenticate and acknowledge subscription]
-  B --> C[Signed SessionReady and TradeUpdate]
+flowchart TB
+  A[Verify Bayn account] --> W[trade_updates WebSocket]
+  A --> H[Finite Activity replay to signed cutoff]
+  H --> E[Live Activity SSE with durable since_id]
+  W --> C[Signed SessionReady and TradeUpdate]
+  H --> F[Signed activity and catch-up boundary]
+  E --> F[Signed activity and heartbeat]
   C -->|direct HTTP plus stable idempotency key| R[Restate durable ingress]
-  R --> S[Immutable source ledger]
-  S --> O[Immediate order, fill and accounting projection]
+  F -->|direct HTTP plus stable idempotency key| R
+  R --> S[Immutable source ledgers and durable cursor]
+  S --> O[Immediate lifecycle projection and durable fill/fee view]
   R --> G[Serialized canonical gap reconciliation]
   O --> D[Serialized account decision and execution]
 ```
@@ -39,12 +48,15 @@ time. HMAC-SHA256 over the exact message bytes uses the existing broker secret. 
 checked against `fixtures/bayn-broker-notification-v1.json`, which contains synthetic credentials. Bayn verifies and
 persists the source before projection; Dorvud cannot grant account, risk or capital authority.
 
-The producer awaits a successful Restate receipt before reading the next update. It retries transient HTTP failures
-with the same idempotency key; a terminal response or exhausted connection ends the session and reconnects with a new
-verified `SessionReady`, allowing canonical gap repair. Updates can be delivered more than once. Stable update IDs,
-Restate receipts, the immutable source ledger and the financial stores retain independent idempotency boundaries.
-`/readyz` becomes ready only after the verified session notification has been durably acknowledged, and resets on
-disconnect. `/metrics` exposes readiness, publications and session failures without account labels.
+Each source awaits a successful Restate receipt before reading its next event. Transient HTTP failures retry with the
+same idempotency key; a terminal response or exhausted connection ends only that source and reconnects it. Activity
+SSE historical completeness requires the finite account-creation-to-cutoff replay; a provider heartbeat cannot replace
+that proof. Live delivery resumes inclusively from the durable ULID, so replay must match the retained content hash. Corrections and busts
+reverse the `previous_id` activity through append-only projection rows. Signed provider heartbeats keep the durable
+view fresh without scheduling repeated reconciliation. Unknown activities, cross-view corrections, and slow-reader
+comments fail closed to the canonical REST path. Documented cash, transfer and corporate-action events are retained as canonical-only
+evidence; they do not masquerade as a fill or fee projection. `/readyz` requires both sources and resets when either disconnects. `/metrics`
+exposes combined and per-source readiness, publications, and session failures without account labels.
 
 Market-data and trade-update sessions allow up to five seconds for a graceful WebSocket close, then cancel that
 session and close both channels. This bounds Ktor's otherwise unbounded close/flush path after a network failure,

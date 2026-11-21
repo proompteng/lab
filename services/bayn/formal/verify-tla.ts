@@ -103,7 +103,14 @@ const check = (name: string, directory: string, expectedViolation?: string) => {
   }
 }
 
-for (const name of ['Controller', 'EntryRecovery', 'MutationLedger', 'RecoveryScheduler', 'CancellationAdmission']) {
+for (const name of [
+  'Controller',
+  'EntryRecovery',
+  'MutationLedger',
+  'RecoveryScheduler',
+  'CancellationAdmission',
+  'ActivityCursor',
+]) {
   const directory = join(output, name)
   mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, `${name}.tla`), readFileSync(join(models, `${name}.tla`)))
@@ -112,6 +119,48 @@ for (const name of ['Controller', 'EntryRecovery', 'MutationLedger', 'RecoverySc
 }
 
 const faults = [
+  {
+    model: 'ActivityCursor',
+    name: 'regressed-activity-cursor',
+    before: 'cursor\' = IF EventDecision = "APPEND" THEN eventCursor ELSE cursor',
+    after: "cursor' = eventCursor",
+    violation: 'Invariant CursorNeverRegresses is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'inexact-activity-replay',
+    before: 'THEN IF retained /\\ hashMatches THEN "REPLAY" ELSE "REJECT"',
+    after: 'THEN "REPLAY"',
+    violation: 'Invariant ReplayRequiresExactRetainedSource is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'changed-activity-catchup-boundary',
+    before: 'CanCatchup == boundaryCursor = cursor /\\ (~caughtUp \\/ coverage = boundaryCoverage)',
+    after: 'CanCatchup == boundaryCursor = cursor',
+    violation: 'Invariant CatchupBoundaryIsImmutable is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'activity-heartbeat-before-catchup',
+    before: 'CanHeartbeat == caughtUp /\\ heartbeatCursor = cursor',
+    after: 'CanHeartbeat == heartbeatCursor = cursor',
+    violation: 'Invariant HeartbeatRequiresCatchup is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'activity-completeness-recovery',
+    before: 'THEN complete /\\ supported ELSE complete',
+    after: 'THEN supported ELSE complete',
+    violation: 'Invariant IncompleteProjectionStaysIncomplete is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'retained-stale-activity-session',
+    before: 'PreserveSession == session = eventSession',
+    after: 'PreserveSession == TRUE',
+    violation: 'Invariant ChangedSessionIsNotLive is violated.',
+  },
   {
     model: 'CancellationAdmission',
     name: 'stale-cancellation-admission',

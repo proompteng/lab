@@ -1,6 +1,7 @@
 # Bayn durable broker event architecture
 
-Status: direct trade-update projection implemented; Activity SSE ownership migration remains required.
+Status: direct trade-update projection and durable Activity SSE ownership are implemented in source; live release
+acceptance remains required before any latency, request-count, or reliability improvement is claimed.
 
 ## Decision
 
@@ -150,14 +151,16 @@ serialized delivery alone cannot prove an economic prefix. The projector retains
 controller immediately, while complete-history reconciliation remains the only TigerBeetle writer. Activity SSE can
 move accounting onto the streaming path only after its replay cursor and correction chain establish that prefix.
 
-## Target financial-state path
+## Durable financial-state path
 
 Alpaca's current [Activity SSE guide](https://docs.alpaca.markets/us/docs/activity-sse) defines the financial-state
 replication contract: persist the last `event_id` ULID, reconnect with `since_id`, deduplicate with `ref_id`, and reverse
 the activity named by `previous_id` before applying a correction or bust. The Trading API now exposes the
 [same endpoint](https://docs.alpaca.markets/us/reference/subscribetoactivitiessse). The lower-latency
 [`trade_updates` WebSocket](https://docs.alpaca.markets/us/docs/websocket-streaming) remains necessary for non-financial
-order lifecycle events.
+order lifecycle events. The provider only exposes activities booked after February 11, 2026. Bayn therefore refuses
+to declare a complete prefix for accounts created before February 12, 2026 UTC; those accounts require a separately
+verified opening snapshot or another complete source before this path can be enabled.
 
 ```mermaid
 flowchart TB
@@ -165,42 +168,67 @@ flowchart TB
     TU[trade_updates: order lifecycle]
     AS[Activity SSE: fills, fees, cash, corrections, busts]
     REST[REST account/order/position snapshot]
+    API[Order API]
   end
 
+  Catchup[Finite account-creation-to-cutoff replay]
   Owner[One Dorvud broker connection owner]
   Ingress[Restate per-account ingress]
   Source[(Immutable source events + durable SSE cursor)]
-  Reducer[Versioned deterministic financial reducer]
+  Lifecycle[Ordered lifecycle projector]
+  Reducer[Versioned deterministic activity reducer]
+  Projection[(Durable fill and fee view)]
   Order[(Orders and fills)]
   Money[(TigerBeetle money)]
-  Verify[Independent convergence verifier]
+  Verify[Canonical convergence verifier]
   Strategy[Jev + deterministic strategy]
   Risk[Risk and capital authority]
+  Mutation[Single execution mutation owner]
 
   TU --> Owner
-  AS --> Owner
-  Owner --> Ingress --> Source --> Reducer
-  Reducer --> Order
-  Reducer --> Money
+  AS --> Catchup --> Owner
+  Owner --> Ingress --> Source
+  Source --> Lifecycle --> Order
+  Source --> Reducer --> Projection --> Verify
   REST --> Verify
+  Verify --> Money
   Order --> Verify
   Money --> Verify
   Strategy --> Risk
   Verify --> Risk
-  Risk -->|approved intents only| Owner
+  Risk -->|approved intents only| Mutation --> API
 ```
 
-The remaining hard migration is therefore explicit:
+The source hard migration is explicit:
 
-- move Activity SSE from replica-local Bayn memory into the single Dorvud owner;
-- persist the last successfully retained ULID and resume only with `since_id`;
-- preserve raw Activity JSON and `ref_id`/`previous_id` before projection;
-- implement correction/bust reversal as immutable compensating entries;
-- serve snapshot reconciliation from the durable activity projection, using provider REST only for startup, periodic
-  independent verification, a reported stream gap, an unsupported activity, or a failed invariant;
-- delete the in-process Activity SSE implementation and its fixed timestamp replay once live equivalence is proven.
+- the single Dorvud process owns Activity SSE beside `trade_updates`;
+- the first session performs a finite replay from verified account creation through a signed cutoff; PostgreSQL makes
+  the prefix usable only after retaining that catch-up boundary;
+- account creation must be inside the provider's complete-history window, otherwise the owner fails before reading or
+  retaining a cursor;
+- PostgreSQL persists the last retained ULID and later live owners resume with `since_id` (or the retained cutoff for
+  an empty prefix);
+- immutable rows preserve exact Activity JSON text, its hash, `ref_id`, and `previous_id` before projection;
+- correction and bust chains reverse one active predecessor through append-only projection rows;
+- historical replay appends without scheduling one reconciliation per event; the first acknowledged live heartbeat
+  activates one coalesced canonical capture, while later live events retain event-driven invalidation;
+- documented non-fill/non-fee activities are retained as canonical-only evidence and advance the cursor without
+  pretending to project cash or positions; independent REST account and position reads remain authoritative for them;
+- the complete cursor versions the fill cut, while a separate hash of active fee source identities versions REST fee
+  verification; fills, heartbeats and canonical-only journals therefore cannot trigger an unchanged full fee-history
+  scan, while every fee correction or bust invalidates that verification;
+- catch-up completion and live liveness are separate signed messages, so a heartbeat cannot certify history;
+- signed live heartbeats prevent a disconnected prefix from appearing current;
+- an unknown activity, a cross-view correction, or a failed invariant closes the fill/fee projection and uses canonical REST
+  reconciliation;
+- the replica-local Activity SSE implementation and its process-local replay state are deleted.
 
-Until this migration is deployed, no reduction in Activity SSE connection count or provider REST calls is claimed.
+The next boundary is live equivalence: exact images, migration, finite catch-up, source rows, cursor replay, heartbeats,
+correction/bust
+projection, stale-stream fallback, canonical convergence, and restart recovery must all be observed on PAPER. Until
+that deployment proof exists, no reduction in Activity SSE connection count or provider REST calls is claimed. Moving
+TigerBeetle posting onto the reducer is a separate change and remains prohibited until the durable prefix is proven
+against independent canonical snapshots.
 
 ## Profitability boundary
 

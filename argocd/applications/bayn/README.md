@@ -32,20 +32,25 @@ explicit target configuration; the research service's scoped database identity i
 ## Streaming broker delivery
 
 `bayn-broker-feed` runs Dorvud's `BrokerFeedMain` for the existing Bayn PAPER account. It verifies `/v2/account`
-with the loaded `bayn-alpaca-auth` credentials before subscribing to the authenticated trade-update socket through
-`bayn-egress-proxy`. Each session boundary and trade update is signed and sent directly to Restate's internal ingress
-with its stable event ID as the HTTP idempotency key. Dorvud reads the next WebSocket update only after Restate
-acknowledges that the verified source payload is durably retained and its continuations are journaled. Collector
-readiness requires a verified account, authenticated/listened socket and an acknowledged session notification; a
-listening HTTP port alone is insufficient.
+with the loaded `bayn-alpaca-auth` credentials before opening the authenticated `trade_updates` WebSocket and Activity
+SSE through `bayn-egress-proxy`. Each session boundary, trade update, activity, and Activity heartbeat is signed and
+sent directly to Restate's internal ingress with a stable event ID as the HTTP idempotency key. Dorvud reads the next
+source event only after Restate acknowledges durable retention. Collector readiness requires both streams to verify
+the account, finish the finite account-creation-to-cutoff Activity replay, establish their live provider session, and
+receive the matching durable Restate receipt; a listening HTTP port
+alone is insufficient.
 
 ```mermaid
-flowchart LR
-  Alpaca[Bayn PAPER account] -->|verified GET and authenticated WS| Dorvud[Bayn Dorvud broker feed]
-  Dorvud -->|signed HTTP, stable idempotency key| Notify[BaynBrokerObservations.notify]
+flowchart TB
+  Alpaca[Bayn PAPER account] -->|verified GET, trade_updates WS, Activity SSE| Dorvud[One Dorvud broker feed]
+  Dorvud -->|signed lifecycle event| Notify[BaynBrokerObservations.notify]
+  Dorvud -->|signed activity, catch-up boundary or heartbeat| Activity[BaynBrokerActivities]
   Notify --> Ledger[(Immutable broker_source_events)]
+  Activity --> ActivityLedger[(Exact activity source, ULID cursor, heartbeat)]
   Ledger --> Project[BaynBrokerSourceProjector, exclusive per account]
+  ActivityLedger --> Reduce[Append-only correction and bust reducer]
   Project --> Order[Canonical order and fill events]
+  Reduce --> Snapshot
   Order --> Wake[Durable execution wake]
   Project --> Reconcile[Serialized safety reconciliation]
   Reconcile --> Snapshot[Canonical REST snapshot]
@@ -60,15 +65,16 @@ routing during deployment cannot leave the old controller's cut admissible;
 a replay returns that receipt instead of recomputing against later intent bindings. Known order lifecycle events project
 immediately. Fill and partial-fill events use event-level quantity, price and execution identity to retain broker-event
 evidence, but the projector never posts money: WebSocket delivery cannot prove that an unseen economic predecessor does
-not exist. Complete-history reconciliation retains sole TigerBeetle authority until Activity SSE supplies a durable
-ordered prefix and correction chain. Projection has its own exclusive account-keyed owner, so evidence and execution
+not exist. Activity SSE now supplies a durable ordered prefix and correction chain, but complete-history reconciliation
+retains sole TigerBeetle authority until that prefix passes live equivalence against canonical snapshots. Projection
+has its own exclusive account-keyed owner, so evidence and execution
 wakes do not wait behind a slow snapshot capture. A reconnect closes the fast-path gate until a canonical capture
 covers that exact session boundary. Session boundaries, unsupported events, missing intent bindings and projection
 conflicts fail closed into reconciliation. The serialized canonical snapshot remains the financial safety lane for
 accounting, cash, fees, corrections, gaps and provider convergence.
 
-Feed readiness also requires the acknowledgement to name the exact promoted source revision and
-`bayn.broker-source-projection.v1`. A response from the retired identity-only handler fails the socket session and the
+Feed readiness also requires acknowledgements to name the exact promoted source revision and the
+`bayn.broker-source-projection.v1` and `bayn.broker-activity-projection.v1` contracts. A response from a retired handler fails the source session and the
 next attempt emits a new session boundary instead of trusting a cached old acknowledgement. Migration 206 retains a
 separate append-only `broker_notification_receipts` sink only while Restate drains already accepted old-worker
 invocations. Current code has no caller for it. After live acceptance, the cleanup migration merges any late identities
@@ -155,12 +161,14 @@ If the new stream fails, deploy a reviewed streaming fix or restore a compatible
 through Kargo and verify canonical reconciliation against the same PAPER account. Do not start an ordinary polling path,
 repoint Torghut, reset financial history, or bypass promotion gates.
 
-The current financial-completeness Activity SSE still runs in the Bayn runtime and is not part of this transport cut.
-The next hard migration is to make the single feed process own that connection, persist its ULID cursor, resume with
-`since_id`, deduplicate by `ref_id`, and apply `previous_id` corrections/busts before retiring replica-local streams.
-The provider contract and target boundaries are recorded in
-[durable broker event architecture](../../../docs/bayn/durable-broker-event-architecture.md). Until that migration is
-deployed, canonical snapshots remain mandatory and no reduction in Activity SSE connections or REST reads is claimed.
+The single feed now owns financial-completeness Activity SSE. PostgreSQL retains the exact source text, ULID cursor,
+`ref_id`/`previous_id` chain, first deterministic projection, finite replay cutoff, and signed live heartbeat. A
+heartbeat cannot certify historical completeness. Documented events outside the fill/fee view are retained as
+canonical-only evidence while REST account and position reads remain authoritative. A missing catch-up boundary,
+stale heartbeat, unknown activity, cross-view correction, or failed invariant closes the durable view and falls back
+to canonical REST reconciliation; it does not skip the event or select a runner-up source. The provider contract and release boundaries are recorded in
+[durable broker event architecture](../../../docs/bayn/durable-broker-event-architecture.md). Until live equivalence is
+proven, canonical snapshots remain mandatory and no reduction in provider REST reads is claimed.
 
 Superseded protocol activation recipes and completed cleanup receipts are available in
 [the repository history](https://github.com/proompteng/lab/blob/45579965308e14c07afd3d8960bc7d089de1986e/argocd/applications/bayn/README.md).

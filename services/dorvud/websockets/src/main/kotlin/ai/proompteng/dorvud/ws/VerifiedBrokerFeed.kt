@@ -35,6 +35,7 @@ internal class BrokerFeedConnection(
   val sourceRevision: String,
   val accountUrl: String = "https://paper-api.alpaca.markets/v2/account",
   val streamUrl: String = "wss://paper-api.alpaca.markets/stream",
+  val activityUrl: String = "https://paper-api.alpaca.markets/v2beta1/events/activities",
 )
 
 @Serializable
@@ -87,7 +88,7 @@ internal data class SignedBrokerNotification(
 internal fun brokerFeedSha256(value: String): String =
   MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).toHex()
 
-private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it.toInt() and 0xff) }
+internal fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
 // This is the existing bayn.broker-identity.v2 canonical material, not a new routing identity.
 internal fun brokerFeedIdentityHash(accountId: String): String =
@@ -118,6 +119,7 @@ internal class VerifiedBrokerFeed(
   private val publish: suspend (String, String, SignedBrokerNotification) -> Unit,
   private val now: () -> Instant = Instant::now,
   private val newSessionId: () -> String = { UUID.randomUUID().toString() },
+  private val onReady: () -> Unit = {},
 ) {
   suspend fun collect() {
     val response =
@@ -166,6 +168,7 @@ internal class VerifiedBrokerFeed(
           ),
         )
         session = proof
+        onReady()
       },
       onUpdate = { update ->
         val proof = checkNotNull(session) { "broker session proof was not published" }

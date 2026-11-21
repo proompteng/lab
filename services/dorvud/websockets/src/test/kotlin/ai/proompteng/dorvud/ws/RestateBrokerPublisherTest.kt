@@ -29,6 +29,11 @@ class RestateBrokerPublisherTest {
       signature = "c".repeat(64),
       schemaVersion = "bayn.signed-broker-notification.v1",
     )
+  private val activity =
+    SignedBrokerActivity(
+      message = """{"schemaVersion":"bayn.broker-activity.v1"}""",
+      signature = "e".repeat(64),
+    )
 
   @Test
   fun `posts one signed event to the account keyed Restate object with durable idempotency`() =
@@ -79,6 +84,44 @@ class RestateBrokerPublisherTest {
         RestateBrokerPublisher(client, "http://restate:8080", sourceRevision, retryDelaysMs = listOf(0))
           .publish(key, eventId, notification)
         assertEquals(listOf<String?>(eventId, eventId), keys)
+      } finally {
+        client.close()
+      }
+    }
+
+  @Test
+  fun `uses the durable activity owner for cursor catchup live events and heartbeats`() =
+    runBlocking {
+      val requests = mutableListOf<Pair<String, String?>>()
+      val cursor = "00000000000000000000000001"
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            requests += request.url.encodedPath to request.headers[RESTATE_IDEMPOTENCY_HEADER]
+            val lifecycle = request.url.encodedPath.substringAfterLast('/')
+            val accepted = lifecycle != "cursor"
+            respond(
+              """{"cursor":"$cursor","caughtUp":true,"coveredThrough":"2026-11-21T16:00:00.000Z","fillFeeComplete":true,"sourceRevision":"$sourceRevision","projectionContract":"$BROKER_ACTIVITY_PROJECTION_CONTRACT"${if (accepted) ",\"accepted\":true,\"eventId\":\"$eventId\"" else ""}}""",
+              HttpStatusCode.OK,
+              headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
+          },
+        )
+      try {
+        val publisher = RestateBrokerPublisher(client, "http://restate:8080", sourceRevision)
+        assertEquals(cursor, publisher.activityCursor(key).cursor)
+        assertEquals(cursor, publisher.publishActivity(key, eventId, activity).cursor)
+        assertEquals(cursor, publisher.completeActivityCatchup(key, eventId, activity).cursor)
+        assertEquals(cursor, publisher.publishActivityHeartbeat(key, eventId, activity).cursor)
+        assertEquals(
+          listOf(
+            "/BaynBrokerActivities/$key/cursor" to null,
+            "/BaynBrokerActivities/$key/ingest" to eventId,
+            "/BaynBrokerActivities/$key/catchup" to eventId,
+            "/BaynBrokerActivities/$key/heartbeat" to eventId,
+          ),
+          requests,
+        )
       } finally {
         client.close()
       }
