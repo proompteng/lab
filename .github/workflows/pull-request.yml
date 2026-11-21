@@ -166,7 +166,7 @@ jobs:
           - target: ${{ contains(fromJSON(needs.plan.outputs.targets), 'design') && 'app' || 'landing' }}
     runs-on: >-
       ${{
-        (matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' ||
+        (matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'ubuntu-24.04-arm' ||
         'ubuntu-latest'
       }}
     env:
