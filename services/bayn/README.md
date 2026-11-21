@@ -2478,10 +2478,11 @@ These parallel shards use Bun 1.4.3 for its isolated-file finalizer fixes. See t
 [upstream fixes](https://bun.sh/blog/bun-v1.4.3#bun-test).
 The CI default test budget is 15 seconds for full research fixtures on shared runners; explicit test budgets still apply.
 Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
-four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
-runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. Never run concurrent shards against
-the same database. The Jev batch and migration cutover suites require a local PostgreSQL role with `CREATEDB`.
-They migrate each suite fixture once, then clone and remove a separate database for each test. ClickHouse/Java archive checks and
+four shards, each with its own disposable database server in CI. Every test file runs in an isolated Bun module
+graph with a fresh database, and Bun prints the randomized order's seed. Run one shard locally with
+`bun run --filter @proompteng/bayn test:postgres 1/4` or omit the shard to run the complete suite. The local PostgreSQL
+role needs `CREATEDB` and a loopback URL for a database that ends in `_test`. The Jev batch and migration cutover suites
+migrate each suite fixture once, then clone and remove a separate database for each test. ClickHouse/Java archive checks and
 PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
 
