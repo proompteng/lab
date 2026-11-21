@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
@@ -6,6 +6,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, 
 import type { Statement } from 'effect/sql/Statement'
 
 import {
+  orderSourceContentHashResult,
   sourceTimestamp,
   type BrokerEventInput,
   type FillEventInput,
@@ -33,17 +34,23 @@ import { canonicalHashV1Result } from '../hash'
 import { Journal, type JournalService } from '../ledger'
 import { makeExecutionPersistence } from './execution-store/postgres'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { config as fixtureConfig } from '../testing/runtime-fixtures'
 import {
   AuthorityGenerationStore,
   AuthorityRestrictionStore,
   BrokerEventStore,
   FillAccountingStore,
+  IntentBindingStore,
   ReconciliationStore,
   type ReconciliationStoreShape,
   ValuationStore,
 } from './execution-store/contract'
-import { ExecutionStoreLive } from './execution-store'
+import { BrokerProjectionStoreLive, ExecutionStoreLive } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 import cashSettlementMigration from '../../migrations/0112_broker_cash_settlements'
@@ -68,6 +75,7 @@ import {
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
 import { postCashSettlements, prepareCashSettlements, readCashSettlements } from './cash-settlements'
+import { makeAccountingHistoryVerifier } from '../reconciliation/algebra'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
@@ -100,7 +108,7 @@ const brokerIdentity = Result.getOrThrow(
     accountId,
   }),
 )
-const config: RuntimeConfig = {
+const makeConfig = (url: string): RuntimeConfig => ({
   ...fixtureConfig,
   operationTimeoutMs: 5_000,
   execution: {
@@ -108,8 +116,8 @@ const config: RuntimeConfig = {
     brokerAccess: BrokerAccess.ReadOnly,
     capitalAuthority: noCapitalAuthority,
   },
-  postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
-}
+  postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
+})
 
 interface JournalControl {
   failPosts: boolean
@@ -136,7 +144,7 @@ const journal = (control: JournalControl): JournalService => ({
   checkRun: () => Effect.void,
 })
 
-const makeRuntime = (control: JournalControl) =>
+const makeRuntime = (config: RuntimeConfig, control: JournalControl) =>
   ManagedRuntime.make(
     ExecutionStoreLive(config).pipe(
       Layer.provideMerge(WriterFenceLive),
@@ -145,13 +153,6 @@ const makeRuntime = (control: JournalControl) =>
       Layer.provide(NodeServices.layer),
     ),
   )
-
-const resetDatabase = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`DROP SCHEMA public CASCADE`
-  yield* sql`CREATE SCHEMA public`
-  yield* postgresMigrations
-})
 
 const accountEvent = (
   sourceEventId = 'account-response-1',
@@ -210,10 +211,11 @@ const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => 
     _tag: 'Order',
     broker: Broker.Alpaca,
     accountId,
-    sourceEventId: 'order-observation-1',
+    sourceEventId: 'order:order-1:2026-08-28T14:30:59.000000000Z',
     contentHash: Result.getOrThrow(canonicalHashV1Result(observedOrder)),
     occurredAt,
     observedAt,
+    sourceTimestamp: '2026-08-28T14:30:59.000000000Z',
     order: observedOrder,
   }
 }
@@ -331,14 +333,20 @@ const committedPreparationCounts = Effect.scoped(
 
 describePostgres('PostgreSQL execution persistence', () => {
   const journalControl: JournalControl = { failPosts: false, postCount: 0 }
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
+  let config: RuntimeConfig
   let runtime: ReturnType<typeof makeRuntime>
 
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
-      throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
-    }
-    runtime = makeRuntime(journalControl)
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const initializer = makeRuntime(makeConfig(url), journalControl)
+      try {
+        await initializer.runPromise(postgresMigrations.pipe(Effect.provide(NodeServices.layer)))
+      } finally {
+        await initializer.dispose()
+      }
+    })
   })
 
   beforeEach(async () => {
@@ -346,11 +354,41 @@ describePostgres('PostgreSQL execution persistence', () => {
     journalControl.postCount = 0
     delete journalControl.beforePost
     delete journalControl.verifyAccount
-    await runtime.runPromise(resetDatabase.pipe(Effect.provide(NodeServices.layer)))
+    database = await template.clone()
+    config = makeConfig(database.url)
+    runtime = makeRuntime(config, journalControl)
   })
 
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
+  })
+
+  afterAll(async () => template?.dispose())
+
+  test('builds the broker projector store without a financial journal', async () => {
+    const projection = ManagedRuntime.make(
+      BrokerProjectionStoreLive.pipe(
+        Layer.provideMerge(WriterFenceLive),
+        Layer.provideMerge(PostgresClientLive(config)),
+        Layer.provide(NodeServices.layer),
+      ),
+    )
+    try {
+      expect(
+        await projection.runPromise(
+          Effect.gen(function* () {
+            yield* BrokerEventStore
+            return yield* (yield* IntentBindingStore).bindings(accountId)
+          }),
+        ),
+      ).toEqual([])
+    } finally {
+      await projection.dispose()
+    }
   })
 
   test('initializes, replays, and restricts one broker-bound OBSERVE generation', async () => {
@@ -513,6 +551,116 @@ describePostgres('PostgreSQL execution persistence', () => {
     })
     expect(result.valuationReplay).toEqual(result.valuation)
     expect(result.counts).toEqual({ events: 3, snapshots: 1, valuations: 1 })
+  })
+
+  test('keeps order state monotonic at full provider precision across stream and snapshot ingestion', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const sql = yield* PgClient.PgClient
+        const canonicalOccurredAt = '2026-08-28T14:31:01.000Z'
+        const currentOrder = {
+          ...orderEvent(),
+          sourceEventId: 'order:order-1:2026-08-28T14:31:01.000900000Z',
+          sourceTimestamp: '2026-08-28T14:31:01.000900000Z',
+          occurredAt: canonicalOccurredAt,
+          observedAt: canonicalOccurredAt,
+          order: {
+            ...order(),
+            filledQuantityAtoms: order().quantityAtoms,
+            status: OrderStatus.Filled,
+            observedAt: canonicalOccurredAt,
+          },
+        }
+        const current = {
+          ...currentOrder,
+          contentHash: Result.getOrThrow(canonicalHashV1Result(currentOrder.order)),
+        }
+        const delayedOrder = {
+          ...orderEvent(),
+          sourceEventId: 'order:order-1:2026-08-28T14:31:01.000100000Z',
+          sourceTimestamp: '2026-08-28T14:31:01.000100000Z',
+          occurredAt: canonicalOccurredAt,
+          observedAt: canonicalOccurredAt,
+          order: { ...order(), observedAt: canonicalOccurredAt },
+        }
+        const delayed = {
+          ...delayedOrder,
+          contentHash: Result.getOrThrow(canonicalHashV1Result(delayedOrder.order)),
+        }
+        const receipt = yield* events.ingest(current)
+        const superseded = yield* events.ingest(delayed)
+        const staleSnapshot = yield* events.completeHistory([delayed]).pipe(Effect.flip)
+        const retained = yield* sql`
+          SELECT observed.status, observed.broker_updated_at
+          FROM orders AS observed JOIN broker_events AS event USING (event_id)
+          WHERE observed.account_id = ${accountId} AND observed.broker_order_id = ${current.order.brokerOrderId}
+          ORDER BY event.source_sequence`
+        return {
+          receipt,
+          superseded,
+          staleSnapshot,
+          retained,
+        }
+      }),
+    )
+    expect(result.superseded).toEqual({ ...result.receipt, deduplicated: true, superseded: true })
+    expect(result.staleSnapshot).toMatchObject({
+      operation: 'ingest',
+      failure: 'conflict',
+      message: expect.stringContaining('older than the retained provider version'),
+    })
+    expect(result.retained).toEqual([
+      { status: OrderStatus.Filled, broker_updated_at: '2026-08-28T14:31:01.000900000Z' },
+    ])
+  })
+
+  test('treats a matching REST microsecond order as the retained stream nanosecond version', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const sql = yield* PgClient.PgClient
+        const retainedTimestamp = '2026-08-28T14:31:01.000900123Z'
+        const restTimestamp = '2026-08-28T14:31:01.000900Z'
+        const retainedOrder = { ...order(), observedAt: '2026-08-28T14:31:01.000Z' }
+        const retained = {
+          ...orderEvent(),
+          sourceEventId: `order:${retainedOrder.brokerOrderId}:${retainedTimestamp}`,
+          sourceTimestamp: retainedTimestamp,
+          contentHash: Result.getOrThrow(orderSourceContentHashResult(retainedOrder, retainedTimestamp)),
+          occurredAt: retainedOrder.observedAt,
+          observedAt: retainedOrder.observedAt,
+          order: retainedOrder,
+        }
+        const rest = {
+          ...retained,
+          sourceEventId: `order:${retainedOrder.brokerOrderId}:${restTimestamp}`,
+          sourceTimestamp: '2026-08-28T14:31:01.000900000Z',
+          contentHash: Result.getOrThrow(orderSourceContentHashResult(retainedOrder, restTimestamp)),
+        }
+        const receipt = yield* events.ingest(retained)
+        const complete = yield* events.completeHistory([rest])
+        const replay = yield* events.ingest(rest)
+        const conflict = yield* events
+          .completeHistory([{ ...rest, order: { ...rest.order, status: OrderStatus.Canceled } }])
+          .pipe(Effect.flip)
+        const rows = yield* sql`
+          SELECT observed.status, observed.broker_updated_at
+          FROM orders AS observed JOIN broker_events AS event USING (event_id)
+          WHERE observed.account_id = ${accountId} AND observed.broker_order_id = ${retainedOrder.brokerOrderId}
+          ORDER BY event.source_sequence
+        `
+        return { receipt, complete, replay, conflict, rows }
+      }),
+    )
+    expect(result.complete.size).toBe(0)
+    expect(result.replay).toEqual({ ...result.receipt, deduplicated: true, superseded: true })
+    expect(result.conflict).toMatchObject({
+      operation: 'ingest',
+      failure: 'conflict',
+      message: expect.stringContaining('older than the retained provider version'),
+    })
+    expect(result.rows).toEqual([{ status: OrderStatus.New, broker_updated_at: '2026-08-28T14:31:01.000900123Z' }])
   })
 
   test('rejects an ambient transaction before running reconciliation ingestion', async () => {
@@ -716,7 +864,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         const read: BrokerReadShape = {
           ...fresh,
           projection: {
-            snapshot: Effect.succeed(previous),
+            reconciliationSnapshot: Effect.succeed({ snapshot: previous, complete: Effect.void }),
             fresh,
             invalidate: Effect.void,
             submissionSnapshot: () => unexpected,
@@ -1096,7 +1244,7 @@ describePostgres('PostgreSQL execution persistence', () => {
                 yield* PgClient.PgClient,
                 accountId,
                 [fill].map((event) => event.fill),
-                config.tigerBeetle.ledger,
+                makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
               )
               const valuation = yield* valuations.value({
                 accountEventId: accountReceipt.eventId,
@@ -1407,7 +1555,11 @@ describePostgres('PostgreSQL execution persistence', () => {
     const accountedFill = fillEvent('fill-accounted', OrderSide.Buy, '3000000000', '100000000')
     const preparedFill = fillEvent('fill-pending', OrderSide.Buy, '1000000000', '101000000')
     const unaccountedFill = fillEvent('fill-unaccounted', OrderSide.Buy, '1000000000', '101000000')
-    const newOrder = { ...observedOrder, sourceEventId: 'order-observation-2' }
+    const newOrder = {
+      ...observedOrder,
+      sourceEventId: 'order:order-1:2026-08-28T14:31:00.000000000Z',
+      sourceTimestamp: '2026-08-28T14:31:00.000000000Z',
+    }
 
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -1426,13 +1578,13 @@ describePostgres('PostgreSQL execution persistence', () => {
           yield* PgClient.PgClient,
           accountId,
           [accountedFill].map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         const accountingMismatch = yield* readAccountingHistory(
           yield* PgClient.PgClient,
           accountId,
           [{ ...accountedFill.fill, quantityAtoms: '2000000000' }],
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         ).pipe(Effect.flip)
         yield* accounting.account(preparedFill)
         const completedAfterRecovery = yield* events.completeHistory(history)
@@ -1440,7 +1592,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           yield* PgClient.PgClient,
           accountId,
           [accountedFill, preparedFill].map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         const conflict = yield* events
           .completeHistory([{ ...observedOrder, contentHash: hash('changed-order-content') }])
@@ -1484,7 +1636,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           monitored,
           accountId,
           inputs.map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         expect(lookups).toHaveLength(1)
         const lookup = lookups[0]
@@ -1512,6 +1664,65 @@ describePostgres('PostgreSQL execution persistence', () => {
         }
         expect(feeSourceReads(plans[0]?.['QUERY PLAN'][0]?.Plan)).toBe(1)
         expect(journalControl.postCount).toBe(inputs.length)
+      }),
+    )
+  })
+
+  test('accounting history preserves coincident coin fees and their exact posting and time bounds', async () => {
+    const feeAt = '2026-08-28T14:31:00.000Z'
+    const cryptoFill = (id: string, side: OrderSide, quantityAtoms: string, priceMicros: string, at: string) => {
+      const event = fillEvent(id, side, quantityAtoms, priceMicros)
+      const fill = { ...event.fill, symbol: 'SOL/USD', feeMicros: '0', occurredAt: at }
+      const timestamp = Result.getOrThrow(sourceTimestamp(at))
+      return {
+        ...event,
+        fill,
+        occurredAt: at,
+        observedAt: '2026-08-28T14:31:01.000Z',
+        sourceTimestamp: timestamp,
+        contentHash: Result.getOrThrow(canonicalHashV1Result({ fill, timestamp })),
+      }
+    }
+    const buy = cryptoFill('coin-fee-buy', OrderSide.Buy, '3000000000', '100000000', occurredAt)
+    const sell = cryptoFill('coin-fee-sell', OrderSide.Sell, '2000000000', '110000000', feeAt)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const accounting = yield* FillAccountingStore
+        const fence = yield* WriterFence
+        yield* (yield* BrokerEventStore).ingest(flatAccountEvent())
+        yield* fence.transaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE broker_inventory_debits (
+              account_id text, symbol text, quantity_atoms numeric, cost_basis_micros numeric,
+              effective_at timestamptz, posted boolean
+            ) ON COMMIT DROP`
+            yield* sql`INSERT INTO broker_inventory_debits VALUES
+              (${accountId}, 'SOL/USD', 1000000, 100001, ${feeAt}, true),
+              (${accountId}, 'SOL/USD', 2000000, 200003, ${feeAt}, true),
+              (${accountId}, 'SOL/USD', 5000000000, 500000000, '2026-08-28T14:31:00.000001Z', true),
+              (${accountId}, 'SOL/USD', 5000000000, 500000000, ${feeAt}, false),
+              (${accountId}, 'ETH/USD', 5000000000, 500000000, ${feeAt}, true),
+              ('foreign-account', 'SOL/USD', 5000000000, 500000000, ${feeAt}, true)`
+            yield* accounting.account(buy)
+            yield* accounting.account(sell)
+            const observedFills = [buy.fill, sell.fill]
+            const verify = makeAccountingHistoryVerifier(config.tigerBeetle.ledger)
+            const history = yield* readAccountingHistory(sql, accountId, observedFills, verify)
+            expect(history).toHaveLength(2)
+            const unchanged = yield* readAccountingHistory(sql, accountId, observedFills, verify)
+            expect(unchanged[1]).toBe(history[1])
+            expect(history[1]?.transaction).toMatchObject({
+              costBasisMicros: '199999997',
+              realizedPnlMicros: '20000003',
+            })
+            yield* sql`UPDATE pg_temp.broker_inventory_debits
+              SET cost_basis_micros = cost_basis_micros + 100
+              WHERE quantity_atoms = 1000000`
+            const changed = yield* readAccountingHistory(sql, accountId, observedFills, verify).pipe(Effect.flip)
+            expect(changed).toMatchObject({ operation: 'reconcile', failure: 'invariant' })
+          }),
+        )
       }),
     )
   })
@@ -1697,7 +1908,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           yield* PgClient.PgClient,
           accountId,
           [buy, secondBuy, sell].map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         const sql = yield* PgClient.PgClient
         return yield* sql`SELECT
@@ -1734,6 +1945,10 @@ describePostgres('PostgreSQL execution persistence', () => {
             DROP CONSTRAINT account_snapshots_schema_version_check`
           yield* sql`ALTER TABLE account_snapshots ADD CONSTRAINT account_snapshots_schema_version_check
             CHECK (schema_version = 'bayn.paper-account-snapshot.v2') NOT VALID`
+          // These legacy orders predate brackets. Supply the current report's nullable protection fields
+          // without applying later migrations that would replace the retained fee schema under test.
+          yield* sql`ALTER TABLE orders ADD COLUMN parent_broker_order_id text, ADD COLUMN stop_price_micros numeric`
+          yield* sql`ALTER TABLE intents ADD COLUMN protection jsonb`
         }
         const fence = yield* WriterFence
         const postRetainedAccrual = (kind: 'COIN' | 'CASH') =>
@@ -2459,7 +2674,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           yield* PgClient.PgClient,
           accountId,
           [buy, sell].map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         expect(
           yield* sql`SELECT sum(quantity_atoms)::text AS quantity,sum(cost_basis_micros)::text AS cost FROM broker_inventory_debits WHERE posted`,

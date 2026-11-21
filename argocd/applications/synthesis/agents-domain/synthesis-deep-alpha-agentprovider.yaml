@@ -8,7 +8,7 @@ spec:
   adapter:
     type: codex-app-server
     codex:
-      model: gpt-6-astra
+      model: gpt-6.2-sol
       effort: high
       sandbox: danger-full-access
       approval: never
@@ -43,15 +43,14 @@ spec:
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
     CODEX_MAX_SESSION_ATTEMPTS: "3"
-    CODEX_MODEL: gpt-6-astra
-    CODEX_MODEL_FALLBACKS: gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex
+    CODEX_MODEL: gpt-6.2-sol
     HOME: /root
     SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
     SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-6-astra"
+        model = "gpt-6.2-sol"
         model_reasoning_summary = "detailed"
         model_reasoning_effort = "high"
         model_verbosity = "medium"

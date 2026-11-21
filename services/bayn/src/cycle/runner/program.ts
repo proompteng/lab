@@ -21,6 +21,7 @@ import { calendarQueryFailureError } from './errors'
 import { finishRecoveryResult } from './pass-decisions'
 import {
   makeIntradayCycleDraft,
+  matchesIntradayEntryWindowLineage,
   marketCalendarQueryFromSession,
   nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
@@ -44,7 +45,7 @@ const hashCalendar = (hours: MarketHours) =>
 
 export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> => {
   const candidate = {
     cycleBindingId: context.cycleBindingId,
     strategyName: context.strategyName,
@@ -186,6 +187,33 @@ export const discoverAutonomousCyclePass = <R>(
       return isTerminalCycleState(existing.value.state)
         ? ({ outcome: 'ALREADY_TERMINAL', observedAt, cycle: existing.value } as const)
         : ({ outcome: 'ALREADY_ACQUIRED', observedAt, cycle: existing.value } as const)
+    }
+    if (
+      Option.isSome(existing) &&
+      matchesIntradayEntryWindowLineage(existing.value, candidate, hours, executionSession)
+    ) {
+      const nextWindow = yield* context.nextEntryWindowDueAt(existing.value.identity.cycleId).pipe(
+        Effect.mapError((cause) =>
+          runnerError({
+            operation: 'build-decision',
+            failure: cause.failure === 'not-ready' ? 'contract' : cause.failure,
+            message: 'durable entry-window consumption could not be read before successor admission',
+            cause,
+          }),
+        ),
+      )
+      if (Option.isSome(nextWindow) && Date.parse(nextWindow.value) > Date.parse(observedAt))
+        return {
+          outcome: 'ALREADY_TERMINAL',
+          observedAt,
+          cycle: existing.value,
+          readiness: {
+            reason: DecisionReadinessReason.SignalWindowObserved,
+            message:
+              'The current entry signal window is already consumed; successor admission awaits the next due window',
+            availableAt: nextWindow.value,
+          },
+        } as const
     }
     const draft =
       entryAttemptOrdinal === 1

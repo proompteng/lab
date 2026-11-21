@@ -2,8 +2,12 @@ import { fileURLToPath } from 'node:url'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { localPostgresTestUrl, removePostgresTestDatabases } from './postgres-test-databases'
 
 const files = [
+  'src/db/visual-non-dispatch-migration.integration.test.ts',
+  'src/db/native-equity-short.integration.test.ts',
+  'src/db/equity-short-accounting.integration.test.ts',
   'src/db/candidate-cutover-diagnostics.integration.test.ts',
   'src/db/candidate-observation-window.integration.test.ts',
   'src/db/current-authority-migration.integration.test.ts',
@@ -15,6 +19,9 @@ const files = [
   'src/db/risk-valuation-query.integration.test.ts',
   'src/db/continuous-cash-spot.integration.test.ts',
   'src/db/available-history-migration.integration.test.ts',
+  'src/db/jev-management-migration.integration.test.ts',
+  'src/db/jev-trade-plan-migration.integration.test.ts',
+  'src/db/jev-entry-limits-migration.integration.test.ts',
   'src/execution/writer-fence.integration.test.ts',
   'src/execution/mutations/expired-entry-cancellation.integration.test.ts',
   'src/db/postgres-backend-tracing.integration.test.ts',
@@ -37,10 +44,22 @@ const files = [
   'src/native-arrival-export-command.integration.test.ts',
   'src/db/jev-evaluation-postgres.integration.test.ts',
   'src/db/jev-evaluation-cohort-postgres.integration.test.ts',
+  'src/db/jev-batch-admission-postgres.integration.test.ts',
+  'src/db/jev-batch-dispatch-postgres.integration.test.ts',
+  'src/db/jev-batch-evidence-postgres.integration.test.ts',
+  'src/db/jev-batch-expiry-paging-postgres.integration.test.ts',
+  'src/db/jev-batch-expiry-postgres.integration.test.ts',
+  'src/db/jev-batch-finalization-postgres.integration.test.ts',
   'src/db/jev-batch-postgres.integration.test.ts',
+  'src/db/jev-batch-worker-postgres.integration.test.ts',
   'src/db/retired-jev-batch-migration.integration.test.ts',
   'src/db/jev-study-export.integration.test.ts',
-  'src/db/jev-native-postgres.integration.test.ts',
+  'src/db/jev-native-entry-receipts-postgres.integration.test.ts',
+  'src/db/jev-native-entry-replay-postgres.integration.test.ts',
+  'src/db/jev-native-exit-deadline-postgres.integration.test.ts',
+  'src/db/jev-native-exit-recovery-postgres.integration.test.ts',
+  'src/db/jev-native-position-postgres.integration.test.ts',
+  'src/db/jev-position-protection-evidence.integration.test.ts',
   'src/intraday-replay/clock.integration.test.ts',
   'src/inference-costs-postgres.integration.test.ts',
   'src/inference-expense-runtime.integration.test.ts',
@@ -57,14 +76,35 @@ if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
     'Usage: BAYN_TEST_POSTGRES_URL=<isolated local _test database> bun tools/test-postgres.ts [index/count]',
   )
 
-const run = (args: readonly string[]) => {
+const timingsPath = process.env['BAYN_CI_POSTGRES_TIMINGS_PATH'] ?? ''
+const recordTimings = timingsPath !== ''
+const recordedTimings = recordTimings ? [`--timings=${timingsPath}`, '--update-timings'] : []
+const testUrl = localPostgresTestUrl(process.env['BAYN_TEST_POSTGRES_URL'])
+
+const run = async (args: readonly string[]) => {
   const directory = mkdtempSync(join(tmpdir(), 'bayn-postgres-results-'))
   const cwd = fileURLToPath(new URL('..', import.meta.url))
+  const prefix = `bayn_file_${crypto.randomUUID().replaceAll('-', '')}_`
   try {
     const report = join(directory, 'results.xml')
     const result = Bun.spawnSync(
-      [process.execPath, 'test', '--no-orphans', '--reporter=junit', `--reporter-outfile=${report}`, ...args],
-      { cwd, stdout: 'inherit', stderr: 'inherit' },
+      [
+        process.execPath,
+        'test',
+        '--no-orphans',
+        '--isolate',
+        '--randomize',
+        '--preload=./tools/postgres-file-preload.ts',
+        '--reporter=junit',
+        `--reporter-outfile=${report}`,
+        ...args,
+      ],
+      {
+        cwd,
+        env: { ...process.env, BAYN_TEST_POSTGRES_FILE_PREFIX: prefix },
+        stdout: 'inherit',
+        stderr: 'inherit',
+      },
     )
     if (result.exitCode !== 0) process.exitCode = result.exitCode
     else {
@@ -77,13 +117,16 @@ const run = (args: readonly string[]) => {
     }
   } finally {
     rmSync(directory, { recursive: true, force: true })
+    // Bun cannot run a file's teardown if module loading failed.
+    await removePostgresTestDatabases(testUrl, prefix)
   }
   if (process.exitCode !== 0) process.exit(process.exitCode)
 }
 
-run(['--isolate', `--shard=${shard}`, '--timings=tools/ci-postgres-timings.json', ...files])
+await run([`--shard=${shard}`, ...recordedTimings, '--timings=tools/ci-postgres-timings.json', ...files])
 if (shard.startsWith('1/'))
-  run([
+  await run([
+    ...(recordTimings ? [`--timings=${timingsPath}.shadow.json`, '--update-timings'] : []),
     'src/shadow-decision.test.ts',
     '--test-name-pattern',
     'migrated cycle guard|PostgreSQL entry binding and nested',

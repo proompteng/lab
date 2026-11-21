@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
 
 ARG IMAGE_BASE=mirror.gcr.io/alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
-ARG IMAGE_GO=mirror.gcr.io/golang:1.26.7@sha256:e30143be198ab04cf7ba25fba83ab3a692ca584c994aad0bf131fa0eb32dd8c1
+ARG IMAGE_GO=mirror.gcr.io/golang:1.26.8@sha256:eb36c1664dd974cde625f736e02c204383deebe03977365caaec5bf49f794348
 ARG IMAGE_NODE=mirror.gcr.io/node:22@sha256:4ad2c2b350ab49fb637ab40a269ffe207c61818bb7eb3a4ea122001a0c605e1f
-ARG HEADLAMP_REF=v0.45.0
-ARG HEADLAMP_SHA=0e9fe810cb618964172f420666727c9a67fd6ebf
+ARG HEADLAMP_REF=v0.46.0
+ARG HEADLAMP_SHA=825604fdadbe7ed94b8e61f615d7917c743e9083
 ARG LAB_GIT_SHA=dirty
 
 FROM ${IMAGE_BASE} AS source
@@ -56,7 +56,7 @@ FROM --platform=${BUILDPLATFORM} ${IMAGE_NODE} AS frontend-build
 WORKDIR /headlamp
 
 COPY --from=source /src/.git /headlamp/.git
-COPY --from=source /src/app/package.json /headlamp/app/package.json
+COPY --from=source /src/app/package.json /src/app/app-build-manifest.json /headlamp/app/
 COPY --from=source /src/frontend/package*.json /headlamp/frontend/
 COPY scripts /tools
 COPY patches /tools/patches

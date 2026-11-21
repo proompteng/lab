@@ -3316,6 +3316,24 @@ data:
             annotations:
               summary: Restate Operator is waiting for a required CRD
               description: At least one operator controller has been unable to discover its required CRD for five minutes.
+      - name: bayn-database-backup.rules
+        interval: 1m
+        rules:
+          - alert: BaynDatabaseBackupStale
+            expr: |
+              time() - max(kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed"}) > 129600
+              or max(absent(kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed"}))
+            for: 5m
+            labels:
+              severity: critical
+              team: trading
+              namespace: bayn
+              service: bayn-db
+              notify: email
+            annotations:
+              summary: Bayn has no recent completed database backup
+              description: No completed bayn-db backup observation is newer than thirty-six hours, or completion telemetry is missing. Check the daily ScheduledBackup, Barman plugin, object store, WAL archive and metric collection. A running or failed backup does not establish completion; a completed backup still requires an independent restore proof.
+              runbook_url: docs/bayn/cnpg-backup-restore.md
       - name: bayn-cycle-operations.rules
         interval: 15s
         rules:
@@ -3406,6 +3424,77 @@ data:
               summary: Bayn broker egress proxy is below its replica target
               description: Bayn has lost broker-proxy redundancy for two minutes while the Deployment still expects multiple replicas.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynBrokerFeedUnavailable
+            expr: |
+              max(dorvud_broker_feed_ready{job="bayn-broker-stream",namespace="bayn",service="bayn-broker-feed"}) < 1
+              or absent(dorvud_broker_feed_ready{job="bayn-broker-stream",namespace="bayn",service="bayn-broker-feed"})
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-broker-feed
+              notify: email
+            annotations:
+              summary: Bayn has no verified broker event connection
+              description: The single PAPER broker connection owner has been unready or missing for one minute. Order and fill lifecycle events are no longer reaching the durable source ledger; canonical snapshot recovery remains the safety path.
+              runbook_url: argocd/applications/bayn/README.md
+          - alert: BaynBrokerSourceProjectionFallbackHigh
+            expr: |
+              sum(increase(bayn_broker_source_projection_total{namespace="bayn",service="bayn-execution-controller",outcome="reconcile_required"}[15m])) >= 5
+              and
+              (
+                sum(increase(bayn_broker_source_projection_total{namespace="bayn",service="bayn-execution-controller",outcome="reconcile_required"}[15m]))
+                /
+                sum(increase(bayn_broker_source_projection_total{namespace="bayn",service="bayn-execution-controller"}[15m]))
+              ) > 0.25
+            for: 5m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn broker events are falling back to snapshot reconciliation
+              description: At least five source events and more than 25 percent of projected broker events required canonical reconciliation in fifteen minutes. Group bayn_broker_source_projection_total by reason before changing the fail-closed gate.
+              runbook_url: docs/bayn/durable-broker-event-architecture.md
+          - alert: BaynBrokerSourceProjectionLatencyHigh
+            expr: |
+              histogram_quantile(0.95,
+                sum by (le) (
+                  rate(bayn_broker_source_projection_lag_seconds_bucket{namespace="bayn",service="bayn-execution-controller"}[10m])
+                )
+              ) > 1
+              and on()
+              sum(increase(bayn_broker_source_projection_lag_seconds_count{namespace="bayn",service="bayn-execution-controller"}[10m])) >= 10
+            for: 5m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn durable broker projection is slower than one second
+              description: Source-to-projection p95 exceeded one second with at least ten completed source events. Inspect the Restate projector queue and PostgreSQL writer fence; financial posting remains on canonical reconciliation.
+              runbook_url: docs/bayn/durable-broker-event-architecture.md
+          - alert: BaynBrokerSourceProjectionStalled
+            expr: |
+              (
+                max(bayn_broker_source_projection_pending{namespace="bayn",service="bayn-execution-controller"}) > 0
+                and
+                max(bayn_broker_source_projection_oldest_pending_seconds{namespace="bayn",service="bayn-execution-controller"}) > 5
+              )
+              or max(bayn_broker_source_projection_observation_success{namespace="bayn",service="bayn-execution-controller"}) < 1
+              or absent(bayn_broker_source_projection_observation_success{namespace="bayn",service="bayn-execution-controller"})
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn broker source projection is stalled
+              description: At least one durable broker source event from any retained revision has lacked a terminal projection receipt for more than five seconds, or PostgreSQL backlog observation itself is failing or absent. This covers a stalled first event and a retired-revision backlog, which current-revision completion histograms cannot observe.
+              runbook_url: docs/bayn/durable-broker-event-architecture.md
           # Count updated workers only, never the retained ReplicaSet pool.
           # Missing/stale or inconsistent generations are UNKNOWN, not zero.
           - record: bayn:execution_worker_observed_ready_replicas
@@ -3504,12 +3593,26 @@ data:
                 (
                   time()
                   -
-                  max by (job, namespace, service) (
-                    bayn_execution_controller_next_due_timestamp_seconds{
-                      job="bayn",
-                      namespace="bayn",
-                      service="bayn"
-                    }
+                  (
+                    (
+                      max by (job, namespace, service) (
+                        bayn_execution_controller_next_due_timestamp_seconds{
+                          job="bayn",
+                          namespace="bayn",
+                          service="bayn"
+                        }
+                      ) > 0
+                    )
+                    or on(job, namespace, service)
+                    (
+                      max by (job, namespace, service) (
+                        bayn_execution_controller_last_completion_timestamp_seconds{
+                          job="bayn",
+                          namespace="bayn",
+                          service="bayn"
+                        }
+                      ) > 0
+                    )
                   )
                 )
                 >
@@ -3529,7 +3632,7 @@ data:
               notify: email
             annotations:
               summary: Bayn durable execution controller is overdue
-              description: The active Restate execution controller has remained past its durable next-due time longer than Bayn's configured stall threshold for one minute.
+              description: The active Restate execution controller has remained past its durable next-due time, or its last completion when no next-due time is recorded, longer than Bayn's configured stall threshold for one minute.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynExecutionWindowUnready
             expr: |
@@ -3753,6 +3856,50 @@ data:
               description: |
                 Bayn readiness is blocked by a required dependency, autonomous-loop,
                 or broker-read/account-binding failure.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynRepeatedEntryExpiry
+            expr: |
+              max by (job, namespace, service) (
+                (
+                  min_over_time(bayn_cycle_terminal_reason{
+                    job="bayn", namespace="bayn", service="bayn",
+                    reason="blocked_unused_entry_expired"
+                  }[10m]) == 1
+                )
+                and on(job, namespace, service, instance)
+                (
+                  changes(bayn_cycle_last_terminal_timestamp_seconds{
+                    job="bayn", namespace="bayn", service="bayn"
+                  }[10m]) >= 5
+                )
+                and on(job, namespace, service, instance)
+                (bayn_cycle_observation_available{job="bayn", namespace="bayn", service="bayn"} == 1)
+                and on(job, namespace, service, instance)
+                (up{job="bayn", namespace="bayn", service="bayn"} == 1)
+                and on(job, namespace, service, instance)
+                (bayn_cycle_submission_open_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} <= time())
+                and on(job, namespace, service, instance)
+                (bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} > time())
+                and on(job, namespace, service, instance)
+                (time() - bayn_runtime_projection_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} < 90)
+                and on(job, namespace, service, instance)
+                (time() - bayn_runtime_projection_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} >= -5)
+              )
+            for: 1m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn entry attempts repeatedly expire without a sampled successful outcome
+              description: |
+                During the current submission window, one freshly observed replica has at least five changes
+                to its latest terminal-cycle timestamp in ten minutes while every sampled terminal reason
+                remains BLOCKED_UNUSED_ENTRY_EXPIRED. Instantaneous readiness or a newly ACTIVE cycle does
+                not clear this signal. These are sampled transitions, not exact missed-trade counts or proof
+                of profitable opportunities. Inspect original input, inference, admission and submission
+                deadlines and source revisions. Missing telemetry is unknown, not a successful outcome.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleStalled
             expr: |

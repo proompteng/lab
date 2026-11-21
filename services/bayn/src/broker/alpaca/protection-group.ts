@@ -1,6 +1,11 @@
 import { Result } from 'effect'
 
-import type { NativeProtection } from '../../execution/contracts'
+import {
+  isStopProtection,
+  isBracketProtection,
+  isEquityShortProtection,
+  type NativeProtection,
+} from '../../execution/contracts'
 import { quantityScale } from '../../quantity'
 import { OrderClass, OrderSide, OrderType, TimeInForce, type Order } from './model'
 
@@ -10,9 +15,12 @@ export const verifyProtectionGroup = (
   expected: { readonly symbol: string; readonly quantityAtoms: string; readonly protection: NativeProtection },
 ): Result.Result<readonly Order[], string> => {
   const terms = expected.protection
-  if (terms._tag === 'StopLimit') return Result.fail('a standalone stop has no broker-generated children')
+  if (isStopProtection(terms)) return Result.fail('a standalone stop has no broker-generated children')
   const legs = parent.legs ?? []
-  const bracket = terms._tag === 'Bracket'
+  const bracket = isBracketProtection(terms)
+  const short = isEquityShortProtection(terms)
+  const entrySide = short ? OrderSide.Sell : OrderSide.Buy
+  const exitSide = short ? OrderSide.Buy : OrderSide.Sell
   const stop = legs.find((leg) => leg.orderType === OrderType.StopLimit)
   const profit = bracket ? legs.find((leg) => leg.orderType === OrderType.Limit) : parent
   const all = [parent, ...legs]
@@ -22,7 +30,7 @@ export const verifyProtectionGroup = (
     original % quantityScale !== 0n ||
     parent.quantityAtoms !== expected.quantityAtoms ||
     parent.orderClass !== (bracket ? OrderClass.Bracket : OrderClass.OneCancelsOther) ||
-    parent.side !== (bracket ? OrderSide.Buy : OrderSide.Sell) ||
+    parent.side !== (bracket ? entrySide : exitSide) ||
     legs.length !== (bracket ? 2 : 1) ||
     stop === undefined ||
     profit === undefined ||
@@ -35,7 +43,7 @@ export const verifyProtectionGroup = (
     if (
       order.accountId !== parent.accountId ||
       order.symbol !== expected.symbol ||
-      order.side !== OrderSide.Sell ||
+      order.side !== exitSide ||
       order.timeInForce !== TimeInForce.Day ||
       order.extendedHours ||
       order.notionalMicros !== undefined ||

@@ -1,6 +1,6 @@
 # Bayn Valkey
 
-Dedicated Valkey 9.1 primary and replica, managed by chideat/valkey-operator v2.1.0.
+Dedicated Valkey 9.1.4 primary and replica, managed by chideat/valkey-operator v2.1.1.
 The `bayn-valkey` Application tracks reviewed `main` independently of Bayn's Kargo
 release. Valkey is a disposable cache; PostgreSQL, TigerBeetle and Kafka retain
 their existing authority.
@@ -30,6 +30,13 @@ the polling owner must publish a fresh cut before readers can proceed. A replica
 alone does not guarantee automatic HA across two hosts.
 Automatic failover requires independent voters; this deployment does not place
 workloads on the reserved compute host or change its taints.
+
+For a planned operator-managed role transfer, follow the verified preference and coordinated `FAILOVER` sequence in
+the [NVMe handoff runbook](../../../docs/bayn/unified-nvme-migration.md). The operator reads the preferred primary from
+ConfigMap `rf-ha-repl-bayn-valkey`, key `master`; changing the native role alone is reverted. Verify the current
+primary, caught-up replica, ConfigMap identity and read/write Service endpoint before a transfer. After recovery,
+require two healthy copies, the existing publication-sized acceptance checks and a fresh canonical broker poll.
+Promoting one surviving copy does not satisfy Bayn's unchanged `WAIT 1` publication requirement by itself.
 
 ## Connection and access
 
@@ -119,7 +126,7 @@ this rollout. Verify the old Cluster and old User are absent and Argo is
 Synced/Healthy at each reviewed revision. Do not persist force/replace options
 or change Application automation.
 
-Upstream v2.1.0 can leave a foreground-deletion cycle: generated operator Users
+The operator can leave a foreground-deletion cycle: generated operator Users
 wait for the Cluster/Failover to disappear while those parents wait for their
 Users. If this occurs, wait for all cache Pods and StatefulSets to disappear
 and for operator cleanup finalizers to clear. A separately authorized metadata

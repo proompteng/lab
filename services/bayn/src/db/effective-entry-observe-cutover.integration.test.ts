@@ -5,6 +5,7 @@ import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import v38ObserveCutover from '../../migrations/0183_effective_entry_observe_cutover'
 import v39ObserveCutover from '../../migrations/0186_jev114_observe_cutover'
+import v40ObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -41,14 +42,22 @@ for (const {
     rejectionMessage:
       'Jev 1.14 OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
   },
+  {
+    schemaVersion: 'bayn.jev.protocol.v40',
+    migrationId: 199,
+    effectiveEntryObserveCutover: v40ObserveCutover,
+    parameterHash: '6b47647a539b3a35971cfbc596c0a431300cababddea3d50ea460b4308a671bb',
+    protocolHash: '140d646d825c1f77d3c5e1f21c425680f64d99226d2c2aacca97f70b11675dcf',
+    rejectionMessage:
+      'native equity short OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
+  },
 ]) {
   const behaviorHash = '76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
   const hash = (value: string) => Result.getOrThrow(canonicalHashV1Result({ value }))
 
-  const makeRuntime = () =>
-    ManagedRuntime.make(
-      PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(Layer.provideMerge(NodeServices.layer)),
-    )
+  const postgres = PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(
+    Layer.provideMerge(NodeServices.layer),
+  )
 
   const guardFixture = Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -237,12 +246,11 @@ for (const {
   DELETE FROM reconciliations`
 
   integration(`${schemaVersion} native OBSERVE cutover`, () => {
-    let runtime: ReturnType<typeof makeRuntime>
+    const runtime = ManagedRuntime.make(postgres)
     beforeAll(() => {
       const parsed = new URL(url)
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
         throw new Error('Effective-entry cutover tests require an isolated local _test database')
-      runtime = makeRuntime()
     })
     afterAll(async () => runtime.dispose())
 
@@ -387,7 +395,8 @@ for (const {
     })
 
     test('migrated authority recovers through native OBSERVE only after fresh reconciliation', async () => {
-      await runtime.runPromise(
+      // Guard queries are prepared against temporary tables. Recovery uses a fresh connection to the real tables.
+      await Effect.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
           yield* sql`DROP SCHEMA public CASCADE`
@@ -474,7 +483,7 @@ for (const {
               broker_identity_hash: broker.identityHash,
             },
           ])
-        }),
+        }).pipe(Effect.provide(postgres)),
       )
     }, 30_000)
   })

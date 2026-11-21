@@ -11,6 +11,8 @@ import {
 } from '../execution/contracts'
 import { legacyReconciliationSchemaVersion, legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
 import { IntentPlanSchema, type IntentPlan } from '../execution/intents/domain'
+import { EquityShortEligibilitySchema } from '../execution/equity-short'
+import { ProtectionCloseBasisSchema } from '../execution/protection-close-basis'
 import {
   IsoDateSchema,
   NonNegativeIntegerSchema,
@@ -20,7 +22,6 @@ import {
   SignedMicrosSchema,
   StrictNonEmptyStringSchema,
   SymbolSchema,
-  UnitIntervalSchema,
   UnsignedMicrosSchema,
   UtcInstantSchema,
 } from '../schemas'
@@ -145,7 +146,7 @@ const TargetPlannerInputFields = {
   policyHash: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
   signalDate: IsoDateSchema,
-  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
+  targetWeights: Schema.Record(SymbolSchema, Schema.Finite.check(Schema.isBetween({ minimum: -1, maximum: 1 }))),
   referencePrices: ExecutionReferencePricesSchema,
   brokerState: TargetPlannerBrokerStateSchema,
   precision: Schema.Struct({
@@ -161,6 +162,7 @@ const TargetPlannerInputFields = {
 export const quoteBoundTargetPlannerInputSchemaVersion = 'bayn.target-planner-input.quote-bound.v1' as const
 
 const QuoteBoundLimitExecutionIdentityFields = {
+  equityShortEntries: Schema.optionalKey(Schema.Record(SymbolSchema, EquityShortEligibilitySchema)),
   executionPurpose: Schema.optionalKey(Schema.Literal('forced-close')),
   orderType: Schema.Literal(OrderType.Limit),
   timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
@@ -193,6 +195,7 @@ const QuoteBoundTargetPlannerInputBase = Schema.Struct({
   ...TargetPlannerInputFields,
   allocationCapitalMicros: UnsignedMicrosSchema,
   executionTerms: QuoteBoundExecutionTermsSchema,
+  protectionClose: Schema.optionalKey(ProtectionCloseBasisSchema),
 })
 
 const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Type): readonly Schema.FilterIssue[] => {
@@ -282,6 +285,17 @@ export interface PlannedTargetQuantity {
   readonly currentQuantityAtoms: string
   readonly targetQuantityAtoms: string
 }
+
+export const shortTargetCollateralMicros = (targets: readonly PlannedTargetQuantity[]): bigint =>
+  targets.reduce((sum, target) => {
+    const quantity = BigInt(target.targetQuantityAtoms)
+    if (quantity >= 0n) return sum
+    const current = BigInt(target.currentQuantityAtoms)
+    const increase = current - quantity
+    if (increase <= 0n) return sum
+    const notional = (increase * BigInt(target.referencePriceMicros) + 999_999_999n) / 1_000_000_000n
+    return sum + (notional * 3n + 1n) / 2n
+  }, 0n)
 
 export type ReferenceTargetIntent = Omit<IntentPlan, 'schemaVersion' | 'notionalLimitMicros' | 'limitPriceMicros'>
 
@@ -406,10 +420,10 @@ export const deriveTargetsFailure = (input: TargetPlannerFailureInput<'derive-ta
 
 export const PlannedTargetQuantitySchema = Schema.Struct({
   symbol: SymbolSchema,
-  targetWeight: UnitIntervalSchema,
+  targetWeight: Schema.Finite.check(Schema.isBetween({ minimum: -1, maximum: 1 })),
   referencePriceMicros: PositiveMicrosSchema,
   currentQuantityAtoms: SignedMicrosSchema,
-  targetQuantityAtoms: UnsignedMicrosSchema,
+  targetQuantityAtoms: SignedMicrosSchema,
 })
 
 export const ReferenceTargetIntentSchema = Schema.Struct({
@@ -435,6 +449,7 @@ export const TargetPlanResultFields = {
   executionTerms: Schema.optionalKey(TargetPlanExecutionTermsSchema),
   targets: Schema.Array(PlannedTargetQuantitySchema),
   requiredReferenceBuyNotionalMicros: UnsignedMicrosSchema,
+  requiredShortCollateralMicros: Schema.optionalKey(UnsignedMicrosSchema),
   availableBuyingPowerMicros: SignedMicrosSchema,
   residualBuyingPowerMicros: SignedMicrosSchema,
 } as const

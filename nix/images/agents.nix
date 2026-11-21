@@ -741,8 +741,5 @@ in
   };
 
   "agents-codex-runner-image" = mkRunnerImage;
-  "ofz-fixture-tools" = pkgs.buildEnv {
-    name = "ofz-fixture-tools";
-    paths = [ runnerTools.postgres runnerTools.spicedb pkgs.openssl ];
-  };
+  "ofz-fixture-tools" = import ./ofz-fixture-tools.nix { inherit pkgs lib runnerTools; };
 }

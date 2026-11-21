@@ -7,10 +7,13 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import {
   JevProtocolSchema,
+  RetainedJevProtocolV37Schema,
   RetainedVisualJevProtocolSchema,
   defaultJevProtocolDocument,
   retainedJevProtocolV38Document,
   retainedJevProtocolV39Document,
+  retainedJevProtocolV40Document,
+  retainedJevProtocolV37ParameterHash,
   jevBehaviorHash,
 } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
@@ -74,17 +77,23 @@ export const verifyStoredOperationalRegistration = (input: unknown) =>
     const runtime = registration.obligations.configuration
     if (
       !Schema.is(JevProtocolSchema)(runtime.protocol) &&
+      !Schema.is(RetainedJevProtocolV37Schema)(runtime.protocol) &&
       !Schema.is(RetainedVisualJevProtocolSchema)(runtime.protocol)
     )
       return yield* invalid('Operational registration requires a recognized native protocol')
     const parameterHash = yield* canonicalHashV1Result(runtime.protocol)
-    const expectedParameterHash = yield* canonicalHashV1Result(
-      runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
-        ? defaultJevProtocolDocument
-        : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
-          ? retainedJevProtocolV39Document
-          : retainedJevProtocolV38Document,
-    )
+    const expectedParameterHash =
+      runtime.protocol.schemaVersion === 'bayn.jev.protocol.v37'
+        ? retainedJevProtocolV37ParameterHash
+        : yield* canonicalHashV1Result(
+            runtime.protocol.schemaVersion === 'bayn.jev.protocol.v41'
+              ? defaultJevProtocolDocument
+              : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+                ? retainedJevProtocolV40Document
+                : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+                  ? retainedJevProtocolV39Document
+                  : retainedJevProtocolV38Document,
+          )
     const protocolHash = yield* makeStrategyProtocolHashResult({
       name: 'jev',
       behaviorHash: jevBehaviorHash,

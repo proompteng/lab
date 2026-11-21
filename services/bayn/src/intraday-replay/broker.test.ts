@@ -21,12 +21,13 @@ import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { prepareAccounting } from '../accounting/domain'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../execution/contracts'
 import { streamingFixture } from '../testing/streaming-market-fixture'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from './broker'
 import { fillObservation, orderObservation, positionSnapshot } from '../broker/observations'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 import { ReplayQuoteRejection } from './broker-execution-evidence'
+import { decodeEquityExecutionTape } from './equity-execution-tape'
 import { makeReplayInferenceTiming } from './inference-timing'
 import {
   emptyStreamingProjection,
@@ -182,7 +183,9 @@ test.each([false, true])(
         yield* broker.mutation.submit(intent())
         const projection = broker.read.projection
         if (projection === undefined) throw new Error('Missing broker projection')
-        const result = yield* Effect.result(projection.snapshot)
+        const result = yield* Effect.result(
+          projection.reconciliationSnapshot.pipe(Effect.map(({ snapshot }) => snapshot)),
+        )
         if (advanceFails) {
           expect(result).toMatchObject({
             _tag: 'Failure',
@@ -2283,6 +2286,185 @@ const bracketTerms = {
   stopLimitPriceMicros: '98900000',
   profitLimitPriceMicros: '103000000',
 } as const
+
+test('consolidated replay binds stop election to a causal print inside its own quote', async () => {
+  const at = (ms: number) => new Date(startMs + ms).toISOString()
+  const scope = {
+    universeId: quote.universeId,
+    universeSymbolHash: quote.universeSymbolHash,
+    symbols: ['AAPL'],
+  }
+  const tapeDocument = {
+    schemaVersion: 'bayn.historical-sip-execution-tape.v1',
+    startAt: at(0),
+    endAt: at(1000),
+    events: [
+      { kind: 'quote', symbol: 'AAPL', at: at(0), bid: 99.95, ask: 100, bidSize: 100, askSize: 100 },
+      { kind: 'quote', symbol: 'AAPL', at: at(300), bid: 98.95, ask: 99.1, bidSize: 100, askSize: 100 },
+      { kind: 'trade', symbol: 'AAPL', at: at(350), price: 98.9 },
+      { kind: 'trade', symbol: 'AAPL', at: at(400), price: 99.02 },
+      { kind: 'trade', symbol: 'AAPL', at: at(450), price: 98.99 },
+    ],
+  }
+  const text = JSON.stringify(tapeDocument)
+  const reference = { sha256: sha256(text), startAt: tapeDocument.startAt, endAt: tapeDocument.endAt }
+  expect(Result.isFailure(decodeEquityExecutionTape(`${text}\n`, reference, scope))).toBe(true)
+  const equityExecutionTape = Result.getOrThrow(decodeEquityExecutionTape(text, reference, scope))
+  const tapeConfig = { ...config, equityExecutionTape }
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup(tapeConfig)
+      yield* broker.observeEquityExecution(0)
+      yield* submit(broker, intent({ protection: bracketTerms }))
+      yield* broker.observeMarket(startMs + 200, laterMarket(200, 98.95))
+      for (const index of [1, 2, 3]) yield* broker.observeEquityExecution(index)
+      const beforeTrade = yield* broker.snapshot
+      expect(beforeTrade.ledger.fills.map((fill) => [fill.side, fill.priceMicros])).toEqual([['buy', '100000000']])
+
+      yield* TestClock.setTime(startMs + 450)
+      yield* broker.observeEquityExecution(4)
+      const checkpoint = yield* broker.checkpoint
+      expect(checkpoint.state.ledger.positions).toEqual([])
+      expect(checkpoint.state.ledger.fills.map((fill) => [fill.side, fill.priceMicros])).toEqual([
+        ['buy', '100000000'],
+        ['sell', '98950000'],
+      ])
+      const stop = checkpoint.state.orders.find(({ order }) => order.orderType === BrokerOrderType.StopLimit)
+      expect(stop?.order.stopTriggeredAt).toBe(at(450))
+      expect(stop?.executions[0]?.stopTradeIndex).toBe(4)
+      const restored = yield* makeReplayBroker({
+        ...tapeConfig,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      expect((yield* restored.checkpoint).checkpointHash).toBe(checkpoint.checkpointHash)
+
+      const { checkpointHash: _checkpointHash, ...material } = checkpoint
+      for (const tamper of ['trade', 'quote'] as const) {
+        const edited = {
+          ...material,
+          state: {
+            ...material.state,
+            orders: material.state.orders.map((record) => ({
+              ...record,
+              executions: record.executions.map((execution) => {
+                if (execution.stopTradeIndex === undefined || execution.quote === null) return execution
+                return tamper === 'trade'
+                  ? { ...execution, stopTradeIndex: 2 }
+                  : { ...execution, quote: { ...execution.quote, bidSize: execution.quote.bidSize + 1 } }
+              }),
+            })),
+          },
+        }
+        const editedHash = Result.getOrThrow(canonicalHashV1Result(edited))
+        expect(
+          Result.isFailure(restoreReplayBrokerCheckpoint({ ...edited, checkpointHash: editedHash }, tapeConfig)),
+        ).toBe(true)
+      }
+    }),
+  )
+})
+
+test.each(['target', 'stop'] as const)(
+  'native short replay covers at the ask through its %s and restores the exact liability checkpoint',
+  async (kind) => {
+    await run(
+      Effect.gen(function* () {
+        const quoteAt = startMs + 1000
+        const coverAsk = kind === 'target' ? 97 : 102.5
+        const cover = observedQuote(
+          {
+            ...quote,
+            eventAt: new Date(quoteAt).toISOString(),
+            ingestedAt: new Date(quoteAt).toISOString(),
+            bidPrice: coverAsk - 0.02,
+            askPrice: coverAsk,
+            sourceOffset: '1000',
+          },
+          quoteAt,
+        )
+        const shortConfig = {
+          ...config,
+          shortingEnabled: true,
+          quoteAt: (_symbol: string, at: number) => Effect.succeed(at >= quoteAt ? cover : observedQuote(quote)),
+          assets: [
+            Result.getOrThrow(
+              normalizeAssetResult(
+                {
+                  id: '12345678-1234-4234-8234-123456789abc',
+                  symbol: 'AAPL',
+                  class: AssetClass.UsEquity,
+                  exchange: AssetExchange.Nasdaq,
+                  status: AssetStatus.Active,
+                  tradable: true,
+                  fractionable: true,
+                  marginable: true,
+                  shortable: true,
+                  easy_to_borrow: true,
+                },
+                'AAPL',
+                observedAt,
+              ),
+            ),
+          ],
+        }
+        const broker = yield* setup(shortConfig)
+        const opening = intent({
+          side: OrderSide.Sell,
+          limitPriceMicros: '100000000',
+          notionalLimitMicros: '500000000',
+          protection: {
+            _tag: 'EquityShortBracket',
+            stopPriceMicros: '102000000',
+            stopLimitPriceMicros: '103000000',
+            profitLimitPriceMicros: '97000000',
+          },
+        })
+        const order = yield* submit(broker, opening)
+        expect(order.order.side).toBe(BrokerOrderSide.Sell)
+        const positions = (yield* broker.read.positions).value
+        expect(positions[0]).toMatchObject({
+          side: 'short',
+          quantityAtoms: '-5000000000',
+          costBasisMicros: '-500000000',
+          marketValueMicros: '-500000000',
+        })
+        expect(BigInt((yield* broker.read.account).value.buyingPowerMicros)).toBeLessThanOrEqual(9_250_000_000n)
+        const retained = yield* broker.checkpoint
+        const restored = yield* makeReplayBroker({
+          ...shortConfig,
+          restoreCheckpoint: { value: retained, expectedHash: retained.checkpointHash },
+        })
+        yield* restored.observeMarket(quoteAt, cover)
+        yield* TestClock.setTime(quoteAt)
+        const flat = yield* restored.checkpoint
+        expect(flat.state.ledger.positions).toEqual([])
+        expect(flat.state.ledger.fills.map((fill) => [fill.side, fill.priceMicros, fill.inventorySide])).toEqual([
+          ['sell', '100000000', 'SHORT'],
+          ['buy', String(Math.round(coverAsk * 1e6)), 'SHORT'],
+        ])
+        const net = BigInt(flat.state.ledger.netRealizedPnlAfterCostsMicros ?? '0')
+        expect(net).toBe(
+          (kind === 'target' ? 15_000_000n : -12_500_000n) - BigInt(flat.state.ledger.executionFeesMicros),
+        )
+        expect((yield* restored.read.orders({ status: OrderCollection.Open })).value).toEqual([])
+        yield* makeReplayBroker({
+          ...shortConfig,
+          restoreCheckpoint: { value: flat, expectedHash: flat.checkpointHash },
+        })
+        expect(
+          (yield* Effect.exit(
+            makeReplayBroker({
+              ...shortConfig,
+              shortingEnabled: false,
+              restoreCheckpoint: { value: retained, expectedHash: retained.checkpointHash },
+            }),
+          ))._tag,
+        ).toBe('Failure')
+      }),
+    )
+  },
+)
+
 const laterMarket = (delay: number, bid: number, size = 100) => {
   const at = startMs + delay
   return observedQuote(

@@ -7,7 +7,72 @@ import { RetainedAutonomousCyclePassObservationSchema } from './pass-observation
 import { DecisionReadinessReason } from './readiness'
 import { Reason as RiskReason } from '../../risk'
 import { strictParseOptions } from '../../schemas'
-import type { CyclePassObservation } from './model'
+import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
+import { OperationalError } from '../../errors'
+import { decisionBuildError, reconciliationRunnerError } from '../../observe-composition/decision-builder'
+import { CycleRunnerError, type CyclePassObservation } from './model'
+import { CycleState, CycleTerminalReason } from '../model'
+
+test('retains only typed local broker absence through decision failure and durable replay', () => {
+  const missingInput = {
+    operation: 'preflight',
+    kind: BrokerReadErrorKind.Timeout,
+    retryable: true,
+    observationFailure: 'NO_ADMISSIBLE_CUT',
+    message: 'A differently worded local projection failure',
+  } as const
+  const missing = new BrokerReadError(missingInput)
+  const decision = (cause: unknown, operation = 'reconciliation') =>
+    new CycleRunnerError({
+      operation: 'build-decision',
+      failure: 'market-data',
+      message: 'Decision construction failed',
+      cause: decisionBuildError(
+        new OperationalError({ component: 'market-data', operation, retryable: true, message: 'Read failed', cause }),
+      ),
+    })
+  const retain = (error: CycleRunnerError) =>
+    retainAutonomousCyclePassObservation({ outcome: 'FAILED', observedAt: '2026-09-04T14:30:02.000Z', error })
+  const decode = Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema, strictParseOptions)
+  for (const error of [decision(missing), reconciliationRunnerError(missing)]) {
+    const retained = retain(error)
+    expect(retained).toMatchObject({
+      result: 'FAILURE',
+      operation: error.operation,
+      failure: 'market-data',
+      message: error.message,
+      brokerObservationFailure: 'NO_ADMISSIBLE_CUT',
+    })
+    expect(decode(JSON.parse(JSON.stringify(retained)))).toEqual(retained)
+  }
+  for (const error of [
+    decision(
+      new BrokerReadError({
+        operation: 'preflight',
+        kind: BrokerReadErrorKind.Timeout,
+        retryable: true,
+        message: missing.message,
+      }),
+    ),
+    decision(new BrokerReadError({ ...missingInput, operation: 'account' })),
+    decision(new BrokerReadError({ ...missingInput, kind: BrokerReadErrorKind.InvalidResponse })),
+    decision(new BrokerReadError({ ...missingInput, retryable: false })),
+    decision(missing, 'snapshot'),
+    decision({ _tag: 'BrokerReadError', ...missingInput }),
+    new CycleRunnerError({ operation: 'build-decision', failure: 'market-data', message: missing.message }),
+  ]) {
+    const retained = retain(error)
+    expect(retained).not.toHaveProperty('brokerObservationFailure')
+    expect(decode(JSON.parse(JSON.stringify(retained)))).toEqual(retained)
+  }
+  const retained = retain(decision(missing))
+  for (const invalid of [
+    { ...retained, brokerObservationFailure: 'UNKNOWN' },
+    { ...retained, failure: 'database' },
+    { ...retained, operation: 'market-calendar' },
+  ])
+    expect(() => decode(invalid)).toThrow()
+})
 
 test('retains readiness and holding reasons through the durable observation schema and log projection', () => {
   const { cycle } = candidateObservationFixture()
@@ -54,6 +119,44 @@ test('retains readiness and holding reasons through the durable observation sche
 test('still decodes a retained pass written before readiness details were available', () => {
   const previous = { result: 'SUCCESS', outcome: 'RECOVERED', observedAt: '2026-09-04T14:30:02.000Z' } as const
   expect(Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema)(previous)).toEqual(previous)
+})
+
+test('retains successor-window eligibility at its evaluation clock across a late pass completion', () => {
+  const { cycle } = candidateObservationFixture()
+  const readiness = {
+    reason: DecisionReadinessReason.SignalWindowObserved as const,
+    message: 'The current entry window is consumed',
+    availableAt: '2026-09-04T14:31:02.000Z',
+  }
+  const observation: CyclePassObservation = {
+    outcome: 'SUCCEEDED',
+    observedAt: '2026-09-04T14:31:02.500Z',
+    result: {
+      outcome: 'ALREADY_TERMINAL',
+      observedAt: '2026-09-04T14:30:13.236Z',
+      readiness,
+      cycle: { ...cycle, state: CycleState.Blocked, terminalReason: CycleTerminalReason.UnusedEntryExpired },
+    },
+  }
+  const retained = retainAutonomousCyclePassObservation(observation)
+  const decode = Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema, strictParseOptions)
+  expect(decode(retained)).toEqual(retained)
+  expect(retained).toMatchObject({ outcome: 'ALREADY_TERMINAL', observedAt: observation.result.observedAt, readiness })
+  expect(cyclePassLogFacts(observation).annotations['readiness']).toBe(JSON.stringify(readiness))
+  for (const invalid of [
+    { ...retained, readiness: { ...readiness, reason: DecisionReadinessReason.AccountProtection } },
+    { ...retained, readiness: { ...readiness, reason: DecisionReadinessReason.SnapshotUnavailable } },
+    { ...retained, readiness: { ...readiness, availableAt: undefined } },
+    { ...retained, readiness: { ...readiness, availableAt: observation.result.observedAt } },
+    { ...retained, readiness: { ...readiness, availableAt: '2026-09-04T14:30:00.000Z' } },
+    { ...retained, waitReason: 'BROKER_OBSERVATION_PENDING' },
+    { ...retained, recoveryAction: 'WAITING' },
+    { ...retained, outcome: 'ALREADY_ACQUIRED' },
+  ])
+    expect(() => decode(invalid)).toThrow()
+  expect(
+    decode({ result: 'SUCCESS', outcome: 'ALREADY_TERMINAL', observedAt: observation.result.observedAt }),
+  ).toBeDefined()
 })
 
 test('durable account protection retains typed limit reasons and accepts older observations', () => {

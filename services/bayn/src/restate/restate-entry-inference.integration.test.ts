@@ -111,10 +111,10 @@ describeRestate('Real always-replay admitted inference retry', () => {
         VALUES (${jobId}, ${expiresAt}::timestamptz, ${failures}, ${crash})`
         }),
       )
-      const executeInference = (input: string, signal: AbortSignal) =>
+      const executeInference: Parameters<typeof makeBaynEntryInference>[1]['executeInference'] = (input, signal) =>
         database.runPromise(
           Effect.gen(function* () {
-            expect(input).toBe(jobId)
+            expect(input.jobId).toBe(jobId)
             const sql = yield* PgClient.PgClient
             const [attempt] = yield* sql<{ should_fail: boolean }>`WITH prior AS (
         SELECT job_id, failures_left > 0 AS should_fail FROM restate_inference_retry_fixture WHERE job_id=${jobId} FOR UPDATE
@@ -151,7 +151,9 @@ describeRestate('Real always-replay admitted inference retry', () => {
       let wakes = 0
       let receivedExpiry: string | undefined
       let attemptsAfterFirstCall = 0
-      const inference = alwaysReplay(makeBaynEntryInference(config, { executeInference }))
+      const inference = alwaysReplay(
+        makeBaynEntryInference(config, { executeInference, awaitDispatch: async () => ({ active: false }) }),
+      )
       const owner = alwaysReplay(
         restate.object({
           name: 'BaynExecutionController',

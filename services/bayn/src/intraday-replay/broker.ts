@@ -1,3 +1,4 @@
+import { isBracketProtection, isOcoProtection, isStopProtection, isEquityShortProtection } from '../execution/contracts'
 import { replayFeeActivity } from './broker-fees'
 import { instrumentMarket, instrumentQuantityTerms, MarketKind } from '../instruments'
 import { jevMarketForSymbol } from '../jev/markets'
@@ -55,6 +56,7 @@ import type { IntradayQuote } from '../market-data/intraday/model'
 import type { ObservedMarketValue, ObservedQuoteSource } from '../market-data/streaming/projection'
 import type { ExecutionModelV6Schema } from '../execution-model-contract'
 import type { ReplayQuoteProtocol } from './broker-execution-evidence'
+import { equityStopTradeQuote, sipExecutionFeed, type EquityExecutionTape } from './equity-execution-tape'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import { simulateIntradayReplayExecution, type ReplayExecutionOutcome } from './execution-core'
 import {
@@ -87,8 +89,10 @@ export interface ReplayBrokerConfig {
   readonly retainSettlement?: (checkpoint: ReplayBrokerCheckpoint) => Effect.Effect<void, ReplayBrokerFailure>
   readonly openingCashMicros: string
   readonly protocol: ReplayQuoteProtocol & { readonly executionModel: typeof ExecutionModelV6Schema.Type }
+  readonly equityExecutionTape?: EquityExecutionTape
   readonly assumptions: ReplayExecutionAssumptions & { readonly latencyMs: number; readonly feeMultiplierPpm: number }
   readonly fractionalTrading: boolean
+  readonly shortingEnabled?: boolean
   readonly assets: readonly AssetObservation[]
   readonly calendar: typeof MarketCalendarResponseSchema.Type
   /** Use the same measured clock as final authorization before fixing submission and arrival timestamps. */
@@ -144,7 +148,7 @@ export interface ReplayBrokerState {
 }
 
 export interface ReplayValuationEvidence {
-  readonly model: 'last-observed-bid'
+  readonly model: 'last-observed-bid' | 'last-observed-executable-side'
   readonly observedAt: string
   readonly marks: readonly {
     readonly symbol: string
@@ -154,6 +158,7 @@ export interface ReplayValuationEvidence {
     readonly ageNanos: string
     readonly staleForExecution: boolean
     readonly bidLiquidityAvailable: boolean
+    readonly coverLiquidityAvailable?: boolean
     readonly topic: string
     readonly partition: number
     readonly offset: string
@@ -189,10 +194,11 @@ const reconcileProtectionGroups = (orders: readonly ReplayBrokerOrder[], at: str
   let result = orders
   for (const { order: parent } of orders) {
     const terms = parent.nativeProtection
-    if (terms === undefined || terms._tag === 'StopLimit') continue
+    if (terms === undefined || isStopProtection(terms)) continue
     const children = result.filter((entry) => entry.order.parentBrokerOrderId === parent.brokerOrderId)
-    const profit =
-      terms._tag === 'Oco' ? parent : children.find((entry) => entry.order.orderType === OrderType.Limit)?.order
+    const profit = isOcoProtection(terms)
+      ? parent
+      : children.find((entry) => entry.order.orderType === OrderType.Limit)?.order
     const stop = children.find((entry) => entry.order.orderType === OrderType.StopLimit)?.order
     if (profit === undefined || stop === undefined) continue
     const original = BigInt(parent.quantityAtoms)
@@ -209,7 +215,7 @@ const reconcileProtectionGroups = (orders: readonly ReplayBrokerOrder[], at: str
           ...entry,
           order: { ...order, status: OrderStatus.Canceled, canceledAt: at, updatedAt: at, observedAt: at },
         }
-      const active = terms._tag === 'Oco' ? parent.firstArrivedAt !== undefined : parent.status === OrderStatus.Filled
+      const active = isOcoProtection(terms) ? parent.firstArrivedAt !== undefined : parent.status === OrderStatus.Filled
       const quantityAtoms =
         order.brokerOrderId === stop.brokerOrderId
           ? (original - BigInt(profit.filledQuantityAtoms)).toString()
@@ -249,6 +255,17 @@ const newYorkDate = new Intl.DateTimeFormat('en-CA', {
 export const makeReplayBroker = (config: ReplayBrokerConfig) =>
   Effect.gen(function* () {
     const acquiredAtMs = yield* Clock.currentTimeMillis
+    const equityTape = config.equityExecutionTape
+    const usesEquityTape = (symbol: string) =>
+      equityTape !== undefined && instrumentMarket(symbol) === MarketKind.Equity
+    const quoteProtocol = (symbol: string) => ({
+      maximumQuoteAgeMs: config.protocol.maximumQuoteAgeMs,
+      ...(usesEquityTape(symbol) ? sipExecutionFeed : jevMarketForSymbol(symbol)),
+    })
+    const quoteAt: ReplayBrokerConfig['quoteAt'] = (symbol, atMs, source) =>
+      usesEquityTape(symbol)
+        ? Effect.sync(() => equityTape?.quoteAt(symbol, atMs, source))
+        : config.quoteAt(symbol, atMs, source)
     yield* Effect.fromResult(Schema.decodeUnknownResult(Sha256Schema, strictParseOptions)(config.runId))
     if (!Number.isSafeInteger(config.assumptions.latencyMs) || config.assumptions.latencyMs < 0)
       return yield* new ReplayBrokerFailure({ message: 'Replay broker latency must be a nonnegative integer' })
@@ -343,7 +360,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       symbol: string,
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> =>
-      replayQuoteRejection(quote, symbol, nowMs, { ...config.protocol, ...jevMarketForSymbol(symbol) }) === null
+      replayQuoteRejection(quote, symbol, nowMs, quoteProtocol(symbol)) === null
     const normalizedCalendars = yield* Effect.fromResult(
       Result.all(
         config.calendar.map((entry) => normalizeMarketCalendarResult([entry], { start: entry.date, end: entry.date })),
@@ -402,10 +419,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       symbol: string,
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> => {
-      const rejection = replayQuoteRejection(quote, symbol, nowMs, {
-        ...config.protocol,
-        ...jevMarketForSymbol(symbol),
-      })
+      const rejection = replayQuoteRejection(quote, symbol, nowMs, quoteProtocol(symbol))
       return rejection === null || rejection === ReplayQuoteRejection.Stale
     }
     const executeQuote = (
@@ -458,6 +472,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       quote: ObservedMarketValue<IntradayQuote> | undefined,
       unavailableReason: ReplayQuoteRejection | 'outside-regular-session' | null,
       initialArrival = false,
+      stopTradeIndex?: number,
     ) =>
       SynchronizedRef.updateEffect(state, (current) =>
         Effect.fromResult(
@@ -495,8 +510,29 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                   }
             if (previous.orderType === OrderType.StopLimit && previous.stopTriggeredAt === undefined) {
               if (unavailableReason !== null || quote === undefined) return acceptedWithoutTrigger()
-              const bid = yield* numberToMicros(quote.value.bidPrice, 'stop trigger bid')
-              if (bid > BigInt(previous.stopPriceMicros ?? '0')) return acceptedWithoutTrigger()
+              const stop = previous.stopPriceMicros ?? '0'
+              if (equityTape !== undefined && usesEquityTape(previous.symbol)) {
+                if (
+                  stopTradeIndex === undefined ||
+                  equityStopTradeQuote({
+                    tape: equityTape,
+                    index: stopTradeIndex,
+                    symbol: previous.symbol,
+                    side: previous.side,
+                    stopMicros: stop,
+                    atMs: Date.parse(arrivedAt),
+                    maximumQuoteAgeMs: config.protocol.maximumQuoteAgeMs,
+                  }) !== quote
+                )
+                  return acceptedWithoutTrigger()
+              } else {
+                const buy = previous.side === OrderSide.Buy
+                const price = yield* numberToMicros(
+                  buy ? quote.value.askPrice : quote.value.bidPrice,
+                  'stop trigger quote',
+                )
+                if (buy ? price < BigInt(stop) : price > BigInt(stop)) return acceptedWithoutTrigger()
+              }
               previous = { ...previous, stopTriggeredAt: arrivedAt }
             }
             const remaining = BigInt(previous.quantityAtoms) - BigInt(previous.filledQuantityAtoms)
@@ -537,6 +573,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             let execution = makeReplayOrderExecution({
               ...arrival,
               outcome,
+              ...(stopTradeIndex === undefined ? {} : { stopTradeIndex }),
             })
             const day = previous.timeInForce !== TimeInForce.ImmediateOrCancel
             let order: ReplayOrder = day
@@ -553,6 +590,17 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             const fills = [...current.fills]
             if (outcome.status === 'filled' && quote !== undefined) {
               const fill: ReplayBrokerFill = {
+                ...(isEquityShortProtection(
+                  (previous.parentBrokerOrderId === undefined
+                    ? previous
+                    : current.orders.find((value) => value.order.brokerOrderId === previous.parentBrokerOrderId)?.order
+                  )?.nativeProtection,
+                ) ||
+                current.ledger.positions.some(
+                  (position) => position.symbol === previous.symbol && BigInt(position.quantityAtoms) < 0n,
+                )
+                  ? { inventorySide: 'SHORT' as const }
+                  : {}),
                 executionIndex,
                 symbol: previous.symbol,
                 side: previous.side,
@@ -674,7 +722,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             yield* settleOrder(order.brokerOrderId, arrivedAt, quote, unavailableReason)
         }
       })
-    const observeMarket = (atMs: number, quote: ObservedMarketValue<IntradayQuote> | null) =>
+    const observeQuote = (atMs: number, quote: ObservedMarketValue<IntradayQuote> | null) =>
       Effect.gen(function* () {
         if (!Number.isSafeInteger(atMs) || (quote !== null && quote.availableAtMs !== atMs))
           return yield* new ReplayBrokerFailure({ message: 'Replay broker market availability is invalid' })
@@ -701,11 +749,37 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             order.brokerOrderId,
             utcInstantFromEpochMillis(atMs),
             quote,
-            replayQuoteRejection(quote, order.symbol, atMs, {
-              ...config.protocol,
-              ...jevMarketForSymbol(order.symbol),
-            }),
+            replayQuoteRejection(quote, order.symbol, atMs, quoteProtocol(order.symbol)),
           )
+        }
+      })
+    const observeMarket = (atMs: number, quote: ObservedMarketValue<IntradayQuote> | null) =>
+      observeQuote(atMs, quote !== null && usesEquityTape(quote.value.symbol) ? null : quote)
+    const observeEquityExecution = (index: number) =>
+      Effect.gen(function* () {
+        const event = equityTape?.entry(index)
+        if (event === undefined)
+          return yield* new ReplayBrokerFailure({ message: 'Equity execution event is outside the bound tape' })
+        if (event.kind === 'quote') return yield* observeQuote(event.atMs, event.quote)
+        yield* expireOrders(event.atMs)
+        if (event.quote === undefined) return
+        for (const { order } of (yield* SynchronizedRef.get(state)).orders) {
+          if (
+            order.symbol === event.symbol &&
+            order.orderType === OrderType.StopLimit &&
+            order.stopTriggeredAt === undefined &&
+            order.firstArrivedAt !== undefined &&
+            Date.parse(order.firstArrivedAt) <= event.atMs &&
+            isOpen(order)
+          )
+            yield* settleOrder(
+              order.brokerOrderId,
+              utcInstantFromEpochMillis(event.atMs),
+              event.quote,
+              null,
+              false,
+              index,
+            )
         }
       })
     const closingEquity = (current: ReplayBrokerState, closeAt: string) =>
@@ -730,17 +804,22 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         let valuationQualified = true
         for (const position of closingLedger.positions) {
           const atMs = Date.parse(closeAt)
-          const quote = yield* config.quoteAt(position.symbol, atMs, null)
+          const quote = yield* quoteAt(position.symbol, atMs, null)
           if (!valuationQuoteUsable(quote, position.symbol, atMs))
             return yield* new ReplayBrokerFailure({ message: 'Session close has no retained valuation quote' })
+          const short = BigInt(position.quantityAtoms) < 0n
           if (
             !quoteUsable(quote, position.symbol, atMs) ||
-            !Number.isFinite(quote.value.bidSize) ||
-            quote.value.bidSize <= 0
+            !Number.isFinite(short ? quote.value.askSize : quote.value.bidSize) ||
+            (short ? quote.value.askSize : quote.value.bidSize) <= 0
           )
             valuationQualified = false
-          const price = yield* Effect.fromResult(numberToMicros(quote.value.bidPrice, 'mark.bid'))
-          equity += yield* Effect.fromResult(notionalMicros(BigInt(position.quantityAtoms), price))
+          const price = yield* Effect.fromResult(
+            numberToMicros(short ? quote.value.askPrice : quote.value.bidPrice, 'mark.price'),
+          )
+          const magnitude = short ? -BigInt(position.quantityAtoms) : BigInt(position.quantityAtoms)
+          const value = yield* Effect.fromResult(notionalMicros(magnitude, price))
+          equity += short ? -value : value
         }
         return { equityMicros: equity.toString(), valuationQualified }
       })
@@ -750,7 +829,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       for (const fill of restored.state.ledger.fills) {
         const order = restored.state.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)?.order
         const arrivedAtMs = Date.parse(fill.observedAt)
-        const quote = yield* config.quoteAt(fill.symbol, arrivedAtMs, fill.quoteSource)
+        const quote = yield* quoteAt(fill.symbol, arrivedAtMs, fill.quoteSource)
         if (
           order === undefined ||
           !quoteUsable(quote, fill.symbol, arrivedAtMs) ||
@@ -810,20 +889,25 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       const marked = yield* Effect.forEach(current.ledger.positions, (position) =>
         Effect.gen(function* () {
           const metadata = asset(position.symbol)
-          const quote = yield* config.quoteAt(position.symbol, Date.parse(observedAt), null)
+          const quote = yield* quoteAt(position.symbol, Date.parse(observedAt), null)
           if (metadata === undefined || !valuationQuoteUsable(quote, position.symbol, Date.parse(observedAt)))
             return yield* new ReplayBrokerFailure({
               message: `Replay position mark unavailable for ${position.symbol}`,
             })
-          const price = yield* Effect.fromResult(numberToMicros(quote.value.bidPrice, 'mark.bid'))
-          const value = yield* Effect.fromResult(notionalMicros(BigInt(position.quantityAtoms), price))
+          const short = BigInt(position.quantityAtoms) < 0n
+          const magnitude = short ? -BigInt(position.quantityAtoms) : BigInt(position.quantityAtoms)
+          const price = yield* Effect.fromResult(
+            numberToMicros(short ? quote.value.askPrice : quote.value.bidPrice, 'mark.price'),
+          )
+          const unsignedValue = yield* Effect.fromResult(notionalMicros(magnitude, price))
+          const value = short ? -unsignedValue : unsignedValue
           const positionValue = {
             accountId,
             assetId: metadata.assetId,
             symbol: position.symbol,
             exchange: metadata.exchange,
             assetClass: metadata.assetClass,
-            side: PositionSide.Long,
+            side: short ? PositionSide.Short : PositionSide.Long,
             quantityAtoms: position.quantityAtoms,
             costBasisMicros: position.costBasisMicros,
             averageEntryPriceMicros: (
@@ -848,6 +932,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               ).toString(),
               staleForExecution: !quoteUsable(quote, position.symbol, Date.parse(observedAt)),
               bidLiquidityAvailable: Number.isFinite(quote.value.bidSize) && quote.value.bidSize > 0,
+              ...(short
+                ? { coverLiquidityAvailable: Number.isFinite(quote.value.askSize) && quote.value.askSize > 0 }
+                : {}),
               topic: quote.value.sourceTopic,
               partition: quote.value.sourcePartition,
               offset: quote.value.sourceOffset,
@@ -860,7 +947,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         positions: marked.map(({ position }) => position),
         observedAt,
         valuation: {
-          model: 'last-observed-bid',
+          model: marked.some(({ position }) => position.side === PositionSide.Short)
+            ? 'last-observed-executable-side'
+            : 'last-observed-bid',
           observedAt,
           marks: marked.map(({ mark }) => mark),
         } satisfies ReplayValuationEvidence,
@@ -915,7 +1004,18 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             cashMicros: current.ledger.cashMicros,
             equityMicros: equity.toString(),
             lastEquityMicros: previousClose?.equityMicros ?? current.ledger.openingCashMicros,
-            buyingPowerMicros: current.ledger.cashMicros,
+            buyingPowerMicros: (() => {
+              const reserved = positions
+                .filter((position) => position.side === PositionSide.Short)
+                .reduce(
+                  (sum, position) =>
+                    sum - BigInt(position.costBasisMicros) + (-BigInt(position.marketValueMicros) * 3n + 1n) / 2n,
+                  0n,
+                )
+              const available = BigInt(current.ledger.cashMicros) - reserved
+              return (available > 0n ? available : 0n).toString()
+            })(),
+            ...(config.shortingEnabled === undefined ? {} : { shortingEnabled: config.shortingEnabled }),
             accountBlocked: false,
             tradingBlocked: false,
             tradeSuspendedByUser: false,
@@ -932,7 +1032,13 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         const observedAt = yield* now
         return yield* evidence(
           yield* Effect.fromResult(
-            normalizeAccountConfigurationResult({ fractional_trading: config.fractionalTrading }, observedAt),
+            normalizeAccountConfigurationResult(
+              {
+                fractional_trading: config.fractionalTrading,
+                ...(config.shortingEnabled === undefined ? {} : { no_shorting: !config.shortingEnabled }),
+              },
+              observedAt,
+            ),
           ),
           observedAt,
         )
@@ -1105,6 +1211,17 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             const metadata = asset(intent.symbol)
             if (metadata === undefined || !metadata.tradable)
               return yield* mutationFailure(MutationOperation.Submit, 'Captured asset is not tradable')
+            if (
+              intent.protection?._tag === 'EquityShortBracket' &&
+              (config.shortingEnabled !== true ||
+                metadata.equityShort?.marginable !== true ||
+                metadata.equityShort?.shortable !== true ||
+                metadata.equityShort?.easyToBorrow !== true)
+            )
+              return yield* mutationFailure(
+                MutationOperation.Submit,
+                'Replay native short requires explicit account and captured borrow assumptions',
+              )
             const limit = yield* Effect.fromResult(decimalToMicrosResult(request.limit_price, false, 'limit price'))
             const brokerOrderId = simulatedUuid(
               yield* Effect.fromResult(hash({ runId: config.runId, clientOrderId: intent.clientOrderId })),
@@ -1129,9 +1246,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     : OrderClass.Simple,
               orderType: request.type,
               ...(intent.protection === undefined ? {} : { nativeProtection: intent.protection }),
-              ...(intent.protection?._tag === 'StopLimit'
-                ? { stopPriceMicros: intent.protection.stopPriceMicros }
-                : {}),
+              ...(isStopProtection(intent.protection) ? { stopPriceMicros: intent.protection.stopPriceMicros } : {}),
               side: request.side,
               timeInForce: request.time_in_force,
               limitPriceMicros: limit,
@@ -1140,9 +1255,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               observedAt,
             }
             const children: ReplayBrokerOrder[] = []
-            if (intent.protection !== undefined && intent.protection._tag !== 'StopLimit') {
+            if (intent.protection !== undefined && !isStopProtection(intent.protection)) {
               const terms = intent.protection
-              for (const kind of terms._tag === 'Bracket' ? ['profit', 'stop'] : ['stop']) {
+              for (const kind of isBracketProtection(terms) ? ['profit', 'stop'] : ['stop']) {
                 const clientOrderId = `${intent.clientOrderId}-${kind}`
                 const childId = simulatedUuid(yield* Effect.fromResult(hash({ runId: config.runId, clientOrderId })))
                 const { nativeProtection: _terms, ...base } = pending
@@ -1154,12 +1269,12 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     clientOrderId,
                     brokerOrderId: childId,
                     parentBrokerOrderId: brokerOrderId,
-                    side: OrderSide.Sell,
+                    side: isEquityShortProtection(terms) ? OrderSide.Buy : OrderSide.Sell,
                     orderClass: OrderClass.Simple,
                     orderType: kind === 'stop' ? OrderType.StopLimit : OrderType.Limit,
                     limitPriceMicros: kind === 'stop' ? terms.stopLimitPriceMicros : terms.profitLimitPriceMicros,
                     ...(kind === 'stop' ? { stopPriceMicros: terms.stopPriceMicros } : {}),
-                    status: terms._tag === 'Bracket' ? OrderStatus.Held : OrderStatus.New,
+                    status: isBracketProtection(terms) ? OrderStatus.Held : OrderStatus.New,
                   },
                 })
               }
@@ -1218,12 +1333,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     submittedAtMs >=
                       Date.parse(request.extended_hours ? session.sessionOpenAt : session.regularOpenAt) &&
                     arrivedAtMs < closeMs)
-                const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs, null) : undefined
+                const quote = sessionOpen ? yield* quoteAt(intent.symbol, arrivedAtMs, null) : undefined
                 const unavailableReason = sessionOpen
-                  ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, {
-                      ...config.protocol,
-                      ...jevMarketForSymbol(intent.symbol),
-                    })
+                  ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, quoteProtocol(intent.symbol))
                   : 'outside-regular-session'
                 yield* settleOrderAndChildren(brokerOrderId, arrivedAt, quote, unavailableReason, true)
               }).pipe(
@@ -1392,7 +1504,8 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           fresh: read,
           invalidate: Effect.void,
           withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-          snapshot: readStableBrokerSnapshot(read, now, waitForSnapshotRetry).pipe(
+          reconciliationSnapshot: readStableBrokerSnapshot(read, now, waitForSnapshotRetry).pipe(
+            Effect.map((snapshot) => ({ snapshot, complete: Effect.void })),
             Effect.mapError((cause) => readFailure('preflight', 'Replay broker snapshot failed', cause)),
           ),
           submissionSnapshot: () =>
@@ -1405,6 +1518,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       },
       mutation,
       observeMarket,
+      observeEquityExecution,
       valuationAt,
       valuation: markedPositions.pipe(Effect.map(({ valuation }) => valuation)),
       snapshot: readState,

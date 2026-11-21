@@ -3,7 +3,7 @@ import { Result } from 'effect'
 
 import { OrderClass, OrderStatus, OrderSide } from '../broker/alpaca/model'
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
-import type { IntentBinding } from '../db/reconciliation'
+import type { IntentBinding } from '../db/intent-bindings'
 import { normalizeSnapshot } from './broker-normalization'
 import { normalizationFixture } from './broker-normalization.test-support'
 

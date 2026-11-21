@@ -80,7 +80,7 @@ describe('Signal publisher GitOps authority contract', () => {
     const decisionSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY']
     const channels = csv(websocketConfig.data.ALPACA_MARKET_DATA_CHANNELS)
     const symbolsByChannel = {
-      bars: coreSymbols,
+      bars: csv(websocketConfig.data.ALPACA_MARKET_DATA_BARS_SYMBOLS),
       quotes: csv(websocketConfig.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS),
       trades: csv(websocketConfig.data.ALPACA_MARKET_DATA_TRADES_SYMBOLS),
     }
@@ -95,7 +95,11 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     expect(schedulerSymbols.every((symbol) => coreSymbols.includes(symbol))).toBe(true)
     expect(csv(websocketConfig.data.SYMBOLS_ALLOWLIST)).toEqual(coreSymbols)
-    expect(coreSymbols).toHaveLength(16)
+    expect(symbolsByChannel.bars).toHaveLength(16)
+    const restBars = csv(websocketConfig.data.ALPACA_LATEST_BAR_SYMBOLS)
+    expect(restBars).toEqual(['GOOGL', 'INTC', 'META', 'MSFT', 'NFLX', 'TSLA'])
+    expect(restBars.some((symbol) => symbolsByChannel.bars.includes(symbol))).toBe(false)
+    expect([...symbolsByChannel.bars, ...restBars].sort()).toEqual(coreSymbols)
     expect(channels).toEqual(['trades', 'quotes', 'bars'])
     expect(symbolsByChannel.quotes).toEqual(decisionSymbols)
     expect(symbolsByChannel.trades).toEqual(decisionSymbols)
@@ -259,6 +263,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'configmap.yaml',
       'flinkdeployment.yaml',
       'metrics-service.yaml',
+      'taskmanager-metrics-service.yaml',
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
@@ -291,7 +296,7 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_CORE_BARS_TOPIC: 'torghut.bars.1m.v1',
       ARCHIVE_CORE_QUOTES_TOPIC: 'torghut.quotes.v1',
       ARCHIVE_CORE_TRADES_TOPIC: 'torghut.trades.v1',
-      ARCHIVE_CORE_UNIVERSE_ID: 'torghut-core-equity-v2',
+      ARCHIVE_CORE_UNIVERSE_ID: 'torghut-core-equity-v3',
       ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH: expectedCoreArchiveHash,
       ARCHIVE_DELAYED_SIP_BARS_TOPIC: 'bayn.market-data.delayed-sip.bars.1m.v1',
       ARCHIVE_DELAYED_SIP_QUOTES_TOPIC: 'bayn.market-data.delayed-sip.quotes.v1',
@@ -310,7 +315,9 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(csv(websocket.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS)).toEqual(liveDecisionSymbols)
     expect(csv(websocket.data.ALPACA_MARKET_DATA_TRADES_SYMBOLS)).toEqual(liveDecisionSymbols)
     expect(liveCoreChannels).toEqual(['trades', 'quotes', 'bars'])
-    expect(liveCoreSymbols.length + liveDecisionSymbols.length * 2).toBe(30)
+    const websocketBars = csv(websocket.data.ALPACA_MARKET_DATA_BARS_SYMBOLS)
+    expect(websocketBars.length + liveDecisionSymbols.length * 2).toBe(30)
+    expect([...websocketBars, ...csv(websocket.data.ALPACA_LATEST_BAR_SYMBOLS)].sort()).toEqual(coreArchiveSymbols)
     expect(coreTopics.find((topic) => topic.metadata.name === 'torghut.quotes.v1')?.spec.partitions).toBe(13)
     expect(websocket.data.ALPACA_FEED).toBe('iex')
     expect(websocket.data.TOPIC_CRYPTO_EVENTS).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)

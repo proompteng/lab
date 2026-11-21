@@ -3,7 +3,7 @@ import type { MarketCalendarObservation } from '../broker/alpaca/model'
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import type { RollingMarketFeature } from '../market-data/features/contract'
 import type { StreamingVerifiedMarketSnapshot, StreamingFeatureReceipt } from '../market-data/streaming/snapshot'
-import { equityMarketProfile } from '../jev/markets'
+import { retainedEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 
 import { Effect, Result } from 'effect'
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
@@ -87,12 +87,11 @@ const rawPricingRequest: IntradaySnapshotRequest & { readonly calendar: MarketCa
     })),
 }
 
-export const streamingFixture = (
-  returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
+export const streamingFixtureRequest = (
   includeBenchmark = true,
-) => {
+): IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } => {
   const { purpose: _purpose, ...baseRequest } = rawPricingRequest
-  const request: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
+  return {
     ...baseRequest,
     rangeStartAt: '2026-09-04T14:00:00.000Z',
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
@@ -101,6 +100,13 @@ export const streamingFixture = (
     candidateSymbols: protocol.candidateSymbols,
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   }
+}
+
+export const streamingFixture = (
+  returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
+  includeBenchmark = true,
+) => {
+  const request = streamingFixtureRequest(includeBenchmark)
   const raw = makeIntradayMomentumTestSnapshot(protocol, request, returns)
   const { cut, query, snapshot, rows } = streamingFixtureFromRaw(raw, request)
   const archive = Result.getOrThrow(
@@ -128,10 +134,10 @@ export const streamingFixtureFromRaw = (
   request: IntradaySnapshotQuery,
 ) => {
   const universe = {
-    universeId: equityMarketProfile.universeId,
-    universeSymbolHash: equityMarketProfile.universeSymbolHash,
-    symbols: protocol.universe,
-    topics: { ...equityMarketProfile.sourceTopics, features: intradayMomentumFeatureTopic },
+    universeId: request.universeId,
+    universeSymbolHash: request.universeSymbolHash,
+    symbols: request.universe,
+    topics: { ...request.sourceTopics, features: intradayMomentumFeatureTopic },
   }
   const observed = Date.parse(request.observedAt)
   let projection = emptyStreamingProjection('fixture-epoch')
@@ -151,8 +157,8 @@ export const streamingFixtureFromRaw = (
       provider: 'alpaca',
       feed: 'iex',
       delayClass: 'real_time_exchange_only',
-      universeId: equityMarketProfile.universeId,
-      universeSymbolHash: equityMarketProfile.universeSymbolHash,
+      universeId: request.universeId,
+      universeSymbolHash: request.universeSymbolHash,
       symbol,
       sessionDate: request.sessionDate,
       sessionPolicy: MarketFeatureSessionPolicy.IexClockSegments,

@@ -174,6 +174,12 @@ export enum OrderSide {
   Sell = 'sell',
 }
 
+export enum TradeActivitySide {
+  Buy = 'buy',
+  Sell = 'sell',
+  SellShort = 'sell_short',
+}
+
 export enum TimeInForce {
   Day = 'day',
   GoodUntilCanceled = 'gtc',
@@ -260,6 +266,7 @@ export interface Account {
   readonly accountBlocked: boolean
   readonly tradingBlocked: boolean
   readonly tradeSuspendedByUser: boolean
+  readonly shortingEnabled?: boolean
   readonly observedAt: string
 }
 
@@ -268,6 +275,7 @@ export interface AccountConfigurationObservation {
   readonly source: typeof accountConfigurationObservationSource
   readonly requestHash: string
   readonly fractionalTrading: boolean
+  readonly noShorting?: boolean
   readonly observedAt: string
   readonly normalizedResponseHash: string
 }
@@ -381,6 +389,7 @@ export interface AssetObservation {
   readonly quantityIncrementAtoms: string
   readonly priceIncrementAtoms: string
   readonly attributes: readonly string[]
+  readonly equityShort?: { readonly marginable: boolean; readonly shortable: boolean; readonly easyToBorrow: boolean }
   readonly observedAt: string
   readonly normalizedResponseHash: string
 }
@@ -470,7 +479,13 @@ export interface BrokerSubmissionSnapshot {
 
 export interface BrokerReadProjection {
   readonly healthSnapshot?: Effect.Effect<ObservedBrokerState, BrokerReadError>
-  readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
+  readonly reconciliationSnapshot: Effect.Effect<
+    {
+      readonly snapshot: StableBrokerSnapshot
+      readonly complete: Effect.Effect<void, BrokerReadError>
+    },
+    BrokerReadError
+  >
   readonly submissionSnapshot: (intentId: string) => Effect.Effect<BrokerSubmissionSnapshot, BrokerReadError>
   readonly fresh: BrokerReadShape
   readonly invalidate: Effect.Effect<void>
@@ -488,9 +503,14 @@ export interface BrokerReadShape {
   readonly orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly feeActivities: (query?: FeeActivitiesQuery) => Effect.Effect<ReadResult<FeeActivityPage>, BrokerReadError>
   readonly fillActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FillActivityPage>, BrokerReadError>
+  readonly accountActivity?: Effect.Effect<import('./activity-stream').AccountActivityCut, BrokerReadError>
   readonly marketCalendar: (
     query: MarketCalendarQuery,
   ) => Effect.Effect<ReadResult<MarketCalendarObservation>, BrokerReadError>
+}
+
+export interface FillExecution extends Omit<FillActivity, 'activityId'> {
+  readonly executionId: string
 }
 
 export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()(
@@ -535,10 +555,12 @@ export const AccountResponseSchema = Schema.Struct({
   account_blocked: Schema.Boolean,
   trading_blocked: Schema.Boolean,
   trade_suspended_by_user: Schema.Boolean,
+  shorting_enabled: Schema.optionalKey(Schema.Boolean),
 })
 
 export const AccountConfigurationResponseSchema = Schema.Struct({
   fractional_trading: Schema.Boolean,
+  no_shorting: Schema.optionalKey(Schema.Boolean),
 })
 
 export const PositionResponseSchema = Schema.Struct({
@@ -577,6 +599,9 @@ export const AssetResponseSchema = Schema.Struct({
   status: Schema.Enum(AssetStatus),
   tradable: Schema.Boolean,
   fractionable: Schema.Boolean,
+  marginable: Schema.optionalKey(Schema.Boolean),
+  shortable: Schema.optionalKey(Schema.Boolean),
+  easy_to_borrow: Schema.optionalKey(Schema.Boolean),
   min_order_size: Schema.optionalKey(Decimal),
   min_trade_increment: Schema.optionalKey(Decimal),
   price_increment: Schema.optionalKey(Decimal),
@@ -661,7 +686,7 @@ export const FillActivityResponseSchema = Schema.Struct({
   leaves_qty: Decimal,
   price: Decimal,
   qty: Decimal,
-  side: Schema.Enum(OrderSide),
+  side: Schema.Enum(TradeActivitySide),
   symbol: ResponseSymbol,
   transaction_time: Timestamp,
   order_id: Uuid,

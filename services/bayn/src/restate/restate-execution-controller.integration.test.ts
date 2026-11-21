@@ -8,6 +8,7 @@ import { decodeExecutionControllerState, executionControllerMaximumRecoveryWindo
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { makeBaynBrokerObservations } from './restate-broker-observations'
+import { makeBaynEntryInference } from './restate-entry-inference'
 import {
   restateExecutionActivationRequest,
   restateExecutionActivationTransportConfig,
@@ -17,6 +18,7 @@ import {
   executionControllerAdvanceMaximumAttempts,
   executionControllerRecoveryTickDelayMs,
   makeBaynExecutionController,
+  type ExecutionControllerConfig,
 } from './restate-execution-controller'
 import { awaitRestateInvocation, RestateSendStatus, sendRestateInvocation } from './restate-invocation-client'
 
@@ -32,6 +34,16 @@ const alwaysReplay = <A extends { name: string }>(service: A): A => {
   definition.options = { ...definition.options, inactivityTimeout: 0 }
   return service
 }
+
+const inactiveInference = (config: ExecutionControllerConfig) =>
+  alwaysReplay(
+    makeBaynEntryInference(config, {
+      awaitDispatch: async () => ({ active: false }),
+      executeInference: async () => {
+        throw new Error('No inference job was admitted by this fixture')
+      },
+    }),
+  )
 
 describeRestate('Real always-replay Restate execution deployment activation', () => {
   test('one durable activation recovers after dependency failure while restarted waiters reuse its coordinator', async () => {
@@ -94,7 +106,12 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
           verifyNotification: () => {
             throw new Error('activation does not ingest signed notifications')
           },
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
+          isNotificationCovered: async () => false,
+          project: async () => {
+            throw new Error('controller integration does not project broker source events')
+          },
           invalidate: async () => undefined,
           activate: async () => {
             brokerActivations += 1
@@ -214,7 +231,9 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
             options: { ingressPrivate: true, inactivityTimeout: 0 },
           })
           yield* register(createServer(restate.createEndpointHandler({ services: [predecessor, observations] })))
-          const endpoint = restate.createEndpointHandler({ services: [controller, observations, bridge] })
+          const endpoint = restate.createEndpointHandler({
+            services: [controller, observations, bridge, inactiveInference(config)],
+          })
           yield* register(
             createServer((request, response) => {
               if (request.url.endsWith('/tick')) financialHandlerAttempts += 1
@@ -458,7 +477,12 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
                   verifyNotification: () => {
                     throw new Error('activation does not ingest signed notifications')
                   },
+                  probeProtection: async () => undefined,
                   recordNotification: async () => ({ covered: false }),
+                  isNotificationCovered: async () => false,
+                  project: async () => {
+                    throw new Error('controller integration does not project broker source events')
+                  },
                   invalidate: async () => undefined,
                   activate: () => Promise.resolve(),
                   poll: async () => {
@@ -477,11 +501,12 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
                 },
               ),
             )
-            yield* register(
-              createServer(
-                restate.createEndpointHandler({ services: [replacementController, replacementObservations] }),
-              ),
-            )
+            const replacementServices = [
+              replacementController,
+              replacementObservations,
+              inactiveInference(replacementConfig),
+            ]
+            yield* register(createServer(restate.createEndpointHandler({ services: replacementServices })))
             const rotation = restateExecutionActivationRequest(
               { ...replacementConfig, ...(yield* loadAttempt(randomUUID())) },
               token,
@@ -530,7 +555,7 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
                 received = resolve
               })
               const endpoint = restate.createEndpointHandler({
-                services: [replacementController, replacementObservations],
+                services: replacementServices,
               })
               yield* register(
                 createServer((request, response) => {
@@ -699,7 +724,9 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const server = createServer(restate.createEndpointHandler({ services: [controller, bridge] }))
+          const server = createServer(
+            restate.createEndpointHandler({ services: [controller, bridge, inactiveInference(config)] }),
+          )
           yield* acquireRestateHttp2Server(server, 0)
           const address = server.address()
           if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')

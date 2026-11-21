@@ -259,6 +259,23 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynEgressProxyReplicaTargetMissed`: compare the `bayn-egress-proxy` Deployment's desired and available replicas.
   Preserve both stateless proxy replicas and their hostname spread so one node loss does not remove broker read
   connectivity. Do not bypass the proxy or broaden broker egress.
+- `BaynBrokerFeedUnavailable`: verify the single `bayn-broker-feed` pod's account check, authenticated WebSocket,
+  exact source revision, and `bayn.broker-source-projection.v1` acknowledgement. Readiness proves connection and
+  durable source acceptance only; use PostgreSQL source/projection evidence and canonical reconciliation before
+  declaring order, fill, or accounting recovery. Do not restore the deleted Kafka adapter or add a second socket.
+- `BaynBrokerSourceProjectionFallbackHigh`: group `bayn_broker_source_projection_total` by `reason` for the exact
+  deployed source. Preserve fail-closed reconciliation for invalid, unsupported, unbound, conflicting, or gapped
+  events. Repair the responsible parser, binding, or session boundary; do not convert a fallback into fabricated
+  broker state or relax the gate to clear the ratio.
+- `BaynBrokerSourceProjectionLatencyHigh`: compare Restate projector queue time with PostgreSQL writer-fence spans and
+  database latency over the same completed-event window. The projector owns source evidence only and has no
+  TigerBeetle dependency. Remove the measured queue or database bottleneck; do not move money posting onto the
+  WebSocket path or claim a latency gain from a restarted or empty histogram.
+- `BaynBrokerSourceProjectionStalled`: inspect pending count, oldest age, and
+  `bayn_broker_source_projection_observation_success`. The query covers retained events from every source revision;
+  a zero or absent observation-success gauge means the backlog itself is unknown. Trace the exact immutable event into
+  its Restate projector invocation and first projection receipt, then repair or resume that owner. Do not delete the
+  event, forge a terminal receipt, or hide a retired-revision backlog.
 - `BaynExecutionWorkerObservationUnavailable`: the current worker count is **unknown**, not zero or healthy.
   Inspect the `bayn/bayn-execution-controller` RestateDeployment, its observed versus metadata generation, and the
   existing kube-state-metrics/Alloy path. All four scalar observations and scrape health must be less than 90 seconds
@@ -331,6 +348,14 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynRuntimeDegraded`: inspect `operational`, all `dependencies` (including `cycleRunner`), `autonomousCycleLoop`,
   and the broker read/account-binding facts in `GET /v1/status`. Restore the failed dependency or the existing scoped
   loop; do not bypass OBSERVE or create a replacement scheduler.
+- `BaynRepeatedEntryExpiry`: inspect the last ten minutes of durable cycle outcomes and their original deadlines.
+  This alert observes at least five changes to a replica's latest terminal timestamp while all sampled terminal
+  reasons remain `BLOCKED_UNUSED_ENTRY_EXPIRED`, within its current submission window and with fresh projection
+  telemetry. It does not depend on instantaneous readiness, so a newly armed cycle cannot hide repeated expiration.
+  The sampled transitions are not an exact cycle count or evidence of missed profitable trades. Check market-input
+  eligibility, admission work, provider completion and owner-resume latency separately, by source revision. A sampled
+  completed or no-trade result breaks the streak; missing or stale telemetry remains unknown. Preserve all freshness,
+  authority and risk gates rather than extending deadlines to silence the alert.
 - `BaynCycleStalled`: branch on `cycle.reason` in `GET /v1/status`. `submissionCutoffAt` remains a hard deadline for an
   ACTIVE cycle until its immutable decision is bound. A decision-bound ACTIVE cycle may continue broker recovery and
   reconciliation through `executionCloseAt`; an unbound ACTIVE cycle at the cutoff is a missed-submission incident.

@@ -5,8 +5,9 @@ source, workload configuration, and Kargo resources are reviewed in Git. Kargo o
 has been published; it directly manages a deployment branch and does not open a second pull request to rewrite a SHA or
 digest in the source repository.
 
-The cluster installation is pinned to Kargo v1.12.5. Keep Warehouse, Freight, Stage, and
-promotion-step fields aligned with that pinned version when enrolling an application.
+The cluster installation is pinned to Kargo v1.12.6. Keep Warehouse, Freight, Stage, and
+promotion-step fields aligned with that pinned version when enrolling an application. The Warehouse webhook rejects
+unknown subscription fields. Use `constraint` for image subscriptions and `semverConstraint` for chart and Git subscriptions.
 
 ## Operator UI
 
@@ -81,6 +82,12 @@ Ofz, Tengri, Nanoagent and Proompteng form one release cohort in the `ofz` Wareh
 must name the same source commit and publish the same `ai.proompteng.tengri-schema` fingerprint. Ofz retains its
 successful run-qualified build receipt; Tengri and Nanoagent retain their paired native qualification gate. The three
 production workflows watch the same cohort inputs so a component change cannot strand a partially built release.
+The four component READMEs are excluded from publication triggers. A push with a changed runtime input still
+publishes the full cohort.
+
+Tengri and Nanoagent build on native GitHub-hosted Linux runners. Each build hands an OCI archive with its
+provenance and SBOM to the private publisher. The publisher imports all four architecture images, verifies
+the paired guest boot checksums and source labels, and signs the indexes before exposing Kargo aliases.
 
 The `ofz` Stage promotes first. Its Argo sync must finish the checksum-bound `migrate-runtime` hook and the healthy
 Ofz rollout before Freight is verified. The `tengri` Stage accepts only that verified upstream Freight, and
@@ -141,6 +148,15 @@ authorized break-glass direct deployment is an incident action, not a normal rel
 
 Changes restricted to Bayn `*.test.ts` modules retain normal pull-request validation and do not publish a new Bayn
 image from `main`. This avoids execution-controller reactivation when production code is unchanged.
+
+If a test-only correction fixes a failed Bayn publication, `bayn-build-push.yml` supports explicit recovery on `main`:
+`gh workflow run bayn-build-push.yml --ref main -f expected_main_sha=<full-reviewed-main-commit>`.
+The checked-out event commit must equal that expected commit and current remote `main`, both before validation and
+before cohort discovery. A wrong ref, moved main, missing revision, or failed source read fails closed; it does not
+switch revisions or reuse the earlier run's validation. Recovery runs the same complete Bayn and broker validation,
+three immutable multi-architecture builds, receipt checks and artifact retention before making the cohort discoverable.
+The existing main-only publishing permissions and Kargo/Argo promotion path are unchanged. This publisher recovery
+does not make diagnostic post-deploy or qualification workflows a promotion fallback.
 
 Bayn follows this same path through `bayn-release/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
 main-published cohort with matching source and run receipts. The trading image owns the exact source revision used

@@ -241,7 +241,7 @@ describe('native Restate execution server', () => {
     )
   })
 
-  test('discovers two owners and a shared authenticated deployment activation with seven-day receipts', async () => {
+  test('discovers separate execution, observation and projection owners with seven-day receipts', async () => {
     const handler = makeRestateExecutionEndpointHandler(
       { controllerKey, operationTimeoutMs: 30_000, planHash, sourceRevision },
       {
@@ -252,10 +252,15 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [],
-      { executeInference: async () => null },
+      { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
       {
         runtime: {
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
+          isNotificationCovered: async () => false,
+          project: async () => {
+            throw new Error('endpoint discovery does not project broker source events')
+          },
           verifyNotification: () => {
             throw new Error('discovery does not verify notifications')
           },
@@ -323,9 +328,10 @@ describe('native Restate execution server', () => {
       },
       {
         name: 'BaynBrokerObservations',
-        handlers: ['notify', 'accept', 'refresh', 'activate', 'capture', 'freshness', 'status'],
+        handlers: ['notify', 'reconcile', 'refresh', 'activate', 'capture', 'freshness', 'status'],
       },
-      { name: 'BaynEntryInference', handlers: ['evaluate'] },
+      { name: 'BaynBrokerSourceProjector', handlers: ['project'] },
+      { name: 'BaynEntryInference', handlers: ['watch', 'evaluate'] },
     ])
     expect(services[0]?.handlers?.find(({ name }) => name === 'prepareActivation')).toMatchObject({
       ty: 'SHARED',
@@ -342,6 +348,16 @@ describe('native Restate execution server', () => {
       ingressPrivate: false,
       idempotencyRetention: 0,
       journalRetention: 0,
+    })
+    expect(services[2]?.handlers?.find(({ name }) => name === 'project')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: true,
+      idempotencyRetention: 7 * 24 * 60 * 60_000,
+    })
+    expect(services[3]?.handlers?.find(({ name }) => name === 'watch')).toMatchObject({ ingressPrivate: true })
+    expect(services[1]?.handlers?.find(({ name }) => name === 'refresh')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: true,
     })
     expect(
       services[0]?.handlers
@@ -404,10 +420,15 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [requestIdentityKey],
-      { executeInference: async () => null },
+      { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
       {
         runtime: {
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
+          isNotificationCovered: async () => false,
+          project: async () => {
+            throw new Error('endpoint discovery does not project broker source events')
+          },
           verifyNotification: () => {
             throw new Error('discovery does not verify notifications')
           },

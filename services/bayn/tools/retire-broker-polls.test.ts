@@ -28,7 +28,7 @@ const service = {
   deployment_id: deploymentId,
   revision: 2,
   metadata: { 'bayn.source-revision': sourceRevision, 'bayn.broker-identity-hash': key },
-  handlers: ['notify', 'accept', 'capture', 'freshness', 'activate', 'status'].map((name) => ({
+  handlers: ['notify', 'reconcile', 'refresh', 'activate', 'capture', 'freshness', 'status'].map((name) => ({
     name,
     public: name === 'notify',
   })),
@@ -278,6 +278,16 @@ describe('scoped obsolete broker polling retirement', () => {
     ['source', { ...service, metadata: { ...service.metadata, 'bayn.source-revision': 'd'.repeat(40) } }],
     ['account', { ...service, metadata: { ...service.metadata, 'bayn.broker-identity-hash': 'd'.repeat(64) } }],
     ['legacy handler', { ...service, handlers: [...service.handlers, { name: 'poll', public: false }] }],
+    [
+      'retired handler contract',
+      {
+        ...service,
+        handlers: ['notify', 'accept', 'activate', 'capture', 'freshness', 'status'].map((name) => ({
+          name,
+          public: name === 'notify',
+        })),
+      },
+    ],
     ['public capture', { ...service, handlers: service.handlers.map((handler) => ({ ...handler, public: true })) }],
   ] as const)('refuses current remote %s drift before mutations', async (_name, current) => {
     const h = harness({ service: current })

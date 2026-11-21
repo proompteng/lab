@@ -122,6 +122,7 @@ describe('Alpaca broker session acquisition retry', () => {
       Layer.provide(
         Layer.succeed(BrokerObservations, {
           read: observed,
+          readForReconciliation: observed.pipe(Effect.map((observation) => ({ observation, complete: Effect.void }))),
           readState: observed,
           readForSubmit: () => observed,
           invalidate: Effect.void,
@@ -155,7 +156,7 @@ describe('Alpaca broker session acquisition retry', () => {
     expect(Exit.isSuccess(exit)).toBeTrue()
     expect(requests).toBe(0)
   })
-  test('publishes complete history with 52 cold requests and 29 retained-history requests', async () => {
+  test('publishes complete history with 50 cold requests and 28 retained-history requests', async () => {
     const fills = Array.from({ length: 2_002 }, (_, index) => ({
       activity_type: 'FILL',
       id: `fill-${index}::62e69015-8549-4bfd-b9c3-01e75843f47d`,
@@ -218,10 +219,9 @@ describe('Alpaca broker session acquisition retry', () => {
         expect(Result.isSuccess(result)).toBe(true)
         if (Result.isFailure(result)) throw result.failure
         expect(result.success.snapshot.history.fills).toHaveLength(2_002)
-        expect(requests).toBe(52)
+        expect(requests).toBe(50)
         expect(Date.parse(result.success.completedAt)).toBeLessThan(30_000)
-        expect(yield* budget.nextPollNotBeforeMs).toBe(31_200)
-        yield* TestClock.adjust(1_200)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(30_000)
         yield* budget.beginCapture
         const second = yield* captureBrokerObservation(
           read,
@@ -230,8 +230,8 @@ describe('Alpaca broker session acquisition retry', () => {
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust(30_000)
         expect((yield* Fiber.join(second)).snapshot.history.fills).toHaveLength(2_002)
-        expect(requests).toBe(81)
-        expect(yield* budget.nextPollNotBeforeMs).toBe(48_600)
+        expect(requests).toBe(78)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(46_800)
         const last = fills.at(-1)
         if (last === undefined) throw new Error('Expected a complete fill fixture')
         fills.push({
@@ -247,7 +247,9 @@ describe('Alpaca broker session acquisition retry', () => {
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust(30_000)
         expect((yield* Fiber.join(changed)).snapshot.history.fills).toHaveLength(2_003)
-        expect(requests).toBe(133)
+        // The invalidation probe is still charged before the new fill forces a full cold bracket.
+        expect(requests).toBe(129)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(90_600)
       }).pipe(Effect.provide(TestClock.layer())),
     )
   })
@@ -277,6 +279,7 @@ describe('Alpaca broker session acquisition retry', () => {
       Layer.provide(
         Layer.succeed(BrokerObservations, {
           read: Effect.succeed(observation),
+          readForReconciliation: Effect.succeed({ observation, complete: Effect.void }),
           readState: Effect.succeed(observation),
           readForSubmit: () => Effect.succeed(observation),
           invalidate: Effect.void,
@@ -457,7 +460,8 @@ describe('Alpaca broker session acquisition retry', () => {
     const client = HttpClient.make((request) => {
       requests += 1
       const requestId = `req-${requests}`
-      return Effect.sleep(6_000).pipe(
+      // Each response arrives within the header bound; all three retries still exceed the 5-second session window.
+      return Effect.sleep(4_000).pipe(
         Effect.as(jsonResponse(request, { code: 50010000, message: 'slow temporary failure' }, requestId, 500)),
       )
     })
@@ -469,11 +473,11 @@ describe('Alpaca broker session acquisition retry', () => {
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(requests).toBe(1)
-        yield* TestClock.adjust(6_000)
+        yield* TestClock.adjust(4_000)
         expect(requests).toBe(2)
-        yield* TestClock.adjust(6_000)
+        yield* TestClock.adjust(4_000)
         expect(requests).toBe(3)
-        yield* TestClock.adjust(6_000)
+        yield* TestClock.adjust(4_000)
         return yield* Fiber.join(fiber)
       }).pipe(Effect.provide(TestClock.layer())),
     )
