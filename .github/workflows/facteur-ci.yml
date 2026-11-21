@@ -9,6 +9,9 @@ on:
   pull_request:
     paths:
       - services/facteur/**
+      - .github/workflows/facteur-ci.yml
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
