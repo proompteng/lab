@@ -4376,7 +4376,7 @@ test('uses the current session to recover the accepted run without another send'
   const mock = await mockTengri(page, {
     durableRun: run,
     threadStore: {
-      threads: [{ id: run.threadId, title: 'Paused conversation', updatedAt: 1, archived: false }],
+      threads: [{ id: run.threadId, title: 'Conversation awaiting reconnect', updatedAt: 1, archived: false }],
     },
     resumeThreadRawJson: JSON.stringify({
       thread: { turns: [{ id: 'turn-recovery', status: 'inProgress', items: [] }] },
@@ -4384,9 +4384,9 @@ test('uses the current session to recover the accepted run without another send'
   })
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
-  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Paused')
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Status unavailable')
   await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
-  const row = chat.getByRole('button', { name: 'Paused conversation', exact: true })
+  const row = chat.getByRole('button', { name: 'Conversation awaiting reconnect', exact: true })
   await expect(row).toHaveAttribute('aria-description', 'Needs you')
   await expect(row.locator('..').locator('.animate-spin')).toHaveCount(0)
   await chat.getByRole('button', { name: 'Reconnect', exact: true }).click()

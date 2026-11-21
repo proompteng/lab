@@ -148,7 +148,7 @@ function codexRunStatus(phase: TengriCodexRun['state']['phase']): string | null 
     case 'cancelling':
       return 'Stopping'
     case 'authorization_required':
-      return 'Paused'
+      return 'Status unavailable'
     case 'needs_reconciliation':
       return 'Response unconfirmed'
     case 'accepted':

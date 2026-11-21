@@ -1,7 +1,7 @@
 'use client'
 
 import { Button, Skeleton } from '@proompteng/design/ui'
-import { Archive, ArrowLeft, LoaderCircle, Pause, RotateCcw } from 'lucide-react'
+import { Archive, ArrowLeft, LoaderCircle, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
@@ -160,10 +160,10 @@ export function AgentSessionList({
             const active = thread.id === selected?.id && !index.archived
             const phase = threadPhases.get(thread.id)
             const busy = phase !== undefined
-            const paused =
+            const waiting =
               phase === 'authorization_required' || phase === 'needs_reconciliation' || phase === 'waiting_for_approval'
             const status =
-              phase === 'needs_reconciliation' ? 'Response unconfirmed' : paused ? 'Needs you' : 'Response in progress'
+              phase === 'needs_reconciliation' ? 'Response unconfirmed' : waiting ? 'Needs you' : 'Response in progress'
             return (
               <li key={thread.id} className="group relative mb-0.5 flex min-w-0 items-center">
                 <Button
@@ -184,12 +184,12 @@ export function AgentSessionList({
                   <span className="min-w-0 flex-1 truncate text-copy-14">{thread.title}</span>
                   {unavailable ? <span className="text-label-12 text-zinc-400">Unavailable</span> : null}
                 </Button>
-                {paused ? (
+                {waiting ? (
                   <span
                     aria-hidden="true"
                     className="pointer-events-none absolute right-1 inline-flex size-6 items-center justify-center text-zinc-400 [@media(pointer:coarse)]:size-11"
                   >
-                    <Pause className="size-3.5" />
+                    <span className="size-1.5 rounded-full bg-current" />
                   </span>
                 ) : busy ? (
                   <span
@@ -199,7 +199,7 @@ export function AgentSessionList({
                     <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
                   </span>
                 ) : null}
-                {!paused || index.archived ? (
+                {!waiting || index.archived ? (
                   <span className="absolute right-1 inline-flex [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
                     <Button
                       type="button"
