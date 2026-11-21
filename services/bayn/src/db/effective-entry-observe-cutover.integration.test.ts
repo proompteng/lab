@@ -699,6 +699,41 @@ for (const {
                 WHERE generation_hash=${replayedPaper}`,
             ).toEqual([{ generations: 0 }])
             expect(yield* readState).toEqual(recoveredRow)
+
+            // Model immutable PAPER history that committed before the retirement fence existed. The history INSERT
+            // trigger is the normal guard; the state trigger must independently prevent an old binary from activating
+            // a dormant row after the account has recovered to clear OBSERVE.
+            const dormantPaper = hash('effective-entry-retired-dormant-paper')
+            yield* sql`ALTER TABLE authority_generations DISABLE TRIGGER authority_generations_research_capital_retirement`
+            yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,
+              activation_schema_version,previous_generation_hash,maximum,authority_version,
+              broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment,
+              activation_source_revision,activation_image_repository,activation_image_digest,strategy_name,
+              strategy_behavior_hash,strategy_parameter_hash,strategy_parameter_schema_version,account_id,
+              risk_policy_hash,proof_plan_hash,reconciliation_id,reconciliation_content_hash,research_plan_hash,
+              strategy_protocol_hash,activated_at)
+            VALUES(${dormantPaper},'bayn.authority-generation-history.v1','bayn.paper-authority-generation.v3',
+              ${successor},'PAPER',5,${broker.schemaVersion},${broker.identityHash},${broker.provider},
+              ${broker.environment},${'1'.repeat(40)},'registry.example/bayn',${`sha256:${'2'.repeat(64)}`},'jev',
+              ${behaviorHash},${parameterHash},${schemaVersion},${broker.accountId},${hash('risk')},${hash('plan')},
+              ${hash('effective-entry-after')},${hash('effective-entry-after')},${hash('research')},${protocolHash},
+              greatest(clock_timestamp(),(SELECT updated_at FROM authority_state)+interval '1 millisecond'))`
+            yield* sql`ALTER TABLE authority_generations ENABLE TRIGGER authority_generations_research_capital_retirement`
+            const stateBypass = yield* sql`UPDATE authority_state SET generation_hash=${dormantPaper},
+              maximum='PAPER',effective='PAPER',kill_state='CLEAR',reason=NULL,version=5,
+              updated_at=(SELECT activated_at FROM authority_generations WHERE generation_hash=${dormantPaper})
+              WHERE singleton`.pipe(Effect.result)
+            expect(Result.isFailure(stateBypass)).toBe(true)
+            if (Result.isFailure(stateBypass))
+              expect(stateBypass.failure).toMatchObject({
+                reason: {
+                  cause: {
+                    code: '55000',
+                    message: `research capital state activation is retired for account ${broker.accountId}`,
+                  },
+                },
+              })
+            expect(yield* readState).toEqual(recoveredRow)
           }
         }).pipe(Effect.provide(postgres)),
       )

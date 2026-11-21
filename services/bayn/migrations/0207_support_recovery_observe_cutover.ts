@@ -64,6 +64,43 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TRIGGER authority_generations_research_capital_retirement
     BEFORE INSERT ON authority_generations
     FOR EACH ROW EXECUTE FUNCTION enforce_research_capital_activation_retirement()`
+  // History admission is the normal activation boundary, but a PAPER generation may already exist if an older
+  // transaction committed its immutable history before this migration acquired the writer locks. Fence the state
+  // transition too, so dormant history cannot be activated after retirement. The only PAPER state update retained
+  // for the retired account is a same-generation OBSERVE/ACTIVE restriction such as the cutover below.
+  yield* sql`CREATE OR REPLACE FUNCTION enforce_research_capital_state_retirement()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path = pg_catalog, public
+    AS $function$
+    DECLARE
+      target_account_id text;
+    BEGIN
+      IF NEW.maximum <> 'PAPER' THEN RETURN NEW; END IF;
+
+      SELECT generation.account_id INTO target_account_id
+      FROM public.authority_generations generation
+      WHERE generation.generation_hash=NEW.generation_hash;
+
+      IF EXISTS (
+        SELECT 1 FROM public.research_capital_activation_retirements retirement
+        WHERE retirement.account_id=target_account_id
+      ) AND (
+        TG_OP='INSERT'
+        OR NEW.generation_hash IS DISTINCT FROM OLD.generation_hash
+        OR NEW.effective <> 'OBSERVE'
+        OR NEW.kill_state <> 'ACTIVE'
+      ) THEN
+        RAISE EXCEPTION 'research capital state activation is retired for account %', target_account_id
+          USING ERRCODE='55000';
+      END IF;
+      RETURN NEW;
+    END $function$`
+  yield* sql`DROP TRIGGER IF EXISTS authority_state_research_capital_retirement
+    ON authority_state`
+  yield* sql`CREATE TRIGGER authority_state_research_capital_retirement
+    BEFORE INSERT OR UPDATE ON authority_state
+    FOR EACH ROW EXECUTE FUNCTION enforce_research_capital_state_retirement()`
   // The v42 runtime cannot protect v41 positions. Restrict only the exact settled v41 generation, after the
   // direct broker stream and its canonical financial reconciliation have covered the complete durable source cut.
   yield* sql`DO $cutover$
