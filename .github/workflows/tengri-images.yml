@@ -1,6 +1,8 @@
 name: Tengri images
 
 on:
+  merge_group:
+    types: [checks_requested]
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, edited]
     paths:
@@ -214,7 +216,7 @@ jobs:
           GOWORK=off go vet ./...
 
   build:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     name: Build native (${{ format('{0}, {1}', matrix.image, matrix.architecture) }})
     timeout-minutes: 120
     strategy:
@@ -277,7 +279,7 @@ jobs:
           (cd "$directory" && sha256sum --check SHA256SUMS)
 
   publish:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs:
       - build
       - validate-tengri
