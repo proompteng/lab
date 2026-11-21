@@ -56,3 +56,5 @@ Unauthenticated users are redirected to `/login`. The app marks pages as `noinde
   CommonJS initialization cycles in the generated server. After packaging, `build` imports the generated SSR entry
   and checks its `fetch` handler; an import failure or missing handler fails the build.
 - This README intentionally documents the current shell and auth flow rather than the original scaffold examples.
+
+<!-- Disposable CI timing probe -->
