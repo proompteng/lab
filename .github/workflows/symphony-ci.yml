@@ -1,6 +1,8 @@
 name: symphony
 
 on:
+  merge_group:
+    types: [checks_requested]
   pull_request:
     paths:
       - 'patches/effect@4.1.4.patch'
@@ -15,6 +17,7 @@ on:
       - 'argocd/applications/observability/graf-mimir-rules.yaml'
       - 'argocd/applications/observability/kustomization.yaml'
       - 'argocd/applicationsets/product.yaml'
+      - '.github/workflows/symphony-ci.yml'
   workflow_dispatch:
 
 concurrency:
@@ -23,7 +26,7 @@ concurrency:
 
 jobs:
   pr-checks:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/common-monorepo.yml
     with:
       bun-version: 1.4.2

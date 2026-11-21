@@ -1,6 +1,8 @@
 name: synthesis
 
 on:
+  merge_group:
+    types: [checks_requested]
   push:
     branches:
       - main
@@ -16,6 +18,7 @@ on:
       - 'packages/scripts/src/synthesis/**'
       - 'argocd/applications/synthesis/**'
       - 'argocd/applicationsets/product.yaml'
+      - '.github/workflows/synthesis-ci.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

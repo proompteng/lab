@@ -1,6 +1,8 @@
 name: signal-publisher
 
 on:
+  merge_group:
+    types: [checks_requested]
   pull_request:
     paths:
       - 'services/signal-publisher/**'
@@ -19,7 +21,7 @@ concurrency:
 
 jobs:
   pr-checks:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/common-monorepo.yml
     with:
       bun-version: 1.4.2
