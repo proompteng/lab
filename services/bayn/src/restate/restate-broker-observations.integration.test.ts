@@ -13,9 +13,15 @@ import {
   verifyBrokerNotification,
 } from '../broker/notifications'
 import { sha256 } from '../hash'
+import { BrokerStreamReconciliationReason } from '../broker/trade-update-projection'
 import { ProtectionReleaseReferenceSchema, type ProtectionReleaseReference } from '../execution/events'
 import { acquireRestateHttp2Server } from './restate-http2-server'
-import { brokerObservationJsonSerde, makeBaynBrokerObservations } from './restate-broker-observations'
+import {
+  brokerObservationJsonSerde,
+  makeBaynBrokerObservations,
+  makeBaynBrokerSourceProjector,
+  type BrokerObservationRuntime,
+} from './restate-broker-observations'
 
 const admin = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_ADMIN_URL'))).pipe(Option.getOrUndefined)
 const ingress = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_INGRESS_URL'))).pipe(
@@ -135,43 +141,49 @@ describeRestate('Real always-replay Restate broker ingress', () => {
     const protectionWakes: unknown[] = []
     const protectionCycleId = sha256(`${config.controllerKey}:pending-close`)
     const clock = Clock.Clock.defaultValue()
-    const makeObserved = () =>
-      alwaysReplay(
-        makeBaynBrokerObservations(config, {
-          verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
-          probeProtection: async (_signal, cycleId, claimId) => {
-            expect(cycleId).toBe(protectionCycleId)
-            captureCountsAtProbe.push(captures)
-            const retained = proofReads.get(claimId)
-            if (retained !== undefined) return retained
-            proofReads.set(claimId, {
-              proofId: sha256(claimId),
-              cycleId,
-              checkedAt: new Date(clock.currentTimeMillisUnsafe()).toISOString(),
-            })
-            throw new Error('Injected lost completion after persisting proof')
+    const runtime: BrokerObservationRuntime = {
+      verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
+      probeProtection: async (_signal, cycleId, claimId) => {
+        expect(cycleId).toBe(protectionCycleId)
+        captureCountsAtProbe.push(captures)
+        const retained = proofReads.get(claimId)
+        if (retained !== undefined) return retained
+        proofReads.set(claimId, {
+          proofId: sha256(claimId),
+          cycleId,
+          checkedAt: new Date(clock.currentTimeMillisUnsafe()).toISOString(),
+        })
+        throw new Error('Injected lost completion after persisting proof')
+      },
+      recordNotification: async () => ({ covered: false }),
+      isNotificationCovered: async () => false,
+      project: async (_signal, eventId) => ({
+        _tag: 'ReconcileRequired',
+        eventId,
+        observedAt: new Date(clock.currentTimeMillisUnsafe()).toISOString(),
+        reason: BrokerStreamReconciliationReason.SessionBoundary,
+      }),
+      invalidate: async () => undefined,
+      activate: async () => {
+        activations += 1
+      },
+      poll: async () => {
+        captures += 1
+        const now = clock.currentTimeMillisUnsafe()
+        return {
+          poll: {
+            _tag: 'Published',
+            snapshotHash: captures.toString(16).padStart(64, '0'),
+            observedAt: new Date(now).toISOString(),
+            nextPollNotBeforeMs: captures === 2 ? now : now + 3_000,
           },
-          recordNotification: async () => ({ covered: false }),
-          invalidate: async () => undefined,
-          activate: async () => {
-            activations += 1
-          },
-          poll: async () => {
-            captures += 1
-            const now = clock.currentTimeMillisUnsafe()
-            return {
-              poll: {
-                _tag: 'Published',
-                snapshotHash: captures.toString(16).padStart(64, '0'),
-                observedAt: new Date(now).toISOString(),
-                nextPollNotBeforeMs: captures === 2 ? now : now + 3_000,
-              },
-              startedAtMs: now,
-              completedAtMs: now,
-            }
-          },
-        }),
-      )
+          startedAtMs: now,
+          completedAtMs: now,
+        }
+      },
+    }
+    const makeObserved = () => alwaysReplay(makeBaynBrokerObservations(config, runtime))
+    const makeProjector = () => alwaysReplay(makeBaynBrokerSourceProjector(config, runtime))
     const bridge = alwaysReplay(
       restate.service({
         name: 'ObservationTestBridge',
@@ -214,7 +226,9 @@ describeRestate('Real always-replay Restate broker ingress', () => {
       Effect.scoped(
         Effect.gen(function* () {
           const endpointScope = yield* Scope.fork(yield* Effect.scope)
-          const server = createServer(restate.createEndpointHandler({ services: [makeObserved(), bridge, receiver] }))
+          const server = createServer(
+            restate.createEndpointHandler({ services: [makeObserved(), makeProjector(), bridge, receiver] }),
+          )
           yield* acquireRestateHttp2Server(server, 0).pipe(Effect.provideService(Scope.Scope, endpointScope))
           const address = server.address()
           if (address === null || typeof address === 'string') throw new Error('Missing endpoint address')
@@ -273,7 +287,7 @@ describeRestate('Real always-replay Restate broker ingress', () => {
           yield* Scope.close(endpointScope, Exit.succeed(undefined))
           yield* Effect.sleep('300 millis')
           const restarted = createServer(
-            restate.createEndpointHandler({ services: [makeObserved(), bridge, receiver] }),
+            restate.createEndpointHandler({ services: [makeObserved(), makeProjector(), bridge, receiver] }),
           )
           yield* acquireRestateHttp2Server(restarted, address.port)
           yield* register()
@@ -298,11 +312,16 @@ describeRestate('Real always-replay Restate broker ingress', () => {
           const counts = yield* json(
             `${admin}/query`,
             {
-              query: `SELECT COUNT(*) AS accepted FROM sys_invocation WHERE target_service_name = 'BaynBrokerObservations' AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'accept'`,
+              query: `SELECT target_service_name AS service, target_handler_name AS handler, COUNT(*) AS invocations FROM sys_invocation WHERE target_service_key = '${config.controllerKey}' AND ((target_service_name = 'BaynBrokerSourceProjector' AND target_handler_name = 'project') OR (target_service_name = 'BaynBrokerObservations' AND target_handler_name = 'reconcile')) GROUP BY target_service_name,target_handler_name ORDER BY target_service_name`,
             },
             { accept: 'application/json' },
           )
-          expect(counts).toEqual({ rows: [{ accepted: 1 }] })
+          expect(counts).toEqual({
+            rows: [
+              { service: 'BaynBrokerObservations', handler: 'reconcile', invocations: 1 },
+              { service: 'BaynBrokerSourceProjector', handler: 'project', invocations: 1 },
+            ],
+          })
           yield* invoke('refresh')
           yield* waitFor(() => Effect.sync(() => protectionWakes.length === 1))
           expect(captureCountsAtProbe).toEqual([2, 2])
@@ -351,6 +370,13 @@ describeRestate('Real always-replay Restate broker ingress', () => {
           verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
           probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
+          isNotificationCovered: async () => false,
+          project: async (_signal, eventId) => ({
+            _tag: 'ReconcileRequired',
+            eventId,
+            observedAt: new Date(clock.currentTimeMillisUnsafe()).toISOString(),
+            reason: BrokerStreamReconciliationReason.SessionBoundary,
+          }),
           invalidate: async () => undefined,
           activate: async () => undefined,
           poll: async () => {

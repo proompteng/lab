@@ -432,10 +432,14 @@ quota reservations and replay protection retain their existing durable semantics
 
 Each capture brackets account and position reads with matching complete order, fill and fee histories. Consecutive
 successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
-The PAPER execution controller verifies the account and opens one Alpaca Activity SSE connection for both startup
-replay and live delivery. It resumes from the last validated event ID on reconnect. Alpaca sends that event again, so
-the reader verifies its payload before advancing. It waits for a stream heartbeat before admitting the activity history.
-A disconnect, dropped frame or unsupported correction makes the local activity history unavailable.
+Each PAPER execution-controller process currently verifies the account and opens an Alpaca Activity SSE connection for
+both startup replay and live delivery. Its cursor and activity materialization are process-local. It resumes from the
+last locally validated event ID on reconnect; a pod restart replays from the configured history boundary. Alpaca sends
+the reconnect cursor again, so the reader verifies its payload before advancing. It waits for a stream heartbeat before
+admitting the activity history. A disconnect, dropped frame or unsupported correction makes the local activity history
+unavailable. This replica-local ownership is retained only until the
+[single-owner durable cursor migration](../../docs/bayn/durable-broker-event-architecture.md#target-financial-state-path)
+is deployed and proven equivalent.
 
 PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
@@ -521,15 +525,24 @@ including after a fallback obtains a newer cut. Missing settlement evidence keep
 with `CLOSE_RECONCILIATION_PENDING`; it does not bind an empty close plan, terminalize the cycle, clear restrictions
 or authorize an order. The next exact cut can resume the same bounded close path.
 
-Verified Dorvud broker notifications enter the account-keyed `BaynBrokerObservations/notify` handler through
-Restate Kafka ingress. Bayn verifies the exact signed payload against its loaded broker account and credentials in
-a journaled step, then retains its stable identity, original receipt time and database arrival time before
-acknowledgement. These compact receipts permanently deduplicate republication and fence projections or captures
-that started before a new notification arrived, including while the exclusive capture handler is running.
-The private owner coalesces pending notifications into one canonical capture. The first notification in a pending wave
-invalidates the older projection before waiting for quota. Raw websocket events never supply ledger fills or
-trading authority; the existing complete, bracketed account/history capture remains authoritative. A published
-canonical cut sends the controller a compact snapshot hash and original observation time.
+Verified Dorvud broker notifications enter the account-keyed `BaynBrokerObservations/notify` handler directly through
+Restate HTTP ingress. The stable source event ID is the transport idempotency key. Bayn verifies the exact signed payload
+against its loaded broker account and credentials in a journaled step, then commits the entire notification to
+`broker_source_events` before acknowledgement. The separate account-keyed `BaynBrokerSourceProjector` serializes the
+immutable source in economic order without sharing the slow snapshot owner's queue. It normalizes known order and fill
+events, runs the existing idempotent broker-event and TigerBeetle accounting stores, appends the first immutable
+projection receipt, and wakes execution without waiting for the canonical snapshot. Replays return that first receipt
+instead of recomputing it against later intent bindings. A new broker session remains fail-closed until a canonical
+capture's durable notification fence covers its `SessionReady` source event; updates arriving before that proof retain
+`SESSION_BOUNDARY` and use reconciliation instead of guessing across a reconnect gap.
+
+The exclusive owner independently coalesces new source events into canonical safety capture. Session boundaries,
+unsupported events, absent intent linkage and deterministic projection conflicts explicitly require reconciliation.
+The first notification in a pending wave invalidates the older projection before waiting for quota. Source events never
+grant trading authority; the complete, bracketed account/history capture remains authoritative for convergence, cash,
+fees, gaps and corrections. A published canonical cut sends the controller its compact snapshot hash and original
+observation time. Source-to-projection lag and bounded outcomes are exported under
+`bayn_broker_source_projection_lag_seconds` and `bayn_broker_source_projection_total`.
 
 An admitted event rechecks a retryable local `NO_ADMISSIBLE_CUT` preflight failure immediately through the same
 broker-observation and reconciliation fences. A cached failure cannot conceal a newly published cut until the

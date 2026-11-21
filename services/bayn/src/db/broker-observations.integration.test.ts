@@ -27,6 +27,9 @@ import {
 } from '../testing/postgres-template.test-support'
 import { config as runtimeConfig } from '../testing/runtime-fixtures'
 import { BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { BrokerEnvironment } from '../broker/identity'
+import type { BrokerNotification } from '../broker/notifications'
+import { BrokerStreamReconciliationReason } from '../broker/trade-update-projection'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from './broker-observations'
@@ -57,6 +60,23 @@ const claim = (store: ReturnType<typeof makeBrokerObservationStore>, captureId =
       ),
     )
 const snapshot = (ticket: BrokerObservationTicket) => observedBrokerSnapshotFixture(accountId, ticket.startedAt)
+const sourceEvent = (eventId: string, receivedAt: string): BrokerNotification => ({
+  _tag: 'SessionReady',
+  schemaVersion: 'bayn.broker-notification.v1',
+  eventId,
+  receivedAt,
+  session: {
+    identityHash: '1'.repeat(64),
+    accountId,
+    environment: BrokerEnvironment.Sandbox,
+    credentialHash: '2'.repeat(64),
+    sessionId: `test-${eventId.slice(0, 8)}`,
+    sourceRevision: revision,
+    verifiedAt: receivedAt,
+    authenticatedAt: receivedAt,
+    subscribedAt: receivedAt,
+  },
+})
 const advanceToTicket = (ticket: BrokerObservationTicket, delta = 0) =>
   TestClock.setTime(Date.parse(ticket.startedAt) + delta)
 
@@ -257,11 +277,9 @@ describePostgres('Durable per-account broker observations', () => {
         const second = yield* claim(store)
         yield* advanceToTicket(second)
         const capturedBeforeNotification = snapshot(second)
-        const receipt = {
-          eventId: 'd'.repeat(64),
-          receivedAt: utcInstantFromEpochMillis(Date.parse(first.startedAt) - 10_000),
-        }
+        const receipt = sourceEvent('d'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) - 10_000))
         expect(yield* store.recordNotification(receipt)).toEqual({ covered: false })
+        expect(yield* store.isSessionBoundaryCovered(receipt.session.sessionId)).toBe(false)
         expect(yield* store.publish(second, capturedBeforeNotification, 0)).toBe(false)
         expect(Result.isFailure(yield* store.readState.pipe(Effect.result))).toBe(true)
         expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
@@ -270,12 +288,13 @@ describePostgres('Durable per-account broker observations', () => {
         const next = yield* claim(store)
         yield* advanceToTicket(next)
         expect(yield* store.publish(next, snapshot(next), 0)).toBe(true)
+        expect(yield* store.isSessionBoundaryCovered(receipt.session.sessionId)).toBe(true)
         expect(yield* store.readState).toEqual(observedBrokerState(snapshot(next)))
         expect(yield* store.recordNotification({ ...receipt, receivedAt: next.startedAt })).toEqual({ covered: true })
         const retained = yield* sql`SELECT event_id, source_revision,
           to_char(received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "receivedAt",
           recorded_at > ${second.startedAt}::timestamptz AS "arrivedDuringCapture"
-          FROM broker_notification_receipts WHERE account_id = ${accountId}`
+          FROM broker_source_events WHERE account_id = ${accountId}`
         expect(retained).toEqual([
           {
             event_id: receipt.eventId,
@@ -290,7 +309,7 @@ describePostgres('Durable per-account broker observations', () => {
   test('concurrent republication retains one receipt and a foreign account cannot revoke a canonical cut', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
-        const receipt = { eventId: 'e'.repeat(64), receivedAt: '2026-11-01T00:00:00.000Z' }
+        const receipt = sourceEvent('e'.repeat(64), '2026-11-01T00:00:00.000Z')
         const records = yield* Effect.all([store.recordNotification(receipt), store.recordNotification(receipt)], {
           concurrency: 2,
         })
@@ -304,11 +323,47 @@ describePostgres('Durable per-account broker observations', () => {
         expect(yield* store.readState).toEqual(observedBrokerState(snapshot(ticket)))
         expect(yield* store.recordNotification(receipt)).toEqual({ covered: true })
         expect(
-          yield* sql`SELECT account_id, COUNT(*)::integer AS count FROM broker_notification_receipts GROUP BY account_id ORDER BY account_id`,
+          yield* sql`SELECT account_id, COUNT(*)::integer AS count FROM broker_source_events GROUP BY account_id ORDER BY account_id`,
         ).toEqual([
           { account_id: 'another-account', count: 1 },
           { account_id: accountId, count: 1 },
         ])
+      }),
+    ))
+
+  test('replays the first immutable source projection receipt instead of recomputing it', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        const event = sourceEvent('6'.repeat(64), '2026-11-01T00:00:00.000Z')
+        yield* store.recordNotification(event)
+        expect(yield* store.readNotification(event.eventId)).toEqual(event)
+
+        const first = {
+          _tag: 'Projected',
+          eventId: event.eventId,
+          observedAt: event.receivedAt,
+          orderEventId: '3'.repeat(64),
+          fillEventId: '4'.repeat(64),
+          accountingReceiptId: '5'.repeat(64),
+        } as const
+        const retained = yield* store.recordProjection(first)
+        expect(retained).toEqual(first)
+        expect(yield* store.readSourceProjection(event.eventId)).toEqual(retained)
+
+        expect(
+          yield* store.recordProjection({
+            _tag: 'ReconcileRequired',
+            eventId: event.eventId,
+            observedAt: event.receivedAt,
+            reason: BrokerStreamReconciliationReason.ProjectionConflict,
+          }),
+        ).toEqual(retained)
+        expect(
+          Result.isFailure(
+            yield* sql`UPDATE broker_source_event_projections SET reason = 'INVALID_FRAME'
+              WHERE account_id = ${accountId} AND event_id = ${event.eventId}`.pipe(Effect.result),
+          ),
+        ).toBe(true)
       }),
     ))
 
@@ -541,10 +596,9 @@ describePostgres('Durable per-account broker observations', () => {
           const until = (afterMs: number) => sql`SELECT pg_sleep(GREATEST(0,
           EXTRACT(EPOCH FROM ${timing.occurredAt}::timestamptz + ${afterMs} * interval '1 millisecond' - clock_timestamp())))`
           yield* until(50)
-          yield* store.recordNotification({
-            eventId: '2'.repeat(64),
-            receivedAt: new Date(Date.parse(timing.occurredAt) + 50).toISOString(),
-          })
+          yield* store.recordNotification(
+            sourceEvent('2'.repeat(64), new Date(Date.parse(timing.occurredAt) + 50).toISOString()),
+          )
           yield* until(150)
           const captureId = randomUUID()
           expect(yield* store.begin(captureId, timing.deadlineMs + 180_000)).toEqual({
@@ -896,8 +950,8 @@ describePostgres('Durable per-account broker observations', () => {
           }),
         )
       if ((mask & 4) !== 0)
-        yield* sql`INSERT INTO broker_notification_receipts (account_id, event_id, source_revision, received_at, recorded_at)
-          VALUES (${accountId}, ${'8'.repeat(64)}, ${revision}, ${at}::timestamptz, ${at}::timestamptz)`
+        yield* sql`INSERT INTO broker_source_events (account_id, event_id, source_revision, received_at, recorded_at, event_kind)
+          VALUES (${accountId}, ${'8'.repeat(64)}, ${revision}, ${at}::timestamptz, ${at}::timestamptz, 'LEGACY_RECEIPT')`
       yield* advanceToTicket(ticket, 1000)
       return ticket
     })
@@ -1009,17 +1063,18 @@ describePostgres('Durable per-account broker observations', () => {
                 'history-' || n, n, ${ticket.startedAt}::timestamptz - interval '60 seconds',
                 ${ticket.startedAt}::timestamptz + CASE WHEN n <= 4096 THEN interval '-60 seconds' ELSE interval '60 seconds' END
               FROM generate_series(1,8192) AS n`
-              yield* sql`CREATE TEMP TABLE broker_notification_receipts (LIKE public.broker_notification_receipts INCLUDING ALL) ON COMMIT DROP`
-              yield* sql`INSERT INTO broker_notification_receipts SELECT * FROM public.broker_notification_receipts`
-              yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at,recorded_at)
+              yield* sql`CREATE TEMP TABLE broker_source_events (LIKE public.broker_source_events INCLUDING ALL) ON COMMIT DROP`
+              yield* sql`INSERT INTO broker_source_events SELECT * FROM public.broker_source_events`
+              yield* sql`INSERT INTO broker_source_events(account_id,event_id,source_revision,received_at,recorded_at,event_kind)
               SELECT CASE WHEN n <= 4096 THEN ${accountId} ELSE 'foreign-account' END,
                 md5('receipt-' || n) || md5(n::text), ${revision},
                 ${ticket.startedAt}::timestamptz - interval '60 seconds',
-                ${ticket.startedAt}::timestamptz + CASE WHEN n <= 4096 THEN interval '-60 seconds' ELSE interval '60 seconds' END
+                ${ticket.startedAt}::timestamptz + CASE WHEN n <= 4096 THEN interval '-60 seconds' ELSE interval '60 seconds' END,
+                'LEGACY_RECEIPT'
               FROM generate_series(1,8192) AS n`
               yield* sql`ANALYZE mutation_events`
               yield* sql`ANALYZE broker_events`
-              yield* sql`ANALYZE broker_notification_receipts`
+              yield* sql`ANALYZE broker_source_events`
               yield* sql`ANALYZE intents`
               yield* sql`ANALYZE broker_observations`
               const reads: Statement<Record<string, unknown>>[] = []

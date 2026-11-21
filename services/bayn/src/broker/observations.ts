@@ -501,7 +501,17 @@ export const orderObservation = (
   )
 
 export const fillObservation = (
-  activity: FillActivity,
+  activity: Pick<
+    FillActivity,
+    | 'accountId'
+    | 'activityId'
+    | 'priceAtoms'
+    | 'quantityAtoms'
+    | 'side'
+    | 'symbol'
+    | 'transactionTime'
+    | 'brokerOrderId'
+  >,
   order: AlpacaOrder,
   evidence: ReadEvidence,
   options: { readonly intentId?: string; readonly feeMicros?: string } = {},
