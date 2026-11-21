@@ -7,6 +7,85 @@ use std::{
     process::{Child, Command, Stdio},
 };
 
+#[test]
+fn approval_deadline_survives_recovery_and_cannot_outlive_the_run() {
+    let waiting = |ids: &[&str]| State::WaitingForApproval {
+        turn_id: "turn".into(),
+        approvals: ids
+            .iter()
+            .map(|id| PendingApproval {
+                approval_id: (*id).into(),
+                raw: serde_json::Value::Null,
+            })
+            .collect(),
+    };
+    let run_deadline = 4_000_000;
+    let first = ApprovalWindow::observe(None, &waiting(&["one", "two"]), 1000, run_deadline);
+    assert_eq!(first.as_ref().unwrap().deadline_ms, 1_801_000);
+    let recovering = ApprovalWindow::observe(
+        first,
+        &State::Recovering {
+            turn_id: "turn".into(),
+            reason: "reconnecting".into(),
+        },
+        2000,
+        run_deadline,
+    );
+    let reordered =
+        ApprovalWindow::observe(recovering, &waiting(&["two", "one"]), 3000, run_deadline);
+    assert_eq!(reordered.as_ref().unwrap().deadline_ms, 1_801_000);
+    let replacement =
+        ApprovalWindow::observe(reordered, &waiting(&["three"]), 3_000_000, run_deadline);
+    assert_eq!(replacement.as_ref().unwrap().deadline_ms, run_deadline);
+    assert!(
+        ApprovalWindow::observe(
+            replacement,
+            &State::Running {
+                turn_id: "turn".into()
+            },
+            3_000_001,
+            run_deadline,
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn reconciled_approval_publishes_the_deadline_that_stops_the_run() {
+    let mut snapshot = Snapshot {
+        run_id: "run".into(),
+        agent_id: "agent".into(),
+        thread_id: "thread".into(),
+        owner_hash: "owner".into(),
+        workspace_uid: "workspace".into(),
+        digest: "input".into(),
+        state: State::NeedsReconciliation {
+            turn_id: None,
+            reason: "dispatch reply lost".into(),
+        },
+        approval_deadline_ms: None,
+        accepted_message: None,
+    };
+    let mut window = None;
+    snapshot.observe(
+        State::WaitingForApproval {
+            turn_id: "accepted-turn".into(),
+            approvals: vec![PendingApproval {
+                approval_id: "request".into(),
+                raw: serde_json::Value::Null,
+            }],
+        },
+        1000,
+        4_000_000,
+        &mut window,
+    );
+    assert_eq!(snapshot.approval_deadline_ms, Some(1_801_000));
+    assert_eq!(
+        window.unwrap().deadline_ms,
+        snapshot.approval_deadline_ms.unwrap()
+    );
+}
+
 fn fixture() -> ControlPlane {
     let mut agent = crate::grpc::tests::provisional_terminal_test_agent(Utc::now());
     agent.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping;
@@ -121,6 +200,8 @@ async fn status_reads_accept_delayed_authorized_responses() {
                             owner_hash: query.owner_hash,
                             workspace_uid: query.workspace_uid,
                             digest: "fixture".into(),
+                            approval_deadline_ms: None,
+                            accepted_message: None,
                             state: State::Succeeded {
                                 turn_id: "turn-fixture".into(),
                             },
@@ -176,9 +257,15 @@ async fn status_reads_accept_delayed_authorized_responses() {
 #[tokio::test]
 #[ignore = "child process for the isolated status response deadline test"]
 async fn delayed_status_read_child() {
-    assert!(active(&principal(), "").await.unwrap().is_empty());
+    assert!(
+        active(&principal(), "", None)
+            .await
+            .unwrap()
+            .runs
+            .is_empty()
+    );
     let id = Uuid::new_v4().to_string();
-    let snapshot = read(&principal(), &id, None).await.unwrap();
+    let snapshot = read(&principal(), &id, None, false).await.unwrap();
     assert_eq!(snapshot.run_id, id);
     assert!(matches!(snapshot.state, State::Succeeded { .. }));
 }
@@ -240,6 +327,8 @@ async fn active_recovery_isolates_conversations_without_hiding_selected_failures
                                 owner_hash: query.owner_hash,
                                 workspace_uid: query.workspace_uid,
                                 digest: "fixture".into(),
+                                approval_deadline_ms: None,
+                                accepted_message: None,
                                 state: State::Running {
                                     turn_id: "turn-working".into(),
                                 },
@@ -294,30 +383,48 @@ async fn active_recovery_isolates_conversations_without_hiding_selected_failures
 #[ignore = "child process for isolated conversation status reads"]
 async fn scoped_status_read_child() {
     let principal = principal();
-    let snapshots = active(&principal, "thread-working").await.unwrap();
+    let snapshots = active(&principal, "thread-working", None).await.unwrap();
+    assert!(!snapshots.incomplete);
+    let snapshots = snapshots.runs;
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].run_id, "run-working");
     assert!(matches!(snapshots[0].state, State::Running { .. }));
+    let background = active(&principal, "", Some("thread-with-no-claim"))
+        .await
+        .unwrap();
+    assert!(background.incomplete);
+    assert_eq!(background.runs.len(), 1);
+    assert_eq!(background.runs[0].run_id, "run-working");
+    let unavailable = active(&principal, "", Some("thread-working"))
+        .await
+        .unwrap();
+    assert!(unavailable.incomplete);
+    assert!(unavailable.runs.is_empty());
     assert!(
         thread_active(&principal, "collaborator-thread")
             .await
             .unwrap()
     );
     assert!(
-        active(&principal, "collaborator-thread")
+        active(&principal, "collaborator-thread", None)
             .await
             .unwrap()
+            .runs
             .is_empty()
     );
     assert!(
-        active(&principal, "thread-with-no-claim")
+        active(&principal, "thread-with-no-claim", None)
             .await
             .unwrap()
+            .runs
             .is_empty()
     );
     for thread_id in ["thread-unavailable", ""] {
         assert_eq!(
-            active(&principal, thread_id).await.unwrap_err().code(),
+            active(&principal, thread_id, None)
+                .await
+                .unwrap_err()
+                .code(),
             tonic::Code::NotFound,
             "an unreadable claimed run must not become an empty active list"
         );
@@ -386,6 +493,8 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
                                 owner_hash: query.owner_hash,
                                 workspace_uid: query.workspace_uid,
                                 digest: "fixture".into(),
+                                approval_deadline_ms: None,
+                                accepted_message: None,
                                 state: State::Running {
                                     turn_id: "turn-current".into(),
                                 },
@@ -441,7 +550,7 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
 #[tokio::test]
 #[ignore = "child process for isolated read recovery tests"]
 async fn recovering_status_read_child() {
-    let mut snapshots = active(&principal(), "").await.unwrap();
+    let mut snapshots = active(&principal(), "", None).await.unwrap().runs;
     assert_eq!(snapshots.len(), 1, "foreign runs must not poison recovery");
     let snapshot = snapshots.remove(0);
     assert!(
@@ -463,7 +572,7 @@ async fn recovering_status_read_child() {
         (422, tonic::Code::FailedPrecondition),
     ] {
         assert_eq!(
-            read(&principal(), &status.to_string(), None)
+            read(&principal(), &status.to_string(), None, false)
                 .await
                 .unwrap_err()
                 .code(),
@@ -942,13 +1051,16 @@ async fn admission(service: &ControlPlane, input: Input) -> Envelope {
 }
 async fn status(client: &reader::Client, input: &Input, owner: &str) -> Result<Snapshot, Status> {
     client
-        .status(&Query {
-            run_id: input.id.clone(),
-            owner_hash: owner.into(),
-            workspace_uid: principal().context.workspace_uid,
-            digest: Some(input_digest(input).unwrap()),
-            expires_at_ms: crate::ofz::now_ms().unwrap() + 2000,
-        })
+        .status(
+            &Query {
+                run_id: input.id.clone(),
+                owner_hash: owner.into(),
+                workspace_uid: principal().context.workspace_uid,
+                digest: Some(input_digest(input).unwrap()),
+                expires_at_ms: crate::ofz::now_ms().unwrap() + 2000,
+            },
+            true,
+        )
         .await
 }
 
@@ -986,6 +1098,9 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     ]);
     if cfg!(target_os = "linux") {
         command.args(["--add-host", "host.docker.internal:host-gateway"]);
+    }
+    if env::var_os("RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT").is_some() {
+        command.args(["--env", "RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT"]);
     }
     let output = command.arg(image).output().unwrap();
     assert!(
@@ -1174,6 +1289,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         if let Ok(snapshot) = status(&read_client, &input, &owner).await
             && matches!(snapshot.state, State::WaitingForGuest { .. })
         {
+            assert_eq!(snapshot.accepted_message.unwrap().text, input.text);
             break;
         }
         assert!(
@@ -1186,7 +1302,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         .post(format!("{admin}/query"))
         .header("accept", "application/json")
         .json(&serde_json::json!({"query": format!(
-            "SELECT index,entry_type,name FROM sys_journal WHERE id=(SELECT id FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{}') ORDER BY index LIMIT 8", input.id
+            "SELECT index,entry_type,name FROM sys_journal WHERE id=(SELECT id FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{}') ORDER BY index LIMIT 12", input.id
         )}))
         .send().await.unwrap();
     assert!(journal.status().is_success());
@@ -1289,7 +1405,12 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         digest: query.digest.clone(),
     };
     assert_eq!(
-        read_client.status(&expired).await.err().unwrap().code(),
+        read_client
+            .status(&expired, false)
+            .await
+            .err()
+            .unwrap()
+            .code(),
         tonic::Code::DeadlineExceeded
     );
     assert_eq!(

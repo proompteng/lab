@@ -3,10 +3,10 @@
 import { Button, Skeleton } from '@proompteng/design/ui'
 import { Archive, ArrowLeft, LoaderCircle, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
+import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
 import { cn } from '@/lib/utils'
-import { runTengriAction, TengriRequestError } from './client'
+import { getTengriCodexThreadTitle, runTengriAction, TengriRequestError } from './client'
 
 type SessionIndex = TengriCodexThreadPage & { archived: boolean } & (
     | { phase: 'loading' | 'ready' }
@@ -14,11 +14,13 @@ type SessionIndex = TengriCodexThreadPage & { archived: boolean } & (
     | { phase: 'error'; error: string }
   )
 
+export type ConversationActivity = { phase: TengriCodexRun['state']['phase']; approvalId?: string }
+
 export function AgentSessionList({
   agentId,
   enabled,
   selected,
-  threadPhases,
+  threadActivity,
   canSelect,
   revision,
   onSelect,
@@ -27,10 +29,10 @@ export function AgentSessionList({
   agentId: string
   enabled: boolean
   selected: { id: string; unavailable: boolean } | null
-  threadPhases: ReadonlyMap<string, TengriCodexRun['state']['phase']>
+  threadActivity: ReadonlyMap<string, ConversationActivity>
   canSelect: boolean
   revision: number
-  onSelect: (threadId: string) => void
+  onSelect: (threadId: string, approvalId?: string) => void
   onArchived: (threadId: string) => void
 }) {
   const [index, setIndex] = useState<SessionIndex>({ archived: false, phase: 'loading', threads: [], nextCursor: null })
@@ -135,7 +137,13 @@ export function AgentSessionList({
   }
 
   if (!enabled) return null
-  const threads = index.threads
+  const loadedIds = new Set(index.threads.map(({ id }) => id))
+  const unlistedApprovals = index.archived
+    ? []
+    : Array.from(threadActivity).flatMap(([id, activity]) =>
+        activity.approvalId && !loadedIds.has(id) ? [{ id, title: null }] : [],
+      )
+  const threads = [...unlistedApprovals, ...index.threads]
   const recovering = index.phase === 'loading' || index.phase === 'retrying'
   return (
     <>
@@ -158,12 +166,16 @@ export function AgentSessionList({
           {threads.map((thread) => {
             const unavailable = thread.id === selected?.id && selected.unavailable
             const active = thread.id === selected?.id && !index.archived
-            const phase = threadPhases.get(thread.id)
+            const { phase, approvalId } = threadActivity.get(thread.id) ?? {}
             const busy = phase !== undefined
-            const waiting =
-              phase === 'authorization_required' || phase === 'needs_reconciliation' || phase === 'waiting_for_approval'
-            const status =
-              phase === 'needs_reconciliation' ? 'Response unconfirmed' : waiting ? 'Needs you' : 'Response in progress'
+            const waiting = phase === 'authorization_required' || phase === 'needs_reconciliation'
+            const status = approvalId
+              ? 'Approval needed'
+              : phase === 'needs_reconciliation'
+                ? 'Response unconfirmed'
+                : waiting
+                  ? 'Needs you'
+                  : 'Response in progress'
             return (
               <li key={thread.id} className="group relative mb-0.5 flex min-w-0 items-center">
                 <Button
@@ -173,7 +185,7 @@ export function AgentSessionList({
                   disabled={!canSelect || index.archived}
                   aria-current={active ? 'true' : undefined}
                   aria-description={busy ? status : undefined}
-                  onClick={() => onSelect(thread.id)}
+                  onClick={() => onSelect(thread.id, approvalId)}
                   className={cn(
                     'h-8 min-w-0 flex-1 justify-start gap-2 rounded-lg pl-2.5 pr-8 text-left transition-none active:bg-white/[0.12] dark:active:bg-white/[0.12] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:pr-12',
                     active
@@ -181,17 +193,24 @@ export function AgentSessionList({
                       : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100 dark:hover:bg-white/5',
                   )}
                 >
-                  <span className="min-w-0 flex-1 truncate text-copy-14">{thread.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-copy-14">
+                    {thread.title ?? <UnlistedChatTitle agentId={agentId} threadId={thread.id} ready={!recovering} />}
+                  </span>
+                  {approvalId ? (
+                    <span aria-hidden="true" className="shrink-0 text-label-12 text-zinc-300">
+                      Needs you
+                    </span>
+                  ) : null}
                   {unavailable ? <span className="text-label-12 text-zinc-400">Unavailable</span> : null}
                 </Button>
-                {waiting ? (
+                {waiting && !approvalId ? (
                   <span
                     aria-hidden="true"
                     className="pointer-events-none absolute right-1 inline-flex size-6 items-center justify-center text-zinc-400 [@media(pointer:coarse)]:size-11"
                   >
                     <span className="size-1.5 rounded-full bg-current" />
                   </span>
-                ) : busy ? (
+                ) : !approvalId && !waiting && busy ? (
                   <span
                     aria-hidden="true"
                     className="pointer-events-none absolute right-1 inline-flex size-6 items-center justify-center text-zinc-500 group-hover:opacity-0 group-focus-within:opacity-0 [@media(pointer:coarse)]:hidden"
@@ -199,7 +218,7 @@ export function AgentSessionList({
                     <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
                   </span>
                 ) : null}
-                {!waiting || index.archived ? (
+                {(!approvalId && !waiting) || index.archived ? (
                   <span className="absolute right-1 inline-flex [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
                     <Button
                       type="button"
@@ -264,4 +283,21 @@ export function AgentSessionList({
       </button>
     </>
   )
+}
+
+function UnlistedChatTitle({ agentId, threadId, ready }: { agentId: string; threadId: string; ready: boolean }) {
+  const [title, setTitle] = useState<string>()
+  useEffect(() => {
+    if (!ready || title) return
+    const controller = new AbortController()
+    void getTengriCodexThreadTitle(agentId, threadId, controller.signal).then(
+      (name) => {
+        if (!controller.signal.aborted) setTitle(name)
+      },
+      () => {},
+    )
+    return () => controller.abort()
+  }, [agentId, ready, threadId, title])
+
+  return title ?? 'Earlier chat'
 }

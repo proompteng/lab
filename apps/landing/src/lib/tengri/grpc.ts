@@ -709,21 +709,30 @@ export async function sendCodexTurn(
 export async function getActiveCodexRuns(
   identity: PlatformIdentity,
   agentId: string,
-  threadId?: string,
+  scope?: string | { excludeThreadId: string },
   signal?: AbortSignal,
 ) {
+  const threadId = typeof scope === 'string' ? scope : undefined
+  const excludeThreadId = typeof scope === 'object' ? scope.excludeThreadId : undefined
   const result = await unary<RawRecord>(
     'getActiveCodexRuns',
-    { id: agentId, threadId },
+    { id: agentId, threadId, excludeThreadId },
     identity,
     TENGRI_UNARY_TIMEOUT_MS,
     signal,
   )
   if (!Array.isArray(result.runs)) throw new TengriUnavailableError('Invalid active run list')
   const runs = result.runs.map(normalizeRun)
-  if (runs.some((run) => run.agentId !== agentId || (threadId !== undefined && run.threadId !== threadId)))
+  if (
+    runs.some(
+      (run) =>
+        run.agentId !== agentId ||
+        run.threadId === excludeThreadId ||
+        (threadId !== undefined && run.threadId !== threadId),
+    )
+  )
     throw new TengriUnavailableError('Invalid active run scope')
-  return runs
+  return { runs, incomplete: result.incomplete === true }
 }
 
 export async function getCodexRun(identity: PlatformIdentity, agentId: string, runId: string, signal?: AbortSignal) {
@@ -745,6 +754,8 @@ function normalizeRun(value: RawRecord): TengriCodexRun {
     agentId: value.agentId,
     threadId: value.threadId,
     state,
+    ...(value.approvalDeadlineMs !== undefined && { approvalDeadlineMs: Number(value.approvalDeadlineMs) }),
+    ...(value.acceptedMessage != null && { acceptedMessage: value.acceptedMessage }),
   })
   if (!parsed.success) throw new TengriUnavailableError('Invalid durable run state')
   return parsed.data

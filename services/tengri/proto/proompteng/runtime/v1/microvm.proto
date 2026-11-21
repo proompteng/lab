@@ -132,6 +132,7 @@ message GetActiveCodexRunsRequest {
   string id = 1;
   // Empty preserves workspace-wide recovery for existing clients.
   string thread_id = 2;
+  optional string exclude_thread_id = 3;
 }
 message WatchAgentRequest { string id = 1; }
 
@@ -294,8 +295,19 @@ message CodexThread {
 }
 message CodexTurn { string id = 1; string thread_id = 2; string raw_json = 3; }
 message GetCodexRunRequest { string agent_id = 1; string run_id = 2; }
-message CodexRuns { repeated CodexRun runs = 1; }
-message CodexRun { string run_id = 1; string agent_id = 2; string thread_id = 3; string state_json = 4; }
+message CodexRuns {
+  repeated CodexRun runs = 1;
+  bool incomplete = 2;
+}
+message CodexRun {
+  string run_id = 1;
+  string agent_id = 2;
+  string thread_id = 3;
+  string state_json = 4;
+  optional uint64 approval_deadline_ms = 5;
+  CodexAcceptedMessage accepted_message = 6;
+}
+message CodexAcceptedMessage { string text = 1; repeated string attachment_paths = 2; }
 
 enum CodexEventKind {
   CODEX_EVENT_KIND_UNSPECIFIED = 0;

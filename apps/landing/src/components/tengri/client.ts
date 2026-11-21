@@ -1,5 +1,6 @@
-import type { TengriAction, TengriDesktopSnapshot, TengriErrorCode } from '@/lib/tengri/types'
+import type { TengriAction, TengriCodexThread, TengriDesktopSnapshot, TengriErrorCode } from '@/lib/tengri/types'
 import { readCodexHistory } from '@/lib/tengri/codex-history'
+import { parseCodexThreadMetadataTitle } from '@/lib/tengri/codex-threads'
 import { tengriCreateAgentSchema } from '@/lib/tengri/schemas'
 import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import { z } from 'zod'
@@ -32,6 +33,15 @@ type TengriActionOptions = {
   keepalive?: boolean
   principalId?: string
   signal?: AbortSignal
+  threadMetadataOnly?: boolean
+}
+
+export async function getTengriCodexThreadTitle(agentId: string, threadId: string, signal: AbortSignal) {
+  const { rawJson } = await runTengriAction<TengriCodexThread>(
+    { action: 'resume-thread', agentId, threadId },
+    { signal, threadMetadataOnly: true },
+  )
+  return parseCodexThreadMetadataTitle(rawJson)
 }
 
 type GuestOperationScope = {
@@ -99,6 +109,7 @@ export async function runTengriAction<Result>(
       action.action !== 'list-threads' &&
       action.action !== 'resume-thread' &&
       action.action !== 'active-codex-runs' &&
+      action.action !== 'background-codex-runs' &&
       action.action !== 'codex-run',
   })
   notifyGuestOperationListeners(scope)
@@ -134,12 +145,17 @@ async function postTengriAction<Result>(
     throw error
   })
   if (action.action === 'resume-thread' && response.ok) {
-    return (await readCodexHistory(response, action.threadId, options?.signal, (record) =>
-      requestFailure(
-        record,
-        typeof record.status === 'number' && record.status >= 400 && record.status <= 599 ? record.status : 503,
-        response.headers.get('x-trace-id'),
-      ),
+    return (await readCodexHistory(
+      response,
+      action.threadId,
+      options?.signal,
+      (record) =>
+        requestFailure(
+          record,
+          typeof record.status === 'number' && record.status >= 400 && record.status <= 599 ? record.status : 503,
+          response.headers.get('x-trace-id'),
+        ),
+      options?.threadMetadataOnly,
     )) as Result
   }
   try {

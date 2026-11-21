@@ -41,6 +41,14 @@ signed GitHub subject and the server-owned `MicroVM` owner hash.
 
 The chat, Finder, Code, Terminal, and preview tabs all operate on the same guest home and `/workspace` filesystem.
 
+The left conversation list marks chats with pending approvals **Needs you**. Selecting that row opens the chat and
+focuses the request. The request card shows the workflow's deadline in local time. A resolved approval stays cleared
+during stale polling. A new browser discovers pending work even when it opens a different saved conversation.
+Background discovery refreshes while a conversation is visible and excludes that conversation. A new draft uses
+approval and replay events to discover work without idle polling. If a run read fails, the chat keeps the readable
+runs and retries discovery. Pending approvals in older chats appear in the sidebar with their chat title before
+their page of history is loaded.
+
 ## Model and reasoning selection
 
 The chat defaults to `gpt-6.2-sol`. Its **Model** selector reads the signed-in guest's paginated `model/list` catalog;
@@ -128,6 +136,8 @@ for protocol 10; draining old runs and pending-operation fences precedes the ret
 - On reload, the desktop queries the workspace's active Restate runs and recovers the selected thread, turn and pending
   approvals, including when browser storage is empty. Transcript events are display progress; the durable run owns
   admission and terminal state. Other conversations can start while this conversation is running or awaiting approval.
+- The selected run restores its accepted message and attachment paths until the native transcript contains the same
+  operation ID. Workspace-wide run summaries carry status alone.
 - A matching native `turn/completed` event ends response activity immediately. Terminal turns in recovered history
   have the same effect. An older durable status poll cannot restore their Thinking indicator, Working label, or Stop
   action. Completion of another turn cannot clear the current response. Restate still owns finalization and the

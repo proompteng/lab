@@ -169,6 +169,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('codex-login'), agentId }),
   z.strictObject({ action: z.literal('codex-models'), agentId, cursor: z.string().min(1).max(4096).optional() }),
   z.strictObject({ action: z.literal('active-codex-runs'), agentId, threadId: codexId.optional() }),
+  z.strictObject({ action: z.literal('background-codex-runs'), agentId, excludeThreadId: codexId }),
   z.strictObject({ action: z.literal('codex-run'), agentId, runId: z.uuid() }),
   z.strictObject({ action: z.literal('recover-run'), agentId, runId: z.uuid(), operationId: z.uuid() }),
   z.strictObject({

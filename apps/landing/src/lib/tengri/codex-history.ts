@@ -26,6 +26,7 @@ export async function readCodexHistory(
   threadId: string,
   signal: AbortSignal | undefined,
   failure: (record: JsonRecord) => Error,
+  metadataOnly = false,
 ): Promise<TengriCodexThread> {
   if (!response.headers.get('Content-Type')?.startsWith('application/x-ndjson') || !response.body) {
     throw new Error('Codex conversation recovery did not return a history stream')
@@ -51,7 +52,10 @@ export async function readCodexHistory(
         if (completed) throw invalidHistory('data after completion')
         if (record.type === 'error') throw failure(record)
         if (record.type === 'complete') completed = true
-        else history.include(record)
+        else {
+          history.include(record)
+          if (metadataOnly) return history.finish(true)
+        }
         newline = pending.indexOf('\n')
       }
       if (pending.length > MAX_RECORD_CHARACTERS) throw invalidHistory('history page is too large')
@@ -155,9 +159,9 @@ class CodexHistory {
     }
   }
 
-  finish(): TengriCodexThread {
+  finish(metadataOnly = false): TengriCodexThread {
     if (!this.snapshot) throw invalidHistory('missing thread metadata')
-    if (this.mode === 'paginated') {
+    if (!metadataOnly && this.mode === 'paginated') {
       if (this.part !== 'turns' || this.nextCursor !== null || this.items.size)
         throw invalidHistory('incomplete history')
       object(this.snapshot.thread).turns = this.turns
