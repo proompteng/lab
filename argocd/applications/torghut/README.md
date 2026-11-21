@@ -95,6 +95,14 @@ corresponding TaskManager Pods. Existing Alloy endpoint discovery scrapes each P
 watermarks and task backpressure; JobManager metrics alone do not expose that pipeline work. The existing JobManager
 Services remain separate so running-job and checkpoint monitoring retain their original targets.
 
+Alloy requests 256 MiB and has a 512 MiB memory limit to accommodate these targets and Flink handover. On
+2026-11-21, the first four TA and eight archive targets added 41,717 post-relabel samples per 30-second scrape.
+Collector working set rose from 139.7 MiB to 225.7 MiB, and the collector was OOM-killed at 06:08:09 UTC during
+handover under its former 256 MiB limit. The larger budget provides room for overlapping scrape state while
+preserving the full metric content. After rollout, verify peak collector memory, restart count, remote-write
+failed/retried samples and queue recovery alongside target coverage and Mimir ingestion; a successful Kargo
+promotion alone does not establish collector capacity.
+
 After promotion through `torghut-release:torghut` to `kargo/torghut`, verify that
 `count by (service) (up{job="torghut",namespace="torghut",service=~".*-taskmanager-metrics"} == 1)` matches each
 deployment's running TaskManager count. Check `flink_taskmanager_job_task_operator_pendingRecords` and
