@@ -71,10 +71,15 @@ jobs:
           - platform: linux/amd64
             arch: amd64
             runner: arc-amd64
+            hosted_runner: ubuntu-24.04
           - platform: linux/arm64
             arch: arm64
             runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
+            hosted_runner: ubuntu-24.04-arm
+    runs-on: >-
+      ${{ github.event_name == 'merge_group'
+          && contains(fromJSON('["app", "attic", "docs", "headlamp", "proompteng", "synthesis"]'), inputs.image_name)
+          && matrix.hosted_runner || matrix.runner }}
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
@@ -121,6 +126,7 @@ jobs:
           printf '%s\t%s\t%s\t%s\n' "checkout-${ARCH}" 0 "$((end - start))" "actions/checkout@v5" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
 
       - name: Require Attic public key
+        if: runner.environment == 'self-hosted'
         run: test -n "${ATTIC_PUBLIC_KEY}"
 
       - name: Start Nix setup timer
@@ -132,12 +138,12 @@ jobs:
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ github.token }}
-          require-preinstalled: 'true'
+          require-preinstalled: ${{ runner.environment == 'self-hosted' }}
           install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
-            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
-            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            substituters = ${{ runner.environment == 'self-hosted' && 'http://attic.attic.svc.cluster.local/lab ' || '' }}https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ runner.environment == 'self-hosted' && vars.ATTIC_PUBLIC_KEY || '' }}
             fallback = false
             connect-timeout = 10
             stalled-download-timeout = 60
