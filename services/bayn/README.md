@@ -624,6 +624,13 @@ without treating replayed bytes as a new live capture. Before binding or transmi
 rechecks the current account, reconciled positions and orders, authority generation, unknown mutations, current executable
 quote, risk and original admission/inference/submission deadlines. Late or stale completion cannot authorize an order.
 
+A new entry observation requires the original protocol inference interval to fit inside its existing admission lease.
+The owner checks before source and eligibility work and again against the acquired source's observation clock before
+batch admission. A nearly expired cycle waits for its original lease expiry, leaving the next signal window unconsumed
+for a freshly validated successor. Pending and completed admitted work retain their original resume and expiry paths.
+This does not extend a source, inference, admission, quote or submission deadline. Even a first observation waits when
+its lease cannot cover the original inference interval; a successor still needs current source, account and risk evidence.
+
 Fresh account, configuration and candidate-asset reads for short eligibility run only when admitting a new source;
 its observation clock is sampled after those reads. Completion retains the original eligibility evidence and avoids
 fresh reads that cannot replace the committed source. Final short submission reads the selected symbol's asset,
@@ -1697,6 +1704,10 @@ lineage. Image publication alone does not authorize the revised strategy.
   trading restrictions remain visible through `/v1/status`. Execution readiness and order admission are unchanged.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
+
+When Activity SSE contains cash fees whose authoritative REST records are still pending, the broker projection
+reports `BROKER_CASH_FEES_PENDING`. This retains the typed observation failure without exposing provider payloads.
+Trading readiness and ordinary submission continue to wait for settlement; other broker failures remain distinct.
 
 The status process opens without a live broker HTTP preflight. Its health passes read the revision-bound canonical
 broker projection each time, so an unavailable broker remains visible as degraded status and can recover without a
