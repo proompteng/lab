@@ -13,4 +13,4 @@ configMapGenerator:
 images:
 - name: opencode-main
   newName: registry.ide-newton.ts.net/lab/opencode
-  digest: sha256:a3f241cbed02b46a8a3cd6df6abacf3491e69b31445c0f7bdc3738e6b83cd2b5
+  digest: sha256:22e61683fa5dca4369b1299cc570b9a3417aae93bc2c6629874ece0a464e4c9d
