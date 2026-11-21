@@ -109,9 +109,16 @@ test('queued service validation joins the required gate without duplicate or mut
     const group = workflow.concurrency?.group
     if (group === undefined) continue
     const prefix = group.split('${{')[0].toLowerCase()
-    expect(prefix).not.toBe('')
-    expect(concurrencyGroups.has(prefix)).toBe(false)
-    concurrencyGroups.add(prefix)
+    if (filename === 'nix-oci-build-common.yml') {
+      expect(group).toBe(
+        "${{ inputs.pr_number != '' && format('ci-pr-{0}-{1}', inputs.pr_number, inputs.image_name) || format('{0}-{1}-{2}', github.workflow, inputs.image_name, inputs.tag) }}",
+      )
+    } else {
+      expect(prefix).not.toBe('')
+    }
+    const key = prefix || filename
+    expect(concurrencyGroups.has(key)).toBe(false)
+    concurrencyGroups.add(key)
   }
 
   const step = gate.steps?.find(({ env }) => env?.QUEUE_SERVICES_RESULT !== undefined)
