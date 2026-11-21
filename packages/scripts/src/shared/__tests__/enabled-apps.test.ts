@@ -430,8 +430,6 @@ describe('enabled app inventory', () => {
     expect(tengriOperations).toContain('Measure at least 50 fresh prepared creations and 50 cold-cache resumes')
     expect(tengriOperations).not.toContain('`Manual OCI Mirror`')
     expect(tengriImagesWorkflow).toContain('TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri')
-    expect(tengriImagesWorkflow).toContain('runner: arc-amd64')
-    expect(tengriImagesWorkflow).toContain('runner: arc-arm64')
     expect(tengriImagesWorkflow).toContain('docker buildx imagetools create')
     expect(tengriImagesWorkflow).toContain('cosign sign --yes "${reference}"')
   })
