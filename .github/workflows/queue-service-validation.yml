@@ -148,6 +148,17 @@ jobs:
   synthesis:
     uses: ./.github/workflows/synthesis-ci.yml
 
+  temporal-bun-sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEMPORAL_TEST_TIMEOUT: '30000'
+      TEMPORAL_INTEGRATION_TESTS: '0'
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/test-temporal-bun-sdk
+
   temporal-worker:
     name: Temporal worker build and heartbeat tests (${{ matrix.architecture }})
     runs-on: ${{ matrix.runner }}
