@@ -2519,6 +2519,7 @@ partial-fill and re-entry cases with modeled slippage. Every measured buy fill m
 adverse arrival quotes remain unfilled and retain separate broker coverage.
 
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
+The cycle recovery cases need a local role with `CREATEDB` to clone their migrated fixture.
 
 The optional cumulative-ledger integration test requires an isolated TigerBeetle 0.17.9 server on loopback with cluster
 ID `2001`. It posts 10,500 synthetic transfers, verifies account and performance evidence, and supports rerunning against
