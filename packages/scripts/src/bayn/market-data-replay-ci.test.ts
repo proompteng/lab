@@ -28,6 +28,7 @@ if (gate?.run === undefined) throw new Error('Missing executable release gate')
 const command = gate.run
 const successful = {
   PATH: process.env.PATH ?? '',
+  MERGE_GROUP: 'false',
   CHANGES_RESULT: 'success',
   BAYN_RELEVANT: 'true',
   PR_CHECKS_RESULT: 'success',
@@ -56,6 +57,15 @@ const run = async (overrides: Record<string, string>) => {
   ])
   return { exit, stdout, stderr }
 }
+
+test('a merge group must select every Bayn suite', async () => {
+  expect((await run({ MERGE_GROUP: 'true' })).exit).toBe(0)
+  for (const flag of ['BAYN_RELEVANT', 'FORMAL_RELEVANT', 'GEPA_RELEVANT']) {
+    const failed = await run({ MERGE_GROUP: 'true', [flag]: 'false' })
+    expect(failed.exit).toBe(1)
+    expect(failed.stderr).toContain('Merge group validation must select every Bayn check.')
+  }
+})
 
 test('native replay cases run in isolated required groups without extending their job budget', () => {
   const ledger = workflow.jobs['ledger-integration']
