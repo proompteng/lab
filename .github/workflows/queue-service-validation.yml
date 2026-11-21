@@ -13,6 +13,9 @@ jobs:
   codex:
     uses: ./.github/workflows/codex-ci.yml
 
+  codex-devbox:
+    uses: ./.github/workflows/codex-devbox-validate.yml
+
   dernier:
     uses: ./.github/workflows/dernier-ci.yml
 

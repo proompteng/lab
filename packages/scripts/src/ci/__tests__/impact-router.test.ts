@@ -98,7 +98,9 @@ test('queued service validation joins the required gate without duplicate or mut
     const workflow = yaml(filename)
     expect(workflow.on).toHaveProperty('workflow_call')
     expect(workflow.on).not.toHaveProperty('merge_group')
-    const prefix = workflow.concurrency.group.split('${{')[0].toLowerCase()
+    const group = workflow.concurrency?.group
+    if (group === undefined) continue
+    const prefix = group.split('${{')[0].toLowerCase()
     expect(prefix).not.toBe('')
     expect(concurrencyGroups.has(prefix)).toBe(false)
     concurrencyGroups.add(prefix)

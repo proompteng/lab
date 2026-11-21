@@ -192,6 +192,7 @@ const expected = {
       'packages/scripts/src/shared/docker.ts',
       'argocd/applications/devbox',
       '.github/workflows/codex-devbox.yml',
+      '.github/workflows/codex-devbox-validate.yml',
       'flake.nix',
       'flake.lock',
       'nix/packages.nix',
