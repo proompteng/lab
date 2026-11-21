@@ -163,6 +163,12 @@
       "pattern": "^publish-index(?: \\(.*\\))?$"
     }
   ],
+  "buzz-relay-cache.yml": [
+    {
+      "id": "seed",
+      "pattern": "^seed(?: \\(.*\\))?$"
+    }
+  ],
   "codex-devbox.yml": [
     {
       "id": "validate",

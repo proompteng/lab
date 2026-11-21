@@ -18,34 +18,27 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: arc-amd64
+            runner: ubuntu-24.04
             system: x86_64-linux
           - arch: arm64
-            runner: arc-arm64
+            runner: ubuntu-24.04-arm
             system: aarch64-linux
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     env:
-      ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
-      ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
       NIX_BUN_FOD_TIMEOUT: 10m
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Require Attic public key
-        run: test -n "${ATTIC_PUBLIC_KEY}"
-
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ github.token }}
-          require-preinstalled: 'true'
           install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
-            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
-            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            substituters = https://cache.nixos.org/
             fallback = true
             connect-timeout = 10
             stalled-download-timeout = 60
@@ -53,7 +46,7 @@ jobs:
 
       - name: Prove dependency source boundary
         if: inputs.service != 'app'
-        run: bash nix/images/bun-workspace-deps-source.test.sh
+        run: nix shell .#bun --command bash nix/images/bun-workspace-deps-source.test.sh
 
       - name: Recompute Bun fixed-output dependency closure
         env:
