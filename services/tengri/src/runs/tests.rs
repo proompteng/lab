@@ -1713,20 +1713,25 @@ async fn refreshed_run_context_still_requires_current_ofz_authority() {
 #[test]
 fn identifying_an_old_turn_does_not_revive_its_dead_process() {
     let history = serde_json::json!({"thread":{"turns":[{"id":"accepted","status":"inProgress"}]}});
-    for _ in 0..3 {
-        let recovered =
-            bind_native_generation(observed_turn(&history, "accepted"), false, "accepted");
-        assert!(matches!(recovered, State::NeedsReconciliation { .. }));
-        assert_eq!(turn_id(&recovered), Some("accepted"));
-        assert!(!recovered.terminal());
-    }
+    let live = observed_turn(&history, "accepted");
+    let recovered = bind_native_generation(live.clone(), false, false, "accepted");
+    assert!(matches!(recovered, State::NeedsReconciliation { .. }));
+    assert_eq!(turn_id(&recovered), Some("accepted"));
+    assert!(!recovered.terminal());
+
+    let fenced = bind_native_generation(live.clone(), false, true, "accepted");
+    assert!(fenced.terminal());
+    assert!(matches!(fenced, State::Unconfirmed { turn_id: Some(id), .. } if id == "accepted"));
+
     let completed = State::Succeeded {
         turn_id: "accepted".into(),
     };
     assert_eq!(
-        bind_native_generation(completed.clone(), false, "accepted"),
+        bind_native_generation(completed.clone(), false, true, "accepted"),
         completed
     );
-    let live = observed_turn(&history, "accepted");
-    assert_eq!(bind_native_generation(live.clone(), true, "accepted"), live);
+    assert_eq!(
+        bind_native_generation(live.clone(), true, false, "accepted"),
+        live
+    );
 }

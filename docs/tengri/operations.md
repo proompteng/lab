@@ -68,6 +68,10 @@ again. A Ready pod, journal activity, or a recorded `turn/start` result does not
 session. Both controls update authority for the existing run. `needs_reconciliation` retains the same identity and
 backs off to one observation per minute. Neither state releases its conversation or sleep pin. A durable rejection
 recorded before the native request was sent lets the existing workflow settle and release both pins.
+If the operation records a kernel boot ID and the retained guest now has a different boot ID, reconciliation can
+settle an unconfirmed outcome after reading native history and receipts. The original operation remains in the
+journal and cannot be resent. The conversation and sleep pins can be released so the user can continue in the same
+chat. Records without a boot ID still need direct evidence before incident repair.
 Run-worker probes use HTTP `/healthz` on 8080; the Restate HTTP/2 listener remains on 9080.
 
 The `TengriRunStatusFailures` alert counts reads that exhausted their recovery budget. `TengriRunRecoveryBlocked`
