@@ -731,18 +731,19 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           const eventId = '7'.repeat(64)
           const brokerOrderId = 'protective-child'
           const observedAt = management.target.observedAt
+          const providerUpdatedAt = Result.getOrThrow(sourceTimestamp(observedAt))
           yield* sql.withTransaction(
             Effect.gen(function* () {
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
           source_event_id,source_sequence,occurred_at,observed_at)
           VALUES(${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${replayAccountId},
-            ${brokerOrderId},100,${observedAt},${observedAt})`
+            ${`order:${brokerOrderId}:${providerUpdatedAt}`},100,${observedAt},${observedAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
           symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status,
           broker_updated_at)
           VALUES(${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'protective-child-client',${intentId},
             'AAPL','SELL','STOP_LIMIT','DAY',5000000000,0,${levels.stopLimitPriceMicros},${levels.stopPriceMicros},'NEW',
-            ${Result.getOrThrow(sourceTimestamp(observedAt))})`
+            ${providerUpdatedAt})`
             }),
           )
           const store = yield* IntentStore
@@ -2777,6 +2778,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           if (entryId === undefined || levels === undefined)
             throw new Error('Expected an approved entry with native protection')
           const cancelAt = managed.observation.payload.observedAt
+          const cancelProviderUpdatedAt = Result.getOrThrow(sourceTimestamp(cancelAt))
           yield* sql`UPDATE simulated_execution_clocks SET observed_at=${cancelAt} WHERE account_id=${replayAccountId}`
           const brokerOrderId = 'partial-tp-native-child'
           const eventId = '7'.repeat(64)
@@ -2785,6 +2787,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           if (parent === undefined) throw new Error('Expected the filled entry order')
           const entryFill = portfolio.entryFills[0]
           if (entryFill === undefined) throw new Error('Expected canonical entry fill pricing')
+          const parentProviderUpdatedAt = Result.getOrThrow(sourceTimestamp(entryFill.occurredAt))
           const partialPriceAtoms = keepNative
             ? String(BigInt(levels.profitLimitPriceMicros) * 1000n)
             : entryFill.priceAtoms
@@ -2799,23 +2802,23 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                 const parentEventId = '9'.repeat(64)
                 yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
                   source_event_id,source_sequence,occurred_at,observed_at) VALUES (${parentEventId},'bayn.paper-broker-event.v1',
-                  ${parentEventId},'ORDER','ALPACA',${replayAccountId},${parent.brokerOrderId},99,${entryFill.occurredAt},${entryFill.occurredAt})`
+                  ${parentEventId},'ORDER','ALPACA',${replayAccountId},${`order:${parent.brokerOrderId}:${parentProviderUpdatedAt}`},99,${entryFill.occurredAt},${entryFill.occurredAt})`
                 yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
                   symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,
                   broker_updated_at)
                   VALUES (${parentEventId},${replayAccountId},'bayn.order.v3',${parent.brokerOrderId},${parent.clientOrderId},${entryId},
                   'AAPL','BUY','LIMIT','DAY',${originalQuantity},${originalQuantity},${parent.limitPriceMicros ?? '0'},'FILLED',
-                  ${Result.getOrThrow(sourceTimestamp(entryFill.occurredAt))})`
+                  ${parentProviderUpdatedAt})`
               }
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
             source_event_id,source_sequence,occurred_at,observed_at) VALUES (${eventId},'bayn.paper-broker-event.v1',
-            ${eventId},'ORDER','ALPACA',${replayAccountId},${brokerOrderId},100,${cancelAt},${cancelAt})`
+            ${eventId},'ORDER','ALPACA',${replayAccountId},${`order:${brokerOrderId}:${cancelProviderUpdatedAt}`},100,${cancelAt},${cancelAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
             symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,parent_broker_order_id,
             broker_updated_at)
             VALUES (${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'partial-tp-native-child',${entryId},
             'AAPL','SELL','LIMIT','DAY',${originalQuantity},2000000000,${levels.profitLimitPriceMicros},'PARTIALLY_FILLED',
-            ${keepNative ? parent.brokerOrderId : null},${Result.getOrThrow(sourceTimestamp(cancelAt))})`
+            ${keepNative ? parent.brokerOrderId : null},${cancelProviderUpdatedAt})`
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
                 source_event_id,source_sequence,occurred_at,observed_at) VALUES (${partialEventId},'bayn.paper-broker-event.v1',
                 ${partialEventId},'FILL','ALPACA',${replayAccountId},'partial-tp-fill',101,${cancelAt},${cancelAt})`

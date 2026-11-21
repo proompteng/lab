@@ -269,7 +269,7 @@ integration('native equity short PostgreSQL execution', () => {
                 yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
                 source_event_id,source_sequence,occurred_at,observed_at)
                 VALUES(${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${accountId},
-                  ${brokerOrderId},${side === OrderSide.Buy ? 1 : 2},${cancellationAt},${cancellationAt})`
+                  ${`order:${brokerOrderId}:${providerUpdatedAt}`},${side === OrderSide.Buy ? 1 : 2},${cancellationAt},${cancellationAt})`
                 yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
                 symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status,
                 broker_updated_at)
