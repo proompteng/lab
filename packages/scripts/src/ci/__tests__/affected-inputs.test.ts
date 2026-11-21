@@ -201,6 +201,41 @@ test.each(['bayn-build-push.yml', 'opencode-build-push.yml'])(
   },
 )
 
+test.each([
+  ['bumba', ['pr-checks', 'atlas-integration']],
+  ['froussard', ['test']],
+  ['oirat', ['pr-checks']],
+] as const)('%s runs every validation job on a queued revision without a PR diff', (service, suites) => {
+  const filename = `./.github/workflows/${service}-ci.yml`
+  const workflow: unknown = Bun.YAML.parse(readFileSync(filename, 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  expect(property(property(queue, 'jobs'), service)).toEqual({ uses: filename })
+  const jobs = property(workflow, 'jobs')
+  for (const id of ['changes', ...suites, 'dependency-closure', 'nix-image']) {
+    const job = property(jobs, id)
+    const expression = text(property(job, 'if')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+    const queued = {
+      github: { event_name: 'merge_group', ref: 'refs/heads/main', event: {} },
+      needs: { changes: { result: 'skipped', outputs: {} } },
+      cancelled: () => false,
+    }
+    const runsWithoutPlanner = id !== 'changes' && id !== 'nix-image'
+    expect(runInNewContext(expression, queued)).toBe(runsWithoutPlanner)
+    if (runsWithoutPlanner) {
+      expect(property(job, 'secrets')).toBeUndefined()
+      expect(runInNewContext(expression, { ...queued, cancelled: () => true })).toBe(false)
+      for (const changed of ['true', 'false']) {
+        const ordinary = {
+          ...queued,
+          github: { event_name: 'pull_request', ref: 'refs/pull/42/merge', event: {} },
+          needs: { changes: { result: 'success', outputs: { changed } } },
+        }
+        expect(runInNewContext(expression, ordinary)).toBe(changed === 'true')
+      }
+    }
+  }
+})
+
 test('Devbox requires native validation in the queue with publication confined to main', () => {
   const caller: unknown = Bun.YAML.parse(readFileSync('.github/workflows/codex-devbox.yml', 'utf8'))
   const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
