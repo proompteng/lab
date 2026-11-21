@@ -73,8 +73,8 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
         (filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml') ||
           (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath) ||
           (event === 'pull_request' &&
-            filename === 'attic-build-push.yaml' &&
-            file === '.github/workflows/attic-build-push.yaml') ||
+            ['attic-build-push.yaml', 'ofz.yaml', 'relay.yml'].includes(filename) &&
+            file === `.github/workflows/${filename}`) ||
           (event === 'pull_request' &&
             filename === 'opencode-ci.yml' &&
             ['.github/workflows/opencode-ci.yml', '.github/workflows/nix-oci-build-common.yml'].includes(file)),

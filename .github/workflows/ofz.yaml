@@ -23,6 +23,7 @@ on:
       - 'apps/landing/package.json'
       - 'bun.lock'
       - '.github/scripts/install-tengri-chromium.mjs'
+      - '.github/workflows/ofz.yaml'
       - 'nix/images/ofz.nix'
       - 'nix/images/ofz-fixture-tools.nix'
       - 'nix/images/agentrun-tools.nix'
@@ -30,6 +31,8 @@ on:
       - 'nix/packages.nix'
       - 'flake.nix'
       - 'flake.lock'
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
     paths:
@@ -178,7 +181,7 @@ jobs:
         run: bash services/ofz/test-control.sh identity
 
   build-ofz:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: validate
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
