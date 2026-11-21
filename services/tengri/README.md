@@ -213,6 +213,10 @@ If a lifecycle command was withdrawn or the guest timed out, the workspace can c
 after the runner confirms termination and authorization returns. While authority is paused, the desktop waits to
 reconnect automatically. An intentional sleep keeps the same disks and presents Resume.
 
+On cold boot the runner installs the Nanoagent binary packaged in its current image. It updates and validates a copy
+of the private root before atomically replacing it. The root's other files and the independently attached home stay
+in place. A memory resume still uses its original guest process.
+
 Lifecycle commands monitor database leadership throughout execution. Withdrawn authority closes the private command's
 write side; the runner cancels that operation, terminates and reaps its VMM, and durably retains a failed claim before
 acknowledging. A separate fencing command covers a completion racing with authority loss. Replacement leadership waits

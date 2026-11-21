@@ -50,7 +50,12 @@ describe('Tengri image workflow', () => {
     expect(workflow.jobs.build?.strategy?.matrix).toEqual({
       architecture: ['amd64', 'arm64'],
       image: ['nanoagent', 'tengri'],
-      include: [{ image: 'tengri', build_contexts: 'ofz-proto=proto\nofz-catalog=services/ofz\n' }],
+      include: [
+        {
+          image: 'tengri',
+          build_contexts: 'ofz-proto=proto\nofz-catalog=services/ofz\nnanoagent-src=services/nanoagent\n',
+        },
+      ],
     })
     expect(workflow.jobs['validate-kvm']).toBeUndefined()
     expect(workflow.jobs['validate-tengri']?.if).not.toContain("github.event_name != 'pull_request'")

@@ -4432,6 +4432,30 @@ for (const phase of ['cancelling', 'needs_reconciliation'] as const) {
   })
 }
 
+test('reopens the composer after an interrupted run without replaying the accepted message', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '88888888-8888-4888-8888-888888888888',
+    agentId: 'microvm-ada',
+    threadId: 'thread-fenced',
+    state: { phase: 'needs_reconciliation', turnId: null, reason: 'The last action could not be confirmed' },
+  }
+  const mock = await mockTengri(page, { durableRun: run })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Response unconfirmed')
+
+  run.state = {
+    phase: 'unconfirmed',
+    turnId: null,
+    reason: 'The workspace restarted. Earlier actions may have taken effect.',
+  }
+  await expect(chat.getByRole('log').getByText('Response interrupted.', { exact: true })).toBeVisible()
+  await expect(chat.getByRole('button', { name: 'Stop response' })).toHaveCount(0)
+  await chat.getByRole('textbox', { name: 'Message your agent' }).fill('Show the current workspace state')
+  await expect(chat.getByRole('button', { name: 'Send message' })).toBeEnabled()
+  expect(mock.actions.filter((action) => action.action === 'send-turn')).toHaveLength(0)
+})
+
 test('shows a text highlight while thinking and keeps reduced-motion status readable', async ({ page }, testInfo) => {
   await mockTengri(page)
   await page.emulateMedia({ reducedMotion: 'no-preference', forcedColors: 'none' })
