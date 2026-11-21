@@ -427,8 +427,28 @@ The end-to-end checks exposed three additional issues:
   approval through the existing workflow. This compatibility finding does not attribute the November 20
   trading losses to the research service.
 
-The two operational repairs and prospective policy correction are follow-up source changes. Their deployment
-and runtime acceptance must be recorded separately from the completed first Bayn release above.
+The operational repairs and prospective policy correction are tracked in
+[PR #16098](https://github.com/proompteng/lab/pull/16098). Their deployment and runtime acceptance must be
+recorded separately from the completed first Bayn release above.
+
+The Torghut post-deploy workflow previously accepted the rollout without testing collector health. Its
+runtime observation window, 06:07:56–06:08:50, overlapped the Alloy OOM at 06:08:09. The follow-up adds
+acceptance checks bound to the verified Argo revision, promoted manifests, current process identity and
+actual TaskManager replicas. It verifies collector capacity, absence of retained rollout OOM/restarts,
+current metric targets and fresh samples, and advancing remote-write delivery without drops or counter
+regression over two scrape intervals. Transient probe failures retain the original process and observation
+history. A bounded read-only run against the original deployment correctly rejected its retained OOM.
+Deleted-Pod history and drops before the first observation of a reused collector remain explicit limits.
+
+At follow-up source `77163050aeea08c635f31b3bdcafa08a02087260`, the
+[core Bayn CI](https://github.com/proompteng/lab/actions/runs/44875746366) passed. The separate
+[native build](https://github.com/proompteng/lab/actions/runs/44875746373) passed on amd64 with 30 assertions
+but failed on arm64 with the unchanged 25-second readiness timeout. The passing test's 53.273-second total
+includes two launches and cleanup; it is not a readiness latency measurement. The failed runner showed no
+measured CPU throttling or restarts and no memory-limit saturation, but these observations do not identify
+the cause. The subsequent test-only diagnostics record bounded spawn, native readiness and gateway phases
+without exposing credentials or changing the original deadlines, retry budgets, ownership or assertions.
+Both architectures must pass on the final source before release.
 
 ## Prospective profitability qualification
 
@@ -452,9 +472,15 @@ fee-ledger verification and native-arrival frontier work. That draft does not su
 comparison, another account binding or a prospectively registered profitable period. Those prerequisites,
 complete cost allocation and original approval requirements remain separate from these runtime repairs.
 
-The follow-up also reproduced a retained-reader defect: the current pure operational-registration validator
-rejects the four stored v37 registrations, while accepting the four v38/v40 registrations. This blocks replay
-of six of the seven retained operational receipts even though the historical protocol schema retains v37.
-A retained-only repair must preserve original hashes and outcomes and leave new admission on the current
-protocol. Restoring historical readability would preserve inconclusive or rejected evidence; it would not
-turn those periods into economic qualification.
+The follow-up also reproduced a retained-reader defect: the original current validator rejected all four
+stored v37 registrations while accepting the four v38/v40 registrations. That blocked replay of six of the
+seven retained operational receipts even though the historical protocol schema retained v37. The repair
+accepts v37 only in the retained reader and only with the exact historical default parameters. Current
+registration and execution admission remain unchanged.
+
+A read-only validation of the same eight live immutable registrations with the repaired reader passed all
+eight, and every recomputed registration hash matched its stored key. A fixed historical fixture exercises
+the public receipt reader and preserves its INCONCLUSIVE / NOT_ASSESSED outcome, including the original
+registration, source-cut and receipt hashes. Forged or altered v37 parameters remain rejected. All six live
+historical source cuts have not been fully replayed; restoring their registration readability does not
+establish a completed replay or economic qualification.
