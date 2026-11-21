@@ -823,7 +823,8 @@ test.each([
   'restate-images.yml',
   'product-nix-images.yml',
 ])('%s uses dependency-aware PR selection for the Landing-only regression', (filename) => {
-  const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+  const selectionWorkflow = filename === 'restate-images.yml' ? 'restate-validation.yml' : filename
+  const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${selectionWorkflow}`, 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing planner steps')
   const filter = steps.find((step) => property(step, 'id') === 'filter')

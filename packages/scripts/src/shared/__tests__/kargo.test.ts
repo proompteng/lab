@@ -214,6 +214,7 @@ const expected = {
     apps: ['restate'],
     includePaths: [
       '.github/workflows/restate-images.yml',
+      '.github/workflows/restate-validation.yml',
       'packages/scripts/src/restate',
       'services/restate',
       'argocd/applications/restate',
