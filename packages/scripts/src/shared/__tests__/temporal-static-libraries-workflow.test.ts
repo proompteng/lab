@@ -67,8 +67,12 @@ test('Temporal Bun SDK keeps PR validation fast and reserves remote load gates f
   expect(integrationJob).toContain('runs-on: arc-arm64')
   expect(integrationJob).toContain('TEMPORAL_ADDRESS: temporal-grpc:7233')
   expect(integrationJob).toContain(`uses: ${integrationAction}`)
-  expect(integrationCommand).toContain('bun test tests/integration --timeout=30000 --max-concurrency=1')
-  expect(integrationCommand).toContain('test:load')
+  expect(integrationCommand).toContain("! -path 'tests/integration/worker-load.test.ts'")
+  expect(integrationCommand).toContain('bun test "${integration_files[@]}" --timeout=30000 --max-concurrency=1')
+  expect(integrationCommand).toContain(
+    'bun test tests/integration/worker-load.test.ts --timeout=30000 --max-concurrency=1',
+  )
+  expect(integrationCommand).not.toContain('test:load')
   expect(integrationCommand.match(/cleanup-integration-workflows\.ts --verify/g)).toHaveLength(2)
   expect(workflow).toContain('needs:\n      - test\n      - integration')
   expect(workflow.match(/- '\.github\/workflows\/temporal-bun-sdk\.yml'/g)).toHaveLength(2)
