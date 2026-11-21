@@ -238,13 +238,19 @@ pub(super) async fn serve_connection(
                 };
                 let same_operation = matches!((&request, &*state.borrow()),
                             (CommandRequest::Restore { claim }, SlotState::Restoring { claim: owner, .. })
+                            | (CommandRequest::Restore { claim }, SlotState::ColdBooting { claim: owner })
                             | (CommandRequest::Sleep { claim }, SlotState::Saving { claim: owner }) if claim == owner);
                 if same_operation {
                     let mut updates = state.clone();
                     match timeout(
                         COMMAND_TIMEOUT,
                         updates.wait_for(|s| {
-                            !matches!(s, SlotState::Restoring { .. } | SlotState::Saving { .. })
+                            !matches!(
+                                s,
+                                SlotState::Restoring { .. }
+                                    | SlotState::ColdBooting { .. }
+                                    | SlotState::Saving { .. }
+                            )
                         }),
                     )
                     .await
