@@ -57,6 +57,7 @@ test('queued revisions require scripts and protobuf validation without sharing a
         TENGRI_RESULT: 'success',
         BUF_RESULT: buf,
         SCRIPTS_RESULT: scripts,
+        TORGHUT_RESULT: 'success',
         FULL_VALIDATION: full,
         DELEGATED: '[]',
       },
