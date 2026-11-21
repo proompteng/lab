@@ -287,6 +287,45 @@ test('the full queue builds the same four native product images and verifies App
   })
 })
 
+test('Temporal worker uses the same native build and heartbeat proof in PRs and the merge queue', () => {
+  const publisher: unknown = Bun.YAML.parse(readFileSync('.github/workflows/temporal-worker-images.yml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const shared: unknown = Bun.YAML.parse(readFileSync('.github/actions/build-temporal-worker/action.yml', 'utf8'))
+  const publisherJobs = property(publisher, 'jobs')
+  const build = property(publisherJobs, 'build')
+  const validation = property(property(queue, 'jobs'), 'temporal-worker')
+  const releaseMatrix = property(property(property(build, 'strategy'), 'matrix'), 'include') as unknown[]
+  expect(property(validation, 'strategy')).toEqual({
+    'fail-fast': false,
+    matrix: {
+      include: releaseMatrix.map((lane) => ({
+        architecture: property(lane, 'architecture'),
+        runner: property(lane, 'prRunner'),
+      })),
+    },
+  })
+  const action = './.github/actions/build-temporal-worker'
+  const baseSteps = [{ uses: 'actions/checkout@v6' }, { uses: './.github/actions/setup-buildkit' }]
+  const architecture = '${{ matrix.architecture }}'
+  expect(property(build, 'steps')).toEqual([
+    ...baseSteps,
+    { uses: action, with: { architecture, 'release-image': '${{ env.IMAGE }}' } },
+  ])
+  expect(property(validation, 'steps')).toEqual([...baseSteps, { uses: action, with: { architecture } }])
+  const steps = property(property(shared, 'runs'), 'steps') as unknown[]
+  const runtime = steps.find((step) => property(step, 'name') === 'Build runtime')
+  expect(property(property(runtime, 'with'), 'push')).toBe(
+    "${{ inputs.release-image != '' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}",
+  )
+  expect(property(property(runtime, 'with'), 'cache-to')).toContain("github.event_name != 'merge_group'")
+  const evidence = steps.find((step) => property(step, 'name') === 'Retain SDK heartbeat proof')
+  expect(property(evidence, 'run')).toContain('--target evidence')
+  const publication = property(publisherJobs, 'publish')
+  expect(property(publication, 'if')).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'")
+  expect(property(publication, 'needs')).toEqual(['build'])
+  expect(property(property(publication, 'permissions'), 'id-token')).toBe('write')
+})
+
 test('Signal Publisher validates the queued image revision without publication', () => {
   const path = './.github/workflows/signal-publisher-build-push.yml'
   const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
