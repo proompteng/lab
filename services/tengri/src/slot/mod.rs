@@ -430,6 +430,11 @@ impl Slot {
     async fn cold_boot(&mut self, claim: &Claim) -> anyhow::Result<()> {
         // A cancelled snapshot is never a boot source. Both disks stay with this runner.
         self.remove_old_snapshots(0).await?;
+        runner::update_guest_agent(
+            &self.config.root_disk,
+            std::path::Path::new(runner::PACKAGED_GUEST_AGENT),
+        )
+        .await?;
         self.vm = Some(Vmm::spawn(&self.config).await?);
         let vm = self.vm.as_mut().context("missing recovery VMM")?;
         vm.boot(&self.config).await?;
