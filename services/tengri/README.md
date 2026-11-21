@@ -209,6 +209,9 @@ visible unclaimed failures that the pool can retire; a restart keeps that failur
 Loss of an active runner, Pod, or node retains the owner and home for explicit fenced recovery. Lease age, missing
 Pods, and controller disconnection never authorize a replacement writer. Sleeping journals can reopen only with
 unchanged runtime and disk identities. An exited VMM fences traffic and reports failure.
+If a lifecycle command was withdrawn or the guest timed out, the workspace can cold boot from its retained disks
+after the runner confirms termination and authorization returns. While authority is paused, the desktop waits to
+reconnect automatically. An intentional sleep keeps the same disks and presents Resume.
 
 Lifecycle commands monitor database leadership throughout execution. Withdrawn authority closes the private command's
 write side; the runner cancels that operation, terminates and reaps its VMM, and durably retains a failed claim before
