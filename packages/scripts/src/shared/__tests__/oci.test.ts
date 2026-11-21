@@ -62,7 +62,6 @@ const headlampStaticCopyPatch = readRepoFile('services/headlamp/patches/0004-sta
 const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
 const appImageModule = readRepoFile('nix/images/app.nix')
 const productImageModules = [
-  appImageModule,
   readRepoFile('nix/images/docs.nix'),
   readRepoFile('nix/images/olden.nix'),
   readRepoFile('nix/images/proompteng.nix'),
@@ -1448,6 +1447,9 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).not.toContain("'argocd/applications/olden/**'")
     expect(productNixWorkflow).toContain("'argocd/applications/synthesis/**'")
     expect(appImageModule).toContain('"@proompteng/source"')
+    expect(appImageModule).toContain('dependencyClosure = "bunCacheArchive";')
+    expect(bunWorkspaceServiceModule).toContain('nix-store --dump "$BUN_INSTALL_CACHE_DIR" > "$out"')
+    expect(bunWorkspaceServiceModule).toContain('nix-store --restore "$BUN_INSTALL_CACHE_DIR" < ${deps}')
     for (const imageModule of productImageModules) {
       expect(imageModule).toContain('dependencyClosure = "bunCache";')
     }
