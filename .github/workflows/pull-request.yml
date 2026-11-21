@@ -458,7 +458,6 @@ jobs:
     name: Bayn CI
     if: github.event_name == 'merge_group'
     uses: ./.github/workflows/bayn-ci.yml
-    secrets: inherit
 
   ci-pr:
     name: ci-pr

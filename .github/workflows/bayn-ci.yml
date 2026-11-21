@@ -119,7 +119,6 @@ jobs:
         bun services/bayn/tools/verify-image-metadata.ts &&
         bun run --cwd services/bayn build:research &&
         bash packages/scripts/src/bayn/verify-research-commands.sh
-    secrets: inherit
 
   gepa:
     needs: changes
