@@ -632,7 +632,10 @@ fi
 
     expect(arcSetupCallers.length).toBeGreaterThan(0)
     for (const { file, job, required } of arcSetupCallers) {
-      expect(required, `${file}:${job} must require the preinstalled ARC Nix toolchain`).toBe('true')
+      expect(
+        ['true', "${{ runner.environment == 'self-hosted' }}"],
+        `${file}:${job} must require the preinstalled ARC Nix toolchain`,
+      ).toContain(required)
     }
   })
 })

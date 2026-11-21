@@ -25,6 +25,7 @@ import ./bun-workspace-service.nix {
     "packages/design"
   ];
   buildCommands = [
+    ''patchShebangs --build "$(realpath apps/app/node_modules/.bin/vite)"''
     "bun --cwd=apps/app run build"
   ];
   runtimeInstallPhase = ''
