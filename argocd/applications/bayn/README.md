@@ -64,8 +64,10 @@ invocations. Current code has no caller for it. After live acceptance, the clean
 into `broker_source_events` before dropping the sink. The migration also installs a temporary shared-database order
 version fence for the same overlap: a prepared predecessor insert derives the canonical nine-digit provider version
 from its immutable source identity, while stale or conflicting provider versions fail before insertion. Current code
-supplies that value directly and applies the same rule. The cleanup migration removes the predecessor insert branch and
-its trigger only after the old revision drains.
+supplies that value directly and applies the same rule. A REST order whose microsecond `updated_at` truncates a retained
+stream nanosecond version reuses that stream receipt only when the complete order content matches; a different state or
+genuinely older microsecond still fails closed. The cleanup migration removes the predecessor insert branch and its
+trigger only after the old revision drains.
 
 This hard migration removes the broker-only Kafka adapter, producer, consumer group, health script and Bayn Kafka
 credentials. It intentionally retains the now-inert topic during cutover: the Kafka application tracks `main`, while

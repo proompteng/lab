@@ -29,7 +29,7 @@
     "src/db/jev-batch-admission-postgres.integration.test.ts": 5400,
     "src/db/jev-batch-dispatch-postgres.integration.test.ts": 7202,
     "src/db/jev-batch-evidence-postgres.integration.test.ts": 8821,
-    "src/db/jev-batch-expiry-paging-postgres.integration.test.ts": 12962,
+    "src/db/jev-batch-expiry-paging-postgres.integration.test.ts": 4793,
     "src/db/jev-batch-expiry-postgres.integration.test.ts": 3818,
     "src/db/jev-batch-finalization-postgres.integration.test.ts": 5668,
     "src/db/jev-batch-postgres.integration.test.ts": 3039,
