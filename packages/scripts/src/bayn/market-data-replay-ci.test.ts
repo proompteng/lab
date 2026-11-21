@@ -1,3 +1,4 @@
+// Exercise CI command wiring with local workflow fixtures.
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
