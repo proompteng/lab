@@ -144,3 +144,22 @@ jobs:
 
   synthesis:
     uses: ./.github/workflows/synthesis-ci.yml
+
+  temporal-worker:
+    name: Temporal worker build and heartbeat tests (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-buildkit
+      - uses: ./.github/actions/build-temporal-worker
+        with:
+          architecture: ${{ matrix.architecture }}

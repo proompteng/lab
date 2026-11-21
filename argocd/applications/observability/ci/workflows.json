@@ -591,6 +591,10 @@
     {
       "id": "synthesis",
       "pattern": "^synthesis(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "temporal-worker",
+      "pattern": "^Temporal worker build and heartbeat tests \\(.*\\)(?: \\(.*\\))?$"
     }
   ],
   "relay.yml": [
