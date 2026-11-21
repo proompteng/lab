@@ -1,0 +1,37 @@
+amends "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Config.pkl"
+
+hooks {
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps {
+      ["gofmt"] {
+        glob = "*.go"
+        fix = "gofmt -w {{files}}"
+      }
+      ["oxlint"] {
+        glob = List("*.ts", "*.tsx", "*.js", "*.jsx")
+        check = "node_modules/.bin/oxlint --config .oxlintrc.json {{files}}"
+      }
+      ["oxfmt"] {
+        glob = List("*.ts", "*.tsx", "*.js", "*.jsx", "*.css")
+        depends = "oxlint"
+        fix = "node_modules/.bin/oxfmt --no-error-on-unmatched-pattern {{files}}"
+      }
+    }
+  }
+  ["commit-msg"] {
+    steps {
+      ["commitlint"] {
+        check = "node node_modules/@commitlint/cli/cli.js --edit {{commit_msg_file}}"
+      }
+    }
+  }
+  ["pre-push"] {
+    steps {
+      ["workspace-lint"] {
+        check = "bun run lint:oxlint"
+      }
+    }
+  }
+}
