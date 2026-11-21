@@ -259,7 +259,16 @@ jobs:
           --filter @proompteng/source
           --filter @proompteng/bayn
       - name: Verify isolated PostgreSQL persistence shard
+        env:
+          BAYN_CI_POSTGRES_TIMINGS_PATH: ${{ format('{0}/bayn-postgres-timings.json', runner.temp) }}
         run: bun run --cwd services/bayn test:postgres ${{ matrix.shard }}/4
+      - name: Record PostgreSQL test file durations
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-postgres-timings-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bayn-postgres-timings.json*
+          if-no-files-found: error
+          retention-days: 7
 
   archive-integration:
     needs: changes

@@ -2483,6 +2483,9 @@ runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. N
 the same database. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
 
+Successful PostgreSQL CI shards upload their measured file durations as `bayn-postgres-timings-<shard>-<attempt>`
+artifacts for balancing future runs.
+
 Streaming failure integration runs in a separate required job with disposable PostgreSQL, Restate 1.8.1 and Kafka.
 Run `bash services/bayn/scripts/test-streaming-integrations.sh` from a local Docker host using the pinned toolchain.
 It exercises admitted inference retries, obsolete-poll retirement on a fresh Restate instance, and the pinned Kafka
