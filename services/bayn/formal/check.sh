@@ -47,7 +47,7 @@ if [[ -e "$source_probe" ]]; then
   echo "Formal sandbox probe path already exists: $source_probe" >&2
   exit 1
 fi
-if bwrap "${sandbox[@]}" -- /bin/sh -c 'printf probe > "$1"' _ "$source_probe" 2>/dev/null; then
+if bwrap "${sandbox[@]}" -- /usr/bin/touch "$source_probe" 2>/dev/null; then
   rm -f -- "$source_probe"
   echo 'Formal build sandbox unexpectedly permits source writes.' >&2
   exit 1
