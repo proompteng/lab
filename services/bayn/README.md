@@ -2578,8 +2578,9 @@ The native integration test records one failure-only process snapshot before out
 child is still running before and after five bounded reads, and requires the PID, parent and kernel start time to agree.
 The capture has a 200 ms budget inside a 250 ms observation budget; each read stops at 4,097 bytes and rejects content
 above 4,096 bytes. Missing, malformed, oversized, changed-identity and timed-out observations remain explicitly
-unavailable. Diagnostic read, parser and logger failures preserve the original test failure. Successful starts perform
-no additional reads; all readiness, probe, outer-test and shutdown deadlines remain unchanged.
+unavailable. The allowlisted record is emitted as one JSON message so the default console formatter preserves nested
+counters and unavailable reasons. Diagnostic read, parser, serialization and logger failures preserve the original test
+failure. Successful starts perform no additional reads; all readiness, probe, outer-test and shutdown deadlines remain unchanged.
 
 The allowlisted [process counters](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html) retain raw CPU clock ticks,
 fault counts, thread count, virtual bytes and resident pages without assuming a tick frequency or page size.

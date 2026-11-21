@@ -208,14 +208,16 @@ export const observeNativeStartupFailure = (
       Effect.map(Option.getOrElse(() => unavailable(UnavailableReason.CaptureTimeout))),
       Effect.catchCause(() => Effect.succeed(unavailable(UnavailableReason.CaptureFailed))),
     )
-    yield* Effect.logInfo({
-      event: 'bayn.opencode-native-process-failure-test.v1',
-      phase,
-      beforeOuterScopeCleanup: true,
-      captureElapsedMs: (yield* Clock.currentTimeMillis) - startedAt,
-      limits: nativeProcessCaptureLimits,
-      snapshot,
-    })
+    yield* Effect.logInfo(
+      JSON.stringify({
+        event: 'bayn.opencode-native-process-failure-test.v1',
+        phase,
+        beforeOuterScopeCleanup: true,
+        captureElapsedMs: (yield* Clock.currentTimeMillis) - startedAt,
+        limits: nativeProcessCaptureLimits,
+        snapshot,
+      }),
+    )
   }).pipe(
     Effect.timeoutOption(nativeProcessCaptureLimits.observationBudgetMs),
     Effect.interruptible,

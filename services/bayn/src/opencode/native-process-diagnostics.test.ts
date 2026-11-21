@@ -1,6 +1,8 @@
-import { expect, test } from 'bun:test'
+import { expect, spyOn, test } from 'bun:test'
+
+import { NodeServices } from '@effect/platform-node'
 import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Logger, Result, Stream } from 'effect'
-import { ChildProcessSpawner } from 'effect/process'
+import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -43,6 +45,15 @@ const observe = (handle = child) =>
     Effect.exit,
   )
 
+const collectEvents = (events: unknown[], message: unknown) => {
+  const messages: readonly unknown[] = Array.isArray(message) ? message : [message]
+  for (const entry of messages) {
+    if (typeof entry !== 'string') throw new Error('Expected a serialized diagnostic')
+    const decoded: unknown = JSON.parse(entry)
+    events.push(decoded)
+  }
+}
+
 const fixture = (replacement: Partial<FileSystem.FileSystem> = {}) => {
   const reads: { path: string; bytesToRead: unknown; chunkSize: number | undefined }[] = []
   const events: unknown[] = []
@@ -58,12 +69,86 @@ const fixture = (replacement: Partial<FileSystem.FileSystem> = {}) => {
   const provide = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
     effect.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provide(
-        Logger.layer([Logger.make(({ message }) => events.push(...(Array.isArray(message) ? message : [message])))]),
-      ),
+      Effect.provide(Logger.layer([Logger.make(({ message }) => collectEvents(events, message))])),
     )
   return { reads, events, fileSystem, provide }
 }
+
+test.each(['available', 'unavailable'] as const)(
+  'default logger and Bun console preserve every allowlisted diagnostic leaf: %s',
+  async (mode) => {
+    const files = { ...contents, stat: stat({ pid: 0, parent: 0 }), schedstat: mode === 'available' ? scheduler : '' }
+    const program = `
+      import { Effect, Exit, FileSystem, Stream } from 'effect'
+      import { ChildProcessSpawner } from 'effect/process'
+      import { observeNativeStartupFailure } from ${JSON.stringify(new URL('../../tools/test-native-process-diagnostics.ts', import.meta.url).href)}
+      const pid = ChildProcessSpawner.ProcessId(process.pid + 10000)
+      const files = ${JSON.stringify(files)}
+      files.stat = files.stat.replace(/^0 /, pid + ' ').replace(') S 0 ', ') S ' + process.pid + ' ')
+      const fs = FileSystem.makeNoop({
+        stream: (path) => Stream.make(new TextEncoder().encode(files[path.split('/').at(-1)] ?? '')),
+      })
+      await Effect.runPromise(observeNativeStartupFailure(Exit.fail('original failure'), 'initial', {
+        pid, isRunning: Effect.succeed(true),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, fs)))
+    `
+    const output = await Effect.runPromise(
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+        const handle = yield* spawner.spawn(
+          ChildProcess.make(process.execPath, ['--eval', program], { cwd: import.meta.dir }),
+        )
+        return yield* Effect.all(
+          {
+            stdout: handle.stdout.pipe(
+              Stream.decodeText(),
+              Stream.runCollect,
+              Effect.map((chunks) => chunks.join('')),
+            ),
+            stderr: handle.stderr.pipe(
+              Stream.decodeText(),
+              Stream.runCollect,
+              Effect.map((chunks) => chunks.join('')),
+            ),
+            exitCode: handle.exitCode,
+          },
+          { concurrency: 'unbounded' },
+        )
+      }).pipe(Effect.timeout('3 seconds'), Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+    expect(output.exitCode).toBe(ChildProcessSpawner.ExitCode(0))
+    expect(output.stderr).toBe('')
+    expect(output.stdout).not.toContain('[Object')
+    expect(output.stdout).not.toMatch(/private|credential-value|\/proc\//)
+    const lines = output.stdout.trim().split('\n')
+    expect(lines).toHaveLength(1)
+    const line = lines[0] ?? ''
+    const record: unknown = JSON.parse(line.slice(line.indexOf('{')))
+    expect(record).toEqual({
+      event: 'bayn.opencode-native-process-failure-test.v1',
+      phase: 'initial',
+      beforeOuterScopeCleanup: true,
+      captureElapsedMs: expect.any(Number),
+      limits: nativeProcessCaptureLimits,
+      snapshot: {
+        availability: 'AVAILABLE',
+        value: {
+          process: {
+            ...Result.getOrThrow(parseNativeProcessStat(stat())),
+            pid: expect.any(Number),
+            parentPid: expect.any(Number),
+          },
+          processAndWaitedChildrenIo: { availability: 'AVAILABLE', value: Result.getOrThrow(parseNativeProcessIo(io)) },
+          status: { availability: 'AVAILABLE', value: Result.getOrThrow(parseNativeProcessStatus(status)) },
+          mainTaskScheduler:
+            mode === 'available'
+              ? { availability: 'AVAILABLE', value: Result.getOrThrow(parseNativeProcessScheduler(scheduler)) }
+              : { availability: 'UNAVAILABLE', reason: 'INVALID_CONTENT' },
+        },
+      },
+    })
+  },
+)
 
 test('stat parser strips the complete comm and preserves only validated numeric fields and task state', () => {
   const result = parseNativeProcessStat(stat())
@@ -282,9 +367,7 @@ test('a never-completing proc reader is interrupted and finalized once inside th
   }).pipe(
     Effect.scoped,
     Effect.provide(TestClock.layer()),
-    Effect.provide(
-      Logger.layer([Logger.make(({ message }) => events.push(...(Array.isArray(message) ? message : [message])))]),
-    ),
+    Effect.provide(Logger.layer([Logger.make(({ message }) => collectEvents(events, message))])),
   )
   await Effect.runPromise(program)
   expect(events).toEqual([
@@ -324,6 +407,37 @@ test.each(['reader', 'logger'])('a throwing %s cannot replace or append to the o
   expect(result).toEqual(original)
   if (kind === 'logger') expect(loggerCalls).toBe(1)
   expect(JSON.stringify(f.events)).not.toContain('credential-value')
+})
+
+test('a serialization defect cannot replace or append to the original failure', async () => {
+  const f = fixture()
+  const stringify = JSON.stringify
+  let serializationCalls = 0
+  const serialization = spyOn(JSON, 'stringify').mockImplementation(
+    (
+      value: unknown,
+      replacer?: ((key: string, value: unknown) => unknown) | (string | number)[] | null,
+      space?: string | number,
+    ) => {
+      if (
+        typeof value === 'object' &&
+        value !== null &&
+        'event' in value &&
+        value.event === 'bayn.opencode-native-process-failure-test.v1'
+      ) {
+        serializationCalls += 1
+        throw new Error('/private/credential-value')
+      }
+      return typeof replacer === 'function' ? stringify(value, replacer, space) : stringify(value, replacer, space)
+    },
+  )
+  try {
+    expect(await Effect.runPromise(f.provide(observe()))).toEqual(original)
+    expect(serializationCalls).toBe(1)
+    expect(f.events).toEqual([])
+  } finally {
+    serialization.mockRestore()
+  }
 })
 
 test('an original defect and interruption retain their exact causes', async () => {
