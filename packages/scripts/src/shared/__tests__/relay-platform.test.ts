@@ -101,6 +101,8 @@ test('queued revisions require the platform suites', () => {
         BUF_RESULT: 'success',
         SCRIPTS_RESULT: 'success',
         TORGHUT_RESULT: 'success',
+        TORGHUT_SCHEMA_RESULT: 'success',
+        TORGHUT_NOTEBOOKS_RESULT: 'success',
         FULL_VALIDATION: full,
         DELEGATED: '[]',
       },
