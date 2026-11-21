@@ -1698,6 +1698,10 @@ lineage. Image publication alone does not authorize the revised strategy.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 
+When Activity SSE contains cash fees whose authoritative REST records are still pending, the broker projection
+reports `BROKER_CASH_FEES_PENDING`. This retains the typed observation failure without exposing provider payloads.
+Trading readiness and ordinary submission continue to wait for settlement; other broker failures remain distinct.
+
 The status process opens without a live broker HTTP preflight. Its health passes read the revision-bound canonical
 broker projection each time, so an unavailable broker remains visible as degraded status and can recover without a
 process restart. Execution workers retain their verified broker session and all existing order-admission checks.
