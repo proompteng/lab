@@ -4,8 +4,8 @@ namespace: restate
 images:
   - name: restate-runtime
     newName: docker.restate.dev/restatedev/restate
-    newTag: 1.8.1
-    digest: sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1
+    newTag: 1.8.1-hotfix.2
+    digest: sha256:e3a11e7c694cfe0c134eca1652992c068bef0bcba3caeec9d2a3b3bc50daa62e
 resources:
   - serviceaccount.yaml
   - request-identity-sealedsecret.yaml
