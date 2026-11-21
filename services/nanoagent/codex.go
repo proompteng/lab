@@ -112,6 +112,7 @@ type codexSupervisor struct {
 	relayMu         sync.Mutex
 	relayRoot       string
 	operationMu     sync.Mutex
+	operationGates  map[string]*codexOperationGate
 	responseTimeout time.Duration
 
 	mu              sync.Mutex
@@ -143,6 +144,7 @@ func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 		binary:          binary,
 		cwd:             cwd,
 		writePermit:     make(chan struct{}, 1),
+		operationGates:  make(map[string]*codexOperationGate),
 		responseTimeout: codexResponseWriteTimeout,
 		generation:      newCodexProcessGeneration(),
 		workRequests:    make(map[string]struct{}),
@@ -381,11 +383,14 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 			ID     string `json:"operationId"`
 			Thread string `json:"threadId"`
 		}
-		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) {
+		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) || input.Thread == "" {
 			return codexCallResult{}, errors.New("invalid operation identity")
 		}
-		supervisor.operationMu.Lock()
-		defer supervisor.operationMu.Unlock()
+		unlock, err := supervisor.lockOperation(ctx, input.Thread)
+		if err != nil {
+			return codexCallResult{}, err
+		}
+		defer unlock()
 		path := filepath.Join(supervisor.cwd, ".tengri", "codex-operations", input.ID+".json")
 		op, err := readCodexOperation(path)
 		if err != nil || op.Thread != input.Thread {
@@ -1624,8 +1629,11 @@ func (supervisor *codexSupervisor) archiveThread(ctx context.Context, params jso
 	if json.Unmarshal(params, &input) != nil || input.ThreadID == "" {
 		return codexCallResult{}, errors.New("threadId is required")
 	}
-	supervisor.operationMu.Lock()
-	defer supervisor.operationMu.Unlock()
+	unlock, err := supervisor.lockOperation(ctx, input.ThreadID)
+	if err != nil {
+		return codexCallResult{}, err
+	}
+	defer unlock()
 	supervisor.mu.Lock()
 	_, active := supervisor.activeTurns[input.ThreadID]
 	supervisor.mu.Unlock()

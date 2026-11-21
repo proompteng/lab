@@ -588,6 +588,8 @@ Nanoagent fsyncs one operation intent and links its conversation gate before dis
 native write never began is recorded as a rejection, along with native invalid-request, method-not-found and
 invalid-params errors. Transport failures after a write begins and other native errors retain acceptance
 reconciliation. Native terminal notifications are fsynced under their accepting generation, thread and turn.
+Dispatch and reconciliation serialize within the affected conversation. The first durable writer owns the operation ID
+across all conversations.
 Version 2 interrupted receipts additionally
 require confirmed termination of that turn's native command sessions. Nanoagent tracks command item IDs before
 interruption, inventories and terminates only those background terminals, and verifies their absence before writing

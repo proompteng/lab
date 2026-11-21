@@ -33,6 +33,40 @@ type codexOperation struct {
 	Error      json.RawMessage `json:"error,omitempty"`
 }
 
+type codexOperationGate struct {
+	permit chan struct{}
+	users  int
+}
+
+func (supervisor *codexSupervisor) lockOperation(ctx context.Context, thread string) (func(), error) {
+	supervisor.operationMu.Lock()
+	gate := supervisor.operationGates[thread]
+	if gate == nil {
+		gate = &codexOperationGate{permit: make(chan struct{}, 1)}
+		supervisor.operationGates[thread] = gate
+	}
+	gate.users++
+	supervisor.operationMu.Unlock()
+	releaseReference := func() {
+		supervisor.operationMu.Lock()
+		defer supervisor.operationMu.Unlock()
+		gate.users--
+		if gate.users == 0 {
+			delete(supervisor.operationGates, thread)
+		}
+	}
+	select {
+	case gate.permit <- struct{}{}:
+		return func() {
+			<-gate.permit
+			releaseReference()
+		}, nil
+	case <-ctx.Done():
+		releaseReference()
+		return nil, ctx.Err()
+	}
+}
+
 func (supervisor *codexSupervisor) operation(ctx context.Context, method string, params json.RawMessage) (codexCallResult, error) {
 	var input struct {
 		ID     string `json:"clientUserMessageId"`
@@ -56,8 +90,11 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 	}
 	digest := sha256.Sum256(append([]byte(method+"\n"), canonical...))
 	op := codexOperation{Version: 1, ID: input.ID, Digest: hex.EncodeToString(digest[:]), Method: method, Thread: input.Thread, State: "dispatching"}
-	supervisor.operationMu.Lock()
-	defer supervisor.operationMu.Unlock()
+	unlock, err := supervisor.lockOperation(ctx, input.Thread)
+	if err != nil {
+		return codexCallResult{}, err
+	}
+	defer unlock()
 	if err := ctx.Err(); err != nil {
 		return codexCallResult{}, err
 	}
@@ -116,7 +153,7 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 			return codexCallResult{}, fmt.Errorf("read pending Codex operation: %w", err)
 		}
 	}
-	if err := writeCodexReceiptWithGate(path, activePath, op); err != nil {
+	if err := publishCodexReceipt(path, activePath, op, true); err != nil {
 		return codexCallResult{}, err
 	}
 	result, requestErr := supervisor.dispatchOperation(ctx, method, params)
@@ -282,10 +319,10 @@ func writeCodexOperation(path string, op codexOperation) error {
 }
 
 func writeCodexReceipt(path string, value any) error {
-	return writeCodexReceiptWithGate(path, "", value)
+	return publishCodexReceipt(path, "", value, false)
 }
 
-func writeCodexReceiptWithGate(path, gate string, value any) error {
+func publishCodexReceipt(path, gate string, value any, createOnly bool) error {
 	content, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -303,7 +340,18 @@ func writeCodexReceiptWithGate(path, gate string, value any) error {
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return err
 	}
-	if err := os.Rename(file.Name(), path); err != nil {
+	if createOnly {
+		// Distinct threads can race to claim the same operation ID. The first writer owns it.
+		if err := os.Link(file.Name(), path); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return errCodexOperationConflict
+			}
+			return err
+		}
+		if err := os.Remove(file.Name()); err != nil {
+			return err
+		}
+	} else if err := os.Rename(file.Name(), path); err != nil {
 		return err
 	}
 	if gate != "" {
