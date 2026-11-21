@@ -35,6 +35,21 @@ patch to the pinned upstream server to select its existing streaming path, keepi
 cache contents and public pull permissions unchanged. Verify an actual small NAR download, not only
 `nix-cache-info`, after rollout.
 
+NAR stream failures report a fixed `error_class`, the validated Nix store-path
+hash, the single-chunk or reassembly mode, and a bounded source-chain depth.
+The classifier examines at most eight error sources, including wrapped I/O
+timeouts, resets, broken pipes and premature EOF. It recognizes the private
+minimum-throughput error in pinned `aws-smithy-runtime` 1.8.3 by its fixed text
+prefix without collecting or emitting the text. Other failures remain
+`unclassified_body_read`; `chain_limit_reached` identifies a truncated or cyclic
+chain. Raw causes, S3 URLs, object keys, headers and credentials are not logged.
+These labels describe observed errors, not a proven storage or network cause.
+The image build is configured to run focused Rust tests for classification, bounded traversal,
+log privacy and preservation of partial bodies and original errors in both
+stream modes. Pull requests build both architectures at the exact reviewed head
+without publishing images or receiving the cache-upload credential. The separate
+publication job forwards only `ATTIC_TOKEN`, and only on `main`.
+
 The API deployment runs database migrations in an init container, then starts
 `atticd --mode api-server`. Garbage collection runs separately through
 `CronJob/attic-gc`.

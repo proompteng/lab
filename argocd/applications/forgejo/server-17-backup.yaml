@@ -29,7 +29,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: forgejo-server-17-0-2-restore-db
+  name: forgejo-server-17-0-2-restore-db-retry
   namespace: forgejo
   annotations:
     argocd.argoproj.io/sync-wave: '-5'

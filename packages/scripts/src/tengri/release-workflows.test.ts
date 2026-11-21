@@ -25,15 +25,17 @@ describe('Tengri image workflow', () => {
     expect(validation).toContain('GOWORK=off go vet ./...')
   })
 
-  it('builds and qualifies each architecture on one builder without publishing PR images', () => {
+  it('builds the two native images independently and verifies the pushed guest artifacts', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: Record<
         string,
         {
           if?: string
-          strategy?: { matrix: { include: Array<{ architecture: string; runner: string }> } }
+          'runs-on'?: string
+          strategy?: { matrix: { architecture: string[]; image: string[]; include: unknown[] } }
           steps: Array<{
             name?: string
+            if?: string
             uses?: string
             run?: string
             with?: Record<string, unknown>
@@ -44,35 +46,39 @@ describe('Tengri image workflow', () => {
     }
     const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
     expect(workflow.jobs.build?.if).toBe(releaseOnly)
-    expect(workflow.jobs.build?.strategy?.matrix.include).toEqual([
-      { architecture: 'amd64', runner: 'arc-amd64' },
-      { architecture: 'arm64', runner: 'arc-arm64' },
-    ])
+    expect(workflow.jobs.build?.['runs-on']).toBe('arc-${{ matrix.architecture }}')
+    expect(workflow.jobs.build?.strategy?.matrix).toEqual({
+      architecture: ['amd64', 'arm64'],
+      image: ['nanoagent', 'tengri'],
+      include: [
+        {
+          image: 'tengri',
+          build_contexts: 'ofz-proto=proto\nofz-catalog=services/ofz\nnanoagent-src=services/nanoagent\n',
+        },
+      ],
+    })
     expect(workflow.jobs['validate-kvm']).toBeUndefined()
     expect(workflow.jobs['validate-tengri']?.if).not.toContain("github.event_name != 'pull_request'")
     expect(workflow.jobs['validate-nanoagent']?.if).not.toContain("github.event_name != 'pull_request'")
     const steps = workflow.jobs.build.steps
     expect(steps.filter((step) => step.uses === './.github/actions/setup-buildkit')).toHaveLength(1)
-    const guestIndex = steps.findIndex((step) => step.name === 'Build nanoagent image')
-    const controllerIndex = steps.findIndex((step) => step.name === 'Build tengri image')
-    expect(guestIndex).toBeGreaterThanOrEqual(0)
-    expect(controllerIndex).toBeGreaterThan(guestIndex)
-    for (const [name, image] of [
-      ['tengri', 'TENGRI_IMAGE'],
-      ['nanoagent', 'NANOAGENT_IMAGE'],
-    ]) {
-      const build = steps.find((step) => step.name === `Build ${name} image`)
-      expect(build?.with?.context).toBe(`services/${name}`)
-      expect(build?.with?.push).toBe(true)
-      expect(build?.with?.['build-args']).toBe('SOURCE_REVISION=${{ github.sha }}')
-      const cache = 'type=registry,ref=${{ env.' + image + ' }}:cache-${{ matrix.architecture }}'
-      expect(build?.with?.['cache-from']).toBe(cache)
-      expect(build?.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
-      expect(build?.['continue-on-error']).not.toBe(true)
-    }
+    const build = steps.find((step) => step.uses === 'docker/build-push-action@v6')
     const pairedBoot = steps.find((step) => step.name === 'Verify paired boot artifact checksums')
-    expect(pairedBoot?.run).toContain('crane export --platform "linux/${ARCHITECTURE}" "$guest"')
-    expect(pairedBoot?.run).toContain('sha256sum --check SHA256SUMS')
+    if (!build || !pairedBoot) throw new Error('Native build or guest verification step is missing')
+    expect(build.with?.context).toBe('services/${{ matrix.image }}')
+    expect(build.with?.push).toBe(true)
+    expect(build.with?.['build-contexts']).toBe('${{ matrix.build_contexts }}')
+    expect(build.with?.['build-args']).toContain(
+      "matrix.image == 'tengri' && format('SOURCE_REVISION={0}', github.sha)",
+    )
+    const cache = 'type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}'
+    expect(build.with?.['cache-from']).toBe(cache)
+    expect(build.with?.['cache-to']).toBe(`${cache},mode=min,ignore-error=true`)
+    expect(build['continue-on-error']).not.toBe(true)
+    expect(pairedBoot.if).toBe("matrix.image == 'nanoagent'")
+    expect(steps.indexOf(pairedBoot)).toBeGreaterThan(steps.indexOf(build))
+    expect(pairedBoot.run).toContain('crane export --platform "linux/${ARCHITECTURE}" "$guest" - | tar -xf -')
+    expect(pairedBoot.run).toContain('sha256sum --check SHA256SUMS')
     expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
 
     const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
@@ -105,16 +111,12 @@ describe('Tengri image workflow', () => {
 
     expect(YAML.parse(source).name).toBe('Tengri images')
     expect(source).not.toContain('tengri-release.yml')
-    expect(source).toContain('Build tengri image')
-    expect(source).toContain('Build nanoagent image')
-    expect(source).toContain('architecture: amd64')
-    expect(source).toContain('architecture: arm64')
     expect(source).toContain('cosign sign --yes')
     expect(source).toContain("--format '{{json .Manifest}}'")
     expect(source).toContain("jq -er '.digest'")
-    expect(source).toContain('org.opencontainers.image.created=${SOURCE_TIMESTAMP}')
-    expect(source).toContain('org.opencontainers.image.revision=${SOURCE_SHA}')
-    expect(source).toContain('crane mutate --platform "linux/${architecture}"')
+    expect(source).toContain('org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}')
+    expect(source).toContain('org.opencontainers.image.revision=${{ github.sha }}')
+    expect(source).not.toContain('crane mutate')
     expect(source).toContain('crane config --platform "linux/${architecture}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.source=${SOURCE_URL}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}"')

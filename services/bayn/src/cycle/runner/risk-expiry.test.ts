@@ -143,6 +143,7 @@ test.each([
       accountId,
       executionPolicy: policy,
       authorityGenerationHash: document.bindings.authorityGenerationHash,
+      nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
       buildDecision: () =>
         Effect.sync(() => {
           operations.push('build')

@@ -24,3 +24,18 @@ spec:
       snapshotOwnerReference: backup
   monitoring:
     enablePodMonitor: true
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: penpot-db-pre-18-7
+  namespace: penpot
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: penpot-db
+  method: volumeSnapshot
+  online: true
+  target: prefer-standby
