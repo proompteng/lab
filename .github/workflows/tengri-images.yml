@@ -80,6 +80,10 @@ on:
       - tsconfig.base.json
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
+      - '!apps/landing/README.md'
+      - '!services/ofz/README.md'
+      - '!services/tengri/README.md'
+      - '!services/nanoagent/README.md'
   workflow_dispatch:
 
 concurrency:
