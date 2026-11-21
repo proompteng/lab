@@ -4,6 +4,11 @@ permissions:
   contents: read
 
 on:
+  pull_request:
+    paths:
+      - 'nix/images/attic.nix'
+      - 'nix/images/attic-stream-nars.patch'
+      - '.github/workflows/attic-build-push.yaml'
   push:
     branches:
       - main
