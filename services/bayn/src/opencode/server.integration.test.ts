@@ -24,6 +24,7 @@ nativeTest(
     const handles: ChildProcessSpawner.ChildProcessHandle[] = []
     let providerCalls = 0
     let nativeSessionCreations = 0
+    let firstAuthorization: string | undefined
     await Effect.runPromise(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
@@ -72,6 +73,8 @@ nativeTest(
         )
         const nativeClient = HttpClient.make((request) =>
           Effect.suspend(() => {
+            if (request.url === `http://127.0.0.1:${locations.nativePort}/api/info` && firstAuthorization === undefined)
+              firstAuthorization = request.headers['authorization']
             if (request.method === 'POST' && request.url === `http://127.0.0.1:${locations.nativePort}/api/session`)
               nativeSessionCreations += 1
             return client.execute(request)
@@ -92,7 +95,11 @@ nativeTest(
         yield* ready.pipe(
           Effect.retry({ schedule: Schedule.spaced('100 millis'), times: 200 }),
           Effect.timeout('25 seconds'),
+          Effect.raceFirst(Fiber.join(fiber)),
         )
+        expect(handles.length).toBe(1)
+        const unauthenticated = yield* client.get(`http://127.0.0.1:${locations.nativePort}/api/info`)
+        expect(unauthenticated.status).toBe(401)
         const configurationHash = yield* Effect.fromResult(
           hashResearch(makeOpenCodeConfiguration(directory, `http://127.0.0.1:${locations.relayPort}`)),
         )
@@ -146,7 +153,15 @@ nativeTest(
         yield* ready.pipe(
           Effect.retry({ schedule: Schedule.spaced('100 millis'), times: 200 }),
           Effect.timeout('25 seconds'),
+          Effect.raceFirst(Fiber.join(fiber)),
         )
+        if (firstAuthorization === undefined) return yield* Effect.fail(new Error('Native authentication missing'))
+        const staleAuthorization = yield* client.execute(
+          HttpClientRequest.get(`http://127.0.0.1:${locations.nativePort}/api/info`).pipe(
+            HttpClientRequest.setHeader('authorization', firstAuthorization),
+          ),
+        )
+        expect(staleAuthorization.status).toBe(401)
         const secondFeedback = `second-proposal-only ${'b'.repeat(14000)}`
         const secondRun = {
           ...run,
@@ -196,7 +211,7 @@ nativeTest(
         expect(ambiguousReplay.status).toBe(503)
         expect(providerCalls).toBe(3)
         yield* Fiber.interrupt(fiber)
-        expect(handles.length).toBeGreaterThanOrEqual(2)
+        expect(handles.length).toBe(2)
         for (const handle of handles) expect(yield* handle.isRunning).toBe(false)
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     )
