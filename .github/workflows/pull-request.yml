@@ -469,6 +469,11 @@ jobs:
     if: github.event_name == 'merge_group'
     uses: ./.github/workflows/relay.yml
 
+  tengri:
+    name: Tengri and Nanoagent
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/tengri-validation.yml
+
   ci-pr:
     name: ci-pr
     if: ${{ always() }}
@@ -481,6 +486,7 @@ jobs:
       - bayn
       - ofz
       - relay
+      - tengri
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
@@ -494,6 +500,7 @@ jobs:
           BAYN_RESULT: ${{ needs.bayn.result }}
           OFZ_RESULT: ${{ needs.ofz.result }}
           RELAY_RESULT: ${{ needs.relay.result }}
+          TENGRI_RESULT: ${{ needs.tengri.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
           FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
@@ -514,8 +521,8 @@ jobs:
             echo "Bayn validation failed: bayn=${BAYN_RESULT}" >&2
             exit 1
           fi
-          if [[ "${FULL_VALIDATION}" == true && ( "${OFZ_RESULT}" != success || "${RELAY_RESULT}" != success ) ]]; then
-            echo "Platform validation failed: ofz=${OFZ_RESULT}, relay=${RELAY_RESULT}" >&2
+          if [[ "${FULL_VALIDATION}" == true && ( "${OFZ_RESULT}" != success || "${RELAY_RESULT}" != success || "${TENGRI_RESULT}" != success ) ]]; then
+            echo "Platform validation failed: ofz=${OFZ_RESULT}, relay=${RELAY_RESULT}, tengri=${TENGRI_RESULT}" >&2
             exit 1
           fi
           echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
