@@ -2592,6 +2592,15 @@ is checked against [Linux v6.18 source](https://github.com/torvalds/linux/blob/7
 which is format provenance, not a claim about the CI host's kernel version. Reads are sequential within the identity
 bracket, not an atomic stack snapshot; a wait symbol and syscall number cannot establish a particular file, device or cause.
 
+An otherwise unknown wait-channel value can carry a fingerprint while remaining `UNRECOGNIZED_WAIT_CHANNEL`.
+Only a trimmed ASCII C identifier of 1–128 characters qualifies. Pure hexadecimal or address-like forms, zero,
+fixed placeholders, offsets, module annotations, paths, embedded whitespace and decorated names receive no fingerprint.
+The record contains only the domain `bayn.opencode-native-wchan-symbol.v1` and a lowercase SHA-256 digest of
+`UTF-8(domain) || 0x00 || UTF-8(trimmed-symbol)`. Known symbols retain their existing output without hashing.
+Candidate public kernel symbols can be compared offline using the same recipe; a match identifies normalized bytes,
+not the host's kernel version, a blocking operation or a cause. The helper reuses the already-read bytes within the
+same seven-read and time budgets. Hashing failures preserve the original test failure, and raw unknown content is never emitted.
+
 The allowlisted [process counters](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html) retain raw CPU clock ticks,
 fault counts, thread count, virtual bytes and resident pages without assuming a tick frequency or page size.
 [Status](https://man7.org/linux/man-pages/man5/proc_pid_status.5.html) memory values are approximate KiB; context switches

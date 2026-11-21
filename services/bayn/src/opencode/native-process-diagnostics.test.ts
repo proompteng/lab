@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from 'bun:test'
+import * as NodeCrypto from 'node:crypto'
 
 import { NodeServices } from '@effect/platform-node'
 import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Logger, PlatformError, Result, Stream } from 'effect'
@@ -60,9 +61,10 @@ const collectEvents = (events: unknown[], message: unknown) => {
   }
 }
 
-const fixture = (replacement: Partial<FileSystem.FileSystem> = {}) => {
+const fixture = (replacement: Partial<FileSystem.FileSystem> = {}, contentOverrides: Partial<typeof contents> = {}) => {
   const reads: { path: string; bytesToRead: unknown; chunkSize: number | undefined }[] = []
   const events: unknown[] = []
+  const procFiles = { ...contents, ...contentOverrides }
   const fileSystem = FileSystem.makeNoop({
     stream: (path, options) => {
       reads.push({ path, bytesToRead: options?.bytesToRead, chunkSize: options?.chunkSize })
@@ -74,7 +76,7 @@ const fixture = (replacement: Partial<FileSystem.FileSystem> = {}) => {
         file === 'schedstat' ||
         file === 'wchan' ||
         file === 'syscall'
-          ? contents[file]
+          ? procFiles[file]
           : ''
       return Stream.make(new TextEncoder().encode(text))
     },
@@ -88,14 +90,19 @@ const fixture = (replacement: Partial<FileSystem.FileSystem> = {}) => {
   return { reads, events, fileSystem, provide }
 }
 
-test.each(['available', 'unavailable'] as const)(
+test.each(['available', 'fingerprinted', 'invalid'] as const)(
   'default logger and Bun console preserve every allowlisted diagnostic leaf: %s',
   async (mode) => {
     const files = {
       ...contents,
       stat: stat({ pid: 0, parent: 0 }),
       schedstat: mode === 'available' ? scheduler : '',
-      wchan: mode === 'available' ? waitChannel : 'private_wait_channel\n',
+      wchan:
+        mode === 'available'
+          ? waitChannel
+          : mode === 'fingerprinted'
+            ? 'private_wait_channel\n'
+            : 'private_wait_channel+0x20/0x40 [private_module]\n',
       syscall: mode === 'available' ? syscall : 'running 0xfeedface\n',
     }
     const program = `
@@ -167,7 +174,16 @@ test.each(['available', 'unavailable'] as const)(
           mainTaskWaitChannel:
             mode === 'available'
               ? { availability: 'AVAILABLE', value: MainTaskWaitChannel.IoSchedule }
-              : { availability: 'UNAVAILABLE', reason: 'UNRECOGNIZED_WAIT_CHANNEL' },
+              : mode === 'fingerprinted'
+                ? {
+                    availability: 'UNAVAILABLE',
+                    reason: 'UNRECOGNIZED_WAIT_CHANNEL',
+                    fingerprint: {
+                      domain: 'bayn.opencode-native-wchan-symbol.v1',
+                      sha256: 'e5c886491fb18da4d6b03753ac82ffe714a22ab3f5d78901db40146276cb12f6',
+                    },
+                  }
+                : { availability: 'UNAVAILABLE', reason: 'UNRECOGNIZED_WAIT_CHANNEL' },
           mainTaskSyscall:
             mode === 'available'
               ? { availability: 'AVAILABLE', value: { state: MainTaskSyscallState.InSyscall, number: 0 } }
@@ -338,11 +354,139 @@ test('stable owned child emits seven bounded allowlisted reads and preserves the
     expect(JSON.stringify(f.events)).not.toContain(secret)
 })
 
-test('successful readiness performs no diagnostic reads or logging', async () => {
-  const f = fixture()
-  await Effect.runPromise(f.provide(observeNativeStartupFailure(Exit.succeed(undefined), 'initial', child)))
-  expect(f.reads).toEqual([])
-  expect(f.events).toEqual([])
+test('successful readiness performs no diagnostic reads, hashing or logging', async () => {
+  const f = fixture({}, { wchan: 'private_wait_channel' })
+  const hashing = spyOn(NodeCrypto, 'createHash')
+  try {
+    await Effect.runPromise(f.provide(observeNativeStartupFailure(Exit.succeed(undefined), 'initial', child)))
+    expect(f.reads).toEqual([])
+    expect(f.events).toEqual([])
+    expect(hashing).not.toHaveBeenCalled()
+  } finally {
+    hashing.mockRestore()
+  }
+})
+
+// Fixed vectors were independently computed with Python hashlib over UTF-8 domain + NUL + trimmed symbol.
+test.each([
+  ['private_wait_channel', 'e5c886491fb18da4d6b03753ac82ffe714a22ab3f5d78901db40146276cb12f6'],
+  ['unlisted_kernel_wait', 'ce4d509c4a3e5cf47f2c6bbb281feba88b34850142d6b65984d19a97d26a4848'],
+] as const)('unknown wait-channel %s retains only its independent golden fingerprint', async (symbol, sha256) => {
+  const f = fixture({}, { wchan: ` \t${symbol}\n` })
+  expect(await Effect.runPromise(f.provide(observe()))).toEqual(original)
+  expect(f.reads).toHaveLength(7)
+  expect(f.events).toEqual([
+    expect.objectContaining({
+      snapshot: {
+        availability: 'AVAILABLE',
+        value: expect.objectContaining({
+          mainTaskWaitChannel: {
+            availability: 'UNAVAILABLE',
+            reason: 'UNRECOGNIZED_WAIT_CHANNEL',
+            fingerprint: { domain: 'bayn.opencode-native-wchan-symbol.v1', sha256 },
+          },
+        }),
+      },
+    }),
+  ])
+  expect(JSON.stringify(f.events)).not.toContain(symbol)
+})
+
+test.each(['g', 'g'.repeat(128)])(
+  'fingerprint eligibility accepts the bounded identifier length: case %#',
+  async (symbol) => {
+    const f = fixture({}, { wchan: symbol })
+    expect(await Effect.runPromise(f.provide(observe()))).toEqual(original)
+    expect(f.events).toEqual([
+      expect.objectContaining({
+        snapshot: {
+          availability: 'AVAILABLE',
+          value: expect.objectContaining({
+            mainTaskWaitChannel: {
+              availability: 'UNAVAILABLE',
+              reason: 'UNRECOGNIZED_WAIT_CHANNEL',
+              fingerprint: {
+                domain: 'bayn.opencode-native-wchan-symbol.v1',
+                sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+              },
+            },
+          }),
+        },
+      }),
+    ])
+  },
+)
+
+test.each([
+  ...Object.values(MainTaskWaitChannel),
+  '',
+  '0',
+  'deadbeef',
+  'DEAD_BEEF',
+  '__0xdeadbeef',
+  '_0x',
+  '_0xprivate_wait',
+  '__0XBADADDR',
+  '___',
+  'NULL',
+  'nil',
+  'none',
+  'unknown',
+  'unavailable',
+  'ptrval',
+  'RUNNING',
+  'invalid',
+  'error',
+  '(ptrval)',
+  'wait_for_completion+0x10/0x30',
+  'wait_for_completion.isra.0',
+  'wait_for_completion [private_module]',
+  '/private/wait',
+  'private wait',
+  'private\nwait',
+  'private\0wait',
+  'private-wait',
+  'privaté_wait',
+  'g'.repeat(129),
+])('known, zero, invalid, address-like and placeholder wait-channel inputs never hash: case %#', async (text) => {
+  const f = fixture({}, { wchan: text })
+  const hashing = spyOn(NodeCrypto, 'createHash')
+  try {
+    expect(await Effect.runPromise(f.provide(observe()))).toEqual(original)
+    const expected = Result.match(parseNativeProcessWaitChannel(text), {
+      onSuccess: (value) => ({ availability: 'AVAILABLE', value }),
+      onFailure: (reason) => ({ availability: 'UNAVAILABLE', reason }),
+    })
+    expect(f.events).toEqual([
+      expect.objectContaining({
+        snapshot: {
+          availability: 'AVAILABLE',
+          value: expect.objectContaining({ mainTaskWaitChannel: expected }),
+        },
+      }),
+    ])
+    expect(hashing).not.toHaveBeenCalled()
+    expect(JSON.stringify(f.events)).not.toMatch(/fingerprint|private|ptrval|0x/)
+  } finally {
+    hashing.mockRestore()
+  }
+})
+
+test('a throwing wait-channel hash implementation cannot replace or append to the original failure', async () => {
+  const f = fixture({}, { wchan: 'private_wait_channel' })
+  const hashing = spyOn(NodeCrypto, 'createHash').mockImplementation(() => {
+    throw new Error('/private/hash-credential-value')
+  })
+  try {
+    expect(await Effect.runPromise(f.provide(observe()))).toEqual(original)
+    expect(hashing).toHaveBeenCalledTimes(1)
+    expect(f.events).toEqual([
+      expect.objectContaining({ snapshot: { availability: 'UNAVAILABLE', reason: 'CAPTURE_FAILED' } }),
+    ])
+    expect(JSON.stringify(f.events)).not.toMatch(/private|credential-value|fingerprint/)
+  } finally {
+    hashing.mockRestore()
+  }
 })
 
 test.each([
@@ -502,7 +646,7 @@ test.each(['stat', 'wchan', 'syscall'] as const)(
     let finalized = 0
     const events: unknown[] = []
     const reads: string[] = []
-    const base = fixture()
+    const base = fixture({}, { wchan: 'private_wait_channel' })
     const program = Effect.gen(function* () {
       const entered = yield* Deferred.make<void>()
       const fs = FileSystem.makeNoop({

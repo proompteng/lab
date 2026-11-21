@@ -1,3 +1,5 @@
+import * as NodeCrypto from 'node:crypto'
+
 import { Clock, Effect, Exit, FileSystem, Option, Result, Schema, Stream } from 'effect'
 import type { ChildProcessSpawner } from 'effect/process'
 
@@ -175,6 +177,34 @@ export const parseNativeProcessWaitChannel = (text: string) => {
   )
 }
 
+const waitChannelFingerprintDomain = 'bayn.opencode-native-wchan-symbol.v1'
+const waitChannelPlaceholders = new Set([
+  'null',
+  'nil',
+  'none',
+  'unknown',
+  'unavailable',
+  'ptrval',
+  'running',
+  'invalid',
+  'error',
+])
+
+const fingerprintWaitChannel = (text: string) => {
+  const symbol = text.trim()
+  if (
+    !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(symbol) ||
+    /^_*0x/i.test(symbol) ||
+    /^_*(?:0x)?[0-9a-f_]*$/i.test(symbol) ||
+    waitChannelPlaceholders.has(symbol.toLowerCase())
+  )
+    return Option.none()
+  const sha256 = NodeCrypto.createHash('sha256')
+    .update(`${waitChannelFingerprintDomain}\0${symbol}`, 'utf8')
+    .digest('hex')
+  return /^[0-9a-f]{64}$/.test(sha256) ? Option.some({ domain: waitChannelFingerprintDomain, sha256 }) : Option.none()
+}
+
 export const parseNativeProcessSyscall = (text: string): Result.Result<MainTaskSyscall, UnavailableReason> => {
   const fields = text.trim().split(/\s+/)
   if (fields.length === 1 && fields[0] === 'running') return Result.succeed({ state: MainTaskSyscallState.Running })
@@ -218,9 +248,17 @@ const capture = (child: OwnedChild | undefined) =>
               bytes.set(chunk, offset)
               offset += chunk.byteLength
             }
-            return Result.match(parse(new TextDecoder().decode(bytes)), {
+            const text = new TextDecoder().decode(bytes)
+            return Result.match(parse(text), {
               onSuccess: available,
-              onFailure: unavailable,
+              onFailure: (reason) => {
+                const missing = unavailable(reason)
+                if (file !== 'wchan' || reason !== UnavailableReason.UnrecognizedWaitChannel) return missing
+                return Option.match(fingerprintWaitChannel(text), {
+                  onNone: () => missing,
+                  onSome: (fingerprint) => ({ ...missing, fingerprint }),
+                })
+              },
             })
           }),
           Effect.orElseSucceed((error) => {
