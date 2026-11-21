@@ -115,6 +115,7 @@ const order = Schema.Struct({
   ...orderLeaf.fields,
   legs: Schema.optionalKey(Schema.Array(orderLeaf).check(Schema.isMaxLength(2))),
 })
+export const BrokerOrderReadResultSchema = observed(order)
 const fill = Schema.Struct({
   accountId: Schema.String,
   activityId: Schema.String,
@@ -145,6 +146,7 @@ export interface ObservedBrokerSnapshot {
   readonly openOrders: ReadResult<readonly Order[]>
   readonly recentOrders: ReadResult<readonly Order[]>
   readonly recentFills: ReadResult<FillActivityPage>
+  readonly pendingCashFeeCount: number
   readonly startedAt: string
   readonly completedAt: string
   readonly observedAt: string
@@ -164,6 +166,7 @@ export const ObservedBrokerSnapshotSchema = Schema.Struct({
   openOrders: observed(Schema.Array(order)),
   recentOrders: observed(Schema.Array(order)),
   recentFills: observed(Schema.Struct({ items: Schema.Array(fill), nextPageToken: Schema.optionalKey(Schema.String) })),
+  pendingCashFeeCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   startedAt: UtcInstantSchema,
   completedAt: UtcInstantSchema,
   observedAt: UtcInstantSchema,
@@ -186,12 +189,26 @@ export const observedBrokerState = (value: ObservedBrokerSnapshot): ObservedBrok
   openOrders: value.openOrders,
   recentOrders: value.recentOrders,
   recentFills: value.recentFills,
+  pendingCashFeeCount: value.pendingCashFeeCount,
   startedAt: value.startedAt,
   completedAt: value.completedAt,
   observedAt: value.observedAt,
 })
 
 export const decodeObservedBrokerSnapshot = Schema.decodeUnknownResult(ObservedBrokerSnapshotSchema, strictParseOptions)
+
+export const requireSettledCashFees = ({ pendingCashFeeCount }: Pick<ObservedBrokerState, 'pendingCashFeeCount'>) =>
+  pendingCashFeeCount === 0
+    ? Effect.void
+    : Effect.fail(
+        new BrokerReadError({
+          operation: 'preflight',
+          kind: BrokerReadErrorKind.ObservationPending,
+          observationFailure: 'CASH_FEES_PENDING',
+          retryable: true,
+          message: 'Broker observation is awaiting authoritative cash fee records',
+        }),
+      )
 
 export const observationUnavailable = (
   message: string,
@@ -297,8 +314,13 @@ export interface BrokerObservationTicket {
   readonly generation: number
   readonly startedAt: string
 }
+export interface ReconciliableBrokerObservation {
+  readonly observation: ObservedBrokerSnapshot
+  readonly complete: Effect.Effect<void, BrokerReadError>
+}
 export interface BrokerObservationsShape {
   readonly read: Effect.Effect<ObservedBrokerSnapshot, BrokerReadError>
+  readonly readForReconciliation: Effect.Effect<ReconciliableBrokerObservation, BrokerReadError>
   readonly readState: Effect.Effect<ObservedBrokerState, BrokerReadError>
   readonly readForSubmit: (intentId: string) => Effect.Effect<ObservedBrokerState, BrokerReadError>
   readonly invalidate: Effect.Effect<void, BrokerReadError>

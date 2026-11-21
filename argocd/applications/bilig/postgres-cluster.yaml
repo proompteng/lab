@@ -100,3 +100,18 @@ spec:
       wal_sender_timeout: 5s
     syncReplicaElectionConstraint:
       enabled: false
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: bilig-db-pre-18-7
+  namespace: bilig
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: bilig-db
+  method: volumeSnapshot
+  online: true
+  target: prefer-standby

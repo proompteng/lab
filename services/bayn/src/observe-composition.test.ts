@@ -39,7 +39,12 @@ import { TestClock } from 'effect/testing'
 
 import type { AutonomousCyclePassObservation } from './runtime-state'
 import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
-import { JevBatchStore } from './jev/batch-evaluation'
+import { JevBatchStore, retainJevBatchPreparation, type JevBatchEvidence } from './jev/batch-evaluation'
+import { JevBatchPlanVersion } from './jev/batch'
+import { JevInferenceWorkStore } from './jev/inference-work'
+import { makeOwnedJevObservation } from './jev/observation'
+import { jevObservationQuery } from './jev/runtime'
+import { prepareJevTradingSignalBatch } from './jev/trading-signals'
 import { JevEvaluationStore } from './jev/evaluation'
 import { JevClient } from './jev/client'
 import { EntryInferenceJournal } from './jev/entry-inference'
@@ -49,7 +54,7 @@ import {
   readObserveDecisionFacts,
 } from './observe-composition/decision-builder'
 import { makeExecutionRiskPolicy, strategyExecutionRiskPolicy } from './execution/risk-policy'
-import { JevPositionStore, JevPurpose } from './jev/portfolio'
+import { decodeJevPortfolio, JevPositionStore, JevPurpose } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
 import { jevBehaviorHash } from './jev/protocol'
@@ -253,7 +258,7 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
     Effect.provideService(JevBatchStore, {
       read: () => unexpected,
       pending: () => Effect.succeed([]),
-      begin: (plan) =>
+      begin: ({ plan }) =>
         Clock.currentTimeMillis.pipe(
           Effect.map((now) => ({
             plan,
@@ -1236,6 +1241,7 @@ const sandboxExecutionProgram = (
     invalidateBrokerState: Effect.void,
     dryRunSubmit: () => unused,
     submit: () => unused,
+    submitProtectionClose: () => unused,
     cancel: () => unused,
     cancelProtectionOrder: () => unused,
     recover: () => unused,
@@ -2587,7 +2593,7 @@ describe('OBSERVE runtime composition', () => {
                       ? Effect.die('Unexpected batch recovery')
                       : Effect.succeed({ plan: pendingEvidence.batchPlan, result: null })
                   }),
-                begin: (plan, observation) =>
+                begin: ({ plan, source: { payload: observation } }) =>
                   Clock.currentTimeMillis.pipe(
                     Effect.map((now) => {
                       expect(canonicalHashV1Result(observation)).toEqual(Result.succeed(plan.observationHash))
@@ -5662,6 +5668,7 @@ describe('OBSERVE runtime composition', () => {
       readonly pricingSnapshotDelayMs?: number
       readonly brokerMaximumAgeMs?: number
       readonly admissionRemainingMs?: number
+      readonly retainedInference?: boolean
       readonly cycleCreatedAt?: string
       readonly entryAction?: 'enter' | 'wait'
       readonly postInferenceReconcileMs?: number
@@ -5679,6 +5686,8 @@ describe('OBSERVE runtime composition', () => {
     let refreshes = 0
     let refreshed: ReconciliationPassResult | undefined
     let reconciliationReads = 0
+    let resumedBatches = 0
+    let admittedBatches = 0
     const testStartedAt =
       options.admissionRemainingMs === undefined
         ? Date.parse(evaluatedAt)
@@ -5687,6 +5696,46 @@ describe('OBSERVE runtime composition', () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         yield* TestClock.setTime(testStartedAt)
+        // Work admitted before the full-interval gate may still complete inside a shorter lease.
+        // Retain that exact source and plan so expiry races exercise recovery, not new admission.
+        const retainedPreparation = options.retainedInference
+          ? yield* Effect.gen(function* () {
+              const originalQuery = fixture.snapshotRequests[0]
+              if (originalQuery === undefined) throw new Error('expected Jev fixture source query')
+              const query = yield* Effect.fromResult(
+                jevObservationQuery(
+                  cycle,
+                  fixtureProtocol,
+                  originalQuery.calendar,
+                  utcInstantFromEpochMillis(testStartedAt),
+                  JevPurpose.Entry,
+                ),
+              )
+              events.push('signal')
+              snapshotRequests.push({ ...query, archiveWatermarks: [] })
+              const snapshot = yield* fixture.input.intradayMarketData.loadSnapshot(query)
+              const portfolio = yield* Effect.fromResult(
+                decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: initial.brokerState }),
+              )
+              const source = yield* Effect.fromResult(
+                makeOwnedJevObservation({
+                  cycleId: cycle.identity.cycleId,
+                  authorityGenerationHash: generationHash,
+                  protocol: fixtureProtocol,
+                  portfolio,
+                  snapshot,
+                }),
+              )
+              return yield* Effect.fromResult(
+                prepareJevTradingSignalBatch(
+                  source,
+                  utcInstantFromEpochMillis(testStartedAt + fixtureProtocol.inferenceValidityMs),
+                  JevBatchPlanVersion.V8,
+                ),
+              )
+            })
+          : undefined
+        let retainedEvidence: JevBatchEvidence | undefined
         const cache = yield* reconciliationForPreparation(
           initial,
           Effect.gen(function* () {
@@ -5770,11 +5819,16 @@ describe('OBSERVE runtime composition', () => {
         }).pipe(
           Effect.provideService(JevBatchStore, {
             pending: () => Effect.succeed([]),
-            read: () => Effect.die('entry fixture must not reread a batch'),
+            read: () =>
+              retainedEvidence === undefined
+                ? Effect.die('entry fixture must not reread a new batch')
+                : Effect.succeed(retainedEvidence),
             complete: () => Effect.die('entry fixture uses a committed batch'),
             finish: () => Effect.die('entry fixture uses a committed batch'),
-            begin: (plan) =>
+            begin: ({ plan }) =>
               Effect.gen(function* () {
+                admittedBatches += 1
+                if (retainedPreparation !== undefined) throw new Error('retained inference must not admit a new batch')
                 yield* TestClock.adjust(options.inferenceMs ?? 1_000)
                 events.push('inference-committed')
                 return {
@@ -5788,6 +5842,34 @@ describe('OBSERVE runtime composition', () => {
                 }
               }),
           }),
+          Effect.provideService(JevInferenceWorkStore, {
+            pending: () => Effect.die('composition must not list provider jobs'),
+            settleExpired: () => Effect.die('composition must not settle provider jobs'),
+            read: () => Effect.die('composition must not read provider jobs'),
+            claim: () => Effect.die('composition must not claim provider jobs'),
+            resume: () =>
+              Effect.gen(function* () {
+                if (retainedPreparation === undefined) return null
+                resumedBatches += 1
+                yield* TestClock.adjust(options.inferenceMs ?? 1_000)
+                events.push('inference-committed')
+                retainedEvidence = retainJevBatchPreparation(
+                  {
+                    plan: retainedPreparation.plan,
+                    result: nativeJevBatchResult(
+                      retainedPreparation.plan,
+                      yield* currentUtcInstant,
+                      (symbol) => symbol === 'NVDA' && (options.entryAction ?? 'enter') === 'enter',
+                    ),
+                  },
+                  retainedPreparation,
+                )
+                return {
+                  batchId: retainedPreparation.plan.batchId,
+                  loadSource: Effect.die('retained preparation must reuse its original source'),
+                }
+              }),
+          }),
         )
         // Intent preparation must reuse the new cut instead of paying for another reconciliation after pricing.
         yield* TestClock.adjust(2_000)
@@ -5795,7 +5877,17 @@ describe('OBSERVE runtime composition', () => {
         return document
       }).pipe((program) => provideDecisionServices(program, calendarRead([])), Effect.provide(TestClock.layer())),
     )
-    return { exit, events, snapshotRequests, refreshes, initial, refreshed, reconciliationReads }
+    return {
+      exit,
+      events,
+      snapshotRequests,
+      refreshes,
+      initial,
+      refreshed,
+      reconciliationReads,
+      resumedBatches,
+      admittedBatches,
+    }
   }
 
   test('turnover exhausted during inference waits without constructing a zero-sized target plan', async () => {
@@ -5865,6 +5957,7 @@ describe('OBSERVE runtime composition', () => {
         entryAction: 'wait',
         initialAgeMs: 0,
         admissionRemainingMs: 2_000,
+        retainedInference: true,
         inferenceMs,
       })
       expect(Exit.isFailure(result.exit)).toBe(true)
@@ -5873,6 +5966,9 @@ describe('OBSERVE runtime composition', () => {
         _tag: 'ObserveDecisionAwaitingSignal',
       })
       expect(result.events).not.toContain('pricing')
+      expect(result.events).toContain('inference-committed')
+      expect(result.resumedBatches).toBe(1)
+      expect(result.admittedBatches).toBe(0)
       expect(result.refreshes).toBe(0)
     },
   )
@@ -5912,6 +6008,7 @@ describe('OBSERVE runtime composition', () => {
         entryAction: 'wait',
         initialAgeMs: 0,
         admissionRemainingMs: 5_000,
+        retainedInference: true,
         inferenceMs: 1_000,
         decisionFinalizationHeadroomMs: 5_000,
         postInferenceReconcileMs,
@@ -5923,6 +6020,8 @@ describe('OBSERVE runtime composition', () => {
         readiness: { reason: DecisionReadinessReason.InferenceUnavailable },
       })
       expect(result.reconciliationReads).toBe(2)
+      expect(result.resumedBatches).toBe(1)
+      expect(result.admittedBatches).toBe(0)
       expect(result.events).not.toContain('pricing')
     },
   )
@@ -5982,6 +6081,7 @@ describe('OBSERVE runtime composition', () => {
       inferenceMs: 1_000,
       refreshMs: 4_000,
       admissionRemainingMs: 5_000,
+      retainedInference: true,
       brokerMaximumAgeMs: 40_000,
       readiness: DecisionReadinessReason.InferenceUnavailable,
     },
@@ -6020,6 +6120,10 @@ describe('OBSERVE runtime composition', () => {
     expect(result.refreshes).toBe(1)
     expect(result.snapshotRequests).toHaveLength(1)
     expect(result.events).not.toContain('pricing')
+    if ('retainedInference' in options) {
+      expect(result.resumedBatches).toBe(1)
+      expect(result.admittedBatches).toBe(0)
+    }
   })
 
   test.each([
@@ -6037,6 +6141,7 @@ describe('OBSERVE runtime composition', () => {
       name: 'admission expiry with still-current inference',
       pricingSnapshotDelayMs: 4_000,
       admissionRemainingMs: 5_000,
+      retainedInference: true,
       readiness: DecisionReadinessReason.InferenceUnavailable,
     },
     {
@@ -6061,6 +6166,10 @@ describe('OBSERVE runtime composition', () => {
     expect(result.refreshes).toBe(0)
     expect(result.snapshotRequests).toHaveLength(2)
     expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
+    if ('retainedInference' in options) {
+      expect(result.resumedBatches).toBe(1)
+      expect(result.admittedBatches).toBe(0)
+    }
   })
 
   test('Jev retains broker backoff when source expiry and broker headroom coincide after pricing', async () => {
@@ -7020,6 +7129,7 @@ test.each(['discovery', 'calendar-reuse', 'pending', 'not-ready', 'activation-ex
             strategyName: 'jev',
             strategyProtocolHash: fixture.preparation.strategyProtocolHash,
             executionPolicy: fixture.preparation.executionPolicy,
+            nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
             buildDecision: (currentCycle) =>
               Effect.gen(function* () {
                 operations.push('build')
@@ -7189,6 +7299,7 @@ test.each(['verified', 'empty', 'contract', 'not-ready'] as const)(
               strategyName: 'jev',
               strategyProtocolHash: fixture.preparation.strategyProtocolHash,
               executionPolicy: fixture.preparation.executionPolicy,
+              nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
               buildDecision: () =>
                 Effect.sync(() => {
                   operations.push('build')
@@ -7280,6 +7391,7 @@ test('reads the execution closure once without weakening completion evidence', a
             strategyName: 'jev',
             strategyProtocolHash: fixture.preparation.strategyProtocolHash,
             executionPolicy: fixture.preparation.executionPolicy,
+            nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
             buildDecision: forbidden,
             buildDecisionEvidence: forbidden,
           },
@@ -7504,6 +7616,7 @@ test('settles the committed close after native protection observes a flat accoun
           strategyName: 'jev',
           strategyProtocolHash: fixture.preparation.strategyProtocolHash,
           executionPolicy: fixture.preparation.executionPolicy,
+          nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
           buildDecision: forbidden,
           buildDecisionEvidence: forbidden,
         },
@@ -7699,6 +7812,7 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
           strategyName: 'jev',
           strategyProtocolHash: fixture.preparation.strategyProtocolHash,
           executionPolicy: fixture.preparation.executionPolicy,
+          nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
           buildDecision: () => unavailable('build decision before submission opens'),
           buildDecisionEvidence: () => unavailable('verify decision before submission opens'),
         },
@@ -7740,6 +7854,7 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
           strategyName: 'jev',
           strategyProtocolHash: fixture.preparation.strategyProtocolHash,
           executionPolicy: fixture.preparation.executionPolicy,
+          nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
           buildDecision: (subject) =>
             mutationDecisionBuilder(
               input,
@@ -8842,7 +8957,7 @@ test.each([
           Effect.provideService(JevBatchStore, {
             read: () => Effect.die('Unexpected batch read'),
             pending: () => Effect.succeed([]),
-            begin: (plan) =>
+            begin: ({ plan }) =>
               Clock.currentTimeMillis.pipe(
                 Effect.map((now) => {
                   batches++
@@ -9307,6 +9422,7 @@ test.each(
                   strategyName: 'jev',
                   strategyProtocolHash: fixture.preparation.strategyProtocolHash,
                   executionPolicy: fixture.preparation.executionPolicy,
+                  nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
                   buildDecision: forbidden,
                   buildDecisionEvidence: forbidden,
                 },

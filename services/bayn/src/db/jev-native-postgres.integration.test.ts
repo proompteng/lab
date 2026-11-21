@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch, evaluateRecordedJevBatch } from '../jev/batch-admission.test-support'
 import { DecisionConstruction } from '../decision-construction'
 import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
@@ -13,7 +14,7 @@ import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-in
 import { EntryInferenceJournalLive } from './entry-inference-postgres'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from '../intraday-replay/inference-timing'
-import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import type { Statement } from 'effect/sql/Statement'
 import {
@@ -41,6 +42,7 @@ import { NodeServices } from '@effect/platform-node'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { sourceTimestamp } from '../broker/observations'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { CryptoFeeTier } from '../broker/crypto-fees'
 import { CycleStore } from '../cycle/store/model'
@@ -70,7 +72,7 @@ import {
   usableEntryBatchInferences,
 } from '../jev/batch'
 import { decideJevEntry, makeJevDefinition } from '../jev/decision'
-import { evaluateJevBatch, JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
+import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import {
@@ -118,6 +120,11 @@ import {
   type ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -169,7 +176,7 @@ const retainedRuntime = {
 const observed = Date.parse(fixture.observation.payload.observedAt)
 const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   TestClock.setTime(observed).pipe(Effect.andThen(effect), Effect.provide(TestClock.layer()))
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     Layer.mergeAll(
       Layer.succeed(DecisionConstruction, {
@@ -191,7 +198,7 @@ const makeRuntime = () =>
       Layer.provideMerge(
         PostgresClientLive({
           operationTimeoutMs: 5000,
-          postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
         }),
       ),
       Layer.provideMerge(NodeServices.layer),
@@ -525,7 +532,7 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
     const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
     expect(plan.candidates).toHaveLength(equityMarketProfile.candidateSymbols.length)
     expect(requested.map((candidate) => candidate.symbol)).toEqual([...symbols].sort())
-    const admission = yield* (yield* JevBatchStore).begin(plan, observation.payload)
+    const admission = yield* beginRecordedJevBatch(yield* JevBatchStore, plan, observation.payload)
     return { plan, requested, observation: observation.payload, admission }
   })
 
@@ -611,33 +618,43 @@ const waitForPostgresLock = (sql: PgClient.PgClient, pid: number) =>
   })
 
 describePostgres('PostgreSQL native Jev execution decisions', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
-    const url = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test'))
-      throw new Error('Native tests require a local _test database')
-    runtime = makeRuntime()
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const schema = makeRuntime(url)
+      try {
+        await schema.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* postgresMigrations
+            yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+              VALUES (${replayAccountId}, ${'e'.repeat(64)}, ${fixture.draft.window.executionOpenAt})`
+            yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+            VALUES (${nativeInput.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${fixture.observation.payload.observedAt})`
+            const r = fixture.portfolio.brokerState.reconciliation
+            yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+            VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
+          }),
+        )
+      } finally {
+        await schema.dispose()
+      }
+    })
   })
   beforeEach(async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-        yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
-          VALUES (${replayAccountId}, ${'e'.repeat(64)}, ${fixture.draft.window.executionOpenAt})`
-        yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
-        VALUES (${nativeInput.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${fixture.observation.payload.observedAt})`
-        const r = fixture.portfolio.brokerState.reconciliation
-        yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
-        VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
-      }),
-    )
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
   })
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+  afterAll(async () => template?.dispose())
 
   test('native broker terms persist only when they match the immutable pre-entry strategy plan', async () => {
     await runtime.runPromise(
@@ -714,16 +731,19 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           const eventId = '7'.repeat(64)
           const brokerOrderId = 'protective-child'
           const observedAt = management.target.observedAt
+          const providerUpdatedAt = Result.getOrThrow(sourceTimestamp(observedAt))
           yield* sql.withTransaction(
             Effect.gen(function* () {
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
           source_event_id,source_sequence,occurred_at,observed_at)
           VALUES(${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${replayAccountId},
-            ${brokerOrderId},100,${observedAt},${observedAt})`
+            ${`order:${brokerOrderId}:${providerUpdatedAt}`},100,${observedAt},${observedAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
-          symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status)
+          symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status,
+          broker_updated_at)
           VALUES(${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'protective-child-client',${intentId},
-            'AAPL','SELL','STOP_LIMIT','DAY',5000000000,0,${levels.stopLimitPriceMicros},${levels.stopPriceMicros},'NEW')`
+            'AAPL','SELL','STOP_LIMIT','DAY',5000000000,0,${levels.stopLimitPriceMicros},${levels.stopPriceMicros},'NEW',
+            ${providerUpdatedAt})`
             }),
           )
           const store = yield* IntentStore
@@ -1108,7 +1128,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(yield* sql`SELECT request_id FROM jev_evaluation_resolutions`).toEqual([])
         expect((yield* requests.read(request.requestId))?.resolution).toBeNull()
         expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
-        expect((yield* (yield* JevBatchStore).begin(plan, observation)).dispatches).toEqual([])
+        expect((yield* beginRecordedJevBatch(yield* JevBatchStore, plan, observation)).dispatches).toEqual([])
         yield* sql`ALTER TABLE jev_batch_results DROP CONSTRAINT fail_atomic_finalization`
         yield* batches.complete(plan, observation, expected)
         expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).not.toBeNull()
@@ -1254,7 +1274,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           complete: (...args: Parameters<typeof batches.complete>) =>
             batches.complete(...args).pipe(Effect.tap(() => TestClock.setTime(Date.parse(plan.expiresAt)))),
         }
-        const saved = yield* evaluateJevBatch(plan, observation).pipe(
+        const saved = yield* evaluateRecordedJevBatch(plan, observation).pipe(
           Effect.provideService(JevBatchStore, delayed),
           Effect.provideService(
             JevClient,
@@ -1538,7 +1558,9 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const wrongIdentity = Result.getOrThrow(
           makeJevBatchPlan({ ...rebound, observationHash: result.batchPlan.observationHash }),
         )
-        expect(Result.isFailure(yield* store.begin(wrongIdentity, result.observation).pipe(Effect.result))).toBe(true)
+        expect(
+          Result.isFailure(yield* beginRecordedJevBatch(store, wrongIdentity, result.observation).pipe(Effect.result)),
+        ).toBe(true)
         expect(yield* sql`SELECT count(*)::int AS count FROM jev_batch_plans`).toEqual([{ count: 1 }])
       }).pipe(
         Effect.provideService(
@@ -2306,7 +2328,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     await Effect.runPromise(phase('first-assertions', firstAssertionsStartedAt, 0))
     const restartStartedAt = performance.now()
     await runtime.dispose()
-    runtime = makeRuntime()
+    runtime = makeRuntime(database.url)
     await Effect.runPromise(phase('runtime-restart', restartStartedAt, 1000))
     const repeated = await runtime.runPromise(observeAt(1000))
     const repeatedAssertionsStartedAt = performance.now()
@@ -2428,7 +2450,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }),
         )
         const store = yield* JevBatchStore
-        yield* store.begin(plan, fixture.observation.payload)
+        yield* beginRecordedJevBatch(store, plan, fixture.observation.payload)
         expect(yield* store.pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([plan.batchId])
         expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([
           plan,
@@ -2640,6 +2662,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             Effect.gen(function* () {
               yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions ON COMMIT DROP
               AS SELECT * FROM public.autonomous_cycle_shadow_decisions`
+              // Rebind prepared reads from the public table to the temporary fixture.
+              yield* sql`SET LOCAL search_path TO pg_temp, public`
               for (const [targetVersion, policyVersion] of [
                 ['bayn.entry-ablation-target.v1', 'bayn.entry-ablation-policy.v1'],
                 ['bayn.repeated-momentum-target.v1', 'bayn.repeated-momentum-policy.v1'],
@@ -2754,6 +2778,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           if (entryId === undefined || levels === undefined)
             throw new Error('Expected an approved entry with native protection')
           const cancelAt = managed.observation.payload.observedAt
+          const cancelProviderUpdatedAt = Result.getOrThrow(sourceTimestamp(cancelAt))
           yield* sql`UPDATE simulated_execution_clocks SET observed_at=${cancelAt} WHERE account_id=${replayAccountId}`
           const brokerOrderId = 'partial-tp-native-child'
           const eventId = '7'.repeat(64)
@@ -2762,6 +2787,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           if (parent === undefined) throw new Error('Expected the filled entry order')
           const entryFill = portfolio.entryFills[0]
           if (entryFill === undefined) throw new Error('Expected canonical entry fill pricing')
+          const parentProviderUpdatedAt = Result.getOrThrow(sourceTimestamp(entryFill.occurredAt))
           const partialPriceAtoms = keepNative
             ? String(BigInt(levels.profitLimitPriceMicros) * 1000n)
             : entryFill.priceAtoms
@@ -2776,20 +2802,23 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                 const parentEventId = '9'.repeat(64)
                 yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
                   source_event_id,source_sequence,occurred_at,observed_at) VALUES (${parentEventId},'bayn.paper-broker-event.v1',
-                  ${parentEventId},'ORDER','ALPACA',${replayAccountId},${parent.brokerOrderId},99,${entryFill.occurredAt},${entryFill.occurredAt})`
+                  ${parentEventId},'ORDER','ALPACA',${replayAccountId},${`order:${parent.brokerOrderId}:${parentProviderUpdatedAt}`},99,${entryFill.occurredAt},${entryFill.occurredAt})`
                 yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
-                  symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status)
+                  symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,
+                  broker_updated_at)
                   VALUES (${parentEventId},${replayAccountId},'bayn.order.v3',${parent.brokerOrderId},${parent.clientOrderId},${entryId},
-                  'AAPL','BUY','LIMIT','DAY',${originalQuantity},${originalQuantity},${parent.limitPriceMicros ?? '0'},'FILLED')`
+                  'AAPL','BUY','LIMIT','DAY',${originalQuantity},${originalQuantity},${parent.limitPriceMicros ?? '0'},'FILLED',
+                  ${parentProviderUpdatedAt})`
               }
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
             source_event_id,source_sequence,occurred_at,observed_at) VALUES (${eventId},'bayn.paper-broker-event.v1',
-            ${eventId},'ORDER','ALPACA',${replayAccountId},${brokerOrderId},100,${cancelAt},${cancelAt})`
+            ${eventId},'ORDER','ALPACA',${replayAccountId},${`order:${brokerOrderId}:${cancelProviderUpdatedAt}`},100,${cancelAt},${cancelAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
-            symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,parent_broker_order_id)
+            symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,parent_broker_order_id,
+            broker_updated_at)
             VALUES (${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'partial-tp-native-child',${entryId},
             'AAPL','SELL','LIMIT','DAY',${originalQuantity},2000000000,${levels.profitLimitPriceMicros},'PARTIALLY_FILLED',
-            ${keepNative ? parent.brokerOrderId : null})`
+            ${keepNative ? parent.brokerOrderId : null},${cancelProviderUpdatedAt})`
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
                 source_event_id,source_sequence,occurred_at,observed_at) VALUES (${partialEventId},'bayn.paper-broker-event.v1',
                 ${partialEventId},'FILL','ALPACA',${replayAccountId},'partial-tp-fill',101,${cancelAt},${cancelAt})`
@@ -3015,7 +3044,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             { count: 0 },
           ])
           yield* Effect.acquireUseRelease(
-            Effect.sync(makeRuntime),
+            Effect.sync(() => makeRuntime(database.url)),
             (restarted) =>
               Effect.promise(() =>
                 restarted.runPromise(

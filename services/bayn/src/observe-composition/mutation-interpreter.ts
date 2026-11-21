@@ -14,6 +14,7 @@ import {
 } from '../execution/mutations/model'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import type { ExecutionProgram } from '../execution/runtime-program'
+import type { PreparedProtectionClose } from '../execution/coordinator'
 import { WriterFence } from '../execution/writer-fence'
 import { currentUtcInstant } from '../time'
 import { decideMutationIntentSettlement, type MutationIntentExecutionResult } from './mutation-decisions'
@@ -205,6 +206,7 @@ export const executeMutationIntentWithExecutor = <E, R>(
       consistencyDelayMs: event.consistencyDelayMs,
       operation,
       mutationAdvanced: existing?.eventId !== event.eventId,
+      ...(event.denialReason === undefined ? {} : { denialReason: event.denialReason }),
     }
   })
 }
@@ -215,10 +217,14 @@ export const executeMutationIntent = (
   action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
   submitExpiresAt?: string,
   cancellationAdmission?: ExpiredEntryCancellationAdmission,
+  protectionClose?: PreparedProtectionClose,
 ): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore> =>
   executeMutationIntentWithExecutor({
     executor: {
-      submit: executionProgram.submit,
+      submit:
+        protectionClose === undefined
+          ? executionProgram.submit
+          : (_intentId, delayMs) => executionProgram.submitProtectionClose(protectionClose, delayMs),
       cancel:
         cancellationAdmission === undefined
           ? executionProgram.cancel

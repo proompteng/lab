@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import { JevBatchPlanVersion } from '../jev/batch'
 import { expect, test } from 'bun:test'
 import { Clock, Deferred, Effect, Exit, Fiber, Option, Result } from 'effect'
@@ -74,7 +75,7 @@ test.each(['already-complete', 'completed-after-inference', 'completed-atomicall
         })
         const result = yield* latency.runPass(
           Effect.gen(function* () {
-            const saved = yield* wrapped.begin(evidence.batchPlan, evidence.observation)
+            const saved = yield* beginRecordedJevBatch(wrapped, evidence.batchPlan, evidence.observation)
             return saved.result !== null
               ? saved
               : path === 'completed-atomically'
@@ -120,7 +121,7 @@ test('slower work keeps its actual duration and pending work cannot acquire a re
         ...store,
         begin: () => Effect.succeed({ plan: stored.plan, result: null, dispatches: [] }),
       })
-      yield* latency.runPass(wrapped.begin(evidence.batchPlan, evidence.observation))
+      yield* latency.runPass(beginRecordedJevBatch(wrapped, evidence.batchPlan, evidence.observation))
       expect((yield* latency.evidence).unreleasedBatchIds).toEqual([stored.plan.batchId])
       yield* TestClock.setTime(start + 20_000)
       yield* latency.runPass(wrapped.finish(stored.plan.batchId))
@@ -163,7 +164,7 @@ test('interruption before release retains the original anchor and frees the comm
           TestClock.setTime(Date.parse(stored.result.completedAt)).pipe(Effect.as({ ...stored, dispatches: [] })),
       })
       const fiber = yield* latency
-        .runPass(wrapped.begin(evidence.batchPlan, evidence.observation))
+        .runPass(beginRecordedJevBatch(wrapped, evidence.batchPlan, evidence.observation))
         .pipe(Effect.forkChild)
       yield* Deferred.await(delaying)
       yield* Fiber.interrupt(fiber)

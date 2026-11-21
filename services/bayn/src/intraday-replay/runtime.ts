@@ -36,6 +36,7 @@ import {
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
+import { readCurrentProtectionClose, readProtectionSubmit } from '../db/protection-release'
 import { CycleStore } from '../cycle/store/model'
 import { makeCycleStore, withWriterFenceCycleStore } from '../cycle/store/postgres'
 import { BrokerAccess, grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
@@ -288,6 +289,11 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             strategy: input.strategy,
             intradayMarketData: marketData,
             executionCycleClosureStore: closures,
+            readProtectionClose: (reference, maxAgeMs) =>
+              readCurrentProtectionClose(reference, identity.accountId, maxAgeMs).pipe(
+                Effect.provideService(PgClient.PgClient, sql),
+                Effect.provideService(WriterFence, fence),
+              ),
             blockedCycleIntentStore,
             reconciliationIntervalMs: input.reconciliationIntervalMs,
             reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
@@ -305,6 +311,11 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             persistedCapitalGrants,
             readFinalExecutionRiskContext: (observedAt) =>
               readFinalExecutionRiskContext(sql, identity.accountId, observedAt),
+            readProtectionSubmit: (intentId, proofId) =>
+              readProtectionSubmit(intentId, proofId, 'transmission').pipe(
+                Effect.provideService(PgClient.PgClient, sql),
+                Effect.provideService(WriterFence, fence),
+              ),
           },
         })
         const startup = yield* engine.startCycle({

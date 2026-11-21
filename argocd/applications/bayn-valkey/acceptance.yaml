@@ -27,7 +27,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: verify
-          image: valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
+          image: valkey/valkey:9.1.4@sha256:3ab0eca823ebbf0fe352476ebac330ac9e5f14b592b9a954eab296d341e81b0e
           command: [sh, /scripts/verify.sh]
           envFrom:
             - configMapRef:

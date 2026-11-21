@@ -39,6 +39,7 @@ import {
   marketChangedEventId,
 } from '../execution/events'
 import { projectExecutionControllerHealth } from '../execution/controller-health'
+import { startInferenceWatch } from './restate-entry-inference'
 
 const stateKey = 'controller'
 const deadlineTickStateKey = 'deadlineTick'
@@ -455,6 +456,11 @@ export const makeBaynExecutionController = (
             executionControllerAdvanceRunOptions,
           )
           if (decision._tag === 'Activated') {
+            startInferenceWatch(ctx, {
+              controllerKey: ctx.key,
+              epoch: decision.state.epoch,
+              sourceRevision: config.sourceRevision,
+            })
             ctx.set(stateKey, decision.state)
             scheduleTick(
               ctx,
@@ -515,6 +521,11 @@ export const makeBaynExecutionController = (
           )
           if (decision._tag === 'Activated') {
             await retireDeadlineTick(ctx)
+            startInferenceWatch(ctx, {
+              controllerKey: ctx.key,
+              epoch: decision.state.epoch,
+              sourceRevision: config.sourceRevision,
+            })
             ctx.set(stateKey, decision.state)
           }
           scheduleTick(
@@ -588,7 +599,19 @@ export const makeBaynExecutionController = (
                 // with the already-durable advance instead of waiting for a separate journaled clock round trip.
                 const issuedAt = tick.issuedAt ?? new Date(clock.currentTimeMillisUnsafe()).toISOString()
                 try {
-                  return await runtime.advance({ ...decision.command, issuedAt }, ctx.request().attemptCompletedSignal)
+                  const release = state?.lastProtectionRelease
+                  const protectionRelease =
+                    release?.sequence === tick.sequence
+                      ? { proofId: release.proofId, cycleId: release.cycleId, checkedAt: release.checkedAt }
+                      : undefined
+                  return await runtime.advance(
+                    {
+                      ...decision.command,
+                      issuedAt,
+                      ...(protectionRelease === undefined ? {} : { protectionRelease }),
+                    },
+                    ctx.request().attemptCompletedSignal,
+                  )
                 } catch (cause) {
                   throw executionAdvanceRunFailure(cause, issuedAt)
                 }
@@ -682,27 +705,15 @@ export const makeBaynExecutionController = (
               service: 'BaynBrokerObservations',
               method: 'refresh',
               key: ctx.key,
-              parameter: { sourceRevision: config.sourceRevision },
+              parameter: {
+                sourceRevision: config.sourceRevision,
+                ...(result.observation.protectionReleaseCycleId === undefined
+                  ? {}
+                  : { cycleId: result.observation.protectionReleaseCycleId }),
+              },
               inputSerde: brokerObservationJsonSerde,
               idempotencyKey: `bayn-post-mutation-refresh-${completed.epoch}-${tick.sequence}`,
             })
-
-          for (const job of result.inferenceJobs ?? []) {
-            if (job.status !== 'Prepared') continue
-            ctx.genericSend({
-              service: 'BaynEntryInference',
-              method: 'evaluate',
-              parameter: {
-                schemaVersion: 'bayn.inference-dispatch.v1',
-                controllerKey: ctx.key,
-                epoch: completed.epoch,
-                sourceRevision: config.sourceRevision,
-                jobId: job.jobId,
-              },
-              inputSerde: brokerObservationJsonSerde,
-              idempotencyKey: `bayn-inference-${job.jobId}`,
-            })
-          }
 
           // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
           // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
@@ -779,8 +790,23 @@ export const makeBaynExecutionController = (
             if (event.snapshotHash === state.lastBrokerSnapshotHash) return
             nextState = { ...state, lastBrokerSnapshotHash: event.snapshotHash }
           }
+          if (event._tag === 'ProtectionRelease') {
+            if (event.eventId !== event.proofId) throw terminal('protection release identity differs')
+            const previous = state.lastProtectionRelease
+            if (previous !== undefined && (previous.proofId === event.proofId || previous.checkedAt >= event.checkedAt))
+              return
+            nextState = {
+              ...state,
+              lastProtectionRelease: {
+                proofId: event.proofId,
+                cycleId: event.cycleId,
+                checkedAt: event.checkedAt,
+                sequence: state.nextSequence,
+              },
+            }
+          }
           if (nextState !== state) ctx.set(stateKey, nextState)
-          // A closed owner has no quote-dependent work. Canonical broker publications still recheck
+          // A closed owner has no quote-dependent work. Canonical broker snapshots and source events still recheck
           // its authority and calendar; source recovery and inference completion remain immediate.
           if (
             event._tag === 'MarketChanged' &&

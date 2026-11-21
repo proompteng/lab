@@ -3,7 +3,7 @@ import { observeCycleGenerationHash } from '../capital-grant-algebra'
 import { orderRequestBody } from '../../broker/alpaca-mutations/decisions'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -40,6 +40,11 @@ import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { canonicalHashV1Result } from '../../hash'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../../testing/postgres-template.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { restrictAuthority } from '../../db/reconciliation'
 import { MutationOperation } from '../../broker/alpaca-mutations/model'
@@ -67,11 +72,11 @@ const brokerIdentity = Result.getOrThrow(
     accountId,
   }),
 )
-const config = {
+const config = (url: string) => ({
   ...fixtureConfig,
   operationTimeoutMs: 5_000,
-  postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
-}
+  postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
+})
 
 const value = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
@@ -280,39 +285,43 @@ const seedRepairableCycle = (
     `
   })
 
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     Layer.mergeAll(CycleStoreLive, BlockedCycleIntentStoreLive).pipe(
-      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provideMerge(PostgresClientLive(config(url))),
       Layer.provideMerge(NodeServices.layer),
     ),
   )
 
-const resetDatabase = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`DROP SCHEMA public CASCADE`
-  yield* sql`CREATE SCHEMA public`
-  yield* postgresMigrations
-})
-
 describePostgres('PostgreSQL authority cycle recovery', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
 
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
-      throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
-    }
-    runtime = makeRuntime()
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const migrated = makeRuntime(url)
+      try {
+        await migrated.runPromise(postgresMigrations)
+      } finally {
+        await migrated.dispose()
+      }
+    })
   })
 
   beforeEach(async () => {
-    await runtime.runPromise(resetDatabase)
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
   })
 
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+  afterAll(async () => template?.dispose())
 
   test.each(['clear', 'operator', 'position'] as const)(
     'native expired-entry migration requires clear flat authority: %s',
@@ -1718,7 +1727,7 @@ const expiryFixture = {
 const makeExpiryRuntime = () =>
   ManagedRuntime.make(
     Layer.mergeAll(BlockedCycleIntentStoreLive, WriterFenceLive).pipe(
-      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provideMerge(PostgresClientLive(config(testUrl))),
       Layer.provideMerge(NodeServices.layer),
     ),
   )
