@@ -6,6 +6,7 @@ import { Clock, Deferred, Effect, Exit, FileSystem, Fiber, Layer, Schedule, Stre
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { ChildProcessSpawner } from 'effect/process'
 
+import { observeNativeStartupFailure } from '../../tools/test-native-process-diagnostics'
 import { sha256 } from '../hash'
 import { inferResearch } from '../research-inference/client'
 import { verifyResearchReceipt } from '../research-inference/store'
@@ -26,6 +27,7 @@ interface NativeStartupObservation {
 const startupDiagnostics = (phase: 'initial' | 'restart', startedAtMs: number) => ({
   phase,
   startedAtMs,
+  child: undefined as ChildProcessSpawner.ChildProcessHandle | undefined,
   spawnRequestedElapsedMs: null as number | null,
   spawnAcquiredElapsedMs: null as number | null,
   nativeRequests: 0,
@@ -86,6 +88,7 @@ nativeTest(
             phase.spawnRequestedElapsedMs = (yield* Clock.currentTimeMillis) - phase.startedAtMs
             const handle = yield* originalSpawner.spawn(command)
             phase.spawnAcquiredElapsedMs = (yield* Clock.currentTimeMillis) - phase.startedAtMs
+            phase.child = handle
             handles.push(handle)
             yield* handle.exitCode.pipe(
               Effect.tap(() => observeLifecycle(`${phase.phase}-child-exited`)),
@@ -222,7 +225,7 @@ nativeTest(
               Effect.onExit((exit) =>
                 Effect.gen(function* () {
                   const now = yield* Clock.currentTimeMillis
-                  const { startedAtMs, ...observations } = phase
+                  const { startedAtMs, child, ...observations } = phase
                   yield* Effect.logInfo({
                     event: 'bayn.opencode-native-startup-test.v1',
                     ...observations,
@@ -230,7 +233,8 @@ nativeTest(
                     readinessElapsedMs: now - waitStartedAtMs,
                     phaseElapsedMs: now - startedAtMs,
                   })
-                }),
+                  yield* observeNativeStartupFailure(exit, phase.phase, child)
+                }).pipe(Effect.catchCause((cause) => (Exit.isFailure(exit) ? Effect.void : Effect.failCause(cause)))),
               ),
             )
           })
