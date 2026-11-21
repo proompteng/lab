@@ -69,6 +69,8 @@ on:
 concurrency:
   group: ${{ github.workflow }}-main
   cancel-in-progress: false
+  # A later dependency-only skip must retain pending production changes.
+  queue: max
 
 jobs:
   changes:
