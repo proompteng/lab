@@ -71,6 +71,9 @@ jobs:
   karapace:
     uses: ./.github/workflows/karapace-schema-sync.yaml
 
+  kata:
+    uses: ./.github/workflows/kata-validation.yml
+
   khoshut:
     uses: ./.github/workflows/khoshut-ci.yml
 

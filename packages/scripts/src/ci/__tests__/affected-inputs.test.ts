@@ -326,6 +326,59 @@ test('Temporal worker uses the same native build and heartbeat proof in PRs and 
   expect(property(property(publication, 'permissions'), 'id-token')).toBe('write')
 })
 
+test('Kata validates its catalog and both native builds in the queue without publishing', () => {
+  const filename = 'kata-validation.yml'
+  const path = `./.github/workflows/${filename}`
+  const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
+  const publisher: unknown = Bun.YAML.parse(readFileSync('.github/workflows/kata-firecracker-extension.yaml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  expect(property(property(queue, 'jobs'), 'kata')).toEqual({ uses: path })
+  const inputs = property(property(property(workflow, 'on'), 'workflow_call'), 'inputs')
+  expect(property(property(inputs, 'publish-extension'), 'default')).toBe(false)
+  expect(property(property(inputs, 'build-extensions'), 'default')).toBe(true)
+  expect(property(property(inputs, 'validate-catalog'), 'default')).toBe(true)
+
+  const jobs = property(workflow, 'jobs')
+  const build = property(jobs, 'build')
+  const matrix = property(property(property(build, 'strategy'), 'matrix'), 'include')
+  expect(matrix).toEqual([
+    { architecture: 'amd64', runner: 'ubuntu-24.04' },
+    { architecture: 'arm64', runner: 'ubuntu-24.04-arm' },
+  ])
+  const steps = property(build, 'steps') as unknown[]
+  const components = steps.find((step) => property(step, 'name') === 'Build and test patched Kata components')
+  expect(property(components, 'run')).toContain('build-patched-kata.sh')
+  const image = steps.find((step) => property(step, 'name') === 'Build native extension image')
+  expect(property(property(image, 'with'), 'push')).toBe(false)
+  expect(property(property(image, 'with'), 'outputs')).toContain("env.EXPORT_EXTENSION == 'true'")
+  expect(property(property(build, 'env'), 'EXPORT_EXTENSION')).toBe(
+    "${{ inputs.publish-extension && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}",
+  )
+  const upload = steps.find((step) => property(step, 'name') === 'Upload native extension')
+  expect(property(upload, 'if')).toBe("env.EXPORT_EXTENSION == 'true'")
+  const catalog = property(jobs, 'catalog')
+  expect(property(catalog, 'runs-on')).toBe('ubuntu-24.04')
+  expect(property(catalog, 'steps')).toContainEqual({
+    name: 'Verify immutable input and build catalog',
+    run: 'devices/galactic/releases/catalog.sh build out/catalog',
+  })
+  expect(Object.keys(jobs as Record<string, unknown>)).toEqual(['catalog', 'build'])
+
+  const releaseJobs = property(publisher, 'jobs')
+  expect(property(releaseJobs, 'catalog')).toMatchObject({ uses: path, with: { 'build-extensions': false } })
+  expect(property(releaseJobs, 'build')).toMatchObject({
+    uses: path,
+    with: { 'validate-catalog': false, 'publish-extension': true },
+  })
+  expect(property(property(releaseJobs, 'publish-catalog'), 'needs')).toBe('catalog')
+  const publish = property(releaseJobs, 'publish')
+  expect(property(publish, 'needs')).toEqual(['changes', 'build'])
+  expect(property(publish, 'runs-on')).toBe('arc-amd64')
+  const publisherSteps = property(publish, 'steps') as unknown[]
+  const publishImage = publisherSteps.find((step) => property(step, 'name') === 'Publish, sign, and verify extension')
+  expect(property(publishImage, 'run')).toContain('skopeo copy --all --preserve-digests')
+})
+
 test('Signal Publisher validates the queued image revision without publication', () => {
   const path = './.github/workflows/signal-publisher-build-push.yml'
   const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
