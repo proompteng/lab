@@ -4,6 +4,11 @@ permissions:
   contents: read
 
 on:
+  pull_request:
+    paths:
+      - 'nix/images/attic.nix'
+      - 'nix/images/attic-stream-nars.patch'
+      - '.github/workflows/attic-build-push.yaml'
   push:
     branches:
       - main
@@ -20,7 +25,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: attic
+      package_attr: atticd-image
+      tag: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+      source_revision: ${{ github.event.pull_request.head.sha }}
+      pr_number: ${{ github.event.pull_request.number }}
+
   build-and-push:
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: attic
@@ -29,4 +45,5 @@ jobs:
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-    secrets: inherit
+    secrets:
+      ATTIC_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.ATTIC_TOKEN || '' }}

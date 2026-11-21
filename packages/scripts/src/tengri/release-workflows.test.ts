@@ -25,15 +25,18 @@ describe('Tengri image workflow', () => {
     expect(validation).toContain('GOWORK=off go vet ./...')
   })
 
-  it('builds and qualifies each architecture on one builder without publishing PR images', () => {
+  it('builds the two native images independently and verifies the pushed guest artifacts', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      on: { merge_group: { types: string[] } }
       jobs: Record<
         string,
         {
           if?: string
-          strategy?: { matrix: { include: Array<{ architecture: string; runner: string }> } }
+          'runs-on'?: string
+          strategy?: { matrix: { architecture: string[]; image: string[]; include: unknown[] } }
           steps: Array<{
             name?: string
+            if?: string
             uses?: string
             run?: string
             with?: Record<string, unknown>
@@ -42,46 +45,68 @@ describe('Tengri image workflow', () => {
         }
       >
     }
-    const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
-    expect(workflow.jobs.build?.if).toBe(releaseOnly)
-    expect(workflow.jobs.build?.strategy?.matrix.include).toEqual([
-      { architecture: 'amd64', runner: 'arc-amd64' },
-      { architecture: 'arm64', runner: 'arc-arm64' },
-    ])
+    const mainPublication =
+      "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
+    expect(workflow.on.merge_group).toEqual({ types: ['checks_requested'] })
+    expect(workflow.jobs.build?.if).toBe(mainPublication)
+    expect(workflow.jobs.publish?.if).toBe(mainPublication)
+    expect(workflow.jobs.build?.['runs-on']).toBe('arc-${{ matrix.architecture }}')
+    expect(workflow.jobs.build?.strategy?.matrix).toEqual({
+      architecture: ['amd64', 'arm64'],
+      image: ['nanoagent', 'tengri'],
+      include: [
+        {
+          image: 'tengri',
+          build_contexts: 'ofz-proto=proto\nofz-catalog=services/ofz\nnanoagent-src=services/nanoagent\n',
+        },
+      ],
+    })
     expect(workflow.jobs['validate-kvm']).toBeUndefined()
-    expect(workflow.jobs['validate-tengri']?.if).not.toContain("github.event_name != 'pull_request'")
-    expect(workflow.jobs['validate-nanoagent']?.if).not.toContain("github.event_name != 'pull_request'")
+    for (const job of ['validate-tengri', 'validate-nanoagent']) {
+      expect(workflow.jobs[job]?.if).toBe("github.event.action != 'edited' || github.event.changes.base")
+    }
     const steps = workflow.jobs.build.steps
     expect(steps.filter((step) => step.uses === './.github/actions/setup-buildkit')).toHaveLength(1)
-    const guestIndex = steps.findIndex((step) => step.name === 'Build nanoagent image')
-    const controllerIndex = steps.findIndex((step) => step.name === 'Build tengri image')
-    expect(guestIndex).toBeGreaterThanOrEqual(0)
-    expect(controllerIndex).toBeGreaterThan(guestIndex)
-    for (const [name, image] of [
-      ['tengri', 'TENGRI_IMAGE'],
-      ['nanoagent', 'NANOAGENT_IMAGE'],
-    ]) {
-      const build = steps.find((step) => step.name === `Build ${name} image`)
-      expect(build?.with?.context).toBe(`services/${name}`)
-      expect(build?.with?.push).toBe(true)
-      expect(build?.with?.['build-args']).toBe('SOURCE_REVISION=${{ github.sha }}')
-      const cache = 'type=registry,ref=${{ env.' + image + ' }}:cache-${{ matrix.architecture }}'
-      expect(build?.with?.['cache-from']).toBe(cache)
-      expect(build?.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
-      expect(build?.['continue-on-error']).not.toBe(true)
-    }
+    const build = steps.find((step) => step.uses === 'docker/build-push-action@v6')
     const pairedBoot = steps.find((step) => step.name === 'Verify paired boot artifact checksums')
-    expect(pairedBoot?.run).toContain('crane export --platform "linux/${ARCHITECTURE}" "$guest"')
-    expect(pairedBoot?.run).toContain('sha256sum --check SHA256SUMS')
+    if (!build || !pairedBoot) throw new Error('Native build or guest verification step is missing')
+    expect(build.with?.context).toBe('services/${{ matrix.image }}')
+    expect(build.with?.push).toBe(true)
+    expect(build.with?.['build-contexts']).toBe('${{ matrix.build_contexts }}')
+    expect(build.with?.['build-args']).toContain(
+      "matrix.image == 'tengri' && format('SOURCE_REVISION={0}', github.sha)",
+    )
+    const cache = 'type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}'
+    expect(build.with?.['cache-from']).toBe(cache)
+    expect(build.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
+    expect(build['continue-on-error']).not.toBe(true)
+    expect(pairedBoot.if).toBe("matrix.image == 'nanoagent'")
+    expect(steps.indexOf(pairedBoot)).toBeGreaterThan(steps.indexOf(build))
+    expect(pairedBoot.run).toContain('crane export --platform "linux/${ARCHITECTURE}" "$guest" - | tar -xf -')
+    expect(pairedBoot.run).toContain('sha256sum --check SHA256SUMS')
     expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
 
     const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
-    expect(ofz.jobs['build-ofz'].if).toBe(releaseOnly)
+    expect(ofz.on.merge_group.types).toEqual(['checks_requested'])
+    expect(ofz.jobs['build-ofz'].if).toBe(mainPublication)
     expect(ofz.jobs['build-ofz'].needs).toBe('validate')
     expect(ofz.jobs.validate.if).toBeUndefined()
+    const ofzChecks = ofz.jobs.validate.steps.map((step: { run?: string }) => step.run ?? '').join('\n')
+    expect(ofzChecks).not.toMatch(/bash services\/ofz\/test-control\.sh control\b/)
+    expect(ofzChecks.match(/bash services\/tengri\/test-database-failover\.sh\b/g)).toHaveLength(1)
+    const promotion = readFileSync(resolve(repositoryRoot, 'services/tengri/test-database-failover.sh'), 'utf8')
+    expect(promotion).toContain('ofz/test-control.sh" failover')
+    const control = readFileSync(resolve(repositoryRoot, 'services/ofz/test-control.sh'), 'utf8')
+    expect(control).toMatch(
+      /if \[\[ "\$fixture_mode" == failover \]\]; then\s+cargo test --locked --lib control_integration/,
+    )
+    expect(control).toContain(
+      'runtime_state_test::physical_database_promotion_preserves_authority_and_consumed_capabilities',
+    )
     const products = YAML.parse(
       readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
     )
+    const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
     for (const service of ['proompteng', 'app', 'synthesis', 'docs']) {
       expect(products.jobs[`build-${service}`].if).toBe(
         service === 'app'
@@ -105,16 +130,12 @@ describe('Tengri image workflow', () => {
 
     expect(YAML.parse(source).name).toBe('Tengri images')
     expect(source).not.toContain('tengri-release.yml')
-    expect(source).toContain('Build tengri image')
-    expect(source).toContain('Build nanoagent image')
-    expect(source).toContain('architecture: amd64')
-    expect(source).toContain('architecture: arm64')
     expect(source).toContain('cosign sign --yes')
     expect(source).toContain("--format '{{json .Manifest}}'")
     expect(source).toContain("jq -er '.digest'")
-    expect(source).toContain('org.opencontainers.image.created=${SOURCE_TIMESTAMP}')
-    expect(source).toContain('org.opencontainers.image.revision=${SOURCE_SHA}')
-    expect(source).toContain('crane mutate --platform "linux/${architecture}"')
+    expect(source).toContain('org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}')
+    expect(source).toContain('org.opencontainers.image.revision=${{ github.sha }}')
+    expect(source).not.toContain('crane mutate')
     expect(source).toContain('crane config --platform "linux/${architecture}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.source=${SOURCE_URL}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}"')
@@ -125,7 +146,6 @@ describe('Tengri image workflow', () => {
     expect(source).not.toMatch(
       /docker buildx imagetools inspect[\s\\]+--format '\{\{json \.Manifest\}\}'[\s\\]+"\$\{kargo_reference\}"/,
     )
-    expect(source).toContain("if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'")
     expect(source).not.toContain(':latest')
     expect(source).not.toContain('latest_digest')
     expect(source).not.toContain('sha256sum "${index_path}"')

@@ -183,7 +183,9 @@ test.each([false, true])(
         yield* broker.mutation.submit(intent())
         const projection = broker.read.projection
         if (projection === undefined) throw new Error('Missing broker projection')
-        const result = yield* Effect.result(projection.snapshot)
+        const result = yield* Effect.result(
+          projection.reconciliationSnapshot.pipe(Effect.map(({ snapshot }) => snapshot)),
+        )
         if (advanceFails) {
           expect(result).toMatchObject({
             _tag: 'Failure',

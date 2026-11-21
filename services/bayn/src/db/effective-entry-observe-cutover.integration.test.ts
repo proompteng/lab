@@ -55,10 +55,9 @@ for (const {
   const behaviorHash = '76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
   const hash = (value: string) => Result.getOrThrow(canonicalHashV1Result({ value }))
 
-  const makeRuntime = () =>
-    ManagedRuntime.make(
-      PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(Layer.provideMerge(NodeServices.layer)),
-    )
+  const postgres = PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(
+    Layer.provideMerge(NodeServices.layer),
+  )
 
   const guardFixture = Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -247,12 +246,11 @@ for (const {
   DELETE FROM reconciliations`
 
   integration(`${schemaVersion} native OBSERVE cutover`, () => {
-    let runtime: ReturnType<typeof makeRuntime>
+    const runtime = ManagedRuntime.make(postgres)
     beforeAll(() => {
       const parsed = new URL(url)
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
         throw new Error('Effective-entry cutover tests require an isolated local _test database')
-      runtime = makeRuntime()
     })
     afterAll(async () => runtime.dispose())
 
@@ -397,7 +395,8 @@ for (const {
     })
 
     test('migrated authority recovers through native OBSERVE only after fresh reconciliation', async () => {
-      await runtime.runPromise(
+      // Guard queries are prepared against temporary tables. Recovery uses a fresh connection to the real tables.
+      await Effect.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
           yield* sql`DROP SCHEMA public CASCADE`
@@ -484,7 +483,7 @@ for (const {
               broker_identity_hash: broker.identityHash,
             },
           ])
-        }),
+        }).pipe(Effect.provide(postgres)),
       )
     }, 30_000)
   })

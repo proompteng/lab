@@ -89,9 +89,10 @@ ENV CARGO_HOME=/home/nanoagent/.cargo \
     DEVELOPER_TOOLS_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-developer-tools \
     XDG_CACHE_HOME=/home/nanoagent/.cache
 
+# The build layer is disposable until this step succeeds. Flush once after package installation.
 RUN set -eux; \
     apt-get update -o Acquire::Retries=3; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-unsafe-io \
       bash \
       bubblewrap \
       ca-certificates \
@@ -114,6 +115,7 @@ RUN set -eux; \
       tini \
       util-linux \
       xz-utils; \
+    sync -f /; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
       /usr/share/man/* /usr/share/info/* /usr/share/locale/*; \
@@ -144,7 +146,6 @@ RUN set -eux; \
       > /etc/apt/apt.conf.d/99tengri; \
     test -x /bin/bash
 
-COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-browser.sh /usr/local/bin/bootstrap-browser
 COPY --chmod=0555 bootstrap-browser-runtime.sh /usr/local/bin/bootstrap-browser-runtime
 COPY --chmod=0555 launch-browser.sh /usr/local/bin/launch-browser
@@ -165,7 +166,7 @@ COPY --chmod=0555 bootstrap-developer-tools.sh /usr/local/bin/bootstrap-develope
 COPY --chmod=0444 astronvim-init.lua /usr/share/nanoagent/astronvim-init.lua
 RUN chmod 0755 /usr/share/nanoagent
 COPY --chmod=0444 developer-profile.sh /etc/profile.d/tengri-development.sh
-RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
+RUN test -x /usr/local/bin/bootstrap-codex
 
 # Keep the verified graphics packages in the immutable image instead of relying
 # on superseded Ubuntu archive URLs. Extract the bundle on the retained home.
@@ -208,13 +209,20 @@ USER 1000:1000
 RUN --mount=type=bind,source=test-guest-admin.sh,target=/tmp/test-guest-admin.sh,readonly \
     bash /tmp/test-guest-admin.sh --filesystem > /tmp/guest-admin-validation.txt
 
-FROM runtime AS c-toolchain-runtime
+# The guest and its compiler can install their packages independently.
+FROM ${UBUNTU_BASE_IMAGE}:24.04 AS c-toolchain-packages
+
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-unsafe-io \
+      ca-certificates curl gcc git libc6-dev make && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* && \
+    sync -f /
+
+FROM c-toolchain-packages AS c-toolchain-runtime
 
 ARG TARGETARCH
 
 RUN set -eux; \
-    apt-get update -o Acquire::Retries=3; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc libc6-dev; \
     triplet="$(gcc -dumpmachine)"; \
     compiler_major="$(gcc -dumpversion)"; \
     compiler_version="$(gcc -dumpfullversion)"; \
@@ -363,13 +371,12 @@ RUN set -eux; \
       --directory /bundle \
       .
 
-FROM runtime AS editor-build
+FROM c-toolchain-packages AS editor-build
 ARG TARGETARCH
+ENV HOME=/home/nanoagent
 COPY --chmod=0555 build-editor.sh /usr/local/bin/build-editor
-COPY --chmod=0444 editor-manifest.lua launch-editor.sh blink-manual-library.patch /usr/share/nanoagent/
-RUN apt-get update -o Acquire::Retries=3 && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc make libc6-dev && \
-    build-editor "$TARGETARCH"
+COPY --chmod=0444 astronvim-init.lua editor-manifest.lua launch-editor.sh blink-manual-library.patch /usr/share/nanoagent/
+RUN mkdir -p "$HOME" && build-editor "$TARGETARCH"
 
 FROM runtime AS runtime-with-toolchain
 
@@ -498,6 +505,7 @@ RUN --network=none test-editor-bundle
 
 FROM runtime-with-toolchain AS guest-rootfs
 
+COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --from=guest-admin-smoke /tmp/guest-admin-validation.txt /usr/share/nanoagent/guest-admin-validation.txt
 COPY --from=browser-smoke /tmp/browser-version /usr/share/nanoagent/browser-version
 COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
@@ -512,7 +520,7 @@ RUN apt-get update -o Acquire::Retries=3 && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 COPY --from=guest-rootfs / /rootfs/
 COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
-RUN validate-rootfs /rootfs /rootfs-validation.txt
+RUN test -x /rootfs/usr/local/bin/nanoagent && validate-rootfs /rootfs /rootfs-validation.txt
 
 FROM rootfs-check AS boot-artifacts
 ARG TARGETARCH

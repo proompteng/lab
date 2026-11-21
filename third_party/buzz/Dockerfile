@@ -18,9 +18,12 @@ RUN apt-get update \
 WORKDIR /build
 COPY . .
 
-RUN cargo test --release --locked -p buzz-relay api::git::store::tests:: --lib \
+RUN cargo test --release --locked -p buzz-relay --lib --no-run \
     && cargo build --release --locked -p buzz-relay --bin buzz-relay \
     && strip target/release/buzz-relay
+
+FROM builder AS verify
+RUN cargo test --release --locked -p buzz-relay api::git::store::tests:: --lib
 
 FROM ${UPSTREAM_IMAGE} AS runtime
 
@@ -31,5 +34,5 @@ LABEL org.opencontainers.image.source="https://github.com/proompteng/lab" \
       io.proompteng.buzz.upstream-revision="acfbb1bb6af54cb29cb152496ff43b8285dcb8cf" \
       io.proompteng.buzz.upstream-image="ghcr.io/block/buzz@sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428"
 
-COPY --from=builder --chown=1000:1000 --chmod=0755 \
+COPY --from=verify --chown=1000:1000 --chmod=0755 \
     /build/target/release/buzz-relay /usr/local/bin/buzz-relay

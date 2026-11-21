@@ -21,7 +21,7 @@ const fixture = () =>
     yield* TestClock.setTime(Date.parse(at))
     const valkey = valkeyFixture()
     let snapshotKey = ''
-    let row = { snapshot_hash: '', state_hash: '', observedAt: at }
+    let row = { generation: 1, snapshot_hash: '', state_hash: '', observedAt: at }
     let fence: 'admitted' | 'pending' | 'rejected' = 'admitted'
     let getBehavior: 'normal' | 'failed' | 'defect' | 'interrupted' | 'elapsed' = 'normal'
     let queries = 0
@@ -57,7 +57,7 @@ const fixture = () =>
         const snapshotHash = hash(snapshot)
         const state = { snapshotHash, state: observedBrokerState(snapshot) }
         const stateHash = hash(state)
-        row = { snapshot_hash: snapshotHash, state_hash: stateHash, observedAt: snapshot.observedAt }
+        row = { generation: 1, snapshot_hash: snapshotHash, state_hash: stateHash, observedAt: snapshot.observedAt }
         snapshotKey = `bayn:broker:snapshot:${hash({ accountId, sourceRevision: revision, hash: snapshotHash })}`
         yield* cache.putAll([
           { key: snapshotKey, value: JSON.stringify(snapshot), ttlMs: 300_000 },
