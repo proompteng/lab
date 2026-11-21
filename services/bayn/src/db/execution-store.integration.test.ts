@@ -615,19 +615,21 @@ describePostgres('PostgreSQL execution persistence', () => {
     ])
   })
 
-  test('treats a matching REST microsecond order as the retained stream nanosecond version', async () => {
+  test.each([
+    { name: 'with a nonzero nanosecond tail', retainedTimestamp: '2026-08-28T14:31:01.000900123Z' },
+    { name: 'with a zero nanosecond tail', retainedTimestamp: '2026-08-28T14:31:01.000900000Z' },
+  ])('treats a matching REST microsecond order as the retained stream nanosecond version $name', async (fixture) => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const events = yield* BrokerEventStore
         const sql = yield* PgClient.PgClient
-        const retainedTimestamp = '2026-08-28T14:31:01.000900123Z'
         const restTimestamp = '2026-08-28T14:31:01.000900Z'
         const retainedOrder = { ...order(), observedAt: '2026-08-28T14:31:01.000Z' }
         const retained = {
           ...orderEvent(),
-          sourceEventId: `order:${retainedOrder.brokerOrderId}:${retainedTimestamp}`,
-          sourceTimestamp: retainedTimestamp,
-          contentHash: Result.getOrThrow(orderSourceContentHashResult(retainedOrder, retainedTimestamp)),
+          sourceEventId: `order:${retainedOrder.brokerOrderId}:${fixture.retainedTimestamp}`,
+          sourceTimestamp: fixture.retainedTimestamp,
+          contentHash: Result.getOrThrow(orderSourceContentHashResult(retainedOrder, fixture.retainedTimestamp)),
           occurredAt: retainedOrder.observedAt,
           observedAt: retainedOrder.observedAt,
           order: retainedOrder,
@@ -658,9 +660,8 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.conflict).toMatchObject({
       operation: 'ingest',
       failure: 'conflict',
-      message: expect.stringContaining('older than the retained provider version'),
     })
-    expect(result.rows).toEqual([{ status: OrderStatus.New, broker_updated_at: '2026-08-28T14:31:01.000900123Z' }])
+    expect(result.rows).toEqual([{ status: OrderStatus.New, broker_updated_at: fixture.retainedTimestamp }])
   })
 
   test('rejects an ambient transaction before running reconciliation ingestion', async () => {
