@@ -39,6 +39,7 @@ jobs:
             bayn:
               - 'services/bayn/**'
               - '!services/bayn/README.md'
+              - '!services/bayn/src/ci-queue-proof.test.ts'
               - '!services/bayn/formal/**'
               - 'services/dorvud/**'
               - 'packages/scripts/src/bayn/**'
