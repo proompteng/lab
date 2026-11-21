@@ -12,24 +12,18 @@ permissions:
 
 jobs:
   build:
-    name: Cold build (${{ matrix.image }}, ${{ matrix.architecture }})
+    name: Cold Nanoagent build (${{ matrix.architecture }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        image: [nanoagent, tengri]
         architecture: [amd64, arm64]
         include:
           - architecture: amd64
             runner: ubuntu-24.04
           - architecture: arm64
             runner: ubuntu-24.04-arm
-          - image: tengri
-            contexts: |
-              ofz-proto=proto
-              ofz-catalog=services/ofz
-              nanoagent-src=services/nanoagent
     steps:
       - uses: actions/checkout@v6
       - name: Read native build capacity
@@ -38,21 +32,51 @@ jobs:
       - name: Build full native release image
         uses: docker/build-push-action@v6
         with:
-          context: services/${{ matrix.image }}
-          build-args: ${{ matrix.image == 'tengri' && format('SOURCE_REVISION={0}', github.sha) || '' }}
-          build-contexts: ${{ matrix.contexts }}
+          context: services/nanoagent
           platforms: linux/${{ matrix.architecture }}
-          outputs: type=oci,dest=${{ runner.temp }}/native-image.tar
+          outputs: type=oci,dest=${{ runner.temp }}/nanoagent-${{ matrix.architecture }}.tar
+          labels: org.opencontainers.image.revision=${{ github.sha }}
           provenance: mode=max
           sbom: true
-      - name: Verify native output and attestation
-        env:
-          ARCHITECTURE: ${{ matrix.architecture }}
+      - name: Hand native image to publisher
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-native-nanoagent-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/nanoagent-${{ matrix.architecture }}.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: true
+
+  import:
+    name: Verify the actual artifacts with ARC regctl
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: tengri-native-*
+          path: ${{ runner.temp }}/tengri-native
+          merge-multiple: true
+      - name: Import and verify each platform and linked attestation
         run: |
           set -euo pipefail
-          tar -xOf "$RUNNER_TEMP/native-image.tar" index.json |
-            jq -e --arg architecture "$ARCHITECTURE" '
-              any(.manifests[]; .platform.architecture == $architecture and .platform.os == "linux") and
-              any(.manifests[]; .annotations["vnd.docker.reference.type"] == "attestation-manifest")
-            '
-          du -h "$RUNNER_TEMP/native-image.tar"
+          export GOBIN="$RUNNER_TEMP/bin"
+          go install github.com/regclient/regclient/cmd/regctl@v0.9.2
+          for architecture in amd64 arm64; do
+            archive="$RUNNER_TEMP/tengri-native/nanoagent-$architecture.tar"
+            destination="ocidir://$RUNNER_TEMP/imported:nanoagent-$architecture"
+            du -h "$archive"
+            "$GOBIN/regctl" image import "$destination" "$archive"
+            "$GOBIN/regctl" manifest get "$destination" --format raw-body |
+              jq -e --arg architecture "$architecture" '
+                ([.manifests[] | select(.platform.architecture == $architecture and .platform.os == "linux")] | first.digest) as $image |
+                $image != null and any(.manifests[];
+                  .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+                  .annotations["vnd.docker.reference.digest"] == $image
+                )
+              '
+            "$GOBIN/regctl" image config "$destination" --platform "linux/$architecture" --format raw-body |
+              jq -e --arg revision "$GITHUB_SHA" '.config.Labels["org.opencontainers.image.revision"] == $revision'
+          done
