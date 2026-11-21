@@ -74,7 +74,10 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
           (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath) ||
           (event === 'pull_request' &&
             filename === 'attic-build-push.yaml' &&
-            file === '.github/workflows/attic-build-push.yaml'),
+            file === '.github/workflows/attic-build-push.yaml') ||
+          (event === 'pull_request' &&
+            filename === 'opencode-ci.yml' &&
+            ['.github/workflows/opencode-ci.yml', '.github/workflows/nix-oci-build-common.yml'].includes(file)),
       )
     for (const file of [
       'nix/cache-push.sh',

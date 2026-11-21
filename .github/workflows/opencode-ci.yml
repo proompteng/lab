@@ -4,6 +4,8 @@ permissions:
 on:
   pull_request:
     paths:
+      - '.github/workflows/opencode-ci.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
       - 'services/opencode/**'
       - 'services/relay/**'
       - 'packages/platform-client/**'
