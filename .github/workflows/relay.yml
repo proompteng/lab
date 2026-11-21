@@ -15,6 +15,7 @@ on:
       - 'argocd/applications/relay/**'
       - 'nix/packages/relay.nix'
       - 'nix/images/relay.nix'
+      - 'nix/images/ofz-fixture-tools.nix'
       - 'nix/images/agentrun-tools.nix'
   push:
     branches: [main]

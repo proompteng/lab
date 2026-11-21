@@ -524,7 +524,7 @@ async fn lifecycle(
         supervisor.leadership.send_replace(None);
         supervisor.state.send_replace(SlotState::Failed {
             claim: Some(claim.clone()),
-            message: "slot lifecycle authority withdrawn".into(),
+            message: super::LIFECYCLE_WITHDRAWN.into(),
         });
         let fenced = tokio::time::timeout(runner::FENCING_TIMEOUT, async {
             loop {

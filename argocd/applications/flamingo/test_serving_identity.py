@@ -17,10 +17,11 @@ class ServingIdentityTests(unittest.IsolatedAsyncioTestCase):
             tokenizer="nvidia/Qwen3.8-27B-NVFP4",
             revision=self.revision,
             tokenizer_revision=self.revision,
-            hf_config=SimpleNamespace(_commit_hash=self.revision),
+            hf_config_path=None,
         )
         self.args = SimpleNamespace(
             served_model_name=["qwen38-flamingo"],
+            revision=self.revision,
             chat_template=None,
             trust_request_chat_template=False,
         )
@@ -75,7 +76,8 @@ class ServingIdentityTests(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_unpinned_or_different_loaded_artifacts_before_dispatch(self):
         cases = [
             (self.model, "revision", None),
-            (self.model.hf_config, "_commit_hash", "c" * 40),
+            (self.args, "revision", "main"),
+            (self.model, "hf_config_path", "foreign/config"),
             (self.model, "tokenizer_revision", "c" * 40),
             (self.model, "tokenizer", "foreign/model"),
             (self.args, "chat_template", "override"),

@@ -11,7 +11,8 @@ import { canonicalHashV1Result } from '../../hash'
 import { brokerPollFailureAnnotations } from '../../composition/broker-observation-runtime'
 import { checkHealth } from '../../health/program'
 import { makeBrokerObservationStore } from '../../db/broker-observations'
-import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtures'
+import { config as runtimeConfig, provenance, readyState } from '../../testing/runtime-fixtures'
+import { statusFacts } from '../../http'
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../alpaca-test-support'
@@ -171,6 +172,56 @@ const healthPass = (read: BrokerReadShape, timeoutMs = 1000) =>
   })
 
 describe('durable broker observations', () => {
+  test('status identifies pending cash fees and clears the reason only after the canonical cut settles', async () => {
+    const source = fixture()
+    let snapshot = { ...observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z'), pendingCashFeeCount: 2 }
+    let failure: BrokerReadError | undefined
+    const observed = Effect.suspend(() => (failure === undefined ? Effect.succeed(snapshot) : Effect.fail(failure)))
+    await run(
+      Effect.gen(function* () {
+        const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+          Effect.provideService(BrokerObservations, {
+            read: observed,
+            readState: observed,
+            readForSubmit: () => observed,
+            invalidate: Effect.void,
+          }),
+        )
+        const facts = () =>
+          healthPass(projected).pipe(
+            Effect.map((broker) =>
+              statusFacts(
+                { ...readyState(), broker },
+                runtimeConfig.execution,
+                provenance,
+                runtimeConfig.build.verification,
+              ),
+            ),
+          )
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_CASH_FEES_PENDING', error: 'BROKER_CASH_FEES_PENDING' },
+        })
+        snapshot = { ...snapshot, pendingCashFeeCount: 0 }
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: true },
+          broker: { readAvailable: true, reasonCode: null, error: null },
+        })
+        failure = new BrokerReadError({
+          operation: 'preflight',
+          kind: BrokerReadErrorKind.Timeout,
+          retryable: true,
+          message: 'Broker observation is awaiting authoritative cash fee records',
+        })
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
+        })
+        expect(source.calls).toEqual([])
+      }),
+    )
+  })
+
   test('requires a new poll cut after history changes instead of retrying the original ticket', async () => {
     const source = fixture()
     let scans = 0

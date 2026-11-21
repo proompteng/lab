@@ -26,7 +26,7 @@ import { currentEquityMarketProfile as equityMarketProfile } from '../jev/market
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevPurpose } from '../jev/portfolio'
 import { exchangeSessions } from '../market-hours'
-import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import {
@@ -81,6 +81,11 @@ import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-suppor
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { makeJevObservation } from '../jev/observation'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
@@ -296,7 +301,7 @@ const expectIndexedObservationLookup = (
     }
     checkSourceScans(root)
   })
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     Layer.mergeAll(
       CycleStoreLive,
@@ -309,7 +314,7 @@ const makeRuntime = () =>
       Layer.provideMerge(
         PostgresClientLive({
           operationTimeoutMs: 5000,
-          postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
         }),
       ),
       Layer.provideMerge(NodeServices.layer),
@@ -317,35 +322,45 @@ const makeRuntime = () =>
   )
 
 describePostgres('PostgreSQL complete Jev batches', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw new Error('Jev batch tests require a local _test database')
-    runtime = makeRuntime()
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const priorSchema = makeRuntime(url)
+      try {
+        await priorSchema.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* postgresMigrations
+            yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
+            VALUES (${replayAccountId},${replaySourceHash},${fixture.snapshot.manifest.observedAt})`
+            yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
+            yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+          VALUES (${plan.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${plan.observedAt})`
+            const r = fixture.portfolio.brokerState.reconciliation
+            yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+            VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
+            yield* (yield* CandidateObservationStore).record(fixture.observation)
+          }),
+        )
+      } finally {
+        await priorSchema.dispose()
+      }
+    })
   })
   beforeEach(async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-        yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
-          VALUES (${replayAccountId},${replaySourceHash},${fixture.snapshot.manifest.observedAt})`
-        yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
-        yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
-        VALUES (${plan.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${plan.observedAt})`
-        const r = fixture.portfolio.brokerState.reconciliation
-        yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
-          VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
-        yield* (yield* CandidateObservationStore).record(fixture.observation)
-      }),
-    )
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
   })
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+  afterAll(async () => template?.dispose())
 
   test('deferred inference survives admission before send and grants exactly one dispatch claim', async () => {
     let finishCalls = 0
@@ -3265,7 +3280,14 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                   checkpoint,
                   resultPath,
                 ],
-                { stdin: 'ignore', stdout: 'inherit', stderr: 'inherit', killSignal: 'SIGKILL' },
+                {
+                  stdin: 'ignore',
+                  stdout: 'inherit',
+                  stderr: 'inherit',
+                  killSignal: 'SIGKILL',
+                  env: { BAYN_TEST_POSTGRES_URL: Redacted.make(database.url) },
+                  extendEnv: true,
+                },
               )
             const firstProcess = yield* spawner.spawn(command(mode))
             while (!(yield* fs.exists(checkpoint))) {

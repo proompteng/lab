@@ -14,7 +14,7 @@ import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-in
 import { EntryInferenceJournalLive } from './entry-inference-postgres'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from '../intraday-replay/inference-timing'
-import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import type { Statement } from 'effect/sql/Statement'
 import {
@@ -119,6 +119,11 @@ import {
   type ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -170,7 +175,7 @@ const retainedRuntime = {
 const observed = Date.parse(fixture.observation.payload.observedAt)
 const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   TestClock.setTime(observed).pipe(Effect.andThen(effect), Effect.provide(TestClock.layer()))
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     Layer.mergeAll(
       Layer.succeed(DecisionConstruction, {
@@ -192,7 +197,7 @@ const makeRuntime = () =>
       Layer.provideMerge(
         PostgresClientLive({
           operationTimeoutMs: 5000,
-          postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
         }),
       ),
       Layer.provideMerge(NodeServices.layer),
@@ -612,33 +617,43 @@ const waitForPostgresLock = (sql: PgClient.PgClient, pid: number) =>
   })
 
 describePostgres('PostgreSQL native Jev execution decisions', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
-    const url = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test'))
-      throw new Error('Native tests require a local _test database')
-    runtime = makeRuntime()
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const schema = makeRuntime(url)
+      try {
+        await schema.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* postgresMigrations
+            yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+              VALUES (${replayAccountId}, ${'e'.repeat(64)}, ${fixture.draft.window.executionOpenAt})`
+            yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+            VALUES (${nativeInput.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${fixture.observation.payload.observedAt})`
+            const r = fixture.portfolio.brokerState.reconciliation
+            yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+            VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
+          }),
+        )
+      } finally {
+        await schema.dispose()
+      }
+    })
   })
   beforeEach(async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-        yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
-          VALUES (${replayAccountId}, ${'e'.repeat(64)}, ${fixture.draft.window.executionOpenAt})`
-        yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
-        VALUES (${nativeInput.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${fixture.observation.payload.observedAt})`
-        const r = fixture.portfolio.brokerState.reconciliation
-        yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
-        VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
-      }),
-    )
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
   })
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+  afterAll(async () => template?.dispose())
 
   test('native broker terms persist only when they match the immutable pre-entry strategy plan', async () => {
     await runtime.runPromise(
@@ -2309,7 +2324,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     await Effect.runPromise(phase('first-assertions', firstAssertionsStartedAt, 0))
     const restartStartedAt = performance.now()
     await runtime.dispose()
-    runtime = makeRuntime()
+    runtime = makeRuntime(database.url)
     await Effect.runPromise(phase('runtime-restart', restartStartedAt, 1000))
     const repeated = await runtime.runPromise(observeAt(1000))
     const repeatedAssertionsStartedAt = performance.now()
@@ -2643,6 +2658,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             Effect.gen(function* () {
               yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions ON COMMIT DROP
               AS SELECT * FROM public.autonomous_cycle_shadow_decisions`
+              // Rebind prepared reads from the public table to the temporary fixture.
+              yield* sql`SET LOCAL search_path TO pg_temp, public`
               for (const [targetVersion, policyVersion] of [
                 ['bayn.entry-ablation-target.v1', 'bayn.entry-ablation-policy.v1'],
                 ['bayn.repeated-momentum-target.v1', 'bayn.repeated-momentum-policy.v1'],
@@ -3018,7 +3035,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             { count: 0 },
           ])
           yield* Effect.acquireUseRelease(
-            Effect.sync(makeRuntime),
+            Effect.sync(() => makeRuntime(database.url)),
             (restarted) =>
               Effect.promise(() =>
                 restarted.runPromise(
