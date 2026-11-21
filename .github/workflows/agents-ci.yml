@@ -11,6 +11,11 @@ on:
         description: JSON array produced by the central PR impact router
         required: true
         type: string
+    secrets:
+      TS_OAUTH_CLIENT_ID:
+        required: false
+      TS_OAUTH_SECRET:
+        required: false
   push:
     branches:
       - main

@@ -4,12 +4,12 @@ let
     x86_64-linux = {
       architecture = "amd64";
       prometheusHash = "e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a";
-      alloyHash = "3694ea4e1044b367e1c21ffe28117f209c5989fa5e604d000321809f871ab701";
+      alloyHash = "62d177feb18c9b6ffd636c8273aa82a6afc75a507d096ff951749df23c3176f9";
     };
     aarch64-linux = {
       architecture = "arm64";
       prometheusHash = "173389cc42bf09c4e6e54cb53fa07a5a835d7c261e14775d2183181d6e385d1c";
-      alloyHash = "fbeaf099b7c90b8b83dfa4781601c1181d8d06e89af34b846680c86ce08f725c";
+      alloyHash = "cc2c4d7bc25d3ef7df8c95395759879ba4eb0d016db068c07dcb7aa88f436ad3";
     };
   };
   release = releases.${pkgs.stdenv.hostPlatform.system};
@@ -42,8 +42,8 @@ in {
   };
   alloy = binary {
     name = "alloy";
-    version = "1.19.2";
-    url = "https://github.com/grafana/alloy/releases/download/v1.19.2/alloy-linux-${release.architecture}.zip";
+    version = "1.22.0";
+    url = "https://github.com/grafana/alloy/releases/download/v1.22.0/alloy-linux-${release.architecture}.zip";
     sha256 = release.alloyHash;
     sourceRoot = ".";
     path = "alloy-linux-${release.architecture}";

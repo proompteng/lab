@@ -66,7 +66,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:ee708d6843d6b24c992b0d89a0d2336e1992b4519f9af5fad03220b333df6d05
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -75,6 +75,15 @@ spec:
                       fail() {
                         echo "arc scratch bootstrap: $*" >&2
                         exit 1
+                      }
+
+                      tree_stats() {
+                        find "$1" -xdev \( -type f -printf 'f %s\n' -o -type l -printf 'l\n' \) |
+                          awk '
+                            $1 == "f" { bytes += $2; files++ }
+                            $1 == "l" { links++ }
+                            END { printf "%.0f %d %d\n", bytes, files, links }
+                          '
                       }
 
                       scratch=/scratch
@@ -103,12 +112,10 @@ spec:
                       # free after the image/cache copy so a runner cannot start on a nearly full volume.
                       mkdir -p /home/runner/.cache
                       reserve_bytes=$((45 * 1024 * 1024 * 1024))
-                      nix_file_bytes="$(find /nix -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
-                      nix_files="$(find /nix -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
-                      nix_links="$(find /nix -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
-                      cache_file_bytes="$(find /home/runner/.cache -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
-                      cache_files="$(find /home/runner/.cache -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
-                      cache_links="$(find /home/runner/.cache -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
+                      stats="$(tree_stats "/nix")"
+                      read -r nix_file_bytes nix_files nix_links <<< "$stats"
+                      stats="$(tree_stats "/home/runner/.cache")"
+                      read -r cache_file_bytes cache_files cache_links <<< "$stats"
                       required_bytes=$((nix_file_bytes + cache_file_bytes + reserve_bytes))
                       available_bytes=$((scratch_available_kib * 1024))
                       (( available_bytes >= required_bytes )) ||
@@ -123,12 +130,10 @@ spec:
                       cp -a /nix/. "$stage/nix/"
                       cp -a /home/runner/.cache/. "$stage/cache/"
 
-                      staged_nix_file_bytes="$(find "$stage/nix" -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
-                      staged_nix_files="$(find "$stage/nix" -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
-                      staged_nix_links="$(find "$stage/nix" -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
-                      staged_cache_file_bytes="$(find "$stage/cache" -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
-                      staged_cache_files="$(find "$stage/cache" -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
-                      staged_cache_links="$(find "$stage/cache" -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
+                      stats="$(tree_stats "$stage/nix")"
+                      read -r staged_nix_file_bytes staged_nix_files staged_nix_links <<< "$stats"
+                      stats="$(tree_stats "$stage/cache")"
+                      read -r staged_cache_file_bytes staged_cache_files staged_cache_links <<< "$stats"
                       [[ "$staged_nix_file_bytes" == "$nix_file_bytes" ]] ||
                         fail "partial /nix copy: $staged_nix_file_bytes file bytes copied, expected $nix_file_bytes"
                       [[ "$staged_nix_files" == "$nix_files" ]] ||
@@ -191,7 +196,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:ee708d6843d6b24c992b0d89a0d2336e1992b4519f9af5fad03220b333df6d05
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -298,7 +303,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:ee708d6843d6b24c992b0d89a0d2336e1992b4519f9af5fad03220b333df6d05
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -307,6 +312,15 @@ spec:
                       fail() {
                         echo "arc scratch bootstrap: $*" >&2
                         exit 1
+                      }
+
+                      tree_stats() {
+                        find "$1" -xdev \( -type f -printf 'f %s\n' -o -type l -printf 'l\n' \) |
+                          awk '
+                            $1 == "f" { bytes += $2; files++ }
+                            $1 == "l" { links++ }
+                            END { printf "%.0f %d %d\n", bytes, files, links }
+                          '
                       }
 
                       scratch=/scratch
@@ -335,12 +349,10 @@ spec:
                       # free after the image/cache copy so a runner cannot start on a nearly full volume.
                       mkdir -p /home/runner/.cache
                       reserve_bytes=$((45 * 1024 * 1024 * 1024))
-                      nix_file_bytes="$(find /nix -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
-                      nix_files="$(find /nix -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
-                      nix_links="$(find /nix -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
-                      cache_file_bytes="$(find /home/runner/.cache -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
-                      cache_files="$(find /home/runner/.cache -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
-                      cache_links="$(find /home/runner/.cache -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
+                      stats="$(tree_stats "/nix")"
+                      read -r nix_file_bytes nix_files nix_links <<< "$stats"
+                      stats="$(tree_stats "/home/runner/.cache")"
+                      read -r cache_file_bytes cache_files cache_links <<< "$stats"
                       required_bytes=$((nix_file_bytes + cache_file_bytes + reserve_bytes))
                       available_bytes=$((scratch_available_kib * 1024))
                       (( available_bytes >= required_bytes )) ||
@@ -355,12 +367,10 @@ spec:
                       cp -a /nix/. "$stage/nix/"
                       cp -a /home/runner/.cache/. "$stage/cache/"
 
-                      staged_nix_file_bytes="$(find "$stage/nix" -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
-                      staged_nix_files="$(find "$stage/nix" -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
-                      staged_nix_links="$(find "$stage/nix" -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
-                      staged_cache_file_bytes="$(find "$stage/cache" -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
-                      staged_cache_files="$(find "$stage/cache" -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
-                      staged_cache_links="$(find "$stage/cache" -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
+                      stats="$(tree_stats "$stage/nix")"
+                      read -r staged_nix_file_bytes staged_nix_files staged_nix_links <<< "$stats"
+                      stats="$(tree_stats "$stage/cache")"
+                      read -r staged_cache_file_bytes staged_cache_files staged_cache_links <<< "$stats"
                       [[ "$staged_nix_file_bytes" == "$nix_file_bytes" ]] ||
                         fail "partial /nix copy: $staged_nix_file_bytes file bytes copied, expected $nix_file_bytes"
                       [[ "$staged_nix_files" == "$nix_files" ]] ||
@@ -423,7 +433,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:ee708d6843d6b24c992b0d89a0d2336e1992b4519f9af5fad03220b333df6d05
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]

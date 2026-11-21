@@ -1,6 +1,8 @@
 name: flamingo
 
 on:
+  merge_group:
+    types: [checks_requested]
   pull_request:
     paths:
       - 'argocd/applications/flamingo/**'
@@ -13,6 +15,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   serving-identity:

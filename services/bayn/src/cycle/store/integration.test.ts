@@ -1,6 +1,6 @@
 import { unusedEntryExpiresAt } from '../entry-admission'
 import { withProviderSessions } from '../../testing/market-calendar-fixture'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -10,6 +10,7 @@ import type { Statement } from 'effect/sql/Statement'
 
 import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
 import { discoverAutonomousCyclePass } from '../runner/program'
+import { DecisionReadinessReason } from '../runner/readiness'
 import { selectCycleRecovery } from '../runner/recovery-selection'
 
 import { CycleState, CycleTerminalReason, type CycleDraft } from '../model'
@@ -34,6 +35,11 @@ import { canonicalHashV1Result } from '../../hash'
 import type { ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../../testing/postgres-template.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleStore } from './model'
 import { CycleStoreLive, withWriterFenceCycleStore } from './postgres'
@@ -58,12 +64,6 @@ const sessionDate = '2026-08-28' as const
 const acquiredAt = '2026-08-28T13:00:00.000Z'
 const activatedAt = '2026-08-28T14:31:00.000Z'
 const blockedAt = '2026-08-28T15:00:00.000Z'
-const config = {
-  ...fixtureConfig,
-  operationTimeoutMs: 5_000,
-  postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
-}
-
 const value = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
@@ -103,17 +103,19 @@ const draft = (
   return candidate satisfies CycleDraft
 }
 
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
-    CycleStoreLive.pipe(Layer.provideMerge(PostgresClientLive(config)), Layer.provideMerge(NodeServices.layer)),
+    CycleStoreLive.pipe(
+      Layer.provideMerge(
+        PostgresClientLive({
+          ...fixtureConfig,
+          operationTimeoutMs: 5_000,
+          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
+        }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    ),
   )
-
-const resetDatabase = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`DROP SCHEMA public CASCADE`
-  yield* sql`CREATE SCHEMA public`
-  yield* postgresMigrations
-})
 
 const sourceTargetsFixture = () => {
   const source = nativeJevFixture()
@@ -150,25 +152,37 @@ const sourceTargetsFixture = () => {
 }
 
 describePostgres('PostgreSQL intraday cycle store', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
   let sourceTargets: ReturnType<typeof sourceTargetsFixture>
 
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
-      throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
-    }
+  beforeAll(async () => {
     sourceTargets = sourceTargetsFixture()
-    runtime = makeRuntime()
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const initializer = makeRuntime(url)
+      try {
+        await initializer.runPromise(postgresMigrations)
+      } finally {
+        await initializer.dispose()
+      }
+    })
   }, 30_000)
 
   beforeEach(async () => {
-    await runtime.runPromise(resetDatabase)
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
   })
 
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+
+  afterAll(async () => template?.dispose())
 
   test('unused entry expiry is persisted after its lease and rejected early by PostgreSQL', async () => {
     await runtime.runPromise(
@@ -392,7 +406,26 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     })
   })
 
-  test('discovery preserves the pre-open block and converges on one new unbound attempt', async () => {
+  test.each([
+    {
+      name: 'pre-open block with no consumed entry window',
+      acquiredAt,
+      blockedAt: '2026-08-28T13:10:00.000Z',
+      reason: CycleTerminalReason.ProvenanceMismatch,
+      observedAt: '2026-08-28T14:12:00.000Z',
+      nextWindowDueAt: undefined,
+      expiresAt: '2026-08-28T14:13:00.000Z',
+    },
+    {
+      name: 'expired entry whose current signal window is consumed',
+      acquiredAt: '2026-08-28T14:11:11.612Z',
+      blockedAt: '2026-08-28T14:12:13.040Z',
+      reason: CycleTerminalReason.UnusedEntryExpired,
+      observedAt: '2026-08-28T14:12:13.236Z',
+      nextWindowDueAt: '2026-08-28T14:13:02.000Z',
+      expiresAt: '2026-08-28T14:14:02.000Z',
+    },
+  ])('discovery preserves $name and converges on one new unbound attempt', async (timing) => {
     const candidate = draft()
     const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
     if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('invalid policy')
@@ -428,13 +461,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
-        yield* store.acquire(candidate, acquiredAt)
-        const blocked = yield* store.block(
-          candidate.identity.cycleId,
-          CycleTerminalReason.ProvenanceMismatch,
-          '2026-08-28T13:10:00.000Z',
-        )
-        yield* TestClock.setTime(Date.parse('2026-08-28T14:12:00.000Z'))
+        yield* store.acquire(candidate, timing.acquiredAt)
+        const blocked = yield* store.block(candidate.identity.cycleId, timing.reason, timing.blockedAt)
+        yield* TestClock.setTime(Date.parse(timing.observedAt))
         const discover = discoverAutonomousCyclePass({
           cycleBindingId: qualificationRunId,
           accountId,
@@ -442,9 +471,24 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           strategyProtocolHash: candidate.identity.strategyProtocolHash,
           authorityGenerationHash: '7'.repeat(64),
           executionPolicy,
+          nextEntryWindowDueAt: () => Effect.succeed(Option.fromUndefinedOr(timing.nextWindowDueAt)),
           buildDecision: forbidden,
           buildDecisionEvidence: forbidden,
         })
+        if (timing.nextWindowDueAt !== undefined) {
+          expect(yield* discover).toMatchObject({
+            outcome: 'ALREADY_TERMINAL',
+            cycle: blocked.cycle,
+            readiness: {
+              reason: DecisionReadinessReason.SignalWindowObserved,
+              availableAt: timing.nextWindowDueAt,
+            },
+          })
+          expect(Option.getOrThrow(yield* store.read(candidate.identity.cycleId))).toEqual(blocked.cycle)
+          const sql = yield* PgClient.PgClient
+          expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_cycles`).toEqual([{ count: 1 }])
+          yield* TestClock.setTime(Date.parse(timing.nextWindowDueAt))
+        }
         const attempts = yield* Effect.all([discover, discover], { concurrency: 'unbounded' })
         const sql = yield* PgClient.PgClient
         const [intents] = yield* sql<{ count: string }>`SELECT count(*)::text AS count FROM intents`
@@ -469,7 +513,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(current.bindings).toEqual({})
     expect(current.window.executionCalendarSchemaVersion).toBe('bayn.alpaca-market-calendar-observation.v2')
     expect(current.window.submissionCutoffAt).toBe('2026-08-28T19:55:00.000Z')
-    expect(unusedEntryExpiresAt(current)).toBe(Date.parse('2026-08-28T14:13:00.000Z'))
+    expect(current.createdAt).toBe(timing.nextWindowDueAt ?? timing.observedAt)
+    expect(unusedEntryExpiresAt(current)).toBe(Date.parse(timing.expiresAt))
     expect(result.attempts.filter((attempt) => attempt.outcome === 'ACQUIRED')).toHaveLength(1)
     expect(result.intentCount).toBe('0')
   })
