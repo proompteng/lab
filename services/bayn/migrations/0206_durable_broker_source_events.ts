@@ -3,6 +3,9 @@ import { SqlClient } from 'effect/sql'
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  // A published broker cut is not yet safe for stream fill accounting. Canonical reconciliation advances this
+  // watermark only after the cut's complete history has been ingested and its financial state is exact.
+  yield* sql`ALTER TABLE broker_observations ADD COLUMN financial_reconciliation_fence_at timestamptz`
   // Order current-state selection must use Alpaca's full provider version, not local arrival order or PostgreSQL's
   // lower timestamp precision. Every historical source identity already retains that version; materialize its canonical
   // nine-digit form once so stream and snapshot ingestion share one monotonic boundary.

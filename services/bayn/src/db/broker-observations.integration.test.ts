@@ -298,6 +298,8 @@ describePostgres('Durable per-account broker observations', () => {
         const next = yield* claim(store)
         yield* advanceToTicket(next)
         expect(yield* store.publish(next, snapshot(next), 0)).toBe(true)
+        expect(yield* store.isSessionBoundaryCovered(receipt.session.sessionId)).toBe(false)
+        yield* (yield* store.readForReconciliation).complete
         expect(yield* store.isSessionBoundaryCovered(receipt.session.sessionId)).toBe(true)
         expect(yield* store.readState).toEqual(observedBrokerState(snapshot(next)))
         expect(yield* store.recordNotification({ ...receipt, receivedAt: next.startedAt })).toEqual({ covered: true })
@@ -338,6 +340,37 @@ describePostgres('Durable per-account broker observations', () => {
           { account_id: 'another-account', count: 1 },
           { account_id: accountId, count: 1 },
         ])
+      }),
+    ))
+
+  test('financial reconciliation, not snapshot publication, opens a replacement stream session', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const firstBoundary = sourceEvent('1'.repeat(64), '2026-11-21T00:00:00.000Z', 'first-session')
+        expect(yield* store.recordNotification(firstBoundary)).toEqual({ covered: false })
+        const first = yield* claim(store)
+        yield* advanceToTicket(first)
+        expect(yield* store.publish(first, snapshot(first), 0)).toBe(true)
+
+        const firstRead = yield* store.readForReconciliation
+        const staleCompletion = firstRead.complete
+        expect(yield* store.isSessionBoundaryCovered(firstBoundary.session.sessionId)).toBe(false)
+        yield* firstRead.complete
+        expect(yield* store.isSessionBoundaryCovered(firstBoundary.session.sessionId)).toBe(true)
+
+        const replacementBoundary = sourceEvent('2'.repeat(64), '2026-11-21T00:00:01.000Z', 'replacement-session')
+        expect(yield* store.recordNotification(replacementBoundary)).toEqual({ covered: false })
+        yield* staleCompletion
+        expect(yield* store.isSessionBoundaryCovered(replacementBoundary.session.sessionId)).toBe(false)
+
+        const replacement = yield* claim(store)
+        yield* advanceToTicket(replacement)
+        expect(yield* store.publish(replacement, snapshot(replacement), 0)).toBe(true)
+        const replacementRead = yield* store.readForReconciliation
+        expect(yield* store.isSessionBoundaryCovered(replacementBoundary.session.sessionId)).toBe(false)
+        yield* replacementRead.complete
+        expect(yield* store.isSessionBoundaryCovered(replacementBoundary.session.sessionId)).toBe(true)
       }),
     ))
 

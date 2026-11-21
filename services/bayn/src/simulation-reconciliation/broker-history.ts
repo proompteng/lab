@@ -470,14 +470,20 @@ export const readBrokerSnapshotOnce = (
     }
   })
 
-export const readStableBrokerSnapshot = (
+export const readReconciliationSnapshot = (
   read: BrokerReadShape,
   now: Effect.Effect<string, ReconciliationError>,
   waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
-): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
-  read.projection?.snapshot ??
+): Effect.Effect<
+  {
+    readonly snapshot: StableBrokerSnapshot
+    readonly complete: Effect.Effect<void, BrokerReadError>
+  },
+  BrokerReadError | ReconciliationError
+> =>
+  read.projection?.reconciliationSnapshot ??
   readBrokerSnapshotOnce(read, now, undefined).pipe(
-    Effect.map((value) => value.snapshot),
+    Effect.map((value) => ({ snapshot: value.snapshot, complete: Effect.void })),
     Effect.retry(
       Schedule.recurs(2).pipe(
         Schedule.while(({ input: cause }) =>
@@ -491,3 +497,10 @@ export const readStableBrokerSnapshot = (
       ),
     ),
   )
+
+export const readStableBrokerSnapshot = (
+  read: BrokerReadShape,
+  now: Effect.Effect<string, ReconciliationError>,
+  waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
+): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
+  readReconciliationSnapshot(read, now, waitForRetry).pipe(Effect.map(({ snapshot }) => snapshot))

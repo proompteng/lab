@@ -91,13 +91,19 @@ export const makeBrokerObservationStore = (
 ) => {
   const decodeProjectionRows = Schema.decodeUnknownEffect(
     Schema.Array(
-      Schema.Struct({ snapshot_hash: Schema.String, state_hash: Schema.String, observedAt: UtcInstantSchema }),
+      Schema.Struct({
+        generation: Schema.Int,
+        snapshot_hash: Schema.String,
+        state_hash: Schema.String,
+        observedAt: UtcInstantSchema,
+      }),
     ),
     strictParseOptions,
   )
   const decodePendingProjectionRows = Schema.decodeUnknownEffect(
     Schema.Array(
       Schema.Struct({
+        generation: Schema.Int,
         snapshot_hash: Schema.String,
         state_hash: Schema.String,
         observedAt: UtcInstantSchema,
@@ -165,7 +171,8 @@ export const makeBrokerObservationStore = (
     VALUES (${accountId}, ${sourceRevision}, to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
     ON CONFLICT (account_id) DO UPDATE SET source_revision = EXCLUDED.source_revision,
       generation = broker_observations.generation + 1, available = false,
-      poll_started_at = NULL, notification_fence_at = NULL, observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, state_hash = NULL,
+      poll_started_at = NULL, notification_fence_at = NULL, financial_reconciliation_fence_at = NULL,
+      observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, state_hash = NULL,
       protection_read_expires_at = NULL, protection_read_cost_ms = NULL, protection_read_claim_id = NULL,
       next_poll_not_before = GREATEST(broker_observations.next_poll_not_before,
           to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
@@ -218,7 +225,7 @@ export const makeBrokerObservationStore = (
       sql`SELECT EXISTS (
         SELECT 1 FROM broker_source_events AS boundary
         JOIN broker_observations AS observation ON observation.account_id = boundary.account_id
-          AND observation.notification_fence_at >= boundary.recorded_at
+          AND observation.financial_reconciliation_fence_at >= boundary.recorded_at
         WHERE boundary.account_id = ${accountId} AND boundary.session_id = ${sessionId}
           AND boundary.event_kind = 'SessionReady'
       ) AS covered`.pipe(
@@ -548,7 +555,7 @@ export const makeBrokerObservationStore = (
     run(
       Effect.gen(function* () {
         const rows = yield* sql`
-      SELECT snapshot_hash, state_hash,
+      SELECT generation, snapshot_hash, state_hash,
         to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
       FROM broker_observations
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND available
@@ -587,7 +594,7 @@ export const makeBrokerObservationStore = (
           // Account timestamp maxima preserve the strict EXISTS comparisons while
           // using the existing ordered indexes for these additional diagnostics.
           const awaiting = yield* sql`
-        SELECT snapshot_hash, state_hash,
+        SELECT generation, snapshot_hash, state_hash,
           to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt",
           EXISTS (SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
             WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= poll_started_at) AS "newerMutation",
@@ -641,6 +648,7 @@ export const makeBrokerObservationStore = (
             'bayn.broker.observation.pending.newer_notification': pending.newerNotification,
           }).pipe(Effect.catchDefect(() => Effect.void))
           return {
+            generation: pending.generation,
             snapshot_hash: pending.snapshot_hash,
             state_hash: pending.state_hash,
             observedAt: pending.observedAt,
@@ -667,15 +675,31 @@ export const makeBrokerObservationStore = (
           }),
         )
       : Effect.void
-  const read = run(
+  const readObservation = run(
     Effect.gen(function* () {
       const row = yield* readProjection(null)
       const value = yield* readSnapshotPayload(row.snapshot_hash)
       const validated = yield* validateObservedBrokerSnapshot(value, accountId, yield* currentUtcInstant, maximumAgeMs)
       yield* requireSettled(row.pending)
       yield* requireSettledCashFees(validated)
-      return validated
+      return { row, observation: validated }
     }),
+  )
+  const read = readObservation.pipe(Effect.map(({ observation }) => observation))
+  const readForReconciliation = readObservation.pipe(
+    Effect.map(({ row, observation }) => ({
+      observation,
+      // The generation and materialization identity bind completion to the exact cut that reconciliation read.
+      // A concurrent source event rotates the generation in its insertion transaction, so this update then becomes
+      // a conservative no-op and the replacement capture must reconcile before its session can use the fast lane.
+      complete: run(
+        sql`UPDATE broker_observations
+          SET financial_reconciliation_fence_at = notification_fence_at
+          WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
+            AND generation = ${row.generation} AND snapshot_hash = ${row.snapshot_hash}
+            AND available AND notification_fence_at IS NOT NULL`.pipe(Effect.asVoid),
+      ),
+    })),
   )
   const readState = (intentId: string | null) =>
     run(
@@ -713,6 +737,7 @@ export const makeBrokerObservationStore = (
     recordProjection,
     hasSessionProjectionGap,
     read,
+    readForReconciliation,
     readState: readState(null),
     readForSubmit: readState,
   }

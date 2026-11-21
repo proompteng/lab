@@ -721,11 +721,11 @@ durableTest.each(
                 ),
               projection: {
                 ...broker.read.projection,
-                snapshot: Ref.get(stallReconciliation).pipe(
+                reconciliationSnapshot: Ref.get(stallReconciliation).pipe(
                   Effect.flatMap((stall) =>
                     stall
                       ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true)))
-                      : broker.read.projection.snapshot,
+                      : broker.read.projection.reconciliationSnapshot,
                   ),
                 ),
               },

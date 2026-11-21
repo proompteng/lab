@@ -815,7 +815,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         const read: BrokerReadShape = {
           ...fresh,
           projection: {
-            snapshot: Effect.succeed(previous),
+            reconciliationSnapshot: Effect.succeed({ snapshot: previous, complete: Effect.void }),
             fresh,
             invalidate: Effect.void,
             submissionSnapshot: () => unexpected,
