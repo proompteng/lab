@@ -3,8 +3,8 @@
 import { Button, Skeleton } from '@proompteng/design/ui'
 import { Archive, ArrowLeft, LoaderCircle, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
+import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
 import { cn } from '@/lib/utils'
 import { runTengriAction, TengriRequestError } from './client'
 
@@ -14,12 +14,13 @@ type SessionIndex = TengriCodexThreadPage & { archived: boolean } & (
     | { phase: 'error'; error: string }
   )
 
+export type ConversationActivity = { phase: TengriCodexRun['state']['phase']; approvalId?: string }
+
 export function AgentSessionList({
   agentId,
   enabled,
   selected,
-  threadPhases,
-  pendingApprovals,
+  threadActivity,
   canSelect,
   revision,
   onSelect,
@@ -28,8 +29,7 @@ export function AgentSessionList({
   agentId: string
   enabled: boolean
   selected: { id: string; unavailable: boolean } | null
-  threadPhases: ReadonlyMap<string, TengriCodexRun['state']['phase']>
-  pendingApprovals: ReadonlyMap<string, string>
+  threadActivity: ReadonlyMap<string, ConversationActivity>
   canSelect: boolean
   revision: number
   onSelect: (threadId: string, approvalId?: string) => void
@@ -140,9 +140,9 @@ export function AgentSessionList({
   const loadedIds = new Set(index.threads.map(({ id }) => id))
   const unlistedApprovals = index.archived
     ? []
-    : Array.from(pendingApprovals.keys())
-        .filter((id) => !loadedIds.has(id))
-        .map((id) => ({ id, title: 'Conversation' }))
+    : Array.from(threadActivity).flatMap(([id, activity]) =>
+        activity.approvalId && !loadedIds.has(id) ? [{ id, title: 'Conversation' }] : [],
+      )
   const threads = [...unlistedApprovals, ...index.threads]
   const recovering = index.phase === 'loading' || index.phase === 'retrying'
   return (
@@ -166,14 +166,9 @@ export function AgentSessionList({
           {threads.map((thread) => {
             const unavailable = thread.id === selected?.id && selected.unavailable
             const active = thread.id === selected?.id && !index.archived
-            const phase = threadPhases.get(thread.id)
+            const { phase, approvalId } = threadActivity.get(thread.id) ?? {}
             const busy = phase !== undefined
-            const approvalId = pendingApprovals.get(thread.id)
-            const waiting =
-              approvalId !== undefined ||
-              phase === 'authorization_required' ||
-              phase === 'needs_reconciliation' ||
-              phase === 'waiting_for_approval'
+            const waiting = phase === 'authorization_required' || phase === 'needs_reconciliation'
             const status = approvalId
               ? 'Approval needed'
               : phase === 'needs_reconciliation'
@@ -189,7 +184,7 @@ export function AgentSessionList({
                   data-conversation-id={thread.id}
                   disabled={!canSelect || index.archived}
                   aria-current={active ? 'true' : undefined}
-                  aria-description={busy || approvalId ? status : undefined}
+                  aria-description={busy ? status : undefined}
                   onClick={() => onSelect(thread.id, approvalId)}
                   className={cn(
                     'h-8 min-w-0 flex-1 justify-start gap-2 rounded-lg pl-2.5 pr-8 text-left transition-none active:bg-white/[0.12] dark:active:bg-white/[0.12] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:pr-12',
@@ -213,7 +208,7 @@ export function AgentSessionList({
                   >
                     <span className="size-1.5 rounded-full bg-current" />
                   </span>
-                ) : !waiting && busy ? (
+                ) : !approvalId && !waiting && busy ? (
                   <span
                     aria-hidden="true"
                     className="pointer-events-none absolute right-1 inline-flex size-6 items-center justify-center text-zinc-500 group-hover:opacity-0 group-focus-within:opacity-0 [@media(pointer:coarse)]:hidden"
@@ -221,7 +216,7 @@ export function AgentSessionList({
                     <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
                   </span>
                 ) : null}
-                {!waiting || index.archived ? (
+                {(!approvalId && !waiting) || index.archived ? (
                   <span className="absolute right-1 inline-flex [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
                     <Button
                       type="button"

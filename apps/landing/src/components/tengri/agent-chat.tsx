@@ -57,7 +57,7 @@ import {
   type TengriCodexImage,
 } from '@/lib/tengri/codex-images'
 import { cn } from '@/lib/utils'
-import { AgentSessionList } from './agent-session-list'
+import { AgentSessionList, type ConversationActivity } from './agent-session-list'
 import { CodexQuestionCard } from './codex-question-card'
 import { codexQuestionRequest } from './codex-question-model'
 import type { QuestionRequest } from './codex-question-model'
@@ -1966,27 +1966,27 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         (!autoApprovalAttempts.current.has(event.approvalId) || resolvingApprovals.has(event.approvalId))
       ),
   )
-  const approvalRuns = workspaceRuns.filter((candidate) => !runMatchesThread || candidate.threadId !== threadId)
-  if (runMatchesThread && run) approvalRuns.push(run)
-  const pendingApprovals = new Map<string, string>()
-  for (const candidate of approvalRuns) {
-    if (candidate.state.phase !== 'waiting_for_approval') continue
-    const pending = candidate.state.approvals.find(({ approvalId }) => !resolvedApprovals.current.has(approvalId))
-    if (pending) pendingApprovals.set(candidate.threadId, pending.approvalId)
+  const sidebarRuns = workspaceRuns.filter((candidate) => !runMatchesThread || candidate.threadId !== threadId)
+  if (runMatchesThread && run) sidebarRuns.push(run)
+  const threadActivity = new Map<string, ConversationActivity>()
+  for (const candidate of sidebarRuns) {
+    if (codexRunIsTerminal(candidate)) continue
+    const state = candidate.state
+    const pending =
+      state.phase === 'waiting_for_approval'
+        ? state.approvals.find(({ approvalId }) => !resolvedApprovals.current.has(approvalId))
+        : undefined
+    threadActivity.set(candidate.threadId, { phase: state.phase, approvalId: pending?.approvalId })
   }
-  const sidebarHasApprovals = !sidebarOpen && pendingApprovals.size > 0
+  if (threadId && !threadActivity.has(threadId) && (activeTurnId || submittingHere)) {
+    threadActivity.set(threadId, { phase: 'running' })
+  }
+  const sidebarHasApprovals = !sidebarOpen && Array.from(threadActivity.values()).some(({ approvalId }) => approvalId)
   const conversationLoading = Boolean(
     threadId && !threadReady && (!recoveryFailed || error instanceof AgentConnectionError),
   )
   const runObservationUnavailable = Boolean(activeRunsRecoveryFailure.current || runRecoveryFailure.current)
   const showRecoveryStop = canStopRun && !showStopAction && Boolean(runStatus || runObservationUnavailable)
-  const threadPhases = new Map(
-    workspaceRuns
-      .filter((candidate) => !codexRunIsTerminal(candidate))
-      .map((candidate) => [candidate.threadId, candidate.state.phase]),
-  )
-  if (runPending && runPhase) threadPhases.set(threadId, runPhase)
-  else if (activeTurnId || submittingHere) threadPhases.set(threadId, 'running')
   const agentStatus = runObservationUnavailable
     ? 'Status unavailable'
     : connectionNotice
@@ -2072,8 +2072,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           agentId={agentId}
           enabled={account.authenticated}
           selected={threadId ? { id: threadId, unavailable: conversationMissing } : null}
-          threadPhases={threadPhases}
-          pendingApprovals={pendingApprovals}
+          threadActivity={threadActivity}
           canSelect={canChangeConversation}
           revision={sessionRevision}
           onSelect={switchConversation}
