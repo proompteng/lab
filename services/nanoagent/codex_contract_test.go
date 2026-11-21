@@ -169,6 +169,23 @@ completed:
 	if _, err := supervisor.call(ctx, "thread/read", missing); !isMissingCodexConversation("thread/read", missing, err) {
 		t.Fatal("missing persisted history must retain the unavailable-conversation classification", err)
 	}
+	const missingOperation = "33333333-3333-4333-8333-333333333333"
+	missingThread, _ := codexThreadID(missing)
+	directory := filepath.Join(workspace, ".tengri", "codex-operations")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	supervisor.retainedBoot = true
+	supervisor.bootID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	if err := writeCodexOperation(filepath.Join(directory, missingOperation+".json"), codexOperation{
+		Version: 1, ID: missingOperation, Digest: strings.Repeat("a", 64), Method: "turn/start",
+		Thread: missingThread, State: "dispatching", Generation: "previous-agent-process",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if result := call("tengri/reconcileOperation", map[string]string{"threadId": missingThread, "operationId": missingOperation}); string(result) != `{"outcome":"unconfirmed"}` {
+		t.Fatalf("fenced dispatch without a native rollout did not settle: %s", result)
+	}
 }
 
 func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
