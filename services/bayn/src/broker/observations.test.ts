@@ -241,6 +241,7 @@ describe('paper broker observations', () => {
       intentId: 'b'.repeat(64),
     })
     expect(event.occurredAt).toBe('2026-07-22T15:30:00.500Z')
+    expect(event.sourceTimestamp).toBe('2026-07-22T15:30:00.500123000Z')
     expect(event.sourceEventId).toBe(`order:${order.brokerOrderId}:${order.updatedAt}`)
     expect(event.contentHash).toBe('77f85d889a621d4815ae2f0dddfed463c6ae7fd3c5e0f0c0d2066c72bdbb9f14')
     expect(failure(orderObservation({ ...order, extendedHours: true }, evidence))).toEqual({

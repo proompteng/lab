@@ -85,6 +85,7 @@ const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceO
   if (
     observation.outcome === 'WAITING' ||
     observation.outcome === 'ADMISSION_WAITING' ||
+    (observation.outcome === 'ALREADY_TERMINAL' && observation.readiness !== undefined) ||
     (result?.outcome === 'RECOVERED' && result.action === 'WAITING') ||
     observation.recoveryAction === 'WAITING'
   ) {

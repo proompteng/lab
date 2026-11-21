@@ -39,6 +39,10 @@
   ],
   "attic-build-push.yaml": [
     {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "build-and-push",
       "pattern": "^build-and-push(?: \\(.*\\))?(?: /.*)?$"
     }
@@ -157,6 +161,12 @@
     {
       "id": "publish-index",
       "pattern": "^publish-index(?: \\(.*\\))?$"
+    }
+  ],
+  "buzz-relay-cache.yml": [
+    {
+      "id": "seed",
+      "pattern": "^seed(?: \\(.*\\))?$"
     }
   ],
   "codex-devbox.yml": [

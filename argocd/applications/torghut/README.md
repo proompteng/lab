@@ -23,6 +23,30 @@ rollout order, and recovery constraints. The post-deploy workflow verifies absen
 then verifies both retained Flink jobs, checkpoints, websocket/Kafka flow, and TA freshness. It observes the
 Kargo-owned rollout and does not contact the retired API endpoints.
 
+Kargo's `kargo-http-smoke` verification checks that the TA HTTP response contains `RUNNING`; it can succeed while
+the previous job still serves during a handover. The separate `torghut-post-deploy-verify` workflow binds its
+pipeline and telemetry evidence to the verified generated Git revision. After the existing pipeline and market-data
+checks, it verifies Alloy's current Deployment/ReplicaSet/Pod, promoted image, resources, rollout digest and mounted
+config hash. A restart or OOM retained by the current Pod during that Argo operation fails acceptance, even if the
+Pod is Ready again. A collector identity change within the observation window also fails; transient read failures
+cannot erase that identity. This snapshot does not reconstruct termination history for already deleted Pods.
+
+This cluster reports the immutable OCI index pull reference in container `imageID`; the verifier matches its digest
+to the promoted image. The separate container `image` status field is a config digest and is not used as a pull
+reference. A future runtime reporting child-manifest `imageID` digests will fail closed until a verified
+index-to-child mapping is added; the verifier does not assume those digest types are interchangeable.
+
+The telemetry check derives expected TaskManager counts and images from the promoted manifests and binds every
+target to a current ready worker's owner, UID and IP. Both successful scrapes and native Flink metrics must reach
+Mimir within three configured scrape intervals and advance across a two-interval observation window. Old targets,
+empty results and stale readiness cannot satisfy it. Remote-write delivery must advance without dropped samples
+across the observation window. A collector started during the operation must also have no earlier drops. For a reused
+collector, cumulative drops before the first observation cannot be assigned to this rollout and remain unproven;
+normal nonzero queues and recovered retries are recorded and allowed when their delivery timestamps stay current.
+This is a bounded delivery check, not a market latency or profitability SLO. It uses the runner's existing read/exec
+access and Mimir endpoint, adds no credentials or permissions, and retains sanitized evidence with the pipeline
+artifact. Its five-minute convergence budget leaves the existing rollout and market-data retry budgets unchanged.
+
 ## Latest IEX observations for Bayn
 
 The websocket producer also polls IEX latest quotes and trades for
@@ -88,6 +112,28 @@ forwarder and both Flink process types after deployment.
 Alloy scrapes `torghut-ta-metrics` and `market-data-archive-metrics`. The signal pipeline alerts distinguish missing
 scrapes, a reachable JobManager without a running job, and stalled or missing checkpoints. Each routes to the existing
 critical email receiver. A Ready JobManager alone is insufficient; check the Flink REST job state and checkpoint age.
+
+The separate `torghut-ta-taskmanager-metrics` and `market-data-archive-taskmanager-metrics` Services select the
+corresponding TaskManager Pods. Existing Alloy endpoint discovery scrapes each Pod's named `metrics` port every
+30 seconds, preserving `pod`, `namespace` and `service` labels. These targets expose Kafka source lag, pending records,
+watermarks and task backpressure; JobManager metrics alone do not expose that pipeline work. The existing JobManager
+Services remain separate so running-job and checkpoint monitoring retain their original targets.
+
+Alloy requests 256 MiB and has a 512 MiB memory limit to accommodate these targets and Flink handover. On
+2026-11-21, the first four TA and eight archive targets added 41,717 post-relabel samples per 30-second scrape.
+Collector working set rose from 139.7 MiB to 225.7 MiB, and the collector was OOM-killed at 06:08:09 UTC during
+handover under its former 256 MiB limit. The larger budget provides room for overlapping scrape state while
+preserving the full metric content. After rollout, verify peak collector memory, restart count, remote-write
+failed/retried samples and queue recovery alongside target coverage and Mimir ingestion; a successful Kargo
+promotion alone does not establish collector capacity.
+
+After promotion through `torghut-release:torghut` to `kargo/torghut`, verify that
+`count by (service) (up{job="torghut",namespace="torghut",service=~".*-taskmanager-metrics"} == 1)` matches each
+deployment's running TaskManager count. Check `flink_taskmanager_job_task_operator_pendingRecords` and
+`flink_taskmanager_job_task_backPressuredTimeMsPerSecond` for the active jobs. A missing series is unobserved, not
+zero backlog; Kafka consumer lag can be `NaN` on idle or unassigned source subtasks. Alloy discovers these Services
+without restarting the collector or changing network permissions. Normal cohort promotion still updates its image
+metadata and follows the existing workload rollout and Flink checkpoint procedures.
 
 The behavior is documented in the
 [deployed operator's recovery contract](https://github.com/apache/flink-kubernetes-operator/blob/79d730bab4d8403f3a447fb027f879f5cbdc59ad/docs/content/docs/custom-resource/job-management.md#redeploy-using-the-savepointredeploynonce).

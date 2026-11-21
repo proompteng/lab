@@ -1,3 +1,4 @@
+import durableBrokerSourceEvents from '../../migrations/0206_durable_broker_source_events'
 import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
 import protectionClosePlans from '../../migrations/0204_protection_close_plans'
 import protectionReadAllowance from '../../migrations/0203_protection_read_allowance'
@@ -206,6 +207,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '206_durable_broker_source_events': durableBrokerSourceEvents,
   '205_inference_source_seals': inferenceSourceSeals,
   '204_protection_close_plans': protectionClosePlans,
   '203_protection_read_allowance': protectionReadAllowance,
