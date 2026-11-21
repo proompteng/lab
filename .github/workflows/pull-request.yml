@@ -2,14 +2,16 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: ci-pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
@@ -19,7 +21,7 @@ jobs:
       targets: ${{ steps.impact.outputs.targets }}
       delegated: ${{ steps.impact.outputs.delegated }}
       changed_files: ${{ steps.impact.outputs.changed_files }}
-      changed_manifests: ${{ steps.active_files.outputs.changed_manifests }}
+      changed_manifests: ${{ steps.active_files.outputs.changed_manifests || '[]' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -34,6 +36,7 @@ jobs:
 
       - name: Derive changed files from Git
         id: files
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -50,14 +53,20 @@ jobs:
         id: impact
         env:
           CHANGED_FILES: ${{ steps.files.outputs.changed_files }}
-        run: >-
-          bun run packages/scripts/src/ci/impact-router.ts
-          --files "${CHANGED_FILES}"
-          --map .github/ci/impact-map.yml
-          --github-output "${GITHUB_OUTPUT}"
+          FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          input=(--full)
+          if [[ "${FULL_VALIDATION}" == false ]]; then
+            input=(--files "${CHANGED_FILES}")
+          fi
+          bun run packages/scripts/src/ci/impact-router.ts "${input[@]}" \
+            --map .github/ci/impact-map.yml --github-output "${GITHUB_OUTPUT}"
 
       - name: Serialize active changed files
         id: active_files
+        if: github.event_name == 'pull_request'
         env:
           CHANGED_MANIFESTS: ${{ steps.files.outputs.changed_manifests }}
         run: |
@@ -70,7 +79,7 @@ jobs:
           DELEGATED: ${{ steps.impact.outputs.delegated }}
         run: |
           {
-            echo '### PR impact plan'
+            echo '### CI validation plan'
             echo
             echo "- Router validations: \`${TARGETS}\`"
             echo "- Delegated service workflows: \`${DELEGATED}\`"
@@ -169,6 +178,7 @@ jobs:
     env:
       CHANGED_FILES_JSON: ${{ needs.plan.outputs.changed_files }}
       CHANGED_MANIFESTS_JSON: ${{ needs.plan.outputs.changed_manifests }}
+      FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -268,12 +278,17 @@ jobs:
               ;;
             root-scripts)
               bun install --frozen-lockfile
-              jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${RUNNER_TEMP}/root-script-files.txt"
+              input=(--full)
+              if [[ "${FULL_VALIDATION}" == false ]]; then
+                jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${RUNNER_TEMP}/root-script-files.txt"
+                input=(--files "${RUNNER_TEMP}/root-script-files.txt")
+              fi
               plan=$(bun run packages/scripts/src/ci/impact-router.ts \
-                --files "${RUNNER_TEMP}/root-script-files.txt" --map .github/ci/root-script-map.yml)
-              suites=$(jq -r 'if (.validationTargets | index("all")) then
-                ["flamingo", "hermes", "kube-router", "cluster-upgrades", "forgejo", "tengri-secrets"]
-                else .validationTargets end | .[]' <<< "${plan}")
+                "${input[@]}" --map .github/ci/root-script-map.yml)
+              if [[ "${FULL_VALIDATION}" == false ]] && jq -e '.validationTargets | index("all") != null' <<< "${plan}" >/dev/null; then
+                plan=$(bun run packages/scripts/src/ci/impact-router.ts --full --map .github/ci/root-script-map.yml)
+              fi
+              suites=$(jq -r '.validationTargets[] | select(. != "all")' <<< "${plan}")
               printf 'Root script suites: %s\n' "${suites}" | tee -a "${GITHUB_STEP_SUMMARY}"
               while IFS= read -r suite; do
                 case "${suite}" in
@@ -321,7 +336,7 @@ jobs:
               ;;
             shared-compat)
               bun install --frozen-lockfile --ignore-scripts
-              if jq -e 'any(.[]; . == "flake.lock" or . == "flake.nix" or startswith("nix/") or startswith(".github/actions/setup-nix-toolchain/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; . == "flake.lock" or . == "flake.nix" or startswith("nix/") or startswith(".github/actions/setup-nix-toolchain/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix flake check --no-build
               fi
               ;;
@@ -329,24 +344,30 @@ jobs:
               nix run .#lint-argo-workflows
               ;;
             kubeconform)
-              if jq -e 'any(.[]; startswith("argocd/applications/bayn/") or . == "scripts/test-bayn-secret-file-mode.sh" or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/bayn/") or . == "scripts/test-bayn-secret-file-mode.sh" or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix develop -c bash scripts/test-bayn-secret-file-mode.sh
               fi
-              if jq -e 'any(.[]; startswith("argocd/prepared/") or startswith("argocd/applications/ofz/") or startswith("argocd/applications/keycloak/") or startswith("argocd/applications/cloudflare/") or startswith("argocd/applications/tengri/") or startswith("argocd/applications/proompteng/") or . == "services/ofz/test-ha-manifests.sh" or . == "services/ofz/tests/ha_manifests.py" or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/prepared/") or startswith("argocd/applications/ofz/") or startswith("argocd/applications/keycloak/") or startswith("argocd/applications/cloudflare/") or startswith("argocd/applications/tengri/") or startswith("argocd/applications/proompteng/") or . == "services/ofz/test-ha-manifests.sh" or . == "services/ofz/tests/ha_manifests.py" or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix develop -c bash services/ofz/test-ha-manifests.sh
               fi
-              mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_MANIFESTS_JSON}")
+              if [[ "${FULL_VALIDATION}" == true ]]; then
+                git ls-files -z -- ':(glob)argocd/**/*.yaml' ':(glob)argocd/**/*.yml' \
+                  ':(glob)kubernetes/**/*.yaml' ':(glob)kubernetes/**/*.yml' > "${RUNNER_TEMP}/all-manifests"
+                mapfile -d '' -t changed_manifests < "${RUNNER_TEMP}/all-manifests"
+              else
+                mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_MANIFESTS_JSON}")
+              fi
               if [ "${#changed_manifests[@]}" -gt 0 ]; then
                 nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${changed_manifests[@]}"
               else
                 nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh argocd
               fi
-              if jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix develop -c kustomize build --enable-helm argocd/applications/temporal >"${RUNNER_TEMP}/temporal-render.yaml"
                 nix develop -c yq eval-all -o=json -I=0 '[.]' "${RUNNER_TEMP}/temporal-render.yaml" |
                   python3 scripts/cluster-upgrades/temporal_manifest_check.py
               fi
-              if jq -e 'any(.[]; startswith("argocd/applications/rook-ceph/") or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/rook-ceph/") or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 rendered="${RUNNER_TEMP}/rook-ceph-render.yaml"
                 nix develop -c kustomize build --enable-helm argocd/applications/rook-ceph >"${rendered}"
                 nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${rendered}"
@@ -409,13 +430,75 @@ jobs:
   agents:
     name: Agents CI
     needs: plan
-    if: ${{ needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.delegated), 'agents-ci') }}
+    if: ${{ github.event_name == 'pull_request' && needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.delegated), 'agents-ci') }}
     uses: ./.github/workflows/agents-ci.yml
     with:
       changed_files_json: ${{ needs.plan.outputs.changed_files }}
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
       TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+
+  agents-full:
+    name: Agents full CI
+    needs: plan
+    if: github.event_name == 'merge_group' && needs.plan.result == 'success'
+    uses: ./.github/workflows/agents-ci.yml
+    with:
+      changed_files_json: ${{ needs.plan.outputs.changed_files }}
+
+  bayn:
+    name: Bayn CI
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/bayn-ci.yml
+
+  ofz:
+    name: Ofz authorization
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/ofz.yaml
+
+  relay:
+    name: Relay platform
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/relay.yml
+
+  tengri:
+    name: Tengri and Nanoagent
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/tengri-validation.yml
+
+  buf:
+    name: Protobuf validation
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/buf-ci.yml
+
+  scripts:
+    name: Repository scripts
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/scripts-ci.yml
+
+  torghut:
+    name: Torghut CI
+    if: github.event_name == 'merge_group'
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/torghut-ci.yml
+
+  torghut-schema:
+    name: Torghut ClickHouse schema
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/torghut-schema.yml
+
+  torghut-notebooks:
+    name: Torghut notebooks
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/torghut-notebooks-ci.yml
+
+  queue-services:
+    name: Queue service validation
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/queue-service-validation.yml
 
   ci-pr:
     name: ci-pr
@@ -425,29 +508,71 @@ jobs:
       - validate
       - landing
       - agents
+      - agents-full
+      - bayn
+      - ofz
+      - relay
+      - tengri
+      - buf
+      - scripts
+      - torghut
+      - torghut-schema
+      - torghut-notebooks
+      - queue-services
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
-          VALIDATE_EXPECTED: ${{ needs.plan.outputs.targets == '["landing"]' && 'skipped' || 'success' }}
+          VALIDATE_EXPECTED: ${{ github.event_name == 'pull_request' && needs.plan.outputs.targets == '["landing"]' && 'skipped' || 'success' }}
           LANDING_RESULT: ${{ needs.landing.result }}
-          LANDING_EXPECTED: ${{ contains(fromJSON(needs.plan.outputs.targets || '[]'), 'landing') && 'success' || 'skipped' }}
-          AGENTS_RESULT: ${{ needs.agents.result }}
+          LANDING_EXPECTED: ${{ (github.event_name == 'merge_group' || contains(fromJSON(needs.plan.outputs.targets || '[]'), 'landing')) && 'success' || 'skipped' }}
+          AGENTS_RESULT: ${{ github.event_name == 'merge_group' && needs.agents-full.result || needs.agents.result }}
+          BAYN_RESULT: ${{ needs.bayn.result }}
+          OFZ_RESULT: ${{ needs.ofz.result }}
+          RELAY_RESULT: ${{ needs.relay.result }}
+          TENGRI_RESULT: ${{ needs.tengri.result }}
+          BUF_RESULT: ${{ needs.buf.result }}
+          SCRIPTS_RESULT: ${{ needs.scripts.result }}
+          TORGHUT_RESULT: ${{ needs.torghut.result }}
+          TORGHUT_SCHEMA_RESULT: ${{ needs.torghut-schema.result }}
+          TORGHUT_NOTEBOOKS_RESULT: ${{ needs.torghut-notebooks.result }}
+          QUEUE_SERVICES_RESULT: ${{ needs.queue-services.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
+          FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
           set -euo pipefail
           if [ "${PLAN_RESULT}" != success ] || [ "${VALIDATE_RESULT}" != "${VALIDATE_EXPECTED}" ]; then
-            echo "PR validation failed: plan=${PLAN_RESULT}, validate=${VALIDATE_RESULT}, expected=${VALIDATE_EXPECTED}" >&2
+            echo "CI validation failed: plan=${PLAN_RESULT}, validate=${VALIDATE_RESULT}, expected=${VALIDATE_EXPECTED}" >&2
             exit 1
           fi
           if [ "${LANDING_RESULT}" != "${LANDING_EXPECTED}" ]; then
             echo "Landing validation failed: landing=${LANDING_RESULT}, expected=${LANDING_EXPECTED}" >&2
             exit 1
           fi
-          if [ "${AGENTS_RESULT}" != success ] && [ "${AGENTS_RESULT}" != skipped ]; then
+          if [[ "${AGENTS_RESULT}" != success && ( "${FULL_VALIDATION}" == true || "${AGENTS_RESULT}" != skipped ) ]]; then
             echo "Agents validation failed: agents=${AGENTS_RESULT}" >&2
             exit 1
           fi
-          echo "Router validation passed: agents=${AGENTS_RESULT}. Delegated workflows: ${DELEGATED}"
+          if [[ "${FULL_VALIDATION}" == true && "${BAYN_RESULT}" != success ]]; then
+            echo "Bayn validation failed: bayn=${BAYN_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && ( "${OFZ_RESULT}" != success || "${RELAY_RESULT}" != success || "${TENGRI_RESULT}" != success ) ]]; then
+            echo "Platform validation failed: ofz=${OFZ_RESULT}, relay=${RELAY_RESULT}, tengri=${TENGRI_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && ( "${BUF_RESULT}" != success || "${SCRIPTS_RESULT}" != success ) ]]; then
+            echo "Tooling validation failed: buf=${BUF_RESULT}, scripts=${SCRIPTS_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && ( "${TORGHUT_RESULT}" != success || "${TORGHUT_SCHEMA_RESULT}" != success || "${TORGHUT_NOTEBOOKS_RESULT}" != success ) ]]; then
+            echo "Torghut validation failed: core=${TORGHUT_RESULT}, schema=${TORGHUT_SCHEMA_RESULT}, notebooks=${TORGHUT_NOTEBOOKS_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && "${QUEUE_SERVICES_RESULT}" != success ]]; then
+            echo "Queue service validation failed: ${QUEUE_SERVICES_RESULT}" >&2
+            exit 1
+          fi
+          echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
