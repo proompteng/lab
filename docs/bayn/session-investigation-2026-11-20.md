@@ -472,6 +472,83 @@ kept 16 WebSocket bar symbols and six completed-REST-only bar symbols, but the t
 sets, the complete shared allowlist and quote/trade coverage, and the unchanged 30-stream WebSocket budget.
 Runtime manifests and trading eligibility are unchanged.
 
+### Main publication and native startup follow-up
+
+PR #16098 merged as `c217c1ddcce8f87d6c4306de27a1894cf8afe4ec` at 07:42:59 UTC on November 21.
+Its final PR source `3ce84941e941e5a1d7f5341b465dc32b6d2e49f5` passed both native image jobs and
+all required CI gates. The subsequent [main OpenCode build](https://github.com/proompteng/lab/actions/runs/44881526170)
+failed on both architectures. The previous healthy OpenCode deployment remained selected; a passing PR build
+did not establish that the intermittent startup failure was resolved.
+
+The new diagnostic records put the arm64 failed startup at 07:49:03.937–07:49:28.952 and amd64 at
+07:49:38.024–07:50:03.036. Child acquisition took 54 ms and 26 ms. Arm64 made three native requests,
+with two early transport failures and no HTTP response; amd64 made two, with one early transport failure
+and no HTTP response. Each last request remained unanswered until the original 25-second budget expired.
+On amd64, scoped cleanup then remained pending until Bun's 90-second test ceiling killed a dangling process.
+
+The pinned [OpenCode server source](https://github.com/anomalyco/opencode/blob/bb25a2f4a3f3f04d7c344bec0c0574ea3510b3b1/packages/server/src/process.ts)
+awaits listening on an initially handler-free server before attaching its request dispatcher. Its exact
+`@effect/platform-node` 4.0.1 dependency has the same listen-before-handler ordering. The dependency's npm
+archive SHA-512 was checked against that upstream commit's `bun.lock`. An isolated loopback reproduction
+on Node 24.11.1 and Bun 1.4.2 observed one early request event with zero handlers: that first request stayed
+unanswered after handler installation, while a second request returned HTTP 200. This proves an exposed
+failure mechanism, not the exact phase or syscall of either historical failed request.
+
+The follow-up therefore bounds each complete authenticated identity probe, including JSON validation, to
+one second within the unchanged 25-second total readiness budget. Only a probe timeout, transport failure
+or authenticated and version-verified HTTP 503 may retry. Authentication errors, wrong versions, other HTTP
+errors, defects and child exits retain their existing terminal behavior. Retries use the same owned process.
+Scope shutdown now allows 25 seconds after SIGTERM, preserving the native library's 20-second graceful
+drain, before escalating to SIGKILL. This is not a hard exit-time guarantee for uninterruptible kernel I/O.
+
+Before the correction, a never-answering probe regression failed because no second probe was attempted,
+and a real child ignoring SIGTERM required the test's independent cleanup watchdog. With the correction,
+all 13 startup/shutdown tests passed, including unchanged authentication and whole-budget negatives, and
+the resistant child was reaped in 25.028 seconds without its watchdog. The broader local suite passed 414
+tests with 77 explicit environment-gated skips. Native CI and live release acceptance remain separate gates.
+
+### Shared storage latency observed during publication
+
+The failed native startup phases overlapped substantial Ceph-backed runner I/O pressure. Arm64's one-minute
+RBD mean write latency was approximately 1.7–3.4 seconds, with estimated queue depth near 20. The amd64
+runner's corresponding mean read latency was 7.834 seconds and mean write latency 1.858 seconds. Both
+had zero observed CPU throttling and approximately 1 GiB working sets under 32 GiB limits. These are
+scrape-window measurements, not independent measurements of each 25-second request; they establish
+correlation, not request-specific storage causation.
+
+The live TA and archive jobs also experienced slow checkpoints while still on the earlier `87a8d928` cohort,
+with no pending promotion or savepoint. TA checkpoint 168640 eventually completed; the coordinator log
+reported 754.670 seconds from its recorded trigger timestamp to the completion log. Read-only JobManager
+thread dumps at
+08:05:01 showed TA waiting for S3 `putObject` response headers while creating a checkpoint directory marker,
+and archive waiting for `completeMultipartUpload` while finalizing checkpoint metadata. RGW logs matched
+the next TA checkpoint's metadata path: an existence-probe HEAD took 6.952 seconds, multipart initiation
+2.604 seconds and metadata PUT 15.564 seconds. The HEAD's 404 was a normal absence probe, not a failed
+checkpoint. This directly identifies slow S3 request completion on the checkpoint path.
+
+The exact live [Flink 2.2.1 checkpoint coordinator](https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/checkpoint/CheckpointCoordinator.java)
+records its trigger timestamp before queued initialization work and arms its timeout later, when creating the
+pending checkpoint. The [configured TA timeout](https://github.com/proompteng/lab/blob/87a8d928433f476530a2323b9afc8166e1c261a3/argocd/applications/torghut/ta/configmap.yaml)
+is 300,000 ms, also verified from the live ConfigMap and Flink REST. The approximately 553.8-second
+pre-initialization interval was outside that timer. Both initialization and old-checkpoint cleanup use the
+same observed single-worker JobManager I/O executor; slow cleanup is a supported amplification path, but
+the exact queued task count was not captured. No executor or timeout setting was changed.
+
+At 08:08, the observed source lag and task backpressure were zero despite slow checkpoint completion. The
+deployed `TorghutSignalPipelineCheckpointsStalled` age alert independently covered this case: the loaded Mimir
+rule was healthy and 14 sampled observations showed TA FIRING between 07:53:00 and 08:06:30. This is not
+a claim of continuous firing or email delivery. Archive reached pending, and by 08:15:33 both checkpoint
+ages were recent (TA 35.3 seconds, archive 42.1 seconds), with the rule inactive. No additional alert was
+needed for the demonstrated condition.
+
+At 08:06, five-minute measurements showed the three Turin OSDs' shared BlueStore DB device at 99.76%
+busy, estimated queue depth 13.46 and 51.75 ms mean writes. Their BlueFS fsync means were 110–122 ms,
+and OSD mean writes were 3.65–5.08 seconds. Ceph still reported HEALTH_OK: durable health did not imply
+low latency. The exact load share attributable to each client remains unproved. The separate Nix download
+concurrency trial must finish and retain its baseline pair before the lower-concurrency candidate, with
+checkpoints still advancing and no new failures. The identified S3 delay remains a comparison confound;
+no runner-count, storage durability, scrub, checkpoint or financial database setting was changed.
+
 ## Prospective profitability qualification
 
 A bounded read-only follow-up at source `87a8d928433f476530a2323b9afc8166e1c261a3` found eight retained
@@ -503,6 +580,21 @@ registration and execution admission remain unchanged.
 A read-only validation of the same eight live immutable registrations with the repaired reader passed all
 eight, and every recomputed registration hash matched its stored key. A fixed historical fixture exercises
 the public receipt reader and preserves its INCONCLUSIVE / NOT_ASSESSED outcome, including the original
-registration, source-cut and receipt hashes. Forged or altered v37 parameters remain rejected. All six live
-historical source cuts have not been fully replayed; restoring their registration readability does not
-establish a completed replay or economic qualification.
+registration, source-cut and receipt hashes. Forged or altered v37 parameters remain rejected. The subsequent
+full graph readback found one further retained-only boundary: a v37 protocol inside archived position-hold
+evidence was still being decoded with the current protocol schema. Its immutable archive bytes and original
+protocol hash matched the historical registration; this was not missing or corrupted evidence.
+
+Review also required retaining the original long-only evidence domain: positive held quantity and cost,
+only the original funded-plan versions, and no protection-evidence marker introduced later under v41.
+Resealed short and later-marker fixtures first reproduce through the general current calculation, then
+fail the historical decoder. Current long and short execution admission remain unchanged.
+
+The narrow retained-hold correction then replayed all seven actual immutable graphs through the source
+reader with exact stored receipt, registration and source-cut hashes. The replay made 1,650 archived-record
+reads; all 1,608 distinct referenced records existed. Six outcomes remain INCONCLUSIVE / NOT_ASSESSED.
+The remaining outcome stays REJECTED / NOT_ASSESSED, including its 550 UNBOUND_CONTROLLER_BUILD
+findings and INCOMPLETE_SAFETY_AUDIT finding. Current execution, registration and assessment admission
+remain unchanged. This was a bounded SELECT-only source-function replay; it did not run a new assessment,
+persist a receipt, grant authority or independently prove the deployed HTTP reader. No historical outcome
+was upgraded, and replay compatibility does not establish economic qualification.
