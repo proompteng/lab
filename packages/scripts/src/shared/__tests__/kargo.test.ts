@@ -192,6 +192,7 @@ const expected = {
       'packages/scripts/src/shared/docker.ts',
       'argocd/applications/devbox',
       '.github/workflows/codex-devbox.yml',
+      '.github/workflows/codex-devbox-validate.yml',
       'flake.nix',
       'flake.lock',
       'nix/packages.nix',
@@ -214,6 +215,7 @@ const expected = {
     apps: ['restate'],
     includePaths: [
       '.github/workflows/restate-images.yml',
+      '.github/workflows/restate-validation.yml',
       'packages/scripts/src/restate',
       'services/restate',
       'argocd/applications/restate',

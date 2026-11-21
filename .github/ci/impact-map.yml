@@ -406,6 +406,8 @@ targets:
     kind: delegated
     workflow: temporal-bun-sdk
     paths:
+      - .github/actions/test-temporal-bun-sdk/**
+      - .github/actions/test-temporal-bun-sdk-integration/**
       - packages/temporal-bun-sdk/**
       - packages/temporal-bun-sdk-example/**
 

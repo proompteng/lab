@@ -9,6 +9,7 @@ on:
       - 'flake.lock'
       - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/kata-firecracker-extension.yaml'
+      - '.github/workflows/kata-validation.yml'
   push:
     branches:
       - main
@@ -19,6 +20,7 @@ on:
       - 'flake.lock'
       - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/kata-firecracker-extension.yaml'
+      - '.github/workflows/kata-validation.yml'
   workflow_dispatch:
 
 concurrency:
@@ -27,11 +29,6 @@ concurrency:
 
 permissions:
   contents: read
-
-env:
-  IMAGE: registry.ide-newton.ts.net/lab/talos-kata-runtimes
-  KATA_SOURCE_COMMIT: 894e1956bb340752b30f7ad49879972234a0098c
-  VERSION: 4.1.0-talos-v1.13.9-r6
 
 jobs:
   changes:
@@ -57,30 +54,20 @@ jobs:
               - 'flake.lock'
               - '.github/actions/setup-nix-toolchain/**'
               - '.github/workflows/kata-firecracker-extension.yaml'
+              - '.github/workflows/kata-validation.yml'
             catalog:
               - 'devices/galactic/releases/**'
               - 'devices/nuc/image-factory/release.json'
               - 'devices/galactic/extensions/kata/build-catalog.sh'
               - '.github/workflows/kata-firecracker-extension.yaml'
+              - '.github/workflows/kata-validation.yml'
 
   catalog:
-    name: Validate Talos 1.14 catalog
     needs: changes
     if: needs.changes.outputs.catalog == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: arc-amd64
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-      - uses: imjasonh/setup-crane@v0.4
-      - uses: sigstore/cosign-installer@v3.10.0
-      - name: Verify immutable input and build catalog
-        run: devices/galactic/releases/catalog.sh build out/catalog
-      - name: Upload catalog receipt
-        uses: actions/upload-artifact@v4
-        with:
-          name: talos-v1.14.0-catalog
-          path: out/catalog/
-          if-no-files-found: error
+    uses: ./.github/workflows/kata-validation.yml
+    with:
+      build-extensions: false
 
   publish-catalog:
     name: Publish signed Talos 1.14 catalog
@@ -114,62 +101,12 @@ jobs:
           if-no-files-found: error
 
   build:
-    name: Build ${{ matrix.architecture }} extension
     needs: changes
     if: needs.changes.outputs.extensions == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - architecture: amd64
-            runner: arc-amd64
-          - architecture: arm64
-            runner: arc-arm64
-    steps:
-      - name: Checkout lab
-        uses: actions/checkout@v6
-
-      - name: Checkout pinned Kata source
-        uses: actions/checkout@v6
-        with:
-          repository: kata-containers/kata-containers
-          ref: ${{ env.KATA_SOURCE_COMMIT }}
-          path: .kata-source
-          persist-credentials: false
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: '1.96'
-
-      - name: Set up pinned native test dependencies
-        uses: ./.github/actions/setup-nix-toolchain
-        with:
-          require-preinstalled: 'true'
-
-      - name: Build and test patched Kata components
-        run: |
-          nix develop --file devices/galactic/extensions/kata/shell.nix \
-            --command devices/galactic/extensions/kata/build-patched-kata.sh \
-            .kata-source \
-            "devices/galactic/extensions/kata/artifacts/${{ matrix.architecture }}"
-
-      - name: Set up Docker Buildx
-        uses: ./.github/actions/setup-buildkit
-
-      - name: Build native extension image
-        uses: docker/build-push-action@v6
-        with:
-          context: devices/galactic/extensions/kata
-          platforms: linux/${{ matrix.architecture }}
-          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          tags: ${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.architecture }}
-          labels: org.opencontainers.image.version=${{ env.VERSION }}
-          cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
-          provenance: mode=max
-          sbom: true
+    uses: ./.github/workflows/kata-validation.yml
+    with:
+      validate-catalog: false
+      publish-extension: true
 
   publish:
     name: Publish signed multi-architecture extension
@@ -180,7 +117,11 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+      VERSION: ${{ needs.build.outputs.version }}
     outputs:
+      image: ${{ steps.publish.outputs.image }}
       digest: ${{ steps.publish.outputs.digest }}
     steps:
       - name: Checkout
@@ -219,7 +160,7 @@ jobs:
             --certificate-identity "${SIGNING_IDENTITY}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${immutable_reference}" >/dev/null
-          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          printf 'image=%s\ndigest=%s\n' "$IMAGE" "$digest" >> "$GITHUB_OUTPUT"
           {
             echo '### Kata runtime extension'
             echo
@@ -230,6 +171,8 @@ jobs:
     name: Build ${{ matrix.profile }} installer
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (needs.changes.outputs.extensions == 'true' || github.event_name == 'workflow_dispatch')
     needs: [changes, publish]
+    env:
+      IMAGE: ${{ needs.publish.outputs.image }}
     runs-on: arc-amd64
     timeout-minutes: 60
     permissions:

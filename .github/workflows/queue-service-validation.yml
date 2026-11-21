@@ -1,0 +1,245 @@
+name: Queue service validation
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  agentctl:
+    uses: ./.github/workflows/agentctl-ci.yml
+
+  attic-image:
+    uses: ./.github/workflows/attic-build-push.yaml
+
+  bumba:
+    uses: ./.github/workflows/bumba-ci.yml
+
+  buzz:
+    uses: ./.github/workflows/buzz-relay-build-push.yml
+
+  codex:
+    uses: ./.github/workflows/codex-ci.yml
+
+  codex-devbox:
+    uses: ./.github/workflows/codex-devbox-validate.yml
+
+  dernier:
+    uses: ./.github/workflows/dernier-ci.yml
+
+  dorvud:
+    uses: ./.github/workflows/dorvud.yml
+
+  facteur:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+      - uses: ./.github/actions/validate-go-service
+        with:
+          service: facteur
+          coverage-title: Facteur Coverage
+
+  feature-flags:
+    uses: ./.github/workflows/feature-flags-ci.yml
+
+  flamingo:
+    uses: ./.github/workflows/flamingo-ci.yml
+
+  froussard:
+    uses: ./.github/workflows/froussard-ci.yml
+
+  galette:
+    uses: ./.github/workflows/galette-ci.yml
+
+  golink:
+    uses: ./.github/workflows/golink-ci.yml
+
+  graf-service:
+    uses: ./.github/workflows/graf-service.yml
+
+  headlamp:
+    uses: ./.github/workflows/headlamp-ci.yml
+
+  jangar:
+    uses: ./.github/workflows/jangar-ci.yml
+
+  jangar-guardrails:
+    uses: ./.github/workflows/jangar-guardrails.yml
+
+  karapace:
+    uses: ./.github/workflows/karapace-schema-sync.yaml
+
+  kata:
+    uses: ./.github/workflows/kata-validation.yml
+
+  khoshut:
+    uses: ./.github/workflows/khoshut-ci.yml
+
+  miel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+      - uses: ./.github/actions/validate-go-service
+        with:
+          service: miel
+
+  nuc-omni-serve:
+    uses: ./.github/workflows/nuc-omni-serve.yaml
+
+  oirat:
+    uses: ./.github/workflows/oirat-ci.yml
+
+  opencode:
+    uses: ./.github/workflows/opencode-ci.yml
+
+  orbit-salvage:
+    uses: ./.github/workflows/orbit-salvage-ci.yml
+
+  otel:
+    uses: ./.github/workflows/otel-ci.yml
+
+  product-dependency-closure:
+    uses: ./.github/workflows/nix-bun-dependency-closure.yml
+    with:
+      service: app
+
+  product-image:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [app, docs, proompteng, synthesis]
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: ${{ matrix.image }}
+      package_attr: ${{ matrix.image }}-image
+      tag: queue-${{ github.sha }}
+      source_revision: ${{ github.sha }}
+
+  reestr:
+    uses: ./.github/workflows/reestr-ci.yml
+
+  registry-cleanup:
+    uses: ./.github/workflows/registry-cleanup-ci.yml
+
+  restate:
+    uses: ./.github/workflows/restate-validation.yml
+
+  ricochet-rush:
+    uses: ./.github/workflows/ricochet-rush-ci.yml
+
+  schematic:
+    uses: ./.github/workflows/schematic-ci.yml
+
+  signal-publisher:
+    uses: ./.github/workflows/signal-publisher-ci.yml
+
+  signal-publisher-image:
+    uses: ./.github/workflows/signal-publisher-build-push.yml
+
+  spire-migration:
+    uses: ./.github/workflows/spire-migration.yml
+
+  symphony:
+    uses: ./.github/workflows/symphony-ci.yml
+
+  synthesis:
+    uses: ./.github/workflows/synthesis-ci.yml
+
+  temporal-bun-sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEMPORAL_TEST_TIMEOUT: '30000'
+      TEMPORAL_INTEGRATION_TESTS: '0'
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/test-temporal-bun-sdk
+
+  temporal-bun-sdk-integration:
+    name: Temporal Bun SDK integration and load
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      COMPOSE_FILE: packages/temporal-bun-sdk/tests/ci/compose.yaml
+      COMPOSE_PROJECT_NAME: temporal-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+      TEMPORAL_TEST_SERVER: '1'
+      TEMPORAL_TEST_TIMEOUT: '30000'
+      TEMPORAL_INTEGRATION_TESTS: '1'
+      TEMPORAL_BUN_RELEASE_GATE: '1'
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_ENFORCE_REMOTE_ADDRESS: '1'
+      TEMPORAL_CLI_COMMAND_MAX_ATTEMPTS: '1'
+      TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS: '12000'
+      TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS: '12000'
+      TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY: '32'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Start isolated Temporal Server and PostgreSQL
+        run: docker compose up --detach temporal
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.11.1'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
+      - name: Verify the isolated Temporal endpoint and create its namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/temporal-bin"
+          cli="$RUNNER_TEMP/temporal-bin/temporal"
+          docker cp "$(docker compose ps --all --quiet schema):/usr/local/bin/temporal" "$cli"
+          "$cli" --version
+          server="$(docker compose ps --quiet temporal)"
+          ip="$(docker inspect "$server" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')"
+          test -n "$ip"
+          address="$ip:7233"
+          for attempt in {1..30}; do
+            if timeout 2s "$cli" --address "$address" operator cluster health; then break; fi
+            test "$(docker inspect "$server" --format '{{.State.Running}}')" = true
+            sleep 1
+          done
+          timeout 2s "$cli" --address "$address" operator cluster health
+          "$cli" --address "$address" operator namespace create --namespace "$TEMPORAL_NAMESPACE" --retention 1d
+          printf '%s\n' "$RUNNER_TEMP/temporal-bin" >> "$GITHUB_PATH"
+          printf 'TEMPORAL_ADDRESS=%s\n' "$address" >> "$GITHUB_ENV"
+      - name: Verify isolated Temporal has no running test workflows
+        run: bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --verify
+      - uses: ./.github/actions/test-temporal-bun-sdk-integration
+      - name: Upload worker load evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: temporal-sdk-queue-worker-load
+          path: packages/temporal-bun-sdk/.artifacts/worker-load/
+      - name: Collect isolated Temporal logs
+        if: failure()
+        run: docker compose logs postgres schema temporal
+      - name: Stop isolated Temporal
+        if: always()
+        run: docker compose down --volumes
+
+  temporal-worker:
+    name: Temporal worker build and heartbeat tests (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-buildkit
+      - uses: ./.github/actions/build-temporal-worker
+        with:
+          architecture: ${{ matrix.architecture }}

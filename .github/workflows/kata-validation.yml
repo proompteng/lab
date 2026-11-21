@@ -1,0 +1,112 @@
+name: Kata validation
+
+on:
+  workflow_call:
+    inputs:
+      build-extensions:
+        type: boolean
+        default: true
+      validate-catalog:
+        type: boolean
+        default: true
+      publish-extension:
+        type: boolean
+        default: false
+    outputs:
+      image:
+        value: ${{ jobs.build.outputs.image }}
+      version:
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: registry.ide-newton.ts.net/lab/talos-kata-runtimes
+  KATA_SOURCE_COMMIT: 894e1956bb340752b30f7ad49879972234a0098c
+  VERSION: 4.1.0-talos-v1.13.9-r6
+
+jobs:
+  catalog:
+    name: Validate Talos 1.14 catalog
+    if: inputs.validate-catalog
+    runs-on: arc-amd64
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: imjasonh/setup-crane@v0.4
+      - uses: sigstore/cosign-installer@v3.10.0
+      - name: Verify immutable input and build catalog
+        run: devices/galactic/releases/catalog.sh build out/catalog
+      - name: Upload catalog receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: talos-v1.14.0-catalog
+          path: out/catalog/
+          if-no-files-found: error
+
+  build:
+    name: Build ${{ matrix.architecture }} extension
+    if: inputs.build-extensions
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    outputs:
+      image: ${{ steps.release.outputs.image }}
+      version: ${{ steps.release.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    steps:
+      - name: Checkout lab
+        uses: actions/checkout@v6
+
+      - name: Checkout pinned Kata source
+        uses: actions/checkout@v6
+        with:
+          repository: kata-containers/kata-containers
+          ref: ${{ env.KATA_SOURCE_COMMIT }}
+          path: .kata-source
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.96'
+
+      - name: Set up pinned native test dependencies
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          require-preinstalled: 'true'
+
+      - name: Build and test patched Kata components
+        run: |
+          nix develop --file devices/galactic/extensions/kata/shell.nix \
+            --command devices/galactic/extensions/kata/build-patched-kata.sh \
+            .kata-source \
+            "devices/galactic/extensions/kata/artifacts/${{ matrix.architecture }}"
+
+      - name: Set up Docker Buildx
+        uses: ./.github/actions/setup-buildkit
+
+      - name: Build native extension image
+        uses: docker/build-push-action@v6
+        with:
+          context: devices/galactic/extensions/kata
+          platforms: linux/${{ matrix.architecture }}
+          push: ${{ inputs.publish-extension && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+          tags: ${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.architecture }}
+          labels: org.opencontainers.image.version=${{ env.VERSION }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Record extension reference
+        id: release
+        shell: bash
+        run: |
+          printf 'image=%s\nversion=%s\n' "$IMAGE" "$VERSION" >> "$GITHUB_OUTPUT"
