@@ -1,5 +1,6 @@
 name: SPIRE datastore migration
 on:
+  workflow_call:
   pull_request:
     paths:
       - argocd/applications/spire-server/migrate/**
@@ -16,7 +17,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: SPIRE datastore migration-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
