@@ -1318,10 +1318,10 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let original = invocation_row(&http, &admin, &parallel.id).await;
     let invocation_id = original["id"].as_str().unwrap();
     assert_eq!(original["pinned_deployment_id"], original_deployment);
-    loop {
+    let paused = loop {
         let current = invocation_row(&http, &admin, &parallel.id).await;
         if matches!(current["status"].as_str(), Some("paused" | "suspended")) {
-            break;
+            break current;
         }
         let pause = http
             .patch(format!("{admin}/invocations/{invocation_id}/pause"))
@@ -1334,7 +1334,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
             "run could not be paused before migration"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    };
     http.patch(format!("{admin}/invocations/{invocation_id}/resume"))
         .query(&[("deployment", &next_deployment)])
         .send()
@@ -1347,8 +1347,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         assert_eq!(current["id"], invocation_id);
         assert_eq!(current["last_failure"], serde_json::Value::Null);
         if current["pinned_deployment_id"] == next_deployment
-            && current["journal_size"].as_u64().unwrap()
-                > original["journal_size"].as_u64().unwrap()
+            && current["journal_size"].as_u64().unwrap() > paused["journal_size"].as_u64().unwrap()
         {
             break;
         }
