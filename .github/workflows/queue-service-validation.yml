@@ -68,6 +68,9 @@ jobs:
   jangar-guardrails:
     uses: ./.github/workflows/jangar-guardrails.yml
 
+  karapace:
+    uses: ./.github/workflows/karapace-schema-sync.yaml
+
   khoshut:
     uses: ./.github/workflows/khoshut-ci.yml
 

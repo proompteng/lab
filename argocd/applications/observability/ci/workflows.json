@@ -513,6 +513,10 @@
       "pattern": "^jangar-guardrails(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "karapace",
+      "pattern": "^karapace(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "khoshut",
       "pattern": "^khoshut(?: \\(.*\\))?(?: /.*)?$"
     },

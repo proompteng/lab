@@ -16,7 +16,8 @@ const yaml = (filename: string) =>
         uses?: string
         needs?: string[]
         secrets?: string
-        steps?: { run?: string; env?: Record<string, string> }[]
+        env?: Record<string, string>
+        steps?: { if?: string; name?: string; run?: string; env?: Record<string, string> }[]
       }
     >
   }
@@ -73,6 +74,26 @@ test('queued revisions require scripts and protobuf validation without sharing a
     expect(run('true', result, 'success')).toBe(1)
     expect(run('true', 'success', result)).toBe(1)
   }
+})
+
+test('the queue compiles and previews Karapace schemas without registry credentials', () => {
+  const service = yaml('queue-service-validation.yml').jobs.karapace
+  expect(service).toEqual({ uses: './.github/workflows/karapace-schema-sync.yaml' })
+  const sync = yaml('karapace-schema-sync.yaml').jobs.sync
+  expect(sync.env).toBeUndefined()
+  expect(sync.steps).toContainEqual({ name: 'Validate protos compile', run: 'buf build proto' })
+  expect(sync.steps?.find(({ name }) => name === 'Dry run schema sync')).toEqual({
+    name: 'Dry run schema sync',
+    if: "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+    run: 'bun run scripts/karapace/sync-protos.ts --dry-run',
+  })
+  const credentialed = sync.steps?.filter(({ env }) => env?.KARAPACE_URL !== undefined)
+  expect(credentialed).toEqual([
+    expect.objectContaining({
+      name: 'Sync schemas to Karapace',
+      if: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+    }),
+  ])
 })
 
 test('queued service validation joins the required gate without duplicate or mutually cancelling runs', () => {
