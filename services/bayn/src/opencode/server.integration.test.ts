@@ -32,6 +32,7 @@ const startupDiagnostics = (phase: 'initial' | 'restart', startedAtMs: number) =
   nativeHttpResponses: 0,
   nativeStartingResponses: 0,
   nativeTransportErrors: 0,
+  nativeRequestCancellations: 0,
   nativeOtherErrors: 0,
   firstNative: null as NativeStartupObservation | null,
   lastNative: null as NativeStartupObservation | null,
@@ -121,6 +122,13 @@ nativeTest(
               Effect.tapError((error) =>
                 info
                   ? observe(error.reason._tag === 'TransportError' ? 'TRANSPORT_ERROR' : 'CLIENT_ERROR', null)
+                  : Effect.void,
+              ),
+              Effect.onInterrupt(() =>
+                info
+                  ? Effect.sync(() => {
+                      phase.nativeRequestCancellations += 1
+                    })
                   : Effect.void,
               ),
             )

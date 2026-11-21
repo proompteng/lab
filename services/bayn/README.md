@@ -2542,6 +2542,14 @@ identity travel in the verified research receipt, with separate gateway and work
 See the runbook for native session and budget enforcement and the [standalone server](../opencode/README.md)
 for development access and the verified state migration.
 
+The research gateway validates the authenticated identity of one pinned native process before serving proposals.
+Each startup identity probe has a one-second bound within the existing 25-second overall readiness budget. A
+transport failure, unanswered probe or authenticated, version-verified starting response may retry the same process;
+authentication, version and other HTTP failures remain terminal. This handles the native server's interval between
+binding its socket and attaching its request handler without extending readiness or restarting the child. Scope
+shutdown allows 25 seconds for SIGTERM, including the native server's 20-second graceful drain, before escalating
+to SIGKILL for a child that has not exited.
+
 New Flamingo research registrations pin the vLLM 0.34.0 serving image introduced by
 [the reviewed Flamingo upgrade](https://github.com/proompteng/lab/commit/66badfc269c0cbaa69c150cd46cb35475e7b6890),
 while keeping the same Qwen 3.8 checkpoint, tokenizer and chat template. Retained receipt decoding freezes all four
