@@ -71,7 +71,10 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
     ])
       expect(matchesPaths(file, patterns)).toBe(
         (filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml') ||
-          (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath),
+          (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath) ||
+          (event === 'pull_request' &&
+            filename === 'attic-build-push.yaml' &&
+            file === '.github/workflows/attic-build-push.yaml'),
       )
     for (const file of [
       'nix/cache-push.sh',
@@ -82,6 +85,42 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
       expect(matchesPaths(file, patterns)).toBe(
         event === 'push' && ['arc-runner-build-push.yml', 'opencode-build-push.yml'].includes(filename),
       )
+    }
+  }
+})
+
+test('native PR validation preserves image publication and cache warming boundaries', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/nix-oci-build-common.yml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  const steps = property(property(jobs, 'build-platform'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing native build steps')
+  const stepCondition = (name: string) =>
+    property(
+      steps.find((step) => property(step, 'name') === name),
+      'if',
+    )
+  const conditions = [
+    [stepCondition('Push platform image without Docker'), 'publish'],
+    [property(property(jobs, 'publish-index'), 'if'), 'publish'],
+    [stepCondition('Warm Nix build outputs in Attic'), 'warm'],
+  ] as const
+  for (const [event, ref, publishOnDispatch, publish, warm] of [
+    ['pull_request', 'refs/pull/1/merge', false, false, false],
+    ['pull_request', 'refs/heads/main', true, false, false],
+    ['push', 'refs/heads/main', false, true, true],
+    ['push', 'refs/heads/feature', true, false, false],
+    ['workflow_dispatch', 'refs/heads/main', false, true, true],
+    ['workflow_dispatch', 'refs/heads/feature', false, false, false],
+    ['workflow_dispatch', 'refs/heads/feature', true, true, false],
+  ] as const) {
+    for (const [condition, boundary] of conditions) {
+      const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+      expect(
+        runInNewContext(expression, {
+          github: { event_name: event, ref },
+          inputs: { publish_on_dispatch: publishOnDispatch },
+        }),
+      ).toBe(boundary === 'publish' ? publish : warm)
     }
   }
 })
