@@ -897,13 +897,15 @@ impl TengriAgentRun {
         }
         if control.method == "turn/interrupt" {
             if !snapshot.state.terminal() {
-                if let Some(key) = ctx.get::<String>("recovery_key").await? {
-                    ctx.resolve_promise(&key, Json(control.principal.clone()));
-                }
+                let principal = control.principal.clone();
                 ctx.object_client::<TengriWorkspaceRunsClient>(&snapshot.workspace_uid)
                     .store_stop(Json(control))
                     .call()
                     .await?;
+                // A woken run reads the Stop receipt immediately.
+                if let Some(key) = ctx.get::<String>("recovery_key").await? {
+                    ctx.resolve_promise(&key, Json(principal));
+                }
             }
             return Ok(Json(ControlResult {
                 delivered: true,
