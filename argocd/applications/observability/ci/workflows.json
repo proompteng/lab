@@ -405,6 +405,14 @@
       "pattern": "^Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "buf",
+      "pattern": "^Protobuf validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "scripts",
+      "pattern": "^Repository scripts(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "ci-pr",
       "pattern": "^ci-pr(?: \\(.*\\))?$"
     }
