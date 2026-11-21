@@ -27,12 +27,21 @@ Kargo's `kargo-http-smoke` verification checks that the TA HTTP response contain
 the previous job still serves during a handover. The separate `torghut-post-deploy-verify` workflow binds its
 pipeline and telemetry evidence to the verified generated Git revision. After the existing pipeline and market-data
 checks, it verifies Alloy's current Deployment/ReplicaSet/Pod, promoted image, resources, rollout digest and mounted
-config hash. A collector restart or OOM during that Argo operation fails acceptance, even if the Pod is Ready again.
+config hash. A restart or OOM retained by the current Pod during that Argo operation fails acceptance, even if the
+Pod is Ready again. A collector identity change within the observation window also fails; transient read failures
+cannot erase that identity. This snapshot does not reconstruct termination history for already deleted Pods.
+
+This cluster reports the immutable OCI index pull reference in container `imageID`; the verifier matches its digest
+to the promoted image. The separate container `image` status field is a config digest and is not used as a pull
+reference. A future runtime reporting child-manifest `imageID` digests will fail closed until a verified
+index-to-child mapping is added; the verifier does not assume those digest types are interchangeable.
 
 The telemetry check derives expected TaskManager counts and images from the promoted manifests and binds every
 target to a current ready worker's owner, UID and IP. Both successful scrapes and native Flink metrics must reach
 Mimir within three configured scrape intervals and advance across a two-interval observation window. Old targets,
-empty results and stale readiness cannot satisfy it. Remote-write delivery must advance without dropped samples;
+empty results and stale readiness cannot satisfy it. Remote-write delivery must advance without dropped samples
+across the observation window. A collector started during the operation must also have no earlier drops. For a reused
+collector, cumulative drops before the first observation cannot be assigned to this rollout and remain unproven;
 normal nonzero queues and recovered retries are recorded and allowed when their delivery timestamps stay current.
 This is a bounded delivery check, not a market latency or profitability SLO. It uses the runner's existing read/exec
 access and Mimir endpoint, adds no credentials or permissions, and retains sanitized evidence with the pipeline

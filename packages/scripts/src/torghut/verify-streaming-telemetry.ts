@@ -168,6 +168,12 @@ const readyPod = (pod: unknown, name: string, image: string) => {
     `${podName} is not currently Ready`,
   )
   assert(at(spec, 'image') === image, `${podName} does not use the promoted image`)
+  const imageId = text(at(status, 'imageID'), 'image ID')
+  const runtimeDigest = /(?:@|^)(sha256:[0-9a-f]{64})$/.exec(imageId)?.[1]
+  assert(
+    runtimeDigest === /@(sha256:[0-9a-f]{64})$/.exec(image)?.[1],
+    `${podName} runtime imageID does not match the promoted index digest`,
+  )
   return {
     pod: podName,
     uid: text(at(pod, 'metadata', 'uid'), 'Pod UID'),
@@ -175,7 +181,7 @@ const readyPod = (pod: unknown, name: string, image: string) => {
     status,
     startedAt: instant(at(status, 'state', 'running', 'startedAt'), 'container start'),
     containerId: text(at(status, 'containerID'), 'container ID'),
-    imageId: text(at(status, 'imageID'), 'image ID'),
+    imageId,
   }
 }
 
@@ -223,6 +229,7 @@ export const evaluateStreamingTelemetry = (
   expected: TelemetryExpectation,
   snapshot: TelemetrySnapshot,
   previous?: TelemetryObservation,
+  windowStartedAt = previous?.observedAt,
 ): TelemetryObservation => {
   const now = numeric(snapshot.observedAt, 'Observation time')
   const operation = at(snapshot.application, 'status', 'operationState')
@@ -277,6 +284,9 @@ export const evaluateStreamingTelemetry = (
     'Ready Alloy Pod belongs to an old ReplicaSet',
   )
   const alloy = readyPod(alloyPod, 'alloy', expected.alloyImage)
+  if (previous && (previous.alloy.uid !== alloy.uid || previous.alloy.containerId !== alloy.containerId)) {
+    throw new RolloutTelemetryFailure('Alloy changed during the observation window')
+  }
   const terminatedAt = at(alloy.status, 'lastState', 'terminated', 'finishedAt')
   const restarts = numeric(at(alloy.status, 'restartCount'), 'Alloy restarts')
   if (
@@ -304,9 +314,19 @@ export const evaluateStreamingTelemetry = (
       sampleAt <= now + 5 &&
         sampleAt >= startedAt &&
         now - sampleAt <= maximumAge &&
-        (!previous || sampleAt > previous.observedAt),
+        (windowStartedAt === undefined || sampleAt > windowStartedAt),
       `${label} is stale or predates the current process/window`,
     )
+  }
+  const remote = remoteWrite(snapshot.remoteMetrics)
+  if (previous && previous.remoteWrite.processStartedAt !== remote.processStartedAt) {
+    throw new RolloutTelemetryFailure('Alloy changed during the observation window')
+  }
+  if (remote.processStartedAt >= rolloutStartedAt && remote.failed > 0) {
+    throw new RolloutTelemetryFailure('Alloy remote-write dropped samples during this rollout')
+  }
+  if (previous && (remote.failed !== previous.remoteWrite.failed || remote.sent < previous.remoteWrite.sent)) {
+    throw new RolloutTelemetryFailure('Alloy remote-write dropped samples or reset during the observation window')
   }
   const targets = expected.pipelines.flatMap((pipeline) => {
     const owner = array(at(snapshot.pipelineDeployments, 'items'), 'Pipeline Deployment inventory').find(
@@ -367,10 +387,6 @@ export const evaluateStreamingTelemetry = (
       }
     })
   })
-  const remote = remoteWrite(snapshot.remoteMetrics)
-  if (remote.processStartedAt >= rolloutStartedAt && remote.failed > 0) {
-    throw new RolloutTelemetryFailure('Alloy remote-write dropped samples during this rollout')
-  }
   assert(
     remote.processStartedAt >= alloy.startedAt - 1 && remote.processStartedAt <= now + 5,
     'Alloy process identity differs from its container',
@@ -381,15 +397,6 @@ export const evaluateStreamingTelemetry = (
     'Alloy remote-write timestamp backlog is not converged',
   )
   if (previous) {
-    assert(
-      previous.alloy.uid === alloy.uid &&
-        previous.alloy.containerId === alloy.containerId &&
-        previous.remoteWrite.processStartedAt === remote.processStartedAt,
-      'Alloy changed during the observation window',
-    )
-    if (remote.failed !== previous.remoteWrite.failed || remote.sent < previous.remoteWrite.sent) {
-      throw new RolloutTelemetryFailure('Alloy remote-write dropped samples or reset during the observation window')
-    }
     assert(
       remote.sent > previous.remoteWrite.sent && remote.sentAt > previous.remoteWrite.sentAt,
       'Alloy remote-write is not making forward progress',
@@ -500,29 +507,48 @@ export const collectTelemetrySnapshot = async (): Promise<TelemetrySnapshot> => 
   }
 }
 
+export const createTelemetryObservationWindow = (expected: TelemetryExpectation) => {
+  let baseline: TelemetryObservation | undefined
+  let windowStartedAt: number | undefined
+  return {
+    observe(snapshot: TelemetrySnapshot) {
+      const observation = evaluateStreamingTelemetry(expected, snapshot, baseline, windowStartedAt)
+      const complete =
+        windowStartedAt !== undefined && observation.observedAt - windowStartedAt >= expected.scrapeInterval * 2
+      baseline ??= observation
+      windowStartedAt ??= observation.observedAt
+      return { observation, complete }
+    },
+    resetFreshnessWindow() {
+      // Transient reads may restart freshness convergence, but cannot erase collector identity or dropped samples.
+      windowStartedAt = undefined
+    },
+  }
+}
+
 const main = async () => {
   const revision = text(process.env.TORGHUT_VERIFIED_REVISION, 'TORGHUT_VERIFIED_REVISION')
   const directory = join(text(process.env.RUNNER_TEMP, 'RUNNER_TEMP'), 'torghut-post-deploy')
   await mkdir(directory, { recursive: true })
   const expected = await loadTelemetryExpectation(revision)
   const deadline = Date.now() + 300_000
-  let previous: TelemetryObservation | undefined
+  const observationWindow = createTelemetryObservationWindow(expected)
   const attempts: { observedAt: string; error?: string; observation?: TelemetryObservation }[] = []
   let complete = false
   while (Date.now() < deadline) {
     try {
-      const observation = evaluateStreamingTelemetry(expected, await collectTelemetrySnapshot(), previous)
+      const result = observationWindow.observe(await collectTelemetrySnapshot())
+      const { observation } = result
       attempts.push({ observedAt: new Date().toISOString(), observation })
-      if (previous && observation.observedAt - previous.observedAt >= expected.scrapeInterval * 2) {
+      if (result.complete) {
         complete = true
         break
       }
-      previous ??= observation
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Telemetry verification failed'
       attempts.push({ observedAt: new Date().toISOString(), error: message })
       console.error(message)
-      previous = undefined
+      observationWindow.resetFreshnessWindow()
       if (error instanceof RolloutTelemetryFailure) break
     }
     await writeFile(

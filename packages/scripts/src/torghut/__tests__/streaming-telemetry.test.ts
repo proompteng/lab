@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'bun:test'
 import {
+  createTelemetryObservationWindow,
   evaluateStreamingTelemetry,
   RolloutTelemetryFailure,
   telemetryExpectation,
@@ -496,5 +497,67 @@ describe('Torghut current-rollout telemetry acceptance', () => {
     expect(() => evaluateStreamingTelemetry(next.expected, next.snapshot, prior)).toThrow(
       'changed during the observation window',
     )
+    expect(() => evaluateStreamingTelemetry(next.expected, next.snapshot, prior)).toThrow(RolloutTelemetryFailure)
+  })
+
+  for (const imageID of ['containerd://unresolved', 'registry.invalid/old@sha256:' + '0'.repeat(64)]) {
+    it(`rejects malformed or stale runtime imageID ${imageID} despite the desired promoted image`, () => {
+      const current = fixture()
+      current.alloyPod.status.containerStatuses[0]!.imageID = imageID
+      expect(() => evaluateStreamingTelemetry(current.expected, current.snapshot)).toThrow('runtime imageID')
+    })
+  }
+
+  for (const replacement of ['pod', 'process']) {
+    it(`retains collector identity through transient failure before a new ${replacement} has fresh metrics`, () => {
+      const first = fixture()
+      const window = createTelemetryObservationWindow(first.expected)
+      expect(window.observe(first.snapshot).complete).toBe(false)
+      const failed = fixture(now + 30)
+      failed.snapshot.metrics.up.status = 'error'
+      expect(() => window.observe(failed.snapshot)).toThrow('successful instant vector')
+      window.resetFreshnessWindow()
+      const next = fixture(now + 60)
+      next.snapshot.metrics.up.data.result = []
+      if (replacement === 'pod') next.alloyPod.metadata.uid = 'replacement-pod-uid'
+      else next.snapshot.remoteMetrics = remote(now + 60, { processStartedAt: startedAt + 30 })
+      expect(() => window.observe(next.snapshot)).toThrow(RolloutTelemetryFailure)
+      expect(() => window.observe(next.snapshot)).toThrow('changed during the observation window')
+    })
+  }
+
+  it('keeps a reused collector drop-counter baseline across collection failures', () => {
+    const first = fixture()
+    const oldStart = time('2026-11-21T05:00:00Z')
+    first.alloyPod.status.containerStatuses[0]!.state.running.startedAt = iso(oldStart)
+    first.snapshot.remoteMetrics = remote(now, { processStartedAt: oldStart, failed: 17 })
+    const window = createTelemetryObservationWindow(first.expected)
+    window.observe(first.snapshot)
+    window.resetFreshnessWindow()
+    const next = fixture(now + 60)
+    next.alloyPod.status.containerStatuses[0]!.state.running.startedAt = iso(oldStart)
+    next.snapshot.remoteMetrics = remote(now + 60, { processStartedAt: oldStart, failed: 18 })
+    expect(() => window.observe(next.snapshot)).toThrow('dropped samples or reset')
+  })
+
+  it('restarts only the freshness window after a transient failure', () => {
+    const first = fixture()
+    const window = createTelemetryObservationWindow(first.expected)
+    window.observe(first.snapshot)
+    window.resetFreshnessWindow()
+    expect(window.observe(fixture(now + 60).snapshot).complete).toBe(false)
+    expect(window.observe(fixture(now + 90).snapshot).complete).toBe(false)
+    expect(window.observe(fixture(now + 120).snapshot).complete).toBe(true)
+  })
+
+  it('cannot use lookback from before a restarted freshness window', () => {
+    const first = fixture()
+    const window = createTelemetryObservationWindow(first.expected)
+    window.observe(first.snapshot)
+    window.resetFreshnessWindow()
+    window.observe(fixture(now + 60).snapshot)
+    const stale = fixture(now + 120)
+    stale.snapshot.metrics.exportedAt.data.result[0]!.value[1] = String(now + 50)
+    expect(() => window.observe(stale.snapshot)).toThrow('Flink metric is stale')
   })
 })
