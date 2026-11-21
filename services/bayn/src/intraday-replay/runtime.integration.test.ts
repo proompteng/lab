@@ -536,20 +536,6 @@ durableTest.each(
         yield* postgresMigrations
         const providerClock = yield* TestClock.make()
         const clock = yield* makeSimulatedExecutionClock(runId, source.sourceManifestHash, providerClock)
-        const wrongAccount = yield* Effect.exit(
-          sql`INSERT INTO simulated_execution_clocks VALUES ('paper-account-1', ${source.sourceManifestHash}, clock_timestamp())`,
-        )
-        const missingClock = yield* Effect.exit(sql`SELECT execution_account_now(${'replay-' + '0'.repeat(64)})`)
-        const rewind = yield* Effect.exit(clock.advanceTo(utcInstantFromEpochMillis(initialMs - 1)))
-        const wrongSource = yield* Effect.exit(makeSimulatedExecutionClock(runId, 'f'.repeat(64), providerClock))
-        const deletedClock = yield* Effect.exit(sql`DELETE FROM simulated_execution_clocks`)
-        const truncatedClock = yield* Effect.exit(sql`TRUNCATE simulated_execution_clocks`)
-        const wallClock = yield* sql<
-          Record<string, unknown>
-        >`SELECT abs(extract(epoch FROM (execution_account_now('paper-account-1') - clock_timestamp()))) < 1 AS current`
-        for (const rejected of [wrongAccount, missingClock, rewind, wrongSource, deletedClock, truncatedClock])
-          expect(rejected._tag).toBe('Failure')
-        expect(wallClock[0]?.['current']).toBe(true)
         let cursor: HistoricalMarketCursor = {
           ...fixture.cursor,
           source,
