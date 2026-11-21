@@ -31,7 +31,6 @@ import {
   type Fill,
   FillSchema,
   NativeProtectionSchema,
-  type NativeProtection,
   type Order,
   type Position,
   type Reconciliation,
@@ -88,14 +87,7 @@ import type { FeeActivity } from '../broker/alpaca/model'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import type { BrokerStateVersion } from '../execution/broker-state-cache'
 import { withObservedStage } from '../telemetry'
-
-export interface IntentBinding {
-  readonly intentId: string
-  readonly clientOrderId: string
-  readonly symbol?: string
-  readonly quantityAtoms?: string
-  readonly protection?: NativeProtection
-}
+import { readIntentBindings } from './intent-bindings'
 
 export interface BrokerSnapshot {
   readonly account: AccountSnapshot
@@ -158,13 +150,6 @@ export class ReconciliationStoreError extends Data.TaggedError('ReconciliationSt
   readonly cause?: unknown
 }> {}
 
-const IntentBindingRow = Schema.Struct({
-  intent_id: Sha256,
-  client_order_id: NonEmptyString,
-  symbol: Schema.String,
-  quantity_atoms: Schema.String,
-  protection: Schema.NullOr(NativeProtectionSchema),
-})
 const IntentRow = Schema.Struct({
   intent_id: Sha256,
   client_order_id: NonEmptyString,
@@ -235,7 +220,6 @@ const ReconciliationRiskContextRow = Schema.Tuple([
   }),
 ])
 
-const decodeBindings = Schema.decodeUnknownEffect(Schema.Array(IntentBindingRow), strictParseOptions)
 const decodeIntents = Schema.decodeUnknownEffect(Schema.Array(IntentRow), strictParseOptions)
 const decodeDurableFills = Schema.decodeUnknownEffect(Schema.Array(DurableFillRow), strictParseOptions)
 const decodeProjectedPositions = Schema.decodeUnknownEffect(Schema.Array(ProjectedPositionRow), strictParseOptions)
@@ -647,27 +631,6 @@ export const makeReconciliation = (
   clock: DatabaseClock = postgresWallClock(sql),
 ) => {
   const verifyAccountingHistory = makeAccountingHistoryVerifier(config.tigerBeetle.ledger)
-  const bindings = (accountId: string): Effect.Effect<readonly IntentBinding[], ReconciliationStoreError> =>
-    runStore(
-      'bindings',
-      sql<Record<string, unknown>>`
-        SELECT intent_id, client_order_id, symbol, quantity_atoms::text, protection
-        FROM intents
-        WHERE account_id = ${accountId}
-        ORDER BY client_order_id COLLATE "C"
-      `.pipe(
-        Effect.flatMap(decodeBindings),
-        Effect.map((rows) =>
-          rows.map((row) => ({
-            intentId: row.intent_id,
-            clientOrderId: row.client_order_id,
-            symbol: row.symbol,
-            quantityAtoms: row.quantity_atoms,
-            ...(row.protection === null ? {} : { protection: row.protection }),
-          })),
-        ),
-      ),
-    )
 
   const readAccountingPhase = (
     snapshot: BrokerSnapshot,
@@ -1077,5 +1040,9 @@ export const makeReconciliation = (
   const retainCashReporting = (snapshot: Parameters<typeof retainAccountCashReporting>[1]) =>
     runStore('reconcile', writerFence.transaction(retainAccountCashReporting(sql, snapshot)))
 
-  return { bindings, reconcile, retainCashReporting }
+  return {
+    bindings: (accountId: string) => runStore('bindings', readIntentBindings(sql, accountId)),
+    reconcile,
+    retainCashReporting,
+  }
 }

@@ -320,8 +320,7 @@ def validate(targets):
     )
     for target, kind, name in workloads:
         spec = resource(targets, target, kind, name)["spec"]
-        expected_replicas = 0 if target == "keycloak" else 2
-        require(spec["replicas"] == expected_replicas, f"{target}: expected {expected_replicas} replicas")
+        require(spec["replicas"] == 2, f"{target}: two serving replicas required")
         pod = spec["template"]["spec"]
         labels = spec["template"]["metadata"]["labels"]
         spread = (

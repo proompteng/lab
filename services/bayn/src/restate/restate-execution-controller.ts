@@ -806,7 +806,7 @@ export const makeBaynExecutionController = (
             }
           }
           if (nextState !== state) ctx.set(stateKey, nextState)
-          // A closed owner has no quote-dependent work. Canonical broker publications still recheck
+          // A closed owner has no quote-dependent work. Canonical broker snapshots and source events still recheck
           // its authority and calendar; source recovery and inference completion remain immediate.
           if (
             event._tag === 'MarketChanged' &&

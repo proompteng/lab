@@ -96,7 +96,7 @@ class VerifiedBrokerFeedTest {
         VerifiedBrokerFeed(
           connection(port),
           client,
-          publish = { key, notification ->
+          publish = { key, _, notification ->
             records += key to notification
             if (records.size == 2) complete.complete(Unit)
           },
@@ -149,7 +149,7 @@ class VerifiedBrokerFeedTest {
           VerifiedBrokerFeed(
             connection(server.resolvedConnectors().single().port),
             client,
-            { _, _ -> published.incrementAndGet() },
+            { _, _, _ -> published.incrementAndGet() },
           )
         withTimeout(5000) { assertFailsWith<IllegalStateException> { feed.collect() } }
         assertEquals(0, opened.get())
@@ -184,7 +184,7 @@ class VerifiedBrokerFeedTest {
           VerifiedBrokerFeed(
             connection(server.resolvedConnectors().single().port),
             client,
-            { _, _ -> published.incrementAndGet() },
+            { _, _, _ -> published.incrementAndGet() },
           )
         withTimeout(5000) { assertFailsWith<IllegalStateException> { feed.collect() } }
         assertEquals(0, published.get())
@@ -221,7 +221,7 @@ class VerifiedBrokerFeedTest {
         VerifiedBrokerFeed(
           connection(server.resolvedConnectors().single().port),
           client,
-          publish = { _, notification ->
+          publish = { _, _, notification ->
             val message = Json.parseToJsonElement(notification.message).jsonObject
             if (message.getValue("_tag").jsonPrimitive.content == "SessionReady") {
               ready += notification

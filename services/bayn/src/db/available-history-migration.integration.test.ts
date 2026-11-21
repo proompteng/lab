@@ -17,13 +17,18 @@ import costSupportedEntryMigration from '../../migrations/0116_cost_supported_en
 import equityHoursMigration from '../../migrations/0113_extended_equity_hours'
 import capitalSizingMigration from '../../migrations/0109_capital_sizing_protocol'
 import modelActionMigration from '../../migrations/0111_model_action_protocol'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import availableHistoryMigration from '../../migrations/0108_available_history_protocol'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { migrationLoader } from './migrations'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -34,11 +39,11 @@ import { makeObserveAuthorityInterpreter } from './execution-store/observe-autho
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     PostgresClientLive({
       operationTimeoutMs: 10_000,
-      postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+      postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
     }).pipe(Layer.provideMerge(NodeServices.layer)),
   )
 
@@ -111,30 +116,39 @@ for (const { label, id, protocol, migration } of [
 ]) {
   describePostgres(`${label} database cutover`, () => {
     let runtime: ReturnType<typeof makeRuntime>
-    beforeAll(() => {
-      const url = new URL(testUrl)
-      if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test'))
-        throw new Error('Migration tests require a local _test database')
-      runtime = makeRuntime()
-    })
-    beforeEach(async () =>
-      runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          yield* sql`DROP SCHEMA public CASCADE`
-          yield* sql`CREATE SCHEMA public`
-          yield* PgMigrator.run({
-            loader: migrationLoader.pipe(
-              Effect.map((migrations) =>
-                migrations.filter(([migrationId]) => migrationId < id || (id === 111 && migrationId === id)),
+    let template: PostgresTestTemplate
+    let database: PostgresTestDatabase
+    beforeAll(async () => {
+      template = await prepareClonedPostgres(testUrl, async (url) => {
+        const priorSchema = makeRuntime(url)
+        try {
+          await priorSchema.runPromise(
+            PgMigrator.run({
+              loader: migrationLoader.pipe(
+                Effect.map((migrations) =>
+                  migrations.filter(([migrationId]) => migrationId < id || (id === 111 && migrationId === id)),
+                ),
               ),
-            ),
-            table: 'schema_migrations',
-          })
-        }),
-      ),
-    )
-    afterAll(async () => runtime.dispose())
+              table: 'schema_migrations',
+            }),
+          )
+        } finally {
+          await priorSchema.dispose()
+        }
+      })
+    })
+    beforeEach(async () => {
+      database = await template.clone()
+      runtime = makeRuntime(database.url)
+    })
+    afterEach(async () => {
+      try {
+        await runtime?.dispose()
+      } finally {
+        await database?.dispose()
+      }
+    })
+    afterAll(async () => template?.dispose())
 
     test('installs its protocol constraint on a fresh database', async () => {
       await runtime.runPromise(

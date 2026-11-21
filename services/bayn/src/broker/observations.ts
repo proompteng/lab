@@ -47,7 +47,7 @@ const CommonEventInput = {
 export const BrokerEventInputSchema = Schema.TaggedUnion({
   Account: { ...CommonEventInput, account: AccountSnapshotSchema },
   Position: { ...CommonEventInput, position: PositionSchema },
-  Order: { ...CommonEventInput, order: OrderSchema },
+  Order: { ...CommonEventInput, sourceTimestamp: UtcOrderTimestamp, order: OrderSchema },
   Fill: { ...CommonEventInput, sourceTimestamp: UtcOrderTimestamp, fill: FillSchema },
 })
 export type BrokerEventInput = typeof BrokerEventInputSchema.Type
@@ -453,55 +453,75 @@ export const orderObservation = (
           timeInForce: timeInForce(validated.timeInForce),
           status: orderStatus(validated.status, validated.filledQuantityAtoms, validated.quantityAtoms),
           occurredAt: canonicalInstant(validated.updatedAt),
+          sourceTimestamp: sourceTimestamp(validated.updatedAt),
         }),
-        Result.flatMap(({ occurredAt, orderType: normalizedOrderType, status, timeInForce: normalizedTimeInForce }) => {
-          const order = {
-            schemaVersion: 'bayn.order.v3' as const,
-            accountId: validated.accountId,
-            brokerOrderId: validated.brokerOrderId,
-            clientOrderId: validated.clientOrderId,
-            ...(validated.parentBrokerOrderId === undefined
-              ? {}
-              : { parentBrokerOrderId: validated.parentBrokerOrderId }),
-            ...(intentId === undefined ? {} : { intentId }),
-            symbol: validated.symbol,
-            side: side(validated.side),
+        Result.flatMap(
+          ({
+            occurredAt,
+            sourceTimestamp,
             orderType: normalizedOrderType,
-            timeInForce: normalizedTimeInForce,
-            ...(validated.quantityAtoms === undefined ? {} : { quantityAtoms: validated.quantityAtoms }),
-            ...(validated.notionalMicros === undefined ? {} : { notionalMicros: validated.notionalMicros }),
-            filledQuantityAtoms: validated.filledQuantityAtoms,
-            ...(validated.limitPriceMicros === undefined ? {} : { limitPriceMicros: validated.limitPriceMicros }),
-            ...(validated.stopPriceMicros === undefined ? {} : { stopPriceMicros: validated.stopPriceMicros }),
             status,
-            observedAt: validated.observedAt,
-          }
-          return pipe(
-            canonicalHash('order', {
-              schemaVersion: 'bayn.order-source.v3',
-              order: withoutObservedAt(order),
-              brokerUpdatedAt: validated.updatedAt,
-            }),
-            Result.flatMap((contentHash) =>
-              decodeEvent('order', {
-                _tag: 'Order',
-                broker: Broker.Alpaca,
-                accountId: order.accountId,
-                sourceEventId: `order:${order.brokerOrderId}:${validated.updatedAt}`,
-                contentHash,
-                occurredAt,
-                observedAt: order.observedAt,
-                order,
+            timeInForce: normalizedTimeInForce,
+          }) => {
+            const order = {
+              schemaVersion: 'bayn.order.v3' as const,
+              accountId: validated.accountId,
+              brokerOrderId: validated.brokerOrderId,
+              clientOrderId: validated.clientOrderId,
+              ...(validated.parentBrokerOrderId === undefined
+                ? {}
+                : { parentBrokerOrderId: validated.parentBrokerOrderId }),
+              ...(intentId === undefined ? {} : { intentId }),
+              symbol: validated.symbol,
+              side: side(validated.side),
+              orderType: normalizedOrderType,
+              timeInForce: normalizedTimeInForce,
+              ...(validated.quantityAtoms === undefined ? {} : { quantityAtoms: validated.quantityAtoms }),
+              ...(validated.notionalMicros === undefined ? {} : { notionalMicros: validated.notionalMicros }),
+              filledQuantityAtoms: validated.filledQuantityAtoms,
+              ...(validated.limitPriceMicros === undefined ? {} : { limitPriceMicros: validated.limitPriceMicros }),
+              ...(validated.stopPriceMicros === undefined ? {} : { stopPriceMicros: validated.stopPriceMicros }),
+              status,
+              observedAt: validated.observedAt,
+            }
+            return pipe(
+              canonicalHash('order', {
+                schemaVersion: 'bayn.order-source.v3',
+                order: withoutObservedAt(order),
+                brokerUpdatedAt: validated.updatedAt,
               }),
-            ),
-          )
-        }),
+              Result.flatMap((contentHash) =>
+                decodeEvent('order', {
+                  _tag: 'Order',
+                  broker: Broker.Alpaca,
+                  accountId: order.accountId,
+                  sourceEventId: `order:${order.brokerOrderId}:${validated.updatedAt}`,
+                  contentHash,
+                  occurredAt,
+                  observedAt: order.observedAt,
+                  sourceTimestamp,
+                  order,
+                }),
+              ),
+            )
+          },
+        ),
       ),
     ),
   )
 
 export const fillObservation = (
-  activity: FillActivity,
+  activity: Pick<
+    FillActivity,
+    | 'accountId'
+    | 'activityId'
+    | 'priceAtoms'
+    | 'quantityAtoms'
+    | 'side'
+    | 'symbol'
+    | 'transactionTime'
+    | 'brokerOrderId'
+  >,
   order: AlpacaOrder,
   evidence: ReadEvidence,
   options: { readonly intentId?: string; readonly feeMicros?: string } = {},

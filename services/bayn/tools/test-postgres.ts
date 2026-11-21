@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { localPostgresTestUrl, removePostgresTestDatabases } from './postgres-test-databases'
 
 const files = [
   'src/db/visual-non-dispatch-migration.integration.test.ts',
@@ -61,14 +62,35 @@ if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
     'Usage: BAYN_TEST_POSTGRES_URL=<isolated local _test database> bun tools/test-postgres.ts [index/count]',
   )
 
-const run = (args: readonly string[]) => {
+const timingsPath = process.env['BAYN_CI_POSTGRES_TIMINGS_PATH'] ?? ''
+const recordTimings = timingsPath !== ''
+const recordedTimings = recordTimings ? [`--timings=${timingsPath}`, '--update-timings'] : []
+const testUrl = localPostgresTestUrl(process.env['BAYN_TEST_POSTGRES_URL'])
+
+const run = async (args: readonly string[]) => {
   const directory = mkdtempSync(join(tmpdir(), 'bayn-postgres-results-'))
   const cwd = fileURLToPath(new URL('..', import.meta.url))
+  const prefix = `bayn_file_${crypto.randomUUID().replaceAll('-', '')}_`
   try {
     const report = join(directory, 'results.xml')
     const result = Bun.spawnSync(
-      [process.execPath, 'test', '--no-orphans', '--reporter=junit', `--reporter-outfile=${report}`, ...args],
-      { cwd, stdout: 'inherit', stderr: 'inherit' },
+      [
+        process.execPath,
+        'test',
+        '--no-orphans',
+        '--isolate',
+        '--randomize',
+        '--preload=./tools/postgres-file-preload.ts',
+        '--reporter=junit',
+        `--reporter-outfile=${report}`,
+        ...args,
+      ],
+      {
+        cwd,
+        env: { ...process.env, BAYN_TEST_POSTGRES_FILE_PREFIX: prefix },
+        stdout: 'inherit',
+        stderr: 'inherit',
+      },
     )
     if (result.exitCode !== 0) process.exitCode = result.exitCode
     else {
@@ -81,13 +103,16 @@ const run = (args: readonly string[]) => {
     }
   } finally {
     rmSync(directory, { recursive: true, force: true })
+    // Bun cannot run a file's teardown if module loading failed.
+    await removePostgresTestDatabases(testUrl, prefix)
   }
   if (process.exitCode !== 0) process.exit(process.exitCode)
 }
 
-run(['--isolate', `--shard=${shard}`, '--timings=tools/ci-postgres-timings.json', ...files])
+await run([`--shard=${shard}`, ...recordedTimings, '--timings=tools/ci-postgres-timings.json', ...files])
 if (shard.startsWith('1/'))
-  run([
+  await run([
+    ...(recordTimings ? [`--timings=${timingsPath}.shadow.json`, '--update-timings'] : []),
     'src/shadow-decision.test.ts',
     '--test-name-pattern',
     'migrated cycle guard|PostgreSQL entry binding and nested',

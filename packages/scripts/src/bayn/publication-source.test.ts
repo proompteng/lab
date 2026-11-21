@@ -138,7 +138,11 @@ test('recovery retains every validation and immutable cohort dependency without 
       type: 'string',
     },
   })
-  expect(workflow.concurrency).toEqual({ group: '${{ github.workflow }}-main', 'cancel-in-progress': false })
+  expect(workflow.concurrency).toEqual({
+    group: '${{ github.workflow }}-main',
+    'cancel-in-progress': false,
+    queue: 'max',
+  })
   expect(workflow.jobs.validation).toEqual({
     needs: 'changes',
     if: "needs.changes.outputs.image == 'true'",
