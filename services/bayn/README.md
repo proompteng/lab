@@ -1676,7 +1676,7 @@ See the [cycle operations runbook](../../docs/runbooks/bayn-cycle-operations.md#
 Normal delivery uses the shared Kargo path:
 
 1. merge reviewed source to `main`;
-2. build the exact multi-architecture image and publish its immutable `kargo-sha-<source>` alias;
+2. build the three exact multi-architecture images and publish their immutable `kargo-sha-<source>-run-<run>` aliases;
 3. let the `bayn` Warehouse and automatic Stage copy that source into `kargo/bayn`, update all three runtime image
    bindings and the existing research build lineage, and push the generated GitOps commit; and
 4. let Argo reconcile the execution worker, activation hook, and status service in their existing sync order.
@@ -1684,6 +1684,23 @@ Normal delivery uses the shared Kargo path:
 Builds are scoped to Bayn inputs and finish when later commits arrive. There is no separate release workflow or
 promotion-eligibility script. Kargo controls delivery; the native activation hook and runtime enforce the configured
 account, strategy, capital grant, reconciliation, and order-risk contracts.
+
+Bayn disables the shared workflow's default index publisher and prepares all three indexes in its existing
+`publish-cohort` job. That job waits for all six platform jobs to finish with success, preserving their native checks,
+pushes, cache-warming policy and log uploads. It resolves each architecture tag once, validates source commit,
+commit timestamp and platform through the resulting immutable digest, then passes those same digests to the shared
+OCI index helper. All six platform proofs must pass before any index is created. Preparation uses only `sha-<source>`
+tags; it publishes neither `latest` nor a Kargo alias. The job checks each returned index's exact child set by digest,
+verifies all three source/run receipts, uploads the existing cohort artifact, and rechecks source eligibility before
+publishing any discovery alias. A failed preparation may leave undiscoverable indexes, but cannot expose a partial
+output set to discovery. Kargo continues to require the complete cohort from one source and run.
+
+This consolidation reduces publication jobs from four ARC runners to one, avoiding three runner starts per eligible
+release while retaining the existing 15-minute cohort budget. It does not change runner counts, storage, build
+concurrency or timeouts. Other consumers retain the shared `publish_index: true` default. This is a structural work
+reduction, not a measured release-latency or cost result. Workflow-only changes keep the existing non-publication
+filters; static and PR validation do not prove live use of the consolidated publisher. The next ordinary eligible
+Bayn build exercises it through the normal release path.
 
 A release that retires executable decision or market-data contracts must follow its reviewed cutover procedure.
 Verify that unfinished cycles remain recoverable by their owning release and that broker orders, positions and
