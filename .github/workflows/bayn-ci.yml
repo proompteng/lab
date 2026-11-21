@@ -253,7 +253,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.3
       - name: Install focused dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts
@@ -262,7 +262,7 @@ jobs:
       - name: Verify isolated PostgreSQL persistence shard
         env:
           BAYN_CI_POSTGRES_TIMINGS_PATH: ${{ format('{0}/bayn-postgres-timings.json', runner.temp) }}
-        run: bun run --cwd services/bayn test:postgres ${{ matrix.shard }}/4
+        run: bun run --cwd services/bayn test:postgres ${{ matrix.shard }}/4 "$(nproc)"
       - name: Record PostgreSQL test file durations
         uses: actions/upload-artifact@v4
         with:

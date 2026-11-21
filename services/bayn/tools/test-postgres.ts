@@ -63,10 +63,17 @@ const files = [
   'src/system-assessment/operational-source-cut.integration.test.ts',
   'src/db/risk-clock-rejection.integration.test.ts',
 ]
-const [shard = '1/1', ...extra] = process.argv.slice(2)
-if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
+const [shard = '1/1', workerCount = '1', ...extra] = process.argv.slice(2)
+const workers = Number(workerCount)
+if (
+  extra.length > 0 ||
+  !Number.isSafeInteger(workers) ||
+  workers < 1 ||
+  String(workers) !== workerCount ||
+  process.env['BAYN_TEST_POSTGRES_URL'] === undefined
+)
   throw new Error(
-    'Usage: BAYN_TEST_POSTGRES_URL=<isolated local _test database> bun tools/test-postgres.ts [index/count]',
+    'Usage: BAYN_TEST_POSTGRES_URL=<isolated local _test database> bun tools/test-postgres.ts [index/count] [workers]',
   )
 
 const timingsPath = process.env['BAYN_CI_POSTGRES_TIMINGS_PATH'] ?? ''
@@ -87,6 +94,7 @@ const run = async (args: readonly string[]) => {
         '--no-orphans',
         '--isolate',
         '--randomize',
+        ...(workers > 1 ? [`--parallel=${workers}`] : []),
         '--preload=./tools/postgres-file-preload.ts',
         '--reporter=junit',
         `--reporter-outfile=${report}`,
