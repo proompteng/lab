@@ -367,6 +367,28 @@
       "pattern": "^build-docs(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "pull-request.yml": [
+    {
+      "id": "plan",
+      "pattern": "^Plan changed-area validation(?: \\(.*\\))?$"
+    },
+    {
+      "id": "validate",
+      "pattern": "^PR validation \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "agents",
+      "pattern": "^Agents CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "bayn",
+      "pattern": "^Bayn CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ci-pr",
+      "pattern": "^ci-pr(?: \\(.*\\))?$"
+    }
+  ],
   "relay.yml": [
     {
       "id": "validate",
