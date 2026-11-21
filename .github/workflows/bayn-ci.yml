@@ -5,6 +5,8 @@ permissions:
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
   workflow_call:
 
@@ -475,6 +477,7 @@ jobs:
     steps:
       - name: Require every applicable Bayn release check
         env:
+          MERGE_GROUP: ${{ github.event_name == 'merge_group' }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
@@ -493,6 +496,10 @@ jobs:
           set -euo pipefail
           if [[ "${CHANGES_RESULT}" != 'success' ]]; then
             echo "Bayn change detection failed: ${CHANGES_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${MERGE_GROUP}" == 'true' && "${BAYN_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'true/true/true' ]]; then
+            echo 'Merge group validation must select every Bayn check.' >&2
             exit 1
           fi
           if [[ "${FORMAL_RELEVANT}" == 'true' && "${FORMAL_RESULT}" != 'success' ]]; then
