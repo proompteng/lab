@@ -103,10 +103,17 @@ testing an explicitly registered candidate against cash and the actual incumbent
 
 ## Execution-price diagnostics
 
+The fixed-cohort [read-only execution SQL](sql/session-investigation-2026-11-20-execution.sql) preserves the
+original cut, signed conventions, per-query timeouts and benchmark coverage. It reproduced these results when
+rerun against the verified standby at approximately `2026-11-21T05:05Z`.
+
 The retained decision rows provide original signal quotes and refreshed execution quotes for all 169 entry episodes
 and 413 entry fills. Positive shortfall means a worse fill price than the executable-side IEX benchmark
 (ask for buys, bid for sells); negative means a favorable price difference. These are exact-numeric stored-row
-comparisons. Complete held-source hashes were not independently replayed for this diagnostic, IEX is not an
+comparisons. Signed USD is the sum of `sideSign × quantity × (fill price − benchmark price)`, with buy sign
+`+1` and sell sign `−1`. Basis points equal `10,000 × signed USD / sum(quantity × benchmark price)`;
+each benchmark uses its own denominator, rather than actual fill notional.
+Complete held-source hashes were not independently replayed for this diagnostic, IEX is not an
 NBBO benchmark, and PAPER fill behavior remains a limitation.
 
 | Entry cohort                 | Fills | Versus original quote | Versus refreshed quote |
@@ -117,8 +124,8 @@ NBBO benchmark, and PAPER fill behavior remains a limitation.
 November 20 original-quote-to-first-fill age has median/p95 7.895/12.675 seconds;
 refreshed-quote-to-first-fill age is 4.005/9.572 seconds; durable-decision-to-first-fill is 2.829/9.269 seconds.
 These intervals include market, routing and fill timing. They are not submission latency or proof of a quote-age
-violation at submission. Positive entry quote shortfall does not explain the losses in this filled cohort;
-signal quality, adverse selection, omitted opportunities and PAPER simulation effects remain separate questions.
+violation at submission. These benchmarks show favorable average filled-entry pricing; they do not isolate
+signal quality, adverse selection, omitted opportunities or PAPER simulation effects.
 
 November 20 closing fills also have complete retained-role coverage. Application-close documents were matched by
 their exact ordered intent IDs because strategy hashes repeat across replans. Native replacement protection was
@@ -234,7 +241,7 @@ it does not establish a pipeline outage, and an absent or NaN lag series must ne
 The repair adds separate metrics Services for the TA and archive TaskManagers, using the existing named
 `metrics` port and Alloy endpoint discovery. Existing JobManager targets remain independent. Both affected
 Kustomize subtrees render successfully, and live selectors match four TA and eight archive TaskManagers.
-The complete Torghut render requires Helm 3, which is unavailable in the inspection shell; CI remains the full-render gate.
+A complete Torghut render also requires Helm 3; it remains a distinct release validation step.
 Deployment must follow the existing `torghut-release:torghut` cohort through Kargo and Argo, including its normal
 checkpoint/savepoint lifecycle. It must not reactivate the retired Torghut API or trading scheduler.
 
