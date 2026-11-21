@@ -5,7 +5,8 @@ historical cut; source, GitOps and fresh runtime evidence remain authoritative.
 
 ## Scope and provenance
 
-Read-only evidence was collected on November 21, 2026, approximately 04:38–04:47 UTC. Financial rows cover
+Financial and decision evidence was collected read-only on November 21, 2026, approximately 04:38–04:47 UTC;
+runtime checks continued through approximately 04:53 UTC. Financial rows cover
 `2026-11-16T00:00:00Z <= occurred_at < 2026-11-21T01:07:10Z`; session dates below use New York time.
 The retained account is PAPER. No orders, risk settings, credentials, source records or accounting were changed.
 
@@ -100,6 +101,40 @@ A new low-ratio cutoff would miss most of this day's losses. The existing 0.70 s
 is not a calibrated probability of target-before-stop. Preserve the frozen strategy and risk policy while
 testing an explicitly registered candidate against cash and the actual incumbent with full costs.
 
+## Execution-price diagnostics
+
+The retained decision rows provide original signal quotes and refreshed execution quotes for all 169 entry episodes
+and 413 entry fills. Positive shortfall means a worse fill price than the executable-side IEX benchmark
+(ask for buys, bid for sells); negative means a favorable price difference. These are exact-numeric stored-row
+comparisons. Complete held-source hashes were not independently replayed for this diagnostic, IEX is not an
+NBBO benchmark, and PAPER fill behavior remains a limitation.
+
+| Entry cohort                 | Fills | Versus original quote | Versus refreshed quote |
+| ---------------------------- | ----: | --------------------: | ---------------------: |
+| November 16–20, 169 episodes |   413 | -$931.72 / -3.007 bps |  -$787.15 / -2.541 bps |
+| November 20, 60 episodes     |   166 | -$437.69 / -3.978 bps |  -$378.82 / -3.443 bps |
+
+November 20 original-quote-to-first-fill age has median/p95 7.895/12.675 seconds;
+refreshed-quote-to-first-fill age is 4.005/9.572 seconds; durable-decision-to-first-fill is 2.829/9.269 seconds.
+These intervals include market, routing and fill timing. They are not submission latency or proof of a quote-age
+violation at submission. Positive entry quote shortfall does not explain the losses in this filled cohort;
+signal quality, adverse selection, omitted opportunities and PAPER simulation effects remain separate questions.
+
+November 20 closing fills also have complete retained-role coverage. Application-close documents were matched by
+their exact ordered intent IDs because strategy hashes repeat across replans. Native replacement protection was
+matched to its original entry decision and protection levels.
+
+| Closing role         | Fills | Episodes touched |     Signed comparison | Benchmark                   |
+| -------------------- | ----: | ---------------: | --------------------: | --------------------------- |
+| Native profit target |    58 |               19 |  -$36.68 / -1.084 bps | Original profit limit       |
+| Native stop          |    48 |               16 |  +$38.35 / +1.382 bps | Original stop trigger       |
+| Application close    |    75 |               29 | -$426.17 / -8.819 bps | Retained closing bid or ask |
+
+Episode counts overlap when an episode has mixed exit types. Native trigger/limit comparisons are not
+execution-arrival benchmarks and must stay separate from quote-based shortfall. Application-close quote-to-fill age
+has median/p95 4.004/7.346 seconds. Across all five sessions, four of 450 closing fills lack a retained closing quote
+and remain unmeasured. These diagnostics do not establish full implementation shortfall or a counterfactual portfolio.
+
 ## Deadline and opportunity-loss diagnosis
 
 November 20 retains 83 completed cycles, 116 no-trade cycles and 152 `BLOCKED_UNUSED_ENTRY_EXPIRED` cycles.
@@ -125,8 +160,8 @@ excluded by source readiness or spread. The other six contain 25 distinct reques
 
 The two next-window acquisitions are a concrete recovery problem. At 16:02:02.752 the old 16:01 cycle opens
 five requests, then terminates at 16:02:03.504. At 20:13:02.766 the old 20:12 cycle opens one request, then
-terminates at 20:13:03.342. All six lack provider receipts and have positive non-dispatch cost evidence in the
-latest quote set. They consume the next source window before the successor can use it. Repair ownership and the
+terminates at 20:13:03.342. All six lack provider receipts; their latest CHART and JEV cost quotes are explicitly
+`NOT_DISPATCHED`, with zero estimated provider cost. They consume the next source window before the successor can use it. Repair ownership and the
 original-cycle deadline boundary; retain the ten-second inference budget and every pricing and financial check.
 
 The remaining completed receipts in these cycles are on time. Several valid pricing rejections must remain
@@ -136,6 +171,85 @@ delay is evidence for tracing resume/persistence latency, not proof that the rej
 Across completed receipts, median / p95 elapsed request time improves from **1.758 / 4.467 seconds** on November 18
 to **0.659 / 1.408 seconds** on November 20. This measures the receipt's started/completed interval, not complete
 market-event-to-broker-acknowledgement latency. The realized losses rose while this component became faster.
+
+## Runtime performance baseline
+
+Mimir measurements cover November 20, 13:00–22:00 UTC, for deployed source
+`22424d95916aeb732f8dfd8229c4bf4057532f28`. These are successful-operation histogram estimates;
+failed, interrupted and never-started work require their separate denominators. Nested stages overlap.
+
+| Stage                             | Estimated p50 | Estimated p95 |
+| --------------------------------- | ------------: | ------------: |
+| Broker capture                    |        4.32 s |        9.54 s |
+| Broker publication                |        321 ms |        489 ms |
+| Generation pass                   |        215 ms |        2.29 s |
+| Reconciliation persistence        |        770 ms |        1.50 s |
+| Intent reconciliation             |        754 ms |        1.59 s |
+| Broker submission                 |        374 ms |        1.03 s |
+| Valkey get                        |         21 ms |         46 ms |
+| Valkey queue                      |       0.50 ms |       0.95 ms |
+| PostgreSQL connection acquisition |       0.50 ms |       0.95 ms |
+
+The two execution-controller pods averaged 0.578 and 0.618 CPU cores, with peak five-minute rates of
+0.933 and 1.071 cores. Peak container working sets were 734.49 and 1,139.50 MiB against each pod's
+eight-core and 3,072 MiB limits. Both controller containers had zero measured CPU throttled-period ratio.
+The execution scheduler's estimated p95 delay was 38.76 ms. These measurements establish useful headroom
+for this session; they do not prove leak-free operation or a whole-path deadline guarantee.
+
+Current high throttle ratios seen on Valkey and PostgreSQL pod aggregates belonged primarily to exporter
+or backup sidecars. The data does not support increasing controller, database or cache limits to solve the
+observed economic or fee-settlement problems. Current pool and cache queue measurements also show no saturation.
+
+To reproduce stage quantiles, query the existing Mimir endpoint at `2026-11-20T22:00:00Z`:
+
+```promql
+histogram_quantile(0.95,
+  sum by (le, stage) (increase(bayn_operation_duration_seconds_bucket{
+    service="bayn-execution-controller",
+    source_revision="22424d95916aeb732f8dfd8229c4bf4057532f28",
+    outcome="succeeded"
+  }[9h]))
+)
+```
+
+Replace `0.95` with `0.5` for the median; the corresponding `_count` increase gives estimated observation counts.
+For container metrics, retain `namespace="bayn"`,
+`pod=~"bayn-execution-controller-45c7948966-.*"`, and `container="execution-controller"`.
+Use `max_over_time(container_memory_working_set_bytes{...}[9h])` for peak working set and the ratio of
+`increase(container_cpu_cfs_throttled_periods_total{...}[9h])` to
+`increase(container_cpu_cfs_periods_total{...}[9h])` for throttled periods. Preserve per-container attribution.
+
+## Streaming observability gap
+
+Both live Flink jobs were `RUNNING/READY` at approximately `2026-11-21T04:53:35Z`, with four TA and eight
+market-data archive TaskManagers running and no current container restarts. The latest successful checkpoint ages
+were 32.4 and 16.5 seconds, respectively; checkpoint durations were 1.93 and 0.986 seconds. The preceding six hours
+had zero observed failed checkpoints or job restarts. Representative direct TaskManager exporters reported zero
+pending records and zero backpressure. Broker-feed readiness was one, with zero observed failures over six hours.
+
+However, the existing metrics Services selected only JobManagers. The TaskManager exporters exposed lag,
+pending-record and backpressure series that were absent from Mimir. This establishes missing observability;
+it does not establish a pipeline outage, and an absent or NaN lag series must never be interpreted as zero lag.
+
+The repair adds separate metrics Services for the TA and archive TaskManagers, using the existing named
+`metrics` port and Alloy endpoint discovery. Existing JobManager targets remain independent. Both affected
+Kustomize subtrees render successfully, and live selectors match four TA and eight archive TaskManagers.
+The complete Torghut render requires Helm 3, which is unavailable in the inspection shell; CI remains the full-render gate.
+Deployment must follow the existing `torghut-release:torghut` cohort through Kargo and Argo, including its normal
+checkpoint/savepoint lifecycle. It must not reactivate the retired Torghut API or trading scheduler.
+
+After the generated deployment converges, verify the discovered target count against actual running replicas:
+
+```promql
+count by (service) (
+  up{job="torghut", namespace="torghut", service=~".*-taskmanager-metrics"} == 1
+)
+```
+
+Also verify that `flink_taskmanager_job_task_operator_pendingRecords` and
+`flink_taskmanager_job_task_backPressuredTimeMsPerSecond` have actual samples, that existing JobManager targets
+remain healthy, and that both jobs complete fresh checkpoints. The pre-deployment expected target counts are
+four TA and eight archive; autoscaling or a later replica change must be reflected rather than hidden.
 
 ## Qualification and action boundaries
 
@@ -150,9 +264,10 @@ Priority actions supported by this cut:
    at-most-once provider calls and recovery behavior with a focused regression.
 2. Expose pending broker fee confirmation accurately while preserving the existing settlement gate.
    The observed provider transport works; the actionable issue is delayed authoritative fee materialization.
-3. Retain the economic baseline above through rollout. Verify deployed code and runtime behavior separately
+3. Restore TaskManager metrics coverage and verify the new targets and successful checkpoints after GitOps rollout.
+4. Retain the economic baseline above through rollout. Verify deployed code and runtime behavior separately
    from prospective profitability. Additional throughput is useful only with a qualified economic comparison.
-4. Obtain complete operating-cost evidence and register untouched prospective sessions, candidate identity,
+5. Obtain complete operating-cost evidence and register untouched prospective sessions, candidate identity,
    conditional support and actual-incumbent controls before claiming an edge. Preserve failed attempts.
 
 ## Reproduction
