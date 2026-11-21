@@ -1,8 +1,7 @@
 name: symphony
 
 on:
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
   pull_request:
     paths:
       - 'patches/effect@4.1.4.patch'
@@ -23,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: symphony-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -91,7 +91,7 @@ class NixBuildCacheTests(unittest.TestCase):
 
     def test_workflow_supplies_the_existing_key_and_both_signed_caches(self):
         workflow = (
-            self.component.parents[1] / ".github/workflows/codex-devbox.yml"
+            self.component.parents[1] / ".github/workflows/codex-devbox-validate.yml"
         ).read_text()
         self.assertIn("ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}", workflow)
         self.assertIn('test -n "${ATTIC_PUBLIC_KEY}"', workflow)

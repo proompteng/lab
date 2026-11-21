@@ -196,11 +196,16 @@ describe('enabled app inventory', () => {
   })
 
   it.each([
-    ['devbox', 'codex-devbox', 'unpublished', '.github/workflows/codex-devbox.yml'],
-    ['ofz', 'ofz', 'unpromoted', '.github/workflows/ofz.yaml'],
+    [
+      'devbox',
+      'codex-devbox',
+      'unpublished',
+      ['.github/workflows/codex-devbox.yml', '.github/workflows/codex-devbox-validate.yml'],
+    ],
+    ['ofz', 'ofz', 'unpromoted', ['.github/workflows/ofz.yaml']],
   ])(
     'recognizes the inert %s promotion template without accepting arbitrary mutable images',
-    (name, image, tag, workflow) => {
+    (name, image, tag, workflows) => {
       const repository = `registry.ide-newton.ts.net/lab/${image}`
       const template = {
         name,
@@ -212,7 +217,7 @@ describe('enabled app inventory', () => {
         enabled: true,
         hasHelmChart: false,
         repoImages: [`${repository}:${tag}`],
-        workflowPaths: [workflow, 'argocd/applications/kargo'],
+        workflowPaths: [...workflows, 'argocd/applications/kargo'],
       } satisfies EnabledAppInventoryEntry
       expect(classifyEnabledApp(template).class).toBe('workflow-image')
       expect(classifyEnabledApp({ ...template, workflowPaths: [] }).class).toBe('deferred')

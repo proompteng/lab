@@ -1,0 +1,140 @@
+name: Queue service validation
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  agentctl:
+    uses: ./.github/workflows/agentctl-ci.yml
+
+  attic-image:
+    uses: ./.github/workflows/attic-build-push.yaml
+
+  bumba:
+    uses: ./.github/workflows/bumba-ci.yml
+
+  codex:
+    uses: ./.github/workflows/codex-ci.yml
+
+  codex-devbox:
+    uses: ./.github/workflows/codex-devbox-validate.yml
+
+  dernier:
+    uses: ./.github/workflows/dernier-ci.yml
+
+  dorvud:
+    uses: ./.github/workflows/dorvud.yml
+
+  facteur:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+      - uses: ./.github/actions/validate-go-service
+        with:
+          service: facteur
+          coverage-title: Facteur Coverage
+
+  feature-flags:
+    uses: ./.github/workflows/feature-flags-ci.yml
+
+  flamingo:
+    uses: ./.github/workflows/flamingo-ci.yml
+
+  froussard:
+    uses: ./.github/workflows/froussard-ci.yml
+
+  galette:
+    uses: ./.github/workflows/galette-ci.yml
+
+  golink:
+    uses: ./.github/workflows/golink-ci.yml
+
+  graf-service:
+    uses: ./.github/workflows/graf-service.yml
+
+  headlamp:
+    uses: ./.github/workflows/headlamp-ci.yml
+
+  jangar:
+    uses: ./.github/workflows/jangar-ci.yml
+
+  jangar-guardrails:
+    uses: ./.github/workflows/jangar-guardrails.yml
+
+  khoshut:
+    uses: ./.github/workflows/khoshut-ci.yml
+
+  miel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+      - uses: ./.github/actions/validate-go-service
+        with:
+          service: miel
+
+  nuc-omni-serve:
+    uses: ./.github/workflows/nuc-omni-serve.yaml
+
+  oirat:
+    uses: ./.github/workflows/oirat-ci.yml
+
+  opencode:
+    uses: ./.github/workflows/opencode-ci.yml
+
+  orbit-salvage:
+    uses: ./.github/workflows/orbit-salvage-ci.yml
+
+  otel:
+    uses: ./.github/workflows/otel-ci.yml
+
+  product-dependency-closure:
+    uses: ./.github/workflows/nix-bun-dependency-closure.yml
+    with:
+      service: app
+
+  product-image:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [app, docs, proompteng, synthesis]
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: ${{ matrix.image }}
+      package_attr: ${{ matrix.image }}-image
+      tag: queue-${{ github.sha }}
+      source_revision: ${{ github.sha }}
+
+  reestr:
+    uses: ./.github/workflows/reestr-ci.yml
+
+  registry-cleanup:
+    uses: ./.github/workflows/registry-cleanup-ci.yml
+
+  restate:
+    uses: ./.github/workflows/restate-validation.yml
+
+  ricochet-rush:
+    uses: ./.github/workflows/ricochet-rush-ci.yml
+
+  schematic:
+    uses: ./.github/workflows/schematic-ci.yml
+
+  signal-publisher:
+    uses: ./.github/workflows/signal-publisher-ci.yml
+
+  signal-publisher-image:
+    uses: ./.github/workflows/signal-publisher-build-push.yml
+
+  spire-migration:
+    uses: ./.github/workflows/spire-migration.yml
+
+  symphony:
+    uses: ./.github/workflows/symphony-ci.yml
+
+  synthesis:
+    uses: ./.github/workflows/synthesis-ci.yml
