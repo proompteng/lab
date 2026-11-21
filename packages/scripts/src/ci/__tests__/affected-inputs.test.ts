@@ -99,6 +99,13 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
 
 test('native PR validation preserves image publication and cache warming boundaries', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/nix-oci-build-common.yml', 'utf8'))
+  const indexInput = property(property(property(workflow, 'on'), 'workflow_call'), 'inputs')
+  expect(property(indexInput, 'publish_index')).toEqual({
+    description: 'Publish the index here; disable only when the caller prepares a verified image cohort',
+    required: false,
+    type: 'boolean',
+    default: true,
+  })
   const jobs = property(workflow, 'jobs')
   const steps = property(property(jobs, 'build-platform'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing native build steps')
@@ -109,7 +116,7 @@ test('native PR validation preserves image publication and cache warming boundar
     )
   const conditions = [
     [stepCondition('Push platform image without Docker'), 'publish'],
-    [property(property(jobs, 'publish-index'), 'if'), 'publish'],
+    [property(property(jobs, 'publish-index'), 'if'), 'index'],
     [stepCondition('Warm Nix build outputs in Attic'), 'warm'],
   ] as const
   for (const [event, ref, publishOnDispatch, publish, warm] of [
@@ -121,14 +128,16 @@ test('native PR validation preserves image publication and cache warming boundar
     ['workflow_dispatch', 'refs/heads/feature', false, false, false],
     ['workflow_dispatch', 'refs/heads/feature', true, true, false],
   ] as const) {
-    for (const [condition, boundary] of conditions) {
-      const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
-      expect(
-        runInNewContext(expression, {
-          github: { event_name: event, ref },
-          inputs: { publish_on_dispatch: publishOnDispatch },
-        }),
-      ).toBe(boundary === 'publish' ? publish : warm)
+    for (const publishIndex of [true, false]) {
+      for (const [condition, boundary] of conditions) {
+        const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+        expect(
+          runInNewContext(expression, {
+            github: { event_name: event, ref },
+            inputs: { publish_on_dispatch: publishOnDispatch, publish_index: publishIndex },
+          }),
+        ).toBe(boundary === 'warm' ? warm : publish && (boundary !== 'index' || publishIndex))
+      }
     }
   }
 })
@@ -564,6 +573,48 @@ test('Ofz publication helpers use script CI without waking service qualification
       expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(false)
     }
   }
+})
+
+test('Ofz PR validation selects its identity fixture dependency changes', () => {
+  const filename = '.github/workflows/ofz.yaml'
+  const workflow: unknown = Bun.YAML.parse(readFileSync(filename, 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'validate'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing Ofz validation steps')
+  const planning = steps.find((step) => property(step, 'id') === 'inputs')
+  expect(property(planning, 'uses')).toBe('./.github/actions/affected-inputs')
+  expect(property(planning, 'if')).toBe("github.event_name == 'pull_request'")
+  const inputs = property(planning, 'with')
+  const configured = parseTargets(
+    text(property(inputs, 'workspaces')),
+    '{}',
+    text(property(inputs, 'workflow')),
+    'pull_request',
+  )
+  const base = {
+    ...before,
+    workspaces: {
+      ...before.workspaces,
+      'packages/backend': { name: '@proompteng/backend' },
+      'packages/design': { name: '@proompteng/design' },
+      'services/golink': { name: '@proompteng/golink', dependencies: { dayjs: '^1.0.0' } },
+    },
+  }
+  const unrelated = {
+    ...base,
+    workspaces: { ...base.workspaces, 'services/golink': { name: '@proompteng/golink', dependencies: {} } },
+  }
+  const identity = {
+    ...base,
+    workspaces: { ...base.workspaces, 'apps/landing': after.workspaces['apps/landing'] },
+    packages: after.packages,
+  }
+  expect(selectAffectedInputs(['bun.lock'], configured, base, unrelated)).toEqual({ ofz: false })
+  expect(selectAffectedInputs(['bun.lock'], configured, base, identity)).toEqual({ ofz: true })
+  expect(selectAffectedInputs(['services/ofz/src/main.rs'], configured, base, base)).toEqual({ ofz: true })
+  const identityStep = steps.find(
+    (step) => property(step, 'name') === 'Verify real browser identity and shared sessions',
+  )
+  expect(property(identityStep, 'if')).toBe("steps.selection.outputs.run != 'false'")
 })
 
 test('a changed transitive dependency still runs its consumers', () => {

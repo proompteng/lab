@@ -56,6 +56,29 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
+  test('plans every registered validation for a queued revision without a diff', () => {
+    const targets = Object.entries(map.targets)
+    expect(selectImpactPlan([], map, true)).toEqual({
+      files: [],
+      validationTargets: targets
+        .filter(([, target]) => target.kind === 'validation')
+        .map(([name]) => name)
+        .sort(),
+      delegatedWorkflows: [
+        ...new Set(
+          targets.flatMap(([, target]) => (target.kind === 'delegated' && target.workflow ? [target.workflow] : [])),
+        ),
+      ].sort(),
+    })
+    expect(selectImpactPlan([], rootScriptMap, true).validationTargets).toContain('all')
+  })
+
+  test('rejects a full plan with only the planner fallback', () => {
+    expect(() =>
+      selectImpactPlan([], { version: 1, targets: { planner: { kind: 'planner', paths: [] } } }, true),
+    ).toThrow('Full CI plan has no validation targets')
+  })
+
   test('routes a service change to its owner without image validation', () => {
     const plan = selectImpactPlan(['services/jangar/src/server.ts'], map)
     expect(plan.validationTargets).toEqual(['planner'])

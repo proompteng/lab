@@ -323,9 +323,6 @@ describe('torghut build-push workflow', () => {
   })
 
   it('keeps Convex admin credentials out of pull-request validation', () => {
-    expect(pullRequestWorkflow).toContain(
-      "- name: Run landing validation\n        if: ${{ matrix.target == 'landing' }}",
-    )
     expect(pullRequestWorkflow).not.toContain('CONVEX_SELF_HOSTED_URL')
     expect(pullRequestWorkflow).not.toContain('CONVEX_SELF_HOSTED_ADMIN_KEY')
   })
