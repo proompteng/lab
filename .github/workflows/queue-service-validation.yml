@@ -16,6 +16,9 @@ jobs:
   bumba:
     uses: ./.github/workflows/bumba-ci.yml
 
+  buzz:
+    uses: ./.github/workflows/buzz-relay-build-push.yml
+
   codex:
     uses: ./.github/workflows/codex-ci.yml
 
