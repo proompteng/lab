@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Schema } from 'effect'
+import { DateTime, Effect, Schema } from 'effect'
 
 import { executionControllerPlanHash } from '../execution/controller-plan'
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
@@ -23,7 +23,7 @@ import {
   verifyStoredOperationalAssessment,
 } from './operational-assessment'
 import { readRegisteredFinancialIdentity } from './capital-identity'
-import { readSystemSourceCut } from './source-cut'
+import { readSystemSourceCut, type SystemSourceCut } from './source-cut'
 import { readOperationalAssessmentSourceCut } from './operational-source-cut'
 import { bindSystemSourceCut } from './bind-source'
 import { SystemAssessmentInputSchema } from './assessment'
@@ -34,6 +34,12 @@ import { bindLatencyStressSources } from './latency-report'
 import { JevResearchPolicy } from '../jev/acceptance'
 import type { VerifiedReplayImage } from './replay-image'
 import { readReplayExecutionReceipt, type ReplayExecutionReceiptSchema } from './replay-execution'
+import { decodeRetainedCashEvidence } from './equity-fee-cash'
+import { ledgerReceiptQuery, ledgerTransactionQuery } from '../forward-performance/postgres/queries'
+import { decodeReceipts, decodeTransactions } from '../forward-performance/postgres/model'
+import { accountingReceiptFromRow, accountingTransactionFromRow } from '../db/accounting-rows'
+import { decodeAccountingReceipt } from '../execution/contracts'
+import { verifyRetainedAccountLedgerPrefix } from './accounting-source'
 
 export const ProgramHistorySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.system-qualification-history.v1'),
@@ -53,6 +59,46 @@ export const ProgramHistorySchema = Schema.Struct({
 const boundaryError = (message: string) => (cause: unknown) => new SystemAssessmentError({ message, cause })
 const HashRow = Schema.Array(Schema.Struct({ registration_hash: Sha256Schema }))
 const RegistrationRows = Schema.Array(Schema.Struct({ payload: Schema.Unknown }))
+
+const verifyNativeCashLedgerSources = (
+  registration: (typeof SystemAssessmentInputSchema.Type)['registration'],
+  cut: SystemSourceCut,
+) =>
+  Effect.gen(function* () {
+    if (registration.schemaVersion !== 'bayn.system-registration.v5') return
+    const retained = yield* Effect.fromResult(decodeRetainedCashEvidence(cut.sourceMaterial))
+    const sql = yield* PgClient.PgClient
+    for (const account of retained.accounts ?? []) {
+      const transactions = account.forward.accountTransactions
+      const reconciledAt = account.forward.accountPositionCounts?.reconciledAt
+      if (
+        transactions === undefined ||
+        reconciledAt === undefined ||
+        !account.forward.ledgerExact ||
+        !account.forward.accountingReceiptsExact
+      )
+        continue
+      const cutoff = DateTime.toDateUtc(DateTime.makeUnsafe(reconciledAt))
+      const durableTransactions = (yield* ledgerTransactionQuery(sql, account.identity.accountId, cutoff).pipe(
+        Effect.flatMap(decodeTransactions),
+      )).map(accountingTransactionFromRow)
+      const receiptRows = yield* ledgerReceiptQuery(sql, account.identity.accountId, cutoff).pipe(
+        Effect.flatMap(decodeReceipts),
+      )
+      const durableReceipts = yield* Effect.forEach(receiptRows, (row) =>
+        decodeAccountingReceipt(accountingReceiptFromRow(row)),
+      )
+      yield* Effect.fromResult(
+        verifyRetainedAccountLedgerPrefix({
+          accountId: account.identity.accountId,
+          asOf: cut.asOf,
+          retainedTransactions: transactions,
+          durableTransactions,
+          durableReceipts,
+        }),
+      )
+    }
+  })
 
 /** The reviewed history origin is write-once; source and candidate changes never create a fresh program. */
 export const initializeQualificationHistory = (input: unknown, verifiedSources: ReadonlySet<string>) =>
@@ -253,6 +299,7 @@ export const assessAndPersistSystem = (
   Effect.gen(function* () {
     const decoded = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(input)
     const cut = yield* readSystemSourceCut(decoded.sourceCutHash)
+    yield* verifyNativeCashLedgerSources(decoded.registration, cut)
     const candidate = decoded.registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
     if (candidate === undefined) return yield* new SystemAssessmentError({ message: 'Missing candidate registration' })
     const timings = yield* Effect.fromResult(

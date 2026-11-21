@@ -20,7 +20,7 @@ import { replayRateCardFixture } from '../testing/inference-rate-card.test-suppo
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
@@ -55,7 +55,9 @@ import {
   readSystemMutationEvidence,
 } from './capture-queries'
 import { makePersistenceDocumentFixture } from './decision-persistence.test-support'
-import { OrderStatus, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
+import { OrderSide, OrderStatus, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
+import { prepareAccounting } from '../accounting/domain'
+import { planAccountingReceipt } from '../db/execution-store/decisions'
 import {
   makeResearchCapitalActivationRequest,
   makeResearchCapitalPlanHash,
@@ -924,6 +926,203 @@ postgres('PostgreSQL prospective system qualification', () => {
     }
     const persisted = await runtime.runPromise(asApplication(registerSystemQualification(input, sources)))
     expect(await runtime.runPromise(readSystemRegistration(persisted.registrationHash))).toEqual(input)
+  })
+
+  test('assessment rejects a rehashed cash witness that differs from its immutable accounting receipts', async () => {
+    const registered = await runtime.runPromise(asApplication(registerFixture(registration(2))))
+    const candidate = registered.registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+    if (candidate === undefined) throw new Error('Missing candidate definition')
+    const accountId = candidate.riskPolicy.accountId
+    const identity = Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        accountId,
+        environment: BrokerEnvironment.Sandbox,
+        provider: BrokerProvider.Alpaca,
+      }),
+    )
+    const observedAt = await runtime.runPromise(databaseNow)
+    const buyAt = new Date(Date.parse(observedAt) - 120_000).toISOString()
+    const sellAt = new Date(Date.parse(observedAt) - 60_000).toISOString()
+    const reconciledAt = new Date(Date.parse(observedAt) - 30_000).toISOString()
+    const events = [testHash('native cash buy'), testHash('native cash sell')]
+    const preparePair = (buyPriceAtoms: string, sellPriceAtoms: string) => [
+      Result.getOrThrow(
+        prepareAccounting(
+          events[0]!,
+          {
+            schemaVersion: 'bayn.fill.v2',
+            accountId,
+            fillId: 'native-cash-fill-0',
+            brokerOrderId: 'native-cash-order-0',
+            clientOrderId: 'native-cash-client-0',
+            symbol: 'AAPL',
+            side: OrderSide.Buy,
+            quantityAtoms: '1000000000',
+            priceAtoms: buyPriceAtoms,
+            feeMicros: '0',
+            occurredAt: buyAt,
+          },
+          { quantityAtoms: '0', costMicros: '0' },
+          7001,
+        ),
+      ),
+      Result.getOrThrow(
+        prepareAccounting(
+          events[1]!,
+          {
+            schemaVersion: 'bayn.fill.v2',
+            accountId,
+            fillId: 'native-cash-fill-1',
+            brokerOrderId: 'native-cash-order-1',
+            clientOrderId: 'native-cash-client-1',
+            symbol: 'AAPL',
+            side: OrderSide.Sell,
+            quantityAtoms: '1000000000',
+            priceAtoms: sellPriceAtoms,
+            feeMicros: '0',
+            occurredAt: sellAt,
+          },
+          { quantityAtoms: '1000000000', costMicros: (BigInt(buyPriceAtoms) / 1000n).toString() },
+          7001,
+        ),
+      ),
+    ]
+    const original = preparePair('100000000000', '107000000000')
+    const rehashed = preparePair('96000000000', '103000000000')
+    expect(rehashed.map(({ transaction }) => transaction.transactionId)).toEqual(
+      original.map(({ transaction }) => transaction.transactionId),
+    )
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            for (const [index, prepared] of original.entries()) {
+              const transaction = prepared.transaction
+              yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+            source_event_id,source_sequence,occurred_at,observed_at)
+          VALUES(${transaction.brokerEventId},'bayn.paper-broker-event.v1',${transaction.brokerEventId},'FILL','ALPACA',
+            ${accountId},${`native-cash-fill-${index}`},${index + 1},${transaction.occurredAt},${transaction.occurredAt})`
+              yield* sql`INSERT INTO fills(event_id,account_id,schema_version,fill_id,broker_order_id,client_order_id,
+            symbol,side,quantity_atoms,price_atoms,fee_micros,source_timestamp,intent_id)
+          VALUES(${transaction.brokerEventId},${accountId},'bayn.fill.v2',${`native-cash-fill-${index}`},
+            ${`native-cash-order-${index}`},${`native-cash-client-${index}`},${transaction.symbol},${transaction.side},
+            ${transaction.quantityAtoms},${transaction.priceAtoms},${transaction.feeMicros},
+            ${transaction.occurredAt.replace('Z', '000000Z')},NULL)`
+              yield* sql`INSERT INTO accounting_transactions(transaction_id,schema_version,broker_event_id,intent_id,account_id,
+            symbol,side,quantity_atoms,price_atoms,notional_micros,fee_micros,cost_basis_micros,realized_pnl_micros,
+            quantity_delta_atoms,cost_basis_delta_micros,cash_delta_micros,ledger_plan_hash,content_hash,occurred_at)
+          VALUES(${transaction.transactionId},${transaction.schemaVersion},${transaction.brokerEventId},NULL,${accountId},
+            ${transaction.symbol},${transaction.side},${transaction.quantityAtoms},${transaction.priceAtoms},
+            ${transaction.notionalMicros},${transaction.feeMicros},${transaction.costBasisMicros},
+            ${transaction.realizedPnlMicros},${transaction.quantityDeltaAtoms},${transaction.costBasisDeltaMicros},
+            ${transaction.cashDeltaMicros},${transaction.ledgerPlanHash},${transaction.contentHash},${transaction.occurredAt})`
+              const receipt = Result.getOrThrow(planAccountingReceipt(prepared, '2001', 7001))
+              yield* sql`INSERT INTO accounting_receipts(receipt_id,schema_version,intent_id,broker_event_id,
+            tigerbeetle_cluster_id,tigerbeetle_ledger,account_ids,transfer_ids,debit_micros,credit_micros,content_hash,recorded_at)
+          VALUES(${receipt.receiptId},${receipt.schemaVersion},NULL,${receipt.brokerEventId},
+            ${receipt.tigerBeetleClusterId},${receipt.tigerBeetleLedger},${receipt.accountIds}::numeric[],
+            ${receipt.transferIds}::numeric[],${receipt.debitMicros},${receipt.creditMicros},${receipt.contentHash},
+            ${transaction.occurredAt})`
+            }
+          }),
+        )
+      }),
+    )
+    const asOf = await runtime.runPromise(databaseNow)
+    const fixture = assessmentFixture(registered.registration)
+    const financial = registered.registration.policies.map((definition) => {
+      const policy = fixture.input.policies.find((row) => row.policy === definition.policy)
+      if (policy === undefined) throw new Error('Missing assessment policy')
+      return {
+        policy: definition.policy,
+        sourceHash: testHash(['native accounting source', definition.policy]),
+        accountBindingHash: definition.accountBindingHash,
+        definitionHash: testHash(definition),
+        cashHistory: null,
+        sessions: policy.sessions.map((session) => ({
+          sessionDate: session.sessionDate,
+          evidenceHash: testHash(session),
+          facts: null,
+        })),
+      }
+    })
+    const sourceMaterial = (transactions: typeof original) => ({
+      accounts: [
+        {
+          policy: JevResearchPolicy.Candidate,
+          identity,
+          forward: {
+            account: { accountId },
+            accountTransactions: transactions.map(({ transaction }) => transaction),
+            accountPositionCounts: { reconciledAt, exact: true },
+            accountCashSettlements: [],
+            accountFeeAccruals: [],
+            accountBrokerFees: [],
+            accountingReceiptsExact: true,
+            ledgerExact: true,
+            missingLedgerAccountCount: 0,
+            unresolvedMutationCount: 0,
+          },
+        },
+      ],
+    })
+    const makeCut = (transactions: typeof original) => {
+      const retained = sourceMaterial(transactions)
+      return Schema.decodeUnknownSync(SystemSourceCutSchema)({
+        schemaVersion: 'bayn.system-source-cut.v4',
+        protectionIntents: [],
+        decisionAdmissions: [],
+        orders: [],
+        registrationHash: registered.registrationHash,
+        asOf,
+        runtimeConfigurationHash: registered.registration.obligations.runtimeConfigurationHash,
+        financial,
+        inference: [],
+        inferenceLedgerEvidenceHash: testHash('native accounting inference ledger'),
+        decisions: [],
+        batches: [],
+        mutations: [],
+        fills: [],
+        accountMarks: [],
+        controllerPasses: [],
+        durableObservations: [],
+        sourceMaterial: retained,
+        sourceMaterialHash: testHash(retained),
+      })
+    }
+    const assessmentInput = (sourceCutHash: string) => ({
+      ...fixture.input,
+      asOf,
+      registration: registered.registration,
+      registrationReceiptHash: registered.registrationHash,
+      sourceCutHash,
+      policies: fixture.input.policies.map((policy) => ({
+        ...policy,
+        sessions: policy.sessions.map((session) => ({ ...session, financial: null, marks: [] })),
+      })),
+      realism: { expectedDecisionIds: [], expectedFillIds: [], decisions: [], fills: [], unsupportedAssumptions: [] },
+      reliability: { ...fixture.input.reliability, asOf, completions: [] },
+      safety: {
+        ...fixture.input.safety,
+        coverage: 'INCOMPLETE' as const,
+        registrationHash: registered.registrationHash,
+        asOf,
+      },
+    })
+    const originalCut = await runtime.runPromise(asApplication(persistSystemSourceCut(makeCut(original))))
+    const accepted = await runtime.runPromiseExit(
+      asApplication(assessAndPersistSystem(assessmentInput(originalCut.sourceCutHash), fixture.verifiedSources)),
+    )
+    expect(Exit.isSuccess(accepted)).toBe(true)
+    const rehashedCut = await runtime.runPromise(asApplication(persistSystemSourceCut(makeCut(rehashed))))
+    const rejected = await runtime.runPromiseExit(
+      asApplication(assessAndPersistSystem(assessmentInput(rehashedCut.sourceCutHash), fixture.verifiedSources)),
+    )
+    expect(Exit.isFailure(rejected)).toBe(true)
+    if (Exit.isFailure(rejected))
+      expect(Cause.pretty(rejected.cause)).toContain('Native cash ledger witness differs from immutable accounting')
   })
 
   test('the window migration preserves existing registration bytes, hashes and attempt order', async () => {
