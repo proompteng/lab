@@ -439,9 +439,15 @@ A disconnect, dropped frame or unsupported correction makes the local activity h
 
 PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
-the same connection. Bayn fetches REST fee records on startup and when the streamed fee history changes. It
-checks that both sources agree on fee counts by booking date, fee kind, cash amount and coin quantity. REST
-supplies the existing ledger IDs, crypto symbols and exact prices. The capture waits for the two sources to agree.
+the same connection. Bayn fetches REST fee records on startup, when the streamed fee history changes, and during
+ordinary captures while fee settlement is pending. It checks both histories by booking date, fee kind, cash amount
+and coin quantity. REST supplies the existing ledger IDs, crypto symbols and exact prices.
+
+A stable stream that is ahead only by USD fee debits may publish current broker observations with a pending cash
+fee count. The gap stays pending across UTC rollover and capture restart. Full reconciliation, trading readiness,
+and ordinary submission wait for the matching REST records. Pending fees create no ledger postings. The separate
+protective close still needs the exact fenced cancel, filled inventory and reducing-order proof. Extra REST fees,
+missing crypto fees and unmatched fees with future booking dates reject publication.
 
 The capture uses REST for complete order history, account state, positions and fresh open-order eligibility. It
 compares complete histories around the account read and checks the filled quantity for every order and leg.
@@ -618,6 +624,13 @@ without treating replayed bytes as a new live capture. Before binding or transmi
 rechecks the current account, reconciled positions and orders, authority generation, unknown mutations, current executable
 quote, risk and original admission/inference/submission deadlines. Late or stale completion cannot authorize an order.
 
+A new entry observation requires the original protocol inference interval to fit inside its existing admission lease.
+The owner checks before source and eligibility work and again against the acquired source's observation clock before
+batch admission. A nearly expired cycle waits for its original lease expiry, leaving the next signal window unconsumed
+for a freshly validated successor. Pending and completed admitted work retain their original resume and expiry paths.
+This does not extend a source, inference, admission, quote or submission deadline. Even a first observation waits when
+its lease cannot cover the original inference interval; a successor still needs current source, account and risk evidence.
+
 Fresh account, configuration and candidate-asset reads for short eligibility run only when admitting a new source;
 its observation clock is sampled after those reads. Completion retains the original eligibility evidence and avoids
 fresh reads that cannot replace the committed source. Final short submission reads the selected symbol's asset,
@@ -666,6 +679,14 @@ captures atomically settle their claim and replace the reservation with measured
 reset evidence. Snapshot invalidation and quota ownership use separate generations, so a mutation racing capture
 cannot strand the quota reservation or let an older capture shorten a newer reservation. A failed settlement leaves
 the conservative database deadline in force. No process-local budget or Restate result is authority to bypass it.
+
+When an accepted PAPER protection cancellation carries a cycle, the exclusive broker refresh checks that cycle
+before scheduling the next complete capture. The last successful capture can fund one scoped four-request read.
+Bayn subtracts requests without valid headers from the lowest reported remaining capacity. It reserves the four
+reads only if one-quarter of the account limit remains. The evidence expires one minute after the first confirming response.
+Alpaca's reset timestamp controls backoff when quota runs low. The PostgreSQL owner charges the protected read
+once and carries that debt into the next full capture. A missing proof or read failure still schedules the full
+capture without admitting a close from the scoped path.
 
 Canonical captures issue one journaled worker command. A quota-blocked capture returns its database deadline and
 schedules a successor without holding the exclusive owner. Deployment activation uses a durable timer to wait for
@@ -1683,6 +1704,10 @@ lineage. Image publication alone does not authorize the revised strategy.
   trading restrictions remain visible through `/v1/status`. Execution readiness and order admission are unchanged.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
+
+When Activity SSE contains cash fees whose authoritative REST records are still pending, the broker projection
+reports `BROKER_CASH_FEES_PENDING`. This retains the typed observation failure without exposing provider payloads.
+Trading readiness and ordinary submission continue to wait for settlement; other broker failures remain distinct.
 
 The status process opens without a live broker HTTP preflight. Its health passes read the revision-bound canonical
 broker projection each time, so an unavailable broker remains visible as degraded status and can recover without a

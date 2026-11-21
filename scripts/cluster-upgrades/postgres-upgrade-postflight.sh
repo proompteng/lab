@@ -87,8 +87,11 @@ case "$expected_image" in
   ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1)
     target_major=18; target_minor=6
     ;;
+  ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453)
+    target_major=18; target_minor=7
+    ;;
   *)
-    die "expected image is not a verified immutable PostgreSQL 17.11/18.6 reference: $expected_image"
+    die "expected image is not a verified immutable PostgreSQL 17.11/18.6/18.7 reference: $expected_image"
     ;;
 esac
 

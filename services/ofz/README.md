@@ -306,7 +306,7 @@ The fixture promotes a two-node disposable database; it does not establish three
 synchronous write availability. Ofz CI runs the combined control and promotion fixture once, and rejects an empty
 selection of the exact promotion test. Shared runtime validation remains in the Tengri image workflow.
 
-The HA fixture also forms a two-node Keycloak 26.7.4 production cluster with JDBC discovery and transport mTLS.
+The HA fixture also forms a two-node Keycloak 26.8.2 production cluster with JDBC discovery and transport mTLS.
 Killing its serving process during an in-flight passkey challenge preserves the subject and credential identities,
 completing authentication on the survivor within thirty seconds. The fixture does not prove CNPG or Kubernetes
 node failover. Validate the complete prepared targets with `bash services/ofz/test-ha-manifests.sh`; the PR schema

@@ -67,7 +67,7 @@ describe('Tengri image workflow', () => {
       expect(build?.with?.['build-args']).toBe('SOURCE_REVISION=${{ github.sha }}')
       const cache = 'type=registry,ref=${{ env.' + image + ' }}:cache-${{ matrix.architecture }}'
       expect(build?.with?.['cache-from']).toBe(cache)
-      expect(build?.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
+      expect(build?.with?.['cache-to']).toBe(`${cache},mode=min,ignore-error=true`)
       expect(build?.['continue-on-error']).not.toBe(true)
     }
     const pairedBoot = steps.find((step) => step.name === 'Verify paired boot artifact checksums')

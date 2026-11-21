@@ -11,7 +11,8 @@ import { canonicalHashV1Result } from '../../hash'
 import { brokerPollFailureAnnotations } from '../../composition/broker-observation-runtime'
 import { checkHealth } from '../../health/program'
 import { makeBrokerObservationStore } from '../../db/broker-observations'
-import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtures'
+import { config as runtimeConfig, provenance, readyState } from '../../testing/runtime-fixtures'
+import { statusFacts } from '../../http'
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../alpaca-test-support'
@@ -171,6 +172,56 @@ const healthPass = (read: BrokerReadShape, timeoutMs = 1000) =>
   })
 
 describe('durable broker observations', () => {
+  test('status identifies pending cash fees and clears the reason only after the canonical cut settles', async () => {
+    const source = fixture()
+    let snapshot = { ...observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z'), pendingCashFeeCount: 2 }
+    let failure: BrokerReadError | undefined
+    const observed = Effect.suspend(() => (failure === undefined ? Effect.succeed(snapshot) : Effect.fail(failure)))
+    await run(
+      Effect.gen(function* () {
+        const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+          Effect.provideService(BrokerObservations, {
+            read: observed,
+            readState: observed,
+            readForSubmit: () => observed,
+            invalidate: Effect.void,
+          }),
+        )
+        const facts = () =>
+          healthPass(projected).pipe(
+            Effect.map((broker) =>
+              statusFacts(
+                { ...readyState(), broker },
+                runtimeConfig.execution,
+                provenance,
+                runtimeConfig.build.verification,
+              ),
+            ),
+          )
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_CASH_FEES_PENDING', error: 'BROKER_CASH_FEES_PENDING' },
+        })
+        snapshot = { ...snapshot, pendingCashFeeCount: 0 }
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: true },
+          broker: { readAvailable: true, reasonCode: null, error: null },
+        })
+        failure = new BrokerReadError({
+          operation: 'preflight',
+          kind: BrokerReadErrorKind.Timeout,
+          retryable: true,
+          message: 'Broker observation is awaiting authoritative cash fee records',
+        })
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
+        })
+        expect(source.calls).toEqual([])
+      }),
+    )
+  })
+
   test('requires a new poll cut after history changes instead of retrying the original ticket', async () => {
     const source = fixture()
     let scans = 0
@@ -926,6 +977,84 @@ describe('complete history reuse between broker captures', () => {
         expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
         yield* observe(6)
         expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+      }),
+    )
+  })
+
+  test('keeps witnessed cash fees pending across UTC rollover and restart until REST settles them', async () => {
+    const fees: FeeActivity[] = []
+    const source = fixture({ fees })
+    const key = Result.getOrThrow(
+      decodeFeeActivityWitness({
+        activity_type: 'FEE',
+        ref_id: 'streamed-cash-fee',
+        status: 'executed',
+        currency: 'USD',
+        net_amount: '-0.02',
+        details: { system_date: '2026-11-19' },
+      }),
+    ).key
+    let feeCounts = new Map([[key, 2]])
+    const read: BrokerReadShape = {
+      ...source.read,
+      fillActivities: () => Effect.die('unexpected REST fill read'),
+      accountActivity: currentUtcInstant.pipe(
+        Effect.map((observedAt) => ({
+          fills: [],
+          feeCounts,
+          evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },
+        })),
+      ),
+    }
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-11-20T01:15:00.000Z'))
+        const capture = yield* makeBrokerObservationCapture
+        const observe = (generation: number) =>
+          currentUtcInstant.pipe(Effect.flatMap((startedAt) => capture(read, { startedAt, generation }, 15_000)))
+        const pending = yield* observe(1)
+        expect(pending.pendingCashFeeCount).toBe(2)
+        expect(pending.snapshot.history.fees).toEqual([])
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(1)
+        expect(Result.isSuccess(decodeObservedBrokerSnapshot(pending))).toBe(true)
+        fees.push({ accountId, activityId: 'rest-one', date: '2026-11-19', netAmountMicros: '-20000' })
+        const partial = yield* observe(2)
+        expect(partial.pendingCashFeeCount).toBe(1)
+        expect(partial.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        fees.push({ ...fees[0], accountId, activityId: 'rest-two', date: '2026-11-19', netAmountMicros: '-30000' })
+        expect(yield* observe(3).pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'Alpaca Activity SSE and fee authority have not converged' },
+        })
+        fees.pop()
+        yield* TestClock.setTime(Date.parse('2026-11-20T23:59:59.999Z'))
+        expect((yield* observe(4)).pendingCashFeeCount).toBe(1)
+
+        yield* TestClock.setTime(Date.parse('2026-11-21T00:00:00.000Z'))
+        const restarted = yield* makeBrokerObservationCapture
+        const observeAfterRestart = (generation: number) =>
+          currentUtcInstant.pipe(Effect.flatMap((startedAt) => restarted(read, { startedAt, generation }, 15_000)))
+        const lingering = yield* observeAfterRestart(5)
+        expect(lingering.observedAt).toBe('2026-11-21T00:00:00.000Z')
+        expect(lingering.pendingCashFeeCount).toBe(1)
+        expect(lingering.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        expect(Result.isSuccess(decodeObservedBrokerSnapshot(lingering))).toBe(true)
+
+        fees.push({ accountId, activityId: 'rest-two', date: '2026-11-19', netAmountMicros: '-20000' })
+        const settled = yield* observeAfterRestart(6)
+        expect(settled.pendingCashFeeCount).toBe(0)
+        expect(settled.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(6)
+        yield* observeAfterRestart(7)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(6)
+        feeCounts = new Map([
+          [key, 2],
+          [key.replace('2026-11-19', '2026-11-22'), 1],
+        ])
+        expect(yield* observeAfterRestart(8).pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'Alpaca Activity SSE and fee authority have not converged' },
+        })
       }),
     )
   })

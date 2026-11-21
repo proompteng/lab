@@ -11,14 +11,14 @@ postgres_pid=
 
 stop_database() {
   if [[ -n "$postgres_pid" ]] && kill -0 "$postgres_pid" 2>/dev/null; then
-    pg_ctl -D "$data" -m fast -w -t 60 stop
+    pg_ctl -D "$data" -m fast -W stop
     wait "$postgres_pid"
   fi
 }
-trap stop_database EXIT
+trap 'status=$?; if ((status != 0)); then touch "$proof/database-failed"; fi; stop_database' EXIT
 trap 'exit 143' TERM INT
 
-[[ $(cat "$data/PG_VERSION") == 17 ]] || exit 1
+[[ $(cat "$data/PG_VERSION") == 18 ]] || exit 1
 control=$(pg_controldata "$data")
 [[ $(awk -F ': *' '/Database system identifier:/ {print $2}' <<<"$control") == "$EXPECTED_SYSTEM_IDENTIFIER" ]] || exit 1
 [[ $(awk -F ': *' '/Database cluster state:/ {print $2}' <<<"$control") == 'shut down' ]] || exit 1
@@ -46,14 +46,12 @@ postgres -D "$data" -c config_file=/tmp/rehearsal.conf \
   -c listen_addresses=127.0.0.1 -c ssl=off -c archive_mode=off \
   -c primary_conninfo= -c restore_command= >"$proof/postgres.log" 2>&1 &
 postgres_pid=$!
-for _ in $(seq 1 60); do
+until pg_isready -h /tmp -p 55432 -U postgres -d forgejo >/dev/null; do
   kill -0 "$postgres_pid"
-  if pg_isready -h /tmp -p 55432 -U postgres -d forgejo >/dev/null; then
-    break
-  fi
+  [[ ! -e "$proof/migration-failed" ]] || exit 1
   sleep 1
 done
-pg_isready -h /tmp -p 55432 -U postgres -d forgejo
+printf 'Restored PostgreSQL accepts connections. Checking source identity.\n'
 
 sql() { psql -X -v ON_ERROR_STOP=1 -h /tmp -p 55432 -U postgres -d forgejo -Atc "$1"; }
 counts_sql='SELECT (SELECT count(*) FROM "user"), (SELECT count(*) FROM repository), (SELECT count(*) FROM action_runner), (SELECT count(*) FROM public_key), (SELECT count(*) FROM deploy_key), (SELECT count(*) FROM access_token)'
@@ -66,15 +64,11 @@ printf 'Snapshot identity counts: %s\n' "$identity_counts"
 printf 'Restored original PostgreSQL identity, base schema 305 and original Forgejo migration ledger; current snapshot identity counts captured.\n'
 touch "$proof/database-ready"
 
-for _ in $(seq 1 480); do
+until [[ -e "$proof/migration-complete" ]]; do
   [[ ! -e "$proof/migration-failed" ]] || exit 1
   kill -0 "$postgres_pid"
-  if [[ -e "$proof/migration-complete" ]]; then
-    break
-  fi
   sleep 1
 done
-[[ -e "$proof/migration-complete" ]] || exit 1
 sql "$counts_sql" >"$proof/identity-counts.after"
 cmp "$proof/identity-counts.before" "$proof/identity-counts.after"
 version=$(sql 'SELECT version FROM version')
@@ -85,4 +79,4 @@ stop_database
 postgres_pid=
 [[ $(pg_controldata "$data" | awk -F ': *' '/Database cluster state:/ {print $2}') == 'shut down' ]] || exit 1
 touch "$proof/database-accepted"
-printf 'PASS: all 39 Forgejo release migrations applied; base schema %s and identity counts preserved; PostgreSQL shut down cleanly.\n' "$version"
+printf 'PASS: all 45 Forgejo release migrations applied; base schema %s and identity counts preserved; PostgreSQL shut down cleanly.\n' "$version"

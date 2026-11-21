@@ -522,7 +522,7 @@ describe('enabled app inventory', () => {
       'cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d',
     )
     expect(karapaceManifest).toContain(
-      'ghcr.io/aiven-open/karapace:6.2.3@sha256:a67ecdcc7c0d0a9e965d7a0eebea91a46bf6797aad4f3b878a3f6924650f3012',
+      'ghcr.io/aiven-open/karapace:6.2.4@sha256:005eda40272a09f34e60605ae40b1c205c0a5119164b8a090a51ad7f939f79f3',
     )
     expect(karapaceManifest).toContain('app.proompteng.ai/schema-storage-generation: compact-v1')
   })
@@ -604,8 +604,8 @@ describe('enabled app inventory', () => {
       .map((container) => container.image)
 
     expect(ollamaImages).toEqual([
-      'ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2',
-      'ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2',
+      'ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592',
+      'ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592',
     ])
   })
 
@@ -613,13 +613,13 @@ describe('enabled app inventory', () => {
     const vllm = flamingoDeployment.spec?.template?.spec?.containers?.find((container) => container.name === 'vllm')
 
     expect(vllm?.image).toBe(
-      'vllm/vllm-openai:v0.29.0-cu129@sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2',
+      'vllm/vllm-openai:v0.34.0@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1',
     )
   })
 
   it('pins Keycloak to the immutable multi-architecture security release', () => {
     expect(keycloakManifest).toContain(
-      'quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c',
+      'quay.io/keycloak/keycloak:26.8.2@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3',
     )
   })
 
@@ -653,7 +653,7 @@ describe('enabled app inventory', () => {
   it('pins both custom NVIDIA device plugins to the immutable security release', () => {
     for (const manifest of nvidiaDevicePluginManifests) {
       expect(manifest).toContain(
-        'nvcr.io/nvidia/k8s-device-plugin:v0.20.0@sha256:a61ba9fd8efb82f3a79f877f7580e02c1e8e7593f62473644bc9c79e315c3312',
+        'nvcr.io/nvidia/k8s-device-plugin:v0.20.2@sha256:7673383d44a84bece724d9ca8feeadf4eee69cd46475fdff614cbbca6732d463',
       )
       expect(manifest).not.toContain('nvcr.io/nvidia/k8s-device-plugin:v0.19.0')
     }
