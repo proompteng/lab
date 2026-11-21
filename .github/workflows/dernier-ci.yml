@@ -1,5 +1,8 @@
 name: dernier-ci
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
@@ -7,6 +10,9 @@ on:
       - 'argocd/applications/dernier/**'
       - 'docs/dernier.md'
       - 'skaffold.yaml'
+      - '.github/workflows/dernier-ci.yml'
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
