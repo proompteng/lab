@@ -1,3 +1,5 @@
+import reconciliationSourceSnapshots from '../../migrations/0207_reconciliation_source_snapshots'
+import nativeQualificationCalendar from '../../migrations/0206_native_qualification_calendar'
 import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
 import protectionClosePlans from '../../migrations/0204_protection_close_plans'
 import protectionReadAllowance from '../../migrations/0203_protection_read_allowance'
@@ -206,7 +208,9 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '207_reconciliation_source_snapshots': reconciliationSourceSnapshots,
   '205_inference_source_seals': inferenceSourceSeals,
+  '206_native_qualification_calendar': nativeQualificationCalendar,
   '204_protection_close_plans': protectionClosePlans,
   '203_protection_read_allowance': protectionReadAllowance,
   '202_protection_release_proofs': protectionReleaseProofs,

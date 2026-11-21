@@ -1,5 +1,6 @@
 import {
   readSystemCashObservations,
+  readSystemFeeSettlementAnchors,
   readSystemBatchEvidence,
   readSystemMutationEvidence,
   readSystemControllerPasses,
@@ -29,7 +30,9 @@ import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { captureQualificationRuntime, qualificationRuntime } from './configuration'
 import { BrokerEnvironment } from '../broker/identity'
-import { registeredMarkIntervalMs } from './policy'
+import { alpacaHttpLayer, make as makeAlpacaRead } from '../broker/alpaca/http'
+import { currentUtcInstant } from '../time'
+import { nativeBrokerRecoveryClose, registeredMarkIntervalMs } from './policy'
 import { measureControllerLatency } from './controller-latency'
 import { measureFullBatchLatency } from './full-batch-latency'
 import { decisionMarketScopeSupported } from './decision-work'
@@ -62,12 +65,30 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         candidate === undefined ||
         identity === undefined ||
         identity.environment !== BrokerEnvironment.Sandbox ||
+        identity.identityHash !== config.alpaca.identity.identityHash ||
         first === undefined ||
         last === undefined
       )
         return yield* new SystemAssessmentError({
           message: 'Source capture requires a registered candidate and broker identity',
         })
+      const brokerRecoveryClose = nativeBrokerRecoveryClose(registration)
+      const statementCut = yield* currentUtcInstant
+      const brokerNonTradeActivity =
+        brokerRecoveryClose !== undefined && statementCut >= brokerRecoveryClose
+          ? yield* makeAlpacaRead(config.alpaca).pipe(
+              Effect.flatMap((reader) =>
+                reader.nonTradeActivityStatement({
+                  // Include the prior day so a proof can select a real before-open anchor.
+                  after: new Date(Date.parse(first.openAt) - 86_400_000).toISOString(),
+                  until: statementCut,
+                }),
+              ),
+              // @effect-diagnostics-next-line strictEffectProvide:off -- financial capture owns the account-bound reader
+              Effect.provide(alpacaHttpLayer(config.alpaca)),
+              Effect.timeout('30 seconds'),
+            )
+          : undefined
       const sql = yield* PgClient.PgClient
       const client = yield* makeTigerBeetleRequestClient(config)
       const captured = yield* sql.withTransaction(
@@ -79,7 +100,27 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           const asOf = times[0]?.asOf
           if (asOf === undefined)
             return yield* new SystemAssessmentError({ message: 'Database snapshot time is unavailable' })
+          if (
+            brokerNonTradeActivity !== undefined &&
+            (brokerNonTradeActivity.accountIdentityHash !== identity.identityHash ||
+              brokerNonTradeActivity.observedAt > asOf)
+          ) {
+            return yield* new SystemAssessmentError({
+              message: 'Broker activity statement differs from its account or evidence cut',
+            })
+          }
           const accounts = []
+          const settlementWindows =
+            registration.schemaVersion === 'bayn.system-registration.v5'
+              ? registration.calendar.sessions.flatMap((session) => {
+                  const provider = registration.calendar.marketCalendar.providerSessions.find(
+                    (row) => row.date === session.sessionDate,
+                  )
+                  return provider === undefined ? [] : [{ ...session, recoveryCloseAt: provider.sessionCloseAt }]
+                })
+              : []
+          if (brokerRecoveryClose !== undefined && settlementWindows.length !== registration.calendar.sessions.length)
+            return yield* new SystemAssessmentError({ message: 'A native session is missing its settlement window' })
           for (const definition of registration.policies) {
             const accountIdentity = yield* readRegisteredFinancialIdentity(definition)
             if (accountIdentity === null) continue
@@ -128,6 +169,10 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               closeAt: last.closeAt,
               asOf,
             })
+            const settlementAnchors =
+              settlementWindows.length === 0
+                ? undefined
+                : yield* readSystemFeeSettlementAnchors(accountIdentity.accountId, settlementWindows, asOf)
             const inventory = yield* Effect.fromResult(prepareValuationInventory(forward))
             const observedTimes = new Set(cashObservations.map((mark) => mark.at))
             const scheduled = yield* Effect.forEach(
@@ -237,6 +282,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               fills,
               accountMarks,
               cashObservations,
+              ...(settlementAnchors === undefined ? {} : { settlementAnchors }),
               valuationQuoteSources: [
                 ...new Map(
                   [...quotes.values()].flatMap((bySymbol) =>
@@ -357,6 +403,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           imageDigest: config.build.imageDigest,
         },
         runtimeConfiguration,
+        ...(brokerNonTradeActivity === undefined ? {} : { brokerNonTradeActivity }),
         accounts: sourceAccounts,
         decisions,
         mutations,

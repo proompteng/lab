@@ -1,5 +1,5 @@
 import { ConditionalStatisticalPlanSchema, validateConditionalStatisticalPlan } from './conditional-confidence'
-import type { MarketCalendarObservationSchema } from '../broker/alpaca/model'
+import { MarketCalendarObservationSchema } from '../broker/alpaca/model'
 import { Result, Schema } from 'effect'
 import { ResearchCapitalGrantGenerationSchema } from '../execution/contracts'
 import {
@@ -49,6 +49,7 @@ import {
   frozenControlPrompts,
   frozenControlContinuation,
 } from './frozen-control-identity'
+import { qualificationCalendar } from './calendar'
 
 export const systemQualificationPolicy = {
   schemaVersion: 'bayn.system-qualification-policy.v5',
@@ -154,14 +155,24 @@ const RetainedResearchRegistrationSchema = Schema.Struct({
   allocationMicros: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
   bootstrap: BootstrapPlanSchema,
 })
-const CurrentSystemRegistrationSchema = Schema.Struct({
+const RetainedConditionalRegistrationSchema = Schema.Struct({
   ...registrationFields,
   schemaVersion: Schema.Literal('bayn.system-registration.v4'),
   allocationMicros: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
   statisticalPlan: ConditionalStatisticalPlanSchema,
 })
+const NativeSystemRegistrationSchema = Schema.Struct({
+  ...RetainedConditionalRegistrationSchema.fields,
+  schemaVersion: Schema.Literal('bayn.system-registration.v5'),
+  calendar: Schema.Struct({
+    ...registrationFields.calendar.fields,
+    operatingHours: Schema.Literal('NATIVE'),
+    marketCalendar: MarketCalendarObservationSchema,
+  }),
+})
 export const SystemRegistrationSchema = Schema.Union([
-  CurrentSystemRegistrationSchema,
+  NativeSystemRegistrationSchema,
+  RetainedConditionalRegistrationSchema,
   RetainedResearchRegistrationSchema,
   RetainedSystemRegistrationSchema,
 ])
@@ -184,7 +195,10 @@ export type ScheduledEvaluation = Pick<SystemRegistration, 'obligations' | 'poli
     )
 }
 
-export const systemQualificationPolicyHash = (version = JevAcceptanceVersion.Current) =>
+export const systemQualificationPolicyHash = (
+  version = JevAcceptanceVersion.Current,
+  operatingHours: 'REGULAR_SESSION' | 'NATIVE' = 'REGULAR_SESSION',
+) =>
   Result.gen(function* () {
     if (version === JevAcceptanceVersion.RetainedV5)
       return 'bf7c0a91d50457aeac8a3e90d004418ffd8af93e032499baaefbd9aee0f41638'
@@ -197,6 +211,13 @@ export const systemQualificationPolicyHash = (version = JevAcceptanceVersion.Cur
       return '7e465b71f52ae99a7f5a5254f04fde8b6432091f63ff51ef42bd1de02f92f90b'
     return yield* canonicalHashV1Result({
       ...systemQualificationPolicy,
+      ...(operatingHours === 'NATIVE'
+        ? {
+            schemaVersion: 'bayn.system-qualification-policy.v6',
+            evaluationWindowRule: 'CANONICAL_NATIVE_EQUITY_WINDOWS_WITH_BROKER_RECOVERY_COVERAGE',
+            equityFeeRule: 'DATED_ACCOUNT_EQUITY_FEES_MATCH_POSTED_SCOPED_RECEIPTS',
+          }
+        : {}),
       acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(version),
     })
   })
@@ -211,6 +232,8 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     )
     const candidatePolicy = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
     const legacy = usesLegacyAcceptance(version)
+    const native = registration.schemaVersion === 'bayn.system-registration.v5'
+    const conditional = 'statisticalPlan' in registration
     const invalid = (message: string) => Result.fail(new SystemAssessmentError({ message }))
     if (
       version === JevAcceptanceVersion.Current &&
@@ -218,7 +241,8 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     )
       return yield* invalid('New registration requires the current execution protocol')
     if (
-      registration.policyHash !== (yield* systemQualificationPolicyHash(version)) ||
+      registration.policyHash !==
+        (yield* systemQualificationPolicyHash(version, registration.calendar.operatingHours)) ||
       registration.acceptanceProtocolHash !== (yield* jevAcceptanceProtocolHash(version)) ||
       registration.latencyStressProtocolHash !== (yield* systemLatencyStressProtocolHash())
     )
@@ -228,8 +252,9 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     if (
       (legacy && registration.schemaVersion !== 'bayn.system-registration.v2') ||
       (!legacy &&
-        registration.schemaVersion !==
-          (version === JevAcceptanceVersion.Current ? 'bayn.system-registration.v4' : 'bayn.system-registration.v3'))
+        (version === JevAcceptanceVersion.Current
+          ? !conditional
+          : registration.schemaVersion !== 'bayn.system-registration.v3'))
     )
       return yield* invalid('Registration schema must match its recorded policy version')
     if (
@@ -255,6 +280,19 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       return yield* invalid(
         'Registered trading markets must cover the native entry scope within its authorized profiles',
       )
+    if (native) {
+      if (runtime.entryMarkets?.length !== 1 || runtime.entryMarkets[0] !== MarketKind.Equity)
+        return yield* invalid('Native equity qualification requires the explicit equity entry scope')
+      const calendar = yield* qualificationCalendar(registration.calendar.marketCalendar, 'NATIVE')
+      if (
+        calendar.sourceHash !== registration.calendar.sourceHash ||
+        calendar.requestedRange.start !== registration.calendar.sessions[0]?.sessionDate ||
+        calendar.requestedRange.end !== registration.calendar.sessions.at(-1)?.sessionDate ||
+        (yield* canonicalHashV1Result(calendar.sessions)) !==
+          (yield* canonicalHashV1Result(registration.calendar.sessions))
+      )
+        return yield* invalid('Registered windows must match the complete canonical native equity calendar')
+    }
     const ablationQuestionHash =
       version === JevAcceptanceVersion.Current
         ? entryAblationQuestionPolicyHash
@@ -280,7 +318,7 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       )
         return yield* invalid('Registered allocation exceeds an approved exposure limit')
     }
-    if (registration.schemaVersion === 'bayn.system-registration.v4') {
+    if (conditional) {
       yield* validateConditionalStatisticalPlan(
         registration.statisticalPlan,
         registration.policies.map((policy) => policy.policy),
@@ -478,7 +516,7 @@ export const verifyStoredSystemRegistration = (input: unknown) =>
           return {
             version,
             hash: yield* jevAcceptanceProtocolHash(version),
-            policyHash: yield* systemQualificationPolicyHash(version),
+            policyHash: yield* systemQualificationPolicyHash(version, decoded.calendar.operatingHours),
           }
         }),
       ),
@@ -494,6 +532,21 @@ export const verifyStoredSystemRegistration = (input: unknown) =>
     return { ...(yield* validateSystemRegistration(decoded, version)), version }
   })
 
+export const validateProspectiveSystemRegistration = (input: unknown) =>
+  Result.gen(function* () {
+    const verified = yield* validateSystemRegistration(input)
+    if (verified.registration.schemaVersion !== 'bayn.system-registration.v5')
+      return yield* Result.fail(
+        new SystemAssessmentError({ message: 'New economic registration requires native equity hours' }),
+      )
+    return { ...verified, registration: verified.registration }
+  })
+
+export const nativeBrokerRecoveryClose = (registration: ScheduledEvaluation) =>
+  registration.schemaVersion === 'bayn.system-registration.v5' && registration.calendar.operatingHours === 'NATIVE'
+    ? registration.calendar.marketCalendar.providerSessions.at(-1)?.sessionCloseAt
+    : undefined
+
 export const registeredAllocationMicros = (registration: SystemRegistration): string =>
   registration.schemaVersion !== 'bayn.system-registration.v2' ? registration.allocationMicros : '100000000000'
 
@@ -508,7 +561,7 @@ export const registeredFinancialTerms = (registration: SystemRegistration, riskP
 })
 
 export const retainedAssessmentTerms = (registration: SystemRegistration, riskPolicy: typeof PolicySchema.Type) =>
-  registration.schemaVersion === 'bayn.system-registration.v4'
+  'statisticalPlan' in registration
     ? Result.fail(new SystemAssessmentError({ message: 'Current statistical registration has no bootstrap terms' }))
     : Result.succeed({
         ...registeredFinancialTerms(registration, riskPolicy),

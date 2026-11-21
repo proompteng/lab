@@ -4,6 +4,8 @@ import { accountMarkValue } from './valuation'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { BrokerEnvironment } from '../broker/identity'
+import { verifyNonTradeActivityStatement } from '../broker/alpaca/model'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { SystemAssessmentInputSchema } from './assessment'
@@ -23,6 +25,7 @@ import { assessSession } from './session'
 import { costAttributionRule } from './cost-attribution'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { bindOperationalObligations } from './operational-obligations'
+import { confirmEquityFeeCash, decodeRetainedCashEvidence, projectFeeAdjustedCash } from './equity-fee-cash'
 
 export const bindSystemSourceCut = (
   input: unknown,
@@ -52,6 +55,18 @@ export const bindSystemSourceCut = (
     const witnessedCut = { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
     const definitionHash = yield* canonicalHashV1Result(candidate)
     const financialAccounts = yield* registeredFinancialAccounts(data.registration, cut.financial)
+    const nativeCalendar =
+      data.registration.schemaVersion === 'bayn.system-registration.v5'
+        ? data.registration.calendar.marketCalendar
+        : null
+    const retainedCash = nativeCalendar === null ? null : yield* decodeRetainedCashEvidence(cut.sourceMaterial)
+    const cashAccounts = new Map(retainedCash?.accounts?.map((account) => [account.policy, account]))
+    if (
+      retainedCash !== null &&
+      (cashAccounts.size !== (retainedCash.accounts?.length ?? 0) ||
+        (yield* canonicalHashV1Result(cut.sourceMaterial)) !== cut.sourceMaterialHash)
+    )
+      return yield* fail('Native cash witnesses differ from the retained source cut')
     const sources = new Set([
       ...verifiedSources,
       ...admissions.sources,
@@ -97,6 +112,25 @@ export const bindSystemSourceCut = (
       const definition = data.registration.policies.find((registered) => registered.policy === policy.policy)
       if (definition === undefined) return yield* fail('Unregistered financial policy')
       const account = financialAccounts.get(policy.policy)
+      const cashAccount = cashAccounts.get(policy.policy)
+      if (
+        cashAccount !== undefined &&
+        (cashAccount.identity.environment !== BrokerEnvironment.Sandbox ||
+          cashAccount.forward.account.accountId !== cashAccount.identity.accountId ||
+          (yield* canonicalHashV1Result({
+            schemaVersion: 'bayn.inference-cost-account.v1',
+            accountId: cashAccount.identity.accountId,
+          })) !== definition.accountBindingHash)
+      )
+        return yield* fail('Native cash witnesses belong to a different registered account')
+      const retainedStatement = retainedCash?.brokerNonTradeActivity
+      const statement =
+        retainedStatement !== undefined && retainedStatement.accountIdentityHash === cashAccount?.identity.identityHash
+          ? yield* Result.mapError(
+              verifyNonTradeActivityStatement(retainedStatement, cashAccount.identity.accountId),
+              (message) => new SystemAssessmentError({ message }),
+            )
+          : undefined
       const sessions = []
       let openingQualificationEquity: bigint | null = BigInt(registeredAllocationMicros(data.registration))
       for (const session of policy.sessions) {
@@ -107,6 +141,34 @@ export const bindSystemSourceCut = (
         const inferenceEvidence = inference[0] ?? null
         if (inferenceEvidence !== null) sources.add(yield* canonicalHashV1Result(inferenceEvidence))
         const calendar = data.registration.calendar.sessions.find((s) => s.sessionDate === session.sessionDate)
+        const observation = account?.sessions.find((s) => s.sessionDate === session.sessionDate)
+        const providerSession = nativeCalendar?.providerSessions.find((entry) => entry.date === session.sessionDate)
+        const facts = observation?.facts
+        const proof =
+          calendar !== undefined &&
+          providerSession !== undefined &&
+          statement !== undefined &&
+          cashAccount?.settlementAnchors !== undefined &&
+          facts?.openingPositionCount === 0 &&
+          facts.closingPositionCount === 0 &&
+          facts.unsettledFillCount === 0
+            ? yield* confirmEquityFeeCash(
+                { ...calendar, recoveryCloseAt: providerSession.sessionCloseAt },
+                definition.accountBindingHash,
+                data.registration.obligations.configuration.protocol.executionModel,
+                cashAccount.forward,
+                {
+                  asOf: cut.asOf,
+                  accountIdentityHash: cashAccount.identity.identityHash,
+                  anchors: cashAccount.settlementAnchors,
+                  statement,
+                },
+              )
+            : null
+        const nativeCash =
+          proof !== null && (proof.points.at(-1)?.incurredFeesMicros ?? '0') === facts?.executionCostMicros
+            ? proof
+            : null
         const capturedMarks =
           calendar === undefined
             ? []
@@ -116,26 +178,41 @@ export const bindSystemSourceCut = (
                 asOf: cut.asOf,
               })
         const cashFlows =
-          calendar !== undefined &&
-          session.cashFlows !== null &&
-          cashFlowsMatchSession(session.cashFlows, {
-            ...calendar,
-            accountBindingHash: definition.accountBindingHash,
-            asOf: cut.asOf,
-          }) &&
-          (yield* cashFlowsSupported(session.cashFlows, sources))
-            ? session.cashFlows
-            : null
+          nativeCalendar !== null
+            ? nativeCash === null
+              ? null
+              : {
+                  schemaVersion: 'bayn.system-cash-flow-evidence.v1' as const,
+                  accountBindingHash: definition.accountBindingHash,
+                  sessionDate: session.sessionDate,
+                  asOf: nativeCash.availableAt,
+                  coverage: 'COMPLETE' as const,
+                  movements: [],
+                }
+            : calendar !== undefined &&
+                session.cashFlows !== null &&
+                cashFlowsMatchSession(session.cashFlows, {
+                  ...calendar,
+                  accountBindingHash: definition.accountBindingHash,
+                  asOf: cut.asOf,
+                }) &&
+                (yield* cashFlowsSupported(session.cashFlows, sources))
+              ? session.cashFlows
+              : null
+        if (nativeCalendar !== null && cashFlows !== null) sources.add(yield* canonicalHashV1Result(cashFlows))
         const projectedMarks =
-          calendar === undefined
-            ? capturedMarks
-            : yield* projectSessionCash(capturedMarks, account?.cashHistory ?? null, cashFlows, calendar.closeAt)
+          nativeCalendar !== null
+            ? nativeCash === null
+              ? []
+              : yield* projectFeeAdjustedCash(capturedMarks, nativeCash)
+            : calendar === undefined
+              ? capturedMarks
+              : yield* projectSessionCash(capturedMarks, account?.cashHistory ?? null, cashFlows, calendar.closeAt)
         const valued = projectedMarks.map((mark) => ({ ...mark, value: accountMarkValue(mark) }))
         // Preserve endpoint economics independently of unresolved intraday risk evidence.
         const opening = valued.find((mark) => mark.at === calendar?.openAt)
         const closing = valued.findLast((mark) => mark.at === calendar?.closeAt)
         const accountMarks = valued.some((mark) => mark.value === null) ? [] : valued
-        const observation = account?.sessions.find((s) => s.sessionDate === session.sessionDate)
         const flow = cashFlows === null || closing === undefined ? null : cashFlowTotals(cashFlows, closing.at)
         const financial =
           observation?.facts !== undefined &&

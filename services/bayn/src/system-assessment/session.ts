@@ -90,7 +90,7 @@ export const assessSession = (
   definition: SystemRegistration['policies'][number],
   asOf: string,
   verifiedSources: ReadonlySet<string>,
-  version = registration.schemaVersion === 'bayn.system-registration.v4'
+  version = 'statisticalPlan' in registration
     ? JevAcceptanceVersion.Current
     : registration.schemaVersion === 'bayn.system-registration.v3'
       ? JevAcceptanceVersion.RetainedV5
