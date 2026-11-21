@@ -49,6 +49,9 @@ jobs:
   nuc-omni-serve:
     uses: ./.github/workflows/nuc-omni-serve.yaml
 
+  orbit-salvage:
+    uses: ./.github/workflows/orbit-salvage-ci.yml
+
   otel:
     uses: ./.github/workflows/otel-ci.yml
 
@@ -58,11 +61,17 @@ jobs:
   registry-cleanup:
     uses: ./.github/workflows/registry-cleanup-ci.yml
 
+  ricochet-rush:
+    uses: ./.github/workflows/ricochet-rush-ci.yml
+
   schematic:
     uses: ./.github/workflows/schematic-ci.yml
 
   signal-publisher:
     uses: ./.github/workflows/signal-publisher-ci.yml
+
+  spire-migration:
+    uses: ./.github/workflows/spire-migration.yml
 
   symphony:
     uses: ./.github/workflows/symphony-ci.yml
