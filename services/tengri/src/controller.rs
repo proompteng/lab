@@ -2538,6 +2538,7 @@ mod tests {
             PreviousAwake,
             Preparing,
             Failed,
+            TimedOut,
             Stopped,
         }
         use ObservedSlot::*;
@@ -2550,6 +2551,8 @@ mod tests {
             (6, PreviousAwake),
             (6, Preparing),
             (6, Failed),
+            (6, TimedOut),
+            (7, TimedOut),
             (6, Stopped),
         ] {
             let old_awake = matches!(observed_slot, PreviousAwake);
@@ -2579,7 +2582,11 @@ mod tests {
                     Preparing => SlotState::Preparing,
                     Failed => SlotState::Failed {
                         claim: Some(claim.clone()),
-                        message: "guest lifecycle timed out".into(),
+                        message: "disk flush failed".into(),
+                    },
+                    TimedOut => SlotState::Failed {
+                        claim: Some(claim.clone()),
+                        message: crate::slot::GUEST_LIFECYCLE_TIMEOUT.into(),
                     },
                     Stopped => SlotState::Stopped {
                         claim: claim.clone(),
@@ -2660,6 +2667,7 @@ mod tests {
                     "/api/v1/namespaces/tengri/pods/slot-test",
                     json!({
                         "apiVersion":"v1", "kind":"Pod", "metadata":{"name":"slot-test", "uid":"original-pod"},
+                        "spec":{"containers":[{"name":"runner","image":"runtime-image"}]},
                         "status":{"podIP":"127.0.0.1"}
                     }),
                 ),
@@ -2684,8 +2692,8 @@ mod tests {
                 result.expect("fresh unchanged authority must still restore after the initial decision expires");
                 assert_eq!(
                     restores.load(Ordering::SeqCst),
-                    usize::from(matches!(observed_slot, Sleeping | PreviousAwake)),
-                    "only a prepared committed snapshot may restore"
+                    usize::from(matches!(observed_slot, Sleeping | PreviousAwake | TimedOut)),
+                    "a committed snapshot or a fenced timeout can recover the same workspace"
                 );
                 assert_eq!(sleeps.load(Ordering::SeqCst), usize::from(old_awake));
                 assert!(pending.lock().unwrap().is_empty());
@@ -3308,10 +3316,19 @@ mod tests {
         assert_eq!(sleeping.conditions[0].reason, "RetainedDisksStopped");
 
         microvm.spec.desired_state = MicroVMDesiredState::Running;
-        let booting = status_for(&microvm, &pod, &state, false);
-        assert_eq!(booting.phase, MicroVMPhase::Booting);
-        assert_eq!(booting.conditions[0].reason, "RetainedDiskBootInProgress");
-        assert!(!booting.guest_ready);
+        for message in [
+            crate::slot::LIFECYCLE_WITHDRAWN,
+            crate::slot::GUEST_LIFECYCLE_TIMEOUT,
+        ] {
+            let stopped = SlotState::Failed {
+                claim: Some(claim_for(&microvm).unwrap()),
+                message: message.into(),
+            };
+            let booting = status_for(&microvm, &pod, &stopped, false);
+            assert_eq!(booting.phase, MicroVMPhase::Booting);
+            assert_eq!(booting.conditions[0].reason, "RetainedDiskBootInProgress");
+            assert!(!booting.guest_ready);
+        }
     }
 
     #[tokio::test]

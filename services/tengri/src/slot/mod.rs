@@ -22,6 +22,7 @@ use vmm::Vmm;
 
 pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.8";
 pub(crate) const LIFECYCLE_WITHDRAWN: &str = "slot lifecycle authority withdrawn";
+pub(crate) const GUEST_LIFECYCLE_TIMEOUT: &str = "guest lifecycle timed out";
 pub const GUEST_API_PORT: u32 = 1024;
 pub const GUEST_CONTROL_PORT: u32 = 1025;
 
@@ -147,7 +148,9 @@ impl SlotState {
     }
 
     pub(crate) fn lifecycle_fenced(&self) -> bool {
-        matches!(self, Self::Failed { claim: Some(_), message } if message == LIFECYCLE_WITHDRAWN)
+        // The runner persists Failed with a claim only after stopping its VMM.
+        matches!(self, Self::Failed { claim: Some(_), message }
+            if matches!(message.as_str(), LIFECYCLE_WITHDRAWN | GUEST_LIFECYCLE_TIMEOUT))
     }
 
     fn restore_snapshot(&self, claim: &Claim) -> anyhow::Result<&Snapshot> {
