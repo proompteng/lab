@@ -10320,16 +10320,13 @@ test('surfaces a background approval and resolves that run from a phone-sized wo
     threadId: 'thread-alpha',
     state: { phase: 'running', turnId: 'turn-alpha' },
   }
-  const mock = await mockTengri(page, {
-    durableRun: run,
-    preserveDraftStorageOnReload: true,
-    threadStore: {
-      threads: [
-        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2, archived: false },
-        { id: 'thread-beta', title: 'Beta', updatedAt: 1, archived: false },
-      ],
-    },
-  })
+  const threadStore: ThreadStore = {
+    threads: [
+      { id: 'thread-alpha', title: 'Alpha', updatedAt: 1, archived: false },
+      { id: 'thread-beta', title: 'Beta', updatedAt: 51, archived: false },
+    ],
+  }
+  const mock = await mockTengri(page, { durableRun: run, preserveDraftStorageOnReload: true, threadStore })
   await page.addInitScript(() => {
     if (!localStorage.getItem('tengri-thread:microvm-ada'))
       localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha')
@@ -10361,6 +10358,14 @@ test('surfaces a background approval and resolves that run from a phone-sized wo
   await expect(alpha).toContainText('Needs you')
   await expect(chat.getByRole('region', { name: 'Pending approvals' })).toHaveCount(0)
 
+  for (let index = 0; index < 49; index += 1) {
+    threadStore.threads.push({
+      id: `thread-recent-${index}`,
+      title: `Recent chat ${index}`,
+      updatedAt: index + 2,
+      archived: false,
+    })
+  }
   await page.setViewportSize({ width: 320, height: 680 })
   await page.reload()
   const conversations = chat.getByRole('button', { name: 'Show conversations', exact: true })
@@ -10370,7 +10375,9 @@ test('surfaces a background approval and resolves that run from a phone-sized wo
   await conversations.click()
   await expect(chat.getByRole('dialog', { name: 'Conversations', exact: true })).toBeVisible()
   await expect(beta).toHaveAttribute('aria-current', 'true')
+  await expect(chat.getByRole('button', { name: 'Load older chats' })).toBeVisible()
   await expect(alpha).toContainText('Needs you')
+  expect(mock.actions.some((action) => action.action === 'list-threads' && action.cursor)).toBe(false)
   await alpha.click()
   const approval = chat.getByRole('article', { name: 'Codex approval' })
   await expect(approval).toContainText('echo review-me')
@@ -10554,8 +10561,7 @@ test('discovers a replacement approval while an older background run is still tr
     .poll(() => mock.actions.some((action) => action.action === 'codex-run' && action.runId === previous.runId))
     .toBe(true)
   replaced = true
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await expect(alpha).toHaveAttribute('aria-description', 'Approval needed')
+  await expect(alpha).toHaveAttribute('aria-description', 'Approval needed', { timeout: 15_000 })
   await alpha.click()
   const approval = chat.getByRole('article', { name: 'Codex approval' })
   await expect(approval).toContainText('echo replacement')

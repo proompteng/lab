@@ -137,7 +137,13 @@ export function AgentSessionList({
   }
 
   if (!enabled) return null
-  const threads = index.threads
+  const loadedIds = new Set(index.threads.map(({ id }) => id))
+  const unlistedApprovals = index.archived
+    ? []
+    : Array.from(pendingApprovals.keys())
+        .filter((id) => !loadedIds.has(id))
+        .map((id) => ({ id, title: 'Conversation' }))
+  const threads = [...unlistedApprovals, ...index.threads]
   const recovering = index.phase === 'loading' || index.phase === 'retrying'
   return (
     <>

@@ -407,22 +407,28 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }, [account?.authenticated, agentId, threadId, activeTurnId, runRecoveryRevision])
 
   useEffect(() => {
-    if (!account?.authenticated) return
+    if (!account?.authenticated || !active) return
     const controller = new AbortController()
-    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
     let discovering = false
     async function discoverBackgroundRuns() {
-      const excludeThreadId = threadIdRef.current
-      if (controller.signal.aborted || discovering || !excludeThreadId) return
-      clearTimeout(retryTimer)
+      if (controller.signal.aborted || discovering || document.hidden) return
+      clearTimeout(timer)
       discovering = true
       let retry = false
+      const excludeThreadId = threadIdRef.current
       const before = new Map(workspaceRunsRef.current.map((run) => [run.threadId, run.runId]))
       try {
-        const discovered = await runTengriAction<{ runs: TengriCodexRun[]; incomplete: boolean }>(
-          { action: 'background-codex-runs', agentId, excludeThreadId },
-          AbortSignal.any([controller.signal, AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS)]),
-        )
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS)])
+        const discovered = excludeThreadId
+          ? await runTengriAction<{ runs: TengriCodexRun[]; incomplete: boolean }>(
+              { action: 'background-codex-runs', agentId, excludeThreadId },
+              signal,
+            )
+          : {
+              runs: await runTengriAction<TengriCodexRun[]>({ action: 'active-codex-runs', agentId }, signal),
+              incomplete: false,
+            }
         if (controller.signal.aborted) return
         setWorkspaceRuns((current) => {
           const byThread = new Map(current.map((run) => [run.threadId, run]))
@@ -442,18 +448,23 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         retry = true
       } finally {
         discovering = false
-        if (retry && !controller.signal.aborted) retryTimer = setTimeout(() => void discoverBackgroundRuns(), 3000)
+        if (!controller.signal.aborted && !document.hidden) {
+          timer = setTimeout(() => void discoverBackgroundRuns(), retry ? 3000 : 10_000)
+        }
       }
     }
-    // Without a stored chat, initial recovery already discovers workspace runs.
-    void discoverBackgroundRuns()
+    // Initial recovery already reads workspace runs when there is no stored chat.
+    if (threadIdRef.current) void discoverBackgroundRuns()
+    else timer = setTimeout(() => void discoverBackgroundRuns(), 10_000)
     window.addEventListener('focus', discoverBackgroundRuns)
+    document.addEventListener('visibilitychange', discoverBackgroundRuns)
     return () => {
       controller.abort()
-      clearTimeout(retryTimer)
+      clearTimeout(timer)
       window.removeEventListener('focus', discoverBackgroundRuns)
+      document.removeEventListener('visibilitychange', discoverBackgroundRuns)
     }
-  }, [account?.authenticated, agentId])
+  }, [account?.authenticated, active, agentId])
 
   useEffect(() => {
     const observers = backgroundRunObservers.current

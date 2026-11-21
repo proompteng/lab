@@ -44,9 +44,9 @@ The chat, Finder, Code, Terminal, and preview tabs all operate on the same guest
 The left conversation list marks chats with pending approvals **Needs you**. Selecting that row opens the chat and
 focuses the request. The request card shows the workflow's deadline in local time. A resolved approval stays cleared
 during stale polling. A new browser discovers pending work even when it opens a different saved conversation.
-Background discovery excludes the selected conversation. If a run read fails, the chat keeps the readable runs and
-retries discovery. Open conversations use their own exact recovery reads. Returning to the tab picks up a new run
-for a background conversation even when the previous run's last known state was active.
+Background discovery refreshes while the chat is visible and excludes the selected conversation. If a run read fails,
+the chat keeps the readable runs and retries discovery. Open conversations use their own exact recovery reads. Known
+pending conversations appear in the sidebar even before their page of chat history is loaded.
 
 ## Model and reasoning selection
 
