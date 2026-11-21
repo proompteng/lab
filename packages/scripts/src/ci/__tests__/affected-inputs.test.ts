@@ -421,6 +421,30 @@ test('Devbox requires native validation in the queue with publication confined t
   expect(property(build, 'uses')).toBe(validationPath)
   expect(property(release, 'needs')).toBe('validate')
   expect(property(release, 'permissions')).toEqual({ contents: 'read', 'id-token': 'write' })
+  const validationJobs = property(validation, 'jobs')
+  const bootstrap = property(validationJobs, 'validate')
+  expect(property(bootstrap, 'runs-on')).toBe('ubuntu-24.04')
+  const bootstrapSteps = property(bootstrap, 'steps') as unknown[]
+  const bootstrapCheck = bootstrapSteps.find(
+    (step) => property(step, 'name') === 'Validate bootstrap and GitOps configuration',
+  )
+  const bootstrapCommand = text(property(bootstrapCheck, 'run'))
+  expect(bootstrapCommand).toContain('test "$(cat /proc/1/comm)" = systemd')
+  expect(bootstrapCommand).toContain('sudo env')
+  const nativeBuild = property(validationJobs, 'build')
+  expect(property(nativeBuild, 'needs')).toBeUndefined()
+  const runners = property(property(property(nativeBuild, 'strategy'), 'matrix'), 'include') as Record<string, string>[]
+  expect(runners.map((matrix) => matrix.architecture)).toEqual(['amd64', 'arm64'])
+  const selectsRunner = text(property(nativeBuild, 'runs-on')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  for (const matrix of runners) {
+    const format = (template: string, value: string) => template.replace('{0}', value)
+    expect(runInNewContext(selectsRunner, { inputs: { publish: false }, matrix, format })).toBe(
+      matrix.architecture === 'amd64' ? 'ubuntu-24.04' : 'ubuntu-24.04-arm',
+    )
+    expect(runInNewContext(selectsRunner, { inputs: { publish: true }, matrix, format })).toBe(
+      `arc-${matrix.architecture}`,
+    )
+  }
 
   const publishesImage = text(property(property(build, 'with'), 'publish')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
   const signsRelease = text(property(release, 'if'))
