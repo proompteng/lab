@@ -3,7 +3,7 @@
 import { appendFileSync } from 'node:fs'
 
 import { repoRoot } from '../shared/cli'
-import { createOciIndex, inspectOciPlatforms } from '../shared/oci'
+import { createOciIndex } from '../shared/oci'
 
 const members = [
   { name: 'bayn', buildResult: 'BAYN_BUILD_RESULT', output: 'bayn_digest' },
@@ -27,8 +27,7 @@ const readCommand = (command: string, args: string[]): string => {
 }
 
 const object = (value: unknown): Record<string, unknown> => {
-  if (value === null || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('Expected an OCI config object')
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected an OCI object')
   return value as Record<string, unknown>
 }
 
@@ -76,7 +75,7 @@ const prepareBaynImageCohort = (environment: NodeJS.ProcessEnv): BaynCohortDiges
       ) {
         throw new Error(`Platform image does not match the source commit metadata: ${reference}`)
       }
-      return { platform: `linux/${architecture}`, digest: platformDigest, reference }
+      return { platform: `linux/${architecture}`, architecture, digest: platformDigest, reference }
     })
     return { member, image, platforms }
   })
@@ -100,13 +99,31 @@ const prepareBaynImageCohort = (environment: NodeJS.ProcessEnv): BaynCohortDiges
     const indexDigest = digest(result.digest, image)
     const reference = `${image}@${indexDigest}`
     // Re-read by digest: a mutable preparation tag cannot substitute another child set between checks.
-    const observed = inspectOciPlatforms(reference)
+    const manifest = object(JSON.parse(readCommand('crane', ['manifest', reference])))
+    const descriptors = manifest.manifests
+    if (!Array.isArray(descriptors) || descriptors.length !== platforms.length)
+      throw new Error(`Prepared index does not contain the verified platform digests: ${reference}`)
+    // Do not use the general platform inspector here: it intentionally omits untyped descriptors.
+    const observed = descriptors.map((entry) => {
+      const descriptor = object(entry)
+      const platform = object(descriptor.platform)
+      return {
+        digest: descriptor.digest,
+        os: platform.os,
+        architecture: platform.architecture,
+        variant: platform.variant,
+      }
+    })
     if (
-      observed.length !== platforms.length ||
       platforms.some(
         (expected) =>
-          observed.filter((actual) => actual.platform === expected.platform && actual.digest === expected.digest)
-            .length !== 1,
+          observed.filter(
+            (actual) =>
+              actual.os === 'linux' &&
+              actual.architecture === expected.architecture &&
+              (actual.variant === undefined || actual.variant === '') &&
+              actual.digest === expected.digest,
+          ).length !== 1,
       )
     )
       throw new Error(`Prepared index does not contain the verified platform digests: ${reference}`)

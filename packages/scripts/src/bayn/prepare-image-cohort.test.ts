@@ -24,6 +24,7 @@ type Registry = {
   checkout: string
   failIndex?: string
   corruptPinnedIndex?: string
+  pinnedDescriptorMutation?: { image: string; kind: 'extra' | 'missing' | 'duplicate' }
 }
 
 // Exercise the real CLI, shared index helper, output-file boundary and command ordering without a registry.
@@ -59,6 +60,11 @@ if (command === 'git') {
   state.indexes[reference] = manifest;
   const pinned = structuredClone(manifest);
   if (state.corruptPinnedIndex === image) pinned.manifests[0].digest = 'sha256:' + 'f'.repeat(64);
+  if (state.pinnedDescriptorMutation?.image === image) {
+    if (state.pinnedDescriptorMutation.kind === 'extra') pinned.manifests.push({ digest: 'sha256:' + 'f'.repeat(64) });
+    if (state.pinnedDescriptorMutation.kind === 'missing') pinned.manifests.pop();
+    if (state.pinnedDescriptorMutation.kind === 'duplicate') pinned.manifests[1] = pinned.manifests[0];
+  }
   state.indexes[image + '@' + state.indexDigests[image]] = pinned;
   fs.writeFileSync(statePath, JSON.stringify(state));
 } else if (command === 'crane') {
@@ -295,3 +301,16 @@ test('rejects an invalid returned index digest without emitting cohort outputs',
   expect(result.stderr).toContain('Missing or invalid OCI digest')
   expect(result.output).toBe('existing_output=retained\n')
 })
+
+test.each(names.flatMap((name) => (['extra', 'missing', 'duplicate'] as const).map((kind) => ({ name, kind }))))(
+  'rejects a $kind descriptor in the complete immutable $name index',
+  ({ name, kind }) => {
+    const result = run((state) => {
+      state.pinnedDescriptorMutation = { image: image(name), kind }
+    })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr).toContain('Prepared index does not contain the verified platform digests')
+    expect(result.output).toBe('existing_output=retained\n')
+    expect(result.commands.every((command) => !command.includes('tag') && !command.includes('copy'))).toBe(true)
+  },
+)
