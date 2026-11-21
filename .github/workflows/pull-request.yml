@@ -430,13 +430,21 @@ jobs:
   agents:
     name: Agents CI
     needs: plan
-    if: ${{ needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.delegated), 'agents-ci') }}
+    if: ${{ github.event_name == 'pull_request' && needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.delegated), 'agents-ci') }}
     uses: ./.github/workflows/agents-ci.yml
     with:
       changed_files_json: ${{ needs.plan.outputs.changed_files }}
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
       TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+
+  agents-full:
+    name: Agents full CI
+    needs: plan
+    if: github.event_name == 'merge_group' && needs.plan.result == 'success'
+    uses: ./.github/workflows/agents-ci.yml
+    with:
+      changed_files_json: ${{ needs.plan.outputs.changed_files }}
 
   ci-pr:
     name: ci-pr
@@ -446,6 +454,7 @@ jobs:
       - validate
       - landing
       - agents
+      - agents-full
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
@@ -455,7 +464,7 @@ jobs:
           VALIDATE_EXPECTED: ${{ github.event_name == 'pull_request' && needs.plan.outputs.targets == '["landing"]' && 'skipped' || 'success' }}
           LANDING_RESULT: ${{ needs.landing.result }}
           LANDING_EXPECTED: ${{ (github.event_name == 'merge_group' || contains(fromJSON(needs.plan.outputs.targets || '[]'), 'landing')) && 'success' || 'skipped' }}
-          AGENTS_RESULT: ${{ needs.agents.result }}
+          AGENTS_RESULT: ${{ github.event_name == 'merge_group' && needs.agents-full.result || needs.agents.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
           FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
