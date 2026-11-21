@@ -6,6 +6,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, 
 import type { Statement } from 'effect/sql/Statement'
 
 import {
+  orderSourceContentHashResult,
   sourceTimestamp,
   type BrokerEventInput,
   type FillEventInput,
@@ -612,6 +613,54 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.retained).toEqual([
       { status: OrderStatus.Filled, broker_updated_at: '2026-08-28T14:31:01.000900000Z' },
     ])
+  })
+
+  test('treats a matching REST microsecond order as the retained stream nanosecond version', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const sql = yield* PgClient.PgClient
+        const retainedTimestamp = '2026-08-28T14:31:01.000900123Z'
+        const restTimestamp = '2026-08-28T14:31:01.000900Z'
+        const retainedOrder = { ...order(), observedAt: '2026-08-28T14:31:01.000Z' }
+        const retained = {
+          ...orderEvent(),
+          sourceEventId: `order:${retainedOrder.brokerOrderId}:${retainedTimestamp}`,
+          sourceTimestamp: retainedTimestamp,
+          contentHash: Result.getOrThrow(orderSourceContentHashResult(retainedOrder, retainedTimestamp)),
+          occurredAt: retainedOrder.observedAt,
+          observedAt: retainedOrder.observedAt,
+          order: retainedOrder,
+        }
+        const rest = {
+          ...retained,
+          sourceEventId: `order:${retainedOrder.brokerOrderId}:${restTimestamp}`,
+          sourceTimestamp: '2026-08-28T14:31:01.000900000Z',
+          contentHash: Result.getOrThrow(orderSourceContentHashResult(retainedOrder, restTimestamp)),
+        }
+        const receipt = yield* events.ingest(retained)
+        const complete = yield* events.completeHistory([rest])
+        const replay = yield* events.ingest(rest)
+        const conflict = yield* events
+          .completeHistory([{ ...rest, order: { ...rest.order, status: OrderStatus.Canceled } }])
+          .pipe(Effect.flip)
+        const rows = yield* sql`
+          SELECT observed.status, observed.broker_updated_at
+          FROM orders AS observed JOIN broker_events AS event USING (event_id)
+          WHERE observed.account_id = ${accountId} AND observed.broker_order_id = ${retainedOrder.brokerOrderId}
+          ORDER BY event.source_sequence
+        `
+        return { receipt, complete, replay, conflict, rows }
+      }),
+    )
+    expect(result.complete.size).toBe(0)
+    expect(result.replay).toEqual({ ...result.receipt, deduplicated: true, superseded: true })
+    expect(result.conflict).toMatchObject({
+      operation: 'ingest',
+      failure: 'conflict',
+      message: expect.stringContaining('older than the retained provider version'),
+    })
+    expect(result.rows).toEqual([{ status: OrderStatus.New, broker_updated_at: '2026-08-28T14:31:01.000900123Z' }])
   })
 
   test('rejects an ambient transaction before running reconciliation ingestion', async () => {
