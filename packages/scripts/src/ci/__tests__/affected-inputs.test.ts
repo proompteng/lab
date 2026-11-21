@@ -71,7 +71,13 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
     ])
       expect(matchesPaths(file, patterns)).toBe(
         (filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml') ||
-          (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath),
+          (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath) ||
+          (event === 'pull_request' &&
+            filename === 'attic-build-push.yaml' &&
+            file === '.github/workflows/attic-build-push.yaml') ||
+          (event === 'pull_request' &&
+            filename === 'opencode-ci.yml' &&
+            ['.github/workflows/opencode-ci.yml', '.github/workflows/nix-oci-build-common.yml'].includes(file)),
       )
     for (const file of [
       'nix/cache-push.sh',
@@ -86,6 +92,64 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
   }
 })
 
+test('native PR validation preserves image publication and cache warming boundaries', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/nix-oci-build-common.yml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  const steps = property(property(jobs, 'build-platform'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing native build steps')
+  const stepCondition = (name: string) =>
+    property(
+      steps.find((step) => property(step, 'name') === name),
+      'if',
+    )
+  const conditions = [
+    [stepCondition('Push platform image without Docker'), 'publish'],
+    [property(property(jobs, 'publish-index'), 'if'), 'publish'],
+    [stepCondition('Warm Nix build outputs in Attic'), 'warm'],
+  ] as const
+  for (const [event, ref, publishOnDispatch, publish, warm] of [
+    ['pull_request', 'refs/pull/1/merge', false, false, false],
+    ['pull_request', 'refs/heads/main', true, false, false],
+    ['push', 'refs/heads/main', false, true, true],
+    ['push', 'refs/heads/feature', true, false, false],
+    ['workflow_dispatch', 'refs/heads/main', false, true, true],
+    ['workflow_dispatch', 'refs/heads/feature', false, false, false],
+    ['workflow_dispatch', 'refs/heads/feature', true, true, false],
+  ] as const) {
+    for (const [condition, boundary] of conditions) {
+      const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+      expect(
+        runInNewContext(expression, {
+          github: { event_name: event, ref },
+          inputs: { publish_on_dispatch: publishOnDispatch },
+        }),
+      ).toBe(boundary === 'publish' ? publish : warm)
+    }
+  }
+})
+
+test('Attic PR validation receives no cache credential and pins its reviewed source', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/attic-build-push.yaml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  const validation = property(jobs, 'validate')
+  const publication = property(jobs, 'build-and-push')
+  expect(property(validation, 'secrets')).toBeUndefined()
+  expect(property(property(validation, 'with'), 'source_revision')).toBe('${{ github.event.pull_request.head.sha }}')
+  const credentials = property(publication, 'secrets')
+  expect(Object.keys(credentials as Record<string, unknown>)).toEqual(['ATTIC_TOKEN'])
+  const tokenExpression = text(property(credentials, 'ATTIC_TOKEN')).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+  for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
+    for (const ref of ['refs/pull/1/merge', 'refs/heads/feature', 'refs/heads/main']) {
+      const context = { github: { event_name: event, ref }, secrets: { ATTIC_TOKEN: 'synthetic-upload-token' } }
+      expect(runInNewContext(text(property(validation, 'if')), context)).toBe(event === 'pull_request')
+      const publishes = runInNewContext(text(property(publication, 'if')), context)
+      expect(publishes).toBe(event !== 'pull_request')
+      const forwardedToken = publishes ? runInNewContext(tokenExpression, context) : ''
+      expect(forwardedToken).toBe(event !== 'pull_request' && ref === 'refs/heads/main' ? 'synthetic-upload-token' : '')
+    }
+  }
+})
+
 test('OpenCode CLI changes publish only the owning image', () => {
   for (const [filename, expected] of [
     ['bayn-build-push.yml', false],
@@ -95,6 +159,47 @@ test('OpenCode CLI changes publish only the owning image', () => {
     const paths = property(property(property(workflow, 'on'), 'push'), 'paths')
     if (!Array.isArray(paths)) throw new Error(`Missing publication inputs: ${filename}`)
     expect(matchesPaths('nix/images/opencode-cli.nix', paths.map(text))).toBe(expected)
+  }
+})
+
+test('OpenCode PR validation selects the PR head without publication secrets', () => {
+  const validation: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-ci.yml', 'utf8'))
+  const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-build-push.yml', 'utf8'))
+  const image = property(property(validation, 'jobs'), 'image')
+  expect(property(image, 'secrets')).toBeUndefined()
+  expect(property(image, 'if')).toBeUndefined()
+  expect(property(property(property(publication, 'jobs'), 'image'), 'if')).toBeUndefined()
+  expect(property(property(validation, 'permissions'), 'contents')).toBe('read')
+  const source = text(property(property(image, 'with'), 'source_revision')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  expect(
+    runInNewContext(source, {
+      github: { sha: 'merge-commit', event: { pull_request: { head: { sha: 'reviewed-pr-head' } } } },
+    }),
+  ).toBe('reviewed-pr-head')
+
+  const selected = (workflow: unknown, event: string, ref: string, file: string) => {
+    const trigger = property(property(workflow, 'on'), event)
+    if (trigger === undefined) return false
+    const paths = property(trigger, 'paths')
+    const branches = property(trigger, 'branches')
+    if (!Array.isArray(paths)) throw new Error('Missing OpenCode input paths')
+    return (
+      matchesPaths(file, paths.map(text)) &&
+      (!Array.isArray(branches) || matchesPaths(ref.replace(/^refs\/heads\//, ''), branches.map(text)))
+    )
+  }
+  for (const [event, ref, file, validate, publish] of [
+    ['pull_request', 'refs/pull/42/merge', '.github/workflows/opencode-ci.yml', true, false],
+    ['pull_request', 'refs/pull/42/merge', '.github/workflows/nix-oci-build-common.yml', true, false],
+    ['pull_request', 'refs/pull/42/merge', 'services/opencode/start.sh', true, false],
+    ['pull_request_target', 'refs/heads/main', 'services/opencode/start.sh', false, false],
+    ['push', 'refs/heads/main', 'services/opencode/start.sh', false, true],
+    ['push', 'refs/heads/feature', 'services/opencode/start.sh', false, false],
+    ['push', 'refs/heads/main', '.github/workflows/nix-oci-build-common.yml', false, false],
+    ['workflow_dispatch', 'refs/heads/main', 'services/opencode/start.sh', false, false],
+  ] as const) {
+    expect(selected(validation, event, ref, file)).toBe(validate)
+    expect(selected(publication, event, ref, file)).toBe(publish)
   }
 })
 

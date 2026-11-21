@@ -147,14 +147,25 @@ fn failure_status(microvm: &MicroVM, error: &anyhow::Error) -> MicroVMStatus {
         cause.downcast_ref::<tonic::Status>().is_some_and(|error| {
             matches!(
                 error.code(),
-                tonic::Code::Cancelled
+                tonic::Code::Aborted
+                    | tonic::Code::Cancelled
                     | tonic::Code::DeadlineExceeded
                     | tonic::Code::Unavailable
                     | tonic::Code::ResourceExhausted
             )
         }) || cause
             .downcast_ref::<reqwest::Error>()
-            .is_some_and(|error| error.is_timeout() || error.is_connect())
+            .is_some_and(|error| {
+                error.is_timeout()
+                    || error.is_connect()
+                    || error.status().is_some_and(|status| {
+                        status.is_server_error()
+                            || matches!(
+                                status,
+                                reqwest::StatusCode::CONFLICT | reqwest::StatusCode::TOO_MANY_REQUESTS
+                            )
+                    })
+            })
             || matches!(cause.downcast_ref::<kube::Error>(), Some(kube::Error::Api(error)) if error.code == 409 || error.code == 429 || error.code >= 500)
     }) {
         status.guest_ready = false;
@@ -633,32 +644,41 @@ fn status_for(
     authorization_paused: bool,
 ) -> MicroVMStatus {
     let now = Utc::now();
+    let fenced = state.lifecycle_fenced();
     let phase = match state {
         SlotState::Awake { .. } => MicroVMPhase::Ready,
         SlotState::Sleeping { .. } => MicroVMPhase::Sleeping,
         SlotState::Vacant { .. } if microvm.spec.desired_state == MicroVMDesiredState::Sleeping => {
             MicroVMPhase::Sleeping
         }
+        SlotState::Failed { .. } if fenced => match microvm.spec.desired_state {
+            MicroVMDesiredState::Running => MicroVMPhase::Booting,
+            MicroVMDesiredState::Sleeping => MicroVMPhase::Sleeping,
+        },
         SlotState::Failed { .. } | SlotState::Stopped { .. } => MicroVMPhase::Failed,
         _ => MicroVMPhase::Booting,
     };
     let ready = phase == MicroVMPhase::Ready;
     let (reason, message) = match state {
-        SlotState::Sleeping { .. } | SlotState::Vacant { .. }
-            if authorization_paused && phase == MicroVMPhase::Sleeping =>
-        {
-            (
-                "AuthorizationPaused",
-                "Authorization is temporarily unavailable; the saved workspace will resume automatically.",
-            )
-        }
+        _ if authorization_paused && phase == MicroVMPhase::Sleeping => (
+            "AuthorizationPaused",
+            "Authorization is temporarily unavailable; the saved workspace will resume automatically.",
+        ),
         SlotState::Awake { .. } => (
             "GuestReady",
             "Files, terminal, and initialized Codex passed the guest readiness checks",
         ),
-        SlotState::ColdBooting { .. } => (
-            "RetainedDiskBootInProgress",
-            "Restarting the workspace from its retained disks",
+        SlotState::ColdBooting { .. } | SlotState::Failed { .. }
+            if phase == MicroVMPhase::Booting =>
+        {
+            (
+                "RetainedDiskBootInProgress",
+                "Restarting the workspace from its retained disks",
+            )
+        }
+        SlotState::Failed { .. } if fenced => (
+            "RetainedDisksStopped",
+            "The workspace is stopped and can resume from its retained disks",
         ),
         SlotState::Sleeping { .. } => (
             "GuestStopped",
@@ -2518,6 +2538,7 @@ mod tests {
             PreviousAwake,
             Preparing,
             Failed,
+            TimedOut,
             Stopped,
         }
         use ObservedSlot::*;
@@ -2530,6 +2551,8 @@ mod tests {
             (6, PreviousAwake),
             (6, Preparing),
             (6, Failed),
+            (6, TimedOut),
+            (7, TimedOut),
             (6, Stopped),
         ] {
             let old_awake = matches!(observed_slot, PreviousAwake);
@@ -2559,7 +2582,11 @@ mod tests {
                     Preparing => SlotState::Preparing,
                     Failed => SlotState::Failed {
                         claim: Some(claim.clone()),
-                        message: "guest lifecycle timed out".into(),
+                        message: "disk flush failed".into(),
+                    },
+                    TimedOut => SlotState::Failed {
+                        claim: Some(claim.clone()),
+                        message: crate::slot::GUEST_LIFECYCLE_TIMEOUT.into(),
                     },
                     Stopped => SlotState::Stopped {
                         claim: claim.clone(),
@@ -2640,6 +2667,7 @@ mod tests {
                     "/api/v1/namespaces/tengri/pods/slot-test",
                     json!({
                         "apiVersion":"v1", "kind":"Pod", "metadata":{"name":"slot-test", "uid":"original-pod"},
+                        "spec":{"containers":[{"name":"runner","image":"runtime-image"}]},
                         "status":{"podIP":"127.0.0.1"}
                     }),
                 ),
@@ -2664,8 +2692,8 @@ mod tests {
                 result.expect("fresh unchanged authority must still restore after the initial decision expires");
                 assert_eq!(
                     restores.load(Ordering::SeqCst),
-                    usize::from(matches!(observed_slot, Sleeping | PreviousAwake)),
-                    "only a prepared committed snapshot may restore"
+                    usize::from(matches!(observed_slot, Sleeping | PreviousAwake | TimedOut)),
+                    "a committed snapshot or a fenced timeout can recover the same workspace"
                 );
                 assert_eq!(sleeps.load(Ordering::SeqCst), usize::from(old_awake));
                 assert!(pending.lock().unwrap().is_empty());
@@ -3249,7 +3277,9 @@ mod tests {
         microvm.status = Some(unknown.clone());
         let repeated = failure_status(
             &microvm,
-            &anyhow::Error::from(tonic::Status::unavailable("dependency unavailable")),
+            &anyhow::Error::from(tonic::Status::aborted(
+                "runtime authority changed before disclosure",
+            )),
         );
         assert_eq!(repeated, unknown);
         let recovered = status_for(&microvm, &Pod::default(), &state, false);
@@ -3264,6 +3294,41 @@ mod tests {
             status_for(&microvm, &Pod::default(), &state, false),
             recovered
         );
+    }
+
+    #[test]
+    fn a_fenced_workspace_preserves_its_reconnect_path() {
+        let mut microvm = agent();
+        let state = SlotState::Failed {
+            claim: Some(claim_for(&microvm).unwrap()),
+            message: crate::slot::LIFECYCLE_WITHDRAWN.into(),
+        };
+        let pod = Pod::default();
+        microvm.spec.desired_state = MicroVMDesiredState::Sleeping;
+        let paused = status_for(&microvm, &pod, &state, true);
+        assert_eq!(paused.phase, MicroVMPhase::Sleeping);
+        assert_eq!(paused.conditions[0].reason, "AuthorizationPaused");
+        assert!(!paused.guest_ready);
+        assert!(paused.failure_reason.is_none());
+
+        let sleeping = status_for(&microvm, &pod, &state, false);
+        assert_eq!(sleeping.phase, MicroVMPhase::Sleeping);
+        assert_eq!(sleeping.conditions[0].reason, "RetainedDisksStopped");
+
+        microvm.spec.desired_state = MicroVMDesiredState::Running;
+        for message in [
+            crate::slot::LIFECYCLE_WITHDRAWN,
+            crate::slot::GUEST_LIFECYCLE_TIMEOUT,
+        ] {
+            let stopped = SlotState::Failed {
+                claim: Some(claim_for(&microvm).unwrap()),
+                message: message.into(),
+            };
+            let booting = status_for(&microvm, &pod, &stopped, false);
+            assert_eq!(booting.phase, MicroVMPhase::Booting);
+            assert_eq!(booting.conditions[0].reason, "RetainedDiskBootInProgress");
+            assert!(!booting.guest_ready);
+        }
     }
 
     #[tokio::test]

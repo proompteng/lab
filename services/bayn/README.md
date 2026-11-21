@@ -2478,10 +2478,16 @@ These parallel shards use Bun 1.4.3 for its isolated-file finalizer fixes. See t
 [upstream fixes](https://bun.sh/blog/bun-v1.4.3#bun-test).
 The CI default test budget is 15 seconds for full research fixtures on shared runners; explicit test budgets still apply.
 Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
-four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
-runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. Never run concurrent shards against
-the same database. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
+four shards, each with its own disposable database server in CI. Every test file runs in an isolated Bun module
+graph with a fresh database, and Bun prints the randomized order's seed. Run one shard locally with
+`bun run --filter @proompteng/bayn test:postgres 1/4` or omit the shard to run the complete suite. The local PostgreSQL
+role needs `CREATEDB` and a loopback URL for a database that ends in `_test`. The Jev batch and migration cutover suites
+migrate each suite fixture once, then clone and remove a separate database for each test. ClickHouse/Java archive checks and
+PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
+
+Successful PostgreSQL CI shards upload their measured file durations as `bayn-postgres-timings-<shard>-<attempt>`
+artifacts for balancing future runs.
 
 Streaming failure integration runs in a separate required job with disposable PostgreSQL, Restate 1.8.1 and Kafka.
 Run `bash services/bayn/scripts/test-streaming-integrations.sh` from a local Docker host using the pinned toolchain.
@@ -2541,6 +2547,14 @@ with one hosted call per proposal and no paid fallback. Its actual provider inpu
 identity travel in the verified research receipt, with separate gateway and worker source revisions.
 See the runbook for native session and budget enforcement and the [standalone server](../opencode/README.md)
 for development access and the verified state migration.
+
+The research gateway validates the authenticated identity of one pinned native process before serving proposals.
+Each startup identity probe has a one-second bound within the existing 25-second overall readiness budget. A
+transport failure, unanswered probe or authenticated, version-verified starting response may retry the same process;
+authentication, version and other HTTP failures remain terminal. This handles the native server's interval between
+binding its socket and attaching its request handler without extending readiness or restarting the child. Scope
+shutdown allows 25 seconds for SIGTERM, including the native server's 20-second graceful drain, before escalating
+to SIGKILL for a child that has not exited.
 
 New Flamingo research registrations pin the vLLM 0.34.0 serving image introduced by
 [the reviewed Flamingo upgrade](https://github.com/proompteng/lab/commit/66badfc269c0cbaa69c150cd46cb35475e7b6890),

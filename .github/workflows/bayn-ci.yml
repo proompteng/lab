@@ -5,6 +5,8 @@ permissions:
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
   workflow_call:
 
@@ -21,8 +23,10 @@ jobs:
       gepa: ${{ github.event_name != 'pull_request' && steps.manual.outputs.gepa || fromJSON(steps.filter.outputs.affected).gepa }}
     steps:
       - uses: actions/checkout@v5
+        if: github.event_name == 'pull_request'
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - name: Detect Bayn release inputs
         id: filter
@@ -259,7 +263,16 @@ jobs:
           --filter @proompteng/source
           --filter @proompteng/bayn
       - name: Verify isolated PostgreSQL persistence shard
+        env:
+          BAYN_CI_POSTGRES_TIMINGS_PATH: ${{ format('{0}/bayn-postgres-timings.json', runner.temp) }}
         run: bun run --cwd services/bayn test:postgres ${{ matrix.shard }}/4
+      - name: Record PostgreSQL test file durations
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-postgres-timings-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bayn-postgres-timings.json*
+          if-no-files-found: error
+          retention-days: 7
 
   archive-integration:
     needs: changes
@@ -475,6 +488,7 @@ jobs:
     steps:
       - name: Require every applicable Bayn release check
         env:
+          MERGE_GROUP: ${{ github.event_name == 'merge_group' }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
@@ -493,6 +507,10 @@ jobs:
           set -euo pipefail
           if [[ "${CHANGES_RESULT}" != 'success' ]]; then
             echo "Bayn change detection failed: ${CHANGES_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${MERGE_GROUP}" == 'true' && "${BAYN_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'true/true/true' ]]; then
+            echo 'Merge group validation must select every Bayn check.' >&2
             exit 1
           fi
           if [[ "${FORMAL_RELEVANT}" == 'true' && "${FORMAL_RESULT}" != 'success' ]]; then
