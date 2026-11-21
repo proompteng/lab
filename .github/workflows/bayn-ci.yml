@@ -5,8 +5,6 @@ permissions:
 
 on:
   pull_request:
-  merge_group:
-    types: [checks_requested]
   workflow_dispatch:
   workflow_call:
 
