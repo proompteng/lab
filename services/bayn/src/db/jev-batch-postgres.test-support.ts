@@ -146,6 +146,7 @@ export const describeJevBatchPostgres = (
     readonly runtime: ReturnType<typeof makeRuntime>
     readonly database: PostgresTestDatabase
   }) => void,
+  seed = fixture,
 ) => {
   describePostgres('PostgreSQL complete Jev batches', () => {
     let template: PostgresTestTemplate
@@ -160,14 +161,14 @@ export const describeJevBatchPostgres = (
               const sql = yield* PgClient.PgClient
               yield* postgresMigrations
               yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
-              VALUES (${replayAccountId},${replaySourceHash},${fixture.snapshot.manifest.observedAt})`
-              yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
+              VALUES (${replayAccountId},${replaySourceHash},${seed.snapshot.manifest.observedAt})`
+              yield* (yield* CycleStore).acquire(seed.draft, seed.snapshot.manifest.observedAt)
               yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
-            VALUES (${plan.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${plan.observedAt})`
-              const r = fixture.portfolio.brokerState.reconciliation
+            VALUES (${seed.observation.payload.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${seed.snapshot.manifest.observedAt})`
+              const r = seed.portfolio.brokerState.reconciliation
               yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
               VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
-              yield* (yield* CandidateObservationStore).record(fixture.observation)
+              yield* (yield* CandidateObservationStore).record(seed.observation)
             }),
           )
         } finally {
