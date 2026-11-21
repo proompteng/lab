@@ -1,0 +1,34 @@
+name: Tengri guest dependency proof
+
+on:
+  push:
+    branches: [codex/tengri-parallel-guest-build]
+    paths:
+      - .github/workflows/tengri-guest-dependency-proof.yml
+      - services/nanoagent/Dockerfile
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify native dependencies (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the compiler and editor stages
+        env:
+          TEST_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          docker buildx build --platform "linux/${TEST_ARCH}" --target c-toolchain-runtime --output=type=cacheonly --progress=plain services/nanoagent
+          docker buildx build --platform "linux/${TEST_ARCH}" --target editor-build --output=type=cacheonly --progress=plain services/nanoagent
