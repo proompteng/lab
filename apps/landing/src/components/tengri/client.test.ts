@@ -177,6 +177,7 @@ test('reports a failed history record from an HTTP 200 stream with its response 
 
 describe('Tengri guest operation coordination', () => {
   for (const action of [
+    { action: 'record-activity', agentId: 'activity-lifecycle' },
     { action: 'codex-models', agentId: 'catalog-lifecycle' },
     { action: 'resume-thread', agentId: 'history-lifecycle', threadId: 'thread-existing' },
   ] satisfies TengriAction[]) {

@@ -1039,6 +1039,79 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   }
 }
 
+test('records draft typing with a trailing update and leaves an untouched desktop idle', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page)
+  const activity = () => mock.actions.filter((action) => action.action === 'record-activity')
+  await page.goto('/')
+  const composer = page.getByRole('textbox', { name: 'Message your agent' })
+  await expect(composer).toBeVisible()
+  await composer.dispatchEvent('input')
+  await page.clock.runFor(30_000)
+  expect(activity()).toHaveLength(0)
+
+  await composer.pressSequentially('draft')
+  await page.clock.runFor(100)
+  await expect.poll(() => activity().length).toBe(1)
+  await page.clock.runFor(18_000)
+  await composer.pressSequentially(' still typing')
+  expect(activity()).toHaveLength(1)
+  await page.clock.runFor(2_100)
+  await expect.poll(() => activity().length).toBe(2)
+  expect(activity()[1]).toEqual({ action: 'record-activity', agentId: readyAgent.id })
+  await page.clock.runFor(60_000)
+  expect(activity()).toHaveLength(2)
+})
+
+test('retries draft activity after a transient failure without another interaction', async ({ page }) => {
+  await page.clock.install()
+  await mockTengri(page)
+  let attempts = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'record-activity') {
+      await route.fallback()
+      return
+    }
+    attempts += 1
+    await route.fulfill({
+      status: attempts === 1 ? 503 : 200,
+      contentType: 'application/json',
+      body: JSON.stringify(attempts === 1 ? { error: 'temporarily unavailable' } : { result: null }),
+    })
+  })
+  await page.goto('/')
+  const composer = page.getByRole('textbox', { name: 'Message your agent' })
+  await expect(composer).toBeVisible()
+  await composer.pressSequentially('draft')
+  await page.clock.runFor(100)
+  await expect.poll(() => attempts).toBe(1)
+  await page.clock.runFor(1_100)
+  await expect.poll(() => attempts).toBe(2)
+  await page.clock.runFor(60_000)
+  expect(attempts).toBe(2)
+})
+
+test('cancels pending desktop activity when the user explicitly sleeps the workspace', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page)
+  const activity = () => mock.actions.filter((action) => action.action === 'record-activity')
+  await page.goto('/')
+  const composer = page.getByRole('textbox', { name: 'Message your agent' })
+  await expect(composer).toBeVisible()
+  await composer.pressSequentially('draft')
+  await page.clock.runFor(100)
+  await expect.poll(() => activity().length).toBe(1)
+  await composer.pressSequentially(' pending')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await openSettingsPane(settings, 'Power & Sleep')
+  await settings.getByRole('button', { name: 'Sleep', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+  const before = activity().length
+  await page.clock.runFor(60_000)
+  expect(activity()).toHaveLength(before)
+})
+
 test('signs out of the desktop through shared platform authentication', async ({ page }) => {
   await mockTengri(page)
   await page.goto('/')

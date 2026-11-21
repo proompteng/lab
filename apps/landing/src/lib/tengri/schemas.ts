@@ -121,6 +121,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('sleep-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('resume-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('update-power-settings'), agentId, power: tengriPowerSettingsSchema }),
+  z.strictObject({ action: z.literal('record-activity'), agentId }),
   z.strictObject({ action: z.literal('stat-file'), agentId, path: workspaceFilePathSchema }),
   z.strictObject({ action: z.literal('list-files'), agentId, path: workspaceFilePathSchema }),
   z.strictObject({ action: z.literal('read-file'), agentId, path: workspaceFilePathSchema }),

@@ -26,6 +26,7 @@ import {
   listTerminals,
   moveFile,
   readFile,
+  recordAgentActivity,
   resolveCodexApproval,
   revokeDesktopPreviews,
   revokePreviewSession,
@@ -123,6 +124,10 @@ async function runAction(request: Request) {
         break
       case 'update-power-settings':
         result = await updatePowerSettings(identity, action.agentId, action.power)
+        break
+      case 'record-activity':
+        await recordAgentActivity(identity, action.agentId, request.signal)
+        result = null
         break
       case 'stat-file':
         result = await statFile(identity, action.agentId, action.path, request.signal)

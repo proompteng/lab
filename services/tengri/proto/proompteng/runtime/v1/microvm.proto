@@ -8,6 +8,7 @@ service MicroVMControlPlane {
   rpc CreateAgent(CreateAgentRequest) returns (Agent);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc GetAgent(GetAgentRequest) returns (Agent);
+  rpc RecordAgentActivity(GetAgentRequest) returns (Empty);
   rpc WatchAgent(WatchAgentRequest) returns (stream Agent);
   rpc UpdatePowerSettings(UpdatePowerSettingsRequest) returns (Agent);
 
