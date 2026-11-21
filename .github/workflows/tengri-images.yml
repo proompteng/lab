@@ -211,7 +211,7 @@ jobs:
 
   build:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    name: Build ${{ matrix.image }} (${{ matrix.architecture }})
+    name: Build native (${{ format('{0}, {1}', matrix.image, matrix.architecture) }})
     timeout-minutes: 120
     strategy:
       fail-fast: false

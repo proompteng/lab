@@ -31,6 +31,7 @@ describe('Tengri image workflow', () => {
         string,
         {
           if?: string
+          'runs-on'?: string
           strategy?: { matrix: { architecture: string[]; image: string[]; include: unknown[] } }
           steps: Array<{
             name?: string
@@ -45,6 +46,7 @@ describe('Tengri image workflow', () => {
     }
     const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
     expect(workflow.jobs.build?.if).toBe(releaseOnly)
+    expect(workflow.jobs.build?.['runs-on']).toBe('arc-${{ matrix.architecture }}')
     expect(workflow.jobs.build?.strategy?.matrix).toEqual({
       architecture: ['amd64', 'arm64'],
       image: ['nanoagent', 'tengri'],
