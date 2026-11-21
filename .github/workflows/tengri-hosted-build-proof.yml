@@ -1,0 +1,58 @@
+name: Tengri hosted native build proof
+
+on:
+  push:
+    branches:
+      - codex/tengri-hosted-native-build
+    paths:
+      - .github/workflows/tengri-hosted-build-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Cold build (${{ matrix.image }}, ${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [nanoagent, tengri]
+        architecture: [amd64, arm64]
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+          - image: tengri
+            contexts: |
+              ofz-proto=proto
+              ofz-catalog=services/ofz
+              nanoagent-src=services/nanoagent
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read native build capacity
+        run: df -hT "$RUNNER_TEMP"
+      - uses: ./.github/actions/setup-buildkit
+      - name: Build full native release image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.image }}
+          build-args: ${{ matrix.image == 'tengri' && format('SOURCE_REVISION={0}', github.sha) || '' }}
+          build-contexts: ${{ matrix.contexts }}
+          platforms: linux/${{ matrix.architecture }}
+          outputs: type=oci,dest=${{ runner.temp }}/native-image.tar
+          provenance: mode=max
+          sbom: true
+      - name: Verify native output and attestation
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          tar -xOf "$RUNNER_TEMP/native-image.tar" index.json |
+            jq -e --arg architecture "$ARCHITECTURE" '
+              any(.manifests[]; .platform.architecture == $architecture and .platform.os == "linux") and
+              any(.manifests[]; .annotations["vnd.docker.reference.type"] == "attestation-manifest")
+            '
+          du -h "$RUNNER_TEMP/native-image.tar"
