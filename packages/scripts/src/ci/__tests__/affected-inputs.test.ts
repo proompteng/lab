@@ -884,6 +884,8 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/formal/conformance/economics.test.ts',
     'services/bayn/README.md',
     'services/bayn/src/jev/entry-economics.test.ts',
+    'services/bayn/src/jev/native.test-support.ts',
+    'services/bayn/src/testing/streaming-market-fixture.ts',
     'services/bayn/tools/test-postgres.ts',
     'services/bayn/tools/test-ledger.ts',
     'services/bayn/tools/ci-unit-timings.json',
