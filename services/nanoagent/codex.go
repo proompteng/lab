@@ -29,6 +29,7 @@ const (
 	codexSubscriberLimit      = 8
 	codexApprovalWriteTimeout = 15 * time.Second
 	codexResponseWriteTimeout = 15 * time.Second
+	codexLateReplyWindow      = time.Minute
 )
 
 type codexEvent struct {
@@ -504,6 +505,17 @@ func (supervisor *codexSupervisor) request(
 	waitReady bool,
 	generation *codexProcessGeneration,
 ) (codexCallResult, error) {
+	return supervisor.requestWithLateReply(ctx, method, params, waitReady, generation, nil)
+}
+
+func (supervisor *codexSupervisor) requestWithLateReply(
+	ctx context.Context,
+	method string,
+	params json.RawMessage,
+	waitReady bool,
+	generation *codexProcessGeneration,
+	lateReply func(codexCallResult, error),
+) (codexCallResult, error) {
 	params, err := codexGuestThreadParams(method, params)
 	if err != nil {
 		return codexCallResult{}, &codexUnsentRequestError{err}
@@ -557,21 +569,39 @@ func (supervisor *codexSupervisor) request(
 	}
 	select {
 	case <-ctx.Done():
-		supervisor.removePending(key)
+		if lateReply == nil {
+			supervisor.removePending(key)
+		} else {
+			go func() {
+				timer := time.NewTimer(codexLateReplyWindow)
+				defer timer.Stop()
+				defer supervisor.removePending(key)
+				select {
+				case result := <-response:
+					lateReply(unpackCodexReply(result, generation))
+				case <-timer.C:
+				case <-supervisor.shutdown:
+				}
+			}()
+		}
 		return codexCallResult{}, ctx.Err()
 	case result := <-response:
-		if result.localErr != nil {
-			return codexCallResult{}, result.localErr
-		}
-		if len(result.err) > 0 && string(result.err) != "null" {
-			return codexCallResult{eventSequence: result.eventSequence, generation: generation}, codexRPCErrorFromRaw(result.err)
-		}
-		return codexCallResult{
-			result:        result.result,
-			eventSequence: result.eventSequence,
-			generation:    generation,
-		}, nil
+		return unpackCodexReply(result, generation)
 	}
+}
+
+func unpackCodexReply(result codexPendingResult, generation *codexProcessGeneration) (codexCallResult, error) {
+	if result.localErr != nil {
+		return codexCallResult{}, result.localErr
+	}
+	if len(result.err) > 0 && string(result.err) != "null" {
+		return codexCallResult{eventSequence: result.eventSequence, generation: generation}, codexRPCErrorFromRaw(result.err)
+	}
+	return codexCallResult{
+		result:        result.result,
+		eventSequence: result.eventSequence,
+		generation:    generation,
+	}, nil
 }
 
 func (supervisor *codexSupervisor) waitForGeneration(

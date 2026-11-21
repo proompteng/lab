@@ -31,7 +31,7 @@ func TestCodexDispatchDoesNotResumeForOtherRejections(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := supervisor.dispatchOperation(ctx, test.method, json.RawMessage(operationParams))
+				_, err := supervisor.dispatchOperation(ctx, test.method, json.RawMessage(operationParams), supervisor.generation, nil)
 				done <- err
 			}()
 			request := readCodexWireRequest(t, writer)
@@ -258,6 +258,49 @@ func TestCodexUncertainOperationDoesNotBlockAnotherConversation(t *testing.T) {
 	newIdentity := strings.ReplaceAll(operationParams, "11111111", "33333333")
 	if _, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(newIdentity)); !errors.Is(err, errCodexOperationUnknown) {
 		t.Fatalf("the uncertain conversation lost its own fence: %v", err)
+	}
+}
+
+func TestCodexOperationKeepsAcceptanceAfterCallerTimesOut(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(ctx, "turn/start", json.RawMessage(operationParams))
+		done <- err
+	}()
+	request := readCodexWireRequest(t, writer)
+	cancel()
+	if err := <-done; !errors.Is(err, errCodexOperationUnknown) {
+		t.Fatalf("operation must remain unconfirmed before the late reply: %v", err)
+	}
+	accepted := json.RawMessage(`{"turn":{"id":"turn-1","status":"inProgress"}}`)
+	supervisor.resolveResponse(codexRPCMessage{ID: request.ID, Result: accepted})
+	path := filepath.Join(supervisor.cwd, ".tengri", "codex-operations", "11111111-1111-4111-8111-111111111111.json")
+	deadline := time.After(5 * time.Second)
+	for {
+		receipt, err := readCodexOperation(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if receipt.State == "completed" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("native acceptance was lost after caller timeout")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	recovered, err := supervisor.call(context.Background(), "tengri/reconcileOperation", json.RawMessage(`{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1"}`))
+	if err != nil || string(recovered.result) != string(accepted) {
+		t.Fatalf("recovery did not use the late native acceptance: %s, %v", recovered.result, err)
+	}
+	select {
+	case unexpected := <-writer.messages:
+		t.Fatalf("recovery made another native call: %s", unexpected)
+	default:
 	}
 }
 

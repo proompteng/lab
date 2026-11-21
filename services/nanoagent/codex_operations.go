@@ -100,7 +100,8 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 	}
 
 	supervisor.mu.Lock()
-	op.Generation = supervisor.generation.id
+	generation := supervisor.generation
+	op.Generation = generation.id
 	supervisor.mu.Unlock()
 
 	directory := filepath.Join(supervisor.cwd, ".tengri", "codex-operations")
@@ -156,10 +157,31 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 	if err := publishCodexReceipt(path, activePath, op, true); err != nil {
 		return codexCallResult{}, err
 	}
-	result, requestErr := supervisor.dispatchOperation(ctx, method, params)
-	if result.generation != nil {
-		op.Generation = result.generation.id
+	result, requestErr := supervisor.dispatchOperation(ctx, method, params, generation, func(result codexCallResult, requestErr error) {
+		supervisor.recordLateOperation(path, op, result, requestErr)
+	})
+	return result, recordCodexOperation(path, op, result, requestErr)
+}
+
+func (supervisor *codexSupervisor) recordLateOperation(path string, op codexOperation, result codexCallResult, requestErr error) {
+	if result.generation == nil || result.generation.id != op.Generation {
+		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), codexLateReplyWindow)
+	defer cancel()
+	unlock, err := supervisor.lockOperation(ctx, op.Thread)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	current, err := readCodexOperation(path)
+	if err != nil || current.State != "dispatching" || current.ID != op.ID || current.Digest != op.Digest || current.Generation != op.Generation {
+		return
+	}
+	_ = recordCodexOperation(path, op, result, requestErr)
+}
+
+func recordCodexOperation(path string, op codexOperation, result codexCallResult, requestErr error) error {
 	if requestErr != nil {
 		var rpcError *codexRPCError
 		var unsent *codexUnsentRequestError
@@ -169,7 +191,7 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 		case errors.As(requestErr, &rpcError) && (rpcError.code == -32600 || rpcError.code == -32601 || rpcError.code == -32602):
 			op.Error = rpcError.raw
 		default:
-			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationUnknown, requestErr)
+			return fmt.Errorf("%w: %v", errCodexOperationUnknown, requestErr)
 		}
 		requestErr = fmt.Errorf("%w: %v", errCodexOperationRejected, requestErr)
 	} else {
@@ -177,9 +199,9 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 	}
 	op.State = "completed"
 	if err := writeCodexOperation(path, op); err != nil {
-		return codexCallResult{}, fmt.Errorf("%w: persist accepted response: %v", errCodexOperationUnknown, err)
+		return fmt.Errorf("%w: persist native response: %v", errCodexOperationUnknown, err)
 	}
-	return result, requestErr
+	return requestErr
 }
 
 func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op codexOperation) (codexOperation, error) {
@@ -242,9 +264,9 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 	return op, errCodexOperationUnknown
 }
 
-func (supervisor *codexSupervisor) dispatchOperation(ctx context.Context, method string, params json.RawMessage) (codexCallResult, error) {
+func (supervisor *codexSupervisor) dispatchOperation(ctx context.Context, method string, params json.RawMessage, generation *codexProcessGeneration, lateReply func(codexCallResult, error)) (codexCallResult, error) {
 	if method != "tengri/resolveApproval" {
-		result, err := supervisor.request(ctx, method, params, true, nil)
+		result, err := supervisor.requestWithLateReply(ctx, method, params, true, generation, lateReply)
 		var input struct {
 			Thread string `json:"threadId"`
 		}
@@ -257,7 +279,7 @@ func (supervisor *codexSupervisor) dispatchOperation(ctx context.Context, method
 		if _, err := supervisor.request(ctx, "thread/resume", resume, true, result.generation); err != nil {
 			return result, &codexUnsentRequestError{err}
 		}
-		return supervisor.request(ctx, method, params, true, result.generation)
+		return supervisor.requestWithLateReply(ctx, method, params, true, result.generation, lateReply)
 	}
 	var input struct {
 		Thread   string          `json:"threadId"`
