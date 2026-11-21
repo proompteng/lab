@@ -10429,7 +10429,12 @@ test('surfaces a background approval and resolves that run from a phone-sized wo
       { id: 'thread-beta', title: 'Beta', updatedAt: 51, archived: false },
     ],
   }
-  const mock = await mockTengri(page, { durableRun: run, preserveDraftStorageOnReload: true, threadStore })
+  const mock = await mockTengri(page, {
+    durableRun: run,
+    preserveDraftStorageOnReload: true,
+    threadStore,
+    resumeThreadRawJsonById: { [run.threadId]: JSON.stringify({ thread: { name: 'Alpha', turns: [] } }) },
+  })
   await page.addInitScript(() => {
     if (!localStorage.getItem('tengri-thread:microvm-ada'))
       localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha')
@@ -10480,6 +10485,7 @@ test('surfaces a background approval and resolves that run from a phone-sized wo
   await expect(beta).toHaveAttribute('aria-current', 'true')
   await expect(chat.getByRole('button', { name: 'Load older chats' })).toBeVisible()
   await expect(alpha).toContainText('Needs you')
+  await expect(alpha.getByText('Alpha', { exact: true })).toBeVisible()
   expect(mock.actions.some((action) => action.action === 'list-threads' && action.cursor)).toBe(false)
   await alpha.click()
   const approval = chat.getByRole('article', { name: 'Codex approval' })

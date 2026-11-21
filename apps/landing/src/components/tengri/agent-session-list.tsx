@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
 import { cn } from '@/lib/utils'
-import { runTengriAction, TengriRequestError } from './client'
+import { getTengriCodexThreadTitle, runTengriAction, TengriRequestError } from './client'
 
 type SessionIndex = TengriCodexThreadPage & { archived: boolean } & (
     | { phase: 'loading' | 'ready' }
@@ -141,7 +141,7 @@ export function AgentSessionList({
   const unlistedApprovals = index.archived
     ? []
     : Array.from(threadActivity).flatMap(([id, activity]) =>
-        activity.approvalId && !loadedIds.has(id) ? [{ id, title: 'Conversation' }] : [],
+        activity.approvalId && !loadedIds.has(id) ? [{ id, title: null }] : [],
       )
   const threads = [...unlistedApprovals, ...index.threads]
   const recovering = index.phase === 'loading' || index.phase === 'retrying'
@@ -193,7 +193,9 @@ export function AgentSessionList({
                       : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100 dark:hover:bg-white/5',
                   )}
                 >
-                  <span className="min-w-0 flex-1 truncate text-copy-14">{thread.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-copy-14">
+                    {thread.title ?? <UnlistedChatTitle agentId={agentId} threadId={thread.id} ready={!recovering} />}
+                  </span>
                   {approvalId ? (
                     <span aria-hidden="true" className="shrink-0 text-label-12 text-zinc-300">
                       Needs you
@@ -281,4 +283,21 @@ export function AgentSessionList({
       </button>
     </>
   )
+}
+
+function UnlistedChatTitle({ agentId, threadId, ready }: { agentId: string; threadId: string; ready: boolean }) {
+  const [title, setTitle] = useState<string>()
+  useEffect(() => {
+    if (!ready || title) return
+    const controller = new AbortController()
+    void getTengriCodexThreadTitle(agentId, threadId, controller.signal).then(
+      (name) => {
+        if (!controller.signal.aborted) setTitle(name)
+      },
+      () => {},
+    )
+    return () => controller.abort()
+  }, [agentId, ready, threadId, title])
+
+  return title ?? 'Earlier chat'
 }

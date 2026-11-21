@@ -46,7 +46,8 @@ focuses the request. The request card shows the workflow's deadline in local tim
 during stale polling. A new browser discovers pending work even when it opens a different saved conversation.
 Background discovery refreshes while a conversation is visible and excludes that conversation. A new draft uses
 approval and replay events to discover work without idle polling. If a run read fails, the chat keeps the readable
-runs and retries discovery. Known pending conversations appear in the sidebar before their page of history is loaded.
+runs and retries discovery. Pending approvals in older chats appear in the sidebar with their chat title before
+their page of history is loaded.
 
 ## Model and reasoning selection
 
