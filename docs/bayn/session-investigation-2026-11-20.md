@@ -209,6 +209,14 @@ Current high throttle ratios seen on Valkey and PostgreSQL pod aggregates belong
 or backup sidecars. The data does not support increasing controller, database or cache limits to solve the
 observed economic or fee-settlement problems. Current pool and cache queue measurements also show no saturation.
 
+A follow-up on the same source and nine-hour cut grouped the broker-read histograms by `operation` and
+`outcome`. Successful order reads had estimated median/p95 0.670/1.607 seconds, versus 0.081/0.218 seconds
+for account reads. The order-read headers stage measured 0.280/0.496 seconds and its body stage
+0.382/0.919 seconds. These nested quantiles cannot be added, and the operation includes both recent/open
+order probes and complete history pages. They identify a slower read class without proving the cause of
+an individual expired cycle. The source already overlaps independent reads and reuses only verified
+history; complete before/after history checks preserve the account snapshot's authority.
+
 To reproduce stage quantiles, query the existing Mimir endpoint at `2026-11-20T22:00:00Z`:
 
 ```promql
@@ -449,6 +457,20 @@ measured CPU throttling or restarts and no memory-limit saturation, but these ob
 the cause. The subsequent test-only diagnostics record bounded spawn, native readiness and gateway phases
 without exposing credentials or changing the original deadlines, retry budgets, ownership or assertions.
 Both architectures must pass on the final source before release.
+
+The subsequent [native run at `6219a192`](https://github.com/proompteng/lab/actions/runs/44878792846)
+passed both architecture jobs with 30 native assertions each. The diagnostic gateway-readiness observations
+were 17.911 seconds initially and 1.237 seconds on restart for arm64, and 14.472/1.213 seconds for amd64.
+Process handles were acquired in 45/18 ms and 25/7 ms, respectively. These observations locate the time
+after process acquisition for this passing run; they neither explain the previous timeout nor establish
+a production latency improvement. All original deadlines and authentication assertions remained in force.
+
+Broader Torghut CI exposed a stale universe assertion from before the reviewed
+[equity-short source extension #15946](https://github.com/proompteng/lab/pull/15946). The runtime had already
+kept 16 WebSocket bar symbols and six completed-REST-only bar symbols, but the test compared their shared
+22-symbol `SYMBOLS` field with the old 16-symbol WebSocket set. The corrected contract verifies both exact
+sets, the complete shared allowlist and quote/trade coverage, and the unchanged 30-stream WebSocket budget.
+Runtime manifests and trading eligibility are unchanged.
 
 ## Prospective profitability qualification
 
