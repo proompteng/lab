@@ -4,16 +4,18 @@ import { Effect, Exit } from 'effect'
 import { createIntegrationHarness, findTemporalCliUnavailableError, type IntegrationHarness, type TemporalDevServerConfig } from './harness'
 import { readWorkerLoadConfig } from './load/config'
 import { calculateWorkerLoadTestTimeoutBudgetMs, runWorkerLoad } from './load/runner'
+import { isReleaseGate } from './test-env'
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
+const loadSuiteDefaults = readWorkerLoadConfig()
 
 const devServerDefaults: TemporalDevServerConfig = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
   namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
+  cliLogPath: loadSuiteDefaults.cliLogPath,
 }
 
-const loadSuiteDefaults = readWorkerLoadConfig()
 const testTimeoutBudgetMs = calculateWorkerLoadTestTimeoutBudgetMs(loadSuiteDefaults)
 const hookTimeoutMs = 60_000
 
@@ -26,6 +28,7 @@ describeIntegration('worker runtime load/perf suite', () => {
     if (Exit.isFailure(harnessExit)) {
       const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
       if (unavailable) {
+        if (isReleaseGate()) throw unavailable
         cliUnavailable = true
         console.warn(`[temporal-bun-sdk] skipping worker-load integration: ${unavailable.message}`)
         return
@@ -38,6 +41,7 @@ describeIntegration('worker runtime load/perf suite', () => {
     if (Exit.isFailure(setupExit)) {
       const unavailable = findTemporalCliUnavailableError(setupExit.cause)
       if (unavailable) {
+        if (isReleaseGate()) throw unavailable
         cliUnavailable = true
         console.warn(`[temporal-bun-sdk] skipping worker-load integration: ${unavailable.message}`)
         return

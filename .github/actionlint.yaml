@@ -29,3 +29,8 @@ paths:
     # temporal-static-libraries-workflow.test.ts checks these concurrency settings.
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/bayn-formal.yml:
+    # The input is supported by setup-java v5 but absent from actionlint's embedded metadata.
+    # https://github.com/actions/setup-java/blob/v5/action.yml
+    ignore:
+      - '^input "jdk-file" is not defined in action "actions/setup-java@v5"\. available inputs are '

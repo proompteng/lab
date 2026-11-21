@@ -1,0 +1,50 @@
+name: Build and test Temporal worker
+description: Build the native runtime and retain the SDK heartbeat and routing evidence.
+inputs:
+  architecture:
+    required: true
+    description: Native Linux architecture of the runner
+  release-image:
+    required: false
+    description: Registry repository for prepared images from main push builds
+runs:
+  using: composite
+  steps:
+    - name: Resolve source metadata
+      id: source
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        echo "timestamp=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+    - name: Build runtime
+      uses: docker/build-push-action@v6
+      with:
+        context: services/temporal-worker
+        platforms: linux/${{ inputs.architecture }}
+        push: ${{ inputs.release-image != '' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        outputs: type=image,oci-mediatypes=true
+        provenance: false
+        tags: ${{ format('{0}:prepare-sha-{1}-run-{2}-{3}', inputs.release-image || 'temporal-worker-validation', github.sha, github.run_id, inputs.architecture) }}
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}
+        cache-from: type=gha,scope=temporal-worker-runtime-${{ inputs.architecture }}
+        cache-to: ${{ github.event_name != 'merge_group' && format('type=gha,mode=max,scope=temporal-worker-runtime-{0}', inputs.architecture) || '' }}
+    - name: Retain SDK heartbeat proof
+      shell: bash
+      env:
+        ARCHITECTURE: ${{ inputs.architecture }}
+      run: |
+        set -euo pipefail
+        mkdir -p .artifacts/temporal-worker
+        docker buildx build services/temporal-worker --target evidence --platform "linux/${ARCHITECTURE}" \
+          --output type=local,dest=.artifacts/temporal-worker \
+          --cache-from "type=gha,scope=temporal-worker-runtime-${ARCHITECTURE}"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: temporal-worker-proof-${{ inputs.architecture }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: .artifacts/temporal-worker
+        if-no-files-found: error

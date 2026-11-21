@@ -1,6 +1,7 @@
 name: karapace schema sync
 
 on:
+  workflow_call:
   push:
     branches:
       - main
@@ -14,18 +15,18 @@ on:
       - 'proto/**'
       - 'proto/schema-subjects.json'
       - 'scripts/karapace/**'
+      - '.github/workflows/karapace-schema-sync.yaml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: karapace-schema-sync-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   sync:
     runs-on: arc-arm64
-    env:
-      KARAPACE_URL: ${{ secrets.KARAPACE_URL }}
-      KARAPACE_USER: ${{ secrets.KARAPACE_USER }}
-      KARAPACE_PASSWORD: ${{ secrets.KARAPACE_PASSWORD }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -49,21 +50,19 @@ jobs:
         run: buf build proto
 
       - name: Dry run schema sync
-        if: ${{ github.event_name == 'pull_request' }}
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: bun run scripts/karapace/sync-protos.ts --dry-run
 
-      - name: Check Karapace configuration
-        if: ${{ github.event_name != 'pull_request' }}
-        id: karapace-config
+      - name: Sync schemas to Karapace
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          KARAPACE_URL: ${{ secrets.KARAPACE_URL }}
+          KARAPACE_USER: ${{ secrets.KARAPACE_USER }}
+          KARAPACE_PASSWORD: ${{ secrets.KARAPACE_PASSWORD }}
         shell: bash
         run: |
           if [[ -z "${KARAPACE_URL}" ]]; then
-            echo "configured=false" >> "${GITHUB_OUTPUT}"
             echo "::notice::Skipping Karapace schema sync because KARAPACE_URL is not configured."
           else
-            echo "configured=true" >> "${GITHUB_OUTPUT}"
+            bun run scripts/karapace/sync-protos.ts
           fi
-
-      - name: Sync schemas to Karapace
-        if: ${{ github.event_name != 'pull_request' && steps.karapace-config.outputs.configured == 'true' }}
-        run: bun run scripts/karapace/sync-protos.ts

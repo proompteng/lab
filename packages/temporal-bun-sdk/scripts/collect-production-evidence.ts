@@ -899,9 +899,9 @@ const requiredCiWorkflowFragments = [
   },
   { id: 'lint', fragment: 'bun run --cwd packages/temporal-bun-sdk lint:oxlint' },
   { id: 'non-integration-tests', fragment: 'bun test "${test_files[@]}" --timeout=30000' },
-  { id: 'integration-tests', fragment: 'bun test tests/integration --timeout=30000 --max-concurrency=1' },
+  { id: 'integration-tests', fragment: 'bun test "${integration_files[@]}" --timeout=30000 --max-concurrency=1' },
   { id: 'replay-corpus', fragment: 'bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus' },
-  { id: 'worker-load', fragment: 'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load' },
+  { id: 'worker-load', fragment: 'bun test tests/integration/worker-load.test.ts --timeout=30000 --max-concurrency=1' },
   { id: 'evidence-purpose', fragment: 'TEMPORAL_BUN_EVIDENCE_PURPOSE' },
   { id: 'production-verification', fragment: 'bun run --filter @proompteng/temporal-bun-sdk verify:production' },
   {
@@ -932,10 +932,20 @@ const validateCiWorkflowCoverage = async (): Promise<GateStatus> => {
   }
 
   const workflow = await readFile(workflowPath, 'utf8')
+  const sources = [workflow]
+  for (const action of ['test-temporal-bun-sdk', 'test-temporal-bun-sdk-integration']) {
+    const actionPath = `.github/actions/${action}`
+    const definition = join(repoRoot, actionPath, 'action.yml')
+    if (!workflow.includes(`uses: ./${actionPath}`) || !existsSync(definition)) {
+      return buildGate(false, `Temporal Bun SDK validation action ${action} missing from the release workflow`)
+    }
+    sources.push(await readFile(definition, 'utf8'))
+  }
+  const effectiveWorkflow = sources.join('\n')
   const missing = requiredCiWorkflowFragments
     .filter(
       (requirement) =>
-        countOccurrences(workflow, requirement.fragment) <
+        countOccurrences(effectiveWorkflow, requirement.fragment) <
         ('minimumOccurrences' in requirement ? requirement.minimumOccurrences : 1),
     )
     .map((requirement) => requirement.id)

@@ -8,35 +8,39 @@ on:
       - synchronize
       - edited
       - ready_for_review
+  merge_group:
+    types: [checks_requested]
 
 permissions:
+  contents: read
   pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
-    name: Validate PR title
+    name: Validate PR metadata
     runs-on: ubuntu-latest
     steps:
-      - name: Validate PR title
-        shell: bash
+      - id: checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install workspace lint tools
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source
+
+      - name: Lint workspace
+        run: bun run lint:oxlint
+
+      - name: Validate title and commit subjects
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          set -euo pipefail
-
-          allowed_types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
-          title_pattern="^(${allowed_types})(\\([a-z0-9._/-]+\\))?!?: [a-z].+"
-
-          if [[ "${PR_TITLE}" =~ ${title_pattern} ]]; then
-            echo "PR title is semantic: ${PR_TITLE}"
-            exit 0
-          fi
-
-          echo "PR title must match '<type>(<optional-scope>): <lowercase subject>'."
-          echo "Allowed types: ${allowed_types//|/, }"
-          echo "Actual title: ${PR_TITLE}"
-          exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/validate-pr-metadata.sh

@@ -1,8 +1,10 @@
 name: jangar-ci
 
 on:
+  workflow_call:
   pull_request:
     paths:
+      - '.github/workflows/jangar-ci.yml'
       - 'packages/temporal-bun-sdk/src/**'
       - 'packages/temporal-bun-sdk/package.json'
       - 'packages/temporal-bun-sdk/tsconfig.json'
@@ -35,9 +37,12 @@ on:
       - '!services/agents/src/**/*.generated.ts'
       - '!services/agents/src/**/*.generated.tsx'
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: jangar-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint-and-typecheck:
@@ -56,7 +61,6 @@ jobs:
     uses: ./.github/workflows/nix-bun-dependency-closure.yml
     with:
       service: jangar
-    secrets: inherit
 
   atlas-search-integration:
     runs-on: ubuntu-latest
