@@ -947,7 +947,6 @@ postgres('PostgreSQL prospective system qualification', () => {
     const buyAt = new Date(Date.parse(observedAt) - 120_000).toISOString()
     const sellAt = new Date(Date.parse(observedAt) - 60_000).toISOString()
     const lateAt = new Date(Date.parse(observedAt) - 45_000).toISOString()
-    const reconciledAt = new Date(Date.parse(observedAt) - 30_000).toISOString()
     const events = [testHash('native cash buy'), testHash('native cash sell'), testHash('native cash late buy')]
     const preparePair = (buyPriceAtoms: string, sellPriceAtoms: string) => [
       Result.getOrThrow(
@@ -1079,7 +1078,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       ledger_plan_hash: Result.getOrThrow(hashLedgerPlanResult(authenticSettlement.plan)),
       tigerbeetle_cluster_id: '2001',
       tigerbeetle_ledger: 7001,
-      posted: false,
+      posted: true,
     }
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -1107,6 +1106,16 @@ postgres('PostgreSQL prospective system qualification', () => {
         )
       }),
     )
+    const beforePostingAsOf = await runtime.runPromise(databaseNow)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE broker_cash_settlements SET posted_at=clock_timestamp()
+          WHERE settlement_id=${authenticSettlement.settlementId}`
+      }),
+    )
+    await runtime.runPromise(Effect.sleep('5 millis'))
+    const reconciledAt = await runtime.runPromise(databaseNow)
     const asOf = await runtime.runPromise(databaseNow)
     const forgedRoundingMicros = '4000000'
     const forgedSettlement = {
@@ -1121,7 +1130,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       ),
       tigerbeetle_cluster_id: '2001',
       tigerbeetle_ledger: 7001,
-      posted: false,
+      posted: true,
     }
     const fixture = assessmentFixture(registered.registration)
     const financial = registered.registration.policies.map((definition) => {
@@ -1143,6 +1152,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     const sourceMaterial = (
       transactions: typeof original,
       accountCashSettlements: readonly (typeof forgedSettlement)[] = [authenticSettlementRecord],
+      positionReconciledAt = reconciledAt,
     ) => ({
       accounts: [
         {
@@ -1151,7 +1161,7 @@ postgres('PostgreSQL prospective system qualification', () => {
           forward: {
             account: { accountId },
             accountTransactions: transactions.map(({ transaction }) => transaction),
-            accountPositionCounts: { reconciledAt, exact: true },
+            accountPositionCounts: { reconciledAt: positionReconciledAt, exact: true },
             accountCashSettlements,
             accountFeeAccruals: [],
             accountBrokerFees: [],
@@ -1166,15 +1176,17 @@ postgres('PostgreSQL prospective system qualification', () => {
     const makeCut = (
       transactions: typeof original,
       accountCashSettlements: readonly (typeof forgedSettlement)[] = [authenticSettlementRecord],
+      cutAsOf = asOf,
+      positionReconciledAt = reconciledAt,
     ) => {
-      const retained = sourceMaterial(transactions, accountCashSettlements)
+      const retained = sourceMaterial(transactions, accountCashSettlements, positionReconciledAt)
       return Schema.decodeUnknownSync(SystemSourceCutSchema)({
         schemaVersion: 'bayn.system-source-cut.v4',
         protectionIntents: [],
         decisionAdmissions: [],
         orders: [],
         registrationHash: registered.registrationHash,
-        asOf,
+        asOf: cutAsOf,
         runtimeConfigurationHash: registered.registration.obligations.runtimeConfigurationHash,
         financial,
         inference: [],
@@ -1190,9 +1202,9 @@ postgres('PostgreSQL prospective system qualification', () => {
         sourceMaterialHash: testHash(retained),
       })
     }
-    const assessmentInput = (sourceCutHash: string) => ({
+    const assessmentInput = (sourceCutHash: string, cutAsOf = asOf) => ({
       ...fixture.input,
-      asOf,
+      asOf: cutAsOf,
       registration: registered.registration,
       registrationReceiptHash: registered.registrationHash,
       sourceCutHash,
@@ -1201,14 +1213,30 @@ postgres('PostgreSQL prospective system qualification', () => {
         sessions: policy.sessions.map((session) => ({ ...session, financial: null, marks: [] })),
       })),
       realism: { expectedDecisionIds: [], expectedFillIds: [], decisions: [], fills: [], unsupportedAssumptions: [] },
-      reliability: { ...fixture.input.reliability, asOf, completions: [] },
+      reliability: { ...fixture.input.reliability, asOf: cutAsOf, completions: [] },
       safety: {
         ...fixture.input.safety,
         coverage: 'INCOMPLETE' as const,
         registrationHash: registered.registrationHash,
-        asOf,
+        asOf: cutAsOf,
       },
     })
+    const futurePostingCut = await runtime.runPromise(
+      asApplication(
+        persistSystemSourceCut(makeCut(original, [authenticSettlementRecord], beforePostingAsOf, reconciledAt)),
+      ),
+    )
+    const futurePostingRejected = await runtime.runPromiseExit(
+      assessAndPersistSystem(
+        assessmentInput(futurePostingCut.sourceCutHash, beforePostingAsOf),
+        fixture.verifiedSources,
+      ),
+    )
+    expect(Exit.isFailure(futurePostingRejected)).toBe(true)
+    if (Exit.isFailure(futurePostingRejected))
+      expect(Cause.pretty(futurePostingRejected.cause)).toContain(
+        'Native cash reconciliation occurs after its immutable source cut',
+      )
     const originalCut = await runtime.runPromise(asApplication(persistSystemSourceCut(makeCut(original))))
     const accepted = await runtime.runPromiseExit(
       assessAndPersistSystem(assessmentInput(originalCut.sourceCutHash), fixture.verifiedSources),

@@ -79,6 +79,16 @@ const verifyNativeCashLedgerSources = (
         ? [{ account, reconciledAt, transactions }]
         : []
     })
+    if (
+      accounts.some(
+        ({ reconciledAt }) =>
+          DateTime.toEpochMillis(DateTime.makeUnsafe(reconciledAt)) >
+          DateTime.toEpochMillis(DateTime.makeUnsafe(cut.asOf)),
+      )
+    )
+      return yield* new SystemAssessmentError({
+        message: 'Native cash reconciliation occurs after its immutable source cut',
+      })
     if (accounts.length === 0) return
     const sql = yield* PgClient.PgClient
     yield* forwardPerformanceSnapshot(sql).withTransaction(
