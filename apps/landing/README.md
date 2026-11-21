@@ -446,3 +446,5 @@ The standalone Next server resolves inside the immutable Nix runtime. Its packag
 `/var/cache/proompteng`, where both the desktop and administration deployments mount a bounded writable cache volume.
 The root filesystem stays read-only. Image publication verifies the cache link at the actual standalone server path
 inside the built archive; rollout verification also checks writes through that resolved path in the deployed container.
+
+<!-- Disposable standalone Landing validation probe -->
