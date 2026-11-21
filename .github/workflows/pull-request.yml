@@ -161,6 +161,8 @@ jobs:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
         exclude:
           - target: landing
+          # Design already runs App's consumer checks.
+          - target: ${{ contains(fromJSON(needs.plan.outputs.targets), 'design') && 'app' || 'landing' }}
     runs-on: >-
       ${{
         (matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' ||
@@ -195,6 +197,8 @@ jobs:
 
       - name: Run selected validation
         shell: bash
+        env:
+          APP_VALIDATION_SELECTED: ${{ contains(fromJSON(needs.plan.outputs.targets), 'app') }}
         run: |
           set -euo pipefail
           target="${{ matrix.target }}"
@@ -208,11 +212,21 @@ jobs:
               bun run --cwd apps/docs lint:oxlint:type
               bun run --filter docs build
               ;;
-            app)
+            app | design)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter app --filter @proompteng/design
-              bun run --cwd apps/app lint:oxlint
-              bun run --cwd apps/app lint:oxlint:type
-              bun run --filter app build
+              status=0
+              if [[ "${target}" == design ]]; then
+                bunx oxfmt --check packages/design || status=1
+                bun run --cwd packages/design lint:oxlint || status=1
+                bun run --cwd packages/design lint:oxlint:type || status=1
+                bun run --filter @proompteng/design build || status=1
+              fi
+              if [[ "${APP_VALIDATION_SELECTED}" == true ]]; then
+                bun run --cwd apps/app lint:oxlint || status=1
+              fi
+              bun run --cwd apps/app lint:oxlint:type || status=1
+              bun run --filter app build || status=1
+              exit "${status}"
               ;;
             olden)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter olden --filter @proompteng/design
@@ -221,15 +235,6 @@ jobs:
               bun run --cwd apps/olden lint:oxlint:type
               bun run --filter olden test
               bun run --filter olden build
-              ;;
-            design)
-              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/design --filter app
-              bunx oxfmt --check packages/design
-              bun run --cwd packages/design lint:oxlint
-              bun run --cwd packages/design lint:oxlint:type
-              bun run --filter @proompteng/design build
-              bun run --cwd apps/app lint:oxlint:type
-              bun run --filter app build
               ;;
             cms)
               PAYLOAD_SECRET=ci-build-secret bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter cms
