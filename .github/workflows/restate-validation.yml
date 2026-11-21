@@ -1,0 +1,201 @@
+name: Restate validation
+
+on:
+  workflow_call:
+    outputs:
+      release-ready:
+        value: >-
+          ${{
+            jobs.changes.outputs.changed == 'true' &&
+            jobs.cache-proof.outputs.passed == 'true' &&
+            (jobs.build.outputs.built == 'true' || jobs.changes.outputs.reuse == 'true')
+          }}
+      built:
+        value: ${{ jobs.build.outputs.built }}
+      reuse:
+        value: ${{ jobs.changes.outputs.reuse }}
+      source:
+        value: ${{ jobs.changes.outputs.source }}
+      run:
+        value: ${{ jobs.changes.outputs.run }}
+      digest:
+        value: ${{ jobs.changes.outputs.digest }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restate-native-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+env:
+  IMAGE: registry.ide-newton.ts.net/lab/restate
+
+jobs:
+  changes:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || fromJSON(steps.filter.outputs.affected).service }}
+      reuse: ${{ steps.plan.outputs.reuse }}
+      source: ${{ steps.plan.outputs.source }}
+      run: ${{ steps.plan.outputs.run }}
+      digest: ${{ steps.plan.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        if: github.event_name != 'merge_group' && github.event_name != 'workflow_dispatch'
+        id: filter
+        with:
+          workflow: .github/workflows/restate-images.yml
+          workspaces: |
+            service: ['', 'packages/scripts']
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install script dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts
+      - name: Validate configuration and release selection
+        run: |
+          bun test packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts packages/scripts/src/restate/release-inputs.test.ts \
+            packages/scripts/src/ci/__tests__/affected-inputs.test.ts packages/scripts/src/shared/__tests__/kargo.test.ts
+          bun packages/scripts/src/ci/generate-observability-workflows.ts --check
+      - name: Select build or qualified runtime reuse
+        if: github.event_name != 'workflow_dispatch'
+        id: plan
+        run: bun packages/scripts/src/restate/release-inputs.ts
+
+  build:
+    needs: changes
+    if: github.event_name != 'merge_group' && needs.changes.outputs.changed == 'true' && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.reuse != 'true')
+    name: Restate build and fault tests (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    outputs:
+      built: ${{ steps.artifact.outputs.artifact-id != '' }}
+    strategy: &native_matrix
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    steps: &native_steps
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install script dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts
+      - name: Resolve source metadata
+        id: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "timestamp=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-buildkit
+      - uses: imjasonh/setup-crane@v0.4
+      - uses: sigstore/cosign-installer@v3.10.0
+      - name: Restore trusted Cargo cache mounts
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          reference="${IMAGE}:cargo-cache-${ARCHITECTURE}"
+          utility="$(awk '$1 == "FROM" {print $2; exit}' services/restate/Dockerfile)"
+          if digest="$(crane digest "$reference" 2>/tmp/restate-cache-error)"; then
+            cosign verify --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/restate-images.yml@refs/heads/main" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "${IMAGE}@${digest}" >/dev/null
+            docker buildx build --file packages/scripts/src/restate/cargo-cache.Dockerfile \
+              --build-arg "UTILITY_IMAGE=$utility" --build-arg "CACHE_IMAGE=${IMAGE}@${digest}" \
+              --target restore --platform "linux/${ARCHITECTURE}" .
+          else
+            grep -Eiq 'manifest[[:space:]_-]+(unknown|not[[:space:]]+found)|manifest[^[:cntrl:]]*404|404[^[:cntrl:]]*(manifest|not[[:space:]]+found)' /tmp/restate-cache-error
+            echo 'No persisted Cargo cache yet; the first source build will populate it.'
+          fi
+      - name: Prove metadata writes and cold-peer elections
+        uses: docker/build-push-action@v6
+        with:
+          context: services/restate
+          target: evidence
+          platforms: linux/${{ matrix.architecture }}
+          outputs: type=local,dest=.artifacts/restate
+          provenance: false
+          no-cache-filters: ${{ (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch') && 'test' || '' }}
+          cache-from: type=gha,scope=restate-test-${{ matrix.architecture }}
+          cache-to: ${{ github.event_name != 'merge_group' && format('type=gha,mode=max,scope=restate-test-{0}', matrix.architecture) || '' }}
+      - name: Build runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: services/restate
+          platforms: linux/${{ matrix.architecture }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,oci-mediatypes=true
+          provenance: false
+          no-cache-filters: ${{ github.event_name == 'merge_group' && 'runtime' || github.event_name == 'workflow_dispatch' && 'builder' || '' }}
+          tags: ${{ env.IMAGE }}:prepare-sha-${{ github.sha }}-run-${{ github.run_id }}-${{ matrix.architecture }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}
+          cache-from: type=gha,scope=restate-runtime-${{ matrix.architecture }}
+          cache-to: ${{ github.event_name != 'merge_group' && format('type=gha,mode=max,scope=restate-runtime-{0}', matrix.architecture) || '' }}
+      - name: Persist Cargo cache mounts for future source builds
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          utility="$(awk '$1 == "FROM" {print $2; exit}' services/restate/Dockerfile)"
+          cache_args=(--file packages/scripts/src/restate/cargo-cache.Dockerfile --build-arg "UTILITY_IMAGE=$utility"
+            --build-arg "CACHE_NONCE=$GITHUB_RUN_ID" --platform "linux/$ARCHITECTURE")
+          docker buildx build "${cache_args[@]}" --target status --output type=local,dest=.artifacts/cache-status .
+          : > .artifacts/restate/cache-digest
+          if grep -Fxq true .artifacts/cache-status/populated; then
+            reference="${IMAGE}:cargo-cache-pending-${ARCHITECTURE}"
+            docker buildx build "${cache_args[@]}" --target archive --provenance=false \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" --tag "$reference" --push .
+            crane digest "$reference" > .artifacts/restate/cache-digest
+          elif test "$GITHUB_EVENT_NAME" = workflow_dispatch; then
+            echo "No Cargo cache was produced for $ARCHITECTURE" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        id: artifact
+        if: always()
+        with:
+          name: restate-proof-${{ matrix.architecture }}-${{ github.run_id }}
+          path: .artifacts/restate
+          if-no-files-found: error
+
+  queue-build:
+    if: github.event_name == 'merge_group'
+    name: Restate native queue validation (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy: *native_matrix
+    steps: *native_steps
+
+  cache-proof:
+    needs: changes
+    if: github.event_name != 'merge_group' && needs.changes.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      passed: ${{ steps.proof.outputs.passed }}
+    steps: &cargo_handoff_steps
+      - uses: actions/checkout@v6
+      - name: Prove Cargo cache handoff between empty workers
+        id: proof
+        run: |
+          bash packages/scripts/src/restate/verify-cargo-cache.sh
+          echo 'passed=true' >> "$GITHUB_OUTPUT"
+
+  queue-cache-proof:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps: *cargo_handoff_steps
