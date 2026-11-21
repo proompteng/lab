@@ -4,6 +4,7 @@ permissions:
   contents: read
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - 'nix/images/attic.nix'
@@ -21,22 +22,22 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: attic-build-push-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   validate:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: attic
       package_attr: atticd-image
-      tag: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
-      source_revision: ${{ github.event.pull_request.head.sha }}
+      tag: ${{ github.event_name == 'merge_group' && format('queue-{0}', github.sha) || format('pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+      source_revision: ${{ github.event_name == 'merge_group' && github.sha || github.event.pull_request.head.sha }}
       pr_number: ${{ github.event.pull_request.number }}
 
   build-and-push:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: attic

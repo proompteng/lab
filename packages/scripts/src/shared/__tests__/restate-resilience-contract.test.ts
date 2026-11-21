@@ -1,4 +1,5 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
@@ -9,7 +10,10 @@ const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRo
 
 test('Restate image promotion requires native build proofs and uploaded release evidence', () => {
   const workflow = YAML.parse(readRepoFile('.github/workflows/restate-images.yml'))
-  const build = workflow.jobs.build
+  const validationPath = '.github/workflows/restate-validation.yml'
+  const validation = YAML.parse(readRepoFile(validationPath))
+  const queue = YAML.parse(readRepoFile('.github/workflows/queue-service-validation.yml'))
+  const build = validation.jobs.build
   const publish = workflow.jobs.publish
   const mainOnly = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
   expect(workflow.on.push.branches).toEqual(['main'])
@@ -19,7 +23,12 @@ test('Restate image promotion requires native build proofs and uploaded release 
     ...workflow.on.push.paths,
   ])
   expect(build.needs).toBe('changes')
-  expect(build.if).toBe("needs.changes.outputs.changed == 'true' && needs.changes.outputs.reuse != 'true'")
+  expect(workflow.jobs.validate).toEqual({ uses: `./${validationPath}` })
+  expect(queue.jobs.restate).toEqual({ uses: `./${validationPath}` })
+  expect(validation.permissions).toEqual({ contents: 'read' })
+  expect(build.if).toBe(
+    "needs.changes.outputs.changed == 'true' && (github.event_name == 'merge_group' || needs.changes.outputs.reuse != 'true')",
+  )
   expect(build.strategy.matrix.include.map((entry: { architecture: string }) => entry.architecture).sort()).toEqual([
     'amd64',
     'arm64',
@@ -31,10 +40,41 @@ test('Restate image promotion requires native build proofs and uploaded release 
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/docker.ts')
   expect(publish.if).toContain(mainOnly)
   expect(publish.if).toContain('!cancelled()')
-  expect(publish.if).toContain("needs.changes.result == 'success'")
-  expect(publish.if).toContain("needs.build.result == 'success'")
-  expect(publish.if).toContain("needs.build.result == 'skipped' && needs.changes.outputs.reuse == 'true'")
-  expect(publish.needs).toEqual(['changes', 'build', 'cache-proof'])
+  expect(publish.if).toContain("needs.validate.result == 'success'")
+  expect(publish.needs).toBe('validate')
+  const releaseReady = validation.on.workflow_call.outputs['release-ready'].value
+    .replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+    .replace('jobs.cache-proof', "jobs['cache-proof']")
+  const releaseCondition = publish.if.replace(
+    'needs.validate.outputs.release-ready',
+    "needs.validate.outputs['release-ready']",
+  )
+  for (const [result, changed, cacheProof, built, reuse, mayPublish] of [
+    ['success', 'true', 'true', 'true', 'false', true],
+    ['success', 'true', 'true', undefined, 'true', true],
+    ['success', 'true', 'true', undefined, 'false', false],
+    ['failure', 'true', 'true', 'true', 'false', false],
+    ['cancelled', 'true', 'true', 'true', 'true', false],
+    ['success', 'true', undefined, 'true', 'false', false],
+    ['success', 'false', undefined, undefined, 'false', false],
+  ]) {
+    const ready = runInNewContext(releaseReady, {
+      jobs: {
+        changes: { outputs: { changed, reuse } },
+        'cache-proof': { outputs: { passed: cacheProof } },
+        build: { outputs: { built } },
+      },
+    })
+    for (const event_name of ['merge_group', 'pull_request', 'push']) {
+      expect(
+        runInNewContext(releaseCondition, {
+          github: { event_name, ref: 'refs/heads/main' },
+          needs: { validate: { result, outputs: { 'release-ready': String(ready) } } },
+          cancelled: () => false,
+        }),
+      ).toBe(event_name === 'push' && mayPublish)
+    }
+  }
   const releaseSteps = publish.steps as { name?: string; uses?: string }[]
   const uploaded = releaseSteps.findIndex((step) => step.uses === 'actions/upload-artifact@v4')
   expect(uploaded).toBeGreaterThan(0)
@@ -71,6 +111,7 @@ test.each([
   ['packages/scripts/src/shared/docker.ts', false],
   ['packages/scripts/src/restate/release-inputs.ts', true],
   ['.github/workflows/restate-images.yml', true],
+  ['.github/workflows/restate-validation.yml', true],
   ['argocd/applicationsets/platform.yaml', false],
   ['services/restate/Dockerfile', true],
   ['services/restate/metadata-background.patch', true],

@@ -51,7 +51,8 @@ test('the registered Kubernetes namespaces match the executor RBAC without grant
 test('the platform release validates both clients before publishing its immutable image', () => {
   const workflow = YAML.parse(source('.github/workflows/relay.yml'))
   expect(workflow.on.push.branches).toEqual(['main'])
-  expect(workflow.on.merge_group.types).toEqual(['checks_requested'])
+  expect(workflow.on).toHaveProperty('workflow_call')
+  expect(workflow.on).not.toHaveProperty('merge_group')
   expect(workflow.jobs.image.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'")
   expect(workflow.jobs.image.needs).toBe('validate')
   expect(workflow.jobs.image.with.publish_kargo_tag).toBe(true)
@@ -62,4 +63,57 @@ test('the platform release validates both clients before publishing its immutabl
   expect(onboarding.spec.template.spec.containers[0].args).toEqual(['onboard-policies'])
   expect(onboarding.spec.template.spec.serviceAccountName).toBe('ofz-migrator')
   expect(onboarding.metadata.annotations['argocd.argoproj.io/hook']).toBe('PostSync')
+})
+
+test('queued revisions require the platform suites', () => {
+  const workflow = YAML.parse(source('.github/workflows/pull-request.yml'))
+  const gate = workflow.jobs['ci-pr']
+  for (const [job, file] of [
+    ['ofz', 'ofz.yaml'],
+    ['relay', 'relay.yml'],
+    ['tengri', 'tengri-validation.yml'],
+  ]) {
+    expect(workflow.jobs[job]).toMatchObject({
+      if: "github.event_name == 'merge_group'",
+      uses: `./.github/workflows/${file}`,
+    })
+    expect(workflow.jobs[job].needs).toBeUndefined()
+    expect(gate.needs).toContain(job)
+  }
+  const step = gate.steps.find((entry: { name: string }) => entry.name === 'Enforce selected validation results')
+  expect(step.env.OFZ_RESULT).toBe('${{ needs.ofz.result }}')
+  expect(step.env.RELAY_RESULT).toBe('${{ needs.relay.result }}')
+  expect(step.env.TENGRI_RESULT).toBe('${{ needs.tengri.result }}')
+  const run = (full: string, ofz: string, relay: string, tengri: string) =>
+    Bun.spawnSync(['bash', '-c', step.run], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        PLAN_RESULT: 'success',
+        VALIDATE_RESULT: 'success',
+        VALIDATE_EXPECTED: 'success',
+        LANDING_RESULT: 'success',
+        LANDING_EXPECTED: 'success',
+        AGENTS_RESULT: 'success',
+        BAYN_RESULT: 'success',
+        OFZ_RESULT: ofz,
+        RELAY_RESULT: relay,
+        TENGRI_RESULT: tengri,
+        BUF_RESULT: 'success',
+        SCRIPTS_RESULT: 'success',
+        TORGHUT_RESULT: 'success',
+        TORGHUT_SCHEMA_RESULT: 'success',
+        TORGHUT_NOTEBOOKS_RESULT: 'success',
+        QUEUE_SERVICES_RESULT: 'success',
+        FULL_VALIDATION: full,
+        DELEGATED: '[]',
+      },
+    }).exitCode
+
+  expect(run('false', 'skipped', 'skipped', 'skipped')).toBe(0)
+  expect(run('true', 'success', 'success', 'success')).toBe(0)
+  for (const result of ['failure', 'cancelled', 'skipped']) {
+    expect(run('true', result, 'success', 'success')).toBe(1)
+    expect(run('true', 'success', result, 'success')).toBe(1)
+    expect(run('true', 'success', 'success', result)).toBe(1)
+  }
 })

@@ -1,8 +1,7 @@
 name: packages-scripts
 
 on:
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
   push:
     branches:
       - main
@@ -138,8 +137,11 @@ on:
       - nix/check-bun-dependency-closure.sh
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: packages-scripts-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   lint-and-test:

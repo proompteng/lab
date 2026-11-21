@@ -122,6 +122,8 @@ test('native PR validation preserves image publication and cache warming boundar
   for (const [event, ref, publishOnDispatch, publish, warm] of [
     ['pull_request', 'refs/pull/1/merge', false, false, false],
     ['pull_request', 'refs/heads/main', true, false, false],
+    ['merge_group', 'refs/heads/gh-readonly-queue/main/pr-1', false, false, false],
+    ['merge_group', 'refs/heads/main', true, false, false],
     ['push', 'refs/heads/main', false, true, true],
     ['push', 'refs/heads/feature', true, false, false],
     ['workflow_dispatch', 'refs/heads/main', false, true, true],
@@ -142,24 +144,43 @@ test('native PR validation preserves image publication and cache warming boundar
   }
 })
 
-test('Attic PR validation receives no cache credential and pins its reviewed source', () => {
-  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/attic-build-push.yaml', 'utf8'))
+test('Attic validates the exact PR or queue commit without cache publication credentials', () => {
+  const path = './.github/workflows/attic-build-push.yaml'
+  const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
   const jobs = property(workflow, 'jobs')
   const validation = property(jobs, 'validate')
   const publication = property(jobs, 'build-and-push')
+  expect(property(property(queue, 'jobs'), 'attic-image')).toEqual({ uses: path })
   expect(property(validation, 'secrets')).toBeUndefined()
-  expect(property(property(validation, 'with'), 'source_revision')).toBe('${{ github.event.pull_request.head.sha }}')
+  const sourceExpression = text(property(property(validation, 'with'), 'source_revision')).replace(
+    /^\s*\$\{\{|\}\}\s*$/g,
+    '',
+  )
   const credentials = property(publication, 'secrets')
   expect(Object.keys(credentials as Record<string, unknown>)).toEqual(['ATTIC_TOKEN'])
   const tokenExpression = text(property(credentials, 'ATTIC_TOKEN')).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
-  for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
+  for (const event of ['pull_request', 'merge_group', 'push', 'workflow_dispatch']) {
     for (const ref of ['refs/pull/1/merge', 'refs/heads/feature', 'refs/heads/main']) {
-      const context = { github: { event_name: event, ref }, secrets: { ATTIC_TOKEN: 'synthetic-upload-token' } }
-      expect(runInNewContext(text(property(validation, 'if')), context)).toBe(event === 'pull_request')
-      const publishes = runInNewContext(text(property(publication, 'if')), context)
-      expect(publishes).toBe(event !== 'pull_request')
-      const forwardedToken = publishes ? runInNewContext(tokenExpression, context) : ''
-      expect(forwardedToken).toBe(event !== 'pull_request' && ref === 'refs/heads/main' ? 'synthetic-upload-token' : '')
+      const context = {
+        github: {
+          event_name: event,
+          ref,
+          sha: 'queue-revision',
+          event: event === 'pull_request' ? { pull_request: { head: { sha: 'reviewed-head' } } } : {},
+        },
+        secrets: { ATTIC_TOKEN: 'synthetic-upload-token' },
+      }
+      const validates = event === 'pull_request' || event === 'merge_group'
+      expect(runInNewContext(text(property(validation, 'if')), context)).toBe(validates)
+      if (validates)
+        expect(runInNewContext(sourceExpression, context)).toBe(
+          event === 'merge_group' ? 'queue-revision' : 'reviewed-head',
+        )
+      const buildsRelease = runInNewContext(text(property(publication, 'if')), context)
+      expect(buildsRelease).toBe(event === 'workflow_dispatch' || (event === 'push' && ref === 'refs/heads/main'))
+      const forwardedToken = buildsRelease ? runInNewContext(tokenExpression, context) : ''
+      expect(forwardedToken).toBe(!validates && ref === 'refs/heads/main' ? 'synthetic-upload-token' : '')
     }
   }
 })
@@ -210,10 +231,256 @@ test.each(['bayn-build-push.yml', 'opencode-build-push.yml'])(
   },
 )
 
-test('OpenCode PR validation selects the PR head without publication secrets', () => {
+test.each([
+  ['bumba', ['pr-checks', 'atlas-integration']],
+  ['froussard', ['test']],
+  ['oirat', ['pr-checks']],
+] as const)('%s runs every validation job on a queued revision without a PR diff', (service, suites) => {
+  const filename = `./.github/workflows/${service}-ci.yml`
+  const workflow: unknown = Bun.YAML.parse(readFileSync(filename, 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  expect(property(property(queue, 'jobs'), service)).toEqual({ uses: filename })
+  const jobs = property(workflow, 'jobs')
+  for (const id of ['changes', ...suites, 'dependency-closure', 'nix-image']) {
+    const job = property(jobs, id)
+    const expression = text(property(job, 'if')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+    const queued = {
+      github: { event_name: 'merge_group', ref: 'refs/heads/main', event: {} },
+      needs: { changes: { result: 'skipped', outputs: {} } },
+      cancelled: () => false,
+    }
+    const runsWithoutPlanner = id !== 'changes' && id !== 'nix-image'
+    expect(runInNewContext(expression, queued)).toBe(runsWithoutPlanner)
+    if (runsWithoutPlanner) {
+      expect(property(job, 'secrets')).toBeUndefined()
+      expect(runInNewContext(expression, { ...queued, cancelled: () => true })).toBe(false)
+      for (const changed of ['true', 'false']) {
+        const ordinary = {
+          ...queued,
+          github: { event_name: 'pull_request', ref: 'refs/pull/42/merge', event: {} },
+          needs: { changes: { result: 'success', outputs: { changed } } },
+        }
+        expect(runInNewContext(expression, ordinary)).toBe(changed === 'true')
+      }
+    }
+  }
+})
+
+test('the full queue builds the same four native product images and verifies App dependencies in parallel', () => {
+  const publisher: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const jobs = property(queue, 'jobs')
+  const validation = property(jobs, 'product-image')
+  const imageBuilder = './.github/workflows/nix-oci-build-common.yml'
+  const releaseJobs = Object.values(property(publisher, 'jobs') as Record<string, unknown>).filter(
+    (job) => property(job, 'uses') === imageBuilder,
+  )
+  const images = releaseJobs.map((job) => text(property(property(job, 'with'), 'image_name')))
+  for (const [index, name] of images.entries()) {
+    expect(property(property(releaseJobs[index], 'with'), 'package_attr')).toBe(`${name}-image`)
+  }
+  expect(validation).toEqual({
+    strategy: { 'fail-fast': false, matrix: { image: images.sort() } },
+    uses: imageBuilder,
+    with: {
+      image_name: '${{ matrix.image }}',
+      package_attr: '${{ matrix.image }}-image',
+      tag: 'queue-${{ github.sha }}',
+      source_revision: '${{ github.sha }}',
+    },
+  })
+  const existingVerifier = property(property(publisher, 'jobs'), 'verify-app-dependency-closure')
+  expect(property(jobs, 'product-dependency-closure')).toEqual({
+    uses: property(existingVerifier, 'uses'),
+    with: property(existingVerifier, 'with'),
+  })
+})
+
+test('Temporal worker uses the same native build and heartbeat proof in PRs and the merge queue', () => {
+  const publisher: unknown = Bun.YAML.parse(readFileSync('.github/workflows/temporal-worker-images.yml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const shared: unknown = Bun.YAML.parse(readFileSync('.github/actions/build-temporal-worker/action.yml', 'utf8'))
+  const publisherJobs = property(publisher, 'jobs')
+  const build = property(publisherJobs, 'build')
+  const validation = property(property(queue, 'jobs'), 'temporal-worker')
+  const releaseMatrix = property(property(property(build, 'strategy'), 'matrix'), 'include') as unknown[]
+  expect(property(validation, 'strategy')).toEqual({
+    'fail-fast': false,
+    matrix: {
+      include: releaseMatrix.map((lane) => ({
+        architecture: property(lane, 'architecture'),
+        runner: property(lane, 'prRunner'),
+      })),
+    },
+  })
+  const action = './.github/actions/build-temporal-worker'
+  const baseSteps = [{ uses: 'actions/checkout@v6' }, { uses: './.github/actions/setup-buildkit' }]
+  const architecture = '${{ matrix.architecture }}'
+  expect(property(build, 'steps')).toEqual([
+    ...baseSteps,
+    { uses: action, with: { architecture, 'release-image': '${{ env.IMAGE }}' } },
+  ])
+  expect(property(validation, 'steps')).toEqual([...baseSteps, { uses: action, with: { architecture } }])
+  const steps = property(property(shared, 'runs'), 'steps') as unknown[]
+  const runtime = steps.find((step) => property(step, 'name') === 'Build runtime')
+  expect(property(property(runtime, 'with'), 'push')).toBe(
+    "${{ inputs.release-image != '' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}",
+  )
+  expect(property(property(runtime, 'with'), 'cache-to')).toContain("github.event_name != 'merge_group'")
+  const evidence = steps.find((step) => property(step, 'name') === 'Retain SDK heartbeat proof')
+  expect(property(evidence, 'run')).toContain('--target evidence')
+  const publication = property(publisherJobs, 'publish')
+  expect(property(publication, 'if')).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'")
+  expect(property(publication, 'needs')).toEqual(['build'])
+  expect(property(property(publication, 'permissions'), 'id-token')).toBe('write')
+})
+
+test('Kata validates its catalog and both native builds in the queue without publishing', () => {
+  const filename = 'kata-validation.yml'
+  const path = `./.github/workflows/${filename}`
+  const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
+  const publisher: unknown = Bun.YAML.parse(readFileSync('.github/workflows/kata-firecracker-extension.yaml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  expect(property(property(queue, 'jobs'), 'kata')).toEqual({ uses: path })
+  const inputs = property(property(property(workflow, 'on'), 'workflow_call'), 'inputs')
+  expect(property(property(inputs, 'publish-extension'), 'default')).toBe(false)
+  expect(property(property(inputs, 'build-extensions'), 'default')).toBe(true)
+  expect(property(property(inputs, 'validate-catalog'), 'default')).toBe(true)
+
+  const jobs = property(workflow, 'jobs')
+  const build = property(jobs, 'build')
+  const matrix = property(property(property(build, 'strategy'), 'matrix'), 'include')
+  expect(matrix).toEqual([
+    { architecture: 'amd64', runner: 'ubuntu-24.04' },
+    { architecture: 'arm64', runner: 'ubuntu-24.04-arm' },
+  ])
+  const steps = property(build, 'steps') as unknown[]
+  const components = steps.find((step) => property(step, 'name') === 'Build and test patched Kata components')
+  expect(property(components, 'run')).toContain('build-patched-kata.sh')
+  const image = steps.find((step) => property(step, 'name') === 'Build native extension image')
+  expect(property(property(image, 'with'), 'push')).toBe(false)
+  expect(property(property(image, 'with'), 'outputs')).toContain("env.EXPORT_EXTENSION == 'true'")
+  expect(property(property(build, 'env'), 'EXPORT_EXTENSION')).toBe(
+    "${{ inputs.publish-extension && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}",
+  )
+  const upload = steps.find((step) => property(step, 'name') === 'Upload native extension')
+  expect(property(upload, 'if')).toBe("env.EXPORT_EXTENSION == 'true'")
+  const catalog = property(jobs, 'catalog')
+  expect(property(catalog, 'runs-on')).toBe('ubuntu-24.04')
+  expect(property(catalog, 'steps')).toContainEqual({
+    name: 'Verify immutable input and build catalog',
+    run: 'devices/galactic/releases/catalog.sh build out/catalog',
+  })
+  expect(Object.keys(jobs as Record<string, unknown>)).toEqual(['catalog', 'build'])
+
+  const releaseJobs = property(publisher, 'jobs')
+  expect(property(releaseJobs, 'catalog')).toMatchObject({ uses: path, with: { 'build-extensions': false } })
+  expect(property(releaseJobs, 'build')).toMatchObject({
+    uses: path,
+    with: { 'validate-catalog': false, 'publish-extension': true },
+  })
+  expect(property(property(releaseJobs, 'publish-catalog'), 'needs')).toBe('catalog')
+  const publish = property(releaseJobs, 'publish')
+  expect(property(publish, 'needs')).toEqual(['changes', 'build'])
+  expect(property(publish, 'runs-on')).toBe('arc-amd64')
+  const publisherSteps = property(publish, 'steps') as unknown[]
+  const publishImage = publisherSteps.find((step) => property(step, 'name') === 'Publish, sign, and verify extension')
+  expect(property(publishImage, 'run')).toContain('skopeo copy --all --preserve-digests')
+})
+
+test('Signal Publisher validates the queued image revision without publication', () => {
+  const path = './.github/workflows/signal-publisher-build-push.yml'
+  const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  const image = property(jobs, 'image')
+  const closure = property(jobs, 'dependency-closure')
+  expect(property(property(queue, 'jobs'), 'signal-publisher-image')).toEqual({ uses: path })
+  expect(property(image, 'needs')).toBe('dependency-closure')
+  expect(property(closure, 'secrets')).toBeUndefined()
+
+  const child: unknown = Bun.YAML.parse(readFileSync('.github/workflows/nix-oci-build-common.yml', 'utf8'))
+  const context = {
+    github: { event_name: 'merge_group', ref: 'refs/heads/main', sha: 'queued-image-commit' },
+    needs: { changes: { result: 'skipped', outputs: {} } },
+    inputs: { publish_on_dispatch: true },
+    secrets: { ATTIC_TOKEN: 'publication-token' },
+    cancelled: () => false,
+  }
+  const evaluate = (value: unknown) => runInNewContext(text(value).replace(/^\$\{\{\s*|\s*\}\}$/g, ''), context)
+  expect(evaluate(property(property(jobs, 'changes'), 'if'))).toBe(false)
+  expect(evaluate(property(closure, 'if'))).toBe(true)
+  expect(evaluate(property(property(image, 'with'), 'source_revision'))).toBe('queued-image-commit')
+  expect(evaluate(property(property(image, 'secrets'), 'ATTIC_TOKEN'))).toBe('')
+  expect(evaluate(property(property(property(child, 'jobs'), 'publish-index'), 'if'))).toBe(false)
+})
+
+test('Devbox requires native validation in the queue with publication confined to main', () => {
+  const caller: unknown = Bun.YAML.parse(readFileSync('.github/workflows/codex-devbox.yml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const validationPath = './.github/workflows/codex-devbox-validate.yml'
+  const validation: unknown = Bun.YAML.parse(readFileSync(validationPath, 'utf8'))
+  const jobs = property(caller, 'jobs')
+  const build = property(jobs, 'validate')
+  const release = property(jobs, 'publish')
+  const inputs = property(property(property(validation, 'on'), 'workflow_call'), 'inputs')
+  expect(property(property(inputs, 'publish'), 'default')).toBe(false)
+  expect(property(validation, 'permissions')).toEqual({ contents: 'read' })
+  expect(property(property(queue, 'jobs'), 'codex-devbox')).toEqual({ uses: validationPath })
+  expect(property(build, 'uses')).toBe(validationPath)
+  expect(property(release, 'needs')).toBe('validate')
+  expect(property(release, 'permissions')).toEqual({ contents: 'read', 'id-token': 'write' })
+
+  const publishesImage = text(property(property(build, 'with'), 'publish')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  const signsRelease = text(property(release, 'if'))
+  for (const [event, ref, publishes] of [
+    ['pull_request', 'refs/pull/42/merge', false],
+    ['merge_group', 'refs/heads/gh-readonly-queue/main/pr-42', false],
+    ['merge_group', 'refs/heads/main', false],
+    ['push', 'refs/heads/main', true],
+    ['push', 'refs/heads/feature', false],
+    ['workflow_dispatch', 'refs/heads/main', true],
+    ['workflow_dispatch', 'refs/heads/feature', false],
+  ] as const) {
+    const context = { github: { event_name: event, ref } }
+    expect(runInNewContext(publishesImage, context)).toBe(publishes)
+    expect(runInNewContext(signsRelease, context)).toBe(publishes)
+  }
+})
+
+test('Headlamp validates queued manifests and images without a publication token', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/headlamp-ci.yml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  expect(property(property(workflow, 'on'), 'workflow_call')).toBeNull()
+  expect(property(property(queue, 'jobs'), 'headlamp')).toEqual({ uses: './.github/workflows/headlamp-ci.yml' })
+  const validations = ['validate-manifests', 'nix-image-pr'].map((id) => property(jobs, id))
+  expect(property(validations[1], 'secrets')).toBeUndefined()
+  const releaseIf = text(property(property(jobs, 'nix-image'), 'if')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  for (const [event, ref, validates, publishes] of [
+    ['pull_request', 'refs/pull/42/merge', true, false],
+    ['merge_group', 'refs/heads/gh-readonly-queue/main/pr-42', true, false],
+    ['merge_group', 'refs/heads/main', true, false],
+    ['push', 'refs/heads/main', false, true],
+    ['push', 'refs/heads/feature', false, false],
+    ['workflow_dispatch', 'refs/heads/main', false, true],
+  ] as const) {
+    const context = {
+      github: { event_name: event, ref, event: { head_commit: { message: 'fix headlamp' } } },
+      contains: (value: string, fragment: string) => value.includes(fragment),
+    }
+    for (const job of validations) expect(runInNewContext(text(property(job, 'if')), context)).toBe(validates)
+    expect(runInNewContext(releaseIf, context)).toBe(publishes)
+  }
+})
+
+test('OpenCode validation selects the PR or queue commit without publication secrets', () => {
   const validation: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-ci.yml', 'utf8'))
   const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-build-push.yml', 'utf8'))
   const image = property(property(validation, 'jobs'), 'image')
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  expect(property(property(validation, 'on'), 'workflow_call')).toBeNull()
+  expect(property(property(queue, 'jobs'), 'opencode')).toEqual({ uses: './.github/workflows/opencode-ci.yml' })
   expect(property(image, 'secrets')).toBeUndefined()
   expect(property(image, 'if')).toBeUndefined()
   expect(property(property(property(publication, 'jobs'), 'image'), 'if')).toBeUndefined()
@@ -224,6 +491,9 @@ test('OpenCode PR validation selects the PR head without publication secrets', (
       github: { sha: 'merge-commit', event: { pull_request: { head: { sha: 'reviewed-pr-head' } } } },
     }),
   ).toBe('reviewed-pr-head')
+  expect(runInNewContext(source, { github: { event_name: 'merge_group', sha: 'queued-revision', event: {} } })).toBe(
+    'queued-revision',
+  )
 
   const selected = (workflow: unknown, event: string, ref: string, file: string) => {
     const trigger = property(property(workflow, 'on'), event)
@@ -823,7 +1093,8 @@ test.each([
   'restate-images.yml',
   'product-nix-images.yml',
 ])('%s uses dependency-aware PR selection for the Landing-only regression', (filename) => {
-  const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+  const selectionWorkflow = filename === 'restate-images.yml' ? 'restate-validation.yml' : filename
+  const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${selectionWorkflow}`, 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing planner steps')
   const filter = steps.find((step) => property(step, 'id') === 'filter')
