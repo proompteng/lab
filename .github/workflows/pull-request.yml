@@ -454,6 +454,11 @@ jobs:
     with:
       changed_files_json: ${{ needs.plan.outputs.changed_files }}
 
+  bayn:
+    name: Bayn CI
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/bayn-ci.yml
+
   ci-pr:
     name: ci-pr
     if: ${{ always() }}
@@ -463,6 +468,7 @@ jobs:
       - landing
       - agents
       - agents-full
+      - bayn
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
@@ -473,6 +479,7 @@ jobs:
           LANDING_RESULT: ${{ needs.landing.result }}
           LANDING_EXPECTED: ${{ (github.event_name == 'merge_group' || contains(fromJSON(needs.plan.outputs.targets || '[]'), 'landing')) && 'success' || 'skipped' }}
           AGENTS_RESULT: ${{ github.event_name == 'merge_group' && needs.agents-full.result || needs.agents.result }}
+          BAYN_RESULT: ${{ needs.bayn.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
           FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
@@ -489,4 +496,8 @@ jobs:
             echo "Agents validation failed: agents=${AGENTS_RESULT}" >&2
             exit 1
           fi
-          echo "Router validation passed: agents=${AGENTS_RESULT}. Delegated workflows: ${DELEGATED}"
+          if [[ "${FULL_VALIDATION}" == true && "${BAYN_RESULT}" != success ]]; then
+            echo "Bayn validation failed: bayn=${BAYN_RESULT}" >&2
+            exit 1
+          fi
+          echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
