@@ -24,7 +24,7 @@ import {
 } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
-import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
+import { streamingFixtureFromRaw, streamingFixtureRequest } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { makeJevObservation } from './observation'
 import { decodeJevPortfolio, JevPurpose } from './portfolio'
@@ -53,23 +53,22 @@ export const nativeJevFixture = (
   protocolDocument: unknown = defaultJevProtocolDocument,
   cycleBindingId = 'a'.repeat(64),
   returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
-  calendar?: ReturnType<typeof streamingFixture>['query']['calendar'],
+  calendar?: ReturnType<typeof streamingFixtureRequest>['calendar'],
   observedPriceChoices = true,
   momentum = true,
 ) => {
-  const base = streamingFixture()
+  const base = streamingFixtureRequest()
   const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
   const equity = protocol.marketProfiles.find((profile) => profile.feed === 'iex')
   if (equity === undefined) throw new Error('Expected the exact equity source profile')
-  const selectedCalendar = calendar ?? base.query.calendar
+  const selectedCalendar = calendar ?? base.calendar
   const selectedDate = Schema.decodeUnknownSync(IsoDateSchema)(
-    calendar === undefined ? base.query.sessionDate : (exchangeSessions(calendar)[0]?.date ?? base.query.sessionDate),
+    calendar === undefined ? base.sessionDate : (exchangeSessions(calendar)[0]?.date ?? base.sessionDate),
   )
   const end =
-    Math.floor((Date.parse(observedAt ?? base.query.observedAt) - protocol.decisionDelaySeconds * 1000) / 60_000) *
-    60_000
+    Math.floor((Date.parse(observedAt ?? base.observedAt) - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
   const timedQuery = {
-    ...base.query,
+    ...base,
     universeId: equity.universeId,
     universeSymbolHash: equity.universeSymbolHash,
     universe: equity.universe,
@@ -78,7 +77,7 @@ export const nativeJevFixture = (
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
-    observedAt: observedAt ?? base.query.observedAt,
+    observedAt: observedAt ?? base.observedAt,
     rangeStartAt: new Date(
       jevHistoryStartMs(
         selectedCalendar,
@@ -110,11 +109,7 @@ export const nativeJevFixture = (
     snapshot,
   } = streamingFixtureFromRaw(
     (() => {
-      const raw = makeIntradayMomentumTestSnapshot(
-        protocol,
-        { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
-        returns,
-      )
+      const raw = makeIntradayMomentumTestSnapshot(protocol, query, returns)
       const firstMinute = raw.bars[0]?.eventAt
       return {
         ...raw,

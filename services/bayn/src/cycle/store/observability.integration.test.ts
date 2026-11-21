@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -22,6 +22,11 @@ import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from 
 import { defaultJevProtocolDocument } from '../../jev/protocol'
 import { makeIntradayCycleDraft } from '../runner/calendar-decisions'
 import { ForwardPerformanceUnavailableReason } from '../observability'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../../testing/postgres-template.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleObservability, CycleObservabilityLive } from './observability'
 import { CycleStore } from './model'
@@ -39,11 +44,6 @@ const sessionDate = '2026-08-28' as const
 const acquiredAt = '2026-08-28T13:00:00.000Z'
 const activatedAt = '2026-08-28T14:31:00.000Z'
 const reconciledAt = '2026-08-28T14:30:00.000Z'
-const config = {
-  ...fixtureConfig,
-  operationTimeoutMs: 5_000,
-  postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
-}
 
 describePostgres('PostgreSQL operation diagnostics', () => {
   test('identifies a real lock wait and emits its named operation without parameters', async () => {
@@ -164,20 +164,19 @@ const draft = () => {
   return candidate
 }
 
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     Layer.mergeAll(CycleStoreLive, CycleObservabilityLive).pipe(
-      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provideMerge(
+        PostgresClientLive({
+          ...fixtureConfig,
+          operationTimeoutMs: 5_000,
+          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
+        }),
+      ),
       Layer.provideMerge(NodeServices.layer),
     ),
   )
-
-const resetDatabase = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`DROP SCHEMA public CASCADE`
-  yield* sql`CREATE SCHEMA public`
-  yield* postgresMigrations
-})
 
 const seedSafetyState = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -299,23 +298,35 @@ const seedPositionSnapshots = (
   })
 
 describePostgres('PostgreSQL intraday observability projection', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
 
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
-      throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
-    }
-    runtime = makeRuntime()
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const initializer = makeRuntime(url)
+      try {
+        await initializer.runPromise(postgresMigrations)
+      } finally {
+        await initializer.dispose()
+      }
+    })
   })
 
   beforeEach(async () => {
-    await runtime.runPromise(resetDatabase)
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
   })
 
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+
+  afterAll(async () => template?.dispose())
 
   test('projects the persisted continuous calendar for a native crypto admission', async () => {
     const window = value(
@@ -594,16 +605,19 @@ describePostgres('PostgreSQL intraday observability projection', () => {
             source_event_id, source_sequence, occurred_at, observed_at
           ) VALUES
             (${'e'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'e'.repeat(64)}, 'ORDER', 'ALPACA', ${accountId},
-              'latency-order-observed', 1, '2026-08-28T14:32:00.350Z', '2026-08-28T14:32:01.500Z'),
+              'order:latency-order:2026-08-28T14:32:00.350000000Z', 1,
+              '2026-08-28T14:32:00.350Z', '2026-08-28T14:32:01.500Z'),
             (${'f'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'f'.repeat(64)}, 'FILL', 'ALPACA', ${accountId},
               'latency-fill-observed', 2, '2026-08-28T14:32:00.800Z', '2026-08-28T14:32:02.000Z')`
               yield* sql`
           INSERT INTO orders (
             event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
-            side, order_type, time_in_force, quantity_atoms, filled_quantity_atoms, limit_price_micros, status
+            side, order_type, time_in_force, quantity_atoms, filled_quantity_atoms, limit_price_micros, status,
+            broker_updated_at
           ) VALUES (
             ${'e'.repeat(64)}, ${accountId}, 'bayn.order.v3', 'latency-order', 'bayn-observability-unresolved',
-            ${'6'.repeat(64)}, 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 500000, 1000000, 'CANCELED'
+            ${'6'.repeat(64)}, 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 500000, 1000000, 'CANCELED',
+            '2026-08-28T14:32:00.350000000Z'
           )`
               yield* sql`
           INSERT INTO fills (

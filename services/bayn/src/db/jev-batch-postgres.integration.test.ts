@@ -76,10 +76,10 @@ import { prepareJevRequest } from '../jev/contract'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevResolutionStatus, makeJevResolution } from '../jev/resolution'
-import { makeJevTradingSignalBatch } from '../jev/trading-signals'
+import { makeJevTradingSignalBatch, prepareJevTradingSignalBatch } from '../jev/trading-signals'
 import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
-import { makeJevObservation } from '../jev/observation'
+import { makeJevObservation, makeOwnedJevObservation } from '../jev/observation'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import {
   prepareClonedPostgres,
@@ -1051,18 +1051,18 @@ describePostgres('PostgreSQL complete Jev batches', () => {
               reconciliationId: sha256(`streaming-expiry-reconciliation:${at}`),
             }
             const observation = yield* Effect.fromResult(
-              makeJevObservation({
+              makeOwnedJevObservation({
                 ...source.input,
                 authorityGenerationHash: generation,
                 portfolio: { ...source.portfolio, brokerState: { ...source.portfolio.brokerState, reconciliation: r } },
               }),
             )
-            const sourcePlan = yield* Effect.fromResult(
-              makeJevTradingSignalBatch({
-                observation: observation.payload,
-                expiresAt: utcInstantFromEpochMillis(at + source.protocol.inferenceValidityMs),
-                planVersion: JevBatchPlanVersion.V8,
-              }),
+            const batch = yield* Effect.fromResult(
+              prepareJevTradingSignalBatch(
+                observation,
+                utcInstantFromEpochMillis(at + source.protocol.inferenceValidityMs),
+                JevBatchPlanVersion.V8,
+              ),
             )
             yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${utcInstantFromEpochMillis(at)}::timestamptz
             WHERE account_id = ${replayAccountId}`
@@ -1071,11 +1071,11 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash},
               ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt}) ON CONFLICT DO NOTHING`
             yield* TestClock.setTime(at)
-            yield* beginRecordedJevBatch(batches, sourcePlan, observation.payload, {
+            yield* batches.begin(batch, {
               deferProviderDispatch: true,
               sourceReference: streamingSnapshotReference(source.snapshot),
             })
-            return sourcePlan
+            return batch.plan
           })
         for (let index = 0; index < 65; index += 1) {
           const expiredPlan = yield* admitAt(observed + index)

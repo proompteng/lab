@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - 'packages/codex/**'
+      - '.github/workflows/codex-ci.yml'
+  merge_group:
+    types: [checks_requested]
   push:
     branches:
       - main
