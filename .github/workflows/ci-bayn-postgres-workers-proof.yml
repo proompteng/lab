@@ -1,0 +1,111 @@
+{
+  "name": "Compare Bayn PostgreSQL worker counts",
+  "on": {
+    "push": {
+      "branches": [
+        "codex/ci-bayn-postgres-workers-8f9dwp"
+      ]
+    }
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "jobs": {
+    "compare": {
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 20,
+      "services": {
+        "postgres": {
+          "image": "postgres:18-alpine",
+          "env": {
+            "POSTGRES_USER": "bayn",
+            "POSTGRES_PASSWORD": "bayn",
+            "POSTGRES_DB": "bayn_test"
+          },
+          "ports": [
+            "5432:5432"
+          ],
+          "options": "--health-cmd \"pg_isready -U bayn -d bayn_test\" --health-interval 1s --health-timeout 5s --health-retries 30"
+        }
+      },
+      "env": {
+        "BAYN_TEST_POSTGRES_URL": "postgresql://bayn:bayn@127.0.0.1:5432/bayn_test"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v5",
+          "with": {
+            "ref": "5717c4b41e06447d085d4863d49d869952b1d392",
+            "persist-credentials": false
+          }
+        },
+        {
+          "uses": "oven-sh/setup-bun@v2",
+          "with": {
+            "bun-version": "1.4.2"
+          }
+        },
+        {
+          "name": "Install focused dependencies",
+          "run": "bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn"
+        },
+        {
+          "name": "Measure baseline",
+          "working-directory": "services/bayn",
+          "shell": "bash",
+          "env": {
+            "EXPECTED_COMMIT": "5717c4b41e06447d085d4863d49d869952b1d392",
+            "BAYN_PROBE_FILES": "./src/db/broker-observations.integration.test.ts\n./src/db/candidate-cutover-diagnostics.integration.test.ts\n./src/db/candidate-observation-window.integration.test.ts\n./src/db/continuous-cash-spot.integration.test.ts\n./src/db/current-authority-migration.integration.test.ts\n./src/db/current-jev-cycle-migration.integration.test.ts\n./src/db/effective-entry-observe-cutover.integration.test.ts\n./src/db/equity-short-accounting.integration.test.ts\n./src/db/execution-controller-status-postgres.integration.test.ts\n./src/db/execution-store.integration.test.ts\n./src/db/explicit-limit-decision-migration.integration.test.ts\n./src/db/explicit-limit-migration.integration.test.ts\n./src/db/forward-performance-receipt.integration.test.ts\n./src/db/jev-batch-postgres.integration.test.ts",
+            "BUN_EXPECTED": "1.4.2",
+            "BAYN_PROBE_MODE": "baseline"
+          },
+          "run": "set -euo pipefail\nproof=\"$RUNNER_TEMP/bayn-pg-worker-proof\"\nmkdir -p \"$proof\"\ntest \"$(bun --version)\" = \"$BUN_EXPECTED\"\ntest \"$(git rev-parse HEAD)\" = \"$EXPECTED_COMMIT\"\nmapfile -t files <<< \"$BAYN_PROBE_FILES\"\ntest \"${#files[@]}\" -eq 14\nBAYN_TEST_POSTGRES_FILE_PREFIX=\"bayn_file_$(openssl rand -hex 16)_\"\nexport BAYN_TEST_POSTGRES_FILE_PREFIX\nworkers=()\ncase \"$BAYN_PROBE_MODE\" in\n  baseline) ;;\n  workers2) workers=(--parallel=2) ;;\n  cores)\n    cores=$(nproc)\n    test \"$cores\" -ge 2\n    workers=(--parallel=\"$cores\")\n    ;;\n  *) exit 1 ;;\nesac\n/usr/bin/time -p -o \"$proof/$BAYN_PROBE_MODE.time\" \\\n  bun test --isolate --no-orphans --randomize --seed=671924 \"${workers[@]}\" \\\n  --preload=./tools/postgres-file-preload.ts --reporter=junit \\\n  --reporter-outfile=\"$proof/$BAYN_PROBE_MODE.xml\" \"${files[@]}\"\nbun - <<'JS'\nimport { SQL } from \"bun\"\nconst sql = new SQL(process.env.BAYN_TEST_POSTGRES_URL)\nconst rows = await sql`SELECT count(*)::int AS remaining FROM pg_database WHERE starts_with(datname, ${process.env.BAYN_TEST_POSTGRES_FILE_PREFIX})`\nawait sql.close()\nif (rows[0].remaining !== 0) process.exit(1)\nJS\ncat \"$proof/$BAYN_PROBE_MODE.time\"\n"
+        },
+        {
+          "uses": "oven-sh/setup-bun@v2",
+          "with": {
+            "bun-version": "1.4.3"
+          }
+        },
+        {
+          "name": "Measure workers2",
+          "working-directory": "services/bayn",
+          "shell": "bash",
+          "env": {
+            "EXPECTED_COMMIT": "5717c4b41e06447d085d4863d49d869952b1d392",
+            "BAYN_PROBE_FILES": "./src/db/broker-observations.integration.test.ts\n./src/db/candidate-cutover-diagnostics.integration.test.ts\n./src/db/candidate-observation-window.integration.test.ts\n./src/db/continuous-cash-spot.integration.test.ts\n./src/db/current-authority-migration.integration.test.ts\n./src/db/current-jev-cycle-migration.integration.test.ts\n./src/db/effective-entry-observe-cutover.integration.test.ts\n./src/db/equity-short-accounting.integration.test.ts\n./src/db/execution-controller-status-postgres.integration.test.ts\n./src/db/execution-store.integration.test.ts\n./src/db/explicit-limit-decision-migration.integration.test.ts\n./src/db/explicit-limit-migration.integration.test.ts\n./src/db/forward-performance-receipt.integration.test.ts\n./src/db/jev-batch-postgres.integration.test.ts",
+            "BUN_EXPECTED": "1.4.3",
+            "BAYN_PROBE_MODE": "workers2"
+          },
+          "run": "set -euo pipefail\nproof=\"$RUNNER_TEMP/bayn-pg-worker-proof\"\nmkdir -p \"$proof\"\ntest \"$(bun --version)\" = \"$BUN_EXPECTED\"\ntest \"$(git rev-parse HEAD)\" = \"$EXPECTED_COMMIT\"\nmapfile -t files <<< \"$BAYN_PROBE_FILES\"\ntest \"${#files[@]}\" -eq 14\nBAYN_TEST_POSTGRES_FILE_PREFIX=\"bayn_file_$(openssl rand -hex 16)_\"\nexport BAYN_TEST_POSTGRES_FILE_PREFIX\nworkers=()\ncase \"$BAYN_PROBE_MODE\" in\n  baseline) ;;\n  workers2) workers=(--parallel=2) ;;\n  cores)\n    cores=$(nproc)\n    test \"$cores\" -ge 2\n    workers=(--parallel=\"$cores\")\n    ;;\n  *) exit 1 ;;\nesac\n/usr/bin/time -p -o \"$proof/$BAYN_PROBE_MODE.time\" \\\n  bun test --isolate --no-orphans --randomize --seed=671924 \"${workers[@]}\" \\\n  --preload=./tools/postgres-file-preload.ts --reporter=junit \\\n  --reporter-outfile=\"$proof/$BAYN_PROBE_MODE.xml\" \"${files[@]}\"\nbun - <<'JS'\nimport { SQL } from \"bun\"\nconst sql = new SQL(process.env.BAYN_TEST_POSTGRES_URL)\nconst rows = await sql`SELECT count(*)::int AS remaining FROM pg_database WHERE starts_with(datname, ${process.env.BAYN_TEST_POSTGRES_FILE_PREFIX})`\nawait sql.close()\nif (rows[0].remaining !== 0) process.exit(1)\nJS\ncat \"$proof/$BAYN_PROBE_MODE.time\"\n"
+        },
+        {
+          "name": "Measure cores",
+          "working-directory": "services/bayn",
+          "shell": "bash",
+          "env": {
+            "EXPECTED_COMMIT": "5717c4b41e06447d085d4863d49d869952b1d392",
+            "BAYN_PROBE_FILES": "./src/db/broker-observations.integration.test.ts\n./src/db/candidate-cutover-diagnostics.integration.test.ts\n./src/db/candidate-observation-window.integration.test.ts\n./src/db/continuous-cash-spot.integration.test.ts\n./src/db/current-authority-migration.integration.test.ts\n./src/db/current-jev-cycle-migration.integration.test.ts\n./src/db/effective-entry-observe-cutover.integration.test.ts\n./src/db/equity-short-accounting.integration.test.ts\n./src/db/execution-controller-status-postgres.integration.test.ts\n./src/db/execution-store.integration.test.ts\n./src/db/explicit-limit-decision-migration.integration.test.ts\n./src/db/explicit-limit-migration.integration.test.ts\n./src/db/forward-performance-receipt.integration.test.ts\n./src/db/jev-batch-postgres.integration.test.ts",
+            "BUN_EXPECTED": "1.4.3",
+            "BAYN_PROBE_MODE": "cores"
+          },
+          "run": "set -euo pipefail\nproof=\"$RUNNER_TEMP/bayn-pg-worker-proof\"\nmkdir -p \"$proof\"\ntest \"$(bun --version)\" = \"$BUN_EXPECTED\"\ntest \"$(git rev-parse HEAD)\" = \"$EXPECTED_COMMIT\"\nmapfile -t files <<< \"$BAYN_PROBE_FILES\"\ntest \"${#files[@]}\" -eq 14\nBAYN_TEST_POSTGRES_FILE_PREFIX=\"bayn_file_$(openssl rand -hex 16)_\"\nexport BAYN_TEST_POSTGRES_FILE_PREFIX\nworkers=()\ncase \"$BAYN_PROBE_MODE\" in\n  baseline) ;;\n  workers2) workers=(--parallel=2) ;;\n  cores)\n    cores=$(nproc)\n    test \"$cores\" -ge 2\n    workers=(--parallel=\"$cores\")\n    ;;\n  *) exit 1 ;;\nesac\n/usr/bin/time -p -o \"$proof/$BAYN_PROBE_MODE.time\" \\\n  bun test --isolate --no-orphans --randomize --seed=671924 \"${workers[@]}\" \\\n  --preload=./tools/postgres-file-preload.ts --reporter=junit \\\n  --reporter-outfile=\"$proof/$BAYN_PROBE_MODE.xml\" \"${files[@]}\"\nbun - <<'JS'\nimport { SQL } from \"bun\"\nconst sql = new SQL(process.env.BAYN_TEST_POSTGRES_URL)\nconst rows = await sql`SELECT count(*)::int AS remaining FROM pg_database WHERE starts_with(datname, ${process.env.BAYN_TEST_POSTGRES_FILE_PREFIX})`\nawait sql.close()\nif (rows[0].remaining !== 0) process.exit(1)\nJS\ncat \"$proof/$BAYN_PROBE_MODE.time\"\n"
+        },
+        {
+          "name": "Verify equivalent file and test coverage",
+          "shell": "bash",
+          "run": "set -euo pipefail\npython3 - <<'EOF'\nfrom pathlib import Path\nfrom xml.etree import ElementTree as ET\nfrom collections import Counter\nimport os\ndirectory = Path(os.environ['RUNNER_TEMP']) / 'bayn-pg-worker-proof'\nreference = None\nfor mode in ('baseline', 'workers2', 'cores'):\n    root = ET.parse(directory / f'{mode}.xml').getroot()\n    assert int(root.attrib['failures']) == 0 and int(root.attrib['skipped']) == 0\n    suites = root.findall('testsuite')\n    files = Counter(suite.attrib['file'].removeprefix('./') for suite in suites)\n    assert len(files) == 14 and set(files.values()) == {1}\n    cases = Counter((case.get('file'), case.get('classname'), case.get('name'), case.get('assertions'))\n                    for case in root.iter('testcase'))\n    if reference is None:\n        reference = files, cases\n    assert (files, cases) == reference\n    print(mode, sum(cases.values()), 'passing test identities,', len(files), 'files; ', (directory / f'{mode}.time').read_text().replace('\\n',' '))\nEOF\n"
+        },
+        {
+          "uses": "actions/upload-artifact@v4",
+          "if": "always()",
+          "with": {
+            "name": "bayn-pg-worker-comparison",
+            "path": "${{ runner.temp }}/bayn-pg-worker-proof",
+            "if-no-files-found": "error"
+          }
+        }
+      ]
+    }
+  }
+}
