@@ -6,7 +6,14 @@ import { TestClock } from 'effect/testing'
 
 import { verifyReportJob } from '../forward-performance-verification-worker'
 import { executionEvidenceFromRows, indexExecutionEvidence, verifyPerformanceDecisions } from './postgres/projection'
+import type { CycleDecisionJsonRow } from './postgres/model'
 import { retainedV38ExecutionFixture } from '../jev/retained-v38-execution.test-support'
+import {
+  makeIntradayPerformanceFixture,
+  makeStreamingPerformanceFixture,
+  makeStreamingPartitionPerformanceFixture,
+} from './intraday-cycle.test-support'
+import { intradayPerformanceDecisionRequest, makeIntradayPerformanceVolumeEvidenceBatch } from './intraday-volume'
 import {
   makeReportVerification,
   reportVerificationConcurrency,
@@ -21,7 +28,7 @@ const row = (ordinal = 0) => ({
   cycle_id: 'a'.repeat(64),
   decision_hash: ordinal.toString(16).padStart(64, '0'),
   created_at: new Date('2026-11-15T00:00:00.000Z'),
-  document: null,
+  document_json: 'null',
 })
 
 class FixtureWorker extends EventEmitter {
@@ -269,7 +276,16 @@ test('native worker preserves genuine retained execution projections and rejects
     document: JSON.parse(bytes.toString('utf8')),
   }
   const corrupt = { ...valid, document: { ...valid.document, contentHash: 'f'.repeat(64) } }
-  const inputs = Array.from({ length: reportVerificationConcurrency + 2 }, (_, n) => (n % 2 === 0 ? valid : corrupt))
+  const objects = [valid, corrupt, { ...valid, document: null }]
+  const transported: (typeof CycleDecisionJsonRow.Type)[] = objects.map(({ document, ...metadata }) => ({
+    ...metadata,
+    document_json: JSON.stringify(document),
+  }))
+  transported.push({ ...transported[0]!, document_json: '{' }, { ...transported[0]!, document_json: null })
+  const inputs = Array.from(
+    { length: reportVerificationConcurrency + 2 },
+    (_, n) => transported[n % transported.length]!,
+  )
   const actual = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -278,14 +294,80 @@ test('native worker preserves genuine retained execution projections and rejects
       }),
     ),
   )
-  const expected = [valid, corrupt].map((input) => {
+  const expected = objects.map((input) => {
     const verified = verifyPerformanceDecisions([input])
     return {
       executionEvidence: executionEvidenceFromRows(verified.verifiedRows, index),
       unverifiedDecisionHashes: verified.unverifiedDecisionHashes,
     }
   })
+  expected.push(
+    { executionEvidence: [], unverifiedDecisionHashes: [valid.decision_hash] },
+    { executionEvidence: [], unverifiedDecisionHashes: [valid.decision_hash] },
+  )
   expect(actual).toEqual(inputs.map((_, n) => expected[n % expected.length]))
   expect(actual[0]?.executionEvidence.length).toBeGreaterThan(0)
   expect(actual[1]?.unverifiedDecisionHashes).toEqual([valid.decision_hash])
+}, 30_000)
+
+test('native volume verification preserves complete, sparse and missing-close evidence and typed failures', async () => {
+  const { request, archive, bars } = makeIntradayPerformanceFixture()
+  const inputs = [bars, bars.slice(1), bars.slice(0, -1), [bars[0], ...bars]]
+  const actual = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const verifier = yield* makeReportVerification()
+        return yield* Effect.forEach(inputs, (input) => verifier.volume([request], archive, input).pipe(Effect.result))
+      }),
+    ),
+  )
+  for (const [i, input] of inputs.entries()) {
+    const expected = makeIntradayPerformanceVolumeEvidenceBatch([request], archive, input)
+    const result = actual[i]
+    if (Result.isSuccess(expected)) expect(result).toEqual(expected)
+    else {
+      expect(result).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'IntradaySnapshotFailure',
+          reason: expected.failure.reason,
+          message: expected.failure.message,
+        },
+      })
+    }
+  }
+}, 30_000)
+
+test('native grouping authenticates original intraday, streaming and partition manifests before querying', async () => {
+  const inputs = [
+    makeIntradayPerformanceFixture,
+    makeStreamingPerformanceFixture,
+    makeStreamingPartitionPerformanceFixture,
+  ].flatMap((makeFixture) => {
+    const { request } = makeFixture()
+    return [request, { ...request, decisionSnapshotId: '0'.repeat(64) }]
+  })
+  const actual = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const verifier = yield* makeReportVerification()
+        return yield* Effect.forEach(inputs, (request) => verifier.volumeRequest(request).pipe(Effect.result), {
+          concurrency: 2,
+        })
+      }),
+    ),
+  )
+  for (const [i, request] of inputs.entries()) {
+    const expected = intradayPerformanceDecisionRequest(request)
+    if (Result.isSuccess(expected)) expect(actual[i]).toEqual(expected)
+    else
+      expect(actual[i]).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'IntradaySnapshotFailure',
+          reason: expected.failure.reason,
+          message: expected.failure.message,
+        },
+      })
+  }
 }, 30_000)

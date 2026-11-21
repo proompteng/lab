@@ -12,6 +12,7 @@ import {
 import { legacyReconciliationSchemaVersion, legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
 import { IntentPlanSchema, type IntentPlan } from '../execution/intents/domain'
 import { EquityShortEligibilitySchema } from '../execution/equity-short'
+import { ProtectionCloseBasisSchema } from '../execution/protection-close-basis'
 import {
   IsoDateSchema,
   NonNegativeIntegerSchema,
@@ -194,6 +195,7 @@ const QuoteBoundTargetPlannerInputBase = Schema.Struct({
   ...TargetPlannerInputFields,
   allocationCapitalMicros: UnsignedMicrosSchema,
   executionTerms: QuoteBoundExecutionTermsSchema,
+  protectionClose: Schema.optionalKey(ProtectionCloseBasisSchema),
 })
 
 const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Type): readonly Schema.FilterIssue[] => {

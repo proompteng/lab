@@ -219,6 +219,7 @@ export const advancePositionProtection = (request: {
           cycle,
           delayMs: 5_000,
           observedAt,
+          protectionReleaseCycleId: cycle.identity.cycleId,
           logContext: {
             cycleId: cycle.identity.cycleId,
             intentId: order.intentId,

@@ -1,3 +1,9 @@
+import durableBrokerSourceEvents from '../../migrations/0206_durable_broker_source_events'
+import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
+import protectionClosePlans from '../../migrations/0204_protection_close_plans'
+import protectionReadAllowance from '../../migrations/0203_protection_read_allowance'
+import protectionReleaseProofs from '../../migrations/0202_protection_release_proofs'
+import notDispatchedVisualEvidence from '../../migrations/0201_not_dispatched_visual_evidence'
 import nativeEquityShorts from '../../migrations/0200_native_equity_shorts'
 import equityShortObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
 import equityShortAccounting from '../../migrations/0198_equity_short_accounting'
@@ -201,6 +207,12 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '206_durable_broker_source_events': durableBrokerSourceEvents,
+  '205_inference_source_seals': inferenceSourceSeals,
+  '204_protection_close_plans': protectionClosePlans,
+  '203_protection_read_allowance': protectionReadAllowance,
+  '202_protection_release_proofs': protectionReleaseProofs,
+  '201_not_dispatched_visual_evidence': notDispatchedVisualEvidence,
   '197_inference_expense_wakeups': inferenceExpenseWakeups,
   '198_equity_short_accounting': equityShortAccounting,
   '199_equity_short_observe_cutover': equityShortObserveCutover,

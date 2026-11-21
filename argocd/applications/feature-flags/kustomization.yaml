@@ -14,16 +14,16 @@ configMapGenerator:
 helmCharts:
   - name: flipt-v2
     repo: https://helm.flipt.io
-    version: 2.12.1
+    version: 2.14.2
     releaseName: feature-flags
     namespace: feature-flags
     valuesFile: flipt-values.yaml
 
 images:
   - name: docker.flipt.io/flipt/flipt
-    newName: mirror.gcr.io/flipt/flipt
-    newTag: v2.12.0
-    digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05
+    newName: docker.io/flipt/flipt
+    newTag: v2.14.2
+    digest: sha256:121830e237c3a0d2b875f73905944d6ff301fdd7881c5abdec5f24f5549537e8
 
 patches:
   - target:

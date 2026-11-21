@@ -18,7 +18,8 @@ export const decisionQuery = (
     ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
     LIMIT 1
   )
-  SELECT decision_rows.cycle_id, decision_rows.decision_hash, decision_rows.document, decision_rows.created_at
+  SELECT decision_rows.cycle_id, decision_rows.decision_hash,
+    decision_rows.document::text AS document_json, decision_rows.created_at
   FROM (
     ${executionDecisionRows(sql)}
   ) AS decision_rows

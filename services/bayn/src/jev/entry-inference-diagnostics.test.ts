@@ -304,11 +304,12 @@ const runSourceInfeasible = async (
   )
   const exit = await Effect.runPromiseExit(
     evaluateClaimedEntryInferences([
-      makeJevDispatch({
-        request,
-        claimedAt: claim.claimedAt,
-        visualClaim: prepared.visualClaim,
-      }),
+      Result.getOrThrow(
+        makeJevDispatch({
+          request,
+          claimedAt: claim.claimedAt,
+        }),
+      ),
     ]).pipe(Effect.provide(layer)),
   )
   return { exit, messages, request }

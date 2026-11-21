@@ -251,6 +251,7 @@ interface ScenarioInput {
   readonly assetOverrides?: Partial<ReturnType<typeof brokerAssetFixture>>
   readonly shortConfiguration?: AccountConfigurationObservation
   readonly brokerAccount?: Account
+  readonly freshShortAccount?: Account
   readonly brokerAccountAtRead?: (orderReads: number) => Account
   readonly positions?: readonly Position[]
   readonly positionSnapshots?: readonly (readonly Position[])[]
@@ -350,6 +351,21 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         positionReads = input.positionSnapshots === undefined ? 0 : 1
         orderReads = input.orderSnapshots === undefined ? 0 : 1
         const cached = cachedBrokerStateFixture(input.brokerAccount ?? account(), cachedPositions, cachedOrders)
+        const read = submissionProjectionFixture(brokerRead)
+        const freshShortAccount = input.freshShortAccount
+        const shortRead =
+          freshShortAccount === undefined || read.projection === undefined
+            ? read
+            : {
+                ...read,
+                projection: {
+                  ...read.projection,
+                  fresh: {
+                    ...brokerRead,
+                    account: Effect.succeed(readResult(freshShortAccount, freshShortAccount.observedAt)),
+                  },
+                },
+              }
         const snapshot = yield* confirmExecutionBrokerState(
           {
             ...cached,
@@ -360,7 +376,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
             },
           },
           proposedIntent,
-          submissionProjectionFixture(brokerRead),
+          shortRead,
         )
         const persisted = yield* persistedCapitalGrants.read()
         if (persisted === undefined) return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const })
@@ -410,6 +426,8 @@ test.each([
   'shorting-disabled',
   'configuration-disabled',
   'stale-account',
+  'fresh-account-with-older-projection',
+  'cash-changed-after-projection',
   'stale-asset',
   'stale-configuration',
   'collateral',
@@ -421,18 +439,31 @@ test.each([
   const { grantHash: _hash, ...material } = original
   const grant = Result.getOrThrow(makeCapitalGrantRecord({ ...material, validUntil: '2026-07-28T15:00:00.000Z' }))
   const covering = scenario === 'cover-after-revocation'
+  const refreshAccount =
+    scenario === 'fresh-account-with-older-projection' || scenario === 'cash-changed-after-projection'
+  const projectedAt = refreshAccount ? '2026-07-28T14:29:27.976Z' : scenario === 'stale-account' ? stale : at
+  const expectedSubmit = scenario === 'eligible' || scenario === 'fresh-account-with-older-projection' || covering
   const observed = await runLiveSubmit({
     environment: BrokerEnvironment.Sandbox,
     grant,
     observedAt: at,
-    accountObservedAt: scenario === 'stale-account' ? stale : at,
+    accountObservedAt: projectedAt,
     positionsObservedAt: at,
     ordersObservedAt: at,
     brokerAccount: account({
       shortingEnabled: scenario !== 'shorting-disabled' && !covering,
-      observedAt: scenario === 'stale-account' ? stale : at,
+      observedAt: projectedAt,
       buyingPowerMicros: scenario === 'collateral' ? '149999999' : '1000000000',
     }),
+    ...(refreshAccount
+      ? {
+          freshShortAccount: account({
+            shortingEnabled: true,
+            observedAt: at,
+            cashMicros: scenario === 'cash-changed-after-projection' ? '990000000' : '1000000000',
+          }),
+        }
+      : {}),
     shortConfiguration: Result.getOrThrow(
       normalizeAccountConfigurationResult(
         { fractional_trading: true, no_shorting: scenario === 'configuration-disabled' || covering },
@@ -486,8 +517,8 @@ test.each([
           }),
     }),
   })
-  expect(observed.submits).toBe(scenario === 'eligible' || covering ? 1 : 0)
-  expect(observed.exit._tag).toBe(scenario === 'eligible' || covering ? 'Success' : 'Failure')
+  expect(observed.submits).toBe(expectedSubmit ? 1 : 0)
+  expect(observed.exit._tag).toBe(expectedSubmit ? 'Success' : 'Failure')
 })
 
 test.each([
@@ -687,7 +718,7 @@ describe('final broker mutation authority', () => {
       ...fresh,
       projection: {
         fresh,
-        snapshot: unusedRead,
+        reconciliationSnapshot: unusedRead,
         invalidate: Effect.void,
         withMutation: (effect) => effect,
         submissionSnapshot: (id) =>

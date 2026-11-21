@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 def yamls(text: str) -> list[dict]:
@@ -70,6 +71,11 @@ def main() -> None:
     container = pod["containers"][0]
     assert container["securityContext"]["allowPrivilegeEscalation"] is False
     assert "@sha256:" in container["image"]
+    host = urlparse(config["PAPERLESS_URL"]).hostname
+    for probe in ("startupProbe", "readinessProbe"):
+        assert {"name": "Host", "value": host} in container[probe]["httpGet"].get(
+            "httpHeaders", []
+        ), f"{probe} must send the configured Paperless host"
     assert "PAPERLESS_SECRET_KEY" not in config
     for name in ("PAPERLESS_SECRET_KEY", "PAPERLESS_ADMIN_PASSWORD", "PAPERLESS_REDIS"):
         assert (

@@ -46,6 +46,37 @@ import {
 export const LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH =
   'd290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063'
 
+export const readAuthorityState = (sql: PgClient.PgClient) => {
+  const statement = sql`
+    SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
+      version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
+    FROM authority_state
+    WHERE singleton
+  `
+  return runExecutionOperation(
+    'authority',
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transaction = yield* Effect.serviceOption(sql.transactionService)
+        const connection = Option.isSome(transaction)
+          ? transaction.value[0]
+          : yield* sql.reserve.pipe(withObservedStage('bayn.postgres.connection-acquire', { dependency: 'postgresql' }))
+        const [query, parameters] = statement.compile()
+        return yield* connection
+          .execute(query, parameters, undefined)
+          .pipe(withObservedStage('bayn.postgres.authority-query', { dependency: 'postgresql' }))
+      }),
+    ).pipe(
+      Effect.flatMap(decodeAuthorityStateRows),
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? failExecutionStore('authority', 'invariant', 'durable authority state is missing')
+          : authorityStateFromRow(rows[0]),
+      ),
+    ),
+  )
+}
+
 export interface ObserveGenerationBrokerIdentityFailure {
   readonly failure: 'conflict' | 'invariant'
   readonly message: string
@@ -521,35 +552,6 @@ export const makeObserveAuthorityInterpreter = (
       ),
     )
 
-  const authorityStateQuery = sql`
-        SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
-        FROM authority_state
-        WHERE singleton
-      `
-  const readAuthorityState = runExecutionOperation(
-    'authority',
-    Effect.scoped(
-      Effect.gen(function* () {
-        const transaction = yield* Effect.serviceOption(sql.transactionService)
-        const connection = Option.isSome(transaction)
-          ? transaction.value[0]
-          : yield* sql.reserve.pipe(withObservedStage('bayn.postgres.connection-acquire', { dependency: 'postgresql' }))
-        const [statement, parameters] = authorityStateQuery.compile()
-        return yield* connection
-          .execute(statement, parameters, undefined)
-          .pipe(withObservedStage('bayn.postgres.authority-query', { dependency: 'postgresql' }))
-      }),
-    ).pipe(
-      Effect.flatMap(decodeAuthorityStateRows),
-      Effect.flatMap((rows) =>
-        rows[0] === undefined
-          ? failExecutionStore('authority', 'invariant', 'durable authority state is missing')
-          : authorityStateFromRow(rows[0]),
-      ),
-    ),
-  )
-
   const readResearchAuthorityGeneration = (generationHash: string) =>
     runExecutionOperation(
       'authority',
@@ -588,7 +590,7 @@ export const makeObserveAuthorityInterpreter = (
   return {
     ensureAuthorityGeneration,
     readOrInitializeObserveAuthority,
-    readAuthorityState,
+    readAuthorityState: readAuthorityState(sql),
     readResearchAuthorityGeneration,
     readAuthorityGenerationLineage,
   }

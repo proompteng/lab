@@ -51,6 +51,8 @@ test('the registered Kubernetes namespaces match the executor RBAC without grant
 test('the platform release validates both clients before publishing its immutable image', () => {
   const workflow = YAML.parse(source('.github/workflows/relay.yml'))
   expect(workflow.on.push.branches).toEqual(['main'])
+  expect(workflow.on.merge_group.types).toEqual(['checks_requested'])
+  expect(workflow.jobs.image.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'")
   expect(workflow.jobs.image.needs).toBe('validate')
   expect(workflow.jobs.image.with.publish_kargo_tag).toBe(true)
   const checks = workflow.jobs.validate.steps.map((step: { run?: string }) => step.run || '').join('\n')

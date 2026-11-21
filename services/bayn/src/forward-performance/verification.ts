@@ -7,11 +7,14 @@ import {
   type DecodedInferenceCostRequest,
 } from '../inference-costs'
 import type { InferenceExpenseQuote, verifyInferenceExpenseCoverage } from '../inference-expense'
-import type { CycleDecisionRow } from './postgres/model'
+import type { CycleDecisionJsonRow } from './postgres/model'
 import type { indexExecutionEvidence } from './postgres/projection'
 import type { ForwardPerformanceExecutionEvidence } from './model'
+import { IntradaySnapshotFailure, type IntradaySnapshotRequest } from '../market-data/intraday/model'
+import type { ForwardPerformanceIntradayMarketVolumeRequest } from './model'
+import type { makeIntradayPerformanceVolumeEvidenceBatch } from './intraday-volume'
 
-export const reportVerificationConcurrency = 8
+export const reportVerificationConcurrency = process.arch === 'arm64' ? 16 : 8
 
 export interface ReportDecisionProjection {
   readonly executionEvidence: readonly ForwardPerformanceExecutionEvidence[]
@@ -24,6 +27,8 @@ export enum ReportVerificationTask {
   Decision = 'DECISION',
   Inference = 'INFERENCE',
   Coverage = 'COVERAGE',
+  Volume = 'VOLUME',
+  VolumeRequest = 'VOLUME_REQUEST',
 }
 
 export interface ReportExpenseCoverageInput {
@@ -34,15 +39,26 @@ export interface ReportExpenseCoverageInput {
 }
 
 export type ReportExpenseCoverage = Result.Result.Success<ReturnType<typeof verifyInferenceExpenseCoverage>>
+export type ReportVolumeEvidence = Result.Result.Success<ReturnType<typeof makeIntradayPerformanceVolumeEvidenceBatch>>
 
 export type ReportVerificationInput =
   | {
       readonly task: ReportVerificationTask.Decision
-      readonly row: typeof CycleDecisionRow.Type
+      readonly row: typeof CycleDecisionJsonRow.Type
       readonly index?: ReportDecisionIndex
     }
   | { readonly task: ReportVerificationTask.Inference; readonly input: unknown; readonly asOf: string }
   | { readonly task: ReportVerificationTask.Coverage; readonly input: ReportExpenseCoverageInput }
+  | {
+      readonly task: ReportVerificationTask.VolumeRequest
+      readonly request: ForwardPerformanceIntradayMarketVolumeRequest
+    }
+  | {
+      readonly task: ReportVerificationTask.Volume
+      readonly requests: readonly ForwardPerformanceIntradayMarketVolumeRequest[]
+      readonly archiveRequest: IntradaySnapshotRequest
+      readonly rawBars: readonly unknown[]
+    }
 
 export interface ReportVerificationJob {
   readonly id: number
@@ -53,6 +69,15 @@ export type ReportVerificationReply = { readonly id: number } & (
   | { readonly outcome: 'DECISION'; readonly value: ReportDecisionProjection }
   | { readonly outcome: 'INFERENCE'; readonly value: DecodedInferenceCostRequest }
   | { readonly outcome: 'COVERAGE'; readonly value: ReportExpenseCoverage }
+  | { readonly outcome: 'VOLUME'; readonly value: ReportVolumeEvidence }
+  | { readonly outcome: 'VOLUME_REQUEST'; readonly value: IntradaySnapshotRequest }
+  | {
+      readonly outcome: 'INVALID_VOLUME'
+      readonly failure: Pick<
+        IntradaySnapshotFailure,
+        'reason' | 'message' | 'facts' | 'ingestionDelayDirection' | 'cause'
+      >
+    }
   | { readonly outcome: 'INVALID_INFERENCE'; readonly message: string; readonly cause: unknown }
   | { readonly outcome: 'DEFECT'; readonly cause: unknown }
 )
@@ -183,6 +208,10 @@ export const makeReportVerification = (
                 reply.outcome === 'DEFECT'
                   ? Effect.die(reply.cause)
                   : (input.task === ReportVerificationTask.Decision && reply.outcome === 'DECISION') ||
+                      (input.task === ReportVerificationTask.Volume &&
+                        (reply.outcome === 'VOLUME' || reply.outcome === 'INVALID_VOLUME')) ||
+                      (input.task === ReportVerificationTask.VolumeRequest &&
+                        (reply.outcome === 'VOLUME_REQUEST' || reply.outcome === 'INVALID_VOLUME')) ||
                       (input.task === ReportVerificationTask.Coverage &&
                         (reply.outcome === 'COVERAGE' || reply.outcome === 'INVALID_INFERENCE')) ||
                       (input.task === ReportVerificationTask.Inference &&
@@ -196,7 +225,33 @@ export const makeReportVerification = (
           (Exit.isFailure(exit) ? dispose(slot) : Effect.void).pipe(Effect.ensuring(Queue.offer(available, slot))),
       )
     return {
-      decision: (row: typeof CycleDecisionRow.Type, index: ReturnType<typeof indexExecutionEvidence>) =>
+      volumeRequest: (request: ForwardPerformanceIntradayMarketVolumeRequest) =>
+        run({ task: ReportVerificationTask.VolumeRequest, request }).pipe(
+          Effect.flatMap(
+            (reply): Effect.Effect<IntradaySnapshotRequest, IntradaySnapshotFailure | ReportVerificationError> =>
+              reply.outcome === 'VOLUME_REQUEST'
+                ? Effect.succeed(reply.value)
+                : reply.outcome === 'INVALID_VOLUME'
+                  ? Effect.fail(new IntradaySnapshotFailure(reply.failure))
+                  : Effect.fail(failed('Report verification omitted its volume request')),
+          ),
+        ),
+      volume: (
+        requests: readonly ForwardPerformanceIntradayMarketVolumeRequest[],
+        archiveRequest: IntradaySnapshotRequest,
+        rawBars: readonly unknown[],
+      ) =>
+        run({ task: ReportVerificationTask.Volume, requests, archiveRequest, rawBars }).pipe(
+          Effect.flatMap(
+            (reply): Effect.Effect<ReportVolumeEvidence, IntradaySnapshotFailure | ReportVerificationError> =>
+              reply.outcome === 'VOLUME'
+                ? Effect.succeed(reply.value)
+                : reply.outcome === 'INVALID_VOLUME'
+                  ? Effect.fail(new IntradaySnapshotFailure(reply.failure))
+                  : Effect.fail(failed('Report verification omitted its volume evidence')),
+          ),
+        ),
+      decision: (row: typeof CycleDecisionJsonRow.Type, index: ReturnType<typeof indexExecutionEvidence>) =>
         run({ task: ReportVerificationTask.Decision, row, index }).pipe(
           Effect.flatMap((reply) =>
             reply.outcome === 'DECISION'
