@@ -37,6 +37,9 @@ jobs:
   graf-service:
     uses: ./.github/workflows/graf-service.yml
 
+  headlamp:
+    uses: ./.github/workflows/headlamp-ci.yml
+
   jangar-guardrails:
     uses: ./.github/workflows/jangar-guardrails.yml
 

@@ -201,6 +201,32 @@ test.each(['bayn-build-push.yml', 'opencode-build-push.yml'])(
   },
 )
 
+test('Headlamp validates queued manifests and images without a publication token', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/headlamp-ci.yml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  expect(property(property(workflow, 'on'), 'workflow_call')).toBeNull()
+  expect(property(property(queue, 'jobs'), 'headlamp')).toEqual({ uses: './.github/workflows/headlamp-ci.yml' })
+  const validations = ['validate-manifests', 'nix-image-pr'].map((id) => property(jobs, id))
+  expect(property(validations[1], 'secrets')).toBeUndefined()
+  const releaseIf = text(property(property(jobs, 'nix-image'), 'if')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  for (const [event, ref, validates, publishes] of [
+    ['pull_request', 'refs/pull/42/merge', true, false],
+    ['merge_group', 'refs/heads/gh-readonly-queue/main/pr-42', true, false],
+    ['merge_group', 'refs/heads/main', true, false],
+    ['push', 'refs/heads/main', false, true],
+    ['push', 'refs/heads/feature', false, false],
+    ['workflow_dispatch', 'refs/heads/main', false, true],
+  ] as const) {
+    const context = {
+      github: { event_name: event, ref, event: { head_commit: { message: 'fix headlamp' } } },
+      contains: (value: string, fragment: string) => value.includes(fragment),
+    }
+    for (const job of validations) expect(runInNewContext(text(property(job, 'if')), context)).toBe(validates)
+    expect(runInNewContext(releaseIf, context)).toBe(publishes)
+  }
+})
+
 test('OpenCode validation selects the PR or queue commit without publication secrets', () => {
   const validation: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-ci.yml', 'utf8'))
   const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-build-push.yml', 'utf8'))

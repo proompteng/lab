@@ -475,6 +475,10 @@
       "pattern": "^graf-service(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "headlamp",
+      "pattern": "^headlamp(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "jangar-guardrails",
       "pattern": "^jangar-guardrails(?: \\(.*\\))?(?: /.*)?$"
     },
