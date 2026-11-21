@@ -1,14 +1,11 @@
 package ai.proompteng.dorvud.ws
 
-import ai.proompteng.dorvud.platform.KafkaAuth
-import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import java.net.URI
 import java.util.UUID
 
 internal class BrokerFeedSettings(
   val connection: BrokerFeedConnection,
-  val topic: String,
-  val kafka: KafkaProducerSettings,
+  val restateIngressUrl: String,
   val proxyUrl: String,
 ) {
   companion object {
@@ -21,10 +18,10 @@ internal class BrokerFeedSettings(
       }
       val revision = required("DORVUD_SOURCE_REVISION")
       require(revision.matches(Regex("[a-f0-9]{40}"))) { "broker feed source revision must be a Git commit" }
-      val topic = required("BAYN_BROKER_NOTIFICATIONS_TOPIC")
-      require(topic.matches(Regex("bayn\\.broker-notifications\\.v1"))) { "broker notifications require the isolated Bayn topic" }
-      val securityProtocol = required("KAFKA_SECURITY_PROTOCOL")
-      require(securityProtocol in setOf("SASL_SSL", "SASL_PLAINTEXT")) { "broker notifications require Kafka authentication" }
+      val restateIngressUrl = required("RESTATE_INGRESS_URL")
+      require(restateIngressUrl == "http://restate.restate.svc.cluster.local:8080") {
+        "broker notifications require the internal Restate ingress"
+      }
       val proxyUrl = required("BAYN_ALPACA_PROXY_URL")
       val proxy = URI(proxyUrl)
       require(
@@ -38,14 +35,7 @@ internal class BrokerFeedSettings(
           secretKey = required("BAYN_ALPACA_SECRET_KEY"),
           sourceRevision = revision,
         ),
-        topic,
-        KafkaProducerSettings(
-          bootstrapServers = required("KAFKA_BOOTSTRAP"),
-          clientId = "bayn-broker-feed",
-          lingerMs = 0,
-          securityProtocol = securityProtocol,
-          auth = KafkaAuth(required("KAFKA_SASL_USER"), required("KAFKA_SASL_PASSWORD")),
-        ),
+        restateIngressUrl,
         proxyUrl,
       )
     }

@@ -319,6 +319,9 @@ export const RetainedJevProtocolV36Schema = Schema.Struct({
   ),
 )
 
+// Original default at 4467bce540bb135b96a59b1ee37396885914df0a; retained readers cannot substitute new parameters.
+export const retainedJevProtocolV37ParameterHash = '4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6'
+
 export const RetainedJevProtocolV37Schema = Schema.Struct({
   ...CurrentProtocol.fields,
   ...protocolFields(

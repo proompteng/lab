@@ -117,12 +117,24 @@ export const prepareSignalStudyBatch = (input: unknown) =>
       return yield* Result.fail(new SignalStudyFailure({ message: 'The study requires native Jev observations' }))
     const batchResult = batch.batchResult === null ? null : yield* decodeJevStudyBatchResult(source, batch.batchResult)
     const decidedAt = batch.batchResult?.completedAt ?? plan.expiresAt
-    const native =
-      batch.batchResult === null || observation.portfolio.purpose !== JevPurpose.Entry
+    const currentNative =
+      batch.batchResult === null || observation.portfolio.purpose !== JevPurpose.Entry || source._tag === 'RETAINED_V38'
         ? null
-        : source._tag === 'RETAINED_V38'
-          ? selectRetainedJevStudyEntry(source, batch.batchResult, decidedAt)
-          : decideJevEntry({ ...batch, decidedAt })
+        : decideJevEntry({ ...batch, decidedAt })
+    const native =
+      source._tag === 'RETAINED_V38' && batch.batchResult !== null && observation.portfolio.purpose === JevPurpose.Entry
+        ? selectRetainedJevStudyEntry(source, batch.batchResult, decidedAt)
+        : currentNative
+    if (currentNative !== null && Result.isSuccess(currentNative)) {
+      const target = currentNative.success
+      const short = target.selectedSymbols.find((symbol) => (target.targetWeights[symbol] ?? 0) < 0)
+      if (short !== undefined)
+        return yield* Result.fail(
+          new SignalStudyFailure({
+            message: `Frozen long-only study cannot evaluate SHORT selection ${short} (target weight ${target.targetWeights[short]}) in batch ${plan.batchId}`,
+          }),
+        )
+    }
     const usable =
       batch.batchResult === null ? null : jevStudyBatchInferencesAt(source, batch.batchResult, Date.parse(decidedAt))
     const inferences = usable !== null && Result.isSuccess(usable) ? usable.success : []

@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - 'packages/codex/**'
+      - '.github/workflows/codex-ci.yml'
+  merge_group:
+    types: [checks_requested]
   push:
     branches:
       - main
@@ -20,7 +23,7 @@ jobs:
     with:
       bun-version: 1.4.2
       node-version: 24.11.1
-      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/codex && bun add -g @openai/codex@0.166.0
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/codex && bun add -g @openai/codex@0.170.0
       lint-command: bunx oxfmt --check packages/codex
       oxlint-command: bun run --cwd packages/codex lint:oxlint
       oxlint-type-command: bun run --cwd packages/codex lint:oxlint:type

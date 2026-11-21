@@ -263,6 +263,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'configmap.yaml',
       'flinkdeployment.yaml',
       'metrics-service.yaml',
+      'taskmanager-metrics-service.yaml',
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({

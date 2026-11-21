@@ -4,6 +4,15 @@ let
   # Hosted runners can reach Attic, but cannot follow redirects to its private S3 endpoint.
   atticServer = pkgs.attic-server.overrideAttrs (old: {
     patches = (old.patches or [ ]) ++ [ ./attic-stream-nars.patch ];
+    # Exercise only the server's stream diagnostics; upstream disables its
+    # client tests because those need a trusted Nix daemon.
+    doCheck = true;
+    cargoTestFlags = (old.cargoTestFlags or [ ]) ++ [
+      "-p"
+      "attic-server"
+      "--lib"
+      "api::binary_cache::stream_error::tests"
+    ];
   });
 in
 pkgs.dockerTools.buildLayeredImage {

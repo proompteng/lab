@@ -35,6 +35,21 @@ patch to the pinned upstream server to select its existing streaming path, keepi
 cache contents and public pull permissions unchanged. Verify an actual small NAR download, not only
 `nix-cache-info`, after rollout.
 
+NAR stream failures report a fixed `error_class`, the validated Nix store-path
+hash, the single-chunk or reassembly mode, and a bounded source-chain depth.
+The classifier examines at most eight error sources, including wrapped I/O
+timeouts, resets, broken pipes and premature EOF. It recognizes the private
+minimum-throughput error in pinned `aws-smithy-runtime` 1.8.3 by its fixed text
+prefix without collecting or emitting the text. Other failures remain
+`unclassified_body_read`; `chain_limit_reached` identifies a truncated or cyclic
+chain. Raw causes, S3 URLs, object keys, headers and credentials are not logged.
+These labels describe observed errors, not a proven storage or network cause.
+The image build is configured to run focused Rust tests for classification, bounded traversal,
+log privacy and preservation of partial bodies and original errors in both
+stream modes. Pull requests build both architectures at the exact reviewed head
+without publishing images or receiving the cache-upload credential. The separate
+publication job forwards only `ATTIC_TOKEN`, and only on `main`.
+
 The API deployment runs database migrations in an init container, then starts
 `atticd --mode api-server`. Garbage collection runs separately through
 `CronJob/attic-gc`.
@@ -211,6 +226,27 @@ before they can populate Attic; shorter per-image deadlines interrupted those
 downloads and made the retry start them again. Archive uploads have a separate
 30-minute deadline. The shared workflow records upload success or failure for
 every image size.
+
+If Attic interrupts an HTTP 200 NAR download after sending bytes, Nix 2.28 cannot
+resume it because Attic does not support byte-range requests. The native image
+build retries once after five seconds only for that exact partial-file error
+and its dependency failures. Normal builds keep source fallback disabled. The
+single retry adds Nix's native `--fallback`, allowing a failed substitution to
+build from the same reviewed derivation and its declared inputs. This flag
+covers every substitution in that retry, including dependencies; it is not
+restricted to the originally interrupted NAR. Downloaded content retains Nix's
+hash and signature checks. An input-addressed source rebuild does not establish
+byte equality with the cached NAR.
+
+Both attempts share the existing 45-minute build deadline. Hash, signature,
+authentication, compilation, mixed errors, and other download failures on the
+first attempt remain terminal. A failed retry or source rebuild preserves its
+failure, and the wrapper never starts a third attempt. Image verification,
+source identity, and cohort publication gates remain required. The phase log
+retains both attempts and identifies when source fallback was enabled.
+An explicit source revision that predates the retry helper retains the original
+single bounded build, so the reusable workflow can still build older PR heads
+without mixing files from another revision.
 
 Attic chunks NARs of at least 16 MiB at a 16 MiB average, with 4 MiB minimum
 and 32 MiB maximum chunks. A 2 GiB archive therefore needs roughly 128 chunk

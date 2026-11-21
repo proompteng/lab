@@ -10,6 +10,12 @@ on:
   pull_request:
     paths:
       - 'packages/otel/**'
+      - '.github/workflows/otel-ci.yml'
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -24,4 +30,3 @@ jobs:
       oxlint-command: bunx oxlint --config .oxlintrc.json packages/otel/src packages/otel/tests
       test-command: bun run --filter @proompteng/otel test
       build-command: bun run --filter @proompteng/otel build
-    secrets: inherit

@@ -2,7 +2,7 @@ import { Cause, Clock, Effect, Exit, Fiber, Ref, Result } from 'effect'
 
 import { OrderCollection, SortDirection, type BrokerReadShape } from '../broker/alpaca/model'
 import { verifyBrokerAccountPermissions, type BrokerAccountPreflightFailure } from '../broker/alpaca/preflight'
-import { type BrokerReadError } from '../broker/alpaca/failures'
+import { BrokerReadError } from '../broker/alpaca/failures'
 import type { ObservedBrokerState } from '../broker/alpaca/observed-snapshot'
 import type { RuntimeConfig } from '../config/model'
 import { operationalError } from '../errors'
@@ -34,7 +34,16 @@ const observe = <A, E, R>(
   Effect.flatMap(Effect.exit(effect), (exit): Effect.Effect<ProbeResult<A>> => {
     if (Exit.isSuccess(exit)) return Effect.succeed({ _tag: 'Available', value: exit.value })
     if (Cause.hasInterrupts(exit.cause)) return Effect.interrupt
-    return Effect.succeed({ _tag: 'Unavailable', error: probeFailureMessage(exit.cause, fallback) })
+    const failure = Cause.findError(exit.cause)
+    const observationFailure =
+      Result.isSuccess(failure) && !Cause.hasDies(exit.cause) && failure.success instanceof BrokerReadError
+        ? failure.success.observationFailure
+        : undefined
+    return Effect.succeed({
+      _tag: 'Unavailable',
+      error: probeFailureMessage(exit.cause, fallback),
+      ...(observationFailure === undefined ? {} : { observationFailure }),
+    })
   })
 
 const renderBrokerPermissionFailure = (failure: BrokerAccountPreflightFailure): string => {
@@ -63,7 +72,7 @@ const namedBrokerRead = <A, E, R>(
         result._tag === 'Available'
           ? result
           : {
-              _tag: 'Unavailable',
+              ...result,
               error: `Alpaca ${behavior} unavailable: ${result.error}`,
             },
     ),
@@ -104,9 +113,7 @@ const observeBrokerComponents = (read: BrokerReadShape, timeoutMs: number) =>
 
 const observeBrokerProjection = (snapshot: Effect.Effect<ObservedBrokerState, BrokerReadError>, timeoutMs: number) => {
   const component = <A>(behavior: string, result: ProbeResult<A>): ProbeResult<A> =>
-    result._tag === 'Available'
-      ? result
-      : { _tag: 'Unavailable', error: `Alpaca ${behavior} unavailable: ${result.error}` }
+    result._tag === 'Available' ? result : { ...result, error: `Alpaca ${behavior} unavailable: ${result.error}` }
   return observe(snapshot).pipe(
     Effect.map((result) => {
       const select = <A>(behavior: string, get: (value: ObservedBrokerState) => A): ProbeResult<A> =>
@@ -146,8 +153,18 @@ const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<
     : observeBrokerProjection(read.projection.healthSnapshot, timeoutMs)
   ).pipe(
     Effect.map((results): ProbeResult<BrokerHealthObservation> => {
-      const failures = Object.values(results).flatMap((result) => (result._tag === 'Unavailable' ? [result.error] : []))
-      if (failures.length > 0) return { _tag: 'Unavailable', error: failures.join('; ') }
+      const failures = Object.values(results).flatMap((result) => (result._tag === 'Unavailable' ? [result] : []))
+      if (failures.length > 0) {
+        const observationFailure = failures[0]?.observationFailure
+        return {
+          _tag: 'Unavailable',
+          error: failures.map((failure) => failure.error).join('; '),
+          ...(observationFailure !== undefined &&
+          failures.every((failure) => failure.observationFailure === observationFailure)
+            ? { observationFailure }
+            : {}),
+        }
+      }
 
       if (results.account._tag !== 'Available' || results.accountConfiguration._tag !== 'Available') {
         return { _tag: 'Unavailable', error: 'Alpaca continuous broker-read health did not complete' }

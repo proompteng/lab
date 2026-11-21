@@ -1,11 +1,11 @@
 # Temporal worker runtime
 
-This image adds CPU and memory reporting to Temporal's internal Go SDK workers. The upstream 1.31.2 server creates
+This image adds CPU and memory reporting to Temporal's internal Go SDK workers. The upstream 1.32.2 server creates
 workers without a system resource provider, so their SDK heartbeats report zero usage and the UI displays
 "Missing Dependency". Worker heartbeats are already enabled; a dynamic configuration or UI setting cannot supply
 the missing provider.
 
-The build pins Temporal 1.31.2 at `19a774302c613da9adc4436ab14278ccdca8e0a5`, keeps Go SDK 1.41.1, and adds
+The build pins Temporal 1.32.2 at `6d085822273f4336796e6959c73ab1d14a23eb77`, uses upstream Go SDK 1.44.0, and adds
 `gopsutil` 4.24.8. The SDK discovers its resource provider through the workflow slot supplier's `HasSysInfoProvider`
 interface. The adapter wraps the existing tuner, or reconstructs the SDK's fixed tuner from the existing execution
 limits, and supplies one shared host collector. CPU and memory are fractions of the host's actual capacity. A
@@ -28,7 +28,7 @@ and replaces `/usr/local/bin/temporal-server` with the patched binary.
 
 ## Worker Deployment routing
 
-The routing patch fixes a race between the deployment workflow's signal listener and continue-as-new. Go SDK 1.41.1
+The routing patch fixes a race between the deployment workflow's signal listener and continue-as-new. Go SDK 1.44.0
 can reserve a signal in a blocked selector before `HasPending()` sees it. If an update finishes in the same workflow
 task, the main coroutine can serialize the next run before the listener handles `propagation-complete`. The next run
 then retains an already-completed routing revision indefinitely.
@@ -133,4 +133,4 @@ Do not directly change the live Deployment image.
 
 Primary contracts: [host resource reporting](https://docs.temporal.io/cloud/worker-health#enable-host-resource-reporting),
 [SDK 1.41.1 heartbeat provider lookup](https://github.com/temporalio/sdk-go/blob/v1.41.1/internal/internal_worker.go),
-and [server 1.31.2 worker factory](https://github.com/temporalio/temporal/blob/v1.31.2/common/sdk/factory.go).
+and [server 1.32.2 worker factory](https://github.com/temporalio/temporal/blob/v1.32.2/common/sdk/factory.go).

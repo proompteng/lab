@@ -8,6 +8,19 @@ Tailscale identity is `nuc.ide-newton.ts.net` (`100.78.240.108`).
 - `pihole/` — Pi-hole runbook and repo-tracked config for Kubernetes split DNS over Tailscale.
 - `omni/` — pinned, reproducible self-hosted Omni and Tailscale OIDC bundle.
 
+## Operator SSH access
+
+From an enrolled operator workstation, use `ssh nuc` if the local alias is configured, or
+`ssh kalmyk@nuc.ide-newton.ts.net` with the existing operator identity and trusted host key. If MagicDNS is
+unavailable, use `100.78.240.108` with the same identity and verified host key. Confirm an unfamiliar host key
+against a trusted operator record or the NUC console before accepting it.
+
+Agent Shell can reach the NUC's tailnet SSH listener. Its Omni Reader identity only authorizes the Omni API.
+Collect the journal from the operator workstation using the
+[Pi-hole incident procedure](pihole/README.md#collect-evidence-during-a-dns-or-egress-interruption).
+For managed log collection, follow the [Agent Shell inspection pattern](../../docs/agents/agents-shell-infrastructure.md),
+with a dedicated approved client key, a verified NUC host key and a server-side forced command scoped to the journal.
+
 ## Sunshine + Moonlight (remote desktop/streaming)
 
 As of `2026-02-21`, remote desktop on this host uses Sunshine (Moonlight client).

@@ -1974,7 +1974,7 @@ describe('execution with the native reconciliation cache', () => {
         },
         invalidate: Effect.void,
         withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-        snapshot: Effect.die('not used by this final confirmation fixture'),
+        reconciliationSnapshot: Effect.die('not used by this final confirmation fixture'),
         submissionSnapshot: () =>
           Effect.succeed({
             account: readResult(brokerAccount()),

@@ -1,0 +1,33 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: bayn-ledger-retention
+spec:
+  failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [persistentvolumes]
+        scope: Cluster
+  matchConditions:
+    - name: bayn-ledger-claim
+      expression: >-
+        has(object.spec.storageClassName) && object.spec.storageClassName == 'local-path' &&
+        has(object.spec.claimRef) && has(object.spec.claimRef.namespace) &&
+        object.spec.claimRef.namespace == 'bayn' && has(object.spec.claimRef.name) &&
+        object.spec.claimRef.name in ['data-ledger-0', 'data-ledger-1', 'data-ledger-2']
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          [JSONPatch{op: 'add', path: '/spec/persistentVolumeReclaimPolicy', value: 'Retain'}]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: bayn-ledger-retention
+spec:
+  policyName: bayn-ledger-retention

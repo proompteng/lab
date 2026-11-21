@@ -174,6 +174,12 @@ export enum OrderSide {
   Sell = 'sell',
 }
 
+export enum TradeActivitySide {
+  Buy = 'buy',
+  Sell = 'sell',
+  SellShort = 'sell_short',
+}
+
 export enum TimeInForce {
   Day = 'day',
   GoodUntilCanceled = 'gtc',
@@ -473,7 +479,13 @@ export interface BrokerSubmissionSnapshot {
 
 export interface BrokerReadProjection {
   readonly healthSnapshot?: Effect.Effect<ObservedBrokerState, BrokerReadError>
-  readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
+  readonly reconciliationSnapshot: Effect.Effect<
+    {
+      readonly snapshot: StableBrokerSnapshot
+      readonly complete: Effect.Effect<void, BrokerReadError>
+    },
+    BrokerReadError
+  >
   readonly submissionSnapshot: (intentId: string) => Effect.Effect<BrokerSubmissionSnapshot, BrokerReadError>
   readonly fresh: BrokerReadShape
   readonly invalidate: Effect.Effect<void>
@@ -491,9 +503,14 @@ export interface BrokerReadShape {
   readonly orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly feeActivities: (query?: FeeActivitiesQuery) => Effect.Effect<ReadResult<FeeActivityPage>, BrokerReadError>
   readonly fillActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FillActivityPage>, BrokerReadError>
+  readonly accountActivity?: Effect.Effect<import('./activity-stream').AccountActivityCut, BrokerReadError>
   readonly marketCalendar: (
     query: MarketCalendarQuery,
   ) => Effect.Effect<ReadResult<MarketCalendarObservation>, BrokerReadError>
+}
+
+export interface FillExecution extends Omit<FillActivity, 'activityId'> {
+  readonly executionId: string
 }
 
 export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()(
@@ -669,7 +686,7 @@ export const FillActivityResponseSchema = Schema.Struct({
   leaves_qty: Decimal,
   price: Decimal,
   qty: Decimal,
-  side: Schema.Enum(OrderSide),
+  side: Schema.Enum(TradeActivitySide),
   symbol: ResponseSymbol,
   transaction_time: Timestamp,
   order_id: Uuid,

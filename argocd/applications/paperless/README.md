@@ -6,7 +6,7 @@ suggestions and document chat backed by the existing Flamingo inference service.
 ## Components and access
 
 - UI: `https://paperless.ide-newton.ts.net` (Tailscale only, no public ingress).
-- Paperless `3.4.2`: one **rootless** Pod with 1 CPU / 2 GiB requested and
+- Paperless `3.5.1`: one **rootless** Pod with 1 CPU / 2 GiB requested and
   4 CPU / 4 GiB limited. Two task workers × two OCR threads, with English OCR.
   Kubernetes Service links are disabled to avoid injecting the `PAPERLESS_PORT`
   service URI into Granian's numeric listening-port setting.

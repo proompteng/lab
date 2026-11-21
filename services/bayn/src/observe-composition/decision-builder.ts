@@ -13,6 +13,7 @@ import type { EquityShortEligibility } from '../execution/equity-short'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { MarketKind, instrumentMarket } from '../instruments'
+import type { ProtectionCloseBasis } from '../execution/protection-close-basis'
 import { continuousMarketHours, type MarketHours } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { CandidateObservationStore } from './candidate-observation'
@@ -20,7 +21,14 @@ import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { jevProfitTargetLimitFloors, jevProfitTargetLimitCeilings, type JevExitTarget } from '../jev/exit'
+import {
+  JevExitReason,
+  JevExitTargetSchema,
+  jevMaximumHoldDueAt,
+  jevProfitTargetLimitFloors,
+  jevProfitTargetLimitCeilings,
+  type JevExitTarget,
+} from '../jev/exit'
 import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
@@ -51,7 +59,7 @@ import {
   type ExecutionSessionBindingFailure,
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { type PersistedIntradaySnapshotRows } from '../market-data/intraday/verification'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
@@ -746,8 +754,10 @@ const requireDecisionAuthority = (
   return Result.succeed({ authority, observedAt: result.riskContext.authorityObservedAt })
 }
 
+type ClosePlanningState = Pick<ReconciliationPassResult, 'brokerState' | 'riskContext'>
+
 export const requireMutationAuthorityGeneration = (
-  result: ReconciliationPassResult,
+  result: ClosePlanningState,
   policy: Policy,
   authorityGenerationHash: string,
 ): Result.Result<ObserveAuthorityObservation, ObserveDecisionCompositionFailure> => {
@@ -1147,7 +1157,7 @@ export const prepareObservePlanner = <R>(
   )
 
 const executionRiskContext = (
-  reconciliation: ReconciliationPassResult,
+  reconciliation: ClosePlanningState,
   authorityObservation: ObserveAuthorityObservation,
 ): ExecutionDecisionInput['riskContext'] => ({
   authority: authorityObservation.authority,
@@ -1165,7 +1175,7 @@ type RiskInputPreparation = {
   readonly minimumSellPriceMicros?: Readonly<Record<string, bigint>>
   readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly executionModel: CycleExecutionModel
-  readonly reconciliation: ReconciliationPassResult
+  readonly reconciliation: ClosePlanningState
   readonly authorityObservation: ObserveAuthorityObservation
   readonly executionSession: ExecutionSessionBinding
   readonly targetPlan: TargetPlanResult
@@ -1176,6 +1186,7 @@ type RiskInputPreparation = {
   >
   readonly evaluatedAt: string
   readonly closeOnlyExpiresAt?: string
+  readonly protectionClose?: ProtectionCloseBasis
 }
 
 const reduceRiskInputs = (
@@ -1251,6 +1262,7 @@ const reduceRiskInputs = (
               executionSession: input.executionSession,
               reservedBuyingPowerMicros: '0',
               evaluatedAt: input.evaluatedAt,
+              ...(input.protectionClose === undefined ? {} : { protectionClose: input.protectionClose }),
               ...(input.closeOnlyExpiresAt === undefined
                 ? {}
                 : { closeOnly: true as const, closeOnlyExpiresAt: input.closeOnlyExpiresAt }),
@@ -1622,15 +1634,25 @@ export interface BuildClosingExecutionCycleDecisionInput<R = ReconciliationRunti
   readonly exitTarget?: JevExitTarget
 }
 
-const buildClosingExecutionCycleDecisionWithSource = <R>(
-  request: BuildClosingExecutionCycleDecisionInput<R>,
+type ClosePlanningEvidence =
+  | { readonly _tag: 'Reconciled'; readonly reconciliation: ReconciliationPassResult }
+  | {
+      readonly _tag: 'ProtectionRelease'
+      readonly reconciliation: ClosePlanningState
+      readonly protectionClose: ProtectionCloseBasis
+    }
+type ClosePlanningRequest = Omit<BuildClosingExecutionCycleDecisionInput, 'reconcile' | 'initialReconciliation'>
+
+const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends ClosePlanningEvidence>(
+  request: ClosePlanningRequest,
   source: 'archive' | 'reconciled-position',
+  read: Effect.Effect<Evidence, ReconciliationPassError, R>,
 ): Effect.Effect<
-  { readonly document: ExecutionDecisionDocument; readonly reconciliation: ReconciliationPassResult },
+  { readonly document: ExecutionDecisionDocument; readonly reconciliation: Evidence['reconciliation'] },
   CycleRunnerError | ExecutionCloseAwaitingMarketData | ExecutionCloseAwaitingReconciliation,
   R | DecisionConstruction
 > => {
-  const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
+  const { input, preparation, policy, cycle, entryDocument, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
     const executionModel = preparation.executionModel
     if (executionModel.schemaVersion !== 'bayn.execution-model.v6') {
@@ -1642,10 +1664,38 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     const intradayParameters = yield* Effect.fromResult(nativeJevProtocol(input.strategy)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
+    const target = request.exitTarget
+    const mandatoryExit =
+      source === 'reconciled-position' &&
+      target !== undefined &&
+      (target.reason === JevExitReason.ProtectionReleased || target.reason === JevExitReason.MaximumHold) &&
+      Result.isSuccess(Schema.decodeUnknownResult(JevExitTargetSchema, strictParseOptions)(target)) &&
+      target.evidence.portfolio.purpose === JevPurpose.Manage &&
+      target.cycleId === cycle.identity.cycleId &&
+      target.entryDecisionHash === entryDocument.contentHash &&
+      target.sessionDate === cycle.identity.executionSessionDate &&
+      target.evidence.portfolio.brokerState.account.accountId === cycle.identity.accountId &&
+      entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7' &&
+      canonicalJsonEqualV1(target.evidence.portfolio.exitPolicy, entryDocument.strategyDecision.exitPolicy)
+        ? target
+        : undefined
     const requireFallbackWindow = (observedAt: string) => {
       const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
-      return observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 &&
+      const portfolio = mandatoryExit?.evidence.portfolio
+      const firstFill = portfolio?.purpose === JevPurpose.Manage ? portfolio.entryFills[0] : undefined
+      // The sealed first-fill deadline authorizes a timed exit independently of any price trigger.
+      // Before it elapses, a mark may only resume an already committed non-profit exit.
+      const resumeMandatoryExit =
+        mandatoryExit !== undefined &&
+        portfolio?.purpose === JevPurpose.Manage &&
+        mandatoryExit.observedAt <= observedAt &&
+        ((firstFill !== undefined &&
+          observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)) ||
+          (mandatoryExit.reason === JevExitReason.ProtectionReleased &&
+            portfolio.exitRequestedAt !== null &&
+            !portfolio.profitExitRequested))
+      return (observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 || resumeMandatoryExit) &&
         (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' ||
           observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000) &&
         observedAt < closeExpiresAt
@@ -1657,14 +1707,14 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
             }),
           )
     }
-    // Sample after the archive attempt: it may have crossed into the close window. Outside that
-    // window a second reconciliation cannot authorize this fallback and only delays the next pass.
+    // Sample after the archive attempt. A due holding deadline or committed non-profit exit can also
+    // authorize a fresh position-mark close; none can authorize a new entry or price trigger.
     if (source === 'reconciled-position') yield* requireFallbackWindow(yield* currentUtcInstant)
-    const reconciliation = yield* (
-      source === 'archive' && request.initialReconciliation !== undefined
-        ? Effect.succeed(request.initialReconciliation)
-        : reconcile
-    ).pipe(Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')))
+    const evidence = yield* read.pipe(
+      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
+    )
+    const reconciliation: Evidence['reconciliation'] = evidence.reconciliation
+    const protectionClose = evidence._tag === 'ProtectionRelease' ? evidence.protectionClose : undefined
     const evaluatedAt = yield* currentUtcInstant
     const executionAuthority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, policy, input.authorityGenerationHash),
@@ -1687,10 +1737,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     // trying to bind liquidation evidence to that empty plan or terminalizing an unfinished close.
     // Check the actual cut here as the fallback can acquire a newer, no-longer-exact reconciliation.
     if (
-      reconciliation.report.reconciliation.status !== ReconciliationStatus.Exact ||
+      (evidence._tag === 'Reconciled' &&
+        (evidence.reconciliation.report.reconciliation.status !== ReconciliationStatus.Exact ||
+          !evidence.reconciliation.report.metrics.accountingExact)) ||
       reconciliation.brokerState.reconciliation.status !== ReconciliationStatus.Exact ||
       reconciliation.brokerState.reconciliation.discrepancies.length !== 0 ||
-      !reconciliation.report.metrics.accountingExact ||
       reconciliation.riskContext.unknownMutationCount !== 0 ||
       reconciliation.brokerState.unknownOrderCount !== 0
     ) {
@@ -1760,6 +1811,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
         source === 'reconciled-position' ||
         evaluatedAt >= cycle.window.executionCloseAt
       ) {
+        if (protectionClose !== undefined)
+          return yield* new ExecutionCloseAwaitingMarketData({
+            message: 'a protection release requires a current executable close quote',
+            observedAt: evaluatedAt,
+          })
         const binding = yield* Effect.fromResult(
           reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),
         ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
@@ -1902,6 +1958,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const plannerInput: TargetPlannerInput = {
       schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
+      ...(protectionClose === undefined ? {} : { protectionClose }),
       ...commonPlannerInput,
       referencePrices: prices,
       precision: {
@@ -1947,6 +2004,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
         executionMarketData: closeExecutionMarketData.binding,
         evaluatedAt,
         closeOnlyExpiresAt: closeExpiresAt,
+        ...(protectionClose === undefined ? {} : { protectionClose }),
       }),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const document = yield* buildExecutionDecision({
@@ -1985,10 +2043,16 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
   })
 }
 
-export const prepareClosingExecutionCycleDecision = <R>(request: BuildClosingExecutionCycleDecisionInput<R>) =>
-  buildClosingExecutionCycleDecisionWithSource(request, 'archive').pipe(
+export const prepareClosingExecutionCycleDecision = <R>(request: BuildClosingExecutionCycleDecisionInput<R>) => {
+  const exact = Effect.map((reconciliation: ReconciliationPassResult) => ({
+    _tag: 'Reconciled' as const,
+    reconciliation,
+  }))
+  const initial =
+    request.initialReconciliation === undefined ? request.reconcile : Effect.succeed(request.initialReconciliation)
+  return buildClosingExecutionCycleDecisionWithSource(request, 'archive', initial.pipe(exact)).pipe(
     Effect.catchTag('ExecutionCloseAwaitingMarketData', (failure) =>
-      buildClosingExecutionCycleDecisionWithSource(request, 'reconciled-position').pipe(
+      buildClosingExecutionCycleDecisionWithSource(request, 'reconciled-position', request.reconcile.pipe(exact)).pipe(
         // An unavailable fallback must not erase the archive/quote failure that caused this wait.
         Effect.catchTag('ExecutionCloseAwaitingMarketData', () => Effect.fail(failure)),
         Effect.tap(() =>
@@ -1999,6 +2063,12 @@ export const prepareClosingExecutionCycleDecision = <R>(request: BuildClosingExe
       ),
     ),
   )
+}
+
+export const prepareProtectionClosingExecutionCycleDecision = (
+  request: ClosePlanningRequest,
+  evidence: Extract<ClosePlanningEvidence, { readonly _tag: 'ProtectionRelease' }>,
+) => buildClosingExecutionCycleDecisionWithSource(request, 'archive', Effect.succeed(evidence))
 
 export const observePass = (
   recordPass: AutonomousCycleStartupInput['recordPass'],
