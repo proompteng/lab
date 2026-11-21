@@ -75,6 +75,7 @@ describe('landing browser validation workflow', () => {
           LANDING_RESULT: landing,
           LANDING_EXPECTED: landingExpected,
           AGENTS_RESULT: 'skipped',
+          BAYN_RESULT: 'skipped',
           DELEGATED: '[]',
         },
       }).exitCode

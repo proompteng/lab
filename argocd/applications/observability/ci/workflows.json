@@ -373,6 +373,10 @@
       "pattern": "^Plan changed-area validation(?: \\(.*\\))?$"
     },
     {
+      "id": "landing",
+      "pattern": "^PR validation \\(landing\\)(?: \\(.*\\))?$"
+    },
+    {
       "id": "validate",
       "pattern": "^PR validation \\(.*\\)(?: \\(.*\\))?$"
     },
