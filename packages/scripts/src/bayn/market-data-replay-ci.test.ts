@@ -61,6 +61,8 @@ test('the root gate requires the complete Bayn workflow on queued revisions', ()
         LANDING_EXPECTED: 'success',
         AGENTS_RESULT: 'success',
         BAYN_RESULT: baynResult,
+        OFZ_RESULT: 'success',
+        RELAY_RESULT: 'success',
         FULL_VALIDATION: full,
         DELEGATED: '[]',
       },
