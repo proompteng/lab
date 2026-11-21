@@ -401,6 +401,10 @@
       "pattern": "^Relay platform(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "tengri",
+      "pattern": "^Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "ci-pr",
       "pattern": "^ci-pr(?: \\(.*\\))?$"
     }
@@ -471,12 +475,8 @@
   ],
   "tengri-images.yml": [
     {
-      "id": "validate-tengri",
-      "pattern": "^Validate Tengri(?: \\(.*\\))?$"
-    },
-    {
-      "id": "validate-nanoagent",
-      "pattern": "^Validate Nanoagent(?: \\(.*\\))?$"
+      "id": "validate",
+      "pattern": "^Validate Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "build",
