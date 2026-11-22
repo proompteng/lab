@@ -37,6 +37,7 @@ export type BrokerReadOperation =
   | 'fill-activities'
   | 'activity-stream'
   | 'fee-activities'
+  | 'non-trade-activities'
   | 'asset-by-symbol'
   | 'market-calendar'
 

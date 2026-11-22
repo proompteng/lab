@@ -33,6 +33,7 @@ const source = {
   protocol: Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument)),
   funding: { bidMicros: '105000000', askMicros: '105010000', capitalMicros: '5000000000', cryptoFeeTier: null },
 }
+const prepared = Result.getOrThrow(buildChartJevRequest(source))
 const boxFor = (first: number, last = first) => {
   const projection = candleProjection(chart.bars)
   const bars = projection.bars.slice(first, last + 1)
@@ -57,7 +58,6 @@ const response = () => ({
 })
 
 test('one image request localizes all three structures without a base-start choice', () => {
-  const prepared = Result.getOrThrow(buildChartJevRequest(source))
   expect(prepared.request.model).toBe('jev-1.14.0')
   expect(
     Object.values(prepared.request.questions)
@@ -68,7 +68,7 @@ test('one image request localizes all three structures without a base-start choi
 })
 
 test('maps normalized boxes to exact original bar IDs and retains their confidence', () => {
-  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, response()))
+  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, prepared, response()))
   expect(assessed.support.anchor).toEqual({ status: 'ASSESSED', barId: chart.bars[0]?.id, probability: 0.92 })
   expect(assessed.resistance.anchor).toEqual({ status: 'ASSESSED', barId: chart.bars[1]?.id, probability: 0.93 })
   expect(assessed.base.first).toEqual({ status: 'ASSESSED', barId: chart.bars[2]?.id, probability: 0.94 })
@@ -81,7 +81,7 @@ test.each([0, 0.1, 0.3])('a returned box cannot invent a structure when presence
   const raw = response()
   raw.answers.support_present.noul = probability
   raw.answers.base_present.noul = probability
-  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, raw))
+  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, prepared, raw))
   expect(assessed.support.anchor.status).toBe('NOT_IDENTIFIED')
   expect(assessed.base.first.status).toBe('NOT_IDENTIFIED')
   expect(assessed.resistance.anchor.status).toBe('ASSESSED')
@@ -91,7 +91,7 @@ test('rejects volume-panel anchors and a base which includes the newest candle',
   const raw = response()
   raw.answers.support_region.box = { top: 0.8, bottom: 0.9, left: 0, right: 1 }
   raw.answers.base_region.box = boxFor(2, 5)
-  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, raw))
+  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, prepared, raw))
   expect(assessed.support.anchor.status).toBe('NOT_IDENTIFIED')
   expect(assessed.base.last.status).toBe('NOT_IDENTIFIED')
 })
@@ -100,7 +100,7 @@ test('rounded zero-area regions remain unavailable even with strong presence and
   const raw = response()
   raw.answers.support_region.box.bottom = raw.answers.support_region.box.top
   raw.answers.base_region.box.right = raw.answers.base_region.box.left
-  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, raw))
+  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, prepared, raw))
   expect(assessed.support.anchor.status).toBe('NOT_IDENTIFIED')
   expect(assessed.base.first.status).toBe('NOT_IDENTIFIED')
   expect(assessed.resistance.anchor.status).toBe('ASSESSED')
@@ -109,7 +109,7 @@ test('rounded zero-area regions remain unavailable even with strong presence and
 test('a partial boundary candle cannot extend the fully enclosed consolidation', () => {
   const raw = response()
   raw.answers.base_region.box.left = boxFor(1).left
-  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, raw))
+  const assessed = Result.getOrThrow(chartAssessmentsFromBoxes(source, prepared, raw))
   expect(assessed.base.first).toEqual({ status: 'ASSESSED', barId: chart.bars[2]?.id, probability: 0.94 })
   expect(assessed.base.last).toEqual({ status: 'ASSESSED', barId: chart.bars[3]?.id, probability: 0.94 })
 })
