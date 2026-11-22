@@ -20,7 +20,7 @@ import { replayRateCardFixture } from '../testing/inference-rate-card.test-suppo
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
@@ -1551,31 +1551,34 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   test('the deferred deadline rejects a transaction that crosses the first market open', async () => {
     const first = registration()
-    const now = Date.parse(await runtime.runPromise(databaseNow))
-    const openAt = new Date(now + 2000).toISOString()
-    const closeAt = new Date(now + 3000).toISOString()
-    const input = {
-      ...first,
-      calendar: {
-        ...first.calendar,
-        sessions: first.calendar.sessions.map((s, i) =>
-          i === 0 ? { sessionDate: Schema.decodeUnknownSync(IsoDateSchema)(openAt.slice(0, 10)), openAt, closeAt } : s,
-        ),
-      },
-    }
     const exit = await runtime.runPromiseExit(
       asApplication(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
+          const now = Date.parse(yield* databaseNow)
+          const openAt = new Date(now + 1250).toISOString()
+          const closeAt = new Date(now + 2250).toISOString()
+          const sessionDate = yield* Schema.decodeUnknownEffect(IsoDateSchema)(openAt.slice(0, 10))
+          const input = {
+            ...first,
+            calendar: {
+              ...first.calendar,
+              sessions: [{ sessionDate, openAt, closeAt }, ...first.calendar.sessions.slice(1)],
+            },
+          }
           yield* registerFixture(withRegistrationCommitments(input))
-          expect(yield* sql`SELECT count(*)::integer AS count FROM system_qualification_registrations`).toEqual([
-            { count: 1 },
-          ])
-          yield* sql`SELECT pg_sleep(2.1)`
+          expect(
+            yield* sql`SELECT count(*)::integer AS count, clock_timestamp() < ${openAt}::timestamptz AS before_open
+              FROM system_qualification_registrations`,
+          ).toEqual([{ count: 1, before_open: true }])
+          yield* sql`SELECT pg_sleep_until(${openAt}::timestamptz)`
         }),
       ),
     )
-    expect(Exit.isFailure(exit)).toBe(true)
+    expect(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit).toMatchObject({
+      _tag: 'SqlError',
+      reason: { cause: { code: '23514', message: 'registration committed after the first open' } },
+    })
     const count = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
