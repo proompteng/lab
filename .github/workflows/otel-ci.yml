@@ -11,14 +11,13 @@ on:
     paths:
       - 'packages/otel/**'
       - '.github/workflows/otel-ci.yml'
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: otel-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

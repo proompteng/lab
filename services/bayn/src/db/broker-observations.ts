@@ -17,6 +17,7 @@ import {
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { protectionReleaseReadCount, type ProtectionReadAllowance } from '../broker/alpaca/poll-budget'
+import { IntentState } from '../execution/contracts'
 import type { NativeProtectionCancelCommand } from '../execution/intents/domain'
 import { currentUtcInstant } from '../time'
 import { canonicalHashV1Result } from '../hash'
@@ -368,7 +369,14 @@ export const makeBrokerObservationStore = (
     interruptedNotBeforeMs: number,
   ): Effect.Effect<BrokerObservationClaim, BrokerReadError> =>
     run(
-      sql`
+      sql.withTransaction(
+        Effect.gen(function* () {
+          // A fresh statement after taking this lock must see any just-committed scoped submit.
+          const [locked] = yield* sql`SELECT account_id FROM broker_observations
+          WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} FOR UPDATE`
+          if (locked === undefined)
+            return yield* observationUnavailable('Broker observation owner is not active for this revision')
+          return yield* sql`
     WITH owner AS (
       SELECT account_id, generation,
         GREATEST(next_poll_not_before, (
@@ -378,11 +386,26 @@ export const makeBrokerObservationStore = (
         )) AS next_poll_not_before,
         clock_timestamp() AS checked_at FROM broker_observations
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
-      FOR UPDATE
+    ), pending_protection AS (
+      SELECT max(active.deadline) AS deadline FROM owner
+      JOIN autonomous_cycles AS cycle ON cycle.account_id = owner.account_id AND cycle.state = 'ACTIVE'
+      JOIN intents AS intent ON intent.account_id = owner.account_id AND intent.cycle_id = cycle.cycle_id
+      JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = cycle.cycle_id
+      JOIN protection_release_proofs AS proof
+        ON proof.proof_id = closure.document #>> '{document,plannerInput,protectionClose,proofId}'
+      JOIN risk_decisions AS risk ON risk.decision_id = intent.risk_decision_id AND risk.intent_id = intent.intent_id
+      CROSS JOIN LATERAL (SELECT LEAST(closure.expires_at, risk.expires_at,
+        (closure.document #>> '{document,submissionCutoffAt}')::timestamptz,
+        (closure.document #>> '{document,strategyDecision,commitDeadlineAt}')::timestamptz
+      ) AS deadline) AS active
+      WHERE intent.state = ${IntentState.IoStarted}
+        AND closure.document #> '{document,orderedIntentIds}' = jsonb_build_array(intent.intent_id)
+        AND proof.evidence #>> '{frontier,observationGeneration}' = owner.generation::text
+        AND active.deadline > execution_account_commit_now(owner.account_id)
     ), claimed AS (
       INSERT INTO broker_observation_captures (account_id, capture_id, generation)
-      SELECT account_id, ${captureId}, generation + 1 FROM owner
-      WHERE next_poll_not_before <= checked_at
+      SELECT account_id, ${captureId}, generation + 1 FROM owner CROSS JOIN pending_protection
+      WHERE next_poll_not_before <= checked_at AND pending_protection.deadline IS NULL
       ON CONFLICT DO NOTHING
       RETURNING account_id, generation
     ), reserved AS (
@@ -401,25 +424,28 @@ export const makeBrokerObservationStore = (
       SELECT 1 FROM broker_observation_captures WHERE account_id = owner.account_id AND capture_id = ${captureId}
     ) THEN 'ALREADY_CLAIMED' ELSE 'QUOTA_WAIT' END AS status,
       NULL::integer AS generation, NULL::text AS "startedAt",
-      ceil(EXTRACT(EPOCH FROM next_poll_not_before) * 1000)::double precision AS "nextPollNotBeforeMs"
-    FROM owner WHERE NOT EXISTS (SELECT 1 FROM reserved)
+      ceil(EXTRACT(EPOCH FROM GREATEST(next_poll_not_before, pending_protection.deadline)) * 1000)::double precision
+        AS "nextPollNotBeforeMs"
+    FROM owner CROSS JOIN pending_protection WHERE NOT EXISTS (SELECT 1 FROM reserved)
   `.pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(claimRows, strictParseOptions)),
-        Effect.flatMap((rows) =>
-          Effect.gen(function* () {
-            const row = rows[0]
-            if (row === undefined)
-              return yield* observationUnavailable('Broker observation owner is not active for this revision')
-            if (row.status === BrokerObservationClaimStatus.Reserved)
-              return {
-                status: row.status,
-                ticket: { generation: row.generation, startedAt: row.startedAt },
-                nextPollNotBeforeMs: row.nextPollNotBeforeMs,
-              }
-            if (row.status === BrokerObservationClaimStatus.AlreadyClaimed) yield* recoverUnfinished(captureId)
-            return { status: row.status, nextPollNotBeforeMs: row.nextPollNotBeforeMs }
-          }),
-        ),
+            Effect.flatMap(Schema.decodeUnknownEffect(claimRows, strictParseOptions)),
+            Effect.flatMap((rows) =>
+              Effect.gen(function* () {
+                const row = rows[0]
+                if (row === undefined)
+                  return yield* observationUnavailable('Broker observation owner is not active for this revision')
+                if (row.status === BrokerObservationClaimStatus.Reserved)
+                  return {
+                    status: row.status,
+                    ticket: { generation: row.generation, startedAt: row.startedAt },
+                    nextPollNotBeforeMs: row.nextPollNotBeforeMs,
+                  }
+                if (row.status === BrokerObservationClaimStatus.AlreadyClaimed) yield* recoverUnfinished(captureId)
+                return { status: row.status, nextPollNotBeforeMs: row.nextPollNotBeforeMs }
+              }),
+            ),
+          )
+        }),
       ),
     )
   const publish = (

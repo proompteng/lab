@@ -12,6 +12,7 @@ import {
   OrderType,
   PositionSchema,
   TimeInForce,
+  type Order,
 } from '../execution/contracts'
 import {
   Sha256Schema as Sha256,
@@ -180,6 +181,16 @@ const withoutObservedAt = <A extends { readonly observedAt: string }>(value: A):
   const { observedAt: _observedAt, ...content } = value
   return content
 }
+
+export const orderSourceContentHashResult = (
+  order: Order,
+  brokerUpdatedAt: string,
+): Result.Result<string, BrokerObservationError> =>
+  canonicalHash('order', {
+    schemaVersion: 'bayn.order-source.v3',
+    order: withoutObservedAt(order),
+    brokerUpdatedAt,
+  })
 
 const accountStatus = (account: AlpacaAccount): AccountStatus => {
   if (account.status === AlpacaAccountStatus.AccountClosed) return AccountStatus.Closed
@@ -485,11 +496,7 @@ export const orderObservation = (
               observedAt: validated.observedAt,
             }
             return pipe(
-              canonicalHash('order', {
-                schemaVersion: 'bayn.order-source.v3',
-                order: withoutObservedAt(order),
-                brokerUpdatedAt: validated.updatedAt,
-              }),
+              orderSourceContentHashResult(order, validated.updatedAt),
               Result.flatMap((contentHash) =>
                 decodeEvent('order', {
                   _tag: 'Order',
