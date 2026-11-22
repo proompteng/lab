@@ -34,10 +34,6 @@ if (import.meta.main) {
   main().catch((error) => fatal('Failed to build and deploy facteur', error))
 }
 
-export const __private = {
-  execGit,
-}
-
 type ManifestUpdateOptions = {
   tag: string
   rolloutTimestamp: string

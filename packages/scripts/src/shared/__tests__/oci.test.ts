@@ -62,7 +62,6 @@ const headlampStaticCopyPatch = readRepoFile('services/headlamp/patches/0004-sta
 const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
 const appImageModule = readRepoFile('nix/images/app.nix')
 const productImageModules = [
-  appImageModule,
   readRepoFile('nix/images/docs.nix'),
   readRepoFile('nix/images/olden.nix'),
   readRepoFile('nix/images/proompteng.nix'),
@@ -852,14 +851,15 @@ describe('native OCI build workflows', () => {
 
   it('does not fan out service CI on image workflow-only changes', () => {
     for (const workflow of [agentsCiWorkflow, symphonyCiWorkflow, torghutCiWorkflow]) {
-      expect(workflow).not.toContain("- '.github/workflows/")
       expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
     }
+    expect(agentsCiWorkflow).not.toContain("- '.github/workflows/")
+    expect(symphonyCiWorkflow).not.toContain("- '.github/workflows/")
+    expect(torghutCiWorkflow.match(/- '\.github\/workflows\/[^']+'/g)).toEqual(["- '.github/workflows/torghut-ci.yml'"])
     expect(agentsCiWorkflow).toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(symphonyCiWorkflow).not.toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(torghutCiWorkflow).not.toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(agentsCiWorkflow).not.toContain("- 'package.json'")
-    expect(torghutCiWorkflow).not.toContain('github/workflows/torghut-')
     expect(torghutCiWorkflow).not.toContain("- 'packages/scripts/src/shared/oci-digest.ts'")
   })
 
@@ -1448,6 +1448,9 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).not.toContain("'argocd/applications/olden/**'")
     expect(productNixWorkflow).toContain("'argocd/applications/synthesis/**'")
     expect(appImageModule).toContain('"@proompteng/source"')
+    expect(appImageModule).toContain('dependencyClosure = "bunCacheArchive";')
+    expect(bunWorkspaceServiceModule).toContain('nix-store --dump "$BUN_INSTALL_CACHE_DIR" > "$out"')
+    expect(bunWorkspaceServiceModule).toContain('nix-store --restore "$BUN_INSTALL_CACHE_DIR" < ${deps}')
     for (const imageModule of productImageModules) {
       expect(imageModule).toContain('dependencyClosure = "bunCache";')
     }

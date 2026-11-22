@@ -272,14 +272,14 @@ export const makeEntryJudgmentRequest = (input: {
     ),
   )
 
-export const selectSupportedEntryProposal = (input: {
+export const evaluateSupportedEntryProposals = (input: {
   readonly proposals: readonly NativeEntryProposal[]
   readonly response: JevResponse
 }) =>
   Result.gen(function* () {
-    const eligible: {
+    const supported: {
       readonly proposal: NativeEntryProposal
-      readonly judgmentSupport: number
+      readonly structuralSupport: number
       readonly modeledLossMicros: bigint
     }[] = []
     const rejections: {
@@ -309,7 +309,7 @@ export const selectSupportedEntryProposal = (input: {
         })
         continue
       }
-      let judgmentSupport = Math.min(setup.noul, stop.noul)
+      let structuralSupport = Math.min(setup.noul, stop.noul)
       if (isShortEntryProposal(proposal)) {
         const obstruction = input.response.answers[shortQuestionNames(proposal.source.setup).obstruction]
         if (obstruction?.type !== 'noul')
@@ -323,7 +323,7 @@ export const selectSupportedEntryProposal = (input: {
           })
           continue
         }
-        judgmentSupport = Math.min(judgmentSupport, 1 - obstruction.noul)
+        structuralSupport = Math.min(structuralSupport, 1 - obstruction.noul)
       }
       if (names.market === MarketKind.Crypto) {
         const obstruction = input.response.answers[names.obstruction]
@@ -338,22 +338,13 @@ export const selectSupportedEntryProposal = (input: {
           })
           continue
         }
-        judgmentSupport = Math.min(judgmentSupport, 1 - obstruction.noul)
+        structuralSupport = Math.min(structuralSupport, 1 - obstruction.noul)
       }
-      eligible.push({
+      supported.push({
         proposal,
-        judgmentSupport,
+        structuralSupport,
         modeledLossMicros: nativeModeledLossMicros(proposal),
       })
     }
-    eligible.sort(
-      (left, right) =>
-        right.judgmentSupport - left.judgmentSupport ||
-        (left.modeledLossMicros < right.modeledLossMicros
-          ? -1
-          : left.modeledLossMicros > right.modeledLossMicros
-            ? 1
-            : left.proposal.proposalId.localeCompare(right.proposal.proposalId)),
-    )
-    return { selected: eligible[0] ?? null, rejections }
+    return { supported, rejections }
   })

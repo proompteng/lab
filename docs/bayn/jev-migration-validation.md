@@ -44,10 +44,11 @@ the native decision binding remain unfinished.
 
 ## Economic acceptance
 
-The active policy is `bayn.jev-acceptance-policy.v5`, paired with system policy v5 and
-`bayn.system-registration.v4`. The pure [economic evaluator](../../services/bayn/src/system-assessment/economic-qualification.ts)
+The active policy is `bayn.jev-acceptance-policy.v5`, paired with system policy v6 and
+`bayn.system-registration.v5`. The pure [economic evaluator](../../services/bayn/src/system-assessment/economic-qualification.ts)
 uses actual fully attributed economics and the exact conditional bounds below. Register the complete policy,
-candidate, selected controls, allocation, cost attribution, calendar and statistical support before the first open.
+candidate, selected controls, allocation, cost attribution, canonical native equity calendar and statistical support
+before the first open. The final assessment requires evidence through the broker recovery window.
 
 Qualification requires positive actual net profit, a strictly positive lower bound for average registered expected
 net profit, strictly positive paired net-edge bounds against every selected control, and the existing approved loss

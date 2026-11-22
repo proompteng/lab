@@ -64,8 +64,10 @@ invocations. Current code has no caller for it. After live acceptance, the clean
 into `broker_source_events` before dropping the sink. The migration also installs a temporary shared-database order
 version fence for the same overlap: a prepared predecessor insert derives the canonical nine-digit provider version
 from its immutable source identity, while stale or conflicting provider versions fail before insertion. Current code
-supplies that value directly and applies the same rule. The cleanup migration removes the predecessor insert branch and
-its trigger only after the old revision drains.
+supplies that value directly and applies the same rule. A REST order whose microsecond `updated_at` truncates a retained
+stream nanosecond version reuses that stream receipt only when the complete order content matches; a different state or
+genuinely older microsecond still fails closed. The cleanup migration removes the predecessor insert branch and its
+trigger only after the old revision drains.
 
 This hard migration removes the broker-only Kafka adapter, producer, consumer group, health script and Bayn Kafka
 credentials. It intentionally retains the now-inert topic during cutover: the Kafka application tracks `main`, while
@@ -144,12 +146,14 @@ If the new stream fails, deploy a reviewed streaming fix or restore a compatible
 through Kargo and verify canonical reconciliation against the same PAPER account. Do not start an ordinary polling path,
 repoint Torghut, reset financial history, or bypass promotion gates.
 
-The current financial-completeness Activity SSE still runs in the Bayn runtime and is not part of this transport cut.
-The next hard migration is to make the single feed process own that connection, persist its ULID cursor, resume with
-`since_id`, deduplicate by `ref_id`, and apply `previous_id` corrections/busts before retiring replica-local streams.
-The provider contract and target boundaries are recorded in
-[durable broker event architecture](../../../docs/bayn/durable-broker-event-architecture.md). Until that migration is
-deployed, canonical snapshots remain mandatory and no reduction in Activity SSE connections or REST reads is claimed.
+The single broker-feed process owns both trade updates and Activity SSE. Bayn migration 211 adds durable Activity
+source, projection and cursor records. Verify the promoted Bayn worker and broker-feed images name the same source
+revision, then verify the new worker owns broker observations before accepting its Activity receipts. The finite
+publication range and live heartbeat must both be accepted before the feed reports Activity readiness.
+
+Verify one durable cursor across a feed restart, inclusive redelivery with unchanged source and projection identities,
+and canonical PostgreSQL and TigerBeetle reconciliation for the same PAPER account. Use the
+[durable broker event architecture](../../../docs/bayn/durable-broker-event-architecture.md) for this acceptance.
 
 Superseded protocol activation recipes and completed cleanup receipts are available in
 [the repository history](https://github.com/proompteng/lab/blob/45579965308e14c07afd3d8960bc7d089de1986e/argocd/applications/bayn/README.md).

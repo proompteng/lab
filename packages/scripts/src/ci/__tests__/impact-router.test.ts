@@ -1,8 +1,131 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import { loadImpactMap, matchesGlob, selectImpactPlan } from '../impact-router'
 
 const map = loadImpactMap('.github/ci/impact-map.yml')
 const rootScriptMap = loadImpactMap('.github/ci/root-script-map.yml')
+
+const yaml = (filename: string) =>
+  Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8')) as {
+    on: Record<string, unknown>
+    concurrency: { group: string }
+    jobs: Record<
+      string,
+      {
+        if?: string
+        uses?: string
+        needs?: string[]
+        secrets?: string
+        steps?: { run?: string; env?: Record<string, string> }[]
+      }
+    >
+  }
+
+test('queued revisions require scripts and protobuf validation without sharing a concurrency group', () => {
+  const router = yaml('pull-request.yml')
+  const gate = router.jobs['ci-pr']
+  const step = gate.steps?.find(({ env }) => env?.BUF_RESULT !== undefined)
+  const command = step?.run
+  if (command === undefined) throw new Error('Queue gate step is missing')
+  for (const [job, file, group] of [
+    ['buf', 'buf-ci.yml', 'buf-'],
+    ['scripts', 'scripts-ci.yml', 'packages-scripts-'],
+  ]) {
+    const workflow = yaml(file)
+    expect(workflow.on).toHaveProperty('workflow_call')
+    expect(workflow.on).not.toHaveProperty('merge_group')
+    expect(workflow.concurrency.group).toStartWith(group)
+    expect(router.jobs[job]).toMatchObject({
+      if: "github.event_name == 'merge_group'",
+      uses: `./.github/workflows/${file}`,
+    })
+    expect(router.jobs[job].needs).toBeUndefined()
+    expect(gate.needs).toContain(job)
+  }
+
+  const run = (full: string, buf: string, scripts: string) =>
+    Bun.spawnSync(['bash', '-c', command], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        PLAN_RESULT: 'success',
+        VALIDATE_RESULT: 'success',
+        VALIDATE_EXPECTED: 'success',
+        LANDING_RESULT: 'success',
+        LANDING_EXPECTED: 'success',
+        AGENTS_RESULT: 'success',
+        BAYN_RESULT: 'success',
+        OFZ_RESULT: 'success',
+        RELAY_RESULT: 'success',
+        TENGRI_RESULT: 'success',
+        BUF_RESULT: buf,
+        SCRIPTS_RESULT: scripts,
+        TORGHUT_RESULT: 'success',
+        TORGHUT_SCHEMA_RESULT: 'success',
+        TORGHUT_NOTEBOOKS_RESULT: 'success',
+        QUEUE_SERVICES_RESULT: 'success',
+        FULL_VALIDATION: full,
+        DELEGATED: '[]',
+      },
+    }).exitCode
+  expect(run('false', 'skipped', 'skipped')).toBe(0)
+  expect(run('true', 'success', 'success')).toBe(0)
+  for (const result of ['failure', 'cancelled', 'skipped']) {
+    expect(run('true', result, 'success')).toBe(1)
+    expect(run('true', 'success', result)).toBe(1)
+  }
+})
+
+test('queued service validation joins the required gate without duplicate or mutually cancelling runs', () => {
+  const router = yaml('pull-request.yml')
+  const caller = router.jobs['queue-services']
+  expect(caller).toMatchObject({
+    if: "github.event_name == 'merge_group'",
+    uses: './.github/workflows/queue-service-validation.yml',
+  })
+  expect(caller.secrets).toBeUndefined()
+  const gate = router.jobs['ci-pr']
+  expect(gate.needs).toContain('queue-services')
+
+  const services = Object.values(yaml('queue-service-validation.yml').jobs)
+  expect(services.map(({ uses }) => uses)).toContain('./.github/workflows/agentctl-ci.yml')
+  const concurrencyGroups = new Set<string>()
+  for (const service of services) {
+    expect(service.if).toBeUndefined()
+    expect(service.needs).toBeUndefined()
+    expect(service.secrets).toBeUndefined()
+    const filename = service.uses?.split('/').at(-1)
+    if (!filename) throw new Error('Missing service workflow')
+    const workflow = yaml(filename)
+    expect(workflow.on).toHaveProperty('workflow_call')
+    expect(workflow.on).not.toHaveProperty('merge_group')
+    const prefix = workflow.concurrency.group.split('${{')[0].toLowerCase()
+    expect(prefix).not.toBe('')
+    expect(concurrencyGroups.has(prefix)).toBe(false)
+    concurrencyGroups.add(prefix)
+  }
+
+  const step = gate.steps?.find(({ env }) => env?.QUEUE_SERVICES_RESULT !== undefined)
+  if (!step?.run) throw new Error('Queue service result enforcement is missing')
+  expect(step.env?.QUEUE_SERVICES_RESULT).toBe('${{ needs.queue-services.result }}')
+  const command = step.run
+  const run = (full: string, result: string) =>
+    Bun.spawnSync(['bash', '-c', command], {
+      env: {
+        ...Object.fromEntries(Object.keys(step.env ?? {}).map((key) => [key, 'success'])),
+        PATH: process.env.PATH ?? '',
+        DELEGATED: '[]',
+        FULL_VALIDATION: full,
+        QUEUE_SERVICES_RESULT: result,
+      },
+    })
+  expect(run('false', 'skipped').exitCode).toBe(0)
+  expect(run('true', 'success').exitCode).toBe(0)
+  for (const result of ['failure', 'cancelled', 'skipped']) {
+    const rejected = run('true', result)
+    expect(rejected.exitCode).toBe(1)
+    expect(rejected.stderr.toString()).toContain('Queue service validation failed')
+  }
+})
 
 describe('root script ownership', () => {
   test.each([
@@ -54,6 +177,29 @@ describe('impact router', () => {
     const plan = selectImpactPlan(['apps/docs/content/index.mdx'], map)
     expect(plan.validationTargets).toEqual(['docs'])
     expect(plan.delegatedWorkflows).toEqual([])
+  })
+
+  test('plans every registered validation for a queued revision without a diff', () => {
+    const targets = Object.entries(map.targets)
+    expect(selectImpactPlan([], map, true)).toEqual({
+      files: [],
+      validationTargets: targets
+        .filter(([, target]) => target.kind === 'validation')
+        .map(([name]) => name)
+        .sort(),
+      delegatedWorkflows: [
+        ...new Set(
+          targets.flatMap(([, target]) => (target.kind === 'delegated' && target.workflow ? [target.workflow] : [])),
+        ),
+      ].sort(),
+    })
+    expect(selectImpactPlan([], rootScriptMap, true).validationTargets).toContain('all')
+  })
+
+  test('rejects a full plan with only the planner fallback', () => {
+    expect(() =>
+      selectImpactPlan([], { version: 1, targets: { planner: { kind: 'planner', paths: [] } } }, true),
+    ).toThrow('Full CI plan has no validation targets')
   })
 
   test('routes a service change to its owner without image validation', () => {
@@ -154,15 +300,15 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
-  test('routes Nix lock changes through compatibility and Agents image validation', () => {
+  test('routes Nix lock changes through compatibility, manifest, and Agents image validation', () => {
     const plan = selectImpactPlan(['flake.lock'], map)
-    expect(plan.validationTargets).toEqual(['shared-compat'])
+    expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
-  test('routes per-service Nix image changes to compatibility validation', () => {
+  test('routes per-service Nix image changes to compatibility and manifest validation', () => {
     const plan = selectImpactPlan(['nix/images/jangar.nix'], map)
-    expect(plan.validationTargets).toEqual(['shared-compat'])
+    expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
@@ -175,7 +321,7 @@ describe('impact router', () => {
       'nix/packages.nix',
     ]) {
       const plan = selectImpactPlan([path], map)
-      expect(plan.validationTargets).toEqual(['shared-compat'])
+      expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
       expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
     }
   })
@@ -194,6 +340,12 @@ describe('impact router', () => {
   test('routes Kubernetes YAML to schema validation', () => {
     const plan = selectImpactPlan(['kubernetes/base/deployment.yaml'], map)
     expect(plan.validationTargets).toEqual(['kubeconform'])
+  })
+
+  test('validates standalone kubeconform workflow changes through the PR router', () => {
+    expect(Object.keys(yaml('kubeconform.yml').on)).toEqual(['push'])
+    const plan = selectImpactPlan(['.github/workflows/kubeconform.yml'], map)
+    expect(plan.validationTargets).toContain('kubeconform')
   })
 
   test('routes the Bayn rendered secret-mode regression through schema validation', () => {

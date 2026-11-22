@@ -77,11 +77,16 @@ export const buildChartJevRequest = ({ chart, protocol, funding }: ChartDecision
   })
 }
 
-export const chartAssessmentsFromBoxes = (source: ChartDecisionSource, input: unknown) =>
+export type PreparedChartRequest = Result.Result.Success<ReturnType<typeof buildChartJevRequest>>
+
+export const chartAssessmentsFromBoxes = (
+  source: ChartDecisionSource,
+  prepared: PreparedChartRequest,
+  input: unknown,
+) =>
   Result.gen(function* () {
     const { chart, funding } = source
-    const request = yield* buildChartJevRequest(source)
-    const response = yield* decodeJevResponse(request.request, input)
+    const response = yield* decodeJevResponse(prepared.request, input)
     const projection = candleProjection(chart.bars)
     const marginX = chartQuestionPolicy.coordinateReportingHalfStep * projection.width + 1
     const marginY = chartQuestionPolicy.coordinateReportingHalfStep * projection.height + 1

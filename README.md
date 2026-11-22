@@ -84,6 +84,10 @@ toolchain-doctor
 bun install
 ```
 
+With mise installed, `bun run hooks:install` sets up the repository's Git hooks. If this clone already uses the old
+Lefthook setup, run `bunx lefthook@2.1.9 uninstall` once before installing hk. Commits run formatting and linting on
+staged files. Pushes run the same workspace lint as CI.
+
 Common entry points from the repo root:
 
 ```bash

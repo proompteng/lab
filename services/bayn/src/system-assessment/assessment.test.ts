@@ -2,9 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { evaluateSystemAssessment, EdgeStatus, ProfitabilityStatus, QualificationVerdict } from './assessment'
-import { JevNumericalVerdict, JevAcceptanceVersion } from '../jev/acceptance'
+import { JevNumericalVerdict, JevAcceptanceVersion, JevResearchPolicy } from '../jev/acceptance'
 import {
   assessmentFixture,
+  knownPayoffAssessmentFixture,
   supportedAssessmentFixture,
   registrationFixture,
   withRegistrationCommitments,
@@ -16,6 +17,55 @@ import { OperatingCostCoverage } from '../operating-costs'
 import { ObligationClass, ReliabilityStatus } from './reliability'
 
 describe('complete system qualification', () => {
+  test.each([JevResearchPolicy.Candidate, JevResearchPolicy.Incumbent])(
+    'native qualification rejects a rebased %s with different physical opening equity',
+    (policy) => {
+      const { input, verifiedSources } = knownPayoffAssessmentFixture('NATIVE')
+      expect(Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources)).verdict).toBe(
+        QualificationVerdict.Qualified,
+      )
+      const sourceHash = testHash([policy, 'independently captured smaller opening book'])
+      const changed = {
+        ...input,
+        policies: input.policies.map((book) =>
+          book.policy !== policy
+            ? book
+            : {
+                ...book,
+                sessions: book.sessions.map((session) => {
+                  if (session.financial === null || session.operatingCosts.trading === null)
+                    throw new Error('Missing complete opening book')
+                  const bridge = session.financial.cashInventory
+                  const offset = 50_000_000_000n
+                  return {
+                    ...session,
+                    financial: {
+                      ...session.financial,
+                      sourceHash,
+                      cashInventory: {
+                        ...bridge,
+                        openingEquityMicros: (BigInt(bridge.openingEquityMicros) - offset).toString(),
+                        closingEquityMicros: (BigInt(bridge.closingEquityMicros) - offset).toString(),
+                      },
+                    },
+                    operatingCosts: {
+                      ...session.operatingCosts,
+                      trading: { ...session.operatingCosts.trading, sourceHash },
+                    },
+                  }
+                }),
+              },
+        ),
+      }
+      const result = Result.getOrThrow(evaluateSystemAssessment(changed, new Set([...verifiedSources, sourceHash])))
+      expect(result.verdict).toBe(QualificationVerdict.Rejected)
+      expect(result.violations).toContain(
+        `${policy}:${input.registration.calendar.sessions[0]?.sessionDate}:OPENING_ALLOCATION_MISMATCH`,
+      )
+      expect(result.edge.status).toBe(EdgeStatus.Undetermined)
+    },
+  )
+
   test.each(['4900', '-4900'])(
     'posted settlement rounding %s contributes once to economic profit and the cash bridge',
     (rounding) => {
