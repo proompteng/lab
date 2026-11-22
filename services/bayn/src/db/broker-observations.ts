@@ -465,13 +465,21 @@ export const makeBrokerObservationStore = (
             EXISTS (
               SELECT 1 FROM broker_activity_event_projections AS projection
               WHERE projection.account_id = ${accountId} AND projection.ref_id = ${event.refId}
+                AND projection.outcome IN ('FILL','FEE','BUST','CANONICAL_ONLY')
                 AND projection.previous_ref_id IS NOT DISTINCT FROM ${requestedPrevious}::uuid
                 AND (
                   (${requested._tag === 'Fill'} AND projection.outcome = 'FILL'
                     AND projection.fill = ${requested._tag === 'Fill' ? JSON.stringify(requested.fill) : null}::jsonb) OR
                   (${requested._tag === 'Fee'} AND projection.outcome = 'FEE'
                     AND projection.fee_key = ${requested._tag === 'Fee' ? requested.feeKey : null}) OR
-                  (${requested._tag === 'Bust'} AND projection.outcome = 'BUST')
+                  (${requested._tag === 'Bust'} AND projection.outcome = 'BUST') OR
+                  CASE WHEN ${requested._tag === 'CanonicalOnly'} AND projection.outcome = 'CANONICAL_ONLY' THEN
+                    EXISTS (
+                      SELECT 1 FROM broker_activity_events AS retained
+                      WHERE retained.account_id = projection.account_id AND retained.source_event_id = projection.source_event_id
+                        AND (retained.activity_json::jsonb - 'event_id') = (${event.activityJson}::jsonb - 'event_id')
+                    )
+                  ELSE false END
                 )
             ) AS identical`.pipe(
             Effect.flatMap(

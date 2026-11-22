@@ -153,7 +153,7 @@ const activityEvent = (
     activityJson,
   }
 }
-const canonicalActivityEvent = (sequence: number, reference: number): BrokerActivityEvent => {
+const canonicalActivityEvent = (sequence: number, reference: number, netAmount = '100.00'): BrokerActivityEvent => {
   const sourceEventId = activityCursor(sequence)
   const activityJson = JSON.stringify({
     activity_type: 'JNLC',
@@ -164,7 +164,7 @@ const canonicalActivityEvent = (sequence: number, reference: number): BrokerActi
     executed_at: `2026-11-21T16:00:0${sequence}.123456789Z`,
     settle_date: '2026-11-21',
     currency: 'USD',
-    net_amount: '100.00',
+    net_amount: netAmount,
     details: { system_date: '2026-11-21' },
   })
   const contentHash = sha256(activityJson)
@@ -1145,7 +1145,7 @@ describePostgres('Durable per-account broker observations', () => {
       }),
     ))
 
-  test('keeps the fill and fee cut complete across a documented cash journal', async () =>
+  test('keeps the fill and fee cut complete across an equivalent cash journal republication', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
         const journal = canonicalActivityEvent(1, 1)
@@ -1160,6 +1160,14 @@ describePostgres('Durable per-account broker observations', () => {
         accepted<BrokerActivityHeartbeatReceipt>(
           yield* store.recordActivityHeartbeat(activityHeartbeat(journal.sourceEventId)),
         )
+        const duplicate = redeliveredActivity(journal, 2)
+        expect(
+          accepted<BrokerActivityReceipt>(yield* store.recordActivity(duplicate, projectBrokerActivity(duplicate))),
+        ).toMatchObject({
+          cursor: duplicate.sourceEventId,
+          projection: 'Duplicate',
+          fillFeeComplete: true,
+        })
         const cut = yield* store.readAccountActivity
         expect(cut.fills).toEqual([])
         expect([...cut.feeCounts]).toEqual([])
@@ -1167,6 +1175,16 @@ describePostgres('Durable per-account broker observations', () => {
           yield* sql`SELECT outcome,reason FROM broker_activity_event_projections
             WHERE account_id = ${accountId} AND source_event_id = ${journal.sourceEventId}`,
         ).toEqual([{ outcome: 'CANONICAL_ONLY', reason: 'OUTSIDE_FILL_FEE_VIEW' }])
+
+        const conflict = redeliveredActivity(canonicalActivityEvent(1, 1, '101.00'), 3)
+        expect(
+          accepted<BrokerActivityReceipt>(yield* store.recordActivity(conflict, projectBrokerActivity(conflict))),
+        ).toMatchObject({
+          cursor: conflict.sourceEventId,
+          projection: 'ReconcileRequired',
+          fillFeeComplete: false,
+        })
+        expect(Result.isFailure(yield* store.readAccountActivity.pipe(Effect.result))).toBe(true)
       }),
     ))
 
