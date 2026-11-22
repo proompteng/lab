@@ -141,7 +141,7 @@ export const bindSystemSourceCut = (
                 data.registration.obligations.configuration.protocol.executionModel,
                 cashAccount.forward,
                 {
-                  asOf: cut.asOf,
+                  asOf: cashAccount.capturedAt ?? cut.asOf,
                   accountIdentityHash: cashAccount.identity.identityHash,
                   anchors: cashAccount.settlementAnchors,
                   statement,
@@ -158,7 +158,7 @@ export const bindSystemSourceCut = (
             : retainedFinancialMarks(cut.accountMarks, {
                 accountBindingHash: definition.accountBindingHash,
                 ...calendar,
-                asOf: cut.asOf,
+                asOf: cashAccount?.capturedAt ?? cut.asOf,
               })
         const cashFlows =
           nativeCalendar !== null
