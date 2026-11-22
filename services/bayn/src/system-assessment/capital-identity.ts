@@ -8,8 +8,13 @@ import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, StrictNonEmptyStringSchema } from '../schemas'
 import { SystemAssessmentError } from './economics'
 import { PolicyDefinitionSchema } from './policy'
+import { Authority } from '../execution/contracts'
+import { JevResearchPolicy } from '../jev/acceptance'
 
-export const readRegisteredFinancialIdentity = (definition: typeof PolicyDefinitionSchema.Type) =>
+export const readRegisteredFinancialIdentity = (
+  definition: typeof PolicyDefinitionSchema.Type,
+  registeredAt?: string,
+) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const rows = yield* Schema.decodeUnknownEffect(
@@ -22,19 +27,33 @@ export const readRegisteredFinancialIdentity = (definition: typeof PolicyDefinit
           strategyHash: Sha256Schema,
           parametersHash: Sha256Schema,
           protocolHash: Sha256Schema,
+          servingAtRegistration: Schema.Boolean,
         }),
       ),
     )(
       yield* sql`SELECT risk_policy_hash AS "riskPolicyHash",
         activation_source_revision AS "sourceRevision", activation_image_digest AS "imageDigest",
         strategy_behavior_hash AS "strategyHash", strategy_parameter_hash AS "parametersHash",
-        strategy_protocol_hash AS "protocolHash", jsonb_build_object(
+        strategy_protocol_hash AS "protocolHash",
+        COALESCE(g.maximum = ${Authority.Execution} AND g.strategy_name = 'jev'
+          AND g.activated_at <= ${registeredAt ?? null}::timestamptz
+          AND NOT EXISTS (
+            SELECT 1 FROM authority_generations AS successor
+            WHERE successor.account_id = g.account_id
+              AND successor.generation_hash <> g.generation_hash
+              AND successor.activated_at >= g.activated_at
+              AND successor.activated_at <= ${registeredAt ?? null}::timestamptz
+          ), false) AS "servingAtRegistration", jsonb_build_object(
         'schemaVersion', broker_identity_schema_version, 'provider', broker_provider,
         'environment', broker_environment, 'accountId', account_id, 'identityHash', broker_identity_hash
-      ) AS identity FROM authority_generations WHERE generation_hash = ${definition.authorityGenerationHash}`,
+      ) AS identity FROM authority_generations AS g WHERE g.generation_hash = ${definition.authorityGenerationHash}`,
     )
     const row = rows[0]
     if (row === undefined) return null
+    if (definition.policy === JevResearchPolicy.Incumbent && !row.servingAtRegistration)
+      return yield* new SystemAssessmentError({
+        message: 'Incumbent must bind the serving PAPER Jev authority at the prospective registration clock',
+      })
     const accountBindingHash = yield* Effect.fromResult(
       canonicalHashV1Result({
         schemaVersion: 'bayn.inference-cost-account.v1',

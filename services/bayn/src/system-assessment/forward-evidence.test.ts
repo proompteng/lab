@@ -10,7 +10,7 @@ import { captureCashHistory as captureHistory, indexCashHistory } from './cash-h
 const cashChangesAt = (history: Parameters<typeof indexCashHistory>[0], at: string) => indexCashHistory(history)(at)
 
 import type { ForwardPerformanceEvidenceInput } from '../forward-performance/model'
-import { JevResearchPolicy } from '../jev/acceptance'
+import { JevResearchPolicy, retainedJevResearchPolicies } from '../jev/acceptance'
 import { captureForwardFinancialEvidence as captureFinancial, type DecisionSessionBinding } from './forward-evidence'
 import { nativeRegistrationFixture, registrationFixture, testHash } from './fixtures.test-support'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -826,7 +826,7 @@ describe('registered financial capture', () => {
   })
 
   test('every policy retains all twenty sessions and a fee on a zero-trade session', () => {
-    for (const policy of Object.values(JevResearchPolicy)) {
+    for (const policy of retainedJevResearchPolicies) {
       const { registration, forward } = fixture(policy)
       const captured = Result.getOrThrow(captureForwardFinancialEvidence(registration, policy, forward, []))
       expect(captured.policy).toBe(policy)

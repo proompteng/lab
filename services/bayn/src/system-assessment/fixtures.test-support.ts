@@ -29,6 +29,7 @@ import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   jevAcceptanceProtocolHash,
   JevResearchPolicy,
+  retainedJevResearchPolicies,
   JevAcceptanceVersion,
   usesLegacyAcceptance,
 } from '../jev/acceptance'
@@ -137,7 +138,7 @@ const baseRegistrationFixture = (
         return { sessionDate: day, openAt: `${day}T14:30:00.000Z`, closeAt: `${day}T14:32:00.000Z` }
       }),
     },
-    policies: Object.values(JevResearchPolicy).map((policy) => ({
+    policies: retainedJevResearchPolicies.map((policy) => ({
       policy,
       ...registeredRiskFixture(`${policy}:account`, protocol.universe),
       authorityGenerationHash: sha256(`${policy}:generation`),
@@ -380,9 +381,24 @@ export const nativeRegistrationFixture = (
 ) => {
   if (registration.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected conditional fixture')
   const marketCalendar = Schema.decodeUnknownSync(MarketCalendarObservationSchema)(calendarObservation)
+  const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+  if (candidate === undefined) throw new Error('Expected native candidate')
+  const accountId = 'INCUMBENT_JEV:account'
+  const riskPolicy = { ...candidate.riskPolicy, accountId }
+  const incumbent = {
+    ...candidate,
+    policy: JevResearchPolicy.Incumbent,
+    riskPolicy,
+    riskPolicyHash: testHash(riskPolicy),
+    accountBindingHash: testHash({ schemaVersion: 'bayn.inference-cost-account.v1', accountId }),
+    authorityGenerationHash: sha256('INCUMBENT_JEV:generation'),
+    sourceRevision: 'c'.repeat(40),
+    imageDigest: sha256('incumbent image'),
+  }
   return withRegistrationCommitments({
     ...registration,
     schemaVersion: 'bayn.system-registration.v5',
+    policies: [...registration.policies.filter((policy) => policy.policy !== JevResearchPolicy.Momentum), incumbent],
     policyHash: Result.getOrThrow(systemQualificationPolicyHash(JevAcceptanceVersion.Current, 'NATIVE')),
     calendar: {
       ...registration.calendar,
@@ -694,11 +710,12 @@ export const supportedAssessmentFixture = (
 export const knownPayoffAssessmentFixture = (operatingHours: 'REGULAR_SESSION' | 'NATIVE' = 'REGULAR_SESSION') => {
   const base = registrationFixture(undefined, 1)
   if (base.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
+  const selected = operatingHours === 'NATIVE' ? nativeRegistrationFixture(base) : base
   const registration = withRegistrationCommitments({
-    ...base,
+    ...selected,
     statisticalPlan: {
-      ...base.statisticalPlan,
-      supports: base.policies.map((policy) => ({
+      ...selected.statisticalPlan,
+      supports: selected.policies.map((policy) => ({
         policy: policy.policy,
         lowerMicros: policy.policy === JevResearchPolicy.Candidate ? '1000000000' : '100000000',
         upperMicros: policy.policy === JevResearchPolicy.Candidate ? '1000000000' : '100000000',
@@ -707,10 +724,7 @@ export const knownPayoffAssessmentFixture = (operatingHours: 'REGULAR_SESSION' |
       })),
     },
   })
-  return supportedAssessmentFixture(
-    1,
-    operatingHours === 'NATIVE' ? nativeRegistrationFixture(registration) : registration,
-  )
+  return supportedAssessmentFixture(1, registration)
 }
 
 import { ReplayImagePlatform } from './replay-image-platform'

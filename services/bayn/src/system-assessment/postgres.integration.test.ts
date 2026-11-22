@@ -1467,6 +1467,11 @@ postgres('PostgreSQL prospective system qualification', () => {
       )
         throw new Error('Missing conditional report')
       const confidence = numerical.confidence
+      if (hours === 'NATIVE') {
+        expect(confidence.paired.find((bound) => bound.control === JevResearchPolicy.Incumbent)).toMatchObject({
+          lowerSumMicros: '900000000',
+        })
+      }
       const cases = [
         { evidence: report, valid: true },
         {
@@ -1585,7 +1590,7 @@ postgres('PostgreSQL prospective system qualification', () => {
   test('current registration permits a selected control, approved PAPER limits and contracted discounts without issuing authority', async () => {
     const base = registration(4)
     const policies = base.policies
-      .filter((p) => p.policy === JevResearchPolicy.Candidate || p.policy === JevResearchPolicy.Momentum)
+      .filter((p) => p.policy === JevResearchPolicy.Candidate || p.policy === JevResearchPolicy.Incumbent)
       .map((p) => {
         const riskPolicy = Result.getOrThrow(
           makeExecutionRiskPolicy(p.riskPolicy.accountId, p.riskPolicy.allowedSymbols, BrokerEnvironment.Sandbox),
@@ -1614,6 +1619,44 @@ postgres('PostgreSQL prospective system qualification', () => {
       }),
     )
     expect(rows).toEqual([{ count: 0 }])
+  })
+
+  test('native admission requires a distinct serving Jev comparator with matched risk', async () => {
+    const input = registration(4)
+    const candidate = input.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
+    const incumbent = input.policies.find((p) => p.policy === JevResearchPolicy.Incumbent)
+    if (candidate === undefined || incumbent === undefined) throw new Error('Missing native comparison')
+    const changedRisk = { ...incumbent.riskPolicy, maxDailyLossMicros: '4999999999' }
+    for (const invalid of [
+      undefined,
+      { ...incumbent, accountBindingHash: candidate.accountBindingHash },
+      { ...incumbent, authorityGenerationHash: candidate.authorityGenerationHash },
+      { ...incumbent, riskPolicy: changedRisk, riskPolicyHash: testHash(changedRisk) },
+    ]) {
+      const policies = input.policies.filter((p) => p !== incumbent)
+      if (invalid !== undefined) policies.push(invalid)
+      const proposal = withRegistrationCommitments({ ...input, policies })
+      expect(Result.isFailure(validateSystemRegistration(proposal))).toBe(true)
+      const payload = Result.getOrThrow(canonicalJsonV1Result(proposal))
+      const direct = await runtime.runPromiseExit(
+        asApplication(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* sql`INSERT INTO system_qualification_registrations
+              (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+              VALUES (${sha256(payload)}, ${proposal.program}, 1, ${proposal.priorAttemptHash}, ${proposal.registeredAt},
+                ${proposal.calendar.sessions[0]?.openAt}, ${proposal.calendar.sessions.at(-1)?.closeAt}, ${payload})`
+          }),
+        ),
+      )
+      expect(Exit.isFailure(direct)).toBe(true)
+    }
+    const proposal = withRegistrationCommitments({ ...input, policies: [candidate, incumbent] })
+    const saved = await runtime.runPromise(asApplication(registerFixture(proposal)))
+    expect(saved.registration.policies.map(({ policy }) => policy)).toEqual([
+      JevResearchPolicy.Candidate,
+      JevResearchPolicy.Incumbent,
+    ])
   })
 
   test('direct SQL rejects incomplete, substituted and unordered statistical support without accepting a bootstrap substitute', async () => {
@@ -1844,10 +1887,10 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       ),
       input.policies.map((policy) =>
-        policy.policy === 'DEPLOYED_BAYN' ? { ...policy, policy: 'REPEATED_MOMENTUM' } : policy,
+        policy.policy === 'DEPLOYED_BAYN' ? { ...policy, policy: 'JEV_ABLATION' } : policy,
       ),
       input.policies.map((policy) =>
-        policy.policy === 'REPEATED_MOMENTUM' ? { ...policy, policy: 'DEPLOYED_BAYN' } : policy,
+        policy.policy === 'JEV_ABLATION' ? { ...policy, policy: 'DEPLOYED_BAYN' } : policy,
       ),
     ]
     for (const policies of invalidPolicies) {
@@ -2198,7 +2241,16 @@ postgres('PostgreSQL prospective system qualification', () => {
             'jev', ${definition.strategyHash}, ${definition.parametersHash}, ${defaultJevProtocolDocument.schemaVersion},
             ${definition.protocolHash}, ${planHash}, ${reconciliation.reconciliationId},
             ${reconciliation.contentHash}, ${planHash})`
-          expect(yield* readRegisteredFinancialIdentity(registered)).toEqual(identity)
+          const observedAt = yield* databaseNow
+          const lockAt = new Date(Date.parse(observedAt) + 1).toISOString()
+          expect(yield* readRegisteredFinancialIdentity(registered, lockAt)).toEqual(identity)
+          if (definition.policy === JevResearchPolicy.Incumbent) {
+            expect(
+              Exit.isFailure(
+                yield* Effect.exit(readRegisteredFinancialIdentity(registered, '2000-01-01T00:00:00.000Z')),
+              ),
+            ).toBe(true)
+          }
           if (definition.policy === JevResearchPolicy.Candidate) {
             const build = {
               ...config.build,
@@ -2258,7 +2310,7 @@ postgres('PostgreSQL prospective system qualification', () => {
             { ...registered, parametersHash: testHash('other parameters') },
             { ...registered, protocolHash: testHash('other protocol') },
           ])
-            expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(changed)))).toBe(true)
+            expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(changed, lockAt)))).toBe(true)
         }
       }),
     )
@@ -2598,7 +2650,12 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect((await runtime.runPromise(readSystemSourceCut(cuts[0] ?? ''))).sourceMaterial).toEqual({ version: 1 })
   })
 
-  test.each(Object.values(JevResearchPolicy))(
+  test.each([
+    JevResearchPolicy.Candidate,
+    JevResearchPolicy.Incumbent,
+    JevResearchPolicy.Deployed,
+    JevResearchPolicy.Ablation,
+  ])(
     'replay observer receipts for %s bind their registered image, cuts and times and remain append-only',
     async (selectedPolicy) => {
       await runtime.runPromise(

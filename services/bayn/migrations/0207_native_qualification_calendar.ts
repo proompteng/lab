@@ -70,7 +70,8 @@ export default Effect.gen(function* () {
   DECLARE shape text; admission text; assessment text; retained text := 'bayn.system-registration.v4';
     current_version text := 'bayn.system-registration.v5';
     retained_hash text := '19024af2ef4b02c8a63e011149e2e2df07e4846e7903ca31baaf34100b88b9b8';
-    current_hash text := '995733a0b6754c5edb759dc6d1984c1164bee454a785a1faf96ede947e8b5d46';
+    current_hash text := '3bcca8feb62f42e6f5df33cb875630e6c4c5419bfb1b71fbae68661a3f1e238b';
+    retained_roles text := '''JEV'',''DEPLOYED_BAYN'',''REPEATED_MOMENTUM'',''JEV_ABLATION''';
   BEGIN
     SELECT pg_get_constraintdef(oid) INTO STRICT shape FROM pg_constraint
       WHERE conrelid='system_qualification_registrations'::regclass AND conname='system_registration_payload_shape';
@@ -78,7 +79,7 @@ export default Effect.gen(function* () {
     SELECT pg_get_functiondef('check_system_assessment_scope()'::regprocedure) INTO STRICT assessment;
     IF strpos(shape,quote_literal(retained) || '::text')=0
       OR strpos(admission,quote_literal(retained))=0 OR strpos(admission,retained_hash)=0
-      OR strpos(assessment,quote_literal(retained))=0
+      OR strpos(admission,retained_roles)=0 OR strpos(assessment,quote_literal(retained))=0
     THEN RAISE EXCEPTION 'unexpected prior system qualification contract'; END IF;
 
     EXECUTE 'ALTER TABLE system_qualification_registrations DROP CONSTRAINT system_registration_payload_shape';
@@ -86,10 +87,22 @@ export default Effect.gen(function* () {
       || replace(shape, quote_literal(retained) || '::text',
          'ANY (ARRAY[' || quote_literal(retained) || '::text,' || quote_literal(current_version) || '::text])');
     admission := replace(replace(admission, retained, current_version), retained_hash, current_hash);
+    admission := replace(admission, retained_roles, retained_roles || ',''INCUMBENT_JEV''');
     EXECUTE replace(admission,'NEW.created_at := clock_timestamp();',$admission$
       IF NEW.program='BAYN_SYSTEM_QUALIFICATION'
         AND NOT system_native_qualification_calendar_valid(NEW.payload_text::json) THEN
         RAISE EXCEPTION 'registration must match the complete canonical native equity calendar' USING ERRCODE='23514';
+      END IF;
+      IF NEW.program='BAYN_SYSTEM_QUALIFICATION' AND NOT EXISTS (
+        SELECT 1 FROM jsonb_array_elements(NEW.payload_text::jsonb->'policies') AS candidate
+        CROSS JOIN jsonb_array_elements(NEW.payload_text::jsonb->'policies') AS incumbent
+        WHERE candidate->>'policy'='JEV' AND incumbent->>'policy'='INCUMBENT_JEV'
+          AND candidate->>'accountBindingHash' <> incumbent->>'accountBindingHash'
+          AND candidate->>'authorityGenerationHash' <> incumbent->>'authorityGenerationHash'
+          AND ((candidate->'riskPolicy') - 'accountId'::text) = ((incumbent->'riskPolicy') - 'accountId'::text)
+      ) THEN
+        RAISE EXCEPTION 'native qualification requires an independent serving Jev comparator with the same risk'
+          USING ERRCODE='23514';
       END IF;
       NEW.created_at := clock_timestamp();
     $admission$);

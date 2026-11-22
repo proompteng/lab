@@ -32,6 +32,7 @@ import {
   conditionalStatisticalModel,
   usesLegacyAcceptance,
   JevResearchPolicy,
+  retainedJevResearchPolicies,
   jevAcceptanceProtocolHash,
   jevAcceptanceInferenceRateFloor,
   jevAcceptanceExecutionRiskLimits,
@@ -216,6 +217,7 @@ export const systemQualificationPolicyHash = (
             schemaVersion: 'bayn.system-qualification-policy.v6',
             evaluationWindowRule: 'CANONICAL_NATIVE_EQUITY_WINDOWS_WITH_BROKER_RECOVERY_COVERAGE',
             equityFeeRule: 'DATED_ACCOUNT_EQUITY_FEES_MATCH_POSTED_SCOPED_RECEIPTS',
+            comparisonRule: 'INDEPENDENT_PAPER_SERVING_JEV_WITH_IDENTICAL_ACCOUNT_NEUTRAL_RISK',
           }
         : {}),
       acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(version),
@@ -260,11 +262,22 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     if (
       new Set(registration.policies.map((p) => p.policy)).size !== registration.policies.length ||
       candidatePolicy === undefined ||
-      (legacy && registration.policies.length !== Object.values(JevResearchPolicy).length)
+      (legacy && registration.policies.length !== retainedJevResearchPolicies.length)
     )
       return yield* invalid('Registration requires the candidate and each distinct matched control')
     if (new Set(registration.policies.map((p) => p.accountBindingHash)).size !== registration.policies.length)
       return yield* invalid('Each policy requires its own economic account scope and cost allocation')
+    const incumbent = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Incumbent)
+    if (native) {
+      if (incumbent === undefined || incumbent.authorityGenerationHash === candidatePolicy.authorityGenerationHash)
+        return yield* invalid('Native qualification requires its independently authorized serving Jev incumbent')
+      const { accountId: _incumbentAccount, ...incumbentRisk } = incumbent.riskPolicy
+      const { accountId: _candidateAccount, ...candidateRisk } = candidatePolicy.riskPolicy
+      if ((yield* canonicalHashV1Result(incumbentRisk)) !== (yield* canonicalHashV1Result(candidateRisk)))
+        return yield* invalid('The Jev incumbent and candidate must share the same execution risk policy')
+    } else if (incumbent !== undefined) {
+      return yield* invalid('Retained qualification cannot substitute its original comparator')
+    }
     yield* validateCostAllocationPlans(
       registration.costAllocationPlans,
       new Set(registration.policies.map((policy) => policy.accountBindingHash)),
@@ -380,7 +393,7 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       const { rates } = yield* prepareInferenceRateCard(policy.inferenceRateCard)
       const jevOnly = usesJevOnlyInference(registration.obligations.configuration.protocol)
       const requiredModels =
-        policy.policy === JevResearchPolicy.Candidate
+        policy.policy === JevResearchPolicy.Candidate || policy.policy === JevResearchPolicy.Incumbent
           ? [
               { provider: 'typesafe', model: registration.obligations.configuration.protocol.model },
               ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),

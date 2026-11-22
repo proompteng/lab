@@ -132,9 +132,11 @@ complete costs, statistical edge, or a combined qualification verdict.
 ## Prospective registration
 
 `validateProspectiveSystemRegistration` admits only `bayn.system-registration.v5`. Stored prior versions retain
-their original registration and assessment paths. Admission binds a nonempty prospective calendar, candidate and at least one
-selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original deadlines,
-allocation, and sourced conditional statistical support and assumptions before the first open. Current registrations
+their original registration and assessment paths. Native admission binds a candidate and an `INCUMBENT_JEV`
+control to separate account and authority identities under the same execution risk policy. The incumbent's account
+history must identify its serving PAPER Jev generation at the registration clock. Admission also binds the nonempty
+calendar, source, image, prompts, cost weights, inference tariffs, original deadlines, allocation, and conditional
+statistical support before the first open. Current registrations
 have no bootstrap plan. The allocation must fit every bound source-approved risk policy. Both existing
 PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
 New registrations bind the explicit equity entry scope and the complete canonical Alpaca calendar as a verified
