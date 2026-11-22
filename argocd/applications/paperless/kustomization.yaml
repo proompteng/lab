@@ -4,6 +4,7 @@ namespace: paperless
 
 resources:
   - secrets.yaml
+  - agent-api.yaml
   - postgres.yaml
   - backup-retention.yaml
   - valkey.yaml
@@ -12,6 +13,9 @@ resources:
   - network.yaml
 
 configMapGenerator:
+  - name: paperless-agent-bootstrap
+    files:
+      - bootstrap_agent.py
   - name: paperless-backup-maintenance
     files:
       - prune_backups.py
@@ -19,3 +23,27 @@ configMapGenerator:
 generatorOptions:
   annotations:
     argocd.argoproj.io/sync-wave: "-2"
+
+replacements:
+  - source:
+      kind: ConfigMap
+      name: paperless-config
+      fieldPath: data.PAPERLESS_ALLOWED_HOSTS
+    targets:
+      - select:
+          kind: Deployment
+          name: paperless
+        fieldPaths:
+          - spec.template.metadata.annotations.[paperless.proompteng.ai/allowed-hosts]
+        options:
+          create: true
+  - source:
+      kind: Deployment
+      name: paperless
+      fieldPath: spec.template.spec.containers.[name=paperless].image
+    targets:
+      - select:
+          kind: Job
+          name: paperless-agent-bootstrap
+        fieldPaths:
+          - spec.template.spec.containers.[name=bootstrap].image
