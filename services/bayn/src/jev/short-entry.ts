@@ -227,15 +227,14 @@ export const mayHaveFundableShortSource = (input: {
         const stopPnl = proceeds - (yield* shortCoverCostMicros({ ...common, priceMicros: stopLimit }))
         return isShortPayoffFunded(input.protocol, targetPnl, stopPnl)
       })
-    const high = prices.reduce((n, p) => (p.high > n ? p.high : n), 0n)
-    const low = prices.reduce((n, p) => (p.low < n ? p.low : n), high)
-    if (
-      yield* fundable(
-        quantizeInstrumentPriceMicros(input.chart.symbol, high + 1n, 'UP'),
-        quantizeInstrumentPriceMicros(input.chart.symbol, low + 1n, 'UP'),
-      )
-    )
-      return true
+    const lowest = prices.reduce<bigint | undefined>((n, p) => (n === undefined || p.low < n ? p.low : n), undefined)
+    if (lowest !== undefined) {
+      const target = quantizeInstrumentPriceMicros(input.chart.symbol, lowest + 1n, 'UP')
+      for (const price of prices) {
+        if (yield* fundable(quantizeInstrumentPriceMicros(input.chart.symbol, price.high + 1n, 'UP'), target))
+          return true
+      }
+    }
     for (let first = 0; first < prices.length - 2; first++) {
       const initial = prices[first]
       if (initial === undefined) continue

@@ -73,13 +73,13 @@ export const withObservedEntryBars = <
             high: Math.max(
               bar.high,
               protocol.schemaVersion === 'bayn.jev.protocol.v42' && quote !== undefined
-                ? quote.askPrice * (shortFavored ? 1.04 : 1.055)
+                ? quote.askPrice * (shortFavored ? 1.04 : 1.035)
                 : bar.open * 1.05,
             ),
             low: Math.min(
               bar.low,
               protocol.schemaVersion === 'bayn.jev.protocol.v42' && quote !== undefined
-                ? quote.bidPrice * (shortFavored ? 0.94 : 0.96)
+                ? quote.bidPrice * (shortFavored ? 0.94 : 0.97)
                 : bar.open * 0.95,
             ),
           }

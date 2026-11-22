@@ -205,7 +205,8 @@ describe('native JeV equity shorts', () => {
       }),
     )
     expect(
-      Result.getOrThrow(evaluateSupportedEntryProposals({ proposals, response })).supported[0]?.proposal.schemaVersion,
+      Result.getOrThrow(evaluateSupportedEntryProposals({ proposals, response, protocol: input.protocol })).supported[0]
+        ?.proposal.schemaVersion,
     ).toBe('bayn.equity-short-entry-proposal.v1')
     for (const proposal of proposals)
       answers[shortQuestionNames(proposal.source.setup).obstruction] = { type: 'noul', noul: 0.9 }
@@ -216,7 +217,9 @@ describe('native JeV equity shorts', () => {
         usage: { input_tokens: 100, output_tokens: 25 },
       }),
     )
-    const rejected = Result.getOrThrow(evaluateSupportedEntryProposals({ proposals, response: obstructed }))
+    const rejected = Result.getOrThrow(
+      evaluateSupportedEntryProposals({ proposals, response: obstructed, protocol: input.protocol }),
+    )
     expect(rejected.supported).toEqual([])
     expect(rejected.rejections.map((value) => value.reason)).toEqual(['OBJECTIVE_OBSTRUCTED', 'OBJECTIVE_OBSTRUCTED'])
   })
@@ -361,10 +364,10 @@ describe('native JeV equity shorts', () => {
         windowEndAt: '2026-11-13T15:00:00.000Z',
         bars: input.chart.bars.map((bar, index) => ({
           minuteBeforeWindowEnd: bar.minuteBeforeWindowEnd,
-          open: index === 0 ? 99.6 : bar.open,
-          high: bar.high,
-          low: index === 0 ? 99.5 : bar.low,
-          close: bar.close,
+          open: index === 0 ? 100.26 : bar.open,
+          high: index === 0 ? 100.3 : bar.high,
+          low: index === 0 ? 100.25 : bar.low,
+          close: index === 0 ? 100.28 : bar.close,
           volume: bar.volume,
         })),
       }),
@@ -419,5 +422,51 @@ describe('native JeV equity shorts', () => {
       },
     })
     expect(state.proposals.BASE_BREAKDOWN.calculatedFacts.completedClosesAfterStructure).toHaveLength(2)
+  })
+
+  test('mayHaveFundableShortSource checks selectable resistance stops when a higher bar fails G/L >= 1.0', () => {
+    const input = fixture()
+    const chart = Result.getOrThrow(
+      makeNativeChartEvidence({
+        symbol: 'AAPL',
+        windowEndAt: '2026-11-13T15:00:00.000Z',
+        bars: input.chart.bars.map((bar, index) => ({
+          minuteBeforeWindowEnd: bar.minuteBeforeWindowEnd,
+          open: 100,
+          high: index === 0 ? 101 : index === 1 ? 100.2 : 100.1,
+          low: 99,
+          close: 100,
+          volume: bar.volume,
+        })),
+      }),
+    )
+    const source = {
+      chart,
+      protocol: input.protocol,
+      bidMicros: 100_000_000n,
+      askMicros: 100_010_000n,
+      capitalMicros: input.capitalMicros,
+    }
+    expect(Result.getOrThrow(mayHaveFundableShortSource(source))).toBe(true)
+    const proposals = Result.getOrThrow(
+      makeShortEntryProposals({
+        ...source,
+        assessments: {
+          ...input.assessments,
+          barsHash: chart.barsHash,
+          pngHash: chart.pngHash,
+          support: {
+            ...input.assessments.support,
+            anchor: { status: 'ASSESSED', barId: chart.bars[0]!.id, probability: 0.9 },
+          },
+          resistance: {
+            ...input.assessments.resistance,
+            anchor: { status: 'ASSESSED', barId: chart.bars[1]!.id, probability: 0.9 },
+          },
+          base: { ...input.assessments.base, presence: { status: 'ASSESSED', probability: 0.1 } },
+        },
+      }),
+    )
+    expect(proposals.map((proposal) => proposal.source.setup)).toEqual([ShortEntrySetup.ResistanceRejection])
   })
 })
