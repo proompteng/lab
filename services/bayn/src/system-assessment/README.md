@@ -137,7 +137,8 @@ control to separate account and authority identities under the same execution ri
 history must identify its serving PAPER Jev generation at the registration clock. Admission also binds the nonempty
 calendar, source, image, prompts, cost weights, inference tariffs, original deadlines, allocation, and conditional
 statistical support before the first open. Current registrations
-have no bootstrap plan. The allocation must fit every bound source-approved risk policy. Both existing
+have no bootstrap plan. The allocation must fit every bound source-approved risk policy and match each account's
+verified opening equity at the first session. Subsequent sessions use their own observed equity. Both existing
 PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
 New registrations bind the explicit equity entry scope and the complete canonical Alpaca calendar as a verified
 source artifact. Both application and database admission recompute the calendar's source and normalized-response
