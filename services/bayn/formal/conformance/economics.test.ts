@@ -17,24 +17,27 @@ const micros = (usd: number) => String(Math.round(usd * 1_000_000))
 
 formal('independent economic evidence evaluation', () => {
   test('recomputes paired bounds, profit and risk before comparing production verdicts', () => {
-    const cases = [knownPayoffAssessmentFixture(), supportedAssessmentFixture(7), supportedAssessmentFixture(21)].map(
-      ({ input, verifiedSources }) => {
-        const registration = input.registration
-        if (registration.schemaVersion !== 'bayn.system-registration.v4') throw Error('Expected current registration')
-        const policies = input.policies.map((policy) => {
-          const definition = registration.policies.find((row) => row.policy === policy.policy)
-          if (definition === undefined) throw Error('Missing definition')
-          return {
-            policy: policy.policy,
-            definitionHash: testHash(definition),
-            sessions: policy.sessions.map((session) =>
-              Result.getOrThrow(assessSession(session, registration, definition, input.asOf, verifiedSources)),
-            ),
-          }
-        })
-        return { registration, policies }
-      },
-    )
+    const cases = [
+      knownPayoffAssessmentFixture(),
+      knownPayoffAssessmentFixture('NATIVE'),
+      supportedAssessmentFixture(7),
+      supportedAssessmentFixture(21),
+    ].map(({ input, verifiedSources }) => {
+      const registration = input.registration
+      if (!('statisticalPlan' in registration)) throw Error('Expected conditional registration')
+      const policies = input.policies.map((policy) => {
+        const definition = registration.policies.find((row) => row.policy === policy.policy)
+        if (definition === undefined) throw Error('Missing definition')
+        return {
+          policy: policy.policy,
+          definitionHash: testHash(definition),
+          sessions: policy.sessions.map((session) =>
+            Result.getOrThrow(assessSession(session, registration, definition, input.asOf, verifiedSources)),
+          ),
+        }
+      })
+      return { registration, policies }
+    })
     const first = cases[0]
     if (first === undefined) throw Error('Missing fixture')
     for (const fault of ['omitted', 'date', 'profit', 'mark', 'support'] as const) {
@@ -107,7 +110,7 @@ formal('independent economic evidence evaluation', () => {
         return Result.isFailure(result) || !('checks' in result.success) ? null : result.success.checks
       }),
     )
-    expect(actual.slice(3)).toEqual([null, null, null, null, null, null])
+    expect(actual.slice(4)).toEqual([null, null, null, null, null, null])
   })
 
   test('binds observations, controls and supports before deriving the attempt error budget', () => {

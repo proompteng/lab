@@ -2,7 +2,8 @@ import type { ChartStageInferenceSchema, ChartStageUsageSchema } from './chart-s
 import { Context, Data, type Effect, Result } from 'effect'
 
 import type { OperationalError } from '../errors'
-import { makeNativeChartEvidence } from './chart-evidence'
+import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evidence'
+import type { PreparedChartRequest } from './chart-questions'
 import {
   makeStagedDispatchClaim,
   stageResponseIdentity,
@@ -11,7 +12,7 @@ import {
   type BaseStartEvidence,
 } from './staged-checkpoint'
 import { type ChartAssessments, type ChartAssessmentsMaterial } from './chart-assessments'
-import { makeInitialChartStageRequest, stagedChartAssessments } from './staged-chart-questions'
+import { assessPreparedChart, makeInitialChartStageRequest } from './staged-chart-questions'
 import type { JevInference } from './client'
 import { JevFailure, JevResponseSchema, type JevRequest } from './contract'
 import type { DecisionsError } from './decisions'
@@ -256,15 +257,26 @@ export const hasFeasibleEntrySource = (
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
 ) => evaluateEntrySourceFeasibility(input, chart).pipe(Result.map((result) => result.feasible))
 
-export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: ChartStageInference) =>
+export const deriveEntryHandoffDisposition = (
+  {
+    input,
+    chart,
+    visualRequest,
+  }: {
+    readonly input: EntryInferenceInput
+    readonly chart: NativeChartEvidence
+    readonly visualRequest: PreparedChartRequest
+  },
+  visual: ChartStageInference,
+) =>
   Result.gen(function* () {
-    const chart = yield* makeNativeChartEvidence(input.chartSource)
     return yield* deriveEntryDispositionForChart(
       input,
       visual,
       chart,
-      yield* stagedChartAssessments(
+      yield* assessPreparedChart(
         { chart, protocol: input.protocol, funding: input.funding },
+        visualRequest,
         stageResponseIdentity(visual),
       ),
       makeEntryJudgmentRequest,

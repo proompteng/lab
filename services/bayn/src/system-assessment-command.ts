@@ -24,7 +24,7 @@ import { OperationalAssessmentInputSchema } from './system-assessment/operationa
 import { captureSystemSourceCut } from './system-assessment/capture'
 import { ValkeyCacheLive } from './valkey-cache'
 import { qualificationRuntime } from './system-assessment/configuration'
-import { validateSystemRegistration } from './system-assessment/policy'
+import { validateProspectiveSystemRegistration } from './system-assessment/policy'
 import { SystemAssessmentError } from './system-assessment/economics'
 import { loadActiveStrategyProtocol } from './strategy'
 import { SystemAssessmentInputSchema } from './system-assessment/assessment'
@@ -99,7 +99,7 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
         if (command._tag === 'SystemRegister') {
           const { registration } = Schema.is(OperationalRegistrationSchema)(packet.payload)
             ? yield* Effect.fromResult(validateOperationalRegistration(packet.payload))
-            : yield* Effect.fromResult(validateSystemRegistration(packet.payload))
+            : yield* Effect.fromResult(validateProspectiveSystemRegistration(packet.payload))
           const runtime = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
           if (
             (yield* Effect.fromResult(canonicalHashV1Result(runtime))) !==
