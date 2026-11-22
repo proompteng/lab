@@ -21,7 +21,7 @@ import { IntentState } from '../execution/contracts'
 import type { NativeProtectionCancelCommand } from '../execution/intents/domain'
 import { currentUtcInstant } from '../time'
 import { canonicalHashV1Result, sha256 } from '../hash'
-import { ValkeyCache } from '../valkey-cache'
+import { ValkeyCache, maximumValkeyValueLength } from '../valkey-cache'
 import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerNotificationSchema, type BrokerNotification } from '../broker/notifications'
@@ -55,7 +55,7 @@ import {
 } from '../broker/activities'
 
 const materializationBytes = Metric.histogram('bayn_broker_materialization_bytes', {
-  boundaries: [4096, 16384, 65536, 262144, 1048576, 4194304],
+  boundaries: [4096, 16384, 65536, 262144, 1048576, 4194304, maximumValkeyValueLength],
 })
 
 const StateMaterialization = Schema.Struct({ snapshotHash: Sha256Schema, state: ObservedBrokerStateSchema })
@@ -123,7 +123,7 @@ const activityProjectionReceipt = (
   }
 }
 
-const maximumRetainedSnapshotBytes = 8 * 1024 * 1024
+const maximumRetainedSnapshotBytes = maximumValkeyValueLength
 
 const freezeMaterialization = (value: unknown): void => {
   if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return

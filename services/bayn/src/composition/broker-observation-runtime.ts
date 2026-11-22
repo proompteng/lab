@@ -54,7 +54,7 @@ import {
   type BrokerSourceProjectionReceipt,
 } from '../broker/trade-update-projection'
 import { withObservedStage } from '../telemetry'
-import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
+import { ValkeyCache, ValkeyCacheError, ValkeyCacheInputError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import { OrderStatus } from '../broker/alpaca/model'
 import {
@@ -154,7 +154,21 @@ export const brokerPublicationFailureAnnotations = (failure: BrokerReadError): R
   try {
     // The persistence wrapper retains the original cache error as its direct cause.
     const cause: unknown = Object.getOwnPropertyDescriptor(failure, 'cause')?.value
-    if (!isNativeError(cause) || Object.getPrototypeOf(cause) !== ValkeyCacheError.prototype) return unknown
+    if (!isNativeError(cause)) return unknown
+    const prototype = Object.getPrototypeOf(cause)
+    if (prototype === ValkeyCacheInputError.prototype) {
+      const operation: unknown = Object.getOwnPropertyDescriptor(cause, 'operation')?.value
+      return {
+        'broker.publication_dependency': 'valkey',
+        'broker.publication_operation':
+          typeof operation === 'string' && ['get', 'put', 'remove', 'configure', 'connect'].includes(operation)
+            ? operation
+            : 'unknown',
+        'broker.publication_failure_category': 'input_validation',
+        'broker.publication_cause_category': 'input_validation',
+      }
+    }
+    if (prototype !== ValkeyCacheError.prototype) return unknown
     const operation: unknown = Object.getOwnPropertyDescriptor(cause, 'operation')?.value
     const category: unknown = Object.getOwnPropertyDescriptor(cause, 'category')?.value
     const causeCategory: unknown = Object.getOwnPropertyDescriptor(cause, 'causeCategory')?.value
