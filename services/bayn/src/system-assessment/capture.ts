@@ -22,8 +22,7 @@ import { readInferenceExpenseLedger } from '../inference-expense-journal'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { instrumentMarket } from '../instruments'
-import { UtcDatabaseInstantSchema, UtcInstantSchema } from '../schemas'
-import { databaseUtcInstant } from '../db/clock'
+import { UtcInstantSchema } from '../schemas'
 import { readAssessmentRegistration } from './postgres'
 import { SystemAssessmentError } from './economics'
 import { captureForwardFinancialEvidence } from './forward-evidence'
@@ -93,19 +92,12 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
       const captured = yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
-          const times = yield* Schema.decodeUnknownEffect(
-            Schema.Array(Schema.Struct({ asOf: UtcInstantSchema, admittedAt: UtcDatabaseInstantSchema })),
-          )(
-            yield* sql`SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "asOf",
-              ${databaseUtcInstant(sql, sql`created_at`)} AS "admittedAt"
-              FROM system_qualification_registrations WHERE registration_hash = ${registrationHash}`,
+          const times = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ asOf: UtcInstantSchema })))(
+            yield* sql`SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "asOf"`,
           )
-          const clock = times[0]
-          if (clock === undefined)
-            return yield* new SystemAssessmentError({
-              message: 'Database snapshot or registration admission time is unavailable',
-            })
-          const { asOf, admittedAt } = clock
+          const asOf = times[0]?.asOf
+          if (asOf === undefined)
+            return yield* new SystemAssessmentError({ message: 'Database snapshot time is unavailable' })
           const accounts = []
           const settlementWindows =
             registration.schemaVersion === 'bayn.system-registration.v5'
@@ -119,7 +111,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           if (brokerRecoveryClose !== undefined && settlementWindows.length !== registration.calendar.sessions.length)
             return yield* new SystemAssessmentError({ message: 'A native session is missing its settlement window' })
           for (const definition of registration.policies) {
-            const accountIdentity = yield* readRegisteredFinancialIdentity(definition, admittedAt)
+            const accountIdentity = yield* readRegisteredFinancialIdentity(definition, registrationHash)
             const brokerNonTradeActivity = brokerStatements?.get(definition.policy)
             if (
               brokerStatements !== undefined &&

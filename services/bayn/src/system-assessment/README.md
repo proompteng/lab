@@ -133,9 +133,9 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 `validateProspectiveSystemRegistration` admits only `bayn.system-registration.v5`. Stored prior versions retain
 their original registration and assessment paths. Native admission binds a candidate and an `INCUMBENT_JEV`
-control to separate account and authority identities under the same execution risk policy. Capture uses the authority
-transition journal to verify that the incumbent generation had effective PAPER authority with its kill switch clear at
-the database-recorded registration admission. Admission also binds the nonempty
+control to separate account and authority identities under the same execution risk policy. Capture verifies effective
+PAPER authority and a clear kill switch against the immutable authority baseline written in the registration
+transaction. A row lock serializes that baseline with authority changes through admission commit. Admission also binds the nonempty
 calendar, source, image, prompts, cost weights, inference tariffs, original deadlines, allocation, and conditional
 statistical support before the first open. Current registrations
 have no bootstrap plan. The allocation must fit every bound source-approved risk policy and match each account's
