@@ -2,6 +2,9 @@ import { Result, Schema } from 'effect'
 
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
+import { OrderSide, OrderType } from '../execution/contracts'
+import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { canonicalHashV1Result } from '../hash'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { quantityScale } from '../quantity'
@@ -18,6 +21,8 @@ import { priceNumberToMicros, desiredQuantityAtoms } from '../strategy/execution
 import type { NativeChartEvidence } from './chart-evidence'
 import type { ChartAssessmentsMaterial } from './chart-assessments'
 import { JevContractError } from './contract'
+import { jevEntryPriceAllowances } from './entry-economics'
+import { requiresPositiveRewardRiskRatio } from './entry-proposals'
 import { chartPresenceIsAbsent } from './judgment-policy'
 import type { JevProtocolMaterial } from './protocol'
 
@@ -94,6 +99,15 @@ export const ShortEntryProposalSchema = Schema.Struct({
 )
 export type ShortEntryProposal = typeof ShortEntryProposalSchema.Type
 
+export const isShortPayoffFunded = (
+  protocol: Pick<JevProtocolMaterial, 'schemaVersion'>,
+  targetPnlMicros: bigint,
+  stopPnlMicros: bigint,
+): boolean =>
+  stopPnlMicros < 0n &&
+  targetPnlMicros > 0n &&
+  (!requiresPositiveRewardRiskRatio(protocol) || targetPnlMicros >= -stopPnlMicros)
+
 export const jevShortEntryEconomics = (input: {
   readonly protocol: JevProtocolMaterial
   readonly symbol: string
@@ -106,7 +120,23 @@ export const jevShortEntryEconomics = (input: {
       return yield* Result.fail(
         new JevContractError({ message: 'Native short funding requires a positive equity bid' }),
       )
-    const minimumEntryPrice = quantizeInstrumentPriceMicros(input.symbol, input.bidMicros, 'DOWN')
+    const entryAllowances = jevEntryPriceAllowances(input.protocol, input.symbol)
+    const minimumEntryPrice =
+      entryAllowances.quoteDriftBps === 0 && entryAllowances.limitSlippageBps === 0
+        ? quantizeInstrumentPriceMicros(input.symbol, input.bidMicros, 'DOWN')
+        : (yield* deriveExecutionIntentPricing({
+            symbol: input.symbol,
+            side: OrderSide.Sell,
+            orderType: OrderType.Limit,
+            timeInForce: cashSpotLimitTimeInForce(MarketKind.Equity),
+            quantityAtoms: quantityScale,
+            referencePriceMicros: quantizeInstrumentPriceMicros(
+              input.symbol,
+              (input.bidMicros * BigInt(10_000 - entryAllowances.quoteDriftBps) + 9_999n) / 10_000n,
+              'DOWN',
+            ),
+            limitSlippageBps: BigInt(entryAllowances.limitSlippageBps),
+          })).expectedExecutionPriceMicros
     if (minimumEntryPrice <= 0n) return null
     const weight = Math.min(input.protocol.maximumGrossWeight, input.protocol.maximumSymbolWeight)
     // Sale proceeds never increase the allocation budget. Reserve 150% initial collateral from existing capital.
@@ -192,10 +222,10 @@ export const mayHaveFundableShortSource = (input: {
           (stop * BigInt(10_000 + input.protocol.maximumEntryLimitSlippageBps)) / 10_000n,
           'DOWN',
         )
-        return (
-          (yield* shortCoverCostMicros({ ...common, priceMicros: target })) < BigInt(economics.saleNetProceedsMicros) &&
-          (yield* shortCoverCostMicros({ ...common, priceMicros: stopLimit })) > BigInt(economics.saleNetProceedsMicros)
-        )
+        const proceeds = BigInt(economics.saleNetProceedsMicros)
+        const targetPnl = proceeds - (yield* shortCoverCostMicros({ ...common, priceMicros: target }))
+        const stopPnl = proceeds - (yield* shortCoverCostMicros({ ...common, priceMicros: stopLimit }))
+        return isShortPayoffFunded(input.protocol, targetPnl, stopPnl)
       })
     const high = prices.reduce((n, p) => (p.high > n ? p.high : n), 0n)
     const low = prices.reduce((n, p) => (p.low < n ? p.low : n), high)
@@ -292,7 +322,7 @@ export const makeShortEntryProposals = (input: {
         const proceeds = BigInt(economics.saleNetProceedsMicros)
         const stopPnl = proceeds - (yield* shortCoverCostMicros({ ...common, priceMicros: stopLimit }))
         const targetPnl = proceeds - (yield* shortCoverCostMicros({ ...common, priceMicros: target }))
-        if (stopPnl >= 0n || targetPnl <= 0n) return
+        if (!isShortPayoffFunded(protocol, targetPnl, stopPnl)) return
         const material = {
           schemaVersion: 'bayn.equity-short-entry-proposal.v1' as const,
           positionSide: 'SHORT' as const,

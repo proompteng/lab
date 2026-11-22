@@ -10,6 +10,7 @@ import { JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { decideJevEntry } from '../jev/decision'
 import { shortNativeEntryFixture } from '../jev/short-entry.test-support'
+import { retainedJevProtocolV41Document } from '../jev/protocol'
 import { makeJevObservation } from '../jev/observation'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
@@ -49,7 +50,7 @@ test('refuses a reproduced native short instead of evaluating its symbol as a lo
 })
 
 test('retains a native long selection when its candidate evidence also contains funded shorts', () => {
-  const short = Result.getOrThrow(shortNativeEntryFixture())
+  const short = Result.getOrThrow(shortNativeEntryFixture(undefined, retainedJevProtocolV41Document))
   const { decidedAt, ...evidence } = nativeJevDecisionEvidence({
     observation: {
       payload: short.observation,
@@ -174,8 +175,7 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
   expect(Object.keys(factors.answers)).toEqual([
     'equity_support_recovery_confirmed',
     'equity_support_recovery_stop_invalidates',
-    'equity_base_breakout_confirmed',
-    'equity_base_breakout_stop_invalidates',
+    'equity_support_recovery_target_obstructed',
   ])
   expect(factors.answers['equity_support_recovery_confirmed']).toMatchObject({
     type: 'noul',
