@@ -111,7 +111,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           if (brokerRecoveryClose !== undefined && settlementWindows.length !== registration.calendar.sessions.length)
             return yield* new SystemAssessmentError({ message: 'A native session is missing its settlement window' })
           for (const definition of registration.policies) {
-            const accountIdentity = yield* readRegisteredFinancialIdentity(definition, registration.registeredAt)
+            const accountIdentity = yield* readRegisteredFinancialIdentity(definition, registrationHash)
             const brokerNonTradeActivity = brokerStatements?.get(definition.policy)
             if (
               brokerStatements !== undefined &&

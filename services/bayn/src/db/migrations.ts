@@ -1,3 +1,4 @@
+import qualificationAuthorityWitness from '../../migrations/0209_qualification_authority_witness'
 import reconciliationSourceSnapshots from '../../migrations/0208_reconciliation_source_snapshots'
 import nativeQualificationCalendar from '../../migrations/0207_native_qualification_calendar'
 import durableBrokerSourceEvents from '../../migrations/0206_durable_broker_source_events'
@@ -209,6 +210,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '209_qualification_authority_witness': qualificationAuthorityWitness,
   '208_reconciliation_source_snapshots': reconciliationSourceSnapshots,
   '207_native_qualification_calendar': nativeQualificationCalendar,
   '206_durable_broker_source_events': durableBrokerSourceEvents,
