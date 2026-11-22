@@ -2184,7 +2184,8 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('financial capture resolves each exact registered account and rejects scope substitution', async () => {
-    const definitions = registration().policies
+    const proposal = registration()
+    const definitions = proposal.policies.toReversed()
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -2195,7 +2196,7 @@ postgres('PostgreSQL prospective system qualification', () => {
               schemaVersion: 'bayn.broker-identity.v2',
               provider: BrokerProvider.Alpaca,
               environment: BrokerEnvironment.Sandbox,
-              accountId: `captured-financial-${definition.policy}`,
+              accountId: definition.riskPolicy.accountId,
             }),
           )
           const previous = testHash({ previous: definition.policy })
@@ -2275,16 +2276,58 @@ postgres('PostgreSQL prospective system qualification', () => {
             'jev', ${definition.strategyHash}, ${definition.parametersHash}, ${defaultJevProtocolDocument.schemaVersion},
             ${definition.protocolHash}, ${planHash}, ${reconciliation.reconciliationId},
             ${reconciliation.contentHash}, ${planHash})`
-          const observedAt = yield* databaseNow
-          const lockAt = new Date(Date.parse(observedAt) + 1).toISOString()
-          expect(yield* readRegisteredFinancialIdentity(registered, lockAt)).toEqual(identity)
+          let registrationHash: string | undefined
           if (definition.policy === JevResearchPolicy.Incumbent) {
-            expect(
-              Exit.isFailure(
-                yield* Effect.exit(readRegisteredFinancialIdentity(registered, '2000-01-01T00:00:00.000Z')),
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`INSERT INTO authority_state
+                  (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
+                  SELECT 'bayn.paper-authority.v1', generation_hash, 'OBSERVE', 'OBSERVE', 'CLEAR', 1, activated_at
+                  FROM authority_generations WHERE generation_hash=${previous}`
+                yield* sql`UPDATE authority_state AS s SET generation_hash=g.generation_hash, maximum='PAPER',
+                  effective='PAPER', version=2, updated_at=g.activated_at
+                  FROM authority_generations AS g WHERE s.singleton AND g.generation_hash=${generation.generationHash}`
+              }),
+            )
+            const input = withRegistrationCommitments({
+              ...proposal,
+              policies: proposal.policies.map((policy) =>
+                policy.policy === JevResearchPolicy.Incumbent ? registered : policy,
               ),
+            })
+            const pause = sql`UPDATE authority_state SET effective='OBSERVE', kill_state='ACTIVE', reason='test pause',
+              version=version+1, updated_at=greatest(clock_timestamp(), updated_at+interval '1 millisecond') WHERE singleton`
+            const admitted = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const inserted = yield* Deferred.make<void>()
+                const commit = yield* Deferred.make<void>()
+                const admission = yield* asApplication(
+                  registerFixture(input).pipe(
+                    Effect.tap(() => Deferred.succeed(inserted, undefined)),
+                    Effect.tap(() => Deferred.await(commit)),
+                  ),
+                ).pipe(Effect.forkScoped({ startImmediately: true }))
+                yield* Deferred.await(inserted).pipe(Effect.timeout('2 seconds'))
+                const pendingPause = yield* asApplication(
+                  sql`SET LOCAL lock_timeout='100ms'`.pipe(Effect.andThen(pause)),
+                ).pipe(Effect.exit)
+                yield* Deferred.succeed(commit, undefined)
+                const saved = yield* Fiber.join(admission)
+                if (Exit.isSuccess(pendingPause)) throw new Error('A pause crossed the uncommitted admission witness')
+                expect(Cause.pretty(pendingPause.cause)).toContain('lock timeout')
+                return saved
+              }),
+            )
+            yield* pause
+            registrationHash = admitted.registrationHash
+            const paused = yield* registerFixture(
+              withRegistrationCommitments({ ...input, attemptIndex: 2, priorAttemptHash: registrationHash }),
+            )
+            expect(
+              Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(registered, paused.registrationHash))),
             ).toBe(true)
           }
+          expect(yield* readRegisteredFinancialIdentity(registered, registrationHash)).toEqual(identity)
           if (definition.policy === JevResearchPolicy.Candidate) {
             const build = {
               ...config.build,
@@ -2344,7 +2387,9 @@ postgres('PostgreSQL prospective system qualification', () => {
             { ...registered, parametersHash: testHash('other parameters') },
             { ...registered, protocolHash: testHash('other protocol') },
           ])
-            expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(changed, lockAt)))).toBe(true)
+            expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(changed, registrationHash)))).toBe(
+              true,
+            )
         }
       }),
     )
