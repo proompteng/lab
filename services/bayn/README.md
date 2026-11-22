@@ -791,6 +791,10 @@ bytes and financial hashes remain readable through their original codecs. The or
 inference and persistence. Bayn computes execution quantities, risk and exit triggers; current candidate admission
 uses [candidate-only queries](src/jev/observation-query.ts).
 
+Jev's structural checks return every supported funded proposal. After verifying the quotes, the entry selector ranks
+that set by structural support, modeled loss, symbol and proposal ID. It binds protection only for the selected
+proposal. Native execution, replay and the target verifier reproduce that choice from the same batch evidence.
+
 The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
 describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
 each reported probability, so the total allowance scales with the number of choices. These are Bayn validation bounds, not a
@@ -2522,8 +2526,9 @@ observation suites migrate each fixture once, then clone and remove a separate d
 archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
 
-Successful PostgreSQL CI shards upload their measured file durations as `bayn-postgres-timings-<shard>-<attempt>`
-artifacts for balancing future runs.
+The PostgreSQL runner assigns the longest measured files to the least-loaded shards using the same checked-in timing
+snapshot on every worker. Each shard verifies its exact file list against Bun's JUnit report. Refresh the snapshot
+from the `bayn-postgres-timings-<shard>-<attempt>` artifacts of a successful full main run.
 
 Streaming failure integration runs in a separate required job with disposable PostgreSQL, Restate 1.8.1 and Kafka.
 Run `bash services/bayn/scripts/test-streaming-integrations.sh` from a local Docker host using the pinned toolchain.
@@ -2540,6 +2545,8 @@ With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 its own disposable PostgreSQL and TigerBeetle. The four twenty-session latency cases retain their native polling,
 assertions and ten-minute case budgets without sharing one fifteen-minute CI job. Append a group name to run it
 locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
+The runtime job runs two groups of measured replay cases on one runner with a separate PostgreSQL and TigerBeetle
+instance for each worker. Local `test:ledger runtime` can run both workers sequentially against one disposable pair.
 Native latency replay diagnostics go to `node_modules/.cache/bayn-latency`; CI retains the full files as artifacts
 instead of streaming every accelerated replay pass to its console. Phase progress and test failures remain visible.
 The disposable diagnostic executable also retains cumulative host-clock timings for seventeen fixed reconciliation,

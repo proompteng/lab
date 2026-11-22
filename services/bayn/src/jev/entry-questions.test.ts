@@ -6,7 +6,7 @@ import { decodeJevResponse } from './contract'
 import { jevEntryEconomics } from './entry-economics'
 import { chartAssessmentsFixture } from './entry-inference.test-support'
 import { EntrySetup, makeEntryProposals } from './entry-proposals'
-import { makeEntryJudgmentRequest, selectSupportedEntryProposal } from './entry-questions'
+import { evaluateSupportedEntryProposals, makeEntryJudgmentRequest } from './entry-questions'
 import { defaultJevProtocolDocument } from './protocol'
 import { WebullSession } from '../market-data/webull-contract'
 import { webullEntryContextPolicy, type WebullEntryContext } from './webull-entry-context'
@@ -98,7 +98,7 @@ const fixture = (
   return { input, prepared, responseFor }
 }
 
-describe('proposal-specific Jev judgments and code-owned selection', () => {
+describe('proposal-specific Jev structural judgments', () => {
   test('the final Jev body retains independently labeled Webull decimals without changing IEX evidence or proposal terms', () => {
     const context = {
       ...webullEntryContextPolicy,
@@ -234,10 +234,10 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
     expect(Result.getOrThrow(makeEntryJudgmentRequest({ ...input, proposals: [] }))).toBeNull()
   })
 
-  test('selects a supported breakout while unrelated recovery judgments remain uncertain', () => {
+  test('retains a supported breakout while unrelated recovery judgments remain uncertain', () => {
     const { input, responseFor } = fixture()
     const result = Result.getOrThrow(
-      selectSupportedEntryProposal({
+      evaluateSupportedEntryProposals({
         proposals: input.proposals,
         response: responseFor({
           equity_support_recovery_confirmed: 0.5,
@@ -245,7 +245,7 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
         }),
       }),
     )
-    expect(result.selected?.proposal.source.setup).toBe(EntrySetup.BaseBreakout)
+    expect(result.supported.map(({ proposal }) => proposal.source.setup)).toEqual([EntrySetup.BaseBreakout])
     expect(result.rejections).toHaveLength(1)
     expect(result.rejections[0]?.reason).toBe('JUDGMENT_UNCERTAIN')
   })
@@ -253,12 +253,12 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
   test('retains supported recovery when breakout acceptance is rejected', () => {
     const { input, responseFor } = fixture()
     const result = Result.getOrThrow(
-      selectSupportedEntryProposal({
+      evaluateSupportedEntryProposals({
         proposals: input.proposals,
         response: responseFor({ equity_base_breakout_confirmed: 0.1 }),
       }),
     )
-    expect(result.selected?.proposal.source.setup).toBe(EntrySetup.SupportRecovery)
+    expect(result.supported.map(({ proposal }) => proposal.source.setup)).toEqual([EntrySetup.SupportRecovery])
     expect(result.rejections[0]?.reason).toBe('SETUP_UNSUPPORTED')
   })
 
@@ -273,7 +273,7 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
       'crypto_base_breakout_target_obstructed',
     ])
     const result = Result.getOrThrow(
-      selectSupportedEntryProposal({
+      evaluateSupportedEntryProposals({
         proposals: input.proposals,
         response: responseFor({
           crypto_support_recovery_target_obstructed: 0.9,
@@ -281,7 +281,7 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
         }),
       }),
     )
-    expect(result.selected).toBeNull()
+    expect(result.supported).toEqual([])
     expect(result.rejections.map((rejection) => rejection.reason)).toEqual([
       'OBJECTIVE_OBSTRUCTED',
       'INVALIDATION_UNSUPPORTED',
@@ -294,7 +294,7 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
     const { equity_support_recovery_confirmed: _, ...answers } = response.answers
     expect(
       Result.isFailure(
-        selectSupportedEntryProposal({ proposals: input.proposals, response: { ...response, answers } }),
+        evaluateSupportedEntryProposals({ proposals: input.proposals, response: { ...response, answers } }),
       ),
     ).toBe(true)
   })
@@ -302,7 +302,7 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
   test('funded equity setups do not require an overhead-resistance probability', () => {
     const { input, responseFor } = fixture()
     const result = Result.getOrThrow(
-      selectSupportedEntryProposal({
+      evaluateSupportedEntryProposals({
         proposals: input.proposals,
         response: responseFor({
           equity_support_recovery_confirmed: 0.8,
@@ -311,14 +311,14 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
         }),
       }),
     )
-    expect(result.selected?.proposal.source.setup).toBe(EntrySetup.SupportRecovery)
-    expect(result.selected?.judgmentSupport).toBe(0.75)
+    expect(result.supported.map(({ proposal }) => proposal.source.setup)).toEqual([EntrySetup.SupportRecovery])
+    expect(result.supported[0]?.structuralSupport).toBe(0.75)
   })
 
   test('rejects equity setups with an unsupported stop despite removing the obstruction veto', () => {
     const { input, responseFor } = fixture()
     const result = Result.getOrThrow(
-      selectSupportedEntryProposal({
+      evaluateSupportedEntryProposals({
         proposals: input.proposals,
         response: responseFor({
           equity_support_recovery_stop_invalidates: 0.1,
@@ -326,19 +326,21 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
         }),
       }),
     )
-    expect(result.selected).toBeNull()
+    expect(result.supported).toEqual([])
     expect(result.rejections.every((rejection) => rejection.reason === 'INVALIDATION_UNSUPPORTED')).toBe(true)
   })
 
-  test('uses deterministic tie-breaking without treating judgment support as profit probability', () => {
+  test('retains every structurally supported proposal without ranking it as expected profit', () => {
     const { input, responseFor } = fixture()
     const first = Result.getOrThrow(
-      selectSupportedEntryProposal({ proposals: input.proposals, response: responseFor() }),
+      evaluateSupportedEntryProposals({ proposals: input.proposals, response: responseFor() }),
     )
     const second = Result.getOrThrow(
-      selectSupportedEntryProposal({ proposals: input.proposals.toReversed(), response: responseFor() }),
+      evaluateSupportedEntryProposals({ proposals: input.proposals.toReversed(), response: responseFor() }),
     )
-    expect(first.selected?.proposal.proposalId).toBe(second.selected?.proposal.proposalId)
-    expect(first.selected?.judgmentSupport).toBe(0.9)
+    expect(first.supported.map(({ proposal }) => proposal.proposalId)).toEqual(
+      second.supported.map(({ proposal }) => proposal.proposalId).toReversed(),
+    )
+    expect(first.supported.every(({ structuralSupport }) => structuralSupport === 0.9)).toBe(true)
   })
 })

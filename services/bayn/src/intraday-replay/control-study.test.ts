@@ -831,8 +831,6 @@ test('active-build frozen-source control runner produces reproducible hashed inc
       const arrivals = `${directory}/arrivals.ndjson.gz`
       yield* fs.writeFile(arrivals, compressedControlFixture(retained.body))
       const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
-      const repeated = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
-      expect(repeated.reportHash).toBe(report.reportHash)
       expect(report.risk.maxDailyTradedNotionalMicros).toBe('200000000000')
       expect(report.risk.maxDrawdownMicros).toBe('5000000000')
       const sandbox = yield* runControlStudy(

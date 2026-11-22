@@ -6,7 +6,7 @@ import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { executionCloseRecoveryExpiry } from '../market-hours'
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Option, Result, Schema } from 'effect'
 
 const runWithConstruction = <A, E>(program: Effect.Effect<A, E, DecisionConstruction>) =>
@@ -189,7 +189,7 @@ const freshMarket: IntradayMarketDataService = {
   verifyReference: fixtureStreamingReference,
 }
 
-const fixture = async (source = native) => {
+const makeFixture = async (source: typeof native) => {
   const selectedCycle = Effect.runSync(
     Schema.decodeUnknownEffect(
       AutonomousCycleSchema,
@@ -302,6 +302,17 @@ const fixture = async (source = native) => {
 }
 
 describe('closing market-data fallback boundaries', () => {
+  let defaultFixture: Awaited<ReturnType<typeof makeFixture>>
+  beforeAll(async () => {
+    defaultFixture = await makeFixture(native)
+  })
+
+  const fixture = async (source = native) => {
+    if (source !== native) return makeFixture(source)
+    const { input, ...state } = defaultFixture
+    return { input: { ...input }, ...structuredClone(state) }
+  }
+
   test.each([
     'profit',
     'stop',
