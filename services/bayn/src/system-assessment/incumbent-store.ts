@@ -9,14 +9,13 @@ const prefix = 'BAYN_QUALIFICATION_INCUMBENT_JEV'
 
 export const openIncumbentPostgres = (config: RuntimeConfig, readOnly: boolean) =>
   Effect.gen(function* () {
-    const postgres = yield* Config.all({
+    const connection = yield* Config.all({
       url: Config.Redacted(`${prefix}_POSTGRES_URL`),
-      tls: Config.Boolean(`${prefix}_POSTGRES_TLS`).pipe(Config.withDefault(config.postgres.tls)),
       caPath: Config.NonEmptyString(`${prefix}_POSTGRES_CA_PATH`).pipe(Config.withDefault(config.postgres.caPath)),
     })
     const services = yield* Layer.build(
       PostgresClientLive(
-        { ...config, postgres },
+        { ...config, postgres: { ...config.postgres, ...connection } },
         { maxConnections: 2, applicationName: 'bayn-qualification-incumbent', readOnly },
       ),
     )

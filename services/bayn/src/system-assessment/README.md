@@ -157,8 +157,8 @@ fee amounts must match distinct posted activities on that date, and each activit
 financial evidence. The registered rate supplies the comparison amount. Posted receipts supply the actual cost.
 Terminal inventory, unresolved orders, the independent cash bridge, and operating costs retain their evidence requirements.
 Native registration, capture, and assessment read the incumbent store through
-`BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_URL`. The corresponding `_POSTGRES_TLS` and
-`_POSTGRES_CA_PATH` settings override the candidate's TLS settings. Registration writes the incumbent
+`BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_URL`. The connection inherits the candidate's TLS mode. Set
+`BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_CA_PATH` when the incumbent uses a different CA. Registration writes the incumbent
 witness. Capture and assessment use read-only PostgreSQL connections. Capture also reads
 `BAYN_QUALIFICATION_INCUMBENT_JEV_TIGERBEETLE_CLUSTER_ID`, `_TIGERBEETLE_ADDRESSES`, and
 `_TIGERBEETLE_LEDGER` for the incumbent. The cut records each account's snapshot time. Assessment
