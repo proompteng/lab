@@ -133,9 +133,11 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 `validateProspectiveSystemRegistration` admits only `bayn.system-registration.v5`. Stored prior versions retain
 their original registration and assessment paths. Native admission binds a candidate and an `INCUMBENT_JEV`
-control to separate account and authority identities under the same execution risk policy. Capture verifies effective
-PAPER authority and a clear kill switch against the immutable authority baseline written in the registration
-transaction. A row lock serializes that baseline with authority changes through admission commit. Admission also binds the nonempty
+control to separate account and authority identities under the same execution risk policy. The incumbent's
+PostgreSQL store locks its active PAPER authority through candidate admission and writes its own witness.
+The candidate store seals the pair after the peer witness commits. Both commit deadlines precede the first
+open. An interrupted attempt without a peer witness remains incomplete and retains its attempt index.
+Admission also binds the nonempty
 calendar, source, image, prompts, cost weights, inference tariffs, original deadlines, allocation, and conditional
 statistical support before the first open. Current registrations
 have no bootstrap plan. The allocation must fit every bound source-approved risk policy and match each account's
@@ -154,6 +156,14 @@ and registered dated fee schedule. Every equity fill must belong to the register
 fee amounts must match distinct posted activities on that date, and each activity must belong to the policy's verified
 financial evidence. The registered rate supplies the comparison amount. Posted receipts supply the actual cost.
 Terminal inventory, unresolved orders, the independent cash bridge, and operating costs retain their evidence requirements.
+Native registration, capture, and assessment read the incumbent store through
+`BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_URL`. The connection inherits the candidate's TLS mode. Set
+`BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_CA_PATH` when the incumbent uses a different CA. Registration writes the incumbent
+witness. Capture and assessment use read-only PostgreSQL connections. Capture also reads
+`BAYN_QUALIFICATION_INCUMBENT_JEV_TIGERBEETLE_CLUSTER_ID`, `_TIGERBEETLE_ADDRESSES`, and
+`_TIGERBEETLE_LEDGER` for the incumbent. The cut records each account's snapshot time. Assessment
+checks the incumbent seal and cash prefix against that account's store and its own cutoff.
+
 After broker recovery, native financial capture reads an authenticated Alpaca non-trade statement for every registered
 PAPER account. `--system-capture` uses the configured broker connection for the candidate. The private command's
 environment supplies a separate `BAYN_QUALIFICATION_<POLICY>_ALPACA_KEY_ID` and
