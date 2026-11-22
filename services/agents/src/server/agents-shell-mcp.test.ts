@@ -362,6 +362,16 @@ describe('agents-shell MCP tools', () => {
         'kubectl_admin',
         'infrastructure',
         'bmc',
+        'paperless_status',
+        'paperless_search',
+        'paperless_get_document',
+        'paperless_list_metadata',
+        'paperless_create_metadata',
+        'paperless_upload',
+        'paperless_get_task',
+        'paperless_update_document',
+        'paperless_download',
+        'paperless_ai_suggestions',
         'create_agent_run',
         'cancel_agent_run',
         'get_agent_run',
@@ -438,7 +448,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(30_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(45_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)

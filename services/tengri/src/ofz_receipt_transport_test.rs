@@ -121,7 +121,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         )
     }))
     .await;
@@ -158,7 +158,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         )
     }));
     let parallel = tokio::time::timeout(Duration::from_secs(3), parallel)
@@ -182,7 +182,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                     stream_receipt_id: String::new()
                 },
                 1,
-                false
+                AuditScope::Submission,
             )
             .await
             .unwrap_err()
@@ -205,7 +205,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         )
         .await
         .unwrap();
@@ -220,7 +220,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         )
     }))
     .await;
@@ -247,7 +247,11 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         target: "/workspace/cold".into(),
         stream_receipt_id: String::new(),
     };
-    let slot = client.receipts.slot(&waiting, 1).await.unwrap();
+    let slot = client
+        .receipts
+        .slot(&waiting, 1, AuditScope::Observation)
+        .await
+        .unwrap();
     let guard = slot.lock().await;
     let calls = service.calls.lock().await.len();
     let expired = tokio::time::timeout(
@@ -261,7 +265,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         ),
     )
     .await
@@ -370,6 +374,35 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
             "the signed request must stay intact"
         );
     }
+
+    let before_run = service.calls.lock().await.len();
+    let mut first_run = control.clone();
+    first_run.audit_scope = AuditScope::RunStart(uuid::Uuid::new_v4());
+    let mut second_run = control.clone();
+    second_run.audit_scope = AuditScope::RunStart(uuid::Uuid::new_v4());
+    let check_start = |principal| {
+        authority
+            .access(principal, uid, &control.context.runtime_epoch, "run-status")
+            .unwrap()
+    };
+    check_start(&first_run).require().await.unwrap();
+    check_start(&first_run).require().await.unwrap();
+    check_start(&second_run).require().await.unwrap();
+    service.allowed.store(false, Ordering::SeqCst);
+    assert_eq!(
+        check_start(&first_run).require().await.unwrap_err().code(),
+        tonic::Code::PermissionDenied
+    );
+    {
+        let calls = service.calls.lock().await;
+        let starts = &calls[before_run..];
+        assert_eq!(starts.len(), 4);
+        assert!(starts[0].stream_receipt_id.is_empty());
+        assert!(!starts[1].stream_receipt_id.is_empty());
+        assert!(starts[2].stream_receipt_id.is_empty());
+        assert_eq!(starts[3].stream_receipt_id, starts[1].stream_receipt_id);
+    }
+    service.allowed.store(true, Ordering::SeqCst);
 
     service
         .database_clock_offset_ms

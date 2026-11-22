@@ -7,6 +7,7 @@ import { createInfrastructureTools } from './infrastructure'
 import { createKubectlTools } from './kubectl'
 import { createMemoryTools } from './memory'
 import { createPatchTools } from './patch'
+import { createPaperlessTools } from '../paperless'
 import { createRepoSessionTools } from './repo-session'
 import { createShellTools } from './shell'
 
@@ -21,5 +22,6 @@ export const createAgentsShellTools = () => [
   ...createKubectlTools(),
   ...createInfrastructureTools(),
   ...createBmcTools(),
+  ...createPaperlessTools(),
   ...createAgentRunTools(),
 ]
