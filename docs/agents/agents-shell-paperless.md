@@ -30,7 +30,13 @@ update. Existing Agent Shell OAuth identity and scope policy applies to both
 connector transports.
 
 Uploads and downloads require the caller's `sessionId` and an allowed workspace
-path. They are bounded to 32 MiB. Downloads refuse to overwrite an existing file.
+path. The default per-file limit is 256 MiB (268435456 bytes). Set
+`AGENTS_SHELL_PAPERLESS_MAX_FILE_BYTES` to a positive safe integer to change it;
+`paperless_status` reports the effective `maxFileBytes`. Production declares the
+same 256 MiB limit in the Agents values. Both directions stream bounded chunks
+instead of buffering a complete file, and file requests have a 600-second
+deadline. Downloads refuse to overwrite an existing file and remove partial
+output after a failed transfer.
 Use the normal file-delivery workflow to bring downloaded files into a user's
 conversation; a path inside Agent Shell is not a file on the ChatGPT workstation.
 Uploads are asynchronous: retain the returned task ID and call

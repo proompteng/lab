@@ -41,8 +41,20 @@ sandbox=(
   --setenv LEAN_ABORT_ON_PANIC 1
   --unshare-all --die-with-parent --new-session --chdir "$project_dir"
 )
-# Build every owned module before importing it, including any root outside the default target graph.
-bwrap "${sandbox[@]}" -- "$lean_prefix/bin/lake" build "${targets[@]}"
+# Build the executable and every owned module inside the read-only source and toolchain sandbox.
+# shellcheck disable=SC2016
+bwrap "${sandbox[@]}" -- bash -euc '
+  lean_prefix="$1"
+  shift
+  for path in "$PWD" "$lean_prefix"; do
+    options="$(findmnt --noheadings --output VFS-OPTIONS --target "$path")"
+    if [[ ",$options," != *,ro,* ]]; then
+      echo "Formal build sandbox requires a read-only mount for $path." >&2
+      exit 1
+    fi
+  done
+  exec "$lean_prefix/bin/lake" -q build bayn-model "$@"
+' bash "$lean_prefix" "${targets[@]}"
 bwrap "${sandbox[@]}" -- "$lean_prefix/bin/lake" env lean --run Export.lean "$scope_file" "${modules[@]}" > "$export_file"
 
 "$lean_prefix/bin/lake" check --from-export "$export_file" --paranoid
