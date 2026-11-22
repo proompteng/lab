@@ -48,7 +48,7 @@ spec:
               protocol: TCP
           env:
             - name: DORVUD_SOURCE_REVISION
-              value: 3776262b9df12735a10e05475954f158c06b5200
+              value: f0988a76d15216d9d7094e579a5d00002d8f2b4a
             - name: BAYN_ALPACA_ACCOUNT_ID
               valueFrom:
                 secretKeyRef:
