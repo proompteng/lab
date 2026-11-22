@@ -1,0 +1,72 @@
+name: Bayn PostgreSQL two-worker matrix comparison
+
+on:
+  push:
+    branches: [codex/ci-bayn-pg-two-workers-8f9dwp]
+    paths: ['.github/workflows/ci-bayn-pg-two-workers-probe.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: bayn
+          POSTGRES_PASSWORD: bayn
+          POSTGRES_DB: bayn_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U bayn -d bayn_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
+      NO_COLOR: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ (matrix.shard == 1 || matrix.shard == 3) && '1.4.2' || '1.4.3' }}
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Measure the first configuration
+        env:
+          ROOT: ${{ runner.temp }}/bayn-pg-two-workers
+          POSTGRES_ID: ${{ job.services.postgres.id }}
+          SHARD: ${{ matrix.shard }}
+        run: bash .ci-proof/bayn-pg-two-workers.sh "$ROOT" "$SHARD" "$POSTGRES_ID"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ (matrix.shard == 1 || matrix.shard == 3) && '1.4.3' || '1.4.2' }}
+      - name: Measure the second configuration
+        env:
+          ROOT: ${{ runner.temp }}/bayn-pg-two-workers
+          POSTGRES_ID: ${{ job.services.postgres.id }}
+          SHARD: ${{ matrix.shard }}
+        run: bash .ci-proof/bayn-pg-two-workers.sh "$ROOT" "$SHARD" "$POSTGRES_ID"
+      - name: Compare every file, case and assertion count
+        env:
+          ROOT: ${{ runner.temp }}/bayn-pg-two-workers
+        run: python3 .ci-proof/bayn-pg-two-workers.py "$ROOT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bayn-pg-two-workers-${{ matrix.shard }}
+          path: ${{ runner.temp }}/bayn-pg-two-workers
+          if-no-files-found: error
+          retention-days: 1
