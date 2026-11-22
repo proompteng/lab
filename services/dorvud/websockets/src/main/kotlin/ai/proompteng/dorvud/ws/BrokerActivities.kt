@@ -12,7 +12,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.URLBuilder
 import io.ktor.http.Url
 import io.ktor.utils.io.readUTF8Line
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -62,6 +64,7 @@ internal sealed interface BrokerActivityMessage {
 
   @Serializable
   @SerialName("Event")
+  @OptIn(ExperimentalSerializationApi::class)
   data class Event(
     override val eventId: String,
     override val session: VerifiedBrokerActivitySession,
@@ -69,7 +72,7 @@ internal sealed interface BrokerActivityMessage {
     val sourceEventId: String,
     val contentHash: String,
     val refId: String,
-    val previousRefId: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val previousRefId: String? = null,
     val activityType: String,
     val activityJson: String,
     override val schemaVersion: String = BROKER_ACTIVITY_VERSION,
@@ -214,6 +217,7 @@ internal class VerifiedBrokerActivityFeed(
   private val now: () -> Instant = Instant::now,
   private val newSessionId: () -> String = { UUID.randomUUID().toString() },
   private val onReady: () -> Unit = {},
+  private val lineTimeoutMs: Long = 30_000,
 ) {
   suspend fun collect() {
     val response =
@@ -254,7 +258,7 @@ internal class VerifiedBrokerActivityFeed(
             parameters.append("until_id", replayUntilId)
           }.build()
       val result =
-        withTimeout(120_000) {
+        withTimeoutOrNull(120_000) {
           consume(
             catchupEndpoint,
             identityHash,
@@ -263,7 +267,7 @@ internal class VerifiedBrokerActivityFeed(
             replayFromId,
             replayUntilId,
           )
-        }
+        } ?: error("broker activity finite replay timed out")
       check(result.publications.lastOrNull()?.sourceEventId == result.cursor) {
         "broker activity range completion does not match the retained publication cursor"
       }
@@ -367,7 +371,10 @@ internal class VerifiedBrokerActivityFeed(
         var lastStreamCursor = streamFromId
         val channel = stream.bodyAsChannel()
         while (true) {
-          val line = withTimeout(30_000) { channel.readUTF8Line() }
+          val read =
+            withTimeoutOrNull(lineTimeoutMs) { Result.success(channel.readUTF8Line()) }
+              ?: error("broker activity stream stopped delivering lines")
+          val line = read.getOrThrow()
           if (line == null) {
             check(finiteUntilId != null) { "broker activity live stream ended" }
             check(data.isEmpty()) { "broker activity finite range ended inside an incomplete event" }

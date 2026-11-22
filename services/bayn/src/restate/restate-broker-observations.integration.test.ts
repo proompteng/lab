@@ -14,7 +14,12 @@ import {
 } from '../broker/notifications'
 import { sha256 } from '../hash'
 import { BrokerStreamReconciliationReason } from '../broker/trade-update-projection'
-import { brokerActivityProjectionContract, brokerActivityVersion, type BrokerActivityEvent } from '../broker/activities'
+import {
+  brokerActivityProjectionContract,
+  brokerActivityVersion,
+  verifyBrokerActivity,
+  type BrokerActivityEvent,
+} from '../broker/activities'
 import { ProtectionReleaseReferenceSchema, type ProtectionReleaseReference } from '../execution/events'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { makeBaynBrokerActivities, type BrokerActivityRuntime } from './restate-broker-activities'
@@ -137,28 +142,54 @@ const wakeReceiver = (record: (wake: unknown) => void = () => undefined) =>
 describeRestate('Real always-replay Restate broker ingress', () => {
   test('activity ingest recovers a lost persistence completion and advances the cursor once', async () => {
     const { admin, ingress } = localTargets()
-    const activityConfig = { ...config, controllerKey: sha256(randomUUID()) }
+    const activityIdentity = Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId: randomUUID(),
+      }),
+    )
+    const activityConfig = { ...config, controllerKey: activityIdentity.identityHash }
+    const activityConnection = { ...connection, identity: activityIdentity }
+    const sourceEventId = '00000000000000000000000001'
+    const refId = '00000000-0000-4000-8000-000000000001'
+    const activityJson = JSON.stringify({
+      account_id: activityIdentity.accountId,
+      event_id: sourceEventId,
+      ref_id: refId,
+      activity_type: 'TRD',
+    })
+    const contentHash = sha256(activityJson)
     const activity: BrokerActivityEvent = {
       _tag: 'Event',
       schemaVersion: brokerActivityVersion,
-      eventId: sha256('always-replay activity delivery'),
-      sourceEventId: '00000000000000000000000001',
-      contentHash: sha256('{}'),
-      refId: '00000000-0000-4000-8000-000000000001',
+      eventId: sha256(`${activityIdentity.identityHash}\nactivity\n${sourceEventId}\n${contentHash}`),
+      sourceEventId,
+      contentHash,
+      refId,
       activityType: 'TRD',
-      activityJson: '{}',
+      activityJson,
       receivedAt: '2026-11-21T16:00:00.000Z',
       session: {
         identityHash: activityConfig.controllerKey,
-        accountId: connection.identity.accountId,
+        accountId: activityIdentity.accountId,
         environment: BrokerEnvironment.Sandbox,
-        credentialHash: sha256('activity credential'),
+        credentialHash: sha256(reference.keyId),
         sessionId: 'activity-replay',
         sourceRevision,
         verifiedAt: '2026-11-21T16:00:00.000Z',
         connectedAt: '2026-11-21T16:00:00.000Z',
         requestId: 'activity-replay',
       },
+    }
+    const activityMessage = JSON.stringify(activity)
+    const signedActivity = {
+      schemaVersion: 'bayn.signed-broker-activity.v1',
+      message: activityMessage,
+      signature: createHmac('sha256', reference.secret)
+        .update(`${brokerActivityVersion}\n${activityMessage}`)
+        .digest('hex'),
     }
     let stored = false
     let attempts = 0
@@ -173,7 +204,7 @@ describeRestate('Real always-replay Restate broker ingress', () => {
       sourceRevision,
     })
     const runtime: BrokerActivityRuntime = {
-      verify: () => Result.succeed(activity),
+      verify: (candidate, nowMs) => verifyBrokerActivity(candidate, activityConnection, nowMs),
       cursor: async () => state(),
       record: async (_signal, selected) => {
         expect(selected).toEqual(activity)
@@ -230,9 +261,9 @@ describeRestate('Real always-replay Restate broker ingress', () => {
           expect(yield* json(`${admin}/services/BaynBrokerActivities`)).toMatchObject({ inactivity_timeout: '0s' })
           const base = `${ingress}/BaynBrokerActivities/${activityConfig.controllerKey}`
           const headers = { 'idempotency-key': activity.eventId }
-          const receipt = yield* json(`${base}/ingest`, {}, headers)
+          const receipt = yield* json(`${base}/ingest`, signedActivity, headers)
           expect(receipt).toMatchObject({ cursor: activity.sourceEventId, replayed: true })
-          expect(yield* json(`${base}/ingest`, {}, headers)).toEqual(receipt)
+          expect(yield* json(`${base}/ingest`, signedActivity, headers)).toEqual(receipt)
           expect(yield* json(`${base}/cursor`, {})).toMatchObject({ cursor: activity.sourceEventId })
           yield* waitFor(() => Effect.sync(() => reconciliations.length > 0))
           expect(attempts).toBe(2)

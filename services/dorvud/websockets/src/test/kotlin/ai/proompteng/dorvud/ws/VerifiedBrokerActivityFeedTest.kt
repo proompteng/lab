@@ -8,17 +8,22 @@ import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.response.header
 import io.ktor.server.response.respondText
+import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonObject
 import java.time.Instant
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import io.ktor.client.engine.cio.CIO as ClientCIO
 
@@ -102,6 +107,7 @@ class VerifiedBrokerActivityFeedTest {
             assertEquals(brokerFeedIdentityHash(accountId), key)
             val event = protocolJson.decodeFromString<BrokerActivityMessage>(signed.message)
             assertTrue(event is BrokerActivityMessage.Event)
+            assertFalse(protocolJson.parseToJsonElement(signed.message).jsonObject.containsKey("previousRefId"))
             assertEquals(delivery.eventId, event.eventId)
             publications += event
             cursor = event.sourceEventId
@@ -174,6 +180,76 @@ class VerifiedBrokerActivityFeedTest {
         client.close()
         server.stop(0, 1000)
       }
+
+      @Test
+      fun `a live heartbeat keeps its null cursor and a silent stream fails without cancelling its caller`() =
+        runBlocking {
+          val server =
+            embeddedServer(CIO, port = 0) {
+              routing {
+                get("/v2/account") {
+                  call.respondText(
+                    """{"id":"$accountId","created_at":"2026-07-22T16:32:23.149747Z"}""",
+                    ContentType.Application.Json,
+                  )
+                }
+                get("/v2beta1/events/activities") {
+                  call.response.header("x-request-id", "silent-activity-request")
+                  call.respondTextWriter(ContentType.parse("text/event-stream")) {
+                    write(": heartbeat\n\n")
+                    flush()
+                    awaitCancellation()
+                  }
+                }
+              }
+            }.start(wait = false)
+          val port = server.resolvedConnectors().single().port
+          val client = HttpClient(ClientCIO) { install(HttpTimeout) }
+          val connection =
+            BrokerFeedConnection(
+              accountId = accountId,
+              keyId = "test-key",
+              secretKey = "test-secret",
+              sourceRevision = "a".repeat(40),
+              accountUrl = "http://127.0.0.1:$port/v2/account",
+              streamUrl = "ws://127.0.0.1:$port/unused",
+              activityUrl = "http://127.0.0.1:$port/v2beta1/events/activities",
+            )
+          val caughtUp =
+            BrokerActivityCursorReceipt(
+              null,
+              true,
+              ACTIVITY_HISTORY_REPLAY_FROM_ID,
+              sourceEventId,
+              "f".repeat(64),
+              true,
+              connection.sourceRevision,
+            )
+          var ready = false
+          val feed =
+            VerifiedBrokerActivityFeed(
+              connection,
+              client,
+              cursor = { caughtUp },
+              publish = { _, _, _ -> error("unexpected event") },
+              completeCatchup = { _, _, _ -> error("unexpected catchup") },
+              heartbeat = { _, _, signed ->
+                assertEquals(JsonNull, Json.parseToJsonElement(signed.message).jsonObject["cursor"])
+                caughtUp
+              },
+              onReady = { ready = true },
+              now = { Instant.parse("2026-11-21T16:00:01Z") },
+              lineTimeoutMs = 500,
+            )
+          try {
+            val failure = assertFailsWith<IllegalStateException> { feed.collect() }
+            assertEquals("broker activity stream stopped delivering lines", failure.message)
+            assertTrue(ready)
+          } finally {
+            client.close()
+            server.stop(0, 1000)
+          }
+        }
     }
 
   @Test
