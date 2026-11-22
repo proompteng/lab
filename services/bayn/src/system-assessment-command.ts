@@ -1,5 +1,6 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
+import { PgClient } from '@effect/sql-pg'
+import { Config, Context, Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
 
 import { readRegisteredFinancialIdentity } from './system-assessment/capital-identity'
 import { embeddedBuildMetadata } from './build'
@@ -13,7 +14,6 @@ import { makeConfiguredTelemetryRuntimeLayer } from './telemetry'
 import { readSystemEvidencePacket } from './system-assessment/files'
 import {
   initializeQualificationHistory,
-  registerSystemQualification,
   assessAndPersistSystem,
   readSystemRegistration,
   registerOperationalPeriod,
@@ -22,6 +22,7 @@ import {
 import { OperationalRegistrationSchema, validateOperationalRegistration } from './system-assessment/operational-period'
 import { OperationalAssessmentInputSchema } from './system-assessment/operational-assessment'
 import { captureSystemSourceCut } from './system-assessment/capture'
+import { registerPairedSystemQualification } from './system-assessment/paired-admission'
 import { ValkeyCacheLive } from './valkey-cache'
 import { qualificationRuntime } from './system-assessment/configuration'
 import { validateProspectiveSystemRegistration } from './system-assessment/policy'
@@ -153,9 +154,27 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
             return yield* new SystemAssessmentError({
               message: 'Registration requires its existing durable capital generation',
             })
-          return registration.program === 'BAYN_OPERATIONAL_RELIABILITY'
-            ? yield* registerOperationalPeriod(registration, packet.verifiedSources)
-            : yield* registerSystemQualification(registration, packet.verifiedSources)
+          if (registration.program === 'BAYN_OPERATIONAL_RELIABILITY')
+            return yield* registerOperationalPeriod(registration, packet.verifiedSources)
+          const incumbentPostgres = yield* Config.all({
+            url: Config.Redacted('BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_URL'),
+            tls: Config.Boolean('BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_TLS').pipe(
+              Config.withDefault(config.postgres.tls),
+            ),
+            caPath: Config.NonEmptyString('BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_CA_PATH').pipe(
+              Config.withDefault(config.postgres.caPath),
+            ),
+          })
+          const incumbentStore = Context.get(
+            yield* Layer.build(
+              PostgresClientLive(
+                { ...config, postgres: incumbentPostgres },
+                { maxConnections: 1, applicationName: 'bayn-qualification-incumbent' },
+              ),
+            ),
+            PgClient.PgClient,
+          )
+          return yield* registerPairedSystemQualification(registration, packet.verifiedSources, incumbentStore)
         }
         if (Schema.is(OperationalAssessmentInputSchema)(packet.payload))
           return yield* assessAndPersistOperational(packet.payload, packet.verifiedSources)

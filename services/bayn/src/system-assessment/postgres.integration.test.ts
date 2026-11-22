@@ -1,5 +1,6 @@
 import { legacyReconciliationSchemaVersion } from '../execution/legacy-wire'
 import { readRegisteredFinancialIdentity } from './capital-identity'
+import { registerPairedSystemQualification } from './paired-admission'
 import { captureOperationalSafetySource } from './operational-safety-source'
 import { ValkeyCache } from '../valkey-cache'
 import { operationalRegistrationFixture } from './operational-period.test-support'
@@ -126,15 +127,13 @@ const databaseNow = Effect.gen(function* () {
   if (row === undefined) throw new Error('Database clock is missing')
   return row.now
 })
-const registerFixture = (value: SystemRegistration) =>
-  registerSystemQualification(
-    value,
-    new Set([
-      value.calendar.sourceHash,
-      ...value.costAllocationPlans.map((plan) => plan.basisSourceHash),
-      ...('statisticalPlan' in value ? value.statisticalPlan.supports.map((s) => s.sourceHash) : []),
-    ]),
-  )
+const fixtureSources = (value: SystemRegistration) =>
+  new Set([
+    value.calendar.sourceHash,
+    ...value.costAllocationPlans.map((plan) => plan.basisSourceHash),
+    ...('statisticalPlan' in value ? value.statisticalPlan.supports.map((s) => s.sourceHash) : []),
+  ])
+const registerFixture = (value: SystemRegistration) => registerSystemQualification(value, fixtureSources(value))
 
 const seedOperationalAuthority = (base: ReturnType<typeof operationalRegistrationFixture>) =>
   Effect.gen(function* () {
@@ -2295,6 +2294,51 @@ postgres('PostgreSQL prospective system qualification', () => {
                 policy.policy === JevResearchPolicy.Incumbent ? registered : policy,
               ),
             })
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const peer = yield* Effect.acquireRelease(
+                  Effect.tryPromise(() => template.clone()),
+                  (peer) => Effect.promise(() => peer.dispose()),
+                )
+                const paired = registerPairedSystemQualification(input, fixtureSources(input), sql)
+                yield* Effect.gen(function* () {
+                  const candidate = yield* PgClient.PgClient
+                  yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+                  const saved = yield* paired
+                  expect(yield* paired).toEqual(saved)
+                  expect(yield* candidate`SELECT count(*)::integer AS count FROM qualification_pair_seals`).toEqual([
+                    { count: 1 },
+                  ])
+                  expect(
+                    yield* sql`SELECT count(*)::integer AS count FROM qualification_incumbent_witnesses
+                      WHERE registration_hash=${saved.registrationHash} AND authority_version = 2`,
+                  ).toEqual([{ count: 1 }])
+
+                  const second = withRegistrationCommitments({
+                    ...input,
+                    attemptIndex: 2,
+                    priorAttemptHash: saved.registrationHash,
+                  })
+                  const incomplete = yield* registerFixture(second)
+                  const retry = yield* registerPairedSystemQualification(second, fixtureSources(second), sql).pipe(
+                    Effect.exit,
+                  )
+                  if (Exit.isSuccess(retry)) throw new Error('Retry fabricated an incumbent witness')
+                  expect(Cause.pretty(retry.cause)).toContain('no exact committed incumbent witness')
+                  expect(
+                    yield* sql`SELECT 1 FROM qualification_incumbent_witnesses
+                    WHERE registration_hash=${incomplete.registrationHash}`,
+                  ).toEqual([])
+                }).pipe(
+                  Effect.provide(
+                    PostgresClientLive({
+                      operationTimeoutMs: 10000,
+                      postgres: { url: Redacted.make(peer.url), tls: false, caPath: '/unused' },
+                    }),
+                  ),
+                )
+              }),
+            )
             const pause = sql`UPDATE authority_state SET effective='OBSERVE', kill_state='ACTIVE', reason='test pause',
               version=version+1, updated_at=greatest(clock_timestamp(), updated_at+interval '1 millisecond') WHERE singleton`
             const admitted = yield* Effect.scoped(
