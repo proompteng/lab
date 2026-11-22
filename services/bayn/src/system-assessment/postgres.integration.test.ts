@@ -1,6 +1,7 @@
 import { legacyReconciliationSchemaVersion } from '../execution/legacy-wire'
 import { readRegisteredFinancialIdentity } from './capital-identity'
 import { registerPairedSystemQualification } from './paired-admission'
+import { requirePairedIncumbentWitness } from './paired-witness'
 import { captureOperationalSafetySource } from './operational-safety-source'
 import { ValkeyCache } from '../valkey-cache'
 import { operationalRegistrationFixture } from './operational-period.test-support'
@@ -49,6 +50,7 @@ import {
   readPersistedSystemAssessment,
   readSystemRegistration,
   registerSystemQualification,
+  verifyNativeCashLedgerSources,
 } from './postgres'
 import { persistSystemSourceCut, readSystemSourceCut, SystemSourceCutSchema } from './source-cut'
 import { EdgeStatus, QualificationVerdict, evaluateSystemAssessment } from './assessment'
@@ -157,6 +159,44 @@ const seedOperationalAuthority = (base: ReturnType<typeof operationalRegistratio
       'jev',${request.strategy.behaviorHash},${request.strategy.parameterHash},${request.strategy.parameterSchemaVersion},${request.strategy.protocolHash},
       ${request.grant.planHash},${generation.reconciliationId},${generation.reconciliationContentHash},${request.grant.planHash})`
   })
+
+const insertFixtureLedgerPrefix = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  entries: readonly Result.Result.Success<ReturnType<typeof prepareAccounting>>[],
+) =>
+  sql.withTransaction(
+    Effect.gen(function* () {
+      for (const [index, prepared] of entries.entries()) {
+        const transaction = prepared.transaction
+        yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+      source_event_id,source_sequence,occurred_at,observed_at)
+    VALUES(${transaction.brokerEventId},'bayn.paper-broker-event.v1',${transaction.brokerEventId},'FILL','ALPACA',
+      ${accountId},${`native-cash-fill-${index}`},${index + 1},${transaction.occurredAt},${transaction.occurredAt})`
+        yield* sql`INSERT INTO fills(event_id,account_id,schema_version,fill_id,broker_order_id,client_order_id,
+      symbol,side,quantity_atoms,price_atoms,fee_micros,source_timestamp,intent_id)
+    VALUES(${transaction.brokerEventId},${accountId},'bayn.fill.v2',${`native-cash-fill-${index}`},
+      ${`native-cash-order-${index}`},${`native-cash-client-${index}`},${transaction.symbol},${transaction.side},
+      ${transaction.quantityAtoms},${transaction.priceAtoms},${transaction.feeMicros},
+      ${transaction.occurredAt.replace('Z', '000000Z')},NULL)`
+        yield* sql`INSERT INTO accounting_transactions(transaction_id,schema_version,broker_event_id,intent_id,account_id,
+      symbol,side,quantity_atoms,price_atoms,notional_micros,fee_micros,cost_basis_micros,realized_pnl_micros,
+      quantity_delta_atoms,cost_basis_delta_micros,cash_delta_micros,ledger_plan_hash,content_hash,occurred_at)
+    VALUES(${transaction.transactionId},${transaction.schemaVersion},${transaction.brokerEventId},NULL,${accountId},
+      ${transaction.symbol},${transaction.side},${transaction.quantityAtoms},${transaction.priceAtoms},
+      ${transaction.notionalMicros},${transaction.feeMicros},${transaction.costBasisMicros},
+      ${transaction.realizedPnlMicros},${transaction.quantityDeltaAtoms},${transaction.costBasisDeltaMicros},
+      ${transaction.cashDeltaMicros},${transaction.ledgerPlanHash},${transaction.contentHash},${transaction.occurredAt})`
+        const receipt = Result.getOrThrow(planAccountingReceipt(prepared, '2001', 7001))
+        yield* sql`INSERT INTO accounting_receipts(receipt_id,schema_version,intent_id,broker_event_id,
+      tigerbeetle_cluster_id,tigerbeetle_ledger,account_ids,transfer_ids,debit_micros,credit_micros,content_hash,recorded_at)
+    VALUES(${receipt.receiptId},${receipt.schemaVersion},NULL,${receipt.brokerEventId},
+      ${receipt.tigerBeetleClusterId},${receipt.tigerBeetleLedger},${receipt.accountIds}::numeric[],
+      ${receipt.transferIds}::numeric[],${receipt.debitMicros},${receipt.creditMicros},${receipt.contentHash},
+      ${transaction.occurredAt})`
+      }
+    }),
+  )
 
 const makeRuntime = (url: string) =>
   ManagedRuntime.make(
@@ -1038,41 +1078,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       original.map(({ transaction }) => transaction.transactionId),
     )
     await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            for (const [index, prepared] of original.entries()) {
-              const transaction = prepared.transaction
-              yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
-            source_event_id,source_sequence,occurred_at,observed_at)
-          VALUES(${transaction.brokerEventId},'bayn.paper-broker-event.v1',${transaction.brokerEventId},'FILL','ALPACA',
-            ${accountId},${`native-cash-fill-${index}`},${index + 1},${transaction.occurredAt},${transaction.occurredAt})`
-              yield* sql`INSERT INTO fills(event_id,account_id,schema_version,fill_id,broker_order_id,client_order_id,
-            symbol,side,quantity_atoms,price_atoms,fee_micros,source_timestamp,intent_id)
-          VALUES(${transaction.brokerEventId},${accountId},'bayn.fill.v2',${`native-cash-fill-${index}`},
-            ${`native-cash-order-${index}`},${`native-cash-client-${index}`},${transaction.symbol},${transaction.side},
-            ${transaction.quantityAtoms},${transaction.priceAtoms},${transaction.feeMicros},
-            ${transaction.occurredAt.replace('Z', '000000Z')},NULL)`
-              yield* sql`INSERT INTO accounting_transactions(transaction_id,schema_version,broker_event_id,intent_id,account_id,
-            symbol,side,quantity_atoms,price_atoms,notional_micros,fee_micros,cost_basis_micros,realized_pnl_micros,
-            quantity_delta_atoms,cost_basis_delta_micros,cash_delta_micros,ledger_plan_hash,content_hash,occurred_at)
-          VALUES(${transaction.transactionId},${transaction.schemaVersion},${transaction.brokerEventId},NULL,${accountId},
-            ${transaction.symbol},${transaction.side},${transaction.quantityAtoms},${transaction.priceAtoms},
-            ${transaction.notionalMicros},${transaction.feeMicros},${transaction.costBasisMicros},
-            ${transaction.realizedPnlMicros},${transaction.quantityDeltaAtoms},${transaction.costBasisDeltaMicros},
-            ${transaction.cashDeltaMicros},${transaction.ledgerPlanHash},${transaction.contentHash},${transaction.occurredAt})`
-              const receipt = Result.getOrThrow(planAccountingReceipt(prepared, '2001', 7001))
-              yield* sql`INSERT INTO accounting_receipts(receipt_id,schema_version,intent_id,broker_event_id,
-            tigerbeetle_cluster_id,tigerbeetle_ledger,account_ids,transfer_ids,debit_micros,credit_micros,content_hash,recorded_at)
-          VALUES(${receipt.receiptId},${receipt.schemaVersion},NULL,${receipt.brokerEventId},
-            ${receipt.tigerBeetleClusterId},${receipt.tigerBeetleLedger},${receipt.accountIds}::numeric[],
-            ${receipt.transferIds}::numeric[],${receipt.debitMicros},${receipt.creditMicros},${receipt.contentHash},
-            ${transaction.occurredAt})`
-            }
-          }),
-        )
-      }),
+      Effect.flatMap(PgClient.PgClient, (sql) => insertFixtureLedgerPrefix(sql, accountId, original)),
     )
     const precisionAccountEventId = testHash('native cash precision event')
     const authenticSettlement = Result.getOrThrow(
@@ -2313,6 +2319,93 @@ postgres('PostgreSQL prospective system qualification', () => {
                     yield* sql`SELECT count(*)::integer AS count FROM qualification_incumbent_witnesses
                       WHERE registration_hash=${saved.registrationHash} AND authority_version = 2`,
                   ).toEqual([{ count: 1 }])
+
+                  const at = yield* databaseNow
+                  const occurredAt = new Date(Date.parse(at) - 120_000).toISOString()
+                  const entry = Result.getOrThrow(
+                    prepareAccounting(
+                      testHash('independent incumbent fill'),
+                      {
+                        schemaVersion: 'bayn.fill.v2',
+                        accountId: identity.accountId,
+                        fillId: 'native-cash-fill-0',
+                        brokerOrderId: 'native-cash-order-0',
+                        clientOrderId: 'native-cash-client-0',
+                        symbol: 'AAPL',
+                        side: OrderSide.Buy,
+                        quantityAtoms: '1000000000',
+                        priceAtoms: '100000000000',
+                        feeMicros: '0',
+                        occurredAt,
+                      },
+                      { quantityAtoms: '0', costMicros: '0' },
+                      7001,
+                    ),
+                  )
+                  yield* insertFixtureLedgerPrefix(sql, identity.accountId, [entry])
+                  const base = emptySourceCutFixture().cut
+                  const incumbentWitness = yield* requirePairedIncumbentWitness(
+                    candidate,
+                    sql,
+                    saved.registrationHash,
+                    generation.generationHash,
+                  )
+                  const cut = (transactions: readonly (typeof entry.transaction)[], capturedAt = at) => {
+                    const sourceMaterial = {
+                      incumbentWitness,
+                      accounts: [
+                        {
+                          policy: JevResearchPolicy.Incumbent,
+                          identity,
+                          capturedAt,
+                          forward: {
+                            account: { accountId: identity.accountId },
+                            accountTransactions: transactions,
+                            accountCashSettlements: [],
+                            accountPositionCounts: { reconciledAt: at, exact: true },
+                            accountingReceiptsExact: true,
+                            ledgerExact: true,
+                            missingLedgerAccountCount: 0,
+                            unresolvedMutationCount: 0,
+                          },
+                        },
+                      ],
+                    }
+                    return {
+                      ...base,
+                      registrationHash: saved.registrationHash,
+                      asOf: at,
+                      sourceMaterial,
+                      sourceMaterialHash: testHash(sourceMaterial),
+                    }
+                  }
+                  yield* verifyNativeCashLedgerSources(saved.registration, cut([entry.transaction]), sql)
+                  const wrongStore = yield* verifyNativeCashLedgerSources(
+                    saved.registration,
+                    cut([entry.transaction]),
+                    candidate,
+                  ).pipe(Effect.exit)
+                  if (Exit.isSuccess(wrongStore)) throw new Error('Assessment used the candidate store as incumbent')
+                  expect(Cause.pretty(wrongStore.cause)).toContain(
+                    'Paired registration seal differs from the incumbent witness',
+                  )
+                  const omission = yield* verifyNativeCashLedgerSources(saved.registration, cut([]), sql).pipe(
+                    Effect.exit,
+                  )
+                  if (Exit.isSuccess(omission)) throw new Error('Assessment accepted an omitted incumbent ledger entry')
+                  expect(Cause.pretty(omission.cause)).toContain(
+                    'Native cash ledger witness differs from immutable accounting',
+                  )
+                  const late = yield* verifyNativeCashLedgerSources(
+                    saved.registration,
+                    cut([entry.transaction], occurredAt),
+                    sql,
+                  ).pipe(Effect.exit)
+                  if (Exit.isSuccess(late))
+                    throw new Error('Assessment used the global cut to admit future incumbent evidence')
+                  expect(Cause.pretty(late.cause)).toContain(
+                    'Native cash reconciliation occurs after its immutable source cut',
+                  )
 
                   const second = withRegistrationCommitments({
                     ...input,

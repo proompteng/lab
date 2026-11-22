@@ -13,15 +13,18 @@ import { JevResearchPolicy } from '../jev/acceptance'
 
 export const readRegisteredFinancialIdentity = (
   definition: typeof PolicyDefinitionSchema.Type,
-  registration?: string | { readonly lockServingIncumbent: true },
+  registration?: string | { readonly lockServingIncumbent: true } | { readonly incumbentWitnessHash: string },
 ) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const serving =
-      typeof registration === 'object'
+      typeof registration === 'object' && 'lockServingIncumbent' in registration
         ? sql`SELECT a.effective = ${Authority.Execution} AND a.kill_state = ${KillState.Clear}
           FROM authority_state AS a WHERE a.singleton AND a.generation_hash = g.generation_hash FOR SHARE OF a`
-        : sql`SELECT b.authority_state->>'generation_hash' = g.generation_hash
+        : typeof registration === 'object'
+          ? sql`SELECT w.generation_hash = g.generation_hash FROM qualification_incumbent_witnesses AS w
+            WHERE w.registration_hash = ${registration.incumbentWitnessHash}`
+          : sql`SELECT b.authority_state->>'generation_hash' = g.generation_hash
           AND b.authority_state->>'effective' = ${Authority.Execution}
           AND b.authority_state->>'kill_state' = ${KillState.Clear}
           FROM operational_safety_baselines AS b WHERE b.registration_hash = ${registration ?? null}`

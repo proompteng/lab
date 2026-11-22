@@ -44,6 +44,7 @@ const RetainedCashLedger = Schema.Struct({
 const RetainedCashAccount = Schema.Struct({
   policy: Schema.Enum(JevResearchPolicy),
   identity: BrokerIdentitySchema,
+  capturedAt: Schema.optionalKey(UtcInstantSchema),
   forward: RetainedCashLedger,
   settlementAnchors: Schema.optionalKey(FeeSettlementAnchorsSchema),
   brokerNonTradeActivity: Schema.optionalKey(NonTradeActivityStatementSchema),
@@ -78,9 +79,11 @@ export const registeredNativeCashAccounts = (
       )
         return yield* fail('Native cash witnesses belong to a different registered account')
       const statement = account.brokerNonTradeActivity
+      const observedAt = account.capturedAt ?? cut.asOf
+      if (observedAt > cut.asOf) return yield* fail('Account snapshot occurs after its immutable source cut')
       if (
         statement !== undefined &&
-        (statement.accountIdentityHash !== account.identity.identityHash || statement.observedAt > cut.asOf)
+        (statement.accountIdentityHash !== account.identity.identityHash || statement.observedAt > observedAt)
       )
         return yield* fail('Broker activity statement differs from its account or evidence cut')
       accounts.set(account.policy, account)

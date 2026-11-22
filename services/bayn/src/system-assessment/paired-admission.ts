@@ -3,40 +3,22 @@ import { Effect, Option, Schema } from 'effect'
 
 import { databaseUtcInstant } from '../db/clock'
 import { JevResearchPolicy } from '../jev/acceptance'
-import { Sha256Schema, UtcDatabaseInstantSchema } from '../schemas'
+import { UtcDatabaseInstantSchema } from '../schemas'
 import { readRegisteredFinancialIdentity } from './capital-identity'
 import { SystemAssessmentError } from './economics'
 import { validateProspectiveSystemRegistration } from './policy'
 import { registerSystemQualification } from './postgres'
+import { readPairedWitness, requirePairedIncumbentWitness } from './paired-witness'
 
 const Admission = Schema.Struct({
   admittedAt: UtcDatabaseInstantSchema,
   firstOpenAt: UtcDatabaseInstantSchema,
 })
-const Witness = Schema.Struct({
-  ...Admission.fields,
-  generationHash: Sha256Schema,
-  authorityVersion: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
-})
-
 const readAdmission = (sql: PgClient.PgClient, registrationHash: string) =>
   sql`SELECT ${databaseUtcInstant(sql, sql`created_at`)} AS "admittedAt",
       ${databaseUtcInstant(sql, sql`first_open_at`)} AS "firstOpenAt"
       FROM system_qualification_registrations WHERE registration_hash = ${registrationHash}`.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Admission))),
-    Effect.map((rows) => rows[0]),
-  )
-
-const readWitness = (
-  sql: PgClient.PgClient,
-  registrationHash: string,
-  table: 'qualification_incumbent_witnesses' | 'qualification_pair_seals',
-) =>
-  sql`SELECT ${databaseUtcInstant(sql, sql`admitted_at`)} AS "admittedAt",
-      ${databaseUtcInstant(sql, sql`first_open_at`)} AS "firstOpenAt",
-      generation_hash AS "generationHash", authority_version::text AS "authorityVersion"
-      FROM ${sql(table)} WHERE registration_hash = ${registrationHash}`.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Witness))),
     Effect.map((rows) => rows[0]),
   )
 
@@ -88,7 +70,7 @@ export const registerPairedSystemQualification = (
         }),
       )
     }
-    const witness = yield* readWitness(incumbentStore, registrationHash, 'qualification_incumbent_witnesses')
+    const witness = yield* readPairedWitness(incumbentStore, registrationHash, 'qualification_incumbent_witnesses')
     const admitted = yield* readAdmission(candidateStore, registrationHash)
     if (
       witness === undefined ||
@@ -101,7 +83,7 @@ export const registerPairedSystemQualification = (
         message: 'Paired registration has no exact committed incumbent witness',
       })
 
-    const sealed = yield* readWitness(candidateStore, registrationHash, 'qualification_pair_seals')
+    const sealed = yield* readPairedWitness(candidateStore, registrationHash, 'qualification_pair_seals')
     if (sealed === undefined) {
       yield* candidateStore`INSERT INTO qualification_pair_seals
         (registration_hash, admitted_at, first_open_at, generation_hash, authority_version)
@@ -109,16 +91,11 @@ export const registerPairedSystemQualification = (
           ${witness.authorityVersion}::bigint)
         ON CONFLICT DO NOTHING`
     }
-    const persisted = sealed ?? (yield* readWitness(candidateStore, registrationHash, 'qualification_pair_seals'))
-    if (
-      persisted === undefined ||
-      persisted.authorityVersion !== witness.authorityVersion ||
-      persisted.generationHash !== witness.generationHash ||
-      persisted.admittedAt !== witness.admittedAt ||
-      persisted.firstOpenAt !== witness.firstOpenAt
+    yield* requirePairedIncumbentWitness(
+      candidateStore,
+      incumbentStore,
+      registrationHash,
+      incumbent.authorityGenerationHash,
     )
-      return yield* new SystemAssessmentError({
-        message: 'Paired registration seal differs from the incumbent witness',
-      })
     return { registrationHash, registration }
   })
