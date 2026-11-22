@@ -165,6 +165,8 @@ const runtimeScenarios = {
   'early-exit': 2,
   'partial-exit-reentry': 2,
   'partial-exit-reentry-protection-proof': 1,
+  'partial-exit-reentry-protection-capture-race': 1,
+  'partial-exit-reentry-protection-capture-expiry': 2,
   'partial-exit-reentry-protection-admission-race': 2,
   'partial-exit-reentry-protection-transmission-race': 2,
   'measured-exit': 2,
@@ -205,9 +207,12 @@ const registerRuntimeScenarios =
 export const testReplayRuntime = registerRuntimeScenarios(
   runtimeScenarios,
   async ({ scenario: mode }) => {
-    const useProtectionProof = mode === 'partial-exit-reentry-protection-proof'
+    const protectionCaptureExpiry = mode === 'partial-exit-reentry-protection-capture-expiry'
+    const protectionCaptureRace = mode === 'partial-exit-reentry-protection-capture-race' || protectionCaptureExpiry
+    const useProtectionProof = mode === 'partial-exit-reentry-protection-proof' || protectionCaptureRace
     const protectionAdmissionRace = mode === 'partial-exit-reentry-protection-admission-race'
     const protectionTransmissionRace = mode === 'partial-exit-reentry-protection-transmission-race'
+    const protectionDenied = protectionTransmissionRace || protectionCaptureExpiry
     const protectionProofScenario = useProtectionProof || protectionAdmissionRace || protectionTransmissionRace
     const ablation = mode === 'ablation-fill'
     const momentum = mode.startsWith('momentum-')
@@ -680,6 +685,7 @@ export const testReplayRuntime = registerRuntimeScenarios(
         const stallReconciliation = yield* Ref.make(false)
         const interrupted = yield* Ref.make(false)
         const injectProtectionTransmissionRace = yield* Ref.make(false)
+        const raceCapture = yield* Ref.make<Effect.Effect<void> | undefined>(undefined)
         let protectedCloseRollbackVerified = false
         const notificationConnection =
           protectionAdmissionRace || protectionTransmissionRace ? yield* sql.reserve : undefined
@@ -778,9 +784,17 @@ export const testReplayRuntime = registerRuntimeScenarios(
             Ref.update(passes, (values) => [...values, pass]),
           pollIntervalMs: scenario === 'no-trade-finalization' ? 30_000 : 1000,
           reconciliationIntervalMs:
-            scenario === 'no-trade-finalization' ? 30_000 : measured ? config.operationTimeoutMs : 1000,
+            scenario === 'no-trade-finalization' || protectionCaptureExpiry
+              ? 30_000
+              : measured
+                ? config.operationTimeoutMs
+                : 1000,
           reconciliationPassTimeoutMs:
-            scenario === 'no-trade-finalization' ? 30_000 : sessionCloseLifecycle ? 1000 : config.operationTimeoutMs,
+            scenario === 'no-trade-finalization' || protectionCaptureExpiry
+              ? 30_000
+              : sessionCloseLifecycle
+                ? 1000
+                : config.operationTimeoutMs,
         }
         const mutations = yield* MutationStore
         const protectedRaceMutations: typeof mutations = {
@@ -811,6 +825,19 @@ export const testReplayRuntime = registerRuntimeScenarios(
                     ),
                   ),
         }
+        const captureRaceMutations: typeof mutations = {
+          ...mutations,
+          beginSubmit: (...args) =>
+            mutations
+              .beginSubmit(...args)
+              .pipe(
+                Effect.tap((receipt) =>
+                  args[5] !== undefined && receipt.started
+                    ? Ref.get(raceCapture).pipe(Effect.flatMap((capture) => capture ?? Effect.void))
+                    : Effect.void,
+                ),
+              ),
+        }
         const expiryMutations: typeof mutations = {
           ...mutations,
           beginSubmit: (...args) =>
@@ -829,7 +856,13 @@ export const testReplayRuntime = registerRuntimeScenarios(
         const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
           Effect.provideService(
             MutationStore,
-            untouchedExpiry ? expiryMutations : protectionAdmissionRace ? protectedRaceMutations : mutations,
+            untouchedExpiry
+              ? expiryMutations
+              : protectionAdmissionRace
+                ? protectedRaceMutations
+                : protectionCaptureRace
+                  ? captureRaceMutations
+                  : mutations,
           ),
           Effect.provideService(JevClient, timing?.clients.jev ?? provider),
 
@@ -2268,6 +2301,21 @@ export const testReplayRuntime = registerRuntimeScenarios(
                     proofId,
                   )
                   if (protectionTransmissionRace) yield* Ref.set(injectProtectionTransmissionRace, true)
+                  if (protectionCaptureRace)
+                    yield* Ref.set(
+                      raceCapture,
+                      Effect.gen(function* () {
+                        yield* sql`UPDATE broker_observations SET next_poll_not_before = date_trunc('milliseconds', clock_timestamp())
+                          WHERE account_id = ${accountId}`
+                        const capture = yield* observationStore.begin('competing-capture', 0)
+                        expect(capture.status).toBe(BrokerObservationClaimStatus.QuotaWait)
+                        if (protectionCaptureExpiry) {
+                          yield* advanceMarketTo(Date.parse(basis.trigger.commitDeadlineAt))
+                          const expired = yield* observationStore.begin('capture-after-expiry', 0)
+                          expect(expired.status).toBe(BrokerObservationClaimStatus.Reserved)
+                        }
+                      }).pipe(Effect.orDie),
+                    )
                   const accelerated = yield* advanceExecutionOnce(
                     {
                       controllerKey: Result.getOrThrow(canonicalHashV1Result({ accountId })),
@@ -2314,8 +2362,8 @@ export const testReplayRuntime = registerRuntimeScenarios(
                     expect(admitted, JSON.stringify(accelerated.observation)).toMatchObject({
                       proof_id: proofId,
                       start_count: 1,
-                      physical_identity_count: protectionTransmissionRace ? 0 : 1,
-                      denied_count: protectionTransmissionRace ? 1 : 0,
+                      physical_identity_count: protectionDenied ? 0 : 1,
+                      denied_count: protectionDenied ? 1 : 0,
                       qualification_count: 1,
                       latest_reconciliation:
                         basis.trigger.evidence.portfolio.brokerState.reconciliation.reconciliationId,
@@ -2329,6 +2377,11 @@ export const testReplayRuntime = registerRuntimeScenarios(
                     }
                   }
                   expect(yield* readProof).toBeUndefined()
+                  if (protectionCaptureRace) {
+                    const capture = yield* observationStore.begin('capture-after-submit', 0)
+                    expect(capture.status).toBe(BrokerObservationClaimStatus.Reserved)
+                  }
+                  if (protectionCaptureExpiry) return { _tag: 'Lifecycle' as const }
                   if (protectionTransmissionRace) {
                     expect((yield* runtime.store.authorityGeneration.readAuthorityState).kill).toBe(KillState.Clear)
                   }
