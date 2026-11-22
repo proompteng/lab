@@ -5,7 +5,10 @@ import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
 
-export const qualificationCalendar = (input: unknown) =>
+export const qualificationCalendar = (
+  input: unknown,
+  operatingHours: 'REGULAR_SESSION' | 'NATIVE' = 'REGULAR_SESSION',
+) =>
   Result.gen(function* () {
     const observation = yield* Schema.decodeUnknownResult(SnapshotCalendarSchema, strictParseOptions)(input)
     if (
@@ -32,10 +35,13 @@ export const qualificationCalendar = (input: unknown) =>
     return {
       sourceHash: yield* canonicalHashV1Result(observation),
       requestedRange: observation.requestedRange,
-      sessions: observation.providerSessions.map((session) => ({
-        sessionDate: session.date,
-        openAt: session.regularOpenAt,
-        closeAt: session.regularCloseAt,
-      })),
+      sessions:
+        operatingHours === 'NATIVE'
+          ? observation.sessions.map(({ date, openAt, closeAt }) => ({ sessionDate: date, openAt, closeAt }))
+          : observation.providerSessions.map(({ date, regularOpenAt, regularCloseAt }) => ({
+              sessionDate: date,
+              openAt: regularOpenAt,
+              closeAt: regularCloseAt,
+            })),
     }
   })

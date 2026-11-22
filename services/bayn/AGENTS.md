@@ -46,6 +46,9 @@
   that actually stops the operation. A timeout without cancellation is not complete.
 - Use `Clock`, `Duration`, `Schedule`, and `TestClock` instead of ambient time and hand-written timers. Retries must be
   bounded and must not turn an unknown outcome into a duplicate accounting or trading mutation.
+- Do not use fixed sleeps to wait for readiness, consistency, or test progress. Wait for the event or verify the
+  actual state. Use a controllable clock in tests. Tie any timer to a concrete deadline, broker quota, or bounded
+  recovery backoff. Keep the account owner free while waiting on a timer whenever pending work can safely proceed.
 
 ## Configuration, data, and observability
 

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema, Stream } from 'effect'
@@ -20,11 +20,18 @@ import {
 } from '../market-data/streaming/native-arrival.test-support'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { makeNativeArrivalStore, streamNativeArrivalChunkPage, readNativeArrivalEpoch } from './native-arrival-postgres'
 import { nativeArrivalPostgresFailure } from './native-arrival-postgres.test-support'
 import { PostgresClientLive } from './postgres-client'
 import { migrationLoader } from './migrations'
 import { postgresMigrations } from './postgres-migrations'
+import { readValuationQuotes } from '../system-assessment/valuation-quotes'
+import { registrationFixture } from '../system-assessment/fixtures.test-support'
 
 const readNativeArrivalChunks = (sql: PgClient.PgClient, captureId: string, afterOrdinal: number) =>
   Effect.gen(function* () {
@@ -37,11 +44,11 @@ const readNativeArrivalChunks = (sql: PgClient.PgClient, captureId: string, afte
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_native_arrival_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const makeRuntime = (operationTimeoutMs: number) =>
+const makeRuntime = (url: string, operationTimeoutMs: number) =>
   ManagedRuntime.make(
     PostgresClientLive({
       operationTimeoutMs,
-      postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+      postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
     }).pipe(Layer.provideMerge(NodeServices.layer)),
   )
 const chunk = (ordinal: number, previousHash: string | null) =>
@@ -50,26 +57,31 @@ const chunk = (ordinal: number, previousHash: string | null) =>
   )
 
 describePostgres('PostgreSQL native arrival retention', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw new Error('Native arrival integration tests require a local _test database')
-    runtime = makeRuntime(5000)
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const initializer = makeRuntime(url, 5000)
+      try {
+        await initializer.runPromise(postgresMigrations)
+      } finally {
+        await initializer.dispose()
+      }
+    })
   })
   beforeEach(async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-      }),
-    )
+    database = await template.clone()
+    runtime = makeRuntime(database.url, 5000)
   })
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+  afterAll(async () => template?.dispose())
 
   test('records native arrivals alongside the existing financial schema without changing its migrations', async () => {
     await runtime.runPromise(
@@ -86,6 +98,71 @@ describePostgres('PostgreSQL native arrival retention', () => {
         yield* store.append([first])
         expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first])
         expect(yield* sql`SELECT migration_id,name FROM schema_migrations ORDER BY migration_id`).toEqual(migrations)
+      }),
+    )
+  })
+
+  test('valuation requires an observed frontier strictly after the mark even when an incomplete journal still has a fresh quote', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = makeNativeArrivalStore(sql)
+        yield* store.begin(epoch)
+        const sourceTime = new Date(900).toISOString()
+        const records = [100, 99].map((bid, index) =>
+          nativeArrival(epoch, {
+            ...observation(
+              index + 1,
+              JSON.stringify({
+                version: 2,
+                provider: 'alpaca',
+                feed: 'us',
+                delayClass: 'real_time_crypto',
+                marketSession: 'continuous',
+                symbol: 'BTC/USD',
+                channel: 'quotes',
+                seq: index + 1,
+                eventTs: sourceTime,
+                ingestTs: sourceTime,
+                payload: { T: 'q', S: 'BTC/USD', bp: bid, ap: bid + 1, bs: 1, as: 1, t: sourceTime },
+              }),
+            ),
+            availableAtMs: index === 0 ? 1_001 : 1_004,
+          }),
+        )
+        const prefix = yield* Effect.fromResult(makeNativeArrivalChunk(epoch, 0, null, records))
+        yield* store.append([prefix])
+        yield* store.end({
+          captureId: epoch.captureId,
+          status: 'INCOMPLETE',
+          observedConsumerSequence: 3,
+          durableConsumerSequence: 2,
+          lastChunkHash: prefix.contentHash,
+          reason: 'TEST_UNRETAINED_INPUT',
+          consumerScopeCompleted: false,
+        })
+        const definition = {
+          ...registrationFixture().policies[0]!,
+          sourceRevision: epoch.build.sourceRevision,
+          imageDigest: epoch.build.imageDigest.slice('sha256:'.length),
+          strategyHash: epoch.build.strategyBehaviorHash,
+          parametersHash: epoch.build.strategyParameterHash,
+        }
+        const beforeFrontier = new Date(1_002).toISOString()
+        const equalFrontier = new Date(1_004).toISOString()
+        const afterFrontier = new Date(1_005).toISOString()
+        const quotes = yield* readValuationQuotes(
+          definition,
+          [beforeFrontier, equalFrontier, afterFrontier].map((at) => ({ at, symbols: ['BTC/USD'] })),
+        )
+        expect(quotes.get(beforeFrontier)?.get('BTC/USD')?.value.bidPrice).toBe(100)
+        expect(quotes.get(beforeFrontier)?.get('BTC/USD')?.source.frontier).toEqual({
+          chunk: prefix.contentHash,
+          availableAtMs: 1_004,
+          consumerSequence: 2,
+        })
+        expect(quotes.get(equalFrontier)?.get('BTC/USD')).toBeUndefined()
+        expect(quotes.get(afterFrontier)?.get('BTC/USD')).toBeUndefined()
       }),
     )
   })
@@ -616,7 +693,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
           FOR EACH ROW EXECUTE FUNCTION native_arrival_test_insert_delay()`
       }),
     )
-    const bounded = makeRuntime(2000)
+    const bounded = makeRuntime(database.url, 2000)
     try {
       await bounded.runPromise(
         Effect.gen(function* () {

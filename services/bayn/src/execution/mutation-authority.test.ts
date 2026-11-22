@@ -718,7 +718,7 @@ describe('final broker mutation authority', () => {
       ...fresh,
       projection: {
         fresh,
-        snapshot: unusedRead,
+        reconciliationSnapshot: unusedRead,
         invalidate: Effect.void,
         withMutation: (effect) => effect,
         submissionSnapshot: (id) =>
@@ -835,29 +835,19 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
-  test('uses current account safety state during concurrent confirmation', async () => {
-    const observed = await runLiveSubmit({
-      brokerAccountAtRead: (orderReads) =>
-        orderReads >= 1 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
-    })
+  test.each(['tradingBlocked', 'accountBlocked', 'tradeSuspendedByUser'] as const)(
+    'rejects a live submit when final confirmation reports %s',
+    async (restriction) => {
+      const observed = await runLiveSubmit({
+        brokerAccountAtRead: (orderReads) => (orderReads >= 1 ? account({ [restriction]: true }) : account()),
+      })
 
-    expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
-    expect(observed.orderReads).toBe(1)
-    expect(observed.grantReads).toBe(1)
-    expect(observed.submits).toBe(0)
-  })
-
-  test('rejects account safety drift during the final confirmation', async () => {
-    const observed = await runLiveSubmit({
-      brokerAccountAtRead: (orderReads) =>
-        orderReads >= 1 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
-    })
-
-    expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
-    expect(observed.orderReads).toBe(1)
-    expect(observed.grantReads).toBe(1)
-    expect(observed.submits).toBe(0)
-  })
+      expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
+      expect(observed.orderReads).toBe(1)
+      expect(observed.grantReads).toBe(1)
+      expect(observed.submits).toBe(0)
+    },
+  )
 
   test('rejects a buy when refreshed broker buying power falls below the durable order cap', async () => {
     const observed = await runLiveSubmit({

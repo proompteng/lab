@@ -43,6 +43,16 @@ export const HistoryEventRow = Schema.Struct({
 })
 export type HistoryEventRow = typeof HistoryEventRow.Type
 
+export const CurrentOrderVersionRow = Schema.Struct({
+  event_id: Sha256,
+  content_hash: Sha256,
+  broker_order_id: NonEmptyString,
+  source_event_id: NonEmptyString,
+  source_sequence: Schema.String,
+  broker_updated_at: UtcSourceTimestampSchema,
+})
+export type CurrentOrderVersionRow = typeof CurrentOrderVersionRow.Type
+
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
   Schema.Struct({ quantity_atoms: Schema.String, cost_micros: Schema.String }),
@@ -245,6 +255,10 @@ export const decodeValuationInput = Schema.decodeUnknownEffect(ValuationInputSch
 export const decodeEventRows = Schema.decodeUnknownEffect(Schema.Array(EventRow), strictParseOptions)
 
 export const decodeHistoryEventRows = Schema.decodeUnknownEffect(Schema.Array(HistoryEventRow), strictParseOptions)
+export const decodeCurrentOrderVersionRows = Schema.decodeUnknownEffect(
+  Schema.Array(CurrentOrderVersionRow),
+  strictParseOptions,
+)
 
 export const decodeLastSequence = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 

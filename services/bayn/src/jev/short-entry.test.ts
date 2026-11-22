@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { makeNativeEntryJudgmentRequest, shortQuestionNames } from './short-entry-questions'
 import { decodeJevResponse } from './contract'
-import { selectSupportedEntryProposal } from './entry-questions'
+import { evaluateSupportedEntryProposals } from './entry-questions'
 import { shortNativeEntryFixture } from './short-entry.test-support'
 import { compileJevEntry } from './runtime'
 
@@ -199,7 +199,7 @@ describe('native JeV equity shorts', () => {
       }),
     )
     expect(
-      Result.getOrThrow(selectSupportedEntryProposal({ proposals, response })).selected?.proposal.schemaVersion,
+      Result.getOrThrow(evaluateSupportedEntryProposals({ proposals, response })).supported[0]?.proposal.schemaVersion,
     ).toBe('bayn.equity-short-entry-proposal.v1')
     for (const proposal of proposals)
       answers[shortQuestionNames(proposal.source.setup).obstruction] = { type: 'noul', noul: 0.9 }
@@ -210,8 +210,8 @@ describe('native JeV equity shorts', () => {
         usage: { input_tokens: 100, output_tokens: 25 },
       }),
     )
-    const rejected = Result.getOrThrow(selectSupportedEntryProposal({ proposals, response: obstructed }))
-    expect(rejected.selected).toBeNull()
+    const rejected = Result.getOrThrow(evaluateSupportedEntryProposals({ proposals, response: obstructed }))
+    expect(rejected.supported).toEqual([])
     expect(rejected.rejections.map((value) => value.reason)).toEqual(['OBJECTIVE_OBSTRUCTED', 'OBJECTIVE_OBSTRUCTED'])
   })
 
