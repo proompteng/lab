@@ -57,7 +57,6 @@ const acquisitionStage = (cause: BrokerReadError | BrokerAccountPreflightError):
     case 'order-by-id':
     case 'order-by-client-id':
     case 'fill-activities':
-    case 'activity-stream':
     case 'fee-activities':
     case 'non-trade-activities':
     case 'asset-by-symbol':

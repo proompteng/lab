@@ -29,7 +29,7 @@ flowchart LR
   B --> C[Signed SessionReady and TradeUpdate]
   C -->|direct HTTP plus stable idempotency key| R[Restate durable ingress]
   R --> S[Immutable source ledger]
-  S --> O[Immediate order, fill and accounting projection]
+  S --> O[Immediate order and fill evidence]
   R --> G[Serialized canonical gap reconciliation]
   O --> D[Serialized account decision and execution]
 ```
@@ -43,8 +43,13 @@ The producer awaits a successful Restate receipt before reading the next update.
 with the same idempotency key; a terminal response or exhausted connection ends the session and reconnects with a new
 verified `SessionReady`, allowing canonical gap repair. Updates can be delivered more than once. Stable update IDs,
 Restate receipts, the immutable source ledger and the financial stores retain independent idempotency boundaries.
-`/readyz` becomes ready only after the verified session notification has been durably acknowledged, and resets on
-disconnect. `/metrics` exposes readiness, publications and session failures without account labels.
+The same process owns Alpaca Activity SSE. It proves a finite initial publication range through
+`BaynBrokerActivities`, then opens the live stream from the durable cursor. Reconnecting reuses the latest stored
+ULID. When initial catchup is interrupted, a new finite read includes the full range in its hash and sends only the
+unrecorded suffix. Bayn checks this hash independently against PostgreSQL before marking the range complete.
+
+`/readyz` requires the acknowledged trade-update session and a live heartbeat accepted against the durable Activity
+cursor. A disconnect clears its lane. `/metrics` exposes lane readiness, publications and failures without account labels.
 
 Market-data and trade-update sessions allow up to five seconds for a graceful WebSocket close, then cancel that
 session and close both channels. This bounds Ktor's otherwise unbounded close/flush path after a network failure,
@@ -58,8 +63,8 @@ and `RESTATE_INGRESS_URL=http://restate.restate.svc.cluster.local:8080`. Live br
 destinations are rejected.
 The existing Torghut collector retains its own account, topics and release path.
 
-Run `./gradlew :websockets:ktlintCheck :websockets:test` for real local HTTP/WebSocket contract tests, including
-wrong-account rejection, binary frames, failed publication, reconnect and the shared signature vector. Deployment and
+Run `./gradlew :websockets:ktlintCheck :websockets:test` for local HTTP, WebSocket and SSE contract tests covering
+wrong-account rejection, failed publication, finite replay, inclusive reconnect and the shared signature vector. Deployment and
 runtime acceptance follow the [Bayn deployment guide](../../argocd/applications/bayn/README.md).
 
 ## Exception tracking

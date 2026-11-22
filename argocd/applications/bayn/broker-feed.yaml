@@ -10,7 +10,7 @@ metadata:
 spec:
   replicas: 1
   revisionHistoryLimit: 2
-  # One verified account socket; reconnect emits a session boundary for gap repair.
+  # One verified process owns trade_updates plus finite-prefix and long-lived Activity SSE connections.
   strategy:
     type: Recreate
   selector:
@@ -48,7 +48,7 @@ spec:
               protocol: TCP
           env:
             - name: DORVUD_SOURCE_REVISION
-              value: 9b5547fee6d1973b7e9ec87e02c6bc28dccddff4
+              value: 74e59fecd4492b450b1c7503c090164981e07bf5
             - name: BAYN_ALPACA_ACCOUNT_ID
               valueFrom:
                 secretKeyRef:

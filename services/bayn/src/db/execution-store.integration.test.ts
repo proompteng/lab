@@ -2912,6 +2912,19 @@ describePostgres('PostgreSQL execution persistence', () => {
             false,
           ).pipe(Effect.flip)).failure,
         ).toBe('invariant')
+        yield* sql`INSERT INTO broker_activity_events(
+            account_id,source_event_id,transport_event_id,source_event_hash,source_revision,ref_id,
+            activity_type,session_id,request_id,received_at,activity_json
+          ) VALUES (
+            ${accountId},'00000000000000000000000001',${hash('cache-activity-transport')},
+            ${hash('cache-activity-source')},${'a'.repeat(40)},'00000000-0000-4000-8000-000000000001',
+            'TRD','cache-activity-session','cache-activity-request','2026-08-28T14:34:00.000Z','{}'
+          )`
+        expect(
+          (yield* verifyBrokerStateVersion(sql, accountId, latestVersion, hash('current-intent'), false).pipe(
+            Effect.flip,
+          )).failure,
+        ).toBe('invariant')
         const laterAt = '2026-08-28T14:34:00.000Z'
         yield* events.ingest({
           ...account,
