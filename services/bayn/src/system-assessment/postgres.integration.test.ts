@@ -2184,7 +2184,7 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('financial capture resolves each exact registered account and rejects scope substitution', async () => {
-    const definitions = registration().policies
+    const definitions = registration().policies.toReversed()
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -2276,15 +2276,31 @@ postgres('PostgreSQL prospective system qualification', () => {
             ${definition.protocolHash}, ${planHash}, ${reconciliation.reconciliationId},
             ${reconciliation.contentHash}, ${planHash})`
           const observedAt = yield* databaseNow
-          const lockAt = new Date(Date.parse(observedAt) + 1).toISOString()
-          expect(yield* readRegisteredFinancialIdentity(registered, lockAt)).toEqual(identity)
+          const at = (offsetMs: number) => new Date(Date.parse(observedAt) + offsetMs).toISOString()
+          const lockAt = at(2)
           if (definition.policy === JevResearchPolicy.Incumbent) {
-            expect(
-              Exit.isFailure(
-                yield* Effect.exit(readRegisteredFinancialIdentity(registered, '2000-01-01T00:00:00.000Z')),
-              ),
-            ).toBe(true)
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`CREATE FUNCTION public.clock_timestamp() RETURNS timestamptz LANGUAGE sql VOLATILE
+                  RETURN current_setting('bayn_test.now')::timestamptz`
+                yield* sql`SET LOCAL search_path = public, pg_catalog`
+                yield* sql`SELECT set_config('bayn_test.now', ${at(1)}, true)`
+                yield* sql`INSERT INTO authority_state
+                  (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
+                  SELECT 'bayn.paper-authority.v1', generation_hash, 'OBSERVE', 'OBSERVE', 'CLEAR', 1, activated_at
+                  FROM authority_generations WHERE generation_hash=${previous}`
+                yield* sql`UPDATE authority_state AS s SET generation_hash=g.generation_hash, maximum='PAPER',
+                  effective='PAPER', version=2, updated_at=g.activated_at
+                  FROM authority_generations AS g WHERE s.singleton AND g.generation_hash=${generation.generationHash}`
+                yield* sql`SELECT set_config('bayn_test.now', ${at(3)}, true)`
+                yield* sql`UPDATE authority_state SET effective='OBSERVE', kill_state='ACTIVE', reason='test pause',
+                  version=version+1, updated_at=clock_timestamp() WHERE singleton`
+              }),
+            )
+            expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(registered, at(4))))).toBe(true)
+            expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(registered, at(0))))).toBe(true)
           }
+          expect(yield* readRegisteredFinancialIdentity(registered, lockAt)).toEqual(identity)
           if (definition.policy === JevResearchPolicy.Candidate) {
             const build = {
               ...config.build,

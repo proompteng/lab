@@ -8,13 +8,10 @@ import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, StrictNonEmptyStringSchema } from '../schemas'
 import { SystemAssessmentError } from './economics'
 import { PolicyDefinitionSchema } from './policy'
-import { Authority } from '../execution/contracts'
+import { Authority, KillState } from '../execution/contracts'
 import { JevResearchPolicy } from '../jev/acceptance'
 
-export const readRegisteredFinancialIdentity = (
-  definition: typeof PolicyDefinitionSchema.Type,
-  registeredAt?: string,
-) =>
+export const readRegisteredFinancialIdentity = (definition: typeof PolicyDefinitionSchema.Type, admittedAt?: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const rows = yield* Schema.decodeUnknownEffect(
@@ -36,13 +33,15 @@ export const readRegisteredFinancialIdentity = (
         strategy_behavior_hash AS "strategyHash", strategy_parameter_hash AS "parametersHash",
         strategy_protocol_hash AS "protocolHash",
         COALESCE(g.maximum = ${Authority.Execution} AND g.strategy_name = 'jev'
-          AND g.activated_at <= ${registeredAt ?? null}::timestamptz
-          AND NOT EXISTS (
-            SELECT 1 FROM authority_generations AS successor
-            WHERE successor.account_id = g.account_id
-              AND successor.generation_hash <> g.generation_hash
-              AND successor.activated_at >= g.activated_at
-              AND successor.activated_at <= ${registeredAt ?? null}::timestamptz
+          AND g.activated_at <= ${admittedAt ?? null}::timestamptz
+          AND (
+            SELECT t.authority_state->>'generation_hash' = g.generation_hash
+              AND t.authority_state->>'effective' = ${Authority.Execution}
+              AND t.authority_state->>'kill_state' = ${KillState.Clear}
+            FROM operational_safety_authority_transitions AS t
+            WHERE t.captured_at <= ${admittedAt ?? null}::timestamptz
+            ORDER BY t.authority_version DESC
+            LIMIT 1
           ), false) AS "servingAtRegistration", jsonb_build_object(
         'schemaVersion', broker_identity_schema_version, 'provider', broker_provider,
         'environment', broker_environment, 'accountId', account_id, 'identityHash', broker_identity_hash
@@ -52,7 +51,7 @@ export const readRegisteredFinancialIdentity = (
     if (row === undefined) return null
     if (definition.policy === JevResearchPolicy.Incumbent && !row.servingAtRegistration)
       return yield* new SystemAssessmentError({
-        message: 'Incumbent must bind the serving PAPER Jev authority at the prospective registration clock',
+        message: 'Incumbent must bind the effective PAPER Jev authority at registration admission',
       })
     const accountBindingHash = yield* Effect.fromResult(
       canonicalHashV1Result({
