@@ -11,7 +11,7 @@ import { makeReplayBrokerCheckpoint, type ReplayBrokerEvidenceConfig } from '../
 import { createReplayLedger } from '../intraday-replay/ledger'
 import { type ReplayInferenceCall } from '../intraday-replay/inference-timing'
 import { equityMarketProfile } from '../jev/markets'
-import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
+import { JevResearchPolicy, JevAcceptanceVersion, retainedJevResearchPolicies } from '../jev/acceptance'
 import { nativeJevInference } from '../jev/native.test-support'
 import { prepareJevRequest } from '../jev/contract'
 import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs'
@@ -141,7 +141,7 @@ const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate, histor
 }
 
 test('zero-trade stress retains every registered session and produces a fully costed operating loss', () => {
-  for (const policy of Object.values(JevResearchPolicy)) {
+  for (const policy of retainedJevResearchPolicies) {
     const f = fixture(policy)
     const result = Result.getOrThrow(f.evaluate())
     expect(result.complete).toBe(true)

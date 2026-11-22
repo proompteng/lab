@@ -74,7 +74,15 @@ export enum JevResearchPolicy {
   Deployed = 'DEPLOYED_BAYN',
   Momentum = 'REPEATED_MOMENTUM',
   Ablation = 'JEV_ABLATION',
+  Incumbent = 'INCUMBENT_JEV',
 }
+
+export const retainedJevResearchPolicies = [
+  JevResearchPolicy.Candidate,
+  JevResearchPolicy.Deployed,
+  JevResearchPolicy.Momentum,
+  JevResearchPolicy.Ablation,
+] as const
 
 export enum JevNumericalVerdict {
   Passed = 'NUMERICAL_TARGETS_PASSED',
@@ -123,7 +131,7 @@ export const JevAcceptanceInputSchema = Schema.Struct({
   }),
   policies: Schema.Array(
     Schema.Struct({
-      policy: Schema.Enum(JevResearchPolicy),
+      policy: Schema.Literals(retainedJevResearchPolicies),
       definitionHash: Sha256Schema,
       sessions: Schema.Array(Session).check(Schema.isMinLength(1)),
     }),

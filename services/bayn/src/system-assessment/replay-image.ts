@@ -117,7 +117,8 @@ export const bindReplayImagePolicy = (
   Result.gen(function* () {
     const entries = dependencies.nativeReplayPolicies
     const root = entries.find((entry) => entry.policy === JevResearchPolicy.Candidate)
-    const selected = entries.find((entry) => entry.policy === policy.policy)
+    const compiledPolicy = policy.policy === JevResearchPolicy.Incumbent ? JevResearchPolicy.Candidate : policy.policy
+    const selected = entries.find((entry) => entry.policy === compiledPolicy)
     if (
       entries.length !== 3 ||
       new Set(entries.map((entry) => entry.policy)).size !== entries.length ||

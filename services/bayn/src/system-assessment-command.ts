@@ -13,7 +13,6 @@ import { makeConfiguredTelemetryRuntimeLayer } from './telemetry'
 import { readSystemEvidencePacket } from './system-assessment/files'
 import {
   initializeQualificationHistory,
-  registerSystemQualification,
   assessAndPersistSystem,
   readSystemRegistration,
   registerOperationalPeriod,
@@ -22,9 +21,11 @@ import {
 import { OperationalRegistrationSchema, validateOperationalRegistration } from './system-assessment/operational-period'
 import { OperationalAssessmentInputSchema } from './system-assessment/operational-assessment'
 import { captureSystemSourceCut } from './system-assessment/capture'
+import { registerPairedSystemQualification } from './system-assessment/paired-admission'
+import { openIncumbentPostgres } from './system-assessment/incumbent-store'
 import { ValkeyCacheLive } from './valkey-cache'
 import { qualificationRuntime } from './system-assessment/configuration'
-import { validateSystemRegistration } from './system-assessment/policy'
+import { validateProspectiveSystemRegistration } from './system-assessment/policy'
 import { SystemAssessmentError } from './system-assessment/economics'
 import { loadActiveStrategyProtocol } from './strategy'
 import { SystemAssessmentInputSchema } from './system-assessment/assessment'
@@ -99,7 +100,7 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
         if (command._tag === 'SystemRegister') {
           const { registration } = Schema.is(OperationalRegistrationSchema)(packet.payload)
             ? yield* Effect.fromResult(validateOperationalRegistration(packet.payload))
-            : yield* Effect.fromResult(validateSystemRegistration(packet.payload))
+            : yield* Effect.fromResult(validateProspectiveSystemRegistration(packet.payload))
           const runtime = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
           if (
             (yield* Effect.fromResult(canonicalHashV1Result(runtime))) !==
@@ -153,9 +154,10 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
             return yield* new SystemAssessmentError({
               message: 'Registration requires its existing durable capital generation',
             })
-          return registration.program === 'BAYN_OPERATIONAL_RELIABILITY'
-            ? yield* registerOperationalPeriod(registration, packet.verifiedSources)
-            : yield* registerSystemQualification(registration, packet.verifiedSources)
+          if (registration.program === 'BAYN_OPERATIONAL_RELIABILITY')
+            return yield* registerOperationalPeriod(registration, packet.verifiedSources)
+          const incumbentStore = yield* openIncumbentPostgres(config, false)
+          return yield* registerPairedSystemQualification(registration, packet.verifiedSources, incumbentStore)
         }
         if (Schema.is(OperationalAssessmentInputSchema)(packet.payload))
           return yield* assessAndPersistOperational(packet.payload, packet.verifiedSources)
@@ -166,7 +168,11 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
           input.registration,
           packet.artifacts,
         )
-        return yield* assessAndPersistSystem(input, packet.verifiedSources, packet.artifacts, images)
+        const peer =
+          input.registration.schemaVersion === 'bayn.system-registration.v5'
+            ? yield* openIncumbentPostgres(config, true)
+            : undefined
+        return yield* assessAndPersistSystem(input, packet.verifiedSources, packet.artifacts, images, peer)
       }).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command owns the scoped database layer
         Effect.provide(PostgresClientLive(config)),

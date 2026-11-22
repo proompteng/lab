@@ -34,19 +34,24 @@ export const retainAccountCashReporting = (
   >,
 ) =>
   Effect.gen(function* () {
+    const account = snapshot.account
+    const observation = sql`
+      SELECT a.event_id FROM account_snapshots a JOIN broker_events e USING(event_id,account_id)
+      WHERE a.event_id=${snapshot.accountEventId} AND a.account_id=${account.accountId}
+        AND a.schema_version=${account.schemaVersion} AND a.status=${account.status} AND a.currency=${account.currency}
+        AND a.cash_micros=${account.cashMicros}::numeric AND a.equity_micros=${account.equityMicros}::numeric
+        AND a.buying_power_micros=${account.buyingPowerMicros}::numeric
+        AND a.crypto_fee_tier IS NOT DISTINCT FROM ${account.cryptoFeeTier}::integer
+        AND e.observed_at=${account.observedAt}::timestamptz`
     yield* sql`INSERT INTO account_cash_reporting(account_event_id,quantum_micros)
-    SELECT a.event_id,${snapshot.cashReportingQuantumMicros}::integer FROM account_snapshots a JOIN broker_events e USING(event_id)
-    WHERE a.event_id=${snapshot.accountEventId} AND a.account_id=${snapshot.account.accountId}
-      AND a.cash_micros=${snapshot.account.cashMicros}::numeric AND e.observed_at=${snapshot.account.observedAt}::timestamptz
+    SELECT observed.event_id,${snapshot.cashReportingQuantumMicros}::integer FROM (${observation}) observed
     ON CONFLICT(account_event_id) DO NOTHING`
     const [row] = yield* Schema.decodeUnknownEffect(
-      Schema.Tuple([Schema.Struct({ quantum_micros: Schema.Int })]),
+      Schema.Tuple([Schema.Struct({ quantum_micros: Schema.NullOr(Schema.Int) })]),
       strictParseOptions,
     )(
-      yield* sql`SELECT r.quantum_micros FROM account_cash_reporting r
-      JOIN account_snapshots a ON a.event_id=r.account_event_id JOIN broker_events e ON e.event_id=a.event_id
-      WHERE r.account_event_id=${snapshot.accountEventId} AND a.account_id=${snapshot.account.accountId}
-        AND a.cash_micros=${snapshot.account.cashMicros}::numeric AND e.observed_at=${snapshot.account.observedAt}::timestamptz`,
+      yield* sql`SELECT (SELECT r.quantum_micros FROM account_cash_reporting r
+      JOIN (${observation}) observed ON observed.event_id=r.account_event_id) AS quantum_micros`,
     )
     if (String(row.quantum_micros) !== snapshot.cashReportingQuantumMicros)
       return yield* new ReconciliationStoreError({

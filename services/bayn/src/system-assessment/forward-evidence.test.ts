@@ -10,9 +10,11 @@ import { captureCashHistory as captureHistory, indexCashHistory } from './cash-h
 const cashChangesAt = (history: Parameters<typeof indexCashHistory>[0], at: string) => indexCashHistory(history)(at)
 
 import type { ForwardPerformanceEvidenceInput } from '../forward-performance/model'
-import { JevResearchPolicy } from '../jev/acceptance'
+import { JevResearchPolicy, retainedJevResearchPolicies } from '../jev/acceptance'
 import { captureForwardFinancialEvidence as captureFinancial, type DecisionSessionBinding } from './forward-evidence'
-import { registrationFixture, testHash } from './fixtures.test-support'
+import { nativeRegistrationFixture, registrationFixture, testHash } from './fixtures.test-support'
+import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
+import { nativeBrokerRecoveryClose } from './policy'
 import { coinRoundTrip, coinActivity } from '../forward-performance/coin-fee-episodes.test-support'
 import { prepareAccounting } from '../accounting/domain'
 import { OrderSide, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
@@ -130,6 +132,123 @@ const cashSettlements = (fills: ReturnType<typeof coinRoundTrip>['fills']) =>
   })
 
 describe('registered financial capture', () => {
+  test('native exposure uses receipted fills through the data close and detects final-day broker recovery activity', () => {
+    const policy = JevResearchPolicy.Candidate
+    const { registration, forward } = fixture(policy)
+    const days = registration.calendar.sessions.map((session) => session.sessionDate)
+    const marketCalendar = Result.getOrThrow(
+      normalizeMarketCalendarResult(
+        days.map((date) => ({ date, open: '09:30', close: '16:00', session_open: '0400', session_close: '2000' })),
+        { start: days[0]!, end: days.at(-1)! },
+      ),
+    )
+    const native = nativeRegistrationFixture(registration, marketCalendar)
+    const recoveryClose = nativeBrokerRecoveryClose(native)!
+    const complete = (
+      day: StoredBrokerFee['data']['date'],
+      exitTime: string,
+      reconciledAt: string,
+      changeFees: (fees: readonly StoredBrokerFee[]) => readonly StoredBrokerFee[] = (fees) => fees,
+    ) => {
+      const fills = [
+        { side: OrderSide.Buy, priceAtoms: '100000000000', at: '20:56:41' },
+        { side: OrderSide.Sell, priceAtoms: '101000000000', at: exitTime },
+      ].map(
+        ({ side, priceAtoms, at }, index) =>
+          Result.getOrThrow(
+            prepareAccounting(
+              testHash(['native clock fill', index]),
+              {
+                schemaVersion: 'bayn.fill.v2',
+                accountId: forward.account.accountId,
+                intentId: testHash(['native clock intent', index]),
+                fillId: `native-clock-fill-${index}`,
+                brokerOrderId: `native-clock-order-${index}`,
+                clientOrderId: `native-clock-client-${index}`,
+                symbol: 'AMZN',
+                side,
+                quantityAtoms: '1000000000',
+                priceAtoms,
+                feeMicros: '0',
+                occurredAt: `${day}T${at}.000Z`,
+              },
+              side === OrderSide.Buy
+                ? { quantityAtoms: '0', costMicros: '0' }
+                : { quantityAtoms: '1000000000', costMicros: '100000000' },
+              7001,
+            ),
+          ).transaction,
+      )
+      const fees = changeFees(
+        ['REG', 'CAT'].map((kind) => {
+          const base = coinActivity('10000', forward.account.accountId)
+          const data = {
+            accountId: forward.account.accountId,
+            activityId: `native-clock-${kind}`,
+            date: day,
+            netAmountMicros: '-10000',
+          }
+          return {
+            ...base,
+            data,
+            coin_cost_basis_micros: null,
+            content_hash: testHash({ schemaVersion: 'bayn.broker-fee.v1', ...data }),
+            ledger_plan_hash: Result.getOrThrow(
+              hashLedgerPlanResult(brokerFeeLedgerPlan(data.accountId, data.activityId, data.netAmountMicros, 7001)),
+            ),
+            read_evidence: { ...base.read_evidence, observedAt: recoveryClose },
+          }
+        }),
+      )
+      return Result.getOrThrow(
+        captureFinancial(
+          native,
+          policy,
+          {
+            ...forward,
+            reconciliation: { ...forward.reconciliation!, reconciledAt },
+            accountPositionCounts: { postgres: 0, ledger: 0, exact: true, reconciledAt },
+            accountTransactions: fills,
+            accountCashSettlements: cashSettlements(fills),
+            accountBrokerFees: fees,
+            brokerFees: fees.map(({ data }) => data),
+            transactions: fills.map((fill) => ({ ...fill, cycleId: testHash('native clock cycle') })),
+          },
+          {
+            decisions: [],
+            fills: fills.map(({ brokerEventId, occurredAt }) => ({ fillId: brokerEventId, occurredAt })),
+          },
+        ),
+      ).sessions
+    }
+    const measured = complete(days[0]!, '21:02:38', recoveryClose)
+    expect(measured.every(({ facts }) => facts !== null)).toBe(true)
+    expect(measured[0]?.facts).toMatchObject({
+      openingPositionCount: 0,
+      closingPositionCount: 0,
+      grossRealizedPnlMicros: '1000000',
+      executionCostMicros: '20000',
+      completedEpisodes: 1,
+    })
+    expect(complete(days[0]!, '21:02:38', recoveryClose, (fees) => fees.slice(0, 1))[0]?.facts).toBeNull()
+    expect(complete(days[0]!, '21:02:38', recoveryClose, ([first]) => [first!, first!])[0]?.facts).toBeNull()
+    expect(
+      complete(days[0]!, '21:02:38', recoveryClose, ([first, second]) => [
+        first!,
+        { ...second!, data: { ...second!.data, date: days[1]! } },
+      ])[0]?.facts,
+    ).toBeNull()
+    expect(
+      complete(days[0]!, '21:02:38', recoveryClose, ([first]) => [
+        { ...first!, data: { ...first!.data, netAmountMicros: '-20000' } },
+      ])[0]?.facts,
+    ).toBeNull()
+    expect(complete(days.at(-1)!, '22:02:38', recoveryClose).every(({ facts }) => facts === null)).toBe(true)
+    expect(
+      complete(days[0]!, '21:02:38', native.calendar.sessions.at(-1)!.closeAt).every(({ facts }) => facts === null),
+    ).toBe(true)
+  })
+
   test('financial capture keeps the authorizing build distinct from the registered physical worker', () => {
     const { registration, forward } = fixture(JevResearchPolicy.Candidate)
     const definition = registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
@@ -707,7 +826,7 @@ describe('registered financial capture', () => {
   })
 
   test('every policy retains all twenty sessions and a fee on a zero-trade session', () => {
-    for (const policy of Object.values(JevResearchPolicy)) {
+    for (const policy of retainedJevResearchPolicies) {
       const { registration, forward } = fixture(policy)
       const captured = Result.getOrThrow(captureForwardFinancialEvidence(registration, policy, forward, []))
       expect(captured.policy).toBe(policy)
