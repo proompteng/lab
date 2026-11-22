@@ -3,7 +3,8 @@ kind: Deployment
 metadata:
   name: bayn-broker-feed
   annotations:
-    argocd.argoproj.io/sync-wave: "-1"
+    # Activity ingestion requires the owner established by the activation hook in wave 0.
+    argocd.argoproj.io/sync-wave: "1"
   labels:
     app.kubernetes.io/name: bayn-broker-feed
     app.kubernetes.io/part-of: bayn
@@ -48,7 +49,7 @@ spec:
               protocol: TCP
           env:
             - name: DORVUD_SOURCE_REVISION
-              value: f0988a76d15216d9d7094e579a5d00002d8f2b4a
+              value: 99f3a9d229737d5d1c41388c815707952a8e3811
             - name: BAYN_ALPACA_ACCOUNT_ID
               valueFrom:
                 secretKeyRef:

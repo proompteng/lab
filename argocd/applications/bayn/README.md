@@ -678,9 +678,9 @@ separate durable cycle with its own entry cutoff, forced-flatten window, risk bu
 state. Rotate the mandate only when one of its bound identities changes.
 
 A mandate rotation must update the request content hash, build lineage, and activation generation in one reviewed
-change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, runs the idempotent activation hook in
-wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status rollout
-and a drained Restate worker revision; the activation hook itself cannot reach the broker.
+change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, and runs the idempotent activation hook in
+wave `0`. The broker feed and read-only status service roll in wave `1`. The activation hook binds the broker observation
+owner before the feed can persist Activity events and pass readiness. The hook itself cannot reach the broker.
 
 The SealedSecret's `proompteng.ai/bayn.mandate-identity` annotation records the request hash, strategy identity, authored
 build, and ciphertext hash without exposing the broker account. The manifest check compares it with the compiled

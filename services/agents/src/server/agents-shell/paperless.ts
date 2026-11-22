@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { open, readFile, realpath, unlink, type FileHandle } from 'node:fs/promises'
+import { lstat, open, readFile, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, relative, resolve } from 'node:path'
 
 import { Effect } from 'effect'
@@ -19,7 +19,9 @@ import { jsonTextResult } from './results'
 import { EmptyInputSchema } from './schemas'
 import { isInsidePath, resolveWorkspacePath } from './workspace-policy'
 
-const MAX_FILE_BYTES = 32 * 1024 * 1024
+const DEFAULT_MAX_FILE_BYTES = 256 * 1024 * 1024
+const FILE_TRANSFER_TIMEOUT_MS = 600000
+const FILE_CHUNK_BYTES = 64 * 1024
 const MAX_JSON_BYTES = 4 * 1024 * 1024
 const API_VERSION = 'application/json; version=10'
 const ID = Schema.Number.pipe(
@@ -97,32 +99,50 @@ const documentMetadata = (value: unknown, detail = false) => {
   return pick(document, detail ? [...documentFields, 'custom_fields', 'mime_type', 'page_count'] : documentFields)
 }
 
-const readBody = async (response: Response, limit: number): Promise<Buffer> => {
+const consumeBody = async (
+  response: Response,
+  limit: number,
+  consume: (chunk: Uint8Array) => void | Promise<void>,
+): Promise<number> => {
+  const oversized = () => new Error('Paperless response exceeds the size limit of ' + limit + ' bytes.')
   const length = Number(response.headers.get('content-length'))
   if (Number.isFinite(length) && length > limit) {
-    await response.body?.cancel()
-    throw new Error('Paperless response exceeds the size limit.')
+    await response.body?.cancel().catch(() => undefined)
+    throw oversized()
   }
   if (!response.body) throw new Error('Paperless returned an empty response.')
   const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
   let bytes = 0
   try {
     while (true) {
-      const chunk = await reader.read()
+      let chunk: Awaited<ReturnType<typeof reader.read>>
+      try {
+        chunk = await reader.read()
+      } catch {
+        throw new Error('Paperless response failed or timed out.')
+      }
       if (chunk.done) break
       bytes += chunk.value.byteLength
-      if (bytes > limit) throw new Error('Paperless response exceeds the size limit.')
-      chunks.push(chunk.value)
+      if (bytes > limit) throw oversized()
+      await consume(chunk.value)
     }
-    return Buffer.concat(chunks, bytes)
+    return bytes
   } finally {
     await reader.cancel().catch(() => undefined)
     reader.releaseLock()
   }
 }
 
+const readBody = async (response: Response, limit: number): Promise<Buffer> => {
+  const chunks: Uint8Array[] = []
+  const bytes = await consumeBody(response, limit, (chunk) => {
+    chunks.push(chunk)
+  })
+  return Buffer.concat(chunks, bytes)
+}
+
 export class PaperlessClient {
+  readonly maxFileBytes: number
   private readonly base: URL
   private readonly tokenFile: string
 
@@ -142,6 +162,15 @@ export class PaperlessClient {
       throw new Error('AGENTS_SHELL_PAPERLESS_URL must be an HTTP(S) service origin.')
     }
     this.tokenFile = env.AGENTS_SHELL_PAPERLESS_TOKEN_FILE || '/var/run/secrets/agents-shell-paperless/token'
+    const limit = env.AGENTS_SHELL_PAPERLESS_MAX_FILE_BYTES?.trim()
+    this.maxFileBytes = limit === undefined ? DEFAULT_MAX_FILE_BYTES : Number(limit)
+    if (
+      (limit !== undefined && !/^\d+$/.test(limit)) ||
+      !Number.isSafeInteger(this.maxFileBytes) ||
+      this.maxFileBytes < 1
+    ) {
+      throw new Error('AGENTS_SHELL_PAPERLESS_MAX_FILE_BYTES must be a positive safe integer.')
+    }
   }
 
   async request(
@@ -149,8 +178,10 @@ export class PaperlessClient {
     options: {
       method?: 'GET' | 'POST' | 'PATCH'
       query?: Record<string, string>
-      body?: FormData | Record<string, unknown>
+      body?: Record<string, unknown>
+      multipart?: { body: ReadableStream<Uint8Array>; boundary: string; contentLength: number }
       timeoutMs?: number
+      signal?: AbortSignal
     } = {},
   ) {
     let token: string
@@ -165,22 +196,26 @@ export class PaperlessClient {
       throw new Error('Invalid Paperless API route.')
     for (const [key, value] of Object.entries(options.query ?? {})) url.searchParams.set(key, value)
     const headers: Record<string, string> = { Authorization: 'Token ' + token, Accept: API_VERSION }
-    const form = options.body instanceof FormData
-    if (options.body && !form) headers['Content-Type'] = 'application/json'
+    if (options.multipart) {
+      headers['Content-Type'] = 'multipart/form-data; boundary=' + options.multipart.boundary
+      headers['Content-Length'] = String(options.multipart.contentLength)
+    } else if (options.body) headers['Content-Type'] = 'application/json'
+    const timeout = AbortSignal.timeout(options.timeoutMs ?? 30000)
     let response: Response
     try {
       response = await this.fetcher(url, {
         method: options.method ?? 'GET',
         headers,
-        body: options.body ? (form ? (options.body as FormData) : JSON.stringify(options.body)) : undefined,
+        body: options.multipart?.body ?? (options.body ? JSON.stringify(options.body) : undefined),
+        ...(options.multipart ? { duplex: 'half' } : {}),
         redirect: 'manual',
-        signal: AbortSignal.timeout(options.timeoutMs ?? 30000),
+        signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
       })
     } catch {
       throw new Error('Paperless request failed or timed out. Check task or document state before retrying a write.')
     }
     if (!response.ok) {
-      await response.body?.cancel()
+      await response.body?.cancel().catch(() => undefined)
       throw new Error(
         'Paperless API returned HTTP ' + response.status + '. Verify account permissions and service health.',
       )
@@ -290,7 +325,7 @@ export const createPaperlessTools = (): EffectTool[] => [
   tool(
     'paperless_status',
     'Check Paperless API',
-    'Check authenticated Paperless access, server/API version and visible document count.',
+    'Check authenticated Paperless access, server/API version, visible document count and configured file limit.',
     EmptyInputSchema,
     false,
     async (client) => {
@@ -302,6 +337,7 @@ export const createPaperlessTools = (): EffectTool[] => [
         version: response.version,
         apiVersion: response.apiVersion,
         visibleDocuments: data.count,
+        maxFileBytes: client.maxFileBytes,
       }
     },
   ),
@@ -422,7 +458,7 @@ export const createPaperlessTools = (): EffectTool[] => [
   tool(
     'paperless_upload',
     'Upload a document to Paperless',
-    'Upload a session file up to 32 MiB. Poll paperless_get_task with taskId; success yields relatedDocumentIds. Check state before retry.',
+    'Stream a session file within the configured limit (paperless_status). Poll paperless_get_task; check state before retrying.',
     Schema.Struct({
       sessionId: text(128),
       path: text(4096),
@@ -437,39 +473,102 @@ export const createPaperlessTools = (): EffectTool[] => [
       withSession(context, input.sessionId, async (root) => {
         const target = await filePath(root, input.path, true)
         const handle = await open(target.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-        let bytes: Buffer
+        const abort = new AbortController()
+        let body: ReadableStream<Uint8Array> | undefined
         try {
           const info = await verifyHandle(handle, target.canonicalRoot)
-          if (info.size < 1 || info.size > MAX_FILE_BYTES)
-            throw new Error('Document must be between 1 byte and 32 MiB.')
-          const chunks: Buffer[] = []
-          let size = 0
-          for await (const chunk of handle.createReadStream({ autoClose: false, start: 0, end: MAX_FILE_BYTES })) {
-            const buffer = Buffer.from(chunk)
-            size += buffer.length
-            if (size > MAX_FILE_BYTES) throw new Error('Document exceeds 32 MiB.')
-            chunks.push(buffer)
+          if (!Number.isSafeInteger(info.size) || info.size < 1 || info.size > client.maxFileBytes)
+            throw new Error('Document must be between 1 byte and ' + client.maxFileBytes + ' bytes.')
+          const fields: [string, string][] = []
+          if (input.title) fields.push(['title', input.title])
+          if (input.created) fields.push(['created', input.created])
+          if (input.correspondentId) fields.push(['correspondent', String(input.correspondentId)])
+          if (input.documentTypeId) fields.push(['document_type', String(input.documentTypeId)])
+          for (const tag of input.tagIds ?? []) fields.push(['tags', String(tag)])
+          const boundary = 'paperless-' + randomUUID()
+          const filename = basename(target.path)
+          const quotedFilename = filename.replace(
+            /[\r\n"\\]/g,
+            (character) => '%' + character.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'),
+          )
+          const prefix = Buffer.from(
+            fields
+              .map(
+                ([name, value]) =>
+                  '--' + boundary + '\r\nContent-Disposition: form-data; name="' + name + '"\r\n\r\n' + value + '\r\n',
+              )
+              .join('') +
+              '--' +
+              boundary +
+              '\r\nContent-Disposition: form-data; name="document"; filename="' +
+              quotedFilename +
+              '"\r\nContent-Type: application/octet-stream\r\n\r\n',
+          )
+          const suffix = Buffer.from('\r\n--' + boundary + '--\r\n')
+          const contentLength = prefix.byteLength + info.size + suffix.byteLength
+          if (!Number.isSafeInteger(contentLength)) throw new Error('Document multipart size is too large.')
+          const hash = createHash('sha256')
+          let bytes = 0
+          let complete = false
+          let streamError: Error | undefined
+          body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(prefix)
+            },
+            async pull(controller) {
+              try {
+                const current = await verifyHandle(handle, target.canonicalRoot)
+                if (current.size !== info.size || current.mtimeMs !== info.mtimeMs)
+                  throw new Error('Source file changed.')
+                if (bytes < info.size) {
+                  const chunk = Buffer.alloc(Math.min(FILE_CHUNK_BYTES, info.size - bytes))
+                  const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, bytes)
+                  if (bytesRead < 1) throw new Error('Source file shrank.')
+                  const sent = chunk.subarray(0, bytesRead)
+                  bytes += bytesRead
+                  hash.update(sent)
+                  controller.enqueue(sent)
+                  return
+                }
+                controller.enqueue(suffix)
+                controller.close()
+                complete = true
+              } catch {
+                streamError = new Error(
+                  'Document changed or became unreadable during upload. Check task state before retrying.',
+                )
+                controller.error(streamError)
+              }
+            },
+          })
+          let result: unknown
+          try {
+            result = (
+              await client.json('/api/documents/post_document/', {
+                method: 'POST',
+                multipart: { body, boundary, contentLength },
+                timeoutMs: FILE_TRANSFER_TIMEOUT_MS,
+                signal: abort.signal,
+              })
+            ).value
+          } catch (error) {
+            throw streamError ?? error
           }
-          bytes = Buffer.concat(chunks, size)
+          if (!complete)
+            throw new Error(
+              'Paperless upload ended before the file was fully streamed. Check task state before retrying.',
+            )
+          await verifyHandle(handle, target.canonicalRoot)
+          return {
+            taskId: Schema.decodeUnknownSync(taskId)(result),
+            filename,
+            bytes,
+            sha256: hash.digest('hex'),
+          }
         } finally {
+          abort.abort()
+          await body?.cancel().catch(() => undefined)
           await handle.close()
-        }
-        const form = new FormData()
-        form.append('document', new Blob([new Uint8Array(bytes)]), basename(target.path))
-        if (input.title) form.append('title', input.title)
-        if (input.created) form.append('created', input.created)
-        if (input.correspondentId) form.append('correspondent', String(input.correspondentId))
-        if (input.documentTypeId) form.append('document_type', String(input.documentTypeId))
-        for (const tag of input.tagIds ?? []) form.append('tags', String(tag))
-        const result = (
-          await client.json('/api/documents/post_document/', { method: 'POST', body: form, timeoutMs: 120000 })
-        ).value
-        const id = Schema.decodeUnknownSync(taskId)(result)
-        return {
-          taskId: id,
-          filename: basename(target.path),
-          bytes: bytes.length,
-          sha256: createHash('sha256').update(bytes).digest('hex'),
         }
       }),
   ),
@@ -517,7 +616,7 @@ export const createPaperlessTools = (): EffectTool[] => [
   tool(
     'paperless_download',
     'Download a Paperless document',
-    'Download original/archive up to 32 MiB into a new session file. Parent directory must exist; existing files are preserved.',
+    'Stream original/archive into a new session file within the limit reported by paperless_status. Existing files are preserved.',
     Schema.Struct({
       documentId: ID,
       sessionId: text(128),
@@ -549,23 +648,44 @@ export const createPaperlessTools = (): EffectTool[] => [
             await verifyHandle(handle, target.canonicalRoot)
             const response = await client.request('/api/documents/' + input.documentId + '/download/', {
               query: { original: input.format === 'original' ? 'true' : 'false' },
-              timeoutMs: 120000,
+              timeoutMs: FILE_TRANSFER_TIMEOUT_MS,
             })
-            const bytes = await readBody(response, MAX_FILE_BYTES)
-            await verifyHandle(handle, target.canonicalRoot)
-            await handle.writeFile(bytes)
+            const hash = createHash('sha256')
+            const bytes = await consumeBody(response, client.maxFileBytes, async (chunk) => {
+              await verifyHandle(handle, target.canonicalRoot)
+              let offset = 0
+              while (offset < chunk.byteLength) {
+                const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset)
+                if (bytesWritten < 1) throw new Error('Unable to write the downloaded document.')
+                offset += bytesWritten
+              }
+              hash.update(chunk)
+            })
+            const saved = await verifyHandle(handle, target.canonicalRoot)
+            const current = await lstat(anchoredPath)
+            if (saved.dev !== current.dev || saved.ino !== current.ino || saved.size !== bytes)
+              throw new Error('Download destination changed during transfer.')
             const savedPath = await realpath('/proc/self/fd/' + handle.fd)
             complete = true
             return {
               documentId: input.documentId,
               path: savedPath,
-              bytes: bytes.length,
-              sha256: createHash('sha256').update(bytes).digest('hex'),
+              bytes,
+              sha256: hash.digest('hex'),
               contentType: response.headers.get('content-type'),
             }
           } finally {
-            await handle.close()
-            if (!complete) await unlink(anchoredPath)
+            try {
+              if (!complete) {
+                const opened = await handle.stat()
+                const current = await lstat(anchoredPath).catch(() => undefined)
+                // Preserve a replacement file and the original transfer error during best-effort cleanup.
+                if (current?.dev === opened.dev && current.ino === opened.ino)
+                  await unlink(anchoredPath).catch(() => undefined)
+              }
+            } finally {
+              await handle.close()
+            }
           }
         } finally {
           await directory.close()
