@@ -14,6 +14,7 @@ import type { ExecutionModel } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { JevResearchPolicy } from '../jev/acceptance'
+import { quantityScale } from '../quantity'
 import { IsoDateSchema, NonNegativeIntegerSchema, StrictNonEmptyStringSchema, UtcInstantSchema } from '../schemas'
 import { calculateSessionFees, equityTafRate } from '../strategy/execution-model/fees'
 import { accountTradingDate } from '../time'
@@ -127,6 +128,7 @@ export const confirmEquityFeeCash = (
     const settled = reconciled?.observation
     const history = forward.accountTransactions
     const postingCut = forward.accountPositionCounts?.reconciledAt
+    const tafRate = equityTafRate(model, sessionDate)
     if (
       rows.length !== 3 ||
       openingAnchor?.cutAt == null ||
@@ -166,9 +168,8 @@ export const confirmEquityFeeCash = (
       timestamp(postingCut) < timestamp(reconciled.cutAt) ||
       forward.missingLedgerAccountCount !== 0 ||
       forward.unresolvedMutationCount !== 0 ||
-      sessionDate < '2026-10-01' ||
-      sessionDate >= '2027-01-01' ||
-      Result.getOrElse(equityTafRate(model, sessionDate), () => -1n) !== 0n ||
+      model.fees.scheduleVersion !== 'alpaca-brokerage-effective-dated-2026-10-12' ||
+      Result.isFailure(tafRate) ||
       [opening, recovery.observation].some(
         (row) =>
           row.positions?.count !== 0 ||
@@ -196,6 +197,7 @@ export const confirmEquityFeeCash = (
     )
       return null
 
+    const tafMinimumPriceAtoms = tafRate.success * 1_000n
     const period = history.filter(
       (trade) =>
         timestamp(trade.occurredAt) > timestamp(opening.at) && timestamp(trade.occurredAt) <= timestamp(settled.at),
@@ -214,6 +216,7 @@ export const confirmEquityFeeCash = (
           row.occurredAt <= openAt ||
           row.occurredAt > closeAt ||
           instrumentMarket(row.symbol) !== MarketKind.Equity ||
+          (row.side === 'SELL' && BigInt(row.priceAtoms) < tafMinimumPriceAtoms) ||
           row.feeMicros !== '0' ||
           Result.isFailure(verifyAccountingTransactionContent(row)) ||
           !cashSettlementMatches(row, settlements.get(row.transactionId), forward.account.accountId, postingCut),
@@ -272,11 +275,11 @@ export const confirmEquityFeeCash = (
     }
     if (paidAmounts.length !== posted.size) return null
 
-    // With zero TAF, all supported equity charges are linear in quantity or notional before account-level rounding.
     const symbol = fills[0]?.symbol ?? 'AAPL'
     const buy = { symbol, side: 'buy' as const, quantityAtoms: 0n, notionalMicros: 0n }
     const sell = { symbol, side: 'sell' as const, quantityAtoms: 0n, notionalMicros: 0n }
     const totals = [buy, sell]
+    const tafCap = BigInt(model.fees.tafMaximumPerOrderMicros) * quantityScale
     const points: CashPoint[] = []
     let tradeCash = 0n
     let fees = 0n
@@ -288,10 +291,17 @@ export const confirmEquityFeeCash = (
       tradeCash +=
         BigInt(fill.cashDeltaMicros) + BigInt(settlements.get(fill.transactionId)?.rounding_delta_micros ?? '0')
       if (fills[index + 1]?.occurredAt === fill.occurredAt) continue
+      // When even the combined sells fit under the cap, allocating partial fills to trades cannot affect TAF.
+      if (sell.quantityAtoms * tafRate.success > tafCap) return null
       const priced = calculateSessionFees(totals, model, 1_000_000n, cryptoMaximumTakerFeeBps, sessionDate)
       if (Result.isFailure(priced)) return null
       fees = priced.success.totalMicros
-      expectedAmounts = [priced.success.commissionMicros, priced.success.secMicros, priced.success.catMicros]
+      expectedAmounts = [
+        priced.success.commissionMicros,
+        priced.success.secMicros,
+        priced.success.tafMicros,
+        priced.success.catMicros,
+      ]
         .filter((amount) => amount > 0n)
         .map((amount) => String(-amount))
       points.push({ at: fill.occurredAt, tradeCashDeltaMicros: String(tradeCash), incurredFeesMicros: String(fees) })
