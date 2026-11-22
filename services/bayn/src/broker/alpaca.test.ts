@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import * as Undici from '@effect/platform-node/Undici'
-import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schedule, Schema, Stream } from 'effect'
+import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
@@ -30,7 +30,7 @@ import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/prefligh
 import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
 import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
 import { make, alpacaHttpLayer } from './alpaca/http'
-import { activityFrames, fillActivityIdentity, startAccountActivityStream } from './alpaca/activity-stream'
+import { fillActivityIdentity } from './activities'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
@@ -186,119 +186,6 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
-  const activityCursor = (n: number) => n.toString().padStart(26, '0')
-  const fillFrame = (n: number, executedAt = '2026-11-18T20:46:59.021034500Z') => ({
-    activity_type: 'TRD',
-    event_id: activityCursor(n),
-    ref_id: n === 1 ? assetId : orderId,
-    executed_at: executedAt,
-    price: '260.10',
-    qty: '1',
-    details: {
-      order_id: orderId,
-      cum_qty: String(n),
-      leaves_qty: n === 1 ? '1' : '0',
-      symbol: 'AAPL',
-      side: 'buy',
-      execution_type: 'fill',
-    },
-  })
-  const feeFrame = {
-    activity_type: 'CFEE',
-    event_id: activityCursor(3),
-    ref_id: 'b91fed24-9e79-4d01-b902-72bfc9701cba',
-    status: 'executed',
-    currency: 'USD',
-    net_amount: '0',
-    qty: '-0.0002',
-    price: '260.1020',
-    settle_date: '2026-11-19',
-    details: { system_date: '2026-11-18' },
-  }
-  const frameText = (value: unknown) => `data: ${JSON.stringify(value)}
-
-`
-  const sseResponse = (body: BodyInit) =>
-    new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'activity-stream' } })
-
-  test('reads PAPER fills and fees from an open stream and replays its inclusive cursor across reconnects', async () => {
-    const requests: string[] = []
-    let transport: ReadableStreamDefaultController<Uint8Array> | undefined
-    let cancellations = 0
-    const bytes = new TextEncoder()
-    const client = HttpClient.make((request, url) => {
-      expect(url.pathname).toBe('/v2beta1/events/activities')
-      requests.push(url.search)
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          transport = controller
-          const history = requests.length === 1 ? frameText(fillFrame(1)) : frameText(feeFrame) + ': heartbeat\n\n'
-          controller.enqueue(bytes.encode(': welcome to the Alpaca events\n\n' + history))
-        },
-        cancel() {
-          cancellations++
-        },
-      })
-      return Effect.succeed(HttpClientResponse.fromWeb(request, sseResponse(body)))
-    })
-    const verified = Effect.void
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { read: snapshot } = yield* startAccountActivityStream(options, verified)
-          const read = snapshot.pipe(
-            Effect.catch(() => Effect.sleep('1 millis').pipe(Effect.andThen(snapshot))),
-            Effect.retry({ times: 50 }),
-          )
-          yield* Effect.sync(() => transport).pipe(
-            Effect.repeat({ while: (controller) => controller === undefined, schedule: Schedule.spaced('1 millis') }),
-            Effect.timeout('1 second'),
-          )
-          expect(yield* Effect.result(snapshot)).toMatchObject({ _tag: 'Failure' })
-          transport?.enqueue(bytes.encode(': heartbeat\n\n'))
-          expect((yield* read).fills.map(({ value }) => value)).toMatchObject([
-            {
-              activityId: `20261118154659021::${assetId}`,
-              transactionTime: '2026-11-18T20:46:59.021034000Z',
-              type: TradeActivityType.PartialFill,
-            },
-          ])
-          expect(requests.map((query) => Object.fromEntries(new URLSearchParams(query)))).toEqual([
-            { since: '2026-02-11T00:00:00.000Z' },
-          ])
-          transport?.enqueue(bytes.encode(frameText(fillFrame(2))))
-          const second = yield* snapshot.pipe(
-            Effect.repeat({ while: (cut) => cut.fills.length < 2, schedule: Schedule.spaced('1 millis') }),
-            Effect.timeout('1 second'),
-          )
-          expect(second.fills).toHaveLength(2)
-          const feeCountsBefore = second.feeCounts
-          expect(feeCountsBefore.size).toBe(0)
-          transport?.enqueue(bytes.encode(frameText(feeFrame)))
-          const withFee = yield* snapshot.pipe(
-            Effect.repeat({ while: (cut) => cut.feeCounts.size === 0, schedule: Schedule.spaced('1 millis') }),
-            Effect.timeout('1 second'),
-          )
-          expect([...withFee.feeCounts]).toEqual([['["CFEE","2026-11-18","0","200000"]', 1]])
-          expect(feeCountsBefore.size).toBe(0)
-          expect(requests).toHaveLength(1)
-          transport?.close()
-          yield* Effect.sleep('100 millis')
-          expect(yield* Effect.result(snapshot)).toMatchObject({ _tag: 'Failure' })
-          yield* Effect.sleep('2 seconds')
-          const reconnected = yield* read
-          expect(reconnected.fills).toHaveLength(2)
-          expect(reconnected.feeCounts).toBe(withFee.feeCounts)
-          expect(requests.map((query) => Object.fromEntries(new URLSearchParams(query)))).toEqual([
-            { since: '2026-02-11T00:00:00.000Z' },
-            { since_id: activityCursor(3) },
-          ])
-        }),
-      ).pipe(Effect.provideService(HttpClient.HttpClient, client)),
-    )
-    expect(cancellations).toBe(1)
-  })
-
   test('preserves ledger identity across Eastern daylight time and microsecond rounding', () => {
     expect(fillActivityIdentity(orderId, '2026-10-05T15:12:39.021034500Z')).toEqual({
       activityId: `20261005111239021::${orderId}`,
@@ -308,20 +195,6 @@ describe('Alpaca paper reads', () => {
       activityId: `20261105101239999::${orderId}`,
       transactionTime: '2026-11-05T15:12:40.000000000Z',
     })
-  })
-
-  test('assembles split UTF-8 frames and rejects drops and truncated endings', async () => {
-    const encoded = new TextEncoder().encode(frameText({ text: 'é' }))
-    const frames = (chunks: readonly Uint8Array[]) => activityFrames(Stream.fromIterable(chunks))
-    expect(
-      await Effect.runPromise(Stream.runCollect(frames(Array.from(encoded, (byte) => Uint8Array.of(byte))))),
-    ).toEqual([{ type: 'Data', value: { text: 'é' } }])
-    for (const input of [': you are reading too slowly, dropped 1 messages\n\n', 'data: {}\n']) {
-      const result = await Effect.runPromise(
-        Effect.result(Stream.runCollect(frames([new TextEncoder().encode(input)]))),
-      )
-      expect(result).toMatchObject({ _tag: 'Failure', failure: { kind: BrokerReadErrorKind.InvalidResponse } })
-    }
   })
 
   test('retains the broker crypto fee tier with its account response evidence', async () => {
