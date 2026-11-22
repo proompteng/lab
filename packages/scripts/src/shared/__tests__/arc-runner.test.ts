@@ -86,7 +86,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcApplication).not.toContain('image: docker:dind')
     const armBlock = runnerScaleSetBlock('arc-arm64')
     expect(armBlock).toContain('storageClassName: rook-ceph-block')
-    expect(armBlock).toContain('storage: 100Gi')
+    expect(armBlock).toContain('storage: 64Gi')
     expect(armBlock).not.toContain('emptyDir:')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('storageClassName: rook-ceph-block')
     expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
@@ -165,7 +165,7 @@ describe('ARC Nix runner toolchain', () => {
                   accessModes: ['ReadWriteOnce'],
                   storageClassName: storageClass,
                   volumeMode: 'Filesystem',
-                  resources: { requests: { storage: '100Gi' } },
+                  resources: { requests: { storage: '64Gi' } },
                 },
               }),
             },
@@ -260,9 +260,10 @@ describe('ARC Nix runner toolchain', () => {
     expect(pod.initContainers).toEqual(amd.template.spec.initContainers)
     expect(runner.volumeMounts).toEqual(amd.template.spec.containers[0].volumeMounts)
     expect(runner.resources).toEqual({
-      requests: { cpu: '4', memory: '16Gi', 'ephemeral-storage': '10Gi' },
-      limits: { cpu: '20', memory: '32Gi', 'ephemeral-storage': '100Gi' },
+      requests: { cpu: '4', memory: '8Gi', 'ephemeral-storage': '10Gi' },
+      limits: { cpu: '20', memory: '16Gi', 'ephemeral-storage': '100Gi' },
     })
+    expect(runner.resources).toEqual(amd.template.spec.containers[0].resources)
     expect(runner.securityContext).toEqual({ privileged: true })
     expect(runner.command).toEqual(['/home/runner/run.sh'])
     expect(runner.image).toBe(amd.template.spec.containers[0].image)
@@ -287,7 +288,7 @@ describe('ARC Nix runner toolchain', () => {
       const block = runnerScaleSetBlock(name)
       expect(block).toContain('minRunners: 5')
       expect(block).toContain('maxRunners: 10')
-      expect(block).toContain('storage: 100Gi')
+      expect(block).toContain('storage: 64Gi')
     }
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-publish')
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
@@ -309,7 +310,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(pod.getIn(['volumes', 0, 'ephemeral', 'volumeClaimTemplate', 'spec', 'storageClassName'])).toBe(
       'rook-ceph-block',
     )
-    expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('16Gi')
+    expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('8Gi')
     const config = YAML.parseDocument(
       readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
     )
@@ -413,7 +414,7 @@ fi
           pod: `runner-${architecture}-${index}`,
           scratchDevice: `/dev/rbd${index}`,
           scratchFilesystem: 'ext4',
-          scratchCapacityBytes: 104000000000,
+          scratchCapacityBytes: 62 * 1024 ** 3,
           runnerTemp: '/home/runner/_work/_temp',
           buildkitRoot: '/home/runner/_work/_temp/buildkit.test/cache',
           inputBytes: 16777216,
@@ -429,7 +430,7 @@ fi
       if (scenario === 'missing') data.pop()
       if (scenario === 'duplicate-device') data[0].scratchDevice = data[1].scratchDevice
       if (scenario === 'wrong-host') data[10].node = 'turin'
-      if (scenario === 'old-capacity') data[0].scratchCapacityBytes = 130 * 1024 ** 3
+      if (scenario === 'old-capacity') data[0].scratchCapacityBytes = 98 * 1024 ** 3
       if (scenario === 'short-overlap') data[0].start = 120
       const result = spawnSync('jq', ['-s', '-e', predicate], {
         input: data.map((receipt) => JSON.stringify(receipt)).join('\n'),
@@ -468,7 +469,7 @@ fi
       expect(block).not.toContain('storage: 20Gi')
     }
 
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('storage: 100Gi')
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('storage: 64Gi')
   })
 
   it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {
