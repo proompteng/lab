@@ -50,7 +50,7 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v9',
+  schemaVersion: 'bayn.matched-entry-definition.v10',
   timing: 'bayn.jev-entry-timing.v2: explicit native millisecond clock; conservative post-COMMIT bucket upper bound.',
   cryptoFees: cryptoTakerFeeSchedule,
   inventory:
@@ -66,7 +66,7 @@ export const matchedEntryDefinition = {
   comparison:
     'Immediate momentum starts at witnessed deterministic completion. Delayed momentum and Jev start at witnessed decision commitment. Selection is Jev minus delayed momentum; delay is delayed minus immediate; total is Jev minus immediate. Per-opportunity net micro-USD divided by the fixed budget. Include abstentions and unfilled entries as zero execution P&L; unknown model answers and unresolved lifecycles are missing, never zero.',
   costs:
-    'Every batch pays its witnessed entry-inference cost on JEV including abstentions. Shared allocated operating cost is charged equally per opportunity. Stress adds ten bps per filled leg.',
+    'Every batch pays its witnessed entry-inference cost on JEV including abstentions. Shared allocated operating cost is charged equally per opportunity. Each allocation binds its batch, category, amount and unresolved count to retained source evidence. Stress adds ten bps per filled leg.',
   falsification:
     'With complete prospective evidence and at least twenty different selections, nonpositive Jev net budget return or total increment over immediate momentum in either base or ten-bp stress stops this entry hypothesis. Positive results only justify the separate frozen portfolio acceptance test.',
   limitations: [
@@ -98,6 +98,15 @@ const WitnessedCost = Schema.NullOr(
     unresolvedCount: NonNegativeIntegerSchema,
   }),
 )
+const MatchedCostWitnessSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.matched-entry-cost-witness.v1'),
+  batchId: Sha256Schema,
+  kind: Schema.Literals(['INFERENCE', 'SHARED_OPERATING']),
+  costMicros: UnsignedMicrosSchema,
+  unresolvedCount: NonNegativeIntegerSchema,
+  sourceEvidenceHash: Sha256Schema,
+})
+
 export const MatchedEntryTimingSchema = Schema.Struct({
   inputAvailableAt: UtcInstantSchema,
   deterministicSelectedAt: UtcInstantSchema,
@@ -438,21 +447,27 @@ export const runMatchedEntryStudy = (
     ])
     const fs = yield* FileSystem.FileSystem
     const witnessed = new Map<string, Uint8Array>()
+    const loadWitness = (hash: string) =>
+      Effect.gen(function* () {
+        const previous = witnessed.get(hash)
+        if (previous !== undefined) return previous
+        const file = input.witnesses.find((candidate) => candidate.sha256 === hash)
+        if (file === undefined)
+          return yield* new SignalStudyFailure({ message: 'Referenced private witness is missing from input' })
+        const bytes = yield* fs
+          .readFile(file.path)
+          .pipe(
+            Effect.mapError(
+              (cause) => new SignalStudyFailure({ message: 'Referenced private witness cannot be read', cause }),
+            ),
+          )
+        if (sha256(bytes) !== hash)
+          return yield* new SignalStudyFailure({ message: 'Referenced private witness bytes differ' })
+        witnessed.set(hash, bytes)
+        return bytes
+      })
     for (const hash of required) {
-      if (hash === null) continue
-      const file = input.witnesses.find((candidate) => candidate.sha256 === hash)
-      if (file === undefined)
-        return yield* new SignalStudyFailure({ message: 'Referenced private witness is missing from input' })
-      const bytes = yield* fs
-        .readFile(file.path)
-        .pipe(
-          Effect.mapError(
-            (cause) => new SignalStudyFailure({ message: 'Referenced private witness cannot be read', cause }),
-          ),
-        )
-      if (sha256(bytes) !== hash)
-        return yield* new SignalStudyFailure({ message: 'Referenced private witness bytes differ' })
-      witnessed.set(hash, bytes)
+      if (hash !== null) yield* loadWitness(hash)
     }
     if (registration.definitionHash !== definitionHash || registration.latencyMs !== input.study.assumptions.latencyMs)
       return yield* new SignalStudyFailure({ message: 'Frozen definition or routing assumptions differ' })
@@ -664,9 +679,37 @@ export const runMatchedEntryStudy = (
     for (const batch of entries)
       if (!timings.has(batch.plan.batchId)) problems.push(`missing-entry-timing:${batch.plan.batchId}`)
     const costs = new Map<string, (typeof input.costs)[number]>()
+    const costReceipts: (typeof MatchedCostWitnessSchema.Type & { evidenceHash: string })[] = []
     for (const cost of input.costs) {
       if (costs.has(cost.batchId) || !entries.some((b) => b.plan.batchId === cost.batchId))
         return yield* new SignalStudyFailure({ message: 'Duplicate or unmatched batch costs' })
+      for (const [kind, claim] of [
+        ['INFERENCE', cost.inference],
+        ['SHARED_OPERATING', cost.sharedOperating],
+      ] as const) {
+        if (claim === null) continue
+        const bytes = yield* loadWitness(claim.evidenceHash)
+        const receipt = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(MatchedCostWitnessSchema),
+          strictParseOptions,
+        )(new TextDecoder().decode(bytes)).pipe(
+          Effect.mapError(
+            () => new SignalStudyFailure({ message: 'Cost witness is not a matched allocation receipt' }),
+          ),
+        )
+        if (
+          receipt.batchId !== cost.batchId ||
+          receipt.kind !== kind ||
+          receipt.costMicros !== claim.costMicros ||
+          receipt.unresolvedCount !== claim.unresolvedCount ||
+          receipt.sourceEvidenceHash === claim.evidenceHash
+        )
+          return yield* new SignalStudyFailure({
+            message: 'Cost witness does not bind the batch, cost category, amount and coverage',
+          })
+        yield* loadWitness(receipt.sourceEvidenceHash)
+        costReceipts.push({ ...receipt, evidenceHash: claim.evidenceHash })
+      }
       costs.set(cost.batchId, cost)
     }
     const source = yield* openBacktestSource(arrivalsPath, input.study.source, input.study.runId, receipt)
@@ -816,7 +859,7 @@ export const runMatchedEntryStudy = (
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v9',
+      schemaVersion: 'bayn.matched-entry-study.v10',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,
@@ -827,6 +870,9 @@ export const runMatchedEntryStudy = (
       sourceRecordCount: input.study.source.recordCount,
       strategyProtocolHashes: [...strategyProtocolHashes].sort(),
       inventories: verifiedInventories,
+      costReceipts: costReceipts.sort((a, b) =>
+        a.batchId < b.batchId ? -1 : a.batchId > b.batchId ? 1 : a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0,
+      ),
       observations: entries.map((b) => ({
         batchId: b.plan.batchId,
         observedAt: b.observation.observedAt,

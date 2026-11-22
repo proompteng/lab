@@ -322,7 +322,23 @@ const witnessedFixture = () =>
 
 test.each(
   (['latency', 'capacity', 'inventory', 'inference', 'operating'] as const).flatMap((gate) =>
-    (['verified', 'missing', 'changed'] as const).map((state) => [gate, state] as const),
+    (gate === 'inference' || gate === 'operating'
+      ? ([
+          'verified',
+          'missing',
+          'changed',
+          'wrong-amount',
+          'wrong-batch',
+          'wrong-kind',
+          'wrong-unresolved',
+          'unbound',
+          'missing-basis',
+          'changed-basis',
+          'known-zero',
+          'known-partial',
+        ] as const)
+      : (['verified', 'missing', 'changed'] as const)
+    ).map((state) => [gate, state] as const),
   ),
 )('matched study verifies %s witness bytes when %s', async (gate, state) => {
   await Effect.runPromise(
@@ -333,10 +349,28 @@ test.each(
       const arrivals = `${directory}/arrivals.gz`
       yield* fs.writeFile(arrivals, gzipSync(data.body))
       const path = `${directory}/evidence.bin`
+      const batchId = data.input.costs[0]?.batchId ?? ''
+      const basisPath = `${directory}/basis.json`
+      const basisText = JSON.stringify({ fixture: 'independently allocated cost' })
+      const sourceEvidenceHash = sha256(basisText)
+      if (state !== 'missing-basis')
+        yield* fs.writeFileString(basisPath, state === 'changed-basis' ? `${basisText}\n` : basisText)
+      const costGate = gate === 'inference' || gate === 'operating'
+      const kind = gate === 'inference' ? 'INFERENCE' : 'SHARED_OPERATING'
+      const costDocument = {
+        schemaVersion: 'bayn.matched-entry-cost-witness.v1',
+        batchId: state === 'wrong-batch' ? 'f'.repeat(64) : batchId,
+        kind: state === 'wrong-kind' ? (kind === 'INFERENCE' ? 'SHARED_OPERATING' : 'INFERENCE') : kind,
+        costMicros: state === 'wrong-amount' ? '117' : state === 'known-zero' ? '0' : '17',
+        unresolvedCount: state === 'wrong-unresolved' || state === 'known-partial' ? 1 : 0,
+        sourceEvidenceHash,
+      } as const
       const bytes =
-        gate === 'inventory'
-          ? new TextEncoder().encode(JSON.stringify(inventoryFor(data)))
-          : new Uint8Array([0, 255, 192, 128, 10])
+        costGate && state !== 'unbound'
+          ? new TextEncoder().encode(JSON.stringify(costDocument))
+          : gate === 'inventory'
+            ? new TextEncoder().encode(JSON.stringify(inventoryFor(data)))
+            : new Uint8Array([0, 255, 192, 128, 10])
       const evidenceHash = sha256(bytes)
       if (state !== 'missing')
         yield* fs.writeFile(path, state === 'changed' ? new Uint8Array([0, 255, 192, 128, 11]) : bytes)
@@ -345,10 +379,17 @@ test.each(
         latencyEvidenceHash: gate === 'latency' ? evidenceHash : null,
         capacityEvidenceHash: gate === 'capacity' ? evidenceHash : null,
       }
-      const cost = { costMicros: '17', evidenceHash, unresolvedCount: 0 }
+      const cost = {
+        costMicros: state === 'known-zero' ? '0' : '17',
+        evidenceHash,
+        unresolvedCount: state === 'known-partial' ? 1 : 0,
+      }
       const input = {
         ...data.input,
-        witnesses: [{ path, sha256: evidenceHash }],
+        witnesses: [
+          { path, sha256: evidenceHash },
+          { path: basisPath, sha256: sourceEvidenceHash },
+        ],
         inventory: data.input.inventory.map((entry, index) => ({
           ...entry,
           evidenceHash: gate === 'inventory' && index === 0 ? evidenceHash : null,
@@ -360,9 +401,14 @@ test.each(
         })),
       }
       const result = yield* runMatchedEntryStudy(input, registration, arrivals, data.receipt).pipe(Effect.result)
-      if (state === 'verified') {
-        Result.getOrThrow(result)
-        expect(Result.isSuccess(result)).toBeTrue()
+      if (state === 'verified' || state === 'known-zero' || state === 'known-partial') {
+        const report = Result.getOrThrow(result)
+        expect(report.costReceipts).toEqual(costGate ? [{ ...costDocument, evidenceHash }] : [])
+        if (costGate) {
+          const pair = report.pairs[0]
+          const costValue = gate === 'inference' ? pair?.inferenceCostMicros : pair?.sharedOperatingCostMicros
+          expect(costValue).toBe(state === 'known-partial' ? null : cost.costMicros)
+        }
       } else {
         expect(Result.isFailure(result)).toBeTrue()
         if (Result.isFailure(result)) {
@@ -371,7 +417,13 @@ test.each(
             message:
               state === 'missing'
                 ? 'Referenced private witness cannot be read'
-                : 'Referenced private witness bytes differ',
+                : state === 'changed' || state === 'changed-basis'
+                  ? 'Referenced private witness bytes differ'
+                  : state === 'missing-basis'
+                    ? 'Referenced private witness cannot be read'
+                    : state === 'unbound'
+                      ? 'Cost witness is not a matched allocation receipt'
+                      : 'Cost witness does not bind the batch, cost category, amount and coverage',
           })
         }
       }
@@ -811,7 +863,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
       if (report === undefined) return yield* Effect.die('Expected a completed study report')
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v9')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v10')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev?.fills[0]?.symbol).toBe(report.pairs[0]?.delayedMomentum?.fills[0]?.symbol)
       expect(report.pairs[0]?.jev?.fills[0]?.observedAt).toBe(report.pairs[0]?.delayedMomentum?.fills[0]?.observedAt)
@@ -838,9 +890,9 @@ test('offline command reproduces native observations, prices shared lifecycle on
       const oldDefinitionHash = Result.getOrThrow(
         canonicalHashV1Result({
           ...matchedEntryDefinition,
-          schemaVersion: 'bayn.matched-entry-definition.v5',
-          lifecycle:
-            'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
+          schemaVersion: 'bayn.matched-entry-definition.v9',
+          costs:
+            'Every batch pays its witnessed entry-inference cost on JEV including abstentions. Shared allocated operating cost is charged equally per opportunity. Stress adds ten bps per filled leg.',
         }),
       )
       const oldRegistration = { ...data.registration, definitionHash: oldDefinitionHash }
@@ -849,7 +901,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       )
       expect(Result.isFailure(oldResult)).toBeTrue()
       if (Result.isFailure(oldResult))
-        expect(String(oldResult.failure)).toContain('Frozen definition or routing assumptions differ')
+        expect(oldResult.failure).toMatchObject({ message: 'Frozen definition or routing assumptions differ' })
       expect(
         Result.isFailure(yield* runMatchedEntryStudy(data.input, late, arrivals, data.receipt).pipe(Effect.result)),
       ).toBeTrue()
