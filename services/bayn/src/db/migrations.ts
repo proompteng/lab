@@ -1,3 +1,7 @@
+import pairedQualificationAdmission from '../../migrations/0210_paired_qualification_admission'
+import qualificationAuthorityWitness from '../../migrations/0209_qualification_authority_witness'
+import reconciliationSourceSnapshots from '../../migrations/0208_reconciliation_source_snapshots'
+import nativeQualificationCalendar from '../../migrations/0207_native_qualification_calendar'
 import durableBrokerSourceEvents from '../../migrations/0206_durable_broker_source_events'
 import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
 import protectionClosePlans from '../../migrations/0204_protection_close_plans'
@@ -207,6 +211,10 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '210_paired_qualification_admission': pairedQualificationAdmission,
+  '209_qualification_authority_witness': qualificationAuthorityWitness,
+  '208_reconciliation_source_snapshots': reconciliationSourceSnapshots,
+  '207_native_qualification_calendar': nativeQualificationCalendar,
   '206_durable_broker_source_events': durableBrokerSourceEvents,
   '205_inference_source_seals': inferenceSourceSeals,
   '204_protection_close_plans': protectionClosePlans,

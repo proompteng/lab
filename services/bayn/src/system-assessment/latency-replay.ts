@@ -14,6 +14,7 @@ import { entryJudgmentPolicy } from '../jev/entry-questions'
 import { jevPositionExitPolicy } from '../jev/exit-policy'
 import { JevProtocolSchema, type JevProtocol } from '../jev/protocol'
 import { approvedExecutionRiskPolicyHashes } from '../execution/risk-policy'
+import { qualificationCalendar } from './calendar'
 import { SystemAssessmentError } from './economics'
 import { measureFullBatchLatency } from './full-batch-latency'
 import {
@@ -171,13 +172,9 @@ export const bindLatencyReplayInput = (
       input.calendar.filter((day) => day.date >= first.sessionDate && day.date <= last.sessionDate),
       { start: first.sessionDate, end: last.sessionDate },
     )
-    const sessions = calendar.providerSessions.map((s) => ({
-      sessionDate: s.date,
-      openAt: s.regularOpenAt,
-      closeAt: s.regularCloseAt,
-    }))
+    const { sessions, sourceHash } = yield* qualificationCalendar(calendar, registration.calendar.operatingHours)
     if (
-      (yield* canonicalHashV1Result(calendar)) !== registration.calendar.sourceHash ||
+      sourceHash !== registration.calendar.sourceHash ||
       (yield* canonicalHashV1Result(sessions)) !== (yield* canonicalHashV1Result(registration.calendar.sessions))
     )
       return yield* fail('Latency replay calendar omits, substitutes or changes registered sessions')
