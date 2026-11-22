@@ -153,8 +153,13 @@ and registered dated fee schedule. Every equity fill must belong to the register
 fee amounts must match distinct posted activities on that date, and each activity must belong to the policy's verified
 financial evidence. The registered rate supplies the comparison amount. Posted receipts supply the actual cost.
 Terminal inventory, unresolved orders, the independent cash bridge, and operating costs retain their evidence requirements.
-Native financial capture also retains the configured PAPER account's observed Alpaca non-trade statement after broker
-recovery. The account read verifies the credential identity. The activity read scans all non-trade types, follows
+After broker recovery, native financial capture reads an authenticated Alpaca non-trade statement for every registered
+PAPER account. `--system-capture` uses the configured broker connection for the candidate. The private command's
+environment supplies a separate `BAYN_QUALIFICATION_<POLICY>_ALPACA_KEY_ID` and
+`BAYN_QUALIFICATION_<POLICY>_ALPACA_SECRET_KEY` for each registered control. Use the registered policy value in the
+variable name, such as `INCUMBENT_JEV`. The command uses the existing PAPER endpoint and proxy and verifies each
+credential pair against the account in that policy's registration. It fails the cut if any statement is missing, names
+a different account, or was observed after the database snapshot. The activity read scans all non-trade types, follows
 provider cursors to an empty terminal page in both directions, and requires the same normalized rows. The private
 source cut retains the original JSON response bodies, recorded response digests, requested creation-time interval,
 and actual observation time. Assessment checks each digest and derives the activity rows and cursors from those

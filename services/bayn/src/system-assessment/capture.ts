@@ -30,8 +30,8 @@ import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { captureQualificationRuntime, qualificationRuntime } from './configuration'
 import { BrokerEnvironment } from '../broker/identity'
-import { alpacaHttpLayer, make as makeAlpacaRead } from '../broker/alpaca/http'
-import { currentUtcInstant } from '../time'
+import { alpacaHttpLayer } from '../broker/alpaca/http'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { nativeBrokerRecoveryClose, registeredMarkIntervalMs } from './policy'
 import { measureControllerLatency } from './controller-latency'
 import { measureFullBatchLatency } from './full-batch-latency'
@@ -43,6 +43,7 @@ import { readSystemExecutionOrders, readSystemExecutionFills, readSystemProtecti
 import { executionOrderPlans } from './execution-plans'
 import { captureInferenceSnapshot } from './inference-capture'
 import { captureOperationalSourceCut } from './operational-capture'
+import { captureNativeBrokerStatements } from './broker-statements'
 
 /** Capture one database snapshot. External ledger verification can reject a moving or incomplete cut. */
 export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registrationHash: string) =>
@@ -75,19 +76,15 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         })
       const brokerRecoveryClose = nativeBrokerRecoveryClose(registration)
       const statementCut = yield* currentUtcInstant
-      const brokerNonTradeActivity =
+      const brokerStatements =
         brokerRecoveryClose !== undefined && statementCut >= brokerRecoveryClose
-          ? yield* makeAlpacaRead(config.alpaca).pipe(
-              Effect.flatMap((reader) =>
-                reader.nonTradeActivityStatement({
-                  // Include the prior day so a proof can select a real before-open anchor.
-                  after: new Date(Date.parse(first.openAt) - 86_400_000).toISOString(),
-                  until: statementCut,
-                }),
-              ),
-              // @effect-diagnostics-next-line strictEffectProvide:off -- financial capture owns the account-bound reader
+          ? yield* captureNativeBrokerStatements(config.alpaca, registration.policies, {
+              // Include the prior day so a proof can select a real before-open anchor.
+              after: utcInstantFromEpochMillis(Date.parse(first.openAt) - 86_400_000),
+              until: statementCut,
+            }).pipe(
+              // @effect-diagnostics-next-line strictEffectProvide:off -- private capture owns the shared proxy transport
               Effect.provide(alpacaHttpLayer(config.alpaca)),
-              Effect.timeout('30 seconds'),
             )
           : undefined
       const sql = yield* PgClient.PgClient
@@ -101,15 +98,6 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           const asOf = times[0]?.asOf
           if (asOf === undefined)
             return yield* new SystemAssessmentError({ message: 'Database snapshot time is unavailable' })
-          if (
-            brokerNonTradeActivity !== undefined &&
-            (brokerNonTradeActivity.accountIdentityHash !== identity.identityHash ||
-              brokerNonTradeActivity.observedAt > asOf)
-          ) {
-            return yield* new SystemAssessmentError({
-              message: 'Broker activity statement differs from its account or evidence cut',
-            })
-          }
           const accounts = []
           const settlementWindows =
             registration.schemaVersion === 'bayn.system-registration.v5'
@@ -124,6 +112,17 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             return yield* new SystemAssessmentError({ message: 'A native session is missing its settlement window' })
           for (const definition of registration.policies) {
             const accountIdentity = yield* readRegisteredFinancialIdentity(definition, registration.registeredAt)
+            const brokerNonTradeActivity = brokerStatements?.get(definition.policy)
+            if (
+              brokerStatements !== undefined &&
+              (accountIdentity === null ||
+                brokerNonTradeActivity === undefined ||
+                brokerNonTradeActivity.accountIdentityHash !== accountIdentity.identityHash ||
+                brokerNonTradeActivity.observedAt > asOf)
+            )
+              return yield* new SystemAssessmentError({
+                message: 'Broker activity statement differs from its registered account or evidence cut',
+              })
             if (accountIdentity === null) continue
             if (
               definition.policy === JevResearchPolicy.Candidate &&
@@ -277,10 +276,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             accounts.push({
               policy: definition.policy,
               identity: accountIdentity,
-              ...(brokerNonTradeActivity !== undefined &&
-              brokerNonTradeActivity.accountIdentityHash === accountIdentity.identityHash
-                ? { brokerNonTradeActivity }
-                : {}),
+              ...(brokerNonTradeActivity === undefined ? {} : { brokerNonTradeActivity }),
               forward,
               decisions,
               protectionIntents,
