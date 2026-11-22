@@ -181,8 +181,10 @@ transaction retains the exact account event and position snapshot it compared. S
 Historical reconciliations without the durable pair provide no settlement witness. For independent opening and recovery
 observations, inventory must precede or coincide with the cash event's economic timestamp.
 
-Native assessment uses a fee-adjusted cash path for the supported case of flat equity endpoints, zero TAF in the
-fourth-quarter 2026 schedule, exact fills, and later posted fees with no other cash movements in the statement.
+Native assessment uses a fee-adjusted cash path for flat equity endpoints, exact fills, and later posted fees with
+no other cash movements in the statement. It uses the registered effective-dated fee schedule. When TAF applies,
+the cash path requires exact posted charges and a total sell fee at or below the per-trade cap. This makes the
+charge independent of how partial fills are grouped into trades.
 The cash leg starts at observed opening cash, adds receipted trade cash and rounding, and subtracts incurred fee
 prefixes. The assessment reconstructs it from the underlying retained account records, settlement snapshots, and
 both authenticated activity page chains. Stored calculated cash points cannot supply a risk mark. The recovery

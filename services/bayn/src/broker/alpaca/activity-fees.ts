@@ -10,7 +10,7 @@ const decodeFee = Schema.decodeUnknownResult(
   Schema.Struct({
     activity_type: Schema.Literals(['FEE', 'CFEE']),
     ref_id: Schema.String.check(Schema.isMinLength(1)),
-    previous_id: Schema.optionalKey(Schema.Never),
+    previous_id: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
     status: Schema.Literal('executed'),
     currency: Schema.Literal('USD'),
     net_amount: Schema.String,
@@ -24,7 +24,7 @@ const invalidFee = () =>
 const feeKey = (kind: 'FEE' | 'CFEE', date: string, netAmountMicros: string, coinQuantityAtoms: string) =>
   JSON.stringify([kind, date, netAmountMicros, coinQuantityAtoms])
 
-export const decodeFeeActivityWitness = (raw: unknown) =>
+export const decodeFeeActivityEffect = (raw: unknown) =>
   Result.gen(function* () {
     const activity = yield* decodeFee(raw).pipe(Result.mapError(invalidFee))
     const netAmountMicros = yield* decimalToMicrosResult(activity.net_amount, true, 'stream fee net amount')
@@ -38,9 +38,17 @@ export const decodeFeeActivityWitness = (raw: unknown) =>
     // PAPER sends the booking date under system_date. Its fee IDs, coin symbols and exact prices come from REST.
     return {
       refId: activity.ref_id,
+      ...(activity.previous_id === undefined ? {} : { previousRefId: activity.previous_id }),
       key: feeKey(activity.activity_type, activity.details.system_date, netAmountMicros, coinQuantityAtoms),
     }
   })
+
+export const decodeFeeActivityWitness = (raw: unknown) =>
+  decodeFeeActivityEffect(raw).pipe(
+    Result.flatMap((effect) =>
+      effect.previousRefId === undefined ? Result.succeed(effect) : Result.fail(invalidFee()),
+    ),
+  )
 
 const pendingCashFeeKey = Schema.decodeUnknownResult(
   Schema.fromJsonString(
