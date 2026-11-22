@@ -192,7 +192,7 @@ const decodeBoxEntryHandoff = (
     )
       return yield* invalid('Box response changes its original source or clocks')
     const derived = chartStages
-      .stagedChartAssessments(chartSource, stageResponseIdentity(visual))
+      .assessPreparedChart(chartSource, initial, stageResponseIdentity(visual))
       .pipe(
         Result.flatMap((assessments) =>
           deriveEntryDispositionForChart(source.input, visual, chart, assessments, prepareJudgments),
