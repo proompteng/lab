@@ -13,7 +13,7 @@ export function runtimeInputs(revision: string, cwd = process.cwd()): string {
   const inputs = ['Prove metadata writes and cold-peer elections', 'Build runtime'].map((name) => {
     const step = steps.find((entry: { name?: string }) => entry.name === name)
     if (!step?.with) throw new Error(`Missing build inputs for ${name}`)
-    const metadata = ['labels', 'tags', 'push', 'outputs', 'cache-from', 'cache-to']
+    const metadata = ['labels', 'tags', 'push', 'outputs', 'cache-from', 'cache-to', 'no-cache-filters']
     const withInputs = Object.fromEntries(Object.entries(step.with).filter(([key]) => !metadata.includes(key)))
     return { uses: step.uses, with: withInputs }
   })
