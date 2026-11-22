@@ -14,6 +14,7 @@ struct CheckService {
     concurrent: Arc<Mutex<Option<Arc<tokio::sync::Barrier>>>>,
     delay_ms: Arc<AtomicU64>,
     database_clock_offset_ms: Arc<AtomicU64>,
+    abort_next_control: Arc<AtomicBool>,
 }
 
 impl tonic::server::UnaryService<CheckRequest> for CheckService {
@@ -34,7 +35,13 @@ impl tonic::server::UnaryService<CheckRequest> for CheckService {
             } else {
                 request.stream_receipt_id.clone()
             };
+            let abort = request.action == Action::CodexControl as i32
+                && request.stream_receipt_id.is_empty()
+                && service.abort_next_control.swap(false, Ordering::SeqCst);
             service.calls.lock().await.push(request);
+            if abort {
+                return Err(Status::aborted("authorization revision changed"));
+            }
             tokio::time::sleep(Duration::from_millis(
                 service.delay_ms.load(Ordering::SeqCst),
             ))
@@ -66,6 +73,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         concurrent: Arc::new(Mutex::new(None)),
         delay_ms: Arc::new(AtomicU64::new(0)),
         database_clock_offset_ms: Arc::new(AtomicU64::new(0)),
+        abort_next_control: Arc::new(AtomicBool::new(false)),
     };
     let incoming = service.clone();
     let server = tokio::spawn(async move {
@@ -344,6 +352,24 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
     );
     assert_eq!(service.calls.lock().await.len(), before_controls + 5);
     service.allowed.store(true, Ordering::SeqCst);
+
+    service.abort_next_control.store(true, Ordering::SeqCst);
+    authority
+        .access(&control, uid, &control.context.runtime_epoch, "run-status")
+        .unwrap()
+        .require()
+        .await
+        .unwrap();
+    {
+        let calls = service.calls.lock().await;
+        let attempts = &calls[before_controls + 5..];
+        assert_eq!(attempts.len(), 2, "an aborted control check gets one retry");
+        assert!(attempts[0].stream_receipt_id.is_empty());
+        assert_eq!(
+            attempts[0], attempts[1],
+            "the signed request must stay intact"
+        );
+    }
 
     service
         .database_clock_offset_ms

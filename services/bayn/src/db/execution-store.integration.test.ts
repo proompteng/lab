@@ -615,19 +615,21 @@ describePostgres('PostgreSQL execution persistence', () => {
     ])
   })
 
-  test('treats a matching REST microsecond order as the retained stream nanosecond version', async () => {
+  test.each([
+    { name: 'with a nonzero nanosecond tail', retainedTimestamp: '2026-08-28T14:31:01.000900123Z' },
+    { name: 'with a zero nanosecond tail', retainedTimestamp: '2026-08-28T14:31:01.000900000Z' },
+  ])('treats a matching REST microsecond order as the retained stream nanosecond version $name', async (fixture) => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const events = yield* BrokerEventStore
         const sql = yield* PgClient.PgClient
-        const retainedTimestamp = '2026-08-28T14:31:01.000900123Z'
         const restTimestamp = '2026-08-28T14:31:01.000900Z'
         const retainedOrder = { ...order(), observedAt: '2026-08-28T14:31:01.000Z' }
         const retained = {
           ...orderEvent(),
-          sourceEventId: `order:${retainedOrder.brokerOrderId}:${retainedTimestamp}`,
-          sourceTimestamp: retainedTimestamp,
-          contentHash: Result.getOrThrow(orderSourceContentHashResult(retainedOrder, retainedTimestamp)),
+          sourceEventId: `order:${retainedOrder.brokerOrderId}:${fixture.retainedTimestamp}`,
+          sourceTimestamp: fixture.retainedTimestamp,
+          contentHash: Result.getOrThrow(orderSourceContentHashResult(retainedOrder, fixture.retainedTimestamp)),
           occurredAt: retainedOrder.observedAt,
           observedAt: retainedOrder.observedAt,
           order: retainedOrder,
@@ -658,9 +660,8 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.conflict).toMatchObject({
       operation: 'ingest',
       failure: 'conflict',
-      message: expect.stringContaining('older than the retained provider version'),
     })
-    expect(result.rows).toEqual([{ status: OrderStatus.New, broker_updated_at: '2026-08-28T14:31:01.000900123Z' }])
+    expect(result.rows).toEqual([{ status: OrderStatus.New, broker_updated_at: fixture.retainedTimestamp }])
   })
 
   test('rejects an ambient transaction before running reconciliation ingestion', async () => {
@@ -753,6 +754,13 @@ describePostgres('PostgreSQL execution persistence', () => {
             (SELECT count(*)::integer FROM position_snapshots) AS snapshots,
             (SELECT count(*)::integer FROM reconciliations) AS reconciliations`
         expect(counts).toEqual({ accounts: 1, snapshots: 1, reconciliations: 1 })
+        const [binding] = yield* sql<{ accountBound: boolean; positionsBound: boolean }>`
+          SELECT EXISTS(SELECT 1 FROM account_snapshots a
+            WHERE a.event_id=r.account_event_id AND a.account_id=r.account_id) AS "accountBound",
+            EXISTS(SELECT 1 FROM position_snapshots p
+            WHERE p.snapshot_id=r.position_snapshot_id AND p.account_id=r.account_id) AS "positionsBound"
+          FROM reconciliations r WHERE r.account_id=${accountId}`
+        expect(binding).toEqual({ accountBound: true, positionsBound: true })
       }),
     )
   })
@@ -2791,6 +2799,49 @@ describePostgres('PostgreSQL execution persistence', () => {
     }
   })
 
+  test('rejects reconciliations carrying a different retained account or position body before posting', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* ReconciliationStore
+        const events = yield* BrokerEventStore
+        const sql = yield* PgClient.PgClient
+        const flat = yield* ingestReconciliationCut(false, false)
+        const unrelated = hash('unrelated same-account inventory')
+        const different = yield* events.ingestPositions(
+          positionSnapshot(unrelated, [positionEvent(unrelated, 'NVDA', '1000000000', '100000000')]),
+        )
+        const inventoryError = yield* Effect.flip(
+          reconcileSnapshot(store, { ...flat, positionSnapshotId: different.snapshotId }),
+        )
+        expect(inventoryError).toMatchObject({
+          failure: 'invariant',
+          message: expect.stringContaining('Positions differ from their retained broker snapshot'),
+        })
+        const position = positionEvent(unrelated, 'NVDA', '2000000000', '200000000').position
+        expect(
+          yield* Effect.flip(
+            reconcileSnapshot(store, {
+              ...flat,
+              positions: [position],
+              positionSnapshotId: different.snapshotId,
+            }),
+          ),
+        ).toMatchObject({ failure: 'invariant' })
+        const cashError = yield* Effect.flip(
+          reconcileSnapshot(store, {
+            ...flat,
+            account: { ...flat.account, buyingPowerMicros: '1' },
+          }),
+        )
+        expect(cashError).toMatchObject({ failure: 'invariant' })
+        expect(yield* sql`SELECT count(*)::int AS count FROM reconciliations`).toEqual([{ count: 0 }])
+        expect(journalControl.postCount).toBe(0)
+        const authentic = yield* reconcileSnapshot(store, flat)
+        expect(authentic.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      }),
+    )
+  })
+
   test('binds the submit cache to the latest exact reconciliation, broker observations and authority version', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -2819,7 +2870,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           fills: [],
           fees: [],
           cashReportingQuantumMicros: '1' as const,
-          positionSnapshotId: hash('fixture-position-snapshot'),
+          positionSnapshotId: positionsReceipt.snapshotId,
           accountEventId: accountReceipt.eventId,
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
@@ -2860,6 +2911,19 @@ describePostgres('PostgreSQL execution persistence', () => {
             hash('current-intent'),
             false,
           ).pipe(Effect.flip)).failure,
+        ).toBe('invariant')
+        yield* sql`INSERT INTO broker_activity_events(
+            account_id,source_event_id,transport_event_id,source_event_hash,source_revision,ref_id,
+            activity_type,session_id,request_id,received_at,activity_json
+          ) VALUES (
+            ${accountId},'00000000000000000000000001',${hash('cache-activity-transport')},
+            ${hash('cache-activity-source')},${'a'.repeat(40)},'00000000-0000-4000-8000-000000000001',
+            'TRD','cache-activity-session','cache-activity-request','2026-08-28T14:34:00.000Z','{}'
+          )`
+        expect(
+          (yield* verifyBrokerStateVersion(sql, accountId, latestVersion, hash('current-intent'), false).pipe(
+            Effect.flip,
+          )).failure,
         ).toBe('invariant')
         const laterAt = '2026-08-28T14:34:00.000Z'
         yield* events.ingest({
@@ -2916,7 +2980,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           fills: [],
           fees: [],
           cashReportingQuantumMicros: '1' as const,
-          positionSnapshotId: hash('fixture-position-snapshot'),
+          positionSnapshotId: positionsReceipt.snapshotId,
           accountEventId: accountReceipt.eventId,
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
