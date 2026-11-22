@@ -13,6 +13,7 @@ const shift = (at: string, milliseconds: number) => new Date(Date.parse(at) + mi
 export const equityFeeCashFixture = (
   session: Parameters<typeof confirmEquityFeeCash>[0],
   accountId = 'fee-adjusted-paper-account',
+  feeCount = 2,
 ) => {
   const openFill = shift(session.openAt, 30_000)
   const closeFill = shift(session.closeAt, -30_000)
@@ -61,8 +62,8 @@ export const equityFeeCashFixture = (
       ).transaction,
   )
 
-  const receipts = [1, 2].map((index) => {
-    const activityId = `${session.sessionDate}::d7a201b7-679b-44d8-b76b-d352a25de73${index}`
+  const receipts = Array.from({ length: feeCount }, (_, index) => {
+    const activityId = `${session.sessionDate}::d7a201b7-679b-44d8-b76b-d352a25de73${index + 1}`
     return {
       ...coinActivity('1', accountId),
       data: { accountId, activityId, date: session.sessionDate, netAmountMicros: '-10000' },
@@ -143,7 +144,7 @@ export const equityFeeCashFixture = (
         sessionDate: session.sessionDate,
         phase: 'RECONCILED',
         cutAt: reconciledAt,
-        observation: witness(shift(reconciledAt, -300), '1006980000'),
+        observation: witness(shift(reconciledAt, -300), String(1_007_000_000 - receipts.length * 10_000)),
         reconciliationHash: testHash('post fee reconciliation'),
         fees: receipts.map((r) => ({
           activityId: r.data.activityId,
