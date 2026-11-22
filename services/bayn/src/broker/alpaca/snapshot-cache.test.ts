@@ -877,7 +877,13 @@ describe('complete history reuse between broker captures', () => {
             Effect.map((observedAt) => {
               source.calls.push('execution-stream-view')
               const evidence = { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt }
-              return { fills: fills.map((value) => ({ value, evidence })), feeCounts, evidence }
+              return {
+                version: `${fills.length}:${JSON.stringify([...feeCounts])}`,
+                feeVersion: JSON.stringify([...feeCounts]),
+                fills: fills.map((value) => ({ value, evidence })),
+                feeCounts,
+                evidence,
+              }
             }),
           ),
         }
@@ -912,10 +918,11 @@ describe('complete history reuse between broker captures', () => {
         })
         const recovered = yield* capture(replayRead, { generation: 6, startedAt: yield* currentUtcInstant }, 15_000)
         expect(recovered.snapshot.history.fills[0]?.value).toEqual(fills[0])
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(5)
         const unavailableReplay = (kind: BrokerReadErrorKind) => ({
           ...read,
           accountActivity: Effect.fail(
-            new BrokerReadError({ operation: 'activity-stream', kind, message: 'fixture', retryable: true }),
+            new BrokerReadError({ operation: 'fill-activities', kind, message: 'fixture', retryable: true }),
           ),
         })
         const timedOut = yield* capture(
@@ -943,6 +950,8 @@ describe('complete history reuse between broker captures', () => {
       fillActivities: () => Effect.die('unexpected REST fill read'),
       accountActivity: currentUtcInstant.pipe(
         Effect.map((observedAt) => ({
+          version: JSON.stringify([...feeCounts]),
+          feeVersion: JSON.stringify([...feeCounts]),
           fills: [],
           feeCounts,
           evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },
@@ -1015,6 +1024,8 @@ describe('complete history reuse between broker captures', () => {
       fillActivities: () => Effect.die('unexpected REST fill read'),
       accountActivity: currentUtcInstant.pipe(
         Effect.map((observedAt) => ({
+          version: JSON.stringify([...feeCounts]),
+          feeVersion: JSON.stringify([...feeCounts]),
           fills: [],
           feeCounts,
           evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },

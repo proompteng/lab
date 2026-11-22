@@ -10,7 +10,7 @@ import {
   type ReadResult,
   type FillActivityPage,
 } from '../broker/alpaca/model'
-import type { AccountActivityCut } from '../broker/alpaca/activity-stream'
+import type { AccountActivityCut } from '../broker/activities'
 import { type BrokerReadError } from '../broker/alpaca/failures'
 import { canonicalHashV1Result } from '../hash'
 import {

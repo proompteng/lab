@@ -29,6 +29,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [208, 'reconciliation_source_snapshots'],
     [209, 'qualification_authority_witness'],
     [210, 'paired_qualification_admission'],
+    [211, 'durable_broker_activities'],
   ])
   const pending = migrations.filter(([id]) => id > 187).map(([id, name]) => [id, name])
 
@@ -55,6 +56,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [208, 'reconciliation_source_snapshots'],
     [209, 'qualification_authority_witness'],
     [210, 'paired_qualification_admission'],
+    [211, 'durable_broker_activities'],
   ])
 })
 
