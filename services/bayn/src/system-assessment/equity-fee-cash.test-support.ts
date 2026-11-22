@@ -108,12 +108,14 @@ export const equityFeeCashFixture = (
         body: [],
       },
     ] as const
+  const accountBody = { id: accountId }
   const statement = {
-    schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v1' as const,
+    schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v2' as const,
     accountIdentityHash: identity.identityHash,
     observedAt: statementAt,
     window: { after: shift(openingAt, -1_000), until: shift(statementAt, -1_000) },
-    accountRead: scanEvidence,
+    accountBody,
+    accountRead: { ...scanEvidence, contentHash: testHash(accountBody) },
     firstPass: pass(activities),
     secondPass: pass(activities.toReversed()),
   }

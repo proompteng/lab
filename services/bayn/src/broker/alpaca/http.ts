@@ -321,10 +321,12 @@ export const make = (connection: BrokerConnection) =>
       )
     }
 
-    const account = readResponse('account', accountUrl(connection), decodeAccount).pipe(
+    const accountWithBody = readResponse('account', accountUrl(connection), (body) =>
+      Result.map(decodeAccount(body), (account) => ({ account, body })),
+    ).pipe(
       Effect.flatMap((result) => {
         const normalized = normalizeAccountResult(
-          result.value,
+          result.value.account,
           connection.expectedAccountId,
           result.evidence.observedAt,
         )
@@ -333,7 +335,7 @@ export const make = (connection: BrokerConnection) =>
             new BrokerReadError({
               operation: 'account',
               kind: BrokerReadErrorKind.AccountMismatch,
-              message: `Alpaca credential resolved account ${result.value.id}, expected ${connection.expectedAccountId}`,
+              message: `Alpaca credential resolved account ${result.value.account.id}, expected ${connection.expectedAccountId}`,
               retryable: false,
               status: result.evidence.status,
               requestId: result.evidence.requestId,
@@ -345,9 +347,11 @@ export const make = (connection: BrokerConnection) =>
         }
         return normalizeRead('account', result.evidence, normalized).pipe(
           Effect.tap(() => observeDiagnostic(result.diagnostic, result.evidence)),
+          Effect.map((read) => ({ ...read, body: result.value.body })),
         )
       }),
     )
+    const account = accountWithBody.pipe(Effect.map(({ body: _body, ...read }) => read))
 
     const accountConfiguration = readResponse(
       'account-configuration',
@@ -526,7 +530,7 @@ export const make = (connection: BrokerConnection) =>
       if (connection.environment !== BrokerEnvironment.Sandbox || bounds.until > now) {
         return yield* invalidRequest(operation, 'Financial activity capture requires a historical PAPER window', null)
       }
-      const verifiedAccount = yield* account
+      const verifiedAccount = yield* accountWithBody
       const readDirection = (direction: SortDirection) =>
         Effect.gen(function* () {
           const pages = []
@@ -564,10 +568,11 @@ export const make = (connection: BrokerConnection) =>
       const firstPass = yield* readDirection(SortDirection.Ascending)
       const secondPass = yield* readDirection(SortDirection.Descending)
       const statement = yield* Schema.decodeUnknownEffect(NonTradeActivityStatementSchema)({
-        schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v1' as const,
+        schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v2' as const,
         accountIdentityHash: connection.identity.identityHash,
         window: bounds,
         accountRead: verifiedAccount.evidence,
+        accountBody: verifiedAccount.body,
         firstPass,
         secondPass,
         observedAt: yield* currentUtcInstant,

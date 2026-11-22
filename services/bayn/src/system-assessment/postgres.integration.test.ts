@@ -1266,6 +1266,28 @@ postgres('PostgreSQL prospective system qualification', () => {
     )
     if (Exit.isFailure(accepted)) throw new Error(Cause.pretty(accepted.cause))
     expect(Exit.isSuccess(accepted)).toBe(true)
+    const reassigned = {
+      accounts: sourceMaterial(original).accounts.map((account) => ({
+        ...account,
+        policy: JevResearchPolicy.Incumbent,
+      })),
+    }
+    const reassignedCut = await runtime.runPromise(
+      asApplication(
+        persistSystemSourceCut({
+          ...originalCut.cut,
+          sourceMaterial: reassigned,
+          sourceMaterialHash: testHash(reassigned),
+        }),
+      ),
+    )
+    const reassignmentRejected = await runtime.runPromiseExit(
+      assessAndPersistSystem(assessmentInput(reassignedCut.sourceCutHash), fixture.verifiedSources),
+    )
+    if (Exit.isSuccess(reassignmentRejected)) throw new Error('An incumbent cannot borrow the candidate ledger')
+    expect(Cause.pretty(reassignmentRejected.cause)).toContain(
+      'Native cash witnesses belong to a different registered account',
+    )
     const rehashedCut = await runtime.runPromise(asApplication(persistSystemSourceCut(makeCut(rehashed))))
     const rejected = await runtime.runPromiseExit(
       assessAndPersistSystem(assessmentInput(rehashedCut.sourceCutHash), fixture.verifiedSources),

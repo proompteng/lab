@@ -4,7 +4,6 @@ import { accountMarkValue } from './valuation'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { BrokerEnvironment } from '../broker/identity'
 import { verifyNonTradeActivityStatement } from '../broker/alpaca/model'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
@@ -25,7 +24,7 @@ import { assessSession } from './session'
 import { costAttributionRule } from './cost-attribution'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { bindOperationalObligations } from './operational-obligations'
-import { confirmEquityFeeCash, decodeRetainedCashEvidence, projectFeeAdjustedCash } from './equity-fee-cash'
+import { confirmEquityFeeCash, projectFeeAdjustedCash, registeredNativeCashAccounts } from './equity-fee-cash'
 
 export const bindSystemSourceCut = (
   input: unknown,
@@ -59,14 +58,9 @@ export const bindSystemSourceCut = (
       data.registration.schemaVersion === 'bayn.system-registration.v5'
         ? data.registration.calendar.marketCalendar
         : null
-    const retainedCash = nativeCalendar === null ? null : yield* decodeRetainedCashEvidence(cut.sourceMaterial)
-    const cashAccounts = new Map(retainedCash?.accounts?.map((account) => [account.policy, account]))
-    if (
-      retainedCash !== null &&
-      (cashAccounts.size !== (retainedCash.accounts?.length ?? 0) ||
-        (yield* canonicalHashV1Result(cut.sourceMaterial)) !== cut.sourceMaterialHash)
-    )
+    if (nativeCalendar !== null && (yield* canonicalHashV1Result(cut.sourceMaterial)) !== cut.sourceMaterialHash)
       return yield* fail('Native cash witnesses differ from the retained source cut')
+    const cashAccounts = nativeCalendar === null ? null : yield* registeredNativeCashAccounts(data.registration, cut)
     const sources = new Set([
       ...verifiedSources,
       ...admissions.sources,
@@ -112,22 +106,11 @@ export const bindSystemSourceCut = (
       const definition = data.registration.policies.find((registered) => registered.policy === policy.policy)
       if (definition === undefined) return yield* fail('Unregistered financial policy')
       const account = financialAccounts.get(policy.policy)
-      const cashAccount = cashAccounts.get(policy.policy)
-      if (
-        cashAccount !== undefined &&
-        (cashAccount.identity.environment !== BrokerEnvironment.Sandbox ||
-          cashAccount.forward.account.accountId !== cashAccount.identity.accountId ||
-          (yield* canonicalHashV1Result({
-            schemaVersion: 'bayn.inference-cost-account.v1',
-            accountId: cashAccount.identity.accountId,
-          })) !== definition.accountBindingHash)
-      )
-        return yield* fail('Native cash witnesses belong to a different registered account')
-      const retainedStatement = retainedCash?.brokerNonTradeActivity
+      const cashAccount = cashAccounts?.get(policy.policy)
       const statement =
-        retainedStatement !== undefined && retainedStatement.accountIdentityHash === cashAccount?.identity.identityHash
+        cashAccount?.brokerNonTradeActivity !== undefined
           ? yield* Result.mapError(
-              verifyNonTradeActivityStatement(retainedStatement, cashAccount.identity.accountId),
+              verifyNonTradeActivityStatement(cashAccount.brokerNonTradeActivity, cashAccount.identity.accountId),
               (message) => new SystemAssessmentError({ message }),
             )
           : undefined

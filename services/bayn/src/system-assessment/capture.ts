@@ -65,6 +65,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         candidate === undefined ||
         identity === undefined ||
         identity.environment !== BrokerEnvironment.Sandbox ||
+        identity.accountId !== candidate.riskPolicy.accountId ||
         identity.identityHash !== config.alpaca.identity.identityHash ||
         first === undefined ||
         last === undefined
@@ -276,6 +277,10 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             accounts.push({
               policy: definition.policy,
               identity: accountIdentity,
+              ...(brokerNonTradeActivity !== undefined &&
+              brokerNonTradeActivity.accountIdentityHash === accountIdentity.identityHash
+                ? { brokerNonTradeActivity }
+                : {}),
               forward,
               decisions,
               protectionIntents,
@@ -403,7 +408,6 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           imageDigest: config.build.imageDigest,
         },
         runtimeConfiguration,
-        ...(brokerNonTradeActivity === undefined ? {} : { brokerNonTradeActivity }),
         accounts: sourceAccounts,
         decisions,
         mutations,
@@ -446,7 +450,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
       })
       const saved = yield* persistSystemSourceCut(cut)
       return {
-        ...saved,
+        sourceCutHash: saved.sourceCutHash,
         controllerLatency: yield* Effect.fromResult(measureControllerLatency(registration, cut, identity)),
         fullBatchLatency: yield* Effect.fromResult(measureFullBatchLatency(registration, cut, identity)),
       }

@@ -732,14 +732,16 @@ const ActivityPass = Schema.NonEmptyArray(
 ).check(Schema.isMaxLength(100))
 
 export const NonTradeActivityStatementSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.alpaca-non-trade-activity-statement.v1'),
+  schemaVersion: Schema.Literal('bayn.alpaca-non-trade-activity-statement.v2'),
   accountIdentityHash: Sha256Schema,
   window: NonTradeActivityWindow,
   accountRead: ActivityRead,
+  accountBody: Schema.Unknown,
   firstPass: ActivityPass,
   secondPass: ActivityPass,
   observedAt: UtcInstantSchema,
 })
+const decodeStatementAccount = Schema.decodeUnknownResult(Schema.Struct({ id: NonEmptyString }))
 
 export const nonTradeActivityInScope = (
   row: Result.Result.Success<ReturnType<typeof decodeNonTradeActivities>>[number],
@@ -759,6 +761,15 @@ export const verifyNonTradeActivityStatement = (
   accountId: string,
 ) =>
   Result.gen(function* () {
+    const account = decodeStatementAccount(statement.accountBody)
+    const accountBodyHash = canonicalHashV1Result(statement.accountBody)
+    if (
+      Result.isFailure(account) ||
+      account.success.id !== accountId ||
+      Result.isFailure(accountBodyHash) ||
+      accountBodyHash.success !== statement.accountRead.contentHash
+    )
+      return yield* Result.fail('Alpaca account body differs from its recorded response or registered account')
     if (statement.accountRead.observedAt < statement.window.until)
       return yield* Result.fail('Alpaca account read predates the activity window')
     let observedAt = statement.accountRead.observedAt

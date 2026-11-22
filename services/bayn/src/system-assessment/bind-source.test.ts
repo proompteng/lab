@@ -24,6 +24,7 @@ import { costReportFromEvidence } from '../inference-expense.test-support'
 import { SystemSourceCutSchema } from './source-cut'
 import { cashInventoryTradingPnl, markedRisk } from './economics'
 import { equityFeeCashFixture } from './equity-fee-cash.test-support'
+import { JevResearchPolicy } from '../jev/acceptance'
 
 const event = (sequence: number, eventType: string, occurredAt: string) =>
   Schema.decodeUnknownSync(MutationEventSchema)({
@@ -72,10 +73,17 @@ describe('immutable source binding', () => {
       sourceHash: testHash(mark),
       valuation: { inventorySourceHash: testHash('positions'), positions },
     }))
-    const retained = {
+    const account = {
+      policy: definition.policy,
+      identity,
+      forward,
+      settlementAnchors: evidence.anchors,
       brokerNonTradeActivity: statement,
-      accounts: [{ policy: definition.policy, identity, forward, settlementAnchors: evidence.anchors }],
     }
+    const retained = { accounts: [account] }
+    const withStatement = (brokerNonTradeActivity: unknown) => ({
+      accounts: [{ ...account, brokerNonTradeActivity }],
+    })
     const bound = (sourceMaterial: unknown) => {
       const source = {
         ...cut,
@@ -132,7 +140,7 @@ describe('immutable source binding', () => {
 
     const fills = forward.accountTransactions ?? []
     const changed = {
-      ...retained.accounts[0]!,
+      ...account,
       forward: {
         ...forward,
         accountTransactions: fills.map((fill) => ({
@@ -142,14 +150,9 @@ describe('immutable source binding', () => {
       },
     }
     expect(firstSession(bound({ ...retained, accounts: [changed] }))?.financial).toBeNull()
-    expect(
-      Result.isFailure(
-        bound({
-          ...retained,
-          brokerNonTradeActivity: { ...statement, secondPass: statement.secondPass.slice(0, 1) },
-        }),
-      ),
-    ).toBe(true)
+    expect(Result.isFailure(bound(withStatement({ ...statement, secondPass: statement.secondPass.slice(0, 1) })))).toBe(
+      true,
+    )
 
     const movements = [
       {
@@ -177,15 +180,110 @@ describe('immutable source binding', () => {
       firstPass: withMovements(statement.firstPass, false),
       secondPass: withMovements(statement.secondPass, true),
     }
-    expect(firstSession(bound({ ...retained, brokerNonTradeActivity: original }))?.financial).toBeNull()
+    expect(firstSession(bound(withStatement(original)))?.financial).toBeNull()
     const withoutMovements = {
       ...statement,
       firstPass: [{ ...statement.firstPass[0], evidence: original.firstPass[0].evidence }, statement.firstPass[1]],
       secondPass: [{ ...statement.secondPass[0], evidence: original.secondPass[0].evidence }, statement.secondPass[1]],
     }
-    const omitted = bound({ ...retained, brokerNonTradeActivity: withoutMovements })
+    const omitted = bound(withStatement(withoutMovements))
     if (Result.isSuccess(omitted)) throw new Error('Expected omitted activity to fail source verification')
     expect(omitted.failure).toMatchObject({ message: 'Alpaca activity page body differs from its recorded response' })
+  })
+
+  test('native paired accounts require their own authenticated statements and exact cash scope', () => {
+    const registration = nativeRegistrationFixture(registrationFixture(undefined, 1))
+    const { input, cut, verifiedSources } = capturedAccountsFixture(supportedAssessmentFixture(1, registration))
+    const session = registration.calendar.sessions[0]!
+    const provider = registration.calendar.marketCalendar.providerSessions[0]!
+    const books = registration.policies
+      .filter((definition) => [JevResearchPolicy.Candidate, JevResearchPolicy.Incumbent].includes(definition.policy))
+      .map((definition) => {
+        const { identity, forward, evidence, accountHash, statement } = equityFeeCashFixture(
+          { ...session, recoveryCloseAt: provider.sessionCloseAt },
+          definition.riskPolicy.accountId,
+        )
+        const marks = [session.openAt, session.closeAt].map((at) => ({
+          at,
+          availableAt: at,
+          accountBindingHash: accountHash,
+          cashMicros: null,
+          sourceHash: testHash([definition.policy, at]),
+          valuation: { inventorySourceHash: testHash([definition.policy, 'flat']), positions: [] },
+        }))
+        return {
+          marks,
+          account: {
+            policy: definition.policy,
+            identity,
+            forward,
+            settlementAnchors: evidence.anchors,
+            brokerNonTradeActivity: statement,
+          },
+        }
+      })
+    const candidate = books.find(({ account }) => account.policy === JevResearchPolicy.Candidate)!.account
+    const incumbent = books.find(({ account }) => account.policy === JevResearchPolicy.Incumbent)!.account
+    const bound = (accounts: unknown[]) => {
+      const sourceMaterial = { accounts }
+      const source = {
+        ...cut,
+        sourceMaterial,
+        sourceMaterialHash: testHash(sourceMaterial),
+        accountMarks: books.flatMap(({ marks }) => marks),
+        financial: cut.financial.map((captured) => ({
+          ...captured,
+          sessions: captured.sessions.map((row) => ({
+            ...row,
+            facts: {
+              ...row.facts!,
+              openingPositionCount: 0,
+              closingPositionCount: 0,
+              grossRealizedPnlMicros: '7000000',
+              executionCostMicros: '20000',
+              cashSettlementRoundingMicros: '0',
+            },
+          })),
+        })),
+      }
+      return bindSystemSourceCut({ ...input, sourceCutHash: testHash(source) }, source, verifiedSources)
+    }
+    const financial = (projection: ReturnType<typeof bound>, policy: JevResearchPolicy) =>
+      Result.getOrThrow(projection).input.policies.find((p) => p.policy === policy)?.sessions[0]?.financial
+
+    const paired = bound([candidate, incumbent])
+    for (const { policy } of [candidate, incumbent]) {
+      const proved = financial(paired, policy)
+      if (proved == null) throw new Error(`Expected verified financial evidence for ${policy}`)
+      expect(cashInventoryTradingPnl(proved.cashInventory)).toBe('6980000')
+    }
+    expect(financial(paired, candidate.policy)?.sourceHash).not.toBe(financial(paired, incumbent.policy)?.sourceHash)
+
+    const { brokerNonTradeActivity: _missing, ...missing } = incumbent
+    const unpaired = bound([candidate, missing])
+    expect(financial(unpaired, candidate.policy)?.cashInventory.closingEquityMicros).toBe('1006980000')
+    expect(financial(unpaired, incumbent.policy)).toBeNull()
+    expect(
+      bound([candidate, { ...incumbent, brokerNonTradeActivity: candidate.brokerNonTradeActivity }]),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { message: 'Broker activity statement differs from its account or evidence cut' },
+    })
+    expect(
+      bound([
+        candidate,
+        {
+          ...incumbent,
+          brokerNonTradeActivity: {
+            ...candidate.brokerNonTradeActivity,
+            accountIdentityHash: incumbent.identity.identityHash,
+          },
+        },
+      ]),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { message: 'Alpaca account body differs from its recorded response or registered account' },
+    })
   })
 
   test('packet financial claims cannot supply an uncaptured control account', () => {

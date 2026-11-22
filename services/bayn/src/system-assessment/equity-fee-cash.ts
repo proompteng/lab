@@ -8,7 +8,7 @@ import { NonTradeActivityStatementSchema, type verifyNonTradeActivityStatement }
 import { decimalToMicrosResult } from '../broker/alpaca/normalizers'
 import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
-import { BrokerIdentitySchema } from '../broker/identity'
+import { BrokerEnvironment, BrokerIdentitySchema } from '../broker/identity'
 import { StoredAccrual } from '../db/fee-accruals'
 import type { ExecutionModel } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
@@ -18,6 +18,9 @@ import { IsoDateSchema, NonNegativeIntegerSchema, StrictNonEmptyStringSchema, Ut
 import { calculateSessionFees, equityTafRate } from '../strategy/execution-model/fees'
 import { accountTradingDate } from '../time'
 import { cashSettlementMatches, FeeSettlementAnchorsSchema } from './cash-settlements'
+import { SystemAssessmentError } from './economics'
+import type { SystemRegistration } from './policy'
+import type { SystemSourceCut } from './source-cut'
 import type { AccountMarkSchema } from './valuation'
 
 const RetainedCashLedger = Schema.Struct({
@@ -38,21 +41,52 @@ const RetainedCashLedger = Schema.Struct({
   unresolvedMutationCount: NonNegativeIntegerSchema,
 })
 
-export const decodeRetainedCashEvidence = Schema.decodeUnknownResult(
+const RetainedCashAccount = Schema.Struct({
+  policy: Schema.Enum(JevResearchPolicy),
+  identity: BrokerIdentitySchema,
+  forward: RetainedCashLedger,
+  settlementAnchors: Schema.optionalKey(FeeSettlementAnchorsSchema),
+  brokerNonTradeActivity: Schema.optionalKey(NonTradeActivityStatementSchema),
+})
+
+const decodeRetainedCashEvidence = Schema.decodeUnknownResult(
   Schema.Struct({
-    brokerNonTradeActivity: Schema.optionalKey(NonTradeActivityStatementSchema),
-    accounts: Schema.optionalKey(
-      Schema.Array(
-        Schema.Struct({
-          policy: Schema.Enum(JevResearchPolicy),
-          identity: BrokerIdentitySchema,
-          forward: RetainedCashLedger,
-          settlementAnchors: Schema.optionalKey(FeeSettlementAnchorsSchema),
-        }),
-      ),
-    ),
+    accounts: Schema.optionalKey(Schema.Array(RetainedCashAccount).check(Schema.isMaxLength(4))),
   }),
 )
+
+export const registeredNativeCashAccounts = (
+  registration: Pick<SystemRegistration, 'policies'>,
+  cut: Pick<SystemSourceCut, 'asOf' | 'sourceMaterial'>,
+) =>
+  Result.gen(function* () {
+    const fail = (message: string) => Result.fail(new SystemAssessmentError({ message }))
+    const retained = yield* decodeRetainedCashEvidence(cut.sourceMaterial)
+    const accounts = new Map<JevResearchPolicy, typeof RetainedCashAccount.Type>()
+    for (const account of retained.accounts ?? []) {
+      const definition = registration.policies.find((p) => p.policy === account.policy)
+      const accountBindingHash = yield* canonicalHashV1Result({
+        schemaVersion: 'bayn.inference-cost-account.v1',
+        accountId: account.identity.accountId,
+      })
+      if (
+        definition === undefined ||
+        accounts.has(account.policy) ||
+        account.identity.environment !== BrokerEnvironment.Sandbox ||
+        account.forward.account.accountId !== account.identity.accountId ||
+        accountBindingHash !== definition.accountBindingHash
+      )
+        return yield* fail('Native cash witnesses belong to a different registered account')
+      const statement = account.brokerNonTradeActivity
+      if (
+        statement !== undefined &&
+        (statement.accountIdentityHash !== account.identity.identityHash || statement.observedAt > cut.asOf)
+      )
+        return yield* fail('Broker activity statement differs from its account or evidence cut')
+      accounts.set(account.policy, account)
+    }
+    return accounts
+  })
 
 type CashPoint = {
   readonly at: string

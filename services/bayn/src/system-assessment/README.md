@@ -218,6 +218,9 @@ Stream command output to a private file. A local capacity measurement using 540 
 source observations, decisions, mutation events, fills, cash observations, and durable controller witnesses. Missing
 accounts or evidence remain missing; a submitted assessment packet cannot replace captured facts with claimed profit
 or reliability. The capture checks each account's risk, source, image, strategy, and protocol against registration.
+Native fee evidence binds the retained Alpaca account response and both activity scans to the same registered account
+as its ledger and settlement anchors. Missing statements leave that account's session economics unresolved.
+Economic capture returns the source-cut hash and latency measurements. The raw broker evidence stays in the private cut.
 Runtime capture preserves the original unscoped hash of historical financial registrations that omit `entryMarkets`.
 All originally committed runtime fields must still match; registrations that include entry scope retain its exact
 hash commitment. Capture stores the matching runtime shape without rewriting the immutable registration.

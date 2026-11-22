@@ -1524,6 +1524,10 @@ describe('Alpaca paper reads', () => {
     expect(result.accountIdentityHash).toBe(options.identity.identityHash)
     expect(result.window).toEqual(bounds)
     const statement = Result.getOrThrow(Schema.decodeUnknownResult(NonTradeActivityStatementSchema)(result))
+    expect(statement.accountBody).toEqual(accountResponse)
+    expect(
+      verifyNonTradeActivityStatement({ ...statement, accountBody: { ...accountResponse, id: assetId } }, assetId),
+    ).toMatchObject({ _tag: 'Failure' })
     expect(Result.getOrThrow(verifyNonTradeActivityStatement(statement, accountId)).activities).toEqual([
       {
         activityId: deposit.id,

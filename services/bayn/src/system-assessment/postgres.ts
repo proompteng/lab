@@ -34,7 +34,7 @@ import { bindLatencyStressSources } from './latency-report'
 import { JevResearchPolicy } from '../jev/acceptance'
 import type { VerifiedReplayImage } from './replay-image'
 import { readReplayExecutionReceipt, type ReplayExecutionReceiptSchema } from './replay-execution'
-import { decodeRetainedCashEvidence } from './equity-fee-cash'
+import { registeredNativeCashAccounts } from './equity-fee-cash'
 import { ledgerReceiptQuery, ledgerTransactionQuery } from '../forward-performance/postgres/queries'
 import { decodeReceipts, decodeTransactions } from '../forward-performance/postgres/model'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../db/accounting-rows'
@@ -68,8 +68,8 @@ const verifyNativeCashLedgerSources = (
 ) =>
   Effect.gen(function* () {
     if (registration.schemaVersion !== 'bayn.system-registration.v5') return
-    const retained = yield* Effect.fromResult(decodeRetainedCashEvidence(cut.sourceMaterial))
-    const accounts = (retained.accounts ?? []).flatMap((account) => {
+    const retained = yield* Effect.fromResult(registeredNativeCashAccounts(registration, cut))
+    const accounts = [...retained.values()].flatMap((account) => {
       const transactions = account.forward.accountTransactions
       const reconciledAt = account.forward.accountPositionCounts?.reconciledAt
       return transactions !== undefined &&
