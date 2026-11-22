@@ -700,7 +700,8 @@ cannot strand the quota reservation or let an older capture shorten a newer rese
 the conservative database deadline in force. No process-local budget or Restate result is authority to bypass it.
 
 When an accepted PAPER protection cancellation carries a cycle, the exclusive broker refresh checks that cycle
-before scheduling the next complete capture. The last successful capture can fund one scoped four-request read.
+immediately after invalidation, before scheduling the next complete capture. The broker readback still has to
+prove the entire protective group is terminal. The last successful capture can fund one scoped four-request read.
 Bayn subtracts requests without valid headers from the lowest reported remaining capacity. It reserves the four
 reads only if one-quarter of the account limit remains. The evidence expires one minute after the first confirming response.
 Alpaca's reset timestamp controls backoff when quota runs low. The PostgreSQL owner charges the protected read

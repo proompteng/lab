@@ -208,11 +208,11 @@ const receipt = { eventId: 'd'.repeat(64) }
 const pollResult = (poll: BrokerObservationPoll) => ({ poll, startedAtMs: initialNow, completedAtMs: initialNow })
 
 describe('event-driven Restate broker observation owner', () => {
-  test('reserves and wakes the exact protective cycle before releasing the ordinary capture', async () => {
+  test('probes immediately and wakes the exact protective cycle before scheduling the ordinary capture', async () => {
     const proof = {
       proofId: '1'.repeat(64),
       cycleId: '2'.repeat(64),
-      checkedAt: new Date(initialNow + 250).toISOString(),
+      checkedAt: new Date(initialNow).toISOString(),
     }
     const probes: string[] = []
     const h = harness({
@@ -227,7 +227,7 @@ describe('event-driven Restate broker observation owner', () => {
     await h.handlers.refresh(h.context, { sourceRevision: 'f'.repeat(40), cycleId: proof.cycleId })
     expect(probes).toEqual([])
     await h.handlers.refresh(h.context, { sourceRevision, cycleId: proof.cycleId })
-    expect(h.sleeps).toEqual([200])
+    expect(h.sleeps).toEqual([])
     expect(probes).toEqual([proof.cycleId])
     expect(h.deliveries).toMatchObject([
       {
@@ -235,25 +235,29 @@ describe('event-driven Restate broker observation owner', () => {
         method: 'wake',
         parameter: { _tag: 'ProtectionRelease', sourceRevision, eventId: proof.proofId, ...proof },
       },
-      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 0 } },
+      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 100 } },
     ])
     expect(h.calls().polls).toBe(0)
   })
 
-  test('a failed protective probe still schedules the account capture', async () => {
-    const h = harness({
-      state: active({ nextCaptureNotBeforeMs: initialNow + 30_000 }),
-      runtime: {
-        probeProtection: async () => {
-          throw new Error('injected unavailable read')
+  test.each(['unproven', 'failed'])(
+    '%s protection readback schedules capture without waking execution',
+    async (outcome) => {
+      const h = harness({
+        state: active({ nextCaptureNotBeforeMs: initialNow + 30_000 }),
+        runtime: {
+          probeProtection: async () => {
+            if (outcome === 'failed') throw new Error('injected unavailable read')
+            return undefined
+          },
         },
-      },
-    })
-    await h.handlers.refresh(h.context, { sourceRevision, cycleId: '2'.repeat(64) })
-    expect(h.deliveries).toMatchObject([
-      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 29_800 } },
-    ])
-  })
+      })
+      await h.handlers.refresh(h.context, { sourceRevision, cycleId: '2'.repeat(64) })
+      expect(h.deliveries).toMatchObject([
+        { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 30_000 } },
+      ])
+    },
+  )
 
   test('activation publishes one canonical cut, wakes the account and arms only its completeness deadline', async () => {
     const h = harness()
