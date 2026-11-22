@@ -9,7 +9,7 @@ const trade = Schema.Struct({
   ref_id: fillFields.order_id,
   account_id: fillFields.account_id,
   executed_at: fillFields.transaction_time,
-  previous_id: Schema.optionalKey(Schema.Never),
+  previous_id: Schema.optionalKey(fillFields.order_id),
   qty: fillFields.qty,
   price: fillFields.price,
   details: Schema.Struct({
@@ -18,7 +18,7 @@ const trade = Schema.Struct({
     leaves_qty: fillFields.leaves_qty,
     symbol: fillFields.symbol,
     side: fillFields.side,
-    execution_type: fillFields.type,
+    execution_type: Schema.Literals(['fill', 'partial_fill', 'trade_correct', 'trade_bust']),
     order_status: fillFields.order_status,
   }),
 })
@@ -26,14 +26,35 @@ const decodeTrade = Schema.decodeUnknownResult(trade)
 
 const replayFailure = (message: string) => contractFailure({ reason: 'FILL_SHAPE', message })
 
-export const decodeFillExecution = (
+export type TradeActivityEffect =
+  | {
+      readonly _tag: 'Fill'
+      readonly refId: string
+      readonly previousRefId?: string
+      readonly execution: FillExecution
+    }
+  | { readonly _tag: 'Bust'; readonly refId: string; readonly previousRefId: string }
+
+export const decodeTradeActivityEffect = (
   row: unknown,
   accountId: string,
-): Result.Result<FillExecution, ReturnType<typeof replayFailure>> =>
+): Result.Result<TradeActivityEffect, ReturnType<typeof replayFailure>> =>
   Result.gen(function* () {
     const event = yield* decodeTrade(row).pipe(
-      Result.mapError(() => replayFailure('Alpaca trade activity cannot represent an ordinary execution')),
+      Result.mapError(() => replayFailure('Alpaca trade activity has an invalid financial shape')),
     )
+    if (event.details.execution_type === 'trade_bust') {
+      if (event.previous_id === undefined)
+        return yield* Result.fail(replayFailure('Alpaca trade bust does not identify the reversed execution'))
+      return { _tag: 'Bust', refId: event.ref_id, previousRefId: event.previous_id }
+    }
+    if (event.details.execution_type === 'trade_correct' && event.previous_id === undefined)
+      return yield* Result.fail(replayFailure('Alpaca trade correction does not identify the reversed execution'))
+    if (
+      (event.details.execution_type === 'fill' || event.details.execution_type === 'partial_fill') &&
+      event.previous_id !== undefined
+    )
+      return yield* Result.fail(replayFailure('Alpaca ordinary execution unexpectedly identifies a predecessor'))
     const { activityId: _discarded, ...fill } = yield* normalizeFillActivityResult(
       {
         activity_type: 'FILL',
@@ -47,14 +68,28 @@ export const decodeFillExecution = (
         symbol: event.details.symbol,
         transaction_time: event.executed_at,
         order_id: event.details.order_id,
-        // Some partial Activity SSE executions arrive with execution_type "fill".
-        type:
-          event.details.execution_type === TradeActivityType.Fill && /^0(?:\.0+)?$/.test(event.details.leaves_qty)
-            ? TradeActivityType.Fill
-            : TradeActivityType.PartialFill,
+        // Corrections carry the complete replacement execution. The order's leaves quantity still determines
+        // whether this execution closes the order; the correction label is retained by the immutable source row.
+        type: /^0(?:\.0+)?$/.test(event.details.leaves_qty) ? TradeActivityType.Fill : TradeActivityType.PartialFill,
         ...(event.details.order_status === undefined ? {} : { order_status: event.details.order_status }),
       },
       accountId,
     )
-    return { ...fill, executionId: event.ref_id }
+    return {
+      _tag: 'Fill',
+      refId: event.ref_id,
+      ...(event.previous_id === undefined ? {} : { previousRefId: event.previous_id }),
+      execution: { ...fill, executionId: event.ref_id },
+    }
+  })
+
+export const decodeFillExecution = (
+  row: unknown,
+  accountId: string,
+): Result.Result<FillExecution, ReturnType<typeof replayFailure>> =>
+  Result.gen(function* () {
+    const effect = yield* decodeTradeActivityEffect(row, accountId)
+    if (effect._tag !== 'Fill' || effect.previousRefId !== undefined)
+      return yield* Result.fail(replayFailure('Alpaca trade activity cannot represent an ordinary execution'))
+    return effect.execution
   })

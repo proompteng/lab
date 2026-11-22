@@ -432,16 +432,12 @@ quota reservations and replay protection retain their existing durable semantics
 
 Each capture brackets account and position reads with matching complete order, fill and fee histories. Consecutive
 successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
-Each PAPER execution-controller process currently verifies the account and opens an Alpaca Activity SSE connection for
-both startup replay and live delivery. Its cursor and activity materialization are process-local. It resumes from the
-last locally validated event ID on reconnect; a pod restart replays from the configured history boundary. Alpaca sends
-the reconnect cursor again, so the reader verifies its payload before advancing. It waits for a stream heartbeat before
-admitting the activity history. A disconnect, dropped frame or unsupported correction makes the local activity history
-unavailable. This replica-local ownership is retained only until the
-[single-owner durable cursor migration](../../docs/bayn/durable-broker-event-architecture.md#target-financial-state-path)
-is deployed and proven equivalent.
+The single Dorvud broker feed owns PAPER Activity SSE. `BaynBrokerActivities` receives signed events and commits their
+original bytes, fill or fee projection, and cursor together in PostgreSQL. The feed resumes with the retained
+`since_id` and verifies inclusive redelivery. Bayn compares the initial finite replay with the durable source rows
+before accepting a live heartbeat. All execution replicas read that same projection.
 
-PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
+PAPER captures take immutable views of the durable fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
 the same connection. Bayn fetches REST fee records on startup, when the streamed fee history changes, and during
 ordinary captures while fee settlement is pending. It checks both histories by booking date, fee kind, cash amount
@@ -449,14 +445,16 @@ and coin quantity. REST supplies the existing ledger IDs, crypto symbols and exa
 
 A stable stream that is ahead only by USD fee debits may publish current broker observations with a pending cash
 fee count. The gap stays pending across UTC rollover and capture restart. Full reconciliation, trading readiness,
-and ordinary submission wait for the matching REST records. Pending fees create no ledger postings. The separate
+and ordinary submission wait for the matching REST records. Pending fees create no ledger postings. Canonical REST
+supplies recovery evidence while the Activity projection is unavailable. An unresolved source or coverage contradiction
+blocks ordinary submission. The separate
 protective close still needs the exact fenced cancel, filled inventory and reducing-order proof. Extra REST fees,
 missing crypto fees and unmatched fees with future booking dates reject publication.
 
 The capture uses REST for complete order history, account state, positions and fresh open-order eligibility. It
 compares complete histories around the account read and checks the filled quantity for every order and leg.
 The order WebSocket carries cancellations and other order lifecycle events.
-See [Activity SSE ownership](src/broker/alpaca/activity-stream.ts),
+See [Activity SSE ownership](../../docs/bayn/durable-broker-event-architecture.md#durable-activity-sse-path),
 [capture ownership](src/broker/alpaca/snapshot-cache.ts) and
 [history verification](src/simulation-reconciliation/broker-history.ts).
 
