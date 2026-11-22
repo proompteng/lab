@@ -1248,7 +1248,25 @@ const sandboxExecutionProgram = (
   }
 }
 
-const executionLifecycleFixture = async (
+const lifecycleMarketData = (snapshotRequests: IntradaySnapshotRequest[]): IntradayMarketDataService => ({
+  check: Effect.void,
+  loadSnapshot: (query) =>
+    Effect.sync(() => {
+      snapshotRequests.push({ ...query, archiveWatermarks: [] })
+      return streamingFixtureFromRaw(
+        makeIntradayMomentumTestSnapshot(
+          currentIntradayProtocol,
+          { ...query, archiveWatermarks: [] },
+          { NVDA: 0.02 },
+          10,
+        ),
+        query,
+      ).snapshot
+    }),
+  verifyReference: fixtureStreamingReference,
+})
+
+const makeExecutionLifecycleFixture = async (
   transformPolicy: (policy: Policy) => Policy = (policy) => policy,
   strategy: StrategyRuntime = currentIntradayRuntime,
   compileDecision: typeof buildMutationShadowCycleDecision = buildMutationShadowCycleDecision,
@@ -1271,23 +1289,7 @@ const executionLifecycleFixture = async (
   const selectedCycle = { ...cycle, identity: selectedIdentity }
 
   const snapshotRequests: IntradaySnapshotRequest[] = []
-  const intradayMarketData: IntradayMarketDataService = {
-    check: Effect.void,
-    loadSnapshot: (query) =>
-      Effect.sync(() => {
-        snapshotRequests.push({ ...query, archiveWatermarks: [] })
-        return streamingFixtureFromRaw(
-          makeIntradayMomentumTestSnapshot(
-            currentIntradayProtocol,
-            { ...query, archiveWatermarks: [] },
-            { NVDA: 0.02 },
-            10,
-          ),
-          query,
-        ).snapshot
-      }),
-    verifyReference: fixtureStreamingReference,
-  }
+  const intradayMarketData = lifecycleMarketData(snapshotRequests)
   const input = {
     accountId,
     authorityGenerationHash: generationHash,
@@ -1359,6 +1361,22 @@ const executionLifecycleFixture = async (
   const risk = document.deltaRisk[0]
   if (intent === undefined || risk === undefined) throw new Error('PAPER lifecycle fixture requires one planned intent')
   return { boundCycle, document, input, intent, intents, policy, preparation, risk, snapshotRequests }
+}
+
+let defaultLifecycleFixture: ReturnType<typeof makeExecutionLifecycleFixture> | undefined
+const executionLifecycleFixture = async (...args: Parameters<typeof makeExecutionLifecycleFixture>) => {
+  if (args.length > 0) return makeExecutionLifecycleFixture(...args)
+  const { input, ...state } = await (defaultLifecycleFixture ??= makeExecutionLifecycleFixture())
+  // Each case owns the initial observations and the market service that records later requests.
+  const copy = structuredClone(state)
+  return {
+    ...copy,
+    input: {
+      ...input,
+      intradayMarketData: lifecycleMarketData(copy.snapshotRequests),
+      executionProgram: sandboxExecutionProgram(),
+    },
+  }
 }
 
 const reconciliationResultAt = (

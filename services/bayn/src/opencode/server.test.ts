@@ -317,8 +317,15 @@ test('scope shutdown escalates for an owned native child that ignores SIGTERM', 
           { mode: 0o700 },
         )
         const originalSpawner = yield* ChildProcessSpawner.ChildProcessSpawner
-        const spawner = ChildProcessSpawner.make((command) =>
-          originalSpawner.spawn(command).pipe(
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (command._tag !== 'StandardCommand') throw new Error('Native shutdown requires one standard command')
+          expect(command.options.forceKillAfter).toBe('25 seconds')
+          // Check the production drain budget above, then exercise real signal escalation on a shorter budget.
+          const testCommand = ChildProcess.make(command.command, command.args, {
+            ...command.options,
+            forceKillAfter: '100 millis',
+          })
+          return originalSpawner.spawn(testCommand).pipe(
             Effect.tap((handle) =>
               Effect.sync(() => {
                 child = handle
@@ -329,8 +336,8 @@ test('scope shutdown escalates for an owned native child that ignores SIGTERM', 
                 }, 30_000)
               }),
             ),
-          ),
-        )
+          )
+        })
         const probed = yield* Deferred.make<void>()
         const native = HttpClient.make(() =>
           Effect.gen(function* () {

@@ -426,8 +426,14 @@ jobs:
               if [ "${#shell_scripts[@]}" -gt 0 ]; then shellcheck "${shell_scripts[@]}"; fi
               ;;
             workflow-lint)
-              go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-              "$(go env GOPATH)/bin/actionlint" -shellcheck '' -pyflakes ''
+              actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"
+              curl --fail --silent --show-error --location \
+                https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+                --output "${actionlint_archive}"
+              printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "${actionlint_archive}" \
+                | sha256sum -c -
+              tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint
+              "${RUNNER_TEMP}/actionlint" -shellcheck '' -pyflakes ''
               ;;
             *)
               echo "Unknown impact target: ${target}" >&2
@@ -493,6 +499,21 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/torghut-ci.yml
 
+  torghut-schema:
+    name: Torghut ClickHouse schema
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/torghut-schema.yml
+
+  torghut-notebooks:
+    name: Torghut notebooks
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/torghut-notebooks-ci.yml
+
+  queue-services:
+    name: Queue service validation
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/queue-service-validation.yml
+
   ci-pr:
     name: ci-pr
     if: ${{ always() }}
@@ -509,6 +530,9 @@ jobs:
       - buf
       - scripts
       - torghut
+      - torghut-schema
+      - torghut-notebooks
+      - queue-services
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
@@ -526,6 +550,9 @@ jobs:
           BUF_RESULT: ${{ needs.buf.result }}
           SCRIPTS_RESULT: ${{ needs.scripts.result }}
           TORGHUT_RESULT: ${{ needs.torghut.result }}
+          TORGHUT_SCHEMA_RESULT: ${{ needs.torghut-schema.result }}
+          TORGHUT_NOTEBOOKS_RESULT: ${{ needs.torghut-notebooks.result }}
+          QUEUE_SERVICES_RESULT: ${{ needs.queue-services.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
           FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
@@ -554,8 +581,12 @@ jobs:
             echo "Tooling validation failed: buf=${BUF_RESULT}, scripts=${SCRIPTS_RESULT}" >&2
             exit 1
           fi
-          if [[ "${FULL_VALIDATION}" == true && "${TORGHUT_RESULT}" != success ]]; then
-            echo "Torghut validation failed: torghut=${TORGHUT_RESULT}" >&2
+          if [[ "${FULL_VALIDATION}" == true && ( "${TORGHUT_RESULT}" != success || "${TORGHUT_SCHEMA_RESULT}" != success || "${TORGHUT_NOTEBOOKS_RESULT}" != success ) ]]; then
+            echo "Torghut validation failed: core=${TORGHUT_RESULT}, schema=${TORGHUT_SCHEMA_RESULT}, notebooks=${TORGHUT_NOTEBOOKS_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && "${QUEUE_SERVICES_RESULT}" != success ]]; then
+            echo "Queue service validation failed: ${QUEUE_SERVICES_RESULT}" >&2
             exit 1
           fi
           echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"

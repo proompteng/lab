@@ -13,7 +13,7 @@ import { prepareRidgeTraining, runRidgeTraining } from './ridge-training'
 import { ridgeTrainingFixture } from './ridge-training.test-support'
 import { RidgeTrainingOutcome } from './ridge-training-selection'
 
-test('original receipts generate causal labels from partial fills with serial cash and turnover, then fit a callable command', async () => {
+test('the CLI fits causal labels from partial fills with serial cash and turnover', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const fixture = ridgeTrainingFixture()
@@ -21,7 +21,29 @@ test('original receipts generate causal labels from partial fills with serial ca
       const directory = yield* fs.makeTempDirectoryScoped()
       const arrivals = `${directory}/arrivals.ndjson.gz`
       yield* fs.writeFile(arrivals, fixture.body)
-      const report = yield* runRidgeTraining(fixture.input, arrivals, fixture.receipt)
+      const inputText = JSON.stringify(fixture.input)
+      yield* fs.writeFileString(`${directory}/input.json`, inputText)
+      yield* fs.writeFileString(`${directory}/receipt.json`, fixture.receiptText)
+      const output = `${directory}/report.json`
+      const args = [
+        '--input',
+        `${directory}/input.json`,
+        '--input-sha256',
+        sha256(inputText),
+        '--arrivals',
+        arrivals,
+        '--source-receipt',
+        `${directory}/receipt.json`,
+        '--source-receipt-sha256',
+        sha256(fixture.receiptText),
+        '--output',
+        output,
+      ]
+      yield* runRidgeTrainingCommand(args)
+      const reportText = yield* fs.readFileString(output)
+      const { reportHash, ...report } = JSON.parse(reportText) as Effect.Success<ReturnType<typeof runRidgeTraining>>
+      expect(reportHash).toBe(Result.getOrThrow(canonicalHashV1Result(report)))
+      expect(report.sourceReceiptHash).toBe(fixture.receipt.contentHash)
       expect(report.status).toBe('FITTED')
       expect(report.artifact).not.toBeNull()
       expect(report.chains).toHaveLength(equityMarketProfile.candidateSymbols.length)
@@ -63,27 +85,12 @@ test('original receipts generate causal labels from partial fills with serial ca
           expect(attempt.orders).toHaveLength(4)
         }
       }
-      const inputText = JSON.stringify(fixture.input)
-      yield* fs.writeFileString(`${directory}/input.json`, inputText)
-      yield* fs.writeFileString(`${directory}/receipt.json`, fixture.receiptText)
-      const args = [
-        '--input',
-        `${directory}/input.json`,
-        '--input-sha256',
-        sha256(inputText),
-        '--arrivals',
-        arrivals,
-        '--source-receipt',
-        `${directory}/receipt.json`,
-        '--source-receipt-sha256',
-        sha256(fixture.receiptText),
-        '--output',
-        `${directory}/report.json`,
-      ]
-      yield* runRidgeTrainingCommand(args)
-      const fromCommand = JSON.parse(yield* fs.readFileString(`${directory}/report.json`)) as { reportHash: string }
-      expect(fromCommand.reportHash).toBe(report.reportHash)
-      expect(Result.isFailure(yield* Effect.result(runRidgeTrainingCommand(args)))).toBeTrue()
+      const refused = yield* Effect.flip(runRidgeTrainingCommand(args))
+      expect(refused).toMatchObject({
+        _tag: 'ControlStudyFailure',
+        message: 'Training report already exists; refusing to overwrite it',
+      })
+      expect(yield* fs.readFileString(output)).toBe(reportText)
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
   )
 }, 150_000)

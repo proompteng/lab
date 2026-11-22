@@ -3,7 +3,12 @@ import { describe, expect, test } from 'bun:test'
 import { DateTime, Result } from 'effect'
 
 import { prepareAccounting } from '../../accounting/domain'
-import type { BrokerEventInput, PositionEventInput, PositionSnapshotInput } from '../../broker/observations'
+import {
+  orderSourceContentHashResult,
+  type BrokerEventInput,
+  type PositionEventInput,
+  type PositionSnapshotInput,
+} from '../../broker/observations'
 import { canonicalHashV1Result } from '../../hash'
 import {
   AccountStatus,
@@ -198,8 +203,12 @@ describe('ExecutionStore decisions', () => {
   })
 
   test('orders provider versions independently of millisecond event time and local arrival', () => {
+    const currentEvent = orderEvent('2026-07-22T15:30:00.500900000Z')
     const current: CurrentOrderVersionRow = {
       event_id: 'a'.repeat(64),
+      content_hash: Result.getOrThrow(
+        orderSourceContentHashResult(currentEvent.order, '2026-07-22T15:30:00.500900000Z'),
+      ),
       broker_order_id: 'broker-order-1',
       source_event_id: 'order:broker-order-1:2026-07-22T15:30:00.500900000Z',
       source_sequence: '9',
@@ -232,6 +241,65 @@ describe('ExecutionStore decisions', () => {
     expect(
       failure(selectLatestOrderVersions([late, orderEvent(late.sourceTimestamp, `${late.sourceEventId}-different`)])),
     ).toMatchObject({ failure: 'conflict', message: expect.stringContaining('different source identity') })
+
+    const retainedTimestamp = '2026-07-22T15:30:00.500900123Z'
+    const retainedEvent = orderEvent(retainedTimestamp)
+    const retained = {
+      ...current,
+      content_hash: Result.getOrThrow(orderSourceContentHashResult(retainedEvent.order, retainedTimestamp)),
+      source_event_id: retainedEvent.sourceEventId,
+      broker_updated_at: retainedTimestamp,
+    }
+    const truncated = orderEvent('2026-07-22T15:30:00.500900000Z', 'order:broker-order-1:2026-07-22T15:30:00.500900Z')
+    expect(value(decideOrderVersion(truncated, retained))).toEqual({
+      _tag: 'RetainEquivalentOrderVersion',
+      receipt: {
+        eventId: retained.event_id,
+        sourceSequence: retained.source_sequence,
+        deduplicated: true,
+        superseded: true,
+      },
+    })
+    expect(
+      value(
+        decideOrderVersion({ ...truncated, order: { ...truncated.order, status: OrderStatus.Canceled } }, retained),
+      ),
+    ).toMatchObject({ _tag: 'SupersedeOrderVersion' })
+    expect(
+      value(
+        decideOrderVersion(
+          orderEvent('2026-07-22T15:30:00.500899000Z', 'order:broker-order-1:2026-07-22T15:30:00.500899Z'),
+          retained,
+        ),
+      ),
+    ).toMatchObject({ _tag: 'SupersedeOrderVersion' })
+
+    const zeroTailTimestamp = '2026-07-22T15:30:00.500900000Z'
+    const zeroTailEvent = orderEvent(zeroTailTimestamp)
+    const zeroTailRetained = {
+      ...current,
+      content_hash: Result.getOrThrow(orderSourceContentHashResult(zeroTailEvent.order, zeroTailTimestamp)),
+      source_event_id: zeroTailEvent.sourceEventId,
+      broker_updated_at: zeroTailTimestamp,
+    }
+    const zeroTailTruncated = orderEvent(zeroTailTimestamp, 'order:broker-order-1:2026-07-22T15:30:00.500900Z')
+    expect(value(decideOrderVersion(zeroTailTruncated, zeroTailRetained))).toEqual({
+      _tag: 'RetainEquivalentOrderVersion',
+      receipt: {
+        eventId: zeroTailRetained.event_id,
+        sourceSequence: zeroTailRetained.source_sequence,
+        deduplicated: true,
+        superseded: true,
+      },
+    })
+    expect(
+      failure(
+        decideOrderVersion(
+          { ...zeroTailTruncated, order: { ...zeroTailTruncated.order, status: OrderStatus.Canceled } },
+          zeroTailRetained,
+        ),
+      ),
+    ).toMatchObject({ failure: 'conflict' })
   })
 
   test('derives source sequences without a hidden partial bigint conversion', () => {
