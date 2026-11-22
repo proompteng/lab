@@ -38,6 +38,14 @@ pub(crate) const AUDITED_REQUEST_BUDGET_MS: u64 = 25_000;
 const DURABLE_TIMEOUT: Duration = Duration::from_secs(30);
 mod receipts;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AuditScope {
+    #[default]
+    Submission,
+    Observation,
+    RunStart(uuid::Uuid),
+}
+
 #[derive(Clone)]
 pub struct Client {
     rpc: TengriAuthorizationServiceClient<Channel>,
@@ -75,6 +83,7 @@ impl Client {
                             stream_receipt_id: String::new(),
                         },
                         recovery,
+                        AuditScope::Observation,
                     )
                     .await?,
             )
@@ -202,6 +211,7 @@ impl Client {
                     stream_receipt_id: String::new(),
                 },
                 recovery,
+                AuditScope::Observation,
             )
             .await?;
         let mut rpc = self.rpc.clone();
@@ -287,11 +297,11 @@ impl Client {
         &self,
         mut check: CheckRequest,
         recovery_generation: u64,
-        observation: bool,
+        scope: AuditScope,
     ) -> Result<CheckResponse, Status> {
-        // Repeated observations retain one durable receipt. Control operations still
-        // audit each submission and renew human activity through that transaction.
-        let reusable = observation
+        // Reuse receipts for repeated observations and the same run start. Each
+        // distinct control submission still commits its own audit before access.
+        let reusable = scope != AuditScope::Submission
             || matches!(
                 Action::try_from(check.action),
                 Ok(Action::WorkspaceMetadataRead
@@ -305,10 +315,17 @@ impl Client {
                 .check_request(check, recovery_generation, !reusable)
                 .await;
         }
-        let binding = self.receipts.bind(&check, recovery_generation).await?;
+        let binding = self
+            .receipts
+            .bind(&check, recovery_generation, scope)
+            .await?;
         check.stream_receipt_id = binding.id().into();
         let decision = self
-            .check_request(check, recovery_generation, false)
+            .check_request(
+                check,
+                recovery_generation,
+                matches!(scope, AuditScope::RunStart(_)),
+            )
             .await?;
         binding.record(decision.audit_receipt_id.clone());
         Ok(decision)
