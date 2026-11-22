@@ -21,7 +21,10 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::{net::TcpStream, time::timeout};
+use tokio::{
+    net::TcpStream,
+    time::{Instant, timeout},
+};
 use tokio_rustls::TlsConnector;
 use tonic::{
     Request, Status,
@@ -298,11 +301,15 @@ impl Client {
                     | Action::BrowserObserve)
             );
         if !check.stream_receipt_id.is_empty() || !reusable {
-            return self.check_request(check, recovery_generation).await;
+            return self
+                .check_request(check, recovery_generation, !reusable)
+                .await;
         }
         let binding = self.receipts.bind(&check, recovery_generation).await?;
         check.stream_receipt_id = binding.id().into();
-        let decision = self.check_request(check, recovery_generation).await?;
+        let decision = self
+            .check_request(check, recovery_generation, false)
+            .await?;
         binding.record(decision.audit_receipt_id.clone());
         Ok(decision)
     }
@@ -311,6 +318,7 @@ impl Client {
         &self,
         check: CheckRequest,
         recovery_generation: u64,
+        submission: bool,
     ) -> Result<CheckResponse, Status> {
         let mut rpc = self.rpc.clone();
         let duration = if check.stream_receipt_id.is_empty() {
@@ -319,7 +327,25 @@ impl Client {
             DECISION_TIMEOUT
         }
         .min(remaining_deadline(&check)?);
-        let decision = bounded(duration, rpc.check(request(check, duration))).await?;
+        let retry = (submission
+            && check.action == Action::CodexControl as i32
+            && check.stream_receipt_id.is_empty())
+        .then(|| check.clone());
+        let deadline = Instant::now() + duration;
+        let first = bounded(duration, rpc.check(request(check, duration))).await;
+        let decision = match (first, retry) {
+            (Err(status), Some(check)) if status.code() == tonic::Code::Aborted => {
+                // Ofz discarded a decision during a policy change. Recheck before admitting work.
+                let remaining = deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(remaining_deadline(&check)?);
+                if remaining.is_zero() {
+                    return Err(status);
+                }
+                bounded(remaining, rpc.check(request(check, remaining))).await?
+            }
+            (result, _) => result?,
+        };
         if decision.recovery_generation != recovery_generation {
             return Err(Status::unauthenticated(
                 "authorization recovery generation changed",
