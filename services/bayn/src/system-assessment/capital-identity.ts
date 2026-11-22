@@ -13,10 +13,21 @@ import { JevResearchPolicy } from '../jev/acceptance'
 
 export const readRegisteredFinancialIdentity = (
   definition: typeof PolicyDefinitionSchema.Type,
-  registrationHash?: string,
+  registration?: string | { readonly lockServingIncumbent: true } | { readonly incumbentWitnessHash: string },
 ) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
+    const serving =
+      typeof registration === 'object' && 'lockServingIncumbent' in registration
+        ? sql`SELECT a.effective = ${Authority.Execution} AND a.kill_state = ${KillState.Clear}
+          FROM authority_state AS a WHERE a.singleton AND a.generation_hash = g.generation_hash FOR SHARE OF a`
+        : typeof registration === 'object'
+          ? sql`SELECT w.generation_hash = g.generation_hash FROM qualification_incumbent_witnesses AS w
+            WHERE w.registration_hash = ${registration.incumbentWitnessHash}`
+          : sql`SELECT b.authority_state->>'generation_hash' = g.generation_hash
+          AND b.authority_state->>'effective' = ${Authority.Execution}
+          AND b.authority_state->>'kill_state' = ${KillState.Clear}
+          FROM operational_safety_baselines AS b WHERE b.registration_hash = ${registration ?? null}`
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.Array(
         Schema.Struct({
@@ -36,12 +47,7 @@ export const readRegisteredFinancialIdentity = (
         strategy_behavior_hash AS "strategyHash", strategy_parameter_hash AS "parametersHash",
         strategy_protocol_hash AS "protocolHash",
         COALESCE(g.maximum = ${Authority.Execution} AND g.strategy_name = 'jev'
-          AND (
-            SELECT b.authority_state->>'generation_hash' = g.generation_hash
-              AND b.authority_state->>'effective' = ${Authority.Execution}
-              AND b.authority_state->>'kill_state' = ${KillState.Clear}
-            FROM operational_safety_baselines AS b WHERE b.registration_hash = ${registrationHash ?? null}
-          ), false) AS "servingAtRegistration", jsonb_build_object(
+          AND (${serving}), false) AS "servingAtRegistration", jsonb_build_object(
         'schemaVersion', broker_identity_schema_version, 'provider', broker_provider,
         'environment', broker_environment, 'accountId', account_id, 'identityHash', broker_identity_hash
       ) AS identity FROM authority_generations AS g WHERE g.generation_hash = ${definition.authorityGenerationHash}`,

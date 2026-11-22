@@ -23,6 +23,7 @@ import {
   verifyStoredOperationalAssessment,
 } from './operational-assessment'
 import { readRegisteredFinancialIdentity } from './capital-identity'
+import { PairedIncumbentWitnessSchema, readPairedWitness, requirePairedIncumbentWitness } from './paired-witness'
 import { readSystemSourceCut, type SystemSourceCut } from './source-cut'
 import { readOperationalAssessmentSourceCut } from './operational-source-cut'
 import { bindSystemSourceCut } from './bind-source'
@@ -62,12 +63,37 @@ const boundaryError = (message: string) => (cause: unknown) => new SystemAssessm
 const HashRow = Schema.Array(Schema.Struct({ registration_hash: Sha256Schema }))
 const RegistrationRows = Schema.Array(Schema.Struct({ payload: Schema.Unknown }))
 
-const verifyNativeCashLedgerSources = (
+export const verifyNativeCashLedgerSources = (
   registration: (typeof SystemAssessmentInputSchema.Type)['registration'],
   cut: SystemSourceCut,
+  peer?: PgClient.PgClient,
 ) =>
   Effect.gen(function* () {
     if (registration.schemaVersion !== 'bayn.system-registration.v5') return
+    const candidate = yield* PgClient.PgClient
+    if (peer !== undefined) {
+      const incumbent = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Incumbent)
+      if (incumbent === undefined)
+        return yield* new SystemAssessmentError({ message: 'Paired registration has no incumbent' })
+      const current = yield* requirePairedIncumbentWitness(
+        candidate,
+        peer,
+        cut.registrationHash,
+        incumbent.authorityGenerationHash,
+      )
+      const { incumbentWitness } = yield* Schema.decodeUnknownEffect(
+        Schema.Struct({ incumbentWitness: PairedIncumbentWitnessSchema }),
+      )(cut.sourceMaterial)
+      if (
+        (yield* Effect.fromResult(canonicalHashV1Result(incumbentWitness))) !==
+        (yield* Effect.fromResult(canonicalHashV1Result(current)))
+      )
+        return yield* new SystemAssessmentError({
+          message: 'Captured incumbent witness differs from the paired admission',
+        })
+    } else if ((yield* readPairedWitness(candidate, cut.registrationHash, 'qualification_pair_seals')) !== undefined) {
+      return yield* new SystemAssessmentError({ message: 'Paired assessment requires the independent incumbent store' })
+    }
     const retained = yield* Effect.fromResult(registeredNativeCashAccounts(registration, cut))
     const accounts = [...retained.values()].flatMap((account) => {
       const transactions = account.forward.accountTransactions
@@ -81,30 +107,30 @@ const verifyNativeCashLedgerSources = (
     })
     if (
       accounts.some(
-        ({ reconciledAt }) =>
+        ({ account, reconciledAt }) =>
           DateTime.toEpochMillis(DateTime.makeUnsafe(reconciledAt)) >
-          DateTime.toEpochMillis(DateTime.makeUnsafe(cut.asOf)),
+          DateTime.toEpochMillis(DateTime.makeUnsafe(account.capturedAt ?? cut.asOf)),
       )
     )
       return yield* new SystemAssessmentError({
         message: 'Native cash reconciliation occurs after its immutable source cut',
       })
     if (accounts.length === 0) return
-    const sql = yield* PgClient.PgClient
-    yield* forwardPerformanceSnapshot(sql).withTransaction(
-      Effect.gen(function* () {
-        for (const { account, reconciledAt, transactions } of accounts) {
-          const cutoff = DateTime.toDateUtc(DateTime.makeUnsafe(reconciledAt))
-          const durableTransactions = (yield* ledgerTransactionQuery(sql, account.identity.accountId, cutoff).pipe(
-            Effect.flatMap(decodeTransactions),
-          )).map(accountingTransactionFromRow)
-          const receiptRows = yield* ledgerReceiptQuery(sql, account.identity.accountId, cutoff).pipe(
-            Effect.flatMap(decodeReceipts),
-          )
-          const durableReceipts = yield* Effect.forEach(receiptRows, (row) =>
-            decodeAccountingReceipt(accountingReceiptFromRow(row)),
-          )
-          const durableCashSettlements = yield* sql`
+    const verifyAccounts = (sql: PgClient.PgClient, owned: typeof accounts) =>
+      forwardPerformanceSnapshot(sql).withTransaction(
+        Effect.gen(function* () {
+          for (const { account, reconciledAt, transactions } of owned) {
+            const cutoff = DateTime.toDateUtc(DateTime.makeUnsafe(reconciledAt))
+            const durableTransactions = (yield* ledgerTransactionQuery(sql, account.identity.accountId, cutoff).pipe(
+              Effect.flatMap(decodeTransactions),
+            )).map(accountingTransactionFromRow)
+            const receiptRows = yield* ledgerReceiptQuery(sql, account.identity.accountId, cutoff).pipe(
+              Effect.flatMap(decodeReceipts),
+            )
+            const durableReceipts = yield* Effect.forEach(receiptRows, (row) =>
+              decodeAccountingReceipt(accountingReceiptFromRow(row)),
+            )
+            const durableCashSettlements = yield* sql`
         SELECT settlement_id,data,rounding_delta_micros::text AS rounding_delta_micros,
           content_hash,ledger_plan_hash,tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
           tigerbeetle_ledger::integer AS tigerbeetle_ledger,
@@ -114,19 +140,28 @@ const verifyNativeCashLedgerSources = (
           AND (data->>'occurredAt')::timestamptz<=${cutoff}::timestamptz
         ORDER BY transaction_id COLLATE "C"
       `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(StoredCashSettlementSchema), strictParseOptions)))
-          yield* Effect.fromResult(
-            verifyRetainedAccountLedgerPrefix({
-              accountId: account.identity.accountId,
-              asOf: cut.asOf,
-              retainedTransactions: transactions,
-              durableTransactions,
-              durableReceipts,
-              retainedCashSettlements: account.forward.accountCashSettlements ?? [],
-              durableCashSettlements,
-            }),
-          )
-        }
-      }),
+            yield* Effect.fromResult(
+              verifyRetainedAccountLedgerPrefix({
+                accountId: account.identity.accountId,
+                asOf: account.capturedAt ?? cut.asOf,
+                retainedTransactions: transactions,
+                durableTransactions,
+                durableReceipts,
+                retainedCashSettlements: account.forward.accountCashSettlements ?? [],
+                durableCashSettlements,
+              }),
+            )
+          }
+        }),
+      )
+    if (peer === undefined) return yield* verifyAccounts(candidate, accounts)
+    yield* verifyAccounts(
+      candidate,
+      accounts.filter(({ account }) => account.policy !== JevResearchPolicy.Incumbent),
+    )
+    yield* verifyAccounts(
+      peer,
+      accounts.filter(({ account }) => account.policy === JevResearchPolicy.Incumbent),
     )
   })
 
@@ -325,11 +360,12 @@ export const assessAndPersistSystem = (
   verifiedSources: ReadonlySet<string>,
   artifacts: ReadonlyMap<string, Uint8Array> = new Map(),
   images: ReadonlyMap<string, VerifiedReplayImage> = new Map(),
+  peer?: PgClient.PgClient,
 ) =>
   Effect.gen(function* () {
     const decoded = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(input)
     const cut = yield* readSystemSourceCut(decoded.sourceCutHash)
-    yield* verifyNativeCashLedgerSources(decoded.registration, cut)
+    yield* verifyNativeCashLedgerSources(decoded.registration, cut, peer)
     const candidate = decoded.registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
     if (candidate === undefined) return yield* new SystemAssessmentError({ message: 'Missing candidate registration' })
     const timings = yield* Effect.fromResult(
