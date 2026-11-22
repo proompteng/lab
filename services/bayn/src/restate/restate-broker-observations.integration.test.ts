@@ -14,8 +14,10 @@ import {
 } from '../broker/notifications'
 import { sha256 } from '../hash'
 import { BrokerStreamReconciliationReason } from '../broker/trade-update-projection'
+import { brokerActivityProjectionContract, brokerActivityVersion, type BrokerActivityEvent } from '../broker/activities'
 import { ProtectionReleaseReferenceSchema, type ProtectionReleaseReference } from '../execution/events'
 import { acquireRestateHttp2Server } from './restate-http2-server'
+import { makeBaynBrokerActivities, type BrokerActivityRuntime } from './restate-broker-activities'
 import {
   brokerObservationJsonSerde,
   makeBaynBrokerObservations,
@@ -133,6 +135,113 @@ const wakeReceiver = (record: (wake: unknown) => void = () => undefined) =>
   )
 
 describeRestate('Real always-replay Restate broker ingress', () => {
+  test('activity ingest recovers a lost persistence completion and advances the cursor once', async () => {
+    const { admin, ingress } = localTargets()
+    const activityConfig = { ...config, controllerKey: sha256(randomUUID()) }
+    const activity: BrokerActivityEvent = {
+      _tag: 'Event',
+      schemaVersion: brokerActivityVersion,
+      eventId: sha256('always-replay activity delivery'),
+      sourceEventId: '00000000000000000000000001',
+      contentHash: sha256('{}'),
+      refId: '00000000-0000-4000-8000-000000000001',
+      activityType: 'TRD',
+      activityJson: '{}',
+      receivedAt: '2026-11-21T16:00:00.000Z',
+      session: {
+        identityHash: activityConfig.controllerKey,
+        accountId: connection.identity.accountId,
+        environment: BrokerEnvironment.Sandbox,
+        credentialHash: sha256('activity credential'),
+        sessionId: 'activity-replay',
+        sourceRevision,
+        verifiedAt: '2026-11-21T16:00:00.000Z',
+        connectedAt: '2026-11-21T16:00:00.000Z',
+        requestId: 'activity-replay',
+      },
+    }
+    let stored = false
+    let attempts = 0
+    const reconciliations: unknown[] = []
+    const state = () => ({
+      cursor: stored ? activity.sourceEventId : null,
+      caughtUp: true,
+      replayFromId: '00000000000000000000000000',
+      replayUntilId: '00000000000000000000000000',
+      completionHash: sha256('prior range'),
+      fillFeeComplete: true,
+      sourceRevision,
+    })
+    const runtime: BrokerActivityRuntime = {
+      verify: () => Result.succeed(activity),
+      cursor: async () => state(),
+      record: async (_signal, selected) => {
+        expect(selected).toEqual(activity)
+        attempts++
+        if (!stored) {
+          stored = true
+          throw new Error('Injected lost completion after persisting the activity')
+        }
+        return {
+          _tag: 'Accepted',
+          receipt: {
+            ...state(),
+            accepted: true,
+            eventId: activity.eventId,
+            replayed: true,
+            projection: 'Fill',
+            projectionContract: brokerActivityProjectionContract,
+          },
+        }
+      },
+      completeCatchup: async () => {
+        throw new Error('Unexpected catchup')
+      },
+      heartbeat: async () => {
+        throw new Error('Unexpected heartbeat')
+      },
+    }
+    const observations = alwaysReplay(
+      restate.object({
+        name: 'BaynBrokerObservations',
+        handlers: {
+          reconcile: restate.handlers.object.exclusive(
+            { ingressPrivate: true, idempotencyRetention: { days: 7 } },
+            (ctx: restate.ObjectContext, input: unknown) =>
+              ctx.run('record activity reconciliation', async () => {
+                reconciliations.push(input)
+              }),
+          ),
+        },
+      }),
+    )
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = createServer(
+            restate.createEndpointHandler({
+              services: [alwaysReplay(makeBaynBrokerActivities(activityConfig, runtime)), observations],
+            }),
+          )
+          yield* acquireRestateHttp2Server(server, 0)
+          const address = server.address()
+          if (address === null || typeof address === 'string') throw new Error('Missing endpoint address')
+          yield* json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}`, force: true })
+          expect(yield* json(`${admin}/services/BaynBrokerActivities`)).toMatchObject({ inactivity_timeout: '0s' })
+          const base = `${ingress}/BaynBrokerActivities/${activityConfig.controllerKey}`
+          const headers = { 'idempotency-key': activity.eventId }
+          const receipt = yield* json(`${base}/ingest`, {}, headers)
+          expect(receipt).toMatchObject({ cursor: activity.sourceEventId, replayed: true })
+          expect(yield* json(`${base}/ingest`, {}, headers)).toEqual(receipt)
+          expect(yield* json(`${base}/cursor`, {})).toMatchObject({ cursor: activity.sourceEventId })
+          yield* waitFor(() => Effect.sync(() => reconciliations.length > 0))
+          expect(attempts).toBe(2)
+          expect(reconciliations).toEqual([{ eventId: activity.eventId }])
+        }).pipe(Effect.timeout('20 seconds')),
+      ),
+    )
+  }, 25_000)
+
   test('verified public ingress coalesces republication and survives a process restart before its quota deadline', async () => {
     const { admin, ingress } = localTargets()
     let activations = 0
