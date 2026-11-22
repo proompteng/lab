@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: kargo-sha-7c9f79e22450602e3c351d711af26d99b4f87ace-run-44987083452
-  digest: sha256:026d9bc5f565d50e47c136406c3290bc3e36c3c5b55cf57036e512313f7b6e13
+  tag: kargo-sha-6aacea9598f07dc7f6678a4326b6615b2b6c4f1e-run-45001088484
+  digest: sha256:722ad2bb922ff096dda8d342b5a2110bdc7af8770b07101905f9c25c21574a58
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -14,8 +14,8 @@ tolerations:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: kargo-sha-7c9f79e22450602e3c351d711af26d99b4f87ace-run-44987083452
-    digest: sha256:8aa5a448249c7b681e7db7742f3c37785f5f57a121b4a71c7c25a1c2d2128a69
+    tag: kargo-sha-6aacea9598f07dc7f6678a4326b6615b2b6c4f1e-run-45001088484
+    digest: sha256:ab506cc1d9be1456ee61bd66069a83c57835ff4ffd9d3469d53444918df41d23
   env:
     vars:
       AGENTS_RELAY_TARGETS_FILE: /etc/agents-relay/relay-targets.json
@@ -23,18 +23,18 @@ controlPlane:
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
       AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
-      AGENTS_SOURCE_HEAD_SHA: 7c9f79e22450602e3c351d711af26d99b4f87ace
-      AGENTS_GITOPS_REVISION: 7c9f79e22450602e3c351d711af26d99b4f87ace
-      AGENTS_SOURCE_CI_RUN_ID: "44987083452"
+      AGENTS_SOURCE_HEAD_SHA: 6aacea9598f07dc7f6678a4326b6615b2b6c4f1e
+      AGENTS_GITOPS_REVISION: 6aacea9598f07dc7f6678a4326b6615b2b6c4f1e
+      AGENTS_SOURCE_CI_RUN_ID: "45001088484"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:8aa5a448249c7b681e7db7742f3c37785f5f57a121b4a71c7c25a1c2d2128a69
-      AGENTS_SERVING_BUILD_COMMIT: 7c9f79e22450602e3c351d711af26d99b4f87ace
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:8aa5a448249c7b681e7db7742f3c37785f5f57a121b4a71c7c25a1c2d2128a69
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:ab506cc1d9be1456ee61bd66069a83c57835ff4ffd9d3469d53444918df41d23
+      AGENTS_SERVING_BUILD_COMMIT: 6aacea9598f07dc7f6678a4326b6615b2b6c4f1e
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:ab506cc1d9be1456ee61bd66069a83c57835ff4ffd9d3469d53444918df41d23
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: kargo-sha-7c9f79e22450602e3c351d711af26d99b4f87ace-run-44987083452
-    digest: sha256:c6aafc91a41752c098c44ff8b41061c3c569a5bb6cdfd06743e7e990789581f5
+    tag: kargo-sha-6aacea9598f07dc7f6678a4326b6615b2b6c4f1e-run-45001088484
+    digest: sha256:0ddc510cfbeb4c94d61c2f2a8d6a5a4aeda7215298ad39cf312d0d63e6bd2d9f
 linearMcpGateway:
   enabled: false
   replicaCount: 2
@@ -57,8 +57,8 @@ agentsShell:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-shell
-    tag: kargo-sha-7c9f79e22450602e3c351d711af26d99b4f87ace-run-44987083452
-    digest: sha256:ef37e17f6fed5e0c02fcbe71823376b871b716f7a3a8ab1efdbd0b8d2dfd461f
+    tag: kargo-sha-6aacea9598f07dc7f6678a4326b6615b2b6c4f1e-run-45001088484
+    digest: sha256:4de7f2f574324d5b29e4a7edeb4f1a648261a7a8b96433f3127f3c94c59bd9e4
     pullPolicy: IfNotPresent
   env:
     vars:
@@ -81,6 +81,7 @@ agentsShell:
       AGENTS_SHELL_REPO_BASE_BRANCH: main
       AGENTS_SHELL_PAPERLESS_URL: http://paperless.paperless.svc.cluster.local:8000
       AGENTS_SHELL_PAPERLESS_TOKEN_FILE: /var/run/secrets/agents-shell-paperless/token
+      AGENTS_SHELL_PAPERLESS_MAX_FILE_BYTES: "268435456"
       OMNI_ENDPOINT: https://nuc.ide-newton.ts.net:443
       TALOSCONFIG: /var/run/secrets/agents-shell-omni/talosconfig
     secrets:
@@ -208,8 +209,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: kargo-sha-7c9f79e22450602e3c351d711af26d99b4f87ace-run-44987083452
-    digest: sha256:026d9bc5f565d50e47c136406c3290bc3e36c3c5b55cf57036e512313f7b6e13
+    tag: kargo-sha-6aacea9598f07dc7f6678a4326b6615b2b6c4f1e-run-45001088484
+    digest: sha256:722ad2bb922ff096dda8d342b5a2110bdc7af8770b07101905f9c25c21574a58
   autoscaling:
     enabled: false
 swarm:
