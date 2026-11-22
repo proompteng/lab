@@ -124,3 +124,29 @@ test('requires complete authentic scope, exact independent postings, and a move-
   ).toBeNull()
   expect(confirm(evidence, { ...forward, ledgerExact: false })).toBeNull()
 })
+
+test.each(['2026-09-29', '2027-01-04'] as const)('requires receipted TAF and verifies its cash prefix on %s', (day) => {
+  const tradingSession = {
+    sessionDate: day,
+    openAt: `${day}T14:30:00.000Z`,
+    closeAt: `${day}T21:00:00.000Z`,
+    recoveryCloseAt: `${day}T23:00:00.000Z`,
+  } as const
+  const { accountHash, evidence, forward, openFill, closeFill } = equityFeeCashFixture(tradingSession, undefined, 3)
+  const verify = (model = intradayExecutionModel, ledger = forward, inputs = evidence) =>
+    Result.getOrThrow(confirmEquityFeeCash(tradingSession, accountHash, model, ledger, inputs))
+
+  expect(verify()?.points).toEqual([
+    { at: openFill, tradeCashDeltaMicros: '-100000000', incurredFeesMicros: '10000' },
+    { at: closeFill, tradeCashDeltaMicros: '7000000', incurredFeesMicros: '30000' },
+  ])
+
+  const unpaid = equityFeeCashFixture(tradingSession)
+  expect(verify(intradayExecutionModel, unpaid.forward, unpaid.evidence)).toBeNull()
+
+  const possibleCap = {
+    ...intradayExecutionModel,
+    fees: { ...intradayExecutionModel.fees, tafMaximumPerOrderMicros: '194' },
+  } as const
+  expect(verify(possibleCap)).toBeNull()
+})
