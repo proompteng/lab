@@ -2119,7 +2119,8 @@ postgres('PostgreSQL prospective system qualification', () => {
   test('the deferred deadline rejects a transaction that crosses the first market open', async () => {
     await restorePriorAdmission(206)
     const first = retainedRegistration()
-    const now = Date.parse(await runtime.runPromise(databaseNow))
+    const databaseTime = await runtime.runPromise(databaseNow)
+    const now = Date.parse(databaseTime)
     const openAt = new Date(now + 2000).toISOString()
     const closeAt = new Date(now + 3000).toISOString()
     const input = {
@@ -2131,19 +2132,30 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       },
     }
+    // Only this disposable database has a controllable clock, and only the test transaction resolves it first.
+    await runtime.runPromise(
+      Effect.flatMap(
+        PgClient.PgClient,
+        (sql) => sql`CREATE FUNCTION public.clock_timestamp() RETURNS timestamptz LANGUAGE sql VOLATILE
+          RETURN current_setting('bayn_test.now')::timestamptz`,
+      ),
+    )
     const exit = await runtime.runPromiseExit(
       asApplication(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
+          yield* sql`SET LOCAL search_path = public, pg_catalog`
+          yield* sql`SELECT set_config('bayn_test.now', ${databaseTime}, true)`
           yield* insertPriorRegistration(withRegistrationCommitments(input))
           expect(yield* sql`SELECT count(*)::integer AS count FROM system_qualification_registrations`).toEqual([
             { count: 1 },
           ])
-          yield* sql`SELECT pg_sleep(2.1)`
+          yield* sql`SELECT set_config('bayn_test.now', ${openAt}, true)`
         }),
       ),
     )
-    expect(Exit.isFailure(exit)).toBe(true)
+    if (!Exit.isFailure(exit)) throw new Error('The late registration committed')
+    expect(Cause.pretty(exit.cause)).toContain('registration committed after the first open')
     const count = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
