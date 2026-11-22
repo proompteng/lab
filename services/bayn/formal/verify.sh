@@ -11,7 +11,7 @@ if [[ "$(uname -s)" != Linux ]]; then
   echo 'Formal verification requires Linux with bubblewrap. Run this command in a Linux VM or container.' >&2
   exit 1
 fi
-for tool in lean bun bwrap git; do
+for tool in lean bun bwrap findmnt git; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "Formal verification requires $tool on PATH." >&2
     exit 1

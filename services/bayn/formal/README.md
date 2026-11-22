@@ -11,9 +11,10 @@ bun run --filter @proompteng/bayn verify:formal
 bun run --filter @proompteng/bayn verify:tla
 ```
 
-The Lean command requires Linux, the pinned Lean toolchain, Bun, Git, installed workspace dependencies, and working `bubblewrap`
-sandboxing. On macOS, use a Linux VM or container. Missing tools, a different Lean version, build failures, checker
-rejections, and conformance failures return a nonzero exit code. The command builds the model and sets
+The Lean command requires Linux, the pinned Lean toolchain, Bun, Git, installed workspace dependencies, `findmnt`
+from util-linux, and working `bubblewrap` sandboxing. On macOS, use a Linux VM or container. Missing tools, a
+different Lean version, build failures, checker rejections, and conformance failures return a nonzero exit code.
+The command builds the model and sets
 `BAYN_FORMAL_EXECUTABLE` itself, so a missing environment variable cannot skip conformance. Ordinary `bun test` skips
 this suite without that variable and is not a substitute for `verify:formal`.
 
@@ -30,10 +31,10 @@ checksum-verified TLC, verifies deliberate faults are detected, and compares eve
 TypeScript. Both commands are mandatory in formal CI and before exact-revision image publication. Neither checker
 runs in the trading runtime. See the [TLA+ model boundaries and assumptions](tla/README.md#bounds-assumptions-and-limits).
 
-The command runs `lake -q build`, `bash check.sh`, and the production conformance suite. The formal CI workflow also
-runs the PostgreSQL handoff, recovery, and assessment suites against its isolated database. `check.sh` builds every
-tracked model module in a sandbox, including roots outside the default target graph, and passes the retained export
-to pinned `lake check --from-export ... --paranoid`.
+`check.sh` verifies the source and toolchain mounts are read-only inside the build sandbox, then builds the executable
+and every tracked model module, including roots outside the default target graph. It passes the retained export to
+pinned `lake check --from-export ... --paranoid` before the production conformance suite runs. Formal CI also runs the
+PostgreSQL handoff, recovery, and assessment suites against its isolated database.
 Every tracked model module is included. `Export.lean` selects every logical declaration by its defining module, including
 private declarations and namespaces outside `Bayn`. The pinned exporter includes their complete transitive dependencies.
 Compiler-generated unsafe or partial implementations are recorded separately; their total logical definitions remain
@@ -125,8 +126,8 @@ explicit evidence assumptions, checked against actual runtime records during the
 `BaynProbability.lean` is a separate default proof-library target, outside `bayn-model` and the trading runtime. It uses
 the pinned Mathlib conditional sub-Gaussian theorem to prove the tail bound, connects the rounded radius to registered
 alpha using `executable_radius_covers_registered_expected_profit` with the actual integer radius, proves paired support without independence and telescopes the familywise allocation across attempts. The
-separate `zero_width_point_support_has_no_strict_lower_bound_failure` theorem covers a registered deterministic series
-with the mathematically correct strict failure event; it does not weaken the positive-width premise of the non-strict tail theorem. The
+separate `zero_width_point_support_has_no_strict_lower_bound_failure` theorem derives a zero chance of a strict
+lower-bound failure when each session return equals its registered value almost surely. The
 causal filtration, deterministic conditional session means, MGF/support and provider authenticity are explicit assessment assumptions. No theorem
 infers those market assumptions from the observed data or establishes future returns. `lake check` checks all default
 targets, including this proof library, through the existing pinned independent checkers.
