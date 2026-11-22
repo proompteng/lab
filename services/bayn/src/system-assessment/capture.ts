@@ -1,5 +1,6 @@
 import {
   readSystemCashObservations,
+  readSystemFeeSettlementAnchors,
   readSystemBatchEvidence,
   readSystemMutationEvidence,
   readSystemControllerPasses,
@@ -29,7 +30,9 @@ import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { captureQualificationRuntime, qualificationRuntime } from './configuration'
 import { BrokerEnvironment } from '../broker/identity'
-import { registeredMarkIntervalMs } from './policy'
+import { alpacaHttpLayer } from '../broker/alpaca/http'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
+import { nativeBrokerRecoveryClose, registeredMarkIntervalMs } from './policy'
 import { measureControllerLatency } from './controller-latency'
 import { measureFullBatchLatency } from './full-batch-latency'
 import { decisionMarketScopeSupported } from './decision-work'
@@ -40,6 +43,7 @@ import { readSystemExecutionOrders, readSystemExecutionFills, readSystemProtecti
 import { executionOrderPlans } from './execution-plans'
 import { captureInferenceSnapshot } from './inference-capture'
 import { captureOperationalSourceCut } from './operational-capture'
+import { captureNativeBrokerStatements } from './broker-statements'
 
 /** Capture one database snapshot. External ledger verification can reject a moving or incomplete cut. */
 export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registrationHash: string) =>
@@ -62,12 +66,27 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         candidate === undefined ||
         identity === undefined ||
         identity.environment !== BrokerEnvironment.Sandbox ||
+        identity.accountId !== candidate.riskPolicy.accountId ||
+        identity.identityHash !== config.alpaca.identity.identityHash ||
         first === undefined ||
         last === undefined
       )
         return yield* new SystemAssessmentError({
           message: 'Source capture requires a registered candidate and broker identity',
         })
+      const brokerRecoveryClose = nativeBrokerRecoveryClose(registration)
+      const statementCut = yield* currentUtcInstant
+      const brokerStatements =
+        brokerRecoveryClose !== undefined && statementCut >= brokerRecoveryClose
+          ? yield* captureNativeBrokerStatements(config.alpaca, registration.policies, {
+              // Include the prior day so a proof can select a real before-open anchor.
+              after: utcInstantFromEpochMillis(Date.parse(first.openAt) - 86_400_000),
+              until: statementCut,
+            }).pipe(
+              // @effect-diagnostics-next-line strictEffectProvide:off -- private capture owns the shared proxy transport
+              Effect.provide(alpacaHttpLayer(config.alpaca)),
+            )
+          : undefined
       const sql = yield* PgClient.PgClient
       const client = yield* makeTigerBeetleRequestClient(config)
       const captured = yield* sql.withTransaction(
@@ -80,8 +99,30 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           if (asOf === undefined)
             return yield* new SystemAssessmentError({ message: 'Database snapshot time is unavailable' })
           const accounts = []
+          const settlementWindows =
+            registration.schemaVersion === 'bayn.system-registration.v5'
+              ? registration.calendar.sessions.flatMap((session) => {
+                  const provider = registration.calendar.marketCalendar.providerSessions.find(
+                    (row) => row.date === session.sessionDate,
+                  )
+                  return provider === undefined ? [] : [{ ...session, recoveryCloseAt: provider.sessionCloseAt }]
+                })
+              : []
+          if (brokerRecoveryClose !== undefined && settlementWindows.length !== registration.calendar.sessions.length)
+            return yield* new SystemAssessmentError({ message: 'A native session is missing its settlement window' })
           for (const definition of registration.policies) {
-            const accountIdentity = yield* readRegisteredFinancialIdentity(definition)
+            const accountIdentity = yield* readRegisteredFinancialIdentity(definition, registration.registeredAt)
+            const brokerNonTradeActivity = brokerStatements?.get(definition.policy)
+            if (
+              brokerStatements !== undefined &&
+              (accountIdentity === null ||
+                brokerNonTradeActivity === undefined ||
+                brokerNonTradeActivity.accountIdentityHash !== accountIdentity.identityHash ||
+                brokerNonTradeActivity.observedAt > asOf)
+            )
+              return yield* new SystemAssessmentError({
+                message: 'Broker activity statement differs from its registered account or evidence cut',
+              })
             if (accountIdentity === null) continue
             if (
               definition.policy === JevResearchPolicy.Candidate &&
@@ -128,6 +169,10 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               closeAt: last.closeAt,
               asOf,
             })
+            const settlementAnchors =
+              settlementWindows.length === 0
+                ? undefined
+                : yield* readSystemFeeSettlementAnchors(accountIdentity.accountId, settlementWindows, asOf)
             const inventory = yield* Effect.fromResult(prepareValuationInventory(forward))
             const observedTimes = new Set(cashObservations.map((mark) => mark.at))
             const scheduled = yield* Effect.forEach(
@@ -231,12 +276,14 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             accounts.push({
               policy: definition.policy,
               identity: accountIdentity,
+              ...(brokerNonTradeActivity === undefined ? {} : { brokerNonTradeActivity }),
               forward,
               decisions,
               protectionIntents,
               fills,
               accountMarks,
               cashObservations,
+              ...(settlementAnchors === undefined ? {} : { settlementAnchors }),
               valuationQuoteSources: [
                 ...new Map(
                   [...quotes.values()].flatMap((bySymbol) =>
@@ -399,7 +446,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
       })
       const saved = yield* persistSystemSourceCut(cut)
       return {
-        ...saved,
+        sourceCutHash: saved.sourceCutHash,
         controllerLatency: yield* Effect.fromResult(measureControllerLatency(registration, cut, identity)),
         fullBatchLatency: yield* Effect.fromResult(measureFullBatchLatency(registration, cut, identity)),
       }
