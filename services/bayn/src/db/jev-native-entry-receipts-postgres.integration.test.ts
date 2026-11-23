@@ -36,7 +36,11 @@ import {
 import { JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { JevFailure } from '../jev/contract'
 import { JevPurpose } from '../jev/portfolio'
-import { nativeJevFixture as fixtureForAccount, nativeJevInference } from '../jev/native.test-support'
+import {
+  nativeJevFixture as fixtureForAccount,
+  nativeJevInference,
+  withObservedEntryBars,
+} from '../jev/native.test-support'
 import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -82,10 +86,13 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
     yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${entry.observation.payload.observedAt}
       WHERE account_id = ${replayAccountId}`
     yield* (yield* CycleStore).acquire(entry.draft, entry.observation.payload.observedAt)
-    const raw = makeIntradayMomentumTestSnapshot(
+    const raw = withObservedEntryBars(
+      makeIntradayMomentumTestSnapshot(
+        entry.protocol,
+        { ...entry.query, archiveWatermarks: [] },
+        Object.fromEntries(symbols.map((symbol) => [symbol, 0.02])),
+      ),
       entry.protocol,
-      { ...entry.query, archiveWatermarks: [] },
-      Object.fromEntries(symbols.map((symbol) => [symbol, 0.02])),
     )
     const snapshot = streamingFixtureFromRaw(
       {

@@ -355,7 +355,11 @@ export const testReplayRuntime = registerRuntimeScenarios(
           bars: original.bars.map((bar) =>
             shiftOffset(
               bar.eventAt === original.bars[0]?.eventAt && bar.symbol !== 'SPY'
-                ? { ...bar, high: Math.max(bar.high, bar.open * 1.05), low: Math.min(bar.low, bar.open * 0.95) }
+                ? {
+                    ...bar,
+                    high: Math.max(bar.high, bar.open * (bar.symbol === 'AAPL' ? 1.056 : 1.035)),
+                    low: Math.min(bar.low, bar.open * 0.99),
+                  }
                 : bar,
             ),
           ),
