@@ -1,6 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: forgejo
+patches:
+- path: server-upgrade-quiesce.patch.yaml
 resources:
 - server-upgrade-backup.yaml
 - kargo-upgrade-backup.yaml
@@ -18,7 +20,7 @@ helmCharts:
   namespace: forgejo
   valuesFile: values.yaml
 configMapGenerator:
-- name: forgejo-server-17-0-2-rehearsal
+- name: forgejo-server-17-0-2-cutover-rehearsal
   files:
   - upgrade-db-rehearsal.sh
   - upgrade-app-rehearsal.sh
@@ -30,4 +32,4 @@ configMapGenerator:
 images:
 - name: code.forgejo.org/forgejo/forgejo
   newName: registry.ide-newton.ts.net/lab/forgejo
-  digest: sha256:9370da313a6775c819fc907f3e19d0a78c5755122f595dff549ffd757922a9c2
+  digest: sha256:b9a139951e54f5829c2cd2eb12e37d32916cc1dc4203d7941df006dd29e17476
