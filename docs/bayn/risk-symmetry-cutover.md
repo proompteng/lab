@@ -27,3 +27,16 @@ After settlement, deliver `bayn.jev.protocol.v42` and admission migration `0213_
 - `strategyBehaviorHash`: `76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67`
 - `strategyParameterHash`: `c78a10a127b6d4fbfd2fa3d2a433744f02295aa9a2b47b20bacfbd9804ba8ed5`
 - `strategyProtocolHash`: `825c8806ba7d16783fcb96fc0d12f49b1e35f03ee81d82f6990bc7b11174d339`
+
+## Return the activated sandbox grant to OBSERVE
+
+Migration 216 restricts the exact activated v42 sandbox grant using the existing strategy-cutover transition.
+Before changing authority it requires terminal cycles and intents, flat inventory, terminal latest broker orders,
+complete accounting and no unexpired inference claims. The fresh exact reconciliation must bind the broker account
+snapshot and the latest trusted flat position snapshot. Orders use the full-precision provider version and
+deterministic receipt tie breaks.
+
+Deliver the migration and removal of the sealed activation request, request identity and runtime lineage together
+through the existing Kargo release. The native controller creates the clear OBSERVE successor after a later exact
+reconciliation. Verify the exact promoted image, clear OBSERVE, flat inventory and no unresolved mutations or
+broker-ledger advance. Resuming PAPER requires its own reviewed mandate.
