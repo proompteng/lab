@@ -258,12 +258,11 @@ const project = (
         }),
       )
     }),
-    // A fresh statement observes the preceding commit; the SQL guard still excludes an ambient transaction's own writes.
+    // An unchanged update witnesses the preceding commit without retaining another copy of the pass.
     Effect.tap((projection) =>
       projection._tag === 'Stale' || !executionControllerStatusHasCompletion(projection.status)
         ? Effect.void
-        : sql`INSERT INTO execution_controller_observations(controller_key, status)
-          SELECT controller_key, to_jsonb(current_status) FROM execution_controller_status current_status
+        : sql`UPDATE execution_controller_status SET last_receipt_hash=last_receipt_hash
           WHERE controller_key=${projection.status.controllerKey} AND plan_hash=${projection.status.planHash}
             AND epoch=${projection.status.epoch} AND next_sequence=${projection.status.nextSequence}
             AND last_receipt_hash=${projection.status.lastReceiptHash}`.pipe(Effect.asVoid),
