@@ -5,6 +5,15 @@ import { HttpClient, HttpClientRequest } from 'effect/http'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../src/schemas'
 
 const serviceName = 'BaynBrokerObservations'
+const requiredStreamingHandlers = [
+  'notify',
+  'reconcile',
+  'refresh',
+  'activate',
+  'capture',
+  'freshness',
+  'status',
+] as const
 const InvocationIdSchema = Schema.String.check(Schema.isPattern(/^inv_[A-Za-z0-9]+$/))
 const DeploymentIdSchema = Schema.String.check(Schema.isPattern(/^dp_[A-Za-z0-9]+$/))
 const PositiveIntSchema = Schema.Int.check(Schema.isGreaterThan(0))
@@ -158,10 +167,7 @@ const validateService = (service: Service, input: BrokerPollRetirementInput) => 
     service.metadata['bayn.broker-identity-hash'] !== input.controllerKey
   )
     return fail('deployment', 'Current registered source revision or broker identity differs from the requested target')
-  if (
-    handlers.has('poll') ||
-    !['notify', 'accept', 'capture', 'freshness', 'activate', 'status'].every((name) => handlers.has(name))
-  )
+  if (handlers.has('poll') || !requiredStreamingHandlers.every((name) => handlers.has(name)))
     return fail('deployment', 'The streaming broker owner must be registered with no poll handler before retirement')
   if (service.handlers.some((handler) => handler.public !== (handler.name === 'notify')))
     return fail('deployment', 'The registered broker handler visibility differs from the streaming contract')

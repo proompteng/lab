@@ -432,16 +432,12 @@ quota reservations and replay protection retain their existing durable semantics
 
 Each capture brackets account and position reads with matching complete order, fill and fee histories. Consecutive
 successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
-Each PAPER execution-controller process currently verifies the account and opens an Alpaca Activity SSE connection for
-both startup replay and live delivery. Its cursor and activity materialization are process-local. It resumes from the
-last locally validated event ID on reconnect; a pod restart replays from the configured history boundary. Alpaca sends
-the reconnect cursor again, so the reader verifies its payload before advancing. It waits for a stream heartbeat before
-admitting the activity history. A disconnect, dropped frame or unsupported correction makes the local activity history
-unavailable. This replica-local ownership is retained only until the
-[single-owner durable cursor migration](../../docs/bayn/durable-broker-event-architecture.md#target-financial-state-path)
-is deployed and proven equivalent.
+The single Dorvud broker feed owns PAPER Activity SSE. `BaynBrokerActivities` receives signed events and commits their
+original bytes, fill or fee projection, and cursor together in PostgreSQL. The feed resumes with the retained
+`since_id` and verifies inclusive redelivery. Bayn compares the initial finite replay with the durable source rows
+before accepting a live heartbeat. All execution replicas read that same projection.
 
-PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
+PAPER captures take immutable views of the durable fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
 the same connection. Bayn fetches REST fee records on startup, when the streamed fee history changes, and during
 ordinary captures while fee settlement is pending. It checks both histories by booking date, fee kind, cash amount
@@ -449,14 +445,16 @@ and coin quantity. REST supplies the existing ledger IDs, crypto symbols and exa
 
 A stable stream that is ahead only by USD fee debits may publish current broker observations with a pending cash
 fee count. The gap stays pending across UTC rollover and capture restart. Full reconciliation, trading readiness,
-and ordinary submission wait for the matching REST records. Pending fees create no ledger postings. The separate
+and ordinary submission wait for the matching REST records. Pending fees create no ledger postings. Canonical REST
+supplies recovery evidence while the Activity projection is unavailable. An unresolved source or coverage contradiction
+blocks ordinary submission. The separate
 protective close still needs the exact fenced cancel, filled inventory and reducing-order proof. Extra REST fees,
 missing crypto fees and unmatched fees with future booking dates reject publication.
 
 The capture uses REST for complete order history, account state, positions and fresh open-order eligibility. It
 compares complete histories around the account read and checks the filled quantity for every order and leg.
 The order WebSocket carries cancellations and other order lifecycle events.
-See [Activity SSE ownership](src/broker/alpaca/activity-stream.ts),
+See [Activity SSE ownership](../../docs/bayn/durable-broker-event-architecture.md#durable-activity-sse-path),
 [capture ownership](src/broker/alpaca/snapshot-cache.ts) and
 [history verification](src/simulation-reconciliation/broker-history.ts).
 
@@ -700,7 +698,8 @@ cannot strand the quota reservation or let an older capture shorten a newer rese
 the conservative database deadline in force. No process-local budget or Restate result is authority to bypass it.
 
 When an accepted PAPER protection cancellation carries a cycle, the exclusive broker refresh checks that cycle
-before scheduling the next complete capture. The last successful capture can fund one scoped four-request read.
+immediately after invalidation, before scheduling the next complete capture. The broker readback still has to
+prove the entire protective group is terminal. The last successful capture can fund one scoped four-request read.
 Bayn subtracts requests without valid headers from the lowest reported remaining capacity. It reserves the four
 reads only if one-quarter of the account limit remains. The evidence expires one minute after the first confirming response.
 Alpaca's reset timestamp controls backoff when quota runs low. The PostgreSQL owner charges the protected read
@@ -790,6 +789,10 @@ acknowledgements. Current v41 cost projection expects CHART and JEV; historical 
 bytes and financial hashes remain readable through their original codecs. The original ten-second deadline bounds
 inference and persistence. Bayn computes execution quantities, risk and exit triggers; current candidate admission
 uses [candidate-only queries](src/jev/observation-query.ts).
+
+Jev's structural checks return every supported funded proposal. After verifying the quotes, the entry selector ranks
+that set by structural support, modeled loss, symbol and proposal ID. It binds protection only for the selected
+proposal. Native execution, replay and the target verifier reproduce that choice from the same batch evidence.
 
 The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
 describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
@@ -2522,8 +2525,9 @@ observation suites migrate each fixture once, then clone and remove a separate d
 archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
 
-Successful PostgreSQL CI shards upload their measured file durations as `bayn-postgres-timings-<shard>-<attempt>`
-artifacts for balancing future runs.
+The PostgreSQL runner assigns the longest measured files to the least-loaded shards using the same checked-in timing
+snapshot on every worker. Each shard verifies its exact file list against Bun's JUnit report. Refresh the snapshot
+from the `bayn-postgres-timings-<shard>-<attempt>` artifacts of a successful full main run.
 
 Streaming failure integration runs in a separate required job with disposable PostgreSQL, Restate 1.8.1 and Kafka.
 Run `bash services/bayn/scripts/test-streaming-integrations.sh` from a local Docker host using the pinned toolchain.
@@ -2540,6 +2544,8 @@ With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 its own disposable PostgreSQL and TigerBeetle. The four twenty-session latency cases retain their native polling,
 assertions and ten-minute case budgets without sharing one fifteen-minute CI job. Append a group name to run it
 locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
+The runtime job runs two groups of measured replay cases on one runner with a separate PostgreSQL and TigerBeetle
+instance for each worker. Local `test:ledger runtime` can run both workers sequentially against one disposable pair.
 Native latency replay diagnostics go to `node_modules/.cache/bayn-latency`; CI retains the full files as artifacts
 instead of streaming every accelerated replay pass to its console. Phase progress and test failures remain visible.
 The disposable diagnostic executable also retains cumulative host-clock timings for seventeen fixed reconciliation,
