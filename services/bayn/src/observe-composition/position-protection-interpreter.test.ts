@@ -199,6 +199,48 @@ describe('armed native protection IEX stop confirmation', () => {
     expect(armedNativeProtectionRequiresStopCancellation(target, plan)).toBe(true)
   })
 
+  test('preserves nanosecond instant ordering across mixed millisecond and nanosecond quote timestamps', () => {
+    const { plan, target } = buildLongStopTarget((_bid, stopPrice) => ({
+      bidPrice: stopPrice - 0.15,
+      askPrice: stopPrice + 0.15,
+    }))
+    const trigger = target.evidence.trigger
+    if (trigger.reason !== JevExitReason.ProtectiveStop) throw new Error('Expected protective stop trigger')
+    const baseQuote = trigger.rows.quotes[0] as Record<string, unknown>
+    const stopPrice = Number(plan.levels.stopPriceMicros) / 1_000_000
+    const earlierMillisecond = {
+      ...baseQuote,
+      event_at: '2026-09-04T14:30:31.123Z',
+      bid_price: stopPrice - 0.15,
+      ask_price: stopPrice + 0.15,
+    }
+    const laterNanosecond = {
+      ...baseQuote,
+      event_at: '2026-09-04T14:30:31.123000001Z',
+      bid_price: stopPrice - 0.15,
+      ask_price: stopPrice - 0.05,
+    }
+    for (const quotes of [
+      [earlierMillisecond, laterNanosecond],
+      [laterNanosecond, earlierMillisecond],
+    ]) {
+      const mixedTarget = {
+        ...target,
+        evidence: {
+          ...target.evidence,
+          trigger: {
+            ...trigger,
+            rows: {
+              ...trigger.rows,
+              quotes,
+            },
+          },
+        },
+      }
+      expect(armedNativeProtectionRequiresStopCancellation(mixedTarget, plan)).toBe(true)
+    }
+  })
+
   test('fails safe and cancels armed protection when opposite IEX size is zero', () => {
     const { plan, target } = buildLongStopTarget((_bid, stopPrice) => ({
       bidPrice: stopPrice - 0.1,

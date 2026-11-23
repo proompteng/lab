@@ -55,7 +55,7 @@ import {
 } from './observe-composition/decision-builder'
 import { makeExecutionRiskPolicy, strategyExecutionRiskPolicy } from './execution/risk-policy'
 import { decodeJevPortfolio, JevPositionStore, JevPurpose } from './jev/portfolio'
-import { JevExitReason } from './jev/exit'
+import { JevExitReason, jevMaximumHoldDueAt } from './jev/exit'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
 import { jevBehaviorHash } from './jev/protocol'
@@ -10082,7 +10082,16 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
       ),
     )
     if (scenario === 'wide-iex-armed') {
-      expect(result).toEqual({ _tag: 'Step', step: { _tag: 'Wait', observedAt, waitReason: 'JEV_POSITION_HELD' } })
+      expect(result).toEqual({
+        _tag: 'Step',
+        step: {
+          _tag: 'Wait',
+          observedAt,
+          waitReason: 'JEV_POSITION_HELD',
+          maximumHoldDueAt: jevMaximumHoldDueAt(fixture.document.createdAt, decision.exitPolicy.maximumHoldingMinutes),
+          maximumHoldEvaluatedAt: observedAt,
+        },
+      })
       expect(calls).toEqual([])
     } else if (scenario === 'gap-armed') {
       expect(result._tag).toBe('PostMutationReconciliation')

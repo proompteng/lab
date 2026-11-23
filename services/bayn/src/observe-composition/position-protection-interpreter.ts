@@ -19,11 +19,12 @@ import { IntentStore, planExecutionIntent } from '../execution/intents/domain'
 import { MutationStore } from '../execution/mutations/model'
 import { decidePositionProtection, type ProtectionOrderState } from '../execution/position-protection'
 import { canonicalHashV1Result } from '../hash'
-import { JevPositionStore } from '../jev/portfolio'
+import { JevPositionStore, JevPurpose } from '../jev/portfolio'
 import type { JevProtocol } from '../jev/protocol'
 import { evaluateJevPositionManagement } from '../jev/runtime'
-import { JevExitReason, jevProtectiveStopCrossed, type JevExitTarget } from '../jev/exit'
+import { JevExitReason, jevMaximumHoldDueAt, jevProtectiveStopCrossed, type JevExitTarget } from '../jev/exit'
 import { decodeIntradayQuoteRows } from '../market-data/intraday/rows'
+import { compareIntradayInstants } from '../market-data/intraday/time'
 import type { ReconciliationPassResult } from '../reconciler'
 import { BrokerMode, evaluate, type Policy, type State } from '../risk'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
@@ -69,9 +70,7 @@ export const armedNativeProtectionRequiresStopCancellation = (
   let latest = quotes[0]
   if (latest === undefined) return true
   for (const row of quotes) {
-    const rowMs = Date.parse(row.event_at)
-    const latestMs = Date.parse(latest.event_at)
-    if (rowMs > latestMs || (rowMs === latestMs && row.event_at >= latest.event_at)) latest = row
+    if (compareIntradayInstants(row.event_at, latest.event_at) >= 0) latest = row
   }
   const short = isShortExitPlan(plan)
   const oppositeSize = Number(short ? latest.bid_size : latest.ask_size)
@@ -228,6 +227,21 @@ export const advancePositionProtection = (request: {
       nativeStatus.reason === 'PROTECTED' &&
       !armedNativeProtectionRequiresStopCancellation(management.target, plan)
     ) {
+      const targetPortfolio = management.target.evidence.portfolio
+      const firstFill =
+        targetPortfolio.purpose === JevPurpose.Manage
+          ? targetPortfolio.entryFills.reduce<(typeof targetPortfolio.entryFills)[number] | undefined>(
+              (earliest, fill) =>
+                earliest === undefined || compareIntradayInstants(fill.occurredAt, earliest.occurredAt) < 0
+                  ? fill
+                  : earliest,
+              undefined,
+            )
+          : undefined
+      const maximumHoldDueAt =
+        firstFill !== undefined && targetPortfolio.purpose === JevPurpose.Manage
+          ? jevMaximumHoldDueAt(firstFill.occurredAt, targetPortfolio.exitPolicy.maximumHoldingMinutes)
+          : undefined
       yield* Effect.logInfo('Holding armed native protection while IEX opposite quote stays clear of stop').pipe(
         Effect.annotateLogs({
           cycleId: cycle.identity.cycleId,
@@ -236,7 +250,15 @@ export const advancePositionProtection = (request: {
           protectionIntentId: protection._tag === 'Armed' ? protection.intentId : '',
         }),
       )
-      management = { _tag: 'Wait', details: { waitReason: 'JEV_POSITION_HELD' } }
+      management = {
+        _tag: 'Wait',
+        details: {
+          waitReason: 'JEV_POSITION_HELD',
+          ...(maximumHoldDueAt === undefined
+            ? {}
+            : { maximumHoldDueAt, maximumHoldEvaluatedAt: management.target.observedAt }),
+        },
+      }
     }
     const action = decidePositionProtection({
       plan,
