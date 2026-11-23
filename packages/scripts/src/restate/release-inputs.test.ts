@@ -86,11 +86,12 @@ test('new build parameters require a build', () => {
   expect(releasePlan(f.cwd).reuse).toBe(false)
 })
 
-test('release labels and cache destinations do not change runtime inputs', () => {
+test('release labels and cache policy do not change runtime inputs', () => {
   const f = fixture()
   Object.assign(f.workflow.jobs.build.steps[1]?.with ?? {}, {
     labels: 'revision=new',
     'cache-to': 'type=gha,scope=new',
+    'no-cache-filters': 'builder',
   })
   f.write('.github/workflows/restate-images.yml', YAML.stringify(f.workflow))
   f.commit()

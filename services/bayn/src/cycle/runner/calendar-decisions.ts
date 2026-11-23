@@ -170,6 +170,31 @@ export const makeIntradayCycleDraft = (
     return yield* makeCycleDraft(identity, window)
   })
 
+/** Match the same entry-consumption lineage used by the durable observation lookup. */
+export const matchesIntradayEntryWindowLineage = (
+  cycle: AutonomousCycle,
+  candidate: IntradayCycleCandidate,
+  observation: MarketHours,
+  executionSession: MarketCalendarSession,
+): boolean => {
+  if (cycle.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') return false
+  // Continuous entry consumption crosses rolling windows; exchange consumption belongs to its exact session.
+  const originalSession = isContinuousMarket(observation)
+    ? {
+        date: cycle.identity.executionSessionDate,
+        openAt: cycle.window.executionOpenAt,
+        closeAt: cycle.window.executionCloseAt,
+      }
+    : executionSession
+  const originalDraft = makeIntradayCycleDraft(
+    candidate,
+    observation,
+    originalSession,
+    cycle.identity.entryAttemptOrdinal,
+  )
+  return Result.isSuccess(originalDraft) && cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
+}
+
 export const nextIntradayEntryAttemptOrdinal = (
   cycle: AutonomousCycle,
   observedAt: string,

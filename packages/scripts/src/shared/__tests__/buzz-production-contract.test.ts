@@ -79,10 +79,30 @@ describe('Buzz production GitOps contract', () => {
     )
     expect(workflow).toContain('[[ "${GITHUB_REF}" == "refs/heads/main" ]]')
     expect(workflow).not.toContain('${IMAGE_REPOSITORY}:latest')
-    expect(dockerfile).toContain('cargo test --release --locked -p buzz-relay api::git::store::tests:: --lib')
+    expect(dockerfile).toContain('cargo test --release --locked -p buzz-relay --lib --no-run')
+    expect(dockerfile).toContain('RUN /compiled/buzz-relay-test api::git::store::tests::')
     expect(patch).toContain('BUZZ_GIT_S3_COMPATIBILITY')
     expect(patch).toContain('<Code>ConcurrentModification</Code>')
     expect(patch).toContain('<Code>ConditionalRequestConflict</Code>')
+  })
+
+  test('seeds compiled layers from main and reruns native verification when they are cached', () => {
+    const release = Bun.YAML.parse(readRepoFile('.github/workflows/buzz-relay-build-push.yml'))
+    const cache = Bun.YAML.parse(readRepoFile('.github/workflows/buzz-relay-cache.yml'))
+    const dockerfile = readRepoFile('third_party/buzz/Dockerfile')
+
+    expect(Object.keys(cache.on).sort()).toEqual(['push', 'workflow_dispatch'])
+    expect(cache.on.push.branches).toEqual(['main'])
+    expect(cache.jobs.seed.if).toBe("github.ref == 'refs/heads/main'")
+    const seed = cache.jobs.seed.steps.find((step: { uses?: string }) => step.uses === 'docker/build-push-action@v6')
+    expect(seed?.with.target).toBe('builder')
+    expect(seed?.with.push).toBe(false)
+    for (const job of [release.jobs.verify, release.jobs.build]) {
+      const build = job.steps.find((step: { uses?: string }) => step.uses === 'docker/build-push-action@v6')
+      expect(build?.with['no-cache-filters']).toBe('verify')
+    }
+    expect(dockerfile).toContain('FROM builder AS verify')
+    expect(dockerfile).toContain('COPY --from=verify')
   })
 
   test('uses external stateful dependencies and Ceph while keeping unsafe features off', () => {

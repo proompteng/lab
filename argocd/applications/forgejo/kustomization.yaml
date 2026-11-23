@@ -13,7 +13,7 @@ resources:
 helmCharts:
 - name: forgejo
   repo: oci://code.forgejo.org/forgejo-helm
-  version: 17.1.5
+  version: 17.3.3
   releaseName: forgejo
   namespace: forgejo
   valuesFile: values.yaml
@@ -30,4 +30,4 @@ configMapGenerator:
 images:
 - name: code.forgejo.org/forgejo/forgejo
   newName: registry.ide-newton.ts.net/lab/forgejo
-  digest: sha256:8d21d23a031801bd715a493538604b0ba92cdebe6753249d17672c4a2aa15a39
+  digest: sha256:9370da313a6775c819fc907f3e19d0a78c5755122f595dff549ffd757922a9c2

@@ -1,5 +1,5 @@
 import type Undici from '@effect/platform-node/Undici'
-import { Context, DateTime, Effect, Option, Schema, SchemaTransformation, type Result } from 'effect'
+import { Context, DateTime, Effect, Option, Result, Schema, SchemaTransformation } from 'effect'
 
 import type { BrokerEnvironment } from '../../execution/authority'
 import {
@@ -11,6 +11,7 @@ import {
 } from '../../schemas'
 import type { BrokerProvider } from '../connection'
 import type { EquityProviderSession } from '../../equity-hours'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../../hash'
 import { BrokerReadError } from './failures'
 import type { ObservedBrokerState } from './observed-snapshot'
 
@@ -479,7 +480,13 @@ export interface BrokerSubmissionSnapshot {
 
 export interface BrokerReadProjection {
   readonly healthSnapshot?: Effect.Effect<ObservedBrokerState, BrokerReadError>
-  readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
+  readonly reconciliationSnapshot: Effect.Effect<
+    {
+      readonly snapshot: StableBrokerSnapshot
+      readonly complete: Effect.Effect<void, BrokerReadError>
+    },
+    BrokerReadError
+  >
   readonly submissionSnapshot: (intentId: string) => Effect.Effect<BrokerSubmissionSnapshot, BrokerReadError>
   readonly fresh: BrokerReadShape
   readonly invalidate: Effect.Effect<void>
@@ -497,7 +504,7 @@ export interface BrokerReadShape {
   readonly orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly feeActivities: (query?: FeeActivitiesQuery) => Effect.Effect<ReadResult<FeeActivityPage>, BrokerReadError>
   readonly fillActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FillActivityPage>, BrokerReadError>
-  readonly accountActivity?: Effect.Effect<import('./activity-stream').AccountActivityCut, BrokerReadError>
+  readonly accountActivity?: Effect.Effect<import('../activities').AccountActivityCut, BrokerReadError>
   readonly marketCalendar: (
     query: MarketCalendarQuery,
   ) => Effect.Effect<ReadResult<MarketCalendarObservation>, BrokerReadError>
@@ -671,6 +678,151 @@ export const decodeFeeActivities = Schema.decodeUnknownResult(
   Schema.Array(FeeActivityResponseSchema),
   responseParseOptions,
 )
+
+// Preserve unfamiliar non-trade activity types so a financial proof can reject unsupported movements.
+const decodeNonTradeActivities = Schema.decodeUnknownResult(
+  Schema.Array(
+    Schema.Struct({
+      id: ActivityId,
+      account_id: Schema.optionalKey(Uuid),
+      activity_type: Schema.String.check(Schema.isPattern(/^[A-Z][A-Z_0-9]{0,31}$/)),
+      date: Schema.optionalKey(Schema.Union([IsoDate, Timestamp])),
+      created_at: Schema.optionalKey(Timestamp),
+      net_amount: Schema.optionalKey(Schema.NullOr(Decimal)),
+    }),
+  ).check(Schema.isMaxLength(defaultFillActivitiesPageSize)),
+  responseParseOptions,
+)
+
+const ActivityPageBody = Schema.Array(Schema.Unknown).check(Schema.isMaxLength(defaultFillActivitiesPageSize))
+const decodeActivityPageBody = Schema.decodeUnknownResult(ActivityPageBody)
+export const decodeNonTradeActivityPage = (input: unknown) =>
+  Result.gen(function* () {
+    const body = yield* decodeActivityPageBody(input)
+    const rows = yield* decodeNonTradeActivities(body)
+    return { body, rows }
+  })
+
+const NonTradeActivityWindow = Schema.Struct({ after: UtcInstantSchema, until: UtcInstantSchema }).check(
+  Schema.makeFilter((window) => window.after < window.until || 'must be an ordered creation-time window'),
+)
+export const decodeNonTradeActivityWindow = Schema.decodeUnknownResult(NonTradeActivityWindow, inputParseOptions)
+
+const ActivityRead = Schema.Struct({
+  requestId: RequestId,
+  status: Schema.Literal(200),
+  contentHash: Sha256Schema,
+  observedAt: UtcInstantSchema,
+  rateLimit: Schema.optionalKey(
+    Schema.Struct({
+      limit: Schema.optionalKey(Schema.String),
+      remaining: Schema.optionalKey(Schema.String),
+      reset: Schema.optionalKey(Schema.String),
+      retryAfter: Schema.optionalKey(Schema.String),
+    }),
+  ),
+})
+
+const ActivityPass = Schema.NonEmptyArray(
+  Schema.Struct({
+    pageToken: Schema.NullOr(ActivityId),
+    evidence: ActivityRead,
+    body: ActivityPageBody,
+  }),
+).check(Schema.isMaxLength(100))
+
+export const NonTradeActivityStatementSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.alpaca-non-trade-activity-statement.v2'),
+  accountIdentityHash: Sha256Schema,
+  window: NonTradeActivityWindow,
+  accountRead: ActivityRead,
+  accountBody: Schema.Unknown,
+  firstPass: ActivityPass,
+  secondPass: ActivityPass,
+  observedAt: UtcInstantSchema,
+})
+const decodeStatementAccount = Schema.decodeUnknownResult(Schema.Struct({ id: NonEmptyString }))
+
+export const nonTradeActivityInScope = (
+  row: Result.Result.Success<ReturnType<typeof decodeNonTradeActivities>>[number],
+  accountId: string,
+  window: typeof NonTradeActivityWindow.Type,
+) => {
+  const createdAt = row.created_at === undefined ? null : Date.parse(row.created_at)
+  return (
+    row.activity_type !== 'FILL' &&
+    (row.account_id === undefined || row.account_id === accountId) &&
+    (createdAt === null || (createdAt >= Date.parse(window.after) && createdAt < Date.parse(window.until)))
+  )
+}
+
+export const verifyNonTradeActivityStatement = (
+  statement: typeof NonTradeActivityStatementSchema.Type,
+  accountId: string,
+) =>
+  Result.gen(function* () {
+    const account = decodeStatementAccount(statement.accountBody)
+    const accountBodyHash = canonicalHashV1Result(statement.accountBody)
+    if (
+      Result.isFailure(account) ||
+      account.success.id !== accountId ||
+      Result.isFailure(accountBodyHash) ||
+      accountBodyHash.success !== statement.accountRead.contentHash
+    )
+      return yield* Result.fail('Alpaca account body differs from its recorded response or registered account')
+    if (statement.accountRead.observedAt < statement.window.until)
+      return yield* Result.fail('Alpaca account read predates the activity window')
+    let observedAt = statement.accountRead.observedAt
+    const scan = (pass: typeof ActivityPass.Type) => {
+      const seen = new Set<string>()
+      const activities = []
+      let token: string | null = null
+      for (const [index, page] of pass.entries()) {
+        const hash = canonicalHashV1Result(page.body)
+        const rows = decodeNonTradeActivities(page.body)
+        if (Result.isFailure(hash) || hash.success !== page.evidence.contentHash || Result.isFailure(rows))
+          return Result.fail('Alpaca activity page body differs from its recorded response')
+        const last = rows.success.at(-1)
+        if (
+          page.pageToken !== token ||
+          page.evidence.observedAt < observedAt ||
+          page.evidence.observedAt > statement.observedAt ||
+          (last === undefined) !== (index === pass.length - 1)
+        )
+          return Result.fail('Alpaca activity page cursors, clocks or terminal page differ')
+        observedAt = page.evidence.observedAt
+        token = last?.id ?? null
+        for (const row of rows.success) {
+          if (seen.has(row.id) || !nonTradeActivityInScope(row, accountId, statement.window))
+            return Result.fail('Alpaca activity page contains an out-of-scope or repeated activity')
+          seen.add(row.id)
+          activities.push({
+            activityId: row.id,
+            activityType: row.activity_type,
+            date: row.date ?? null,
+            netAmount: row.net_amount ?? null,
+            createdAt: row.created_at ?? null,
+          })
+        }
+      }
+      return Result.succeed(activities.sort((left, right) => left.activityId.localeCompare(right.activityId)))
+    }
+    const activities = yield* scan(statement.firstPass)
+    const descending = yield* scan(statement.secondPass)
+    if (!canonicalJsonEqualV1(activities, descending))
+      return yield* Result.fail('Alpaca activity history changed between pagination passes')
+    const sourceHash = yield* Result.mapError(
+      canonicalHashV1Result(statement),
+      () => 'Alpaca activity statement cannot be canonically hashed',
+    )
+    return {
+      accountIdentityHash: statement.accountIdentityHash,
+      window: statement.window,
+      observedAt: statement.observedAt,
+      sourceHash,
+      activities,
+    }
+  })
 
 export const FillActivityResponseSchema = Schema.Struct({
   activity_type: Schema.Literal('FILL'),

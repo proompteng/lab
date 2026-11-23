@@ -34,7 +34,7 @@ import {
   latencyReplayExecutionModelHash,
   latencyReplayPolicyMaterial,
 } from '../system-assessment/latency-replay'
-import { registrationFixture, testHash } from '../system-assessment/fixtures.test-support'
+import { nativeRegistrationFixture, registrationFixture, testHash } from '../system-assessment/fixtures.test-support'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { jevModel, prepareJevRequest } from '../jev/contract'
 import { prepareObserveStartup } from '../observe-composition/startup'
@@ -475,6 +475,33 @@ test('registered latency replay preserves every equity session and the exact can
     { ...input, calendar: input.calendar.map((day) => ({ ...day, close: '15:00' })) },
   ])
     expect(Result.isFailure(bindLatencyReplayInput(changed, registration, identity))).toBe(true)
+
+  const nativeCalendar = rawCalendar.map((day) => ({ ...day, session_open: '0400', session_close: '2000' }))
+  const native = nativeRegistrationFixture(
+    registration,
+    Result.getOrThrow(normalizeMarketCalendarResult(nativeCalendar, { start: firstDate, end: lastDate })),
+  )
+  const incumbent = native.policies.find((p) => p.policy === JevResearchPolicy.Incumbent)
+  const nativeFirst = native.calendar.sessions[0]
+  const nativeLast = native.calendar.sessions.at(-1)
+  if (incumbent === undefined || nativeFirst === undefined || nativeLast === undefined)
+    throw new Error('Missing independent incumbent or native calendar')
+  const incumbentInput = {
+    ...input,
+    policy: JevResearchPolicy.Incumbent as const,
+    calendar: nativeCalendar,
+    interval: { startAt: nativeFirst.openAt, endAt: nativeLast.closeAt },
+    build: { ...input.build, sourceRevision: incumbent.sourceRevision, imageDigest: `sha256:${incumbent.imageDigest}` },
+  }
+  expect(Result.getOrThrow(bindLatencyReplayInput(incumbentInput, native, identity))).toEqual(
+    native.calendar.sessions.map((s) => ({ date: s.sessionDate, openAt: s.openAt, closeAt: s.closeAt })),
+  )
+  for (const changed of [
+    { ...incumbentInput, calendar: rawCalendar },
+    { ...incumbentInput, build: input.build },
+    { ...incumbentInput, inference: { ...input.inference, costs: { ...input.inference.costs, rates: [] } } },
+  ])
+    expect(Result.isFailure(bindLatencyReplayInput(changed, native, identity))).toBe(true)
 })
 
 test('retained replay binds the recording to its exact source, source revision and policy', () => {
@@ -501,7 +528,11 @@ test('retained replay binds the recording to its exact source, source revision a
       recordingHash: Result.getOrThrow(canonicalHashV1Result(retained)),
     },
   })
-  expect(Result.isSuccess(prepareBacktest(input(recording)))).toBe(true)
+  const candidate = Result.getOrThrow(prepareBacktest(input(recording)))
+  const incumbent = Result.getOrThrow(prepareBacktest({ ...input(recording), policy: JevResearchPolicy.Incumbent }))
+  expect(incumbent.policyIdentity.policy).toBe(JevResearchPolicy.Incumbent)
+  expect(incumbent.strategy.provenance).toEqual(candidate.strategy.provenance)
+  expect(incumbent.runId).not.toBe(candidate.runId)
   for (const field of [
     'sourceManifestHash',
     'sourceRevision',
@@ -553,7 +584,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v41')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v43')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)

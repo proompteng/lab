@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
@@ -8,6 +8,11 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { makeAuthorityPostgres } from './execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from './execution-store/observe-authority'
 import { migrationLoader } from './migrations'
@@ -84,33 +89,44 @@ const migrate = PgMigrator.run({
   loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= fenceId))),
   table: 'schema_migrations',
 })
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(Layer.provideMerge(NodeServices.layer)),
   )
 
 integration('current authority write cutover', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
-    const parsed = new URL(url)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw new Error('Authority cutover tests require an isolated local _test database')
-    runtime = makeRuntime()
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(url, async (templateUrl) => {
+      const historical = makeRuntime(templateUrl)
+      try {
+        await historical.runPromise(
+          PgMigrator.run({
+            loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < fenceId))),
+            table: 'schema_migrations',
+          }),
+        )
+      } finally {
+        await historical.dispose()
+      }
+    })
   })
-  afterAll(async () => runtime.dispose())
-  beforeEach(async () =>
-    runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* PgMigrator.run({
-          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < fenceId))),
-          table: 'schema_migrations',
-        })
-      }),
-    ),
-  )
+  beforeEach(async () => {
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
+  })
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
+  })
+  afterAll(async () => {
+    await template?.dispose()
+  })
 
   test.each(retiredStrategies)(
     'retains %s / %s and recovers without reopening retired writes',

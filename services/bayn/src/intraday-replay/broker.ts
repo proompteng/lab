@@ -1504,7 +1504,8 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           fresh: read,
           invalidate: Effect.void,
           withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-          snapshot: readStableBrokerSnapshot(read, now, waitForSnapshotRetry).pipe(
+          reconciliationSnapshot: readStableBrokerSnapshot(read, now, waitForSnapshotRetry).pipe(
+            Effect.map((snapshot) => ({ snapshot, complete: Effect.void })),
             Effect.mapError((cause) => readFailure('preflight', 'Replay broker snapshot failed', cause)),
           ),
           submissionSnapshot: () =>

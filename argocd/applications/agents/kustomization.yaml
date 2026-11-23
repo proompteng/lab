@@ -11,6 +11,7 @@ resources:
   - agents-shell-tunnel-networkpolicy.yaml
   - agents-shell-omni-externalsecret.yaml
   - agents-shell-bmc-externalsecret.yaml
+  - agents-shell-paperless-secret.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
   - graf-codex-agentprovider.yaml
@@ -88,6 +89,9 @@ patches:
                   - name: bmc
                     mountPath: /var/run/secrets/agents-shell-bmc
                     readOnly: true
+                  - name: paperless
+                    mountPath: /var/run/secrets/agents-shell-paperless
+                    readOnly: true
             volumes:
               - name: omni
                 secret:
@@ -99,6 +103,10 @@ patches:
               - name: bmc
                 secret:
                   secretName: agents-shell-bmc
+                  defaultMode: 0440
+              - name: paperless
+                secret:
+                  secretName: agents-shell-paperless
                   defaultMode: 0440
 helmGlobals:
   chartHome: ../../../charts

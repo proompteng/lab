@@ -3,7 +3,7 @@
 Status: Implemented contract and PAPER cutover design. See [streaming operations](../../services/bayn/src/market-data/streaming/README.md)
 for the configured runtime and replay procedures; deployment and market-session evidence require current verification.
 Source baseline: `13c53e073a655fde7250d59b926e71d02ca6c2b9`, inspected September 12, 2026 UTC.
-The [current Bayn architecture](architecture.md) remains the reference for the existing runtime.
+See the [Bayn runtime architecture](../../services/bayn/README.md#runtime-architecture) for current ownership and execution.
 
 ## Decision
 

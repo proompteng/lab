@@ -28,7 +28,10 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
   const calendar = Result.getOrThrow(
     normalizeMarketCalendarResult(rawCalendar, { start: '2026-09-01', end: '2026-09-04' }),
   )
-  const trainingSessions = calendar.sessions.slice(0, 2)
+  // Exhausting one complete session proves there are no eligible rows in the excluded fixture.
+  const trainingCount = mode === 'excluded' ? 1 : 2
+  const trainingSessions = calendar.sessions.slice(0, trainingCount)
+  const firstEvaluation = calendar.sessions[trainingCount]!
   const inputs: SixBarFixtureInput[] = []
   for (const session of trainingSessions) {
     const openMs = Date.parse(session.openAt)
@@ -115,13 +118,13 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       ...session,
       firstDecisionAt: iso(Date.parse(session.openAt) + 90_000),
       partition:
-        index < 2
+        index < trainingCount
           ? SixBarRidgePartition.Training
-          : index === 2
+          : index === trainingCount
             ? SixBarRidgePartition.Validation
             : SixBarRidgePartition.Holdout,
     })),
-    fitCutoffAt: '2026-09-03T00:00:00.000Z',
+    fitCutoffAt: `${firstEvaluation.date}T00:00:00.000Z`,
     allocationBudgetMicros: '20000000000',
     decisionLatencyMs: 1000,
     turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
@@ -151,7 +154,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'SYNTHETIC fixed-candidate training',
       interval: { startAt: trainingSessions[0]!.openAt, endAt: trainingSessions.at(-1)!.closeAt },
-      calendar: rawCalendar.slice(0, 3),
+      calendar: rawCalendar.slice(0, trainingCount + 1),
       build,
       assumptions: {
         instruments: replayTestInstruments,

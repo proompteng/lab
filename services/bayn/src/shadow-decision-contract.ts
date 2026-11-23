@@ -47,6 +47,8 @@ import {
   retainedJevProtocolV38Document,
   retainedJevProtocolV39Document,
   retainedJevProtocolV40Document,
+  retainedJevProtocolV41Document,
+  retainedJevProtocolV42Document,
   jevBehaviorHash,
   type JevProtocol,
   type RetainedVisualJevProtocolSchema,
@@ -1275,15 +1277,19 @@ const recordedJevProtocolIdentityMatches = (
   protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type,
   strategyProtocolHash: string,
 ): boolean => {
-  if (protocol.schemaVersion === 'bayn.jev.protocol.v41')
+  if (protocol.schemaVersion === 'bayn.jev.protocol.v43')
     return jevProtocolIdentityMatches(protocol, strategyProtocolHash)
   const parameters = canonicalHashV1Result(protocol)
   const expected = canonicalHashV1Result(
-    protocol.schemaVersion === 'bayn.jev.protocol.v40'
-      ? retainedJevProtocolV40Document
-      : protocol.schemaVersion === 'bayn.jev.protocol.v39'
-        ? retainedJevProtocolV39Document
-        : retainedJevProtocolV38Document,
+    protocol.schemaVersion === 'bayn.jev.protocol.v42'
+      ? retainedJevProtocolV42Document
+      : protocol.schemaVersion === 'bayn.jev.protocol.v41'
+        ? retainedJevProtocolV41Document
+        : protocol.schemaVersion === 'bayn.jev.protocol.v40'
+          ? retainedJevProtocolV40Document
+          : protocol.schemaVersion === 'bayn.jev.protocol.v39'
+            ? retainedJevProtocolV39Document
+            : retainedJevProtocolV38Document,
   )
   if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
     return false
@@ -1296,6 +1302,19 @@ const recordedJevProtocolIdentityMatches = (
   return Result.isSuccess(identity) && identity.success === strategyProtocolHash
 }
 
+const retainedExpectedProtocolDocument = (protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type) =>
+  protocol.schemaVersion === 'bayn.jev.protocol.v43'
+    ? defaultJevProtocolDocument
+    : protocol.schemaVersion === 'bayn.jev.protocol.v42'
+      ? retainedJevProtocolV42Document
+      : protocol.schemaVersion === 'bayn.jev.protocol.v41'
+        ? retainedJevProtocolV41Document
+        : protocol.schemaVersion === 'bayn.jev.protocol.v40'
+          ? retainedJevProtocolV40Document
+          : protocol.schemaVersion === 'bayn.jev.protocol.v39'
+            ? retainedJevProtocolV39Document
+            : retainedJevProtocolV38Document
+
 const ablationProtocolIdentityMatches = (
   policy: Omit<EntryAblationPolicy, 'sharedProtocol' | 'questionPolicyHash'> & {
     readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
@@ -1304,15 +1323,7 @@ const ablationProtocolIdentityMatches = (
   strategyProtocolHash: string,
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
-  const expected = canonicalHashV1Result({
-    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v41'
-      ? defaultJevProtocolDocument
-      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
-        ? retainedJevProtocolV40Document
-        : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
-          ? retainedJevProtocolV39Document
-          : retainedJevProtocolV38Document),
-  })
+  const expected = canonicalHashV1Result({ ...retainedExpectedProtocolDocument(policy.sharedProtocol) })
   if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
     return false
   const identity = entryAblationStrategyIdentity(policy)
@@ -1326,15 +1337,7 @@ const momentumProtocolIdentityMatches = (
   strategyProtocolHash: string,
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
-  const expected = canonicalHashV1Result({
-    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v41'
-      ? defaultJevProtocolDocument
-      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
-        ? retainedJevProtocolV40Document
-        : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
-          ? retainedJevProtocolV39Document
-          : retainedJevProtocolV38Document),
-  })
+  const expected = canonicalHashV1Result({ ...retainedExpectedProtocolDocument(policy.sharedProtocol) })
   const identity = repeatedMomentumStrategyIdentity(policy)
   return (
     Result.isSuccess(parameters) &&
