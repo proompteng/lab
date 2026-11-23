@@ -1,3 +1,4 @@
+import executionExpectedSession from '../../migrations/0215_execution_expected_session'
 import singleControllerObservation from '../../migrations/0214_single_controller_observation'
 import riskSymmetryAdmission from '../../migrations/0213_risk_symmetry_admission'
 import riskSymmetryObserveCutover from '../../migrations/0212_risk_symmetry_observe_cutover'
@@ -215,6 +216,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '215_execution_expected_session': executionExpectedSession,
   '214_single_controller_observation': singleControllerObservation,
   '213_risk_symmetry_admission': riskSymmetryAdmission,
   '212_risk_symmetry_observe_cutover': riskSymmetryObserveCutover,
