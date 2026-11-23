@@ -3183,8 +3183,14 @@ postgres('PostgreSQL prospective system qualification', () => {
         expect(Date.parse(witness?.witnessedAt ?? at)).toBeLessThanOrEqual(
           Date.parse(at) + registered.registration.obligations.decisionWindowMs,
         )
+        expect(yield* sql`SELECT count(*)::integer AS count FROM execution_controller_observations`).toEqual([
+          { count: 1 },
+        ])
         expect((yield* store.project(status))._tag).toBe('Replayed')
         expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM execution_controller_observations`).toEqual([
+          { count: 1 },
+        ])
         expect(yield* store.read(status.controllerKey)).toEqual(status)
         expect(
           (yield* readSystemControllerPasses(status.controllerKey, planHash, at, at, yield* databaseNow)).map(
@@ -3208,6 +3214,19 @@ postgres('PostgreSQL prospective system qualification', () => {
         expect(Exit.isFailure(rolledBack)).toBe(true)
         expect(yield* store.read(status.controllerKey)).toEqual(status)
         expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM execution_controller_observations`).toEqual([
+          { count: 1 },
+        ])
+
+        expect((yield* sql.withTransaction(store.project(next)))._tag).toBe('Applied')
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+        expect((yield* store.project(next))._tag).toBe('Replayed')
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(
+          expect.arrayContaining([expect.objectContaining({ kind: 'CONTROLLER', sourceHash: next.lastReceiptHash })]),
+        )
+        expect(yield* sql`SELECT count(*)::integer AS count FROM execution_controller_observations`).toEqual([
+          { count: 2 },
+        ])
       }).pipe(Effect.provide(ExecutionControllerStatusStoreLive)),
     )
   })
