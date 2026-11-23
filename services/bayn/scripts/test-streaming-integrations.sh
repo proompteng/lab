@@ -5,7 +5,6 @@ root=$(git rev-parse --show-toplevel)
 run_id=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(8).toString("hex"))')
 postgres_name="bayn-streaming-integration-postgres-${run_id}"
 restate_name="bayn-streaming-integration-restate-${run_id}"
-retirement_name="bayn-streaming-integration-retirement-restate-${run_id}"
 results="$root/.artifacts/bayn-streaming-integration/$run_id"
 mkdir -p "$results"
 
@@ -19,7 +18,7 @@ remove_owned() {
 }
 cleanup() {
   local status=$? name
-  for name in "$postgres_name" "$restate_name" "$retirement_name"; do
+  for name in "$postgres_name" "$restate_name"; do
     if [[ "$status" != 0 ]]; then
       identity=$(docker inspect --format '{{.Id}} {{index .Config.Labels "bayn-streaming-integration-fixture"}}' "$name" 2>/dev/null) || continue
       read -r id owner <<< "$identity"
@@ -81,12 +80,4 @@ run_required 120s services/bayn/src/restate/restate-entry-inference.integration.
 remove_owned "$restate_name"
 remove_owned "$postgres_name"
 unset BAYN_TEST_POSTGRES_URL
-
-# Retirement replaces service definitions and intentionally leaves protected work unfinished.
-start_restate "$retirement_name"
-export BAYN_TEST_BROKER_POLL_RESTATE_ADMIN_URL="$BAYN_TEST_RESTATE_ADMIN_URL"
-export BAYN_TEST_BROKER_POLL_RESTATE_INGRESS_URL="$BAYN_TEST_RESTATE_INGRESS_URL"
-run_required 60s services/bayn/tools/retire-broker-polls.integration.test.ts
-remove_owned "$retirement_name"
 unset BAYN_TEST_RESTATE_ADMIN_URL BAYN_TEST_RESTATE_INGRESS_URL
-unset BAYN_TEST_BROKER_POLL_RESTATE_ADMIN_URL BAYN_TEST_BROKER_POLL_RESTATE_INGRESS_URL

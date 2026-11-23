@@ -9,6 +9,7 @@ import { Clock, Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Ref, R
 import { TestClock } from 'effect/testing'
 import type { Statement } from 'effect/sql/Statement'
 
+import retireBrokerNotificationReceipts from '../../migrations/0216_retire_broker_notification_receipts'
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
 import {
   BrokerObservations,
@@ -1188,7 +1189,7 @@ describePostgres('Durable per-account broker observations', () => {
       }),
     ))
 
-  test('migrates legacy receipts and fences predecessor order writes before any payload redelivery', async () =>
+  test('preserves legacy receipts and order evidence through broker transport retirement', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1236,7 +1237,10 @@ describePostgres('Durable per-account broker observations', () => {
               [],
               undefined,
             )
-            yield* postgresMigrations
+            yield* PgMigrator.run({
+              loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 216))),
+              table: 'schema_migrations',
+            })
 
             const predecessorInsert = (
               eventId: string,
@@ -1298,8 +1302,8 @@ describePostgres('Durable per-account broker observations', () => {
           { status: 'CANCELED', broker_updated_at: '2026-11-01T00:00:00.001000000Z' },
         ])
         const drainingEventId = '3'.repeat(64)
-        yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at)
-          VALUES (${accountId},${drainingEventId},${revision},${event.receivedAt}::timestamptz)`
+        yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at,recorded_at)
+          VALUES (${accountId},${drainingEventId},${revision},'2026-11-01T00:00:00.496281Z','2026-11-01T00:00:00.496289Z')`
         expect(
           yield* sql`SELECT event_id FROM broker_notification_receipts
             WHERE account_id = ${accountId} AND event_id = ${drainingEventId}`,
@@ -1340,6 +1344,89 @@ describePostgres('Durable per-account broker observations', () => {
             reason: 'LEGACY_RECEIPT',
           },
         ])
+        const priorEvidence = yield* sql`SELECT to_jsonb(source) AS source, to_jsonb(projection) AS projection
+          FROM broker_source_events source JOIN broker_source_event_projections projection USING (account_id,event_id)
+          WHERE source.account_id = ${accountId} AND source.event_id = ${event.eventId}`
+        const rollback = 'rollback conflicting receipt fixture'
+        const rejected = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO broker_source_events(account_id,event_id,source_revision,received_at,recorded_at,event_kind)
+            SELECT account_id,event_id,${'b'.repeat(40)},received_at,recorded_at,'LEGACY_RECEIPT'
+            FROM broker_notification_receipts WHERE account_id = ${accountId} AND event_id = ${drainingEventId}`
+              const conflict = yield* sql.withTransaction(retireBrokerNotificationReceipts).pipe(Effect.result)
+              expect(conflict).toMatchObject({ _tag: 'Failure', failure: { reason: { cause: { code: '23514' } } } })
+              expect(
+                yield* sql`SELECT event_id FROM broker_notification_receipts
+            WHERE account_id = ${accountId} AND event_id = ${drainingEventId}`,
+              ).toEqual([{ event_id: drainingEventId }])
+              expect(
+                yield* sql`SELECT event_id FROM broker_source_event_projections
+            WHERE account_id = ${accountId} AND event_id = ${drainingEventId}`,
+              ).toEqual([])
+              return yield* Effect.fail(rollback)
+            }),
+          )
+          .pipe(Effect.result)
+        expect(rejected).toEqual(Result.fail(rollback))
+        yield* postgresMigrations
+        expect(yield* sql`SELECT to_regclass('broker_notification_receipts') IS NULL AS retired`).toEqual([
+          { retired: true },
+        ])
+        expect(
+          yield* sql`SELECT to_jsonb(source) AS source, to_jsonb(projection) AS projection
+            FROM broker_source_events source JOIN broker_source_event_projections projection USING (account_id,event_id)
+            WHERE source.account_id = ${accountId} AND source.event_id = ${event.eventId}`,
+        ).toEqual(priorEvidence)
+        expect(
+          yield* sql`SELECT source.source_revision, source.event_kind, projection.outcome, projection.reason,
+              source.received_at = '2026-11-01T00:00:00.496281Z'::timestamptz AS received_exact,
+              source.recorded_at = '2026-11-01T00:00:00.496289Z'::timestamptz AS recorded_exact,
+              projection.observed_at = source.received_at AS observed_exact
+            FROM broker_source_events source JOIN broker_source_event_projections projection USING (account_id,event_id)
+            WHERE source.account_id = ${accountId} AND source.event_id = ${drainingEventId}`,
+        ).toEqual([
+          {
+            source_revision: revision,
+            event_kind: 'LEGACY_RECEIPT',
+            outcome: 'RECONCILE_REQUIRED',
+            reason: 'LEGACY_RECEIPT',
+            received_exact: true,
+            recorded_exact: true,
+            observed_exact: true,
+          },
+        ])
+        const newOrderEvent = 'c'.repeat(64)
+        const providerVersion = '2026-11-01T00:00:00.001000001Z'
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO broker_events(
+            event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,
+            occurred_at,observed_at
+          ) VALUES (
+            ${newOrderEvent},'bayn.paper-broker-event.v1',${'d'.repeat(64)},'ORDER','ALPACA',${accountId},
+            ${`order:legacy-order:${providerVersion}`},2,${event.receivedAt}::timestamptz,${event.receivedAt}::timestamptz
+          )`
+            const insertOrder = (version: string | null) => sql`INSERT INTO orders(
+            event_id,account_id,schema_version,broker_order_id,client_order_id,symbol,side,order_type,time_in_force,
+            quantity_atoms,filled_quantity_atoms,status,broker_updated_at
+          ) VALUES (
+            ${newOrderEvent},${accountId},'bayn.order.v3','legacy-order','legacy-client','AAPL','BUY','MARKET','DAY',
+            1000000000,0,'NEW',${version}
+          )`
+            for (const rejectedVersion of [null, '2026-11-01T00:00:00.001000000Z']) {
+              expect(yield* sql.withTransaction(insertOrder(rejectedVersion)).pipe(Effect.result)).toMatchObject({
+                _tag: 'Failure',
+                failure: {
+                  reason: {
+                    cause: { code: '23514', message: 'order provider version does not match the source identity' },
+                  },
+                },
+              })
+            }
+            yield* insertOrder(providerVersion)
+          }),
+        )
       }),
     ))
 

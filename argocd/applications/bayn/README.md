@@ -58,22 +58,20 @@ accounting, cash, fees, corrections, gaps and provider convergence.
 
 Feed readiness also requires the acknowledgement to name the exact promoted source revision and
 `bayn.broker-source-projection.v1`. A response from the retired identity-only handler fails the socket session and the
-next attempt emits a new session boundary instead of trusting a cached old acknowledgement. Migration 206 retains a
-separate append-only `broker_notification_receipts` sink only while Restate drains already accepted old-worker
-invocations. Current code has no caller for it. After live acceptance, the cleanup migration merges any late identities
-into `broker_source_events` before dropping the sink. The migration also installs a temporary shared-database order
-version fence for the same overlap: a prepared predecessor insert derives the canonical nine-digit provider version
-from its immutable source identity, while stale or conflicting provider versions fail before insertion. Current code
-supplies that value directly and applies the same rule. A REST order whose microsecond `updated_at` truncates a retained
-stream nanosecond version reuses that stream receipt only when the complete order content matches; a different state or
-genuinely older microsecond still fails closed. The cleanup migration removes the predecessor insert branch and its
-trigger only after the old revision drains.
+next attempt emits a new session boundary instead of trusting a cached old acknowledgement. Migration 216 copies each
+late identity and its original timestamps from `broker_notification_receipts` into `broker_source_events` with an
+explicit legacy projection receipt. Any disagreement rolls back the cutover. Once the predecessor invocations and
+prepared writers are drained, the same migration drops the old sink and removes provider-version synthesis for old
+order inserts. The database still checks the supplied nine-digit provider version against the immutable source identity.
+A REST order whose microsecond `updated_at` truncates a retained stream nanosecond version reuses that stream receipt
+only when the complete order content matches. A different state or genuinely older microsecond still fails closed.
 
 This hard migration removes the broker-only Kafka adapter, producer, consumer group, health script and Bayn Kafka
 credentials. It intentionally retains the now-inert topic during cutover: the Kafka application tracks `main`, while
 Bayn tracks `kargo/bayn`, so deleting the topic in the implementation merge would break the incumbent before Kargo
-could promote its replacement. After live direct-path acceptance, an immediate cleanup PR deletes that last topic.
-No promoted runtime reads or writes it. This does not change Dorvud's market-data Kafka/Flink pipeline. Notifications
+could promote its replacement. Remove the last topic after live direct-path acceptance and after retained records have
+expired or been preserved in a verified archive. No promoted runtime reads or writes it. Dorvud's market-data
+Kafka/Flink pipeline is independent. Notifications
 cannot grant capital authority: account, strategy, risk, reconciliation and mutation checks remain in Bayn, and Jev
 remains the strategy inference component.
 Market workers use `RESTATE_INGRESS_ORIGIN` to send authenticated advisory `marketChanged` hints directly to Restate.
@@ -100,8 +98,9 @@ Rollout order and acceptance:
    automatic Bayn Stage promotion, its exact generated branch revision, and Argo's deployed images. The feed
    starts with the execution endpoint after the execution activation hook succeeds. Unavailable Restate keeps the
    stream unproven.
-2. After the streaming endpoint registers, retire any obsolete broker polling invocations using the procedure below.
-   A removed handler can hold the account object lock and block activation even though the replacement pod is healthy.
+2. Before delivering migration 216, verify zero unfinished invocations of `BaynBrokerObservations.poll` and that the
+   predecessor worker and its prepared writers have drained. A removed handler can hold the account object lock even
+   when the replacement pod is healthy.
 3. Observe the feed's verified ready state and `dorvud_broker_feed_publications_total` increasing. Correlate an accepted
    `notify` invocation, one immutable `broker_source_events` row, one immutable projection receipt and the resulting
    execution wake. Query `bayn_broker_source_projection_lag_seconds` by exact source revision. Do not submit a test order
@@ -113,26 +112,7 @@ Rollout order and acceptance:
    source receipt to projection, fill to accounting and complete submission to fill. Do not claim an improvement from
    architecture, tests, readiness or an empty session.
 
-The hard cutover removes `BaynBrokerObservations.poll`. On Restate 1.8.1, an old running or scheduled call to that
-removed handler can pause on HTTP 404 while retaining its object lock. Graceful cancellation cannot release a call
-whose handler no longer exists. The reviewed retirement tool verifies the current deployment, service revision,
-source and account key, then proves each old call's source from its retained journal and timer identity.
-
-Run from `services/bayn`, using the exact deployed source and prior source revisions recorded before rollout:
-
-```sh
-bun tools/retire-broker-polls.ts \
-  --admin-url <approved-restate-admin-url> \
-  --controller-key <configured-broker-identity-sha256> \
-  --source-revision <current-deployed-git-sha> \
-  --obsolete-source-revisions <reviewed-prior-sha[,prior-sha]>
-```
-
-This prints a read-only plan. Inspect the selected invocation IDs, deployment, source, epoch and sequence, then repeat
-with `--apply`. It kills only those verified obsolete broker polls and checks that no old poll work or poll lock
-remains. It excludes financial ticks, inference, new capture handlers and other accounts. A successful rerun is empty.
-Missing or conflicting journal evidence stops retirement. SQL capture claims, quota debt, financial history and
-account authority remain intact. Use the existing `RESTATE_AUTH_TOKEN` binding if the approved Admin endpoint needs it.
+Deliver migration 216 after these checks pass. Verify the legacy source and projection parity after promotion.
 
 The existing observability Alloy scrapes the feed every fifteen seconds and collects its logs. Check
 `job="bayn-broker-stream"` metrics and `job="bayn"` logs without exporting raw broker payloads. Feed readiness establishes
