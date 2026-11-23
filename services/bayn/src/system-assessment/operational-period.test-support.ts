@@ -90,7 +90,7 @@ export const operationalRegistrationFixture = (base = registrationFixture()): Op
   if (sourceConfiguration.schemaVersion !== 'bayn.qualification-runtime.v1')
     throw new Error('Operational fixture must start from its retained financial registration')
   const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...common } = sourceConfiguration
-  const configuration = ['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'].includes(
+  const configuration = ['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42'].includes(
     sourceConfiguration.protocol.schemaVersion,
   )
     ? {

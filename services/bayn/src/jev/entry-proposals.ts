@@ -98,6 +98,9 @@ type ProposalFundingInput = {
   readonly target: bigint
 }
 
+export const requiresPositiveRewardRiskRatio = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>): boolean =>
+  protocol.schemaVersion === 'bayn.jev.protocol.v42'
+
 const fundProposalPrices = (input: ProposalFundingInput) =>
   Result.gen(function* () {
     const { symbol, economics, protocol, bidMicros, stop, target } = input
@@ -117,10 +120,13 @@ const fundProposalPrices = (input: ProposalFundingInput) =>
     const stopValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: stopLimit })
     const targetValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: target })
     const acquisition = BigInt(economics.acquisitionCostMicros)
+    const modeledLoss = acquisition - stopValue.conservativeNetMicros
+    const modeledGain = targetValue.conservativeNetMicros - acquisition
     if (
       stopValue.conservativeNetMicros <= 0n ||
-      stopValue.conservativeNetMicros >= acquisition ||
-      targetValue.conservativeNetMicros <= acquisition
+      modeledLoss <= 0n ||
+      modeledGain <= 0n ||
+      (requiresPositiveRewardRiskRatio(protocol) && modeledGain < modeledLoss)
     )
       return { status: 'REJECTED', reason: ProposalRejection.Unfunded } as const
     return {

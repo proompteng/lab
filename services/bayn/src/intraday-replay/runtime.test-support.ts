@@ -355,7 +355,11 @@ export const testReplayRuntime = registerRuntimeScenarios(
           bars: original.bars.map((bar) =>
             shiftOffset(
               bar.eventAt === original.bars[0]?.eventAt && bar.symbol !== 'SPY'
-                ? { ...bar, high: Math.max(bar.high, bar.open * 1.05), low: Math.min(bar.low, bar.open * 0.95) }
+                ? {
+                    ...bar,
+                    high: Math.max(bar.high, bar.open * (bar.symbol === 'AAPL' ? 1.056 : 1.035)),
+                    low: Math.min(bar.low, bar.open * 0.99),
+                  }
                 : bar,
             ),
           ),
@@ -1854,9 +1858,7 @@ export const testReplayRuntime = registerRuntimeScenarios(
           expect(committed.observation?.executionIssuedAt).toBe(replayCommand.issuedAt)
           expect(committed.outcome.receiptHash).not.toBe(abandoned.lastReceiptHash)
           const committedObservations = yield* readCompletionObservations
-          // The status trigger retains the completion; a fresh statement separately witnesses its commit.
-          expect(committedObservations).toHaveLength(2)
-          expect(committedObservations[0]?.status).toEqual(committedObservations[1]?.status)
+          expect(committedObservations).toHaveLength(1)
           expect(committedObservations[0]?.status).toEqual(
             expect.objectContaining({
               controller_key: controllerKey,
