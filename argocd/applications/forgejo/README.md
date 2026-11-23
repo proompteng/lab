@@ -27,18 +27,13 @@ References:
 - https://forgejo.org/docs/latest/
 - https://artifacthub.io/packages/helm/forgejo-helm/forgejo
 
-## Version 17 upgrade
+## Version 17 recovery
 
 The Application tracks `kargo/forgejo` and authorizes only `forgejo-release:forgejo`.
-The 17.0.2 checkpoint stops Forgejo before it takes fresh PostgreSQL and
-repository snapshots. The rehearsal uses clones of those snapshots, preserves
-their file ownership, and runs with networking disabled. The published image
-uses the same upstream rootless index and platform digests as the rehearsal.
+The 17.0.2 cutover retained offline PostgreSQL and repository snapshots and
+their isolated clone claims. Recover them as a pair from the
+`forgejo-server-17-0-2-cutover-*` resources. The published image uses the
+upstream rootless index and platform digests exercised in the clone rehearsal.
 
-The two containers share the Job's 40-minute deadline. Each reports failure to
-its peer when it exits early, and PostgreSQL shuts down before the Job passes.
-
-Require a successful rehearsal before starting Forgejo against production
-data. Keep both checkpoint snapshots and their clone claims. Follow the
-[upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md) for the
-acceptance checks and coordinated recovery.
+Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md) for
+the acceptance checks and coordinated recovery.
