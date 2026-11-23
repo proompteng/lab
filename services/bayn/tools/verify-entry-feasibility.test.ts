@@ -67,8 +67,7 @@ test('verifies current staged equity and crypto evidence through the native disp
         expect(report.results[0].originalJevQuestionNames).toEqual([
           'equity_support_recovery_confirmed',
           'equity_support_recovery_stop_invalidates',
-          'equity_base_breakout_confirmed',
-          'equity_base_breakout_stop_invalidates',
+          'equity_support_recovery_target_obstructed',
         ])
         expect(report.results[1].originalJevQuestionNames).toContain('crypto_support_recovery_target_obstructed')
       }),

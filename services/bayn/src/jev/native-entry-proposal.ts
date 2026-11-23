@@ -14,5 +14,9 @@ export const nativeModeledLossMicros = (proposal: NativeEntryProposal): bigint =
   isShortEntryProposal(proposal)
     ? -BigInt(proposal.funding.estimatedStopPnlMicros)
     : BigInt(proposal.funding.acquisitionCostMicros) - BigInt(proposal.funding.estimatedStopNetMicros)
+export const nativeModeledGainMicros = (proposal: NativeEntryProposal): bigint =>
+  isShortEntryProposal(proposal)
+    ? BigInt(proposal.funding.estimatedTargetPnlMicros)
+    : BigInt(proposal.funding.estimatedTargetNetMicros) - BigInt(proposal.funding.acquisitionCostMicros)
 export const nativeEntryProposalExitPlan = (proposal: NativeEntryProposal) =>
   isShortEntryProposal(proposal) ? shortEntryProposalExitPlan(proposal) : entryProposalExitPlan(proposal)

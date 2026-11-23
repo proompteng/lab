@@ -5942,7 +5942,7 @@ describe('OBSERVE runtime composition', () => {
     expect(risk.limitPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
     expect(risk.facts.state.expectedExecutionPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
     expect(BigInt(risk.facts.state.referencePriceMicros)).toBeGreaterThan(BigInt(risk.limitPriceMicros))
-    expect(document.entryLimitSlippageBps).toBe(0)
+    expect(document.entryLimitSlippageBps).toBe(5)
     expect(risk.facts.state.entryQuote?.maximumAgeMs).toBe(10_000)
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
   })
@@ -7693,7 +7693,7 @@ test('settles the committed close after native protection observes a flat accoun
 
 test('persists the pricing quote event and its full freshness deadline for every entry target', async () => {
   const fixture = await executionLifecycleFixture()
-  expect(fixture.document.entryLimitSlippageBps).toBe(0)
+  expect(fixture.document.entryLimitSlippageBps).toBe(5)
   expect(fixture.policy.maxAdverseSlippageBps).toBe(10)
   expect(Result.isSuccess(decodeExecutionDecisionDocument(fixture.document))).toBeTrue()
   expect(fixture.document.deltaRisk.length).toBeGreaterThan(0)
@@ -7708,7 +7708,7 @@ test('persists the pricing quote event and its full freshness deadline for every
     expect(limit).toBe(reference)
   }
   const { contentHash: _contentHash, ...material } = fixture.document
-  expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, entryLimitSlippageBps: 1 }))).toBeTrue()
+  expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, entryLimitSlippageBps: 6 }))).toBeTrue()
   expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, closeLimitSlippageBps: 10 }))).toBeTrue()
   const { entryLimitSlippageBps: _allowance, ...withoutAllowance } = material
   const unpadded = Result.getOrThrow(makeExecutionDecisionDocument(withoutAllowance))
