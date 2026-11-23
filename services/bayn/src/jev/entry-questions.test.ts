@@ -18,7 +18,7 @@ const fixture = (
   structureHigh = 103,
   webullContext: WebullEntryContext = null,
   protocol: JevProtocolMaterial = defaultJevProtocolDocument,
-  resistanceHigh = 112,
+  resistanceHigh = 113,
 ) => {
   const chart = Result.getOrThrow(
     makeNativeChartEvidence({
@@ -86,7 +86,8 @@ const fixture = (
   const prepared = Result.getOrThrow(
     makeEntryJudgmentRequest({
       ...input,
-      includeEquityObstruction: protocol.schemaVersion === 'bayn.jev.protocol.v42',
+      includeEquityObstruction:
+        protocol.schemaVersion === 'bayn.jev.protocol.v42' || protocol.schemaVersion === 'bayn.jev.protocol.v43',
     }),
   )
   if (prepared === null) throw new Error('Expected proposal questions')

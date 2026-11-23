@@ -98,8 +98,37 @@ type ProposalFundingInput = {
   readonly target: bigint
 }
 
+export const minimumProtectiveStopDistanceBps = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>): bigint =>
+  protocol.schemaVersion === 'bayn.jev.protocol.v43' ? 15n : 0n
+
+export const meetsMinimumProtectiveStopDistance = (input: {
+  readonly protocol: Pick<JevProtocolMaterial, 'schemaVersion'>
+  readonly side: 'long' | 'short'
+  readonly referenceMicros: bigint
+  readonly stopPriceMicros: bigint
+}): boolean => {
+  const minimumBps = minimumProtectiveStopDistanceBps(input.protocol)
+  if (minimumBps === 0n) return true
+  if (input.referenceMicros <= 0n) return false
+  const distanceMicros =
+    input.side === 'long'
+      ? input.referenceMicros - input.stopPriceMicros
+      : input.stopPriceMicros - input.referenceMicros
+  return distanceMicros > 0n && distanceMicros * 10_000n >= input.referenceMicros * minimumBps
+}
+
+export const hasRequiredRewardRiskRatio = (
+  protocol: Pick<JevProtocolMaterial, 'schemaVersion'>,
+  modeledGainMicros: bigint,
+  modeledLossMicros: bigint,
+): boolean => {
+  if (protocol.schemaVersion === 'bayn.jev.protocol.v43') return modeledGainMicros * 5n >= modeledLossMicros * 6n
+  if (protocol.schemaVersion === 'bayn.jev.protocol.v42') return modeledGainMicros >= modeledLossMicros
+  return true
+}
+
 export const requiresPositiveRewardRiskRatio = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>): boolean =>
-  protocol.schemaVersion === 'bayn.jev.protocol.v42'
+  protocol.schemaVersion === 'bayn.jev.protocol.v42' || protocol.schemaVersion === 'bayn.jev.protocol.v43'
 
 const fundProposalPrices = (input: ProposalFundingInput) =>
   Result.gen(function* () {
@@ -109,7 +138,13 @@ const fundProposalPrices = (input: ProposalFundingInput) =>
       (stop * BigInt(10_000 - protocol.maximumEntryLimitSlippageBps) + 9_999n) / 10_000n,
       'UP',
     )
-    if (stopLimit <= 0n || stopLimit > stop || stop >= bidMicros || target <= BigInt(economics.maximumEntryPriceMicros))
+    if (
+      stopLimit <= 0n ||
+      stopLimit > stop ||
+      stop >= bidMicros ||
+      target <= BigInt(economics.maximumEntryPriceMicros) ||
+      !meetsMinimumProtectiveStopDistance({ protocol, side: 'long', referenceMicros: bidMicros, stopPriceMicros: stop })
+    )
       return { status: 'REJECTED', reason: ProposalRejection.InvalidPrices } as const
     const liquidation = {
       protocol,
@@ -126,7 +161,7 @@ const fundProposalPrices = (input: ProposalFundingInput) =>
       stopValue.conservativeNetMicros <= 0n ||
       modeledLoss <= 0n ||
       modeledGain <= 0n ||
-      (requiresPositiveRewardRiskRatio(protocol) && modeledGain < modeledLoss)
+      !hasRequiredRewardRiskRatio(protocol, modeledGain, modeledLoss)
     )
       return { status: 'REJECTED', reason: ProposalRejection.Unfunded } as const
     return {
@@ -226,7 +261,12 @@ export const makeEntrySourceCandidates = (input: {
       const funding = yield* fundProposalPrices({ ...input, symbol: chart.symbol, stop, target: greatestTarget })
       if (funding.status === 'FUNDED') {
         supportBarIds.push(bar.id)
-        admittedStop ??= stop
+        admittedStop =
+          protocol.schemaVersion === 'bayn.jev.protocol.v43' && admittedStop !== undefined
+            ? stop > admittedStop
+              ? stop
+              : admittedStop
+            : (admittedStop ?? stop)
       }
     }
     if (admittedStop !== undefined)
