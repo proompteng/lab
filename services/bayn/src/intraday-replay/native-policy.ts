@@ -17,15 +17,19 @@ import {
 } from '../strategy/repeated-momentum/policy'
 import { Sha256Schema } from '../schemas'
 
-export const NativeReplayPolicySchema = Schema.Literals([
+const CompiledReplayPolicySchema = Schema.Literals([
   JevResearchPolicy.Candidate,
   JevResearchPolicy.Ablation,
   JevResearchPolicy.Momentum,
 ])
+export const NativeReplayPolicySchema = Schema.Literals([
+  ...CompiledReplayPolicySchema.literals,
+  JevResearchPolicy.Incumbent,
+])
 export type NativeReplayPolicy = typeof NativeReplayPolicySchema.Type
 
 export const NativeReplayIdentitySchema = Schema.Struct({
-  policy: NativeReplayPolicySchema,
+  policy: CompiledReplayPolicySchema,
   strategy: Schema.Struct({
     name: Schema.Literal('jev'),
     behaviorHash: Sha256Schema,
@@ -41,7 +45,10 @@ export const NativeReplayIdentitySchema = Schema.Struct({
 })
 
 /** All native policies are compiled into the same replay executable; their economic identities remain distinct. */
-export const nativeReplayPolicyIdentity = (policy: NativeReplayPolicy, protocol: JevProtocol) =>
+export const nativeReplayPolicyIdentity = <ReplayPolicy extends NativeReplayPolicy>(
+  policy: ReplayPolicy,
+  protocol: JevProtocol,
+) =>
   Result.gen(function* () {
     if (policy === JevResearchPolicy.Ablation)
       return {
@@ -70,8 +77,4 @@ export const nativeReplayPolicyIdentity = (policy: NativeReplayPolicy, protocol:
   })
 
 export const nativeReplayPolicyManifest = (protocol: JevProtocol) =>
-  Result.all([
-    nativeReplayPolicyIdentity(JevResearchPolicy.Candidate, protocol),
-    nativeReplayPolicyIdentity(JevResearchPolicy.Ablation, protocol),
-    nativeReplayPolicyIdentity(JevResearchPolicy.Momentum, protocol),
-  ])
+  Result.all(CompiledReplayPolicySchema.literals.map((policy) => nativeReplayPolicyIdentity(policy, protocol)))

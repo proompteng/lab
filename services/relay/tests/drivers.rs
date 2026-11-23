@@ -8,6 +8,7 @@ use relay::{
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use serde_json::json;
 use std::{
+    fs::{File, TryLockError},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -26,6 +27,14 @@ impl Directory {
         let path = self.0.join(name);
         std::fs::write(&path, value).unwrap();
         path.to_str().unwrap().to_owned()
+    }
+    fn child_lock(&self) -> File {
+        File::options()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(self.0.join("child.lock"))
+            .unwrap()
     }
 }
 impl Drop for Directory {
@@ -49,6 +58,43 @@ fn failure<T>(result: Result<T, Failure>) -> Failure {
         Ok(_) => panic!("expected driver failure"),
     }
 }
+
+async fn assert_descendant_cancelled<T>(
+    directory: &Directory,
+    child_lock: File,
+    task: tokio::task::JoinHandle<T>,
+) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !directory.0.join("started").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("descendant did not report holding the lock");
+    assert!(matches!(
+        child_lock.try_lock(),
+        Err(TryLockError::WouldBlock)
+    ));
+
+    task.abort();
+    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+    tokio::time::timeout(Duration::from_millis(1200), async {
+        loop {
+            match child_lock.try_lock() {
+                Ok(()) => break,
+                Err(TryLockError::WouldBlock) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await
+                }
+                Err(TryLockError::Error(error)) => {
+                    panic!("cannot check the descendant lock: {error}")
+                }
+            }
+        }
+    })
+    .await
+    .expect("cancelled process left its descendant holding the lock");
+}
+
 fn python() -> String {
     let result = std::process::Command::new("python3")
         .args(["-c", "import sys; print(sys.executable)"])
@@ -172,6 +218,7 @@ async fn upstream_mcp_rejects_tool_changes_before_dispatch_and_never_repeats_a_l
 #[tokio::test]
 async fn upstream_mcp_cancellation_terminates_the_server_and_its_children() {
     let directory = Directory::new();
+    let child_lock = directory.child_lock();
     let adapter = mcp(&directory, "hang");
     let task = tokio::spawn(async move {
         adapter
@@ -181,17 +228,7 @@ async fn upstream_mcp_cancellation_terminates_the_server_and_its_children() {
             )
             .await
     });
-    tokio::time::timeout(Duration::from_secs(3), async {
-        while !directory.0.join("calls.jsonl").exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-    task.abort();
-    assert!(matches!(task.await,Err(error) if error.is_cancelled()));
-    tokio::time::sleep(Duration::from_millis(1200)).await;
-    assert!(!directory.0.join("calls.escaped").exists());
+    assert_descendant_cancelled(&directory, child_lock, task).await;
 }
 
 async fn mcp_http_fixture(
@@ -482,23 +519,22 @@ async fn cli_preserves_process_failures_and_rejects_unbounded_or_invalid_output(
 #[tokio::test]
 async fn cli_cancellation_terminates_descendants() {
     let directory = Directory::new();
-    let adapter = Arc::new(cli(
+    let child_lock = directory.child_lock();
+    let adapter = cli(
         &directory,
-        "import os,sys,time\npid=os.fork()\nif pid==0:\n time.sleep(1)\n open('escaped','w').write('escaped')\n time.sleep(5)\nelse:\n open('started','w').write(str(pid))\n time.sleep(30)\n",
-    ));
+        r#"import fcntl, os, time
+if os.fork() == 0:
+    with open('child.lock', 'r+') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        open('started', 'w').close()
+        time.sleep(6)
+else:
+    time.sleep(30)
+"#,
+    );
     let request = adapter.normalize("read", br#"{"query":"ok"}"#).unwrap();
     let task = tokio::spawn(async move { adapter.execute(&request, None).await });
-    tokio::time::timeout(Duration::from_secs(3), async {
-        while !directory.0.join("started").exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-    task.abort();
-    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
-    tokio::time::sleep(Duration::from_millis(1200)).await;
-    assert!(!directory.0.join("escaped").exists());
+    assert_descendant_cancelled(&directory, child_lock, task).await;
 }
 
 #[tokio::test]

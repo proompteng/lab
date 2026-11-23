@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
-import { ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
+import { ValkeyCacheError, ValkeyCacheInputError, ValkeyFailureCategory } from '../valkey-cache'
 import { BrokerPollFailureReason } from '../broker/alpaca/failures'
 import { OrderStatus } from '../broker/alpaca/model'
 import {
@@ -239,6 +239,27 @@ test('publication diagnostics expose only allowlisted fields, without inspecting
   expect(brokerPublicationFailureAnnotations(observationUnavailable('private wrapper', getterCache))).toEqual({
     ...unknown,
     'broker.publication_dependency': 'valkey',
+  })
+  expect(
+    brokerPublicationFailureAnnotations(
+      observationUnavailable(
+        'private wrapper',
+        new ValkeyCacheInputError({ operation: 'put', message: 'private value' }),
+      ),
+    ),
+  ).toEqual({
+    'broker.publication_dependency': 'valkey',
+    'broker.publication_operation': 'put',
+    'broker.publication_failure_category': 'input_validation',
+    'broker.publication_cause_category': 'input_validation',
+  })
+  const getterInputError = new ValkeyCacheInputError({ operation: 'put', message: 'private value' })
+  Object.defineProperty(getterInputError, 'operation', { get: getter })
+  expect(brokerPublicationFailureAnnotations(observationUnavailable('private wrapper', getterInputError))).toEqual({
+    'broker.publication_dependency': 'valkey',
+    'broker.publication_operation': 'unknown',
+    'broker.publication_failure_category': 'input_validation',
+    'broker.publication_cause_category': 'input_validation',
   })
   const hostilePrototype = new Proxy({}, { getPrototypeOf: getter, get: getter })
   for (const cause of [hostilePrototype, Object.setPrototypeOf(new Error('private native detail'), hostilePrototype)])

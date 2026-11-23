@@ -47,6 +47,7 @@ import {
   retainedJevProtocolV38Document,
   retainedJevProtocolV39Document,
   retainedJevProtocolV40Document,
+  retainedJevProtocolV41Document,
   jevBehaviorHash,
   type JevProtocol,
   type RetainedVisualJevProtocolSchema,
@@ -1275,15 +1276,17 @@ const recordedJevProtocolIdentityMatches = (
   protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type,
   strategyProtocolHash: string,
 ): boolean => {
-  if (protocol.schemaVersion === 'bayn.jev.protocol.v41')
+  if (protocol.schemaVersion === 'bayn.jev.protocol.v42')
     return jevProtocolIdentityMatches(protocol, strategyProtocolHash)
   const parameters = canonicalHashV1Result(protocol)
   const expected = canonicalHashV1Result(
-    protocol.schemaVersion === 'bayn.jev.protocol.v40'
-      ? retainedJevProtocolV40Document
-      : protocol.schemaVersion === 'bayn.jev.protocol.v39'
-        ? retainedJevProtocolV39Document
-        : retainedJevProtocolV38Document,
+    protocol.schemaVersion === 'bayn.jev.protocol.v41'
+      ? retainedJevProtocolV41Document
+      : protocol.schemaVersion === 'bayn.jev.protocol.v40'
+        ? retainedJevProtocolV40Document
+        : protocol.schemaVersion === 'bayn.jev.protocol.v39'
+          ? retainedJevProtocolV39Document
+          : retainedJevProtocolV38Document,
   )
   if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
     return false
@@ -1305,13 +1308,15 @@ const ablationProtocolIdentityMatches = (
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
   const expected = canonicalHashV1Result({
-    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v41'
+    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v42'
       ? defaultJevProtocolDocument
-      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
-        ? retainedJevProtocolV40Document
-        : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
-          ? retainedJevProtocolV39Document
-          : retainedJevProtocolV38Document),
+      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v41'
+        ? retainedJevProtocolV41Document
+        : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
+          ? retainedJevProtocolV40Document
+          : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
+            ? retainedJevProtocolV39Document
+            : retainedJevProtocolV38Document),
   })
   if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
     return false
@@ -1327,13 +1332,15 @@ const momentumProtocolIdentityMatches = (
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
   const expected = canonicalHashV1Result({
-    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v41'
+    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v42'
       ? defaultJevProtocolDocument
-      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
-        ? retainedJevProtocolV40Document
-        : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
-          ? retainedJevProtocolV39Document
-          : retainedJevProtocolV38Document),
+      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v41'
+        ? retainedJevProtocolV41Document
+        : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
+          ? retainedJevProtocolV40Document
+          : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
+            ? retainedJevProtocolV39Document
+            : retainedJevProtocolV38Document),
   })
   const identity = repeatedMomentumStrategyIdentity(policy)
   return (

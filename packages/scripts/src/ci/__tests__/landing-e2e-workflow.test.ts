@@ -75,6 +75,7 @@ describe('landing browser validation workflow', () => {
           LANDING_RESULT: landing,
           LANDING_EXPECTED: landingExpected,
           AGENTS_RESULT: 'skipped',
+          BAYN_RESULT: 'skipped',
           DELEGATED: '[]',
         },
       }).exitCode
@@ -109,7 +110,7 @@ describe('landing browser validation workflow', () => {
 
   test('runs Landing units and runtime SQL acceptance once while retaining identity proof', () => {
     const ofz = readFileSync('.github/workflows/ofz.yaml', 'utf8')
-    const native = readFileSync('.github/workflows/tengri-images.yml', 'utf8')
+    const native = readFileSync('.github/workflows/tengri-validation.yml', 'utf8')
     const combined = [workflow, ofz, native].join('\n')
     expect(combined.match(/bun run --cwd apps\/landing test\n/g)).toHaveLength(1)
     expect(combined.match(/bash (?:services\/tengri\/)?test-runtime\.sh/g)).toHaveLength(1)

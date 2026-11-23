@@ -769,7 +769,7 @@ impl TengriAgentRun {
         if snapshot.state.terminal() {
             ctx.run(|| async {
                 self.service
-                    .pin_run(&principal, &admission.input, false)
+                    .release_run_pin(&principal, &admission.input)
                     .await
                     .map_err(HandlerError::from)?;
                 Ok(())
@@ -1255,32 +1255,28 @@ impl ControlPlane {
             Err(_) => state.clone(),
         }
     }
-    async fn pin_run(
+    async fn release_run_pin(&self, principal: &Principal, input: &Input) -> Result<(), Status> {
+        use kube::{Api, ResourceExt};
+        let api: Api<crate::crd::MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        match api.get(&input.agent_id).await {
+            Ok(agent) if agent.uid().as_deref() == Some(&principal.context.workspace_uid) => {
+                self.set_run_pin(&agent, input, false).await
+            }
+            Ok(_) => Ok(()),
+            Err(kube::Error::Api(error)) if error.code == 404 => Ok(()),
+            Err(_) => Err(Status::unavailable("run sleep fence cleanup unavailable")),
+        }
+    }
+
+    async fn set_run_pin(
         &self,
-        principal: &Principal,
+        agent: &crate::crd::MicroVM,
         input: &Input,
         active: bool,
     ) -> Result<(), Status> {
         use kube::{
             Api, ResourceExt,
             api::{Patch, PatchParams},
-        };
-        let mut principal = principal.clone();
-        principal.refresh_run_context()?;
-        let api: Api<crate::crd::MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
-        let agent = if active {
-            self.agent_access(&principal, &input.agent_id, &input.id)
-                .await?
-                .0
-        } else {
-            match api.get(&input.agent_id).await {
-                Ok(agent) if agent.uid().as_deref() == Some(&principal.context.workspace_uid) => {
-                    agent
-                }
-                Ok(_) => return Ok(()),
-                Err(kube::Error::Api(error)) if error.code == 404 => return Ok(()),
-                Err(_) => return Err(Status::unavailable("run sleep fence cleanup unavailable")),
-            }
         };
         let current = agent
             .metadata
@@ -1338,21 +1334,7 @@ impl ControlPlane {
     }
 
     async fn prepare_durable_run(&self, principal: &Principal, input: &Input) -> State {
-        if let Err(error) = self.pin_run(principal, input, true).await {
-            return if matches!(
-                error.code(),
-                tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
-            ) {
-                State::Rejected {
-                    reason: "run authority was revoked or expired before dispatch".into(),
-                }
-            } else {
-                State::WaitingForGuest {
-                    reason: "waiting to protect the active run from automatic sleep".into(),
-                }
-            };
-        }
-        let guest = match self.run_guest(principal, input).await {
+        let guest = match self.pinned_start_guest(principal, input).await {
             Ok(guest) => guest,
             Err(error)
                 if matches!(
@@ -1385,18 +1367,12 @@ impl ControlPlane {
     }
 
     async fn dispatch_durable_run(&self, principal: &Principal, input: &Input) -> State {
-        if self.pin_run(principal, input, true).await.is_err() {
-            return State::NeedsReconciliation {
-                turn_id: None,
-                reason: "dispatch authority or its sleep fence is unavailable; a previous attempt may already have reached Codex".into(),
-            };
-        }
-        let guest = match self.run_guest(principal, input).await {
+        let guest = match self.pinned_start_guest(principal, input).await {
             Ok(guest) => guest,
             Err(_) => {
                 return State::NeedsReconciliation {
                     turn_id: None,
-                    reason: "dispatch authority or transport is unavailable; a previous attempt may already have reached Codex".into(),
+                    reason: "dispatch authority, sleep protection or transport is unavailable; a previous attempt may already have reached Codex".into(),
                 };
             }
         };
@@ -1451,6 +1427,23 @@ impl ControlPlane {
                 reason: "Codex dispatch outcome is uncertain; the request was not resent".into(),
             },
         }
+    }
+
+    async fn pinned_start_guest(
+        &self,
+        principal: &Principal,
+        input: &Input,
+    ) -> Result<crate::guest::GuestClient, Status> {
+        let mut principal = principal.clone();
+        principal.refresh_run_context()?;
+        principal.audit_scope = crate::ofz::AuditScope::RunStart(
+            Uuid::parse_str(&input.id).map_err(|_| Status::invalid_argument("invalid run ID"))?,
+        );
+        let (agent, access) = self
+            .agent_access(&principal, &input.agent_id, &input.id)
+            .await?;
+        self.set_run_pin(&agent, input, true).await?;
+        self.guest_from_access(&agent, &access).await
     }
 
     async fn observe_durable_run(
