@@ -155,6 +155,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
           ? yield* evaluateSupportedEntryProposals({
               proposals: inference.handoff.disposition.evaluation.proposals,
               response: inference.jev.inference.response,
+              protocol: observation.protocol,
             })
           : null
       const retained = batchResult?.candidates.find((entry) => entry.symbol === candidate.symbol)

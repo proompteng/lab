@@ -21,6 +21,9 @@ Warehouse/Freight, Kargo and Argo, and verify clear OBSERVE before delivering v4
 
 ## Deliver and activate v42
 
-After settlement, deliver `bayn.jev.protocol.v42` and admission migration 213 with the mandate absent, verify the
-immutable v42 image in clear OBSERVE, and then restore the sealed `ResearchCapitalActivationRequest` bound to the
-verified v42 strategy identity and immutable image digest.
+After settlement, deliver `bayn.jev.protocol.v42` and admission migration `0213_risk_symmetry_admission` (`213_risk_symmetry_admission`) with the mandate absent, verify the immutable v42 image in clear OBSERVE, and then restore the sealed `ResearchCapitalActivationRequest` bound to the verified v42 strategy identity and immutable image digest:
+
+- `symmetricQuestionPolicyHash`: `26fdef322e448b597429bb6ccd0c51d118102128d4d50291f30fc799867ed4bf`
+- `strategyBehaviorHash`: `76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67`
+- `strategyParameterHash`: `c78a10a127b6d4fbfd2fa3d2a433744f02295aa9a2b47b20bacfbd9804ba8ed5`
+- `strategyProtocolHash`: `825c8806ba7d16783fcb96fc0d12f49b1e35f03ee81d82f6990bc7b11174d339`

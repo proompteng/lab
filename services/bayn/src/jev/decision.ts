@@ -13,7 +13,7 @@ import { JevContractError } from './contract'
 import { evaluateSupportedEntryProposals } from './entry-questions'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
-import type { JevProtocol } from './protocol'
+import type { JevProtocol, JevProtocolMaterial } from './protocol'
 import {
   isPreparedJevBatch,
   jevEntryQuoteExclusion,
@@ -39,10 +39,33 @@ type SupportedEntryCandidate = {
   readonly symbol: string
   readonly proposalId: string
   readonly structuralSupport: number
+  readonly modeledGainMicros?: bigint
   readonly modeledLossMicros: bigint
 }
 
-const compareSupportedEntryCandidates = (left: SupportedEntryCandidate, right: SupportedEntryCandidate) => {
+const EV_PROBABILITY_SCALE = 10_000n
+
+const compareSupportedEntryCandidates = (
+  left: SupportedEntryCandidate,
+  right: SupportedEntryCandidate,
+  rankByModeledExpectedValue = false,
+) => {
+  if (
+    rankByModeledExpectedValue &&
+    left.modeledGainMicros !== undefined &&
+    right.modeledGainMicros !== undefined &&
+    left.modeledLossMicros > 0n &&
+    right.modeledLossMicros > 0n
+  ) {
+    const leftProb = BigInt(Math.round(left.structuralSupport * Number(EV_PROBABILITY_SCALE)))
+    const rightProb = BigInt(Math.round(right.structuralSupport * Number(EV_PROBABILITY_SCALE)))
+    const leftEvNum = leftProb * left.modeledGainMicros - (EV_PROBABILITY_SCALE - leftProb) * left.modeledLossMicros
+    const rightEvNum =
+      rightProb * right.modeledGainMicros - (EV_PROBABILITY_SCALE - rightProb) * right.modeledLossMicros
+    const crossDiff = rightEvNum * left.modeledLossMicros - leftEvNum * right.modeledLossMicros
+    if (crossDiff > 0n) return 1
+    if (crossDiff < 0n) return -1
+  }
   const supportOrder = right.structuralSupport - left.structuralSupport
   if (supportOrder !== 0) return supportOrder
   if (left.modeledLossMicros < right.modeledLossMicros) return -1
@@ -54,9 +77,12 @@ const compareSupportedEntryCandidates = (left: SupportedEntryCandidate, right: S
 export const selectJevEntryCandidatesFromSupported = <Candidate extends SupportedEntryCandidate>(
   candidates: readonly Candidate[],
   maximumPositions: number,
+  rankByModeledExpectedValue = false,
 ) => {
   const selected: Candidate[] = []
-  for (const candidate of candidates.toSorted(compareSupportedEntryCandidates)) {
+  for (const candidate of candidates.toSorted((left, right) =>
+    compareSupportedEntryCandidates(left, right, rankByModeledExpectedValue),
+  )) {
     if (selected.some((entry) => entry.symbol === candidate.symbol)) continue
     selected.push(candidate)
     if (selected.length === maximumPositions) break
@@ -126,7 +152,7 @@ export const reproduceDecisionEvidence = (input: unknown, expectedVersion: JevBa
 
 export const selectJevEntryCandidates = (
   observation: Pick<Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['observation'], 'snapshot'> & {
-    readonly protocol: Pick<JevProtocol, 'maximumPositions'>
+    readonly protocol: Pick<JevProtocolMaterial, 'schemaVersion' | 'maximumPositions'>
   },
   inferences: Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['inferences'],
   requests: readonly {
@@ -152,18 +178,20 @@ export const selectJevEntryCandidates = (
       const evaluation = yield* evaluateSupportedEntryProposals({
         proposals: disposition.evaluation.proposals,
         response: inference.jev.inference.response,
+        protocol: observation.protocol,
       })
       if (evaluation.supported.length === 0) {
         entryPlanRejections[symbol] = 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS'
         continue
       }
       if ((yield* jevEntryQuoteExclusion(quote)) !== null) continue
-      for (const { proposal, structuralSupport, modeledLossMicros } of evaluation.supported) {
+      for (const { proposal, structuralSupport, modeledGainMicros, modeledLossMicros } of evaluation.supported) {
         if (proposal.symbol !== symbol) return yield* unavailable('Supported proposal belongs to another symbol')
         eligible.push({
           symbol,
           proposalId: proposal.proposalId,
           structuralSupport,
+          modeledGainMicros,
           modeledLossMicros,
           proposal,
         })
@@ -171,13 +199,15 @@ export const selectJevEntryCandidates = (
     }
     return {
       entryPlanRejections,
-      selected: selectJevEntryCandidatesFromSupported(eligible, observation.protocol.maximumPositions).map(
-        ({ symbol, proposal }) => ({
-          symbol,
-          weight: proposal.funding.maximumTargetWeight * (isShortEntryProposal(proposal) ? -1 : 1),
-          exitPlan: nativeEntryProposalExitPlan(proposal),
-        }),
-      ),
+      selected: selectJevEntryCandidatesFromSupported(
+        eligible,
+        observation.protocol.maximumPositions,
+        observation.protocol.schemaVersion === 'bayn.jev.protocol.v42',
+      ).map(({ symbol, proposal }) => ({
+        symbol,
+        weight: proposal.funding.maximumTargetWeight * (isShortEntryProposal(proposal) ? -1 : 1),
+        exitPlan: nativeEntryProposalExitPlan(proposal),
+      })),
     }
   })
 

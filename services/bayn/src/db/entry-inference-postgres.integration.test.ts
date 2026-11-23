@@ -1,6 +1,11 @@
 import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
+import riskSymmetryAdmission from '../../migrations/0213_risk_symmetry_admission'
 import jevBoxInference from '../../migrations/0188_jev_box_inference'
-import { retainedJevProtocolV39Document, retainedJevProtocolV40Document } from '../jev/protocol'
+import {
+  retainedJevProtocolV39Document,
+  retainedJevProtocolV40Document,
+  retainedJevProtocolV41Document,
+} from '../jev/protocol'
 import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
 import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
@@ -62,6 +67,7 @@ import {
   makeFundedEvaluationReceipt,
 } from '../jev/funded-entry.test-support'
 import {
+  entryEvaluationRequestFixture,
   nativeChartInference,
   entryCompletionFixture,
   stagedCheckpointFixture,
@@ -2433,4 +2439,148 @@ integration('committed sequential provider handoff', () => {
       }),
     ),
   )
+
+  test('risk symmetry migration 213 enforces OBSERVE cutover guard, admits v42 equity (5,5) and crypto (0,0), and rejects v41 claims', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 213))),
+          table: 'schema_migrations',
+        })
+        const bindCycle = <T extends typeof request>(value: T, snapshotId: string): T => ({
+          ...value,
+          cycleId: request.cycleId,
+          authorityGenerationHash: request.authorityGenerationHash,
+          snapshotId,
+        })
+        const v41Equity = bindCycle(
+          entryEvaluationRequestFixture(request.observedAt, 'AAPL', undefined, retainedJevProtocolV41Document),
+          '1'.repeat(64),
+        )
+        const v42Equity = bindCycle(entryEvaluationRequestFixture(request.observedAt, 'AAPL'), '2'.repeat(64))
+        const v42Crypto = bindCycle(entryEvaluationRequestFixture(request.observedAt, 'BTC/USD'), '3'.repeat(64))
+        const v41Claim = stagedCheckpointFixture(v41Equity).claims[0]
+        if (v41Claim === undefined) throw new Error('Expected v41 CHART dispatch claim')
+        yield* sql`INSERT INTO simulated_execution_clocks(account_id,source_manifest_hash,observed_at)
+          VALUES (${replayAccountId},${replaySourceHash},${v41Equity.observedAt})`
+        yield* (yield* CycleStore).acquire(fixture.draft, v41Equity.observedAt)
+        const broker = Result.getOrThrow(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            accountId: replayAccountId,
+          }),
+        )
+        const authority = makeObserveAuthorityInterpreter(
+          sql,
+          makeAuthorityPostgres(sql, { now: sql`${v41Equity.observedAt}::timestamptz` }),
+          broker,
+        )
+        yield* authority.ensureAuthorityGeneration({
+          generationHash: v41Equity.authorityGenerationHash,
+          maximum: Authority.Observe,
+        })
+        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+          VALUES (${'f'.repeat(64)},'bayn.paper-reconciliation.v1',${replayAccountId},${'1'.repeat(64)},${'1'.repeat(64)},${'2'.repeat(64)},'EXACT','[]'::jsonb,clock_timestamp())`
+        yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+          VALUES (${v41Equity.requestId},${v41Equity.cycleId},${v41Equity.authorityGenerationHash},${sql.json(v41Equity)})`
+        yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+          VALUES (${v41Equity.requestId},'CHART',${v41Claim.claimHash},${sql.json(v41Claim)})`
+        const activeRejected = yield* sql.withTransaction(riskSymmetryAdmission).pipe(Effect.result)
+        expect(Result.isFailure(activeRejected)).toBe(true)
+        if (Result.isFailure(activeRejected))
+          expect(activeRejected.failure).toMatchObject({
+            reason: { cause: { code: '55000', message: expect.stringContaining('risk symmetry cutover requires') } },
+          })
+        yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+          UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+            updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${fixture.draft.identity.cycleId}`
+        const v41StoredBefore =
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${v41Equity.requestId}`
+        const v41ClaimBefore =
+          yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims WHERE request_id=${v41Equity.requestId}`
+        yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at)
+          VALUES (${'7'.repeat(64)},'bayn.paper-position-snapshot.v1',${replayAccountId},${'8'.repeat(64)},${'9'.repeat(64)},1,${v41Equity.observedAt})`
+        const openPositionRejected = yield* sql.withTransaction(riskSymmetryAdmission).pipe(Effect.result)
+        expect(Result.isFailure(openPositionRejected)).toBe(true)
+        if (Result.isFailure(openPositionRejected))
+          expect(openPositionRejected.failure).toMatchObject({ reason: { cause: { code: '55000' } } })
+        yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at)
+          VALUES (${'6'.repeat(64)},'bayn.paper-position-snapshot.v1',${replayAccountId},${'5'.repeat(64)},${'4'.repeat(64)},0,clock_timestamp())`
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`UPDATE authority_state SET kill_state='ACTIVE',reason='operator hold',version=2,updated_at=clock_timestamp() WHERE singleton`
+              const heldRejected = yield* riskSymmetryAdmission.pipe(Effect.result)
+              expect(Result.isFailure(heldRejected)).toBe(true)
+              if (Result.isFailure(heldRejected))
+                expect(heldRejected.failure).toMatchObject({ reason: { cause: { code: '55000' } } })
+              return yield* Effect.fail('revert-hold')
+            }),
+          )
+          .pipe(Effect.ignore)
+        yield* sql.withTransaction(riskSymmetryAdmission)
+        expect(
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${v41Equity.requestId}`,
+        ).toEqual(v41StoredBefore)
+        expect(
+          yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims WHERE request_id=${v41Equity.requestId}`,
+        ).toEqual(v41ClaimBefore)
+        for (const admitted of [v42Equity, v42Crypto])
+          yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+            VALUES (${admitted.requestId},${admitted.cycleId},${admitted.authorityGenerationHash},${sql.json(admitted)})`
+        const wrongV42Equity = {
+          ...v42Equity,
+          requestId: 'e'.repeat(64),
+          request: {
+            ...v42Equity.request,
+            numericalState: {
+              ...v42Equity.request.numericalState,
+              entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
+            },
+          },
+        }
+        const wrongV42Crypto = {
+          ...v42Crypto,
+          requestId: 'd'.repeat(64),
+          request: {
+            ...v42Crypto.request,
+            numericalState: {
+              ...v42Crypto.request.numericalState,
+              entryEconomics: { maximumEntryQuoteDriftBps: 5, maximumEntryLimitSlippageBps: 5 },
+            },
+          },
+        }
+        const retiredV41 = { ...v41Equity, requestId: 'c'.repeat(64), snapshotId: '4'.repeat(64) }
+        for (const bad of [wrongV42Equity, wrongV42Crypto, retiredV41]) {
+          const rejected =
+            yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+            VALUES (${bad.requestId},${bad.cycleId},${bad.authorityGenerationHash},${sql.json(bad)})`.pipe(
+              Effect.result,
+            )
+          if (Result.isSuccess(rejected)) throw new Error(`Expected 23514 constraint rejection for ${bad.requestId}`)
+          yield* Schema.decodeUnknownEffect(
+            Schema.Struct({
+              code: Schema.Literal('23514'),
+              constraint: Schema.Literal('jev_evaluation_requests_check'),
+            }),
+          )(rejected.failure.reason.cause)
+        }
+        const rejectedV41Claim = yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+          VALUES (${v41Equity.requestId},'CHART',${'9'.repeat(64)},${sql.json({ ...v41Claim, claimHash: '9'.repeat(64) })})`.pipe(
+          Effect.result,
+        )
+        if (Result.isSuccess(rejectedV41Claim)) throw new Error('Expected retired v41 dispatch claim rejection')
+        yield* Schema.decodeUnknownEffect(
+          Schema.Struct({
+            code: Schema.Literal('23514'),
+            message: Schema.Literal('Box dispatch requires one unexpired unresolved current CHART request'),
+          }),
+        )(rejectedV41Claim.failure.reason.cause)
+      }),
+    ))
 })
