@@ -1,6 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: forgejo
+patches:
+  - path: server-upgrade-quiesce.patch.yaml
 resources:
   - server-upgrade-backup.yaml
   - kargo-upgrade-backup.yaml
@@ -19,7 +21,7 @@ helmCharts:
     valuesFile: values.yaml
 
 configMapGenerator:
-  - name: forgejo-server-17-0-2-rehearsal
+  - name: forgejo-server-17-0-2-cutover-rehearsal
     files:
       - upgrade-db-rehearsal.sh
       - upgrade-app-rehearsal.sh
