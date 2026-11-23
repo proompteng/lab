@@ -1,3 +1,4 @@
+import stopFloorRewardRiskAdmission from '../../migrations/0217_stop_floor_reward_risk_admission'
 import stopFloorRewardRiskObserveCutover from '../../migrations/0216_stop_floor_reward_risk_observe_cutover'
 import executionExpectedSession from '../../migrations/0215_execution_expected_session'
 import singleControllerObservation from '../../migrations/0214_single_controller_observation'
@@ -217,6 +218,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '217_stop_floor_reward_risk_admission': stopFloorRewardRiskAdmission,
   '216_stop_floor_reward_risk_observe_cutover': stopFloorRewardRiskObserveCutover,
   '215_execution_expected_session': executionExpectedSession,
   '214_single_controller_observation': singleControllerObservation,

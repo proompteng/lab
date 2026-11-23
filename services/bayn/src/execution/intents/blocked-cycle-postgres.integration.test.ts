@@ -187,7 +187,8 @@ const seedExecutionAuthority = (
     | 'bayn.jev.protocol.v39'
     | 'bayn.jev.protocol.v40'
     | 'bayn.jev.protocol.v41'
-    | 'bayn.jev.protocol.v42' = defaultJevProtocolDocument.schemaVersion,
+    | 'bayn.jev.protocol.v42'
+    | 'bayn.jev.protocol.v43' = defaultJevProtocolDocument.schemaVersion,
 ) => {
   const observeGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'observe' }))
   const executionGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))

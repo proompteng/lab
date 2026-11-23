@@ -196,7 +196,12 @@ export const jevProtocolSchemaForQuestionPolicy = <
 
 export const JevProtocolSchema = Schema.Struct({
   ...CurrentProtocol.fields,
-  schemaVersion: Schema.Literals(['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42']),
+  schemaVersion: Schema.Literals([
+    'bayn.jev.protocol.v40',
+    'bayn.jev.protocol.v41',
+    'bayn.jev.protocol.v42',
+    'bayn.jev.protocol.v43',
+  ]),
   maximumEntryQuoteDriftBps: Schema.Literals([5, 10]),
   maximumEntryLimitSlippageBps: Schema.Literals([5, 10]),
   positionPolicy: Schema.Literals(['long-only', 'equity-long-short']),
@@ -216,7 +221,7 @@ export const JevProtocolSchema = Schema.Struct({
       protocol.schemaVersion === 'bayn.jev.protocol.v40' ? jevUniverse : currentJevUniverse,
     ),
     ...((
-      protocol.schemaVersion === 'bayn.jev.protocol.v42'
+      hasRiskSymmetryProtocol(protocol)
         ? protocol.positionPolicy === 'equity-long-short' &&
           protocol.entryQuestionPolicyHash === symmetricQuestionPolicyHash &&
           protocol.maximumEntryQuoteDriftBps === 5 &&
@@ -453,8 +458,11 @@ export type JevProtocolMaterial =
         | 'bayn.jev.protocol.v29'
     })
 
+export const hasRiskSymmetryProtocol = (protocol: { readonly schemaVersion: string }): boolean =>
+  protocol.schemaVersion === 'bayn.jev.protocol.v42' || protocol.schemaVersion === 'bayn.jev.protocol.v43'
+
 export const usesJevOnlyInference = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>) =>
-  protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+  hasRiskSymmetryProtocol(protocol) ||
   protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v39' ||
@@ -464,7 +472,7 @@ export const usesJevOnlyInference = (protocol: Pick<JevProtocolMaterial, 'schema
 export const usesBoxChartInference = (protocol: { readonly schemaVersion: string }): boolean =>
   protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
-  protocol.schemaVersion === 'bayn.jev.protocol.v42'
+  hasRiskSymmetryProtocol(protocol)
 
 export const retainedJevProtocolV40Document = Object.freeze({
   schemaVersion: 'bayn.jev.protocol.v40',
@@ -513,12 +521,17 @@ export const retainedJevProtocolV41Document = Object.freeze({
   candidateSymbols: currentJevCandidateSymbols,
 } as const)
 
-export const defaultJevProtocolDocument = Object.freeze({
+export const retainedJevProtocolV42Document = Object.freeze({
   ...retainedJevProtocolV41Document,
   schemaVersion: 'bayn.jev.protocol.v42',
   maximumEntryQuoteDriftBps: 5,
   maximumEntryLimitSlippageBps: 5,
   entryQuestionPolicyHash: symmetricQuestionPolicyHash,
+} as const)
+
+export const defaultJevProtocolDocument = Object.freeze({
+  ...retainedJevProtocolV42Document,
+  schemaVersion: 'bayn.jev.protocol.v43',
 } as const)
 
 export const retainedJevProtocolV39Document = Object.freeze({
