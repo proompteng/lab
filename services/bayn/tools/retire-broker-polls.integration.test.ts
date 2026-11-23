@@ -99,7 +99,8 @@ describeLocal('real Restate obsolete broker poll retirement', () => {
           { ingressPrivate: false },
           async (_ctx: restate.ObjectSharedContext, _candidate: unknown) => undefined,
         ),
-        accept: privateVoid,
+        reconcile: privateVoid,
+        refresh: privateVoid,
         activate: privateVoid,
         freshness: privateVoid,
         capture: restate.handlers.object.exclusive(

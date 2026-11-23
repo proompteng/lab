@@ -419,6 +419,22 @@
       "pattern": "^Repository scripts(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "torghut",
+      "pattern": "^Torghut CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-schema",
+      "pattern": "^Torghut ClickHouse schema(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-notebooks",
+      "pattern": "^Torghut notebooks(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "queue-services",
+      "pattern": "^Queue service validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "ci-pr",
       "pattern": "^ci-pr(?: \\(.*\\))?$"
     }

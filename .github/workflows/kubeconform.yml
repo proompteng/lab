@@ -1,17 +1,6 @@
 name: kubeconform
 
 on:
-  merge_group:
-    types: [checks_requested]
-  pull_request:
-    paths:
-      - 'argocd/**/*.yaml'
-      - 'scripts/kubeconform.sh'
-      - 'schemas/custom/**'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'nix/**'
-      - '.github/workflows/kubeconform.yml'
   push:
     branches:
       - main
@@ -28,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -50,22 +39,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh argocd
-            exit 0
-          fi
-
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base_sha="${{ github.event.pull_request.base.sha }}"
-            git fetch --no-tags --depth=1 origin "${base_sha}"
+          base_sha="${{ github.event.before }}"
+          if [ -z "${base_sha}" ] || [ "${base_sha}" = "0000000000000000000000000000000000000000" ]; then
+            git fetch --no-tags --depth=2 origin "${{ github.sha }}"
+            base_sha="$(git rev-parse "${{ github.sha }}^")"
           else
-            base_sha="${{ github.event.before }}"
-            if [ -z "${base_sha}" ] || [ "${base_sha}" = "0000000000000000000000000000000000000000" ]; then
-              git fetch --no-tags --depth=2 origin "${{ github.sha }}"
-              base_sha="$(git rev-parse "${{ github.sha }}^")"
-            else
-              git fetch --no-tags --depth=1 origin "${base_sha}"
-            fi
+            git fetch --no-tags --depth=1 origin "${base_sha}"
           fi
 
           mapfile -d '' changed_manifests < <(

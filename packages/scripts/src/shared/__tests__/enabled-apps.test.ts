@@ -507,7 +507,7 @@ describe('enabled app inventory', () => {
       'sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189',
     )
     expect(natsKustomization).toContain('newTag: v1.22.0')
-    expect(observabilityKustomization).toContain('version: 8.4.2')
+    expect(observabilityKustomization).toContain('version: 9.1.0')
   })
 
   it('pins the enabled service image upgrade wave', () => {
@@ -602,8 +602,8 @@ describe('enabled app inventory', () => {
       .map((container) => container.image)
 
     expect(ollamaImages).toEqual([
-      'ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592',
-      'ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592',
+      'ollama/ollama:0.40.17@sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754',
+      'ollama/ollama:0.40.17@sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754',
     ])
   })
 

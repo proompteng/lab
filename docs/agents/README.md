@@ -18,6 +18,7 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 - Preserving shell sessions during storage migration: `agents-shell-workspace-migration.md`
 - Engineering memory and shell tools: `memory-notes.md`
 - Talos, Omni and BMC shell inspection: `agents-shell-infrastructure.md`
+- Paperless documents and AI tools: `agents-shell-paperless.md`
 - Linear intake and source-bound operations: `linear-mcp.md`
 - Codex MCP integration: `codex-mcp-agents.md`
 - Workflow-loop launches: `agentrun-workflow-loop-launch-guide.md`

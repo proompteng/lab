@@ -2094,7 +2094,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     <span className="font-medium text-zinc-300">Response interrupted.</span> {run.state.reason}
                   </p>
                 ) : null}
-                {agentStatus === 'Working' ? (
+                {agentStatus === 'Sending' || agentStatus === 'Working' ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                   </div>

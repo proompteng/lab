@@ -55,7 +55,18 @@ import { CycleObservability, CycleObservabilityLive } from '../cycle/store/obser
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://agent@127.0.0.1:55432/bayn_v41_test'
 const accountId = `replay-${sha256(crypto.randomUUID())}`
-const native = nativeJevFixture(undefined, undefined, accountId)
+const native = nativeJevFixture(
+  undefined,
+  undefined,
+  accountId,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  true,
+)
 const at = native.snapshot.manifest.observedAt
 const generation = native.input.authorityGenerationHash
 

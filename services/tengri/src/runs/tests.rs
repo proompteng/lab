@@ -1613,17 +1613,30 @@ async fn completing_one_conversation_keeps_the_other_run_pinned() {
         thread_id: "second-thread".into(),
         ..input()
     };
-    service.pin_run(&principal(), &first, true).await.unwrap();
-    service.pin_run(&principal(), &second, true).await.unwrap();
-    service.pin_run(&principal(), &first, false).await.unwrap();
-    service.pin_run(&principal(), &first, false).await.unwrap();
+    assert!(
+        service
+            .pinned_start_guest(&principal(), &first)
+            .await
+            .is_err()
+    );
+    assert!(
+        service
+            .pinned_start_guest(&principal(), &second)
+            .await
+            .is_err()
+    );
+    service.release_run_pin(&principal(), &first).await.unwrap();
+    service.release_run_pin(&principal(), &first).await.unwrap();
     let agents: kube::Api<crate::crd::MicroVM> =
         kube::Api::namespaced(service.client.clone(), "tengri");
     let agent = agents.get(&first.agent_id).await.unwrap();
     let pins: BTreeSet<String> =
         serde_json::from_str(&agent.annotations()[crate::activity::ACTIVE_RUN_ANNOTATION]).unwrap();
     assert_eq!(pins, BTreeSet::from([second.id.clone()]));
-    service.pin_run(&principal(), &second, false).await.unwrap();
+    service
+        .release_run_pin(&principal(), &second)
+        .await
+        .unwrap();
     assert!(
         !agents
             .get(&first.agent_id)
@@ -1655,7 +1668,7 @@ async fn an_accepted_run_is_pinned_before_guest_availability_is_required() {
         agent.spec.desired_state,
         crate::crd::MicroVMDesiredState::Sleeping
     );
-    service.pin_run(&principal(), &input, false).await.unwrap();
+    service.release_run_pin(&principal(), &input).await.unwrap();
     assert!(
         !agents
             .get(&input.agent_id)
@@ -1683,7 +1696,7 @@ async fn snapshot_resume_rebinds_the_run_pin_to_current_authority() {
     let mut admitted = principal();
     admitted.context.runtime_epoch = "55555555-5555-4555-8555-555555555555".into();
 
-    service.pin_run(&admitted, &input, true).await.unwrap();
+    assert!(service.pinned_start_guest(&admitted, &input).await.is_err());
 
     let agents: kube::Api<crate::crd::MicroVM> =
         kube::Api::namespaced(service.client.clone(), "tengri");

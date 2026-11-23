@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 import scripts.run_whitepaper_autoresearch_profit_target as runner
 import scripts.train_mlx_autoresearch_ranker as ranker_trainer
-from scripts.whitepaper_autoresearch_runner import replay_shards
+from scripts.whitepaper_autoresearch_runner import replay_execution
 from scripts.whitepaper_autoresearch_runner import run_reporting
 from app.models import (
     AutoresearchCandidateSpec,
@@ -500,8 +500,8 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
                 ),
             ),
             patch.object(
-                replay_shards,
-                "_run_real_replay_once_with_optional_timeout",
+                replay_execution,
+                "_run_real_replay",
                 side_effect=RuntimeError("forced replay failure"),
             ),
             patch.object(
@@ -548,6 +548,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
 
         self.assertEqual(exit_code, 3)
         self.assertEqual(summary["status"], "replay_failed")
+        self.assertIn("forced replay failure", summary["failure_reason"])
         self.assertEqual(summary["partial_evidence_bundle_count"], 1)
         self.assertTrue(partial_artifact_exists)
         self.assertTrue(remediation_exists)
