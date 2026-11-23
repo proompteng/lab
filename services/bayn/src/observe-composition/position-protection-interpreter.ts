@@ -1,5 +1,5 @@
 import { isProtectedEntryTarget } from '../strategy/runtime-decision'
-import { Effect, Option } from 'effect'
+import { Effect, Option, Result } from 'effect'
 
 import { BrokerMutationError, MutationOperation } from '../broker/alpaca-mutations/model'
 import type { AutonomousCycle } from '../cycle/model'
@@ -22,13 +22,15 @@ import { canonicalHashV1Result } from '../hash'
 import { JevPositionStore } from '../jev/portfolio'
 import type { JevProtocol } from '../jev/protocol'
 import { evaluateJevPositionManagement } from '../jev/runtime'
-import type { JevExitTarget } from '../jev/exit'
+import { JevExitReason, jevProtectiveStopCrossed, type JevExitTarget } from '../jev/exit'
+import { decodeIntradayQuoteRows } from '../market-data/intraday/rows'
 import type { ReconciliationPassResult } from '../reconciler'
 import { BrokerMode, evaluate, type Policy, type State } from '../risk'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
 import { quantityScale } from '../quantity'
-import { isShortExitPlan } from '../strategy/funded-exit-plan'
+import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { isShortExitPlan, type FundedEntryExitPlan } from '../strategy/funded-exit-plan'
 import type { CycleWaitReason } from '../cycle/runner/readiness'
 import { CycleRunnerError } from '../cycle/runner/model'
 import {
@@ -46,6 +48,38 @@ type ProtectionAdvance =
   | { readonly _tag: 'Ready'; readonly exitTarget?: JevExitTarget }
   | { readonly _tag: 'Step'; readonly step: PreparedMutationCycleStep }
   | PostMutationReconciliation
+
+/**
+ * Single-exchange IEX quotes frequently widen one side past stop while Alpaca's already-armed consolidated
+ * STOP_LIMIT/OCO/BRACKET remains valid. Only cancel healthy native broker protection for ProtectiveStop when
+ * non-IEX evidence or the opposite side of the quote also crosses stop (indicating a genuine market break/gap).
+ */
+export const armedNativeProtectionRequiresStopCancellation = (
+  target: JevExitTarget,
+  plan: FundedEntryExitPlan,
+): boolean => {
+  if (target.reason !== JevExitReason.ProtectiveStop) return true
+  const trigger = target.evidence.trigger
+  if (trigger.reason !== JevExitReason.ProtectiveStop) return true
+  if (trigger.manifest['feed'] !== 'iex') return true
+  const decodedQuotes = decodeIntradayQuoteRows(trigger.rows.quotes)
+  if (Result.isFailure(decodedQuotes)) return true
+  const quotes = decodedQuotes.success.filter((row) => row.symbol === plan.levels.symbol)
+  if (quotes.length === 0 || quotes.some((row) => row.feed !== 'iex')) return true
+  let latest = quotes[0]
+  if (latest === undefined) return true
+  for (const row of quotes) {
+    const rowMs = Date.parse(row.event_at)
+    const latestMs = Date.parse(latest.event_at)
+    if (rowMs > latestMs || (rowMs === latestMs && row.event_at >= latest.event_at)) latest = row
+  }
+  const short = isShortExitPlan(plan)
+  const oppositeSize = Number(short ? latest.bid_size : latest.ask_size)
+  if (!Number.isFinite(oppositeSize) || oppositeSize <= 0) return true
+  const oppositePrice = Number(short ? latest.bid_price : latest.ask_price)
+  const oppositeMicros = priceNumberToMicros(oppositePrice, short ? 'bid' : 'ask', short ? 'DOWN' : 'UP')
+  return Result.isSuccess(oppositeMicros) ? jevProtectiveStopCrossed(oppositeMicros.success, plan.levels) : true
+}
 
 /** One account writer owns entry settlement, native coverage, cancellation and residual liquidation. */
 export const advancePositionProtection = (request: {
@@ -177,6 +211,32 @@ export const advancePositionProtection = (request: {
                   ?.limitPriceMicros ?? '0',
               ),
         }
+    }
+    const nativeStatus = decidePositionProtection({
+      plan,
+      entry: { _tag: 'Settled' },
+      quantityAtoms,
+      protection,
+      exitDue: false,
+      observedAt,
+    })
+    if (
+      !request.closeDue &&
+      management._tag === 'Exit' &&
+      management.target.reason === JevExitReason.ProtectiveStop &&
+      nativeStatus._tag === 'Wait' &&
+      nativeStatus.reason === 'PROTECTED' &&
+      !armedNativeProtectionRequiresStopCancellation(management.target, plan)
+    ) {
+      yield* Effect.logInfo('Holding armed native protection while IEX opposite quote stays clear of stop').pipe(
+        Effect.annotateLogs({
+          cycleId: cycle.identity.cycleId,
+          symbol: plan.levels.symbol,
+          exitSide,
+          protectionIntentId: protection._tag === 'Armed' ? protection.intentId : '',
+        }),
+      )
+      management = { _tag: 'Wait', details: { waitReason: 'JEV_POSITION_HELD' } }
     }
     const action = decidePositionProtection({
       plan,
