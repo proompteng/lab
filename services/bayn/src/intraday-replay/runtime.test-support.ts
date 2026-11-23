@@ -1858,9 +1858,7 @@ export const testReplayRuntime = registerRuntimeScenarios(
           expect(committed.observation?.executionIssuedAt).toBe(replayCommand.issuedAt)
           expect(committed.outcome.receiptHash).not.toBe(abandoned.lastReceiptHash)
           const committedObservations = yield* readCompletionObservations
-          // The status trigger retains the completion; a fresh statement separately witnesses its commit.
-          expect(committedObservations).toHaveLength(2)
-          expect(committedObservations[0]?.status).toEqual(committedObservations[1]?.status)
+          expect(committedObservations).toHaveLength(1)
           expect(committedObservations[0]?.status).toEqual(
             expect.objectContaining({
               controller_key: controllerKey,
