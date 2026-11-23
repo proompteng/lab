@@ -3,7 +3,7 @@ fullnameOverride: torghut-notebooks
 hub:
   image:
     name: quay.io/jupyterhub/k8s-hub
-    tag: '4.4.2'
+    tag: '4.4.5'
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -36,7 +36,7 @@ hub:
         - '3333333333333333333333333333333333333333333333333333333333333333'
   extraEnv:
     TORGHUT_NOTEBOOK_IMAGE:
-      value: registry.ide-newton.ts.net/lab/torghut-notebook@sha256:bd0a02119021751f2baadf796a578735dc0eecf00f64a277027ad41a15eb63af
+      value: registry.ide-newton.ts.net/lab/torghut-notebook@sha256:4fbcb830795bead3f99e6d3cb42c6df1dbdbfc69b99af35a2e0a78a7bc36a4b8
     TORGHUT_HUB_COOKIE_SECRET:
       valueFrom:
         secretKeyRef:
@@ -92,7 +92,7 @@ proxy:
   chp:
     image:
       name: quay.io/jupyterhub/configurable-http-proxy
-      tag: '5.3.0'
+      tag: '5.4.0'
       pullPolicy: IfNotPresent
     resources:
       requests:

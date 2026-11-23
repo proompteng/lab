@@ -1,0 +1,9 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forgejo
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+spec:
+  replicas: 0
