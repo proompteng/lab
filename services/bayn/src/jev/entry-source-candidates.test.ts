@@ -167,7 +167,7 @@ test('an unrepresentable unselected high cannot remove a usable support low', ()
     makeNativeChartEvidence({
       ...source,
       bars: source.bars.map((bar, index) =>
-        index === 0 ? { ...bar, high: 1e15 } : index === 1 ? { ...bar, high: 112 } : bar,
+        index === 0 ? { ...bar, high: 1e15 } : index === 1 ? { ...bar, high: 113 } : bar,
       ),
     }),
   )

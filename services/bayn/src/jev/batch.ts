@@ -267,6 +267,7 @@ export const jevBatchQuestionSetHash = (
       const input = candidate.request.request
       const { protocol } = input
       const usesBoxes =
+        protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v40'
@@ -287,7 +288,7 @@ export const jevBatchQuestionSetHash = (
         jev:
           input.schemaVersion === 'bayn.entry-ablation-input.v1'
             ? { status: 'OMITTED_BY_POLICY', selectionPolicy: input.selectionPolicy }
-            : protocol.schemaVersion === 'bayn.jev.protocol.v42'
+            : protocol.schemaVersion === 'bayn.jev.protocol.v42' || protocol.schemaVersion === 'bayn.jev.protocol.v43'
               ? {
                   ...symmetricEntryJudgmentPolicy,
                   model: protocol.model,
