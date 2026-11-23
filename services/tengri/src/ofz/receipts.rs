@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tonic::Status;
 
-use super::proto::CheckRequest;
+use super::{AuditScope, proto::CheckRequest};
 
 const CAPACITY: usize = 4096;
 const MAX_AGE: Duration = Duration::from_secs(7 * 60 * 60);
@@ -57,8 +57,13 @@ pub(super) struct Cache {
 }
 
 impl Cache {
-    pub async fn bind(&self, request: &CheckRequest, recovery: u64) -> Result<Binding, Status> {
-        let slot = self.slot(request, recovery).await?;
+    pub async fn bind(
+        &self,
+        request: &CheckRequest,
+        recovery: u64,
+        scope: AuditScope,
+    ) -> Result<Binding, Status> {
+        let slot = self.slot(request, recovery, scope).await?;
         let remaining = super::remaining_deadline(request)?.min(super::DURABLE_TIMEOUT);
         let mut receipt = tokio::time::timeout(remaining, slot.lock_owned())
             .await
@@ -73,8 +78,13 @@ impl Cache {
         }
     }
 
-    pub async fn slot(&self, request: &CheckRequest, recovery: u64) -> Result<Slot, Status> {
-        let key = key(request, recovery);
+    pub async fn slot(
+        &self,
+        request: &CheckRequest,
+        recovery: u64,
+        scope: AuditScope,
+    ) -> Result<Slot, Status> {
+        let key = key(request, recovery, scope);
         let mut entries = self.entries.lock().await;
         if let Some((used, slot)) = entries.get_mut(&key) {
             *used = Instant::now();
@@ -95,7 +105,7 @@ impl Cache {
     }
 }
 
-fn key(request: &CheckRequest, recovery: u64) -> [u8; 32] {
+fn key(request: &CheckRequest, recovery: u64, scope: AuditScope) -> [u8; 32] {
     let mut binding = request.clone();
     binding.stream_receipt_id.clear();
     if let Some(context) = &mut binding.context {
@@ -104,6 +114,10 @@ fn key(request: &CheckRequest, recovery: u64) -> [u8; 32] {
     }
     let mut digest = Sha256::new();
     digest.update(b"tengri.audit-binding.v1\n");
+    if let AuditScope::RunStart(id) = scope {
+        digest.update(b"run-start\n");
+        digest.update(id.as_bytes());
+    }
     digest.update(recovery.to_be_bytes());
     digest.update(binding.encode_to_vec());
     digest.finalize().into()
@@ -141,11 +155,17 @@ mod tests {
     async fn receipts_share_only_the_exact_authority_and_target() {
         let cache = Cache::default();
         let original = request();
-        let slot = cache.slot(&original, 1).await.unwrap();
+        let slot = cache
+            .slot(&original, 1, AuditScope::Observation)
+            .await
+            .unwrap();
         let mut same = original.clone();
         same.context.as_mut().unwrap().trace_id = uuid::Uuid::new_v4().to_string();
         same.context.as_mut().unwrap().deadline_unix_ms += 1;
-        assert!(Arc::ptr_eq(&slot, &cache.slot(&same, 1).await.unwrap()));
+        assert!(Arc::ptr_eq(
+            &slot,
+            &cache.slot(&same, 1, AuditScope::Observation).await.unwrap()
+        ));
         let mut variants = Vec::new();
         for field in [
             "session",
@@ -181,11 +201,20 @@ mod tests {
             variants.push(changed);
         }
         for changed in variants {
-            assert!(!Arc::ptr_eq(&slot, &cache.slot(&changed, 1).await.unwrap()));
+            assert!(!Arc::ptr_eq(
+                &slot,
+                &cache
+                    .slot(&changed, 1, AuditScope::Observation)
+                    .await
+                    .unwrap()
+            ));
         }
         assert!(!Arc::ptr_eq(
             &slot,
-            &cache.slot(&original, 2).await.unwrap()
+            &cache
+                .slot(&original, 2, AuditScope::Observation)
+                .await
+                .unwrap()
         ));
         *slot.lock().await = Some(Receipt {
             id: "old".into(),
@@ -201,15 +230,29 @@ mod tests {
         let mut retained = Vec::new();
         for n in 0..CAPACITY {
             request.target = n.to_string();
-            retained.push(cache.slot(&request, 1).await.unwrap());
+            retained.push(
+                cache
+                    .slot(&request, 1, AuditScope::Observation)
+                    .await
+                    .unwrap(),
+            );
         }
         request.target = "overflow".into();
         assert_eq!(
-            cache.slot(&request, 1).await.unwrap_err().code(),
+            cache
+                .slot(&request, 1, AuditScope::Observation)
+                .await
+                .unwrap_err()
+                .code(),
             tonic::Code::ResourceExhausted
         );
         retained.pop();
-        assert!(cache.slot(&request, 1).await.is_ok());
+        assert!(
+            cache
+                .slot(&request, 1, AuditScope::Observation)
+                .await
+                .is_ok()
+        );
         assert_eq!(cache.entries.lock().await.len(), CAPACITY);
     }
 }

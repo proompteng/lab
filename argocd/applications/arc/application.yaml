@@ -203,11 +203,11 @@ spec:
                   resources:
                     requests:
                       cpu: "4"
-                      memory: "16Gi"
+                      memory: "8Gi"
                       ephemeral-storage: "10Gi"
                     limits:
                       cpu: "20"
-                      memory: "32Gi"
+                      memory: "16Gi"
                       ephemeral-storage: "100Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
@@ -257,7 +257,7 @@ spec:
                         volumeMode: Filesystem
                         resources:
                           requests:
-                            storage: 100Gi
+                            storage: 64Gi
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.15.1
@@ -440,11 +440,11 @@ spec:
                   resources:
                     requests:
                       cpu: "4"
-                      memory: "16Gi"
+                      memory: "8Gi"
                       ephemeral-storage: "10Gi"
                     limits:
                       cpu: "20"
-                      memory: "32Gi"
+                      memory: "16Gi"
                       ephemeral-storage: "100Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
@@ -494,7 +494,7 @@ spec:
                         volumeMode: Filesystem
                         resources:
                           requests:
-                            storage: 100Gi
+                            storage: 64Gi
               tolerations:
                 - key: workload.proompteng.ai/compute-local
                   operator: Equal

@@ -18,7 +18,10 @@ def verify(report: Path, expected: list[Path]) -> None:
         source = suite.get("file")
         if not source:
             raise ValueError("Required integration file is missing its report identity")
-        reported.add(Path(source).resolve())
+        path = Path(source).resolve()
+        if path in reported:
+            raise ValueError(f"Required integration file reported multiple times: {source}")
+        reported.add(path)
         cases = list(suite.iter("testcase"))
         if any(
             case.find("failure") is not None or case.find("error") is not None
@@ -29,10 +32,16 @@ def verify(report: Path, expected: list[Path]) -> None:
             raise ValueError(
                 f"Required integration executed no successful cases: {source}"
             )
-    missing = {source.resolve() for source in expected} - reported
+    expected_paths = {source.resolve() for source in expected}
+    missing = expected_paths - reported
     if missing:
         raise ValueError(
             f"Required integration files absent from report: {sorted(map(str, missing))}"
+        )
+    unexpected = reported - expected_paths if expected else set()
+    if unexpected:
+        raise ValueError(
+            f"Unexpected integration files in report: {sorted(map(str, unexpected))}"
         )
 
 

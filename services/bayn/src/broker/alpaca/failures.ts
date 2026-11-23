@@ -35,8 +35,8 @@ export type BrokerReadOperation =
   | 'order-by-id'
   | 'order-by-client-id'
   | 'fill-activities'
-  | 'activity-stream'
   | 'fee-activities'
+  | 'non-trade-activities'
   | 'asset-by-symbol'
   | 'market-calendar'
 

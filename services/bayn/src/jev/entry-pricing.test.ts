@@ -10,7 +10,7 @@ import { CandidateObservationStore } from '../observe-composition/candidate-obse
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { jevObservationForSnapshot } from './native.test-support'
-import { jevEntryPriceAllowances } from './entry-economics'
+import { jevEntryPriceAllowances, jevMaximumEntryAskMicros } from './entry-economics'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
@@ -107,6 +107,10 @@ test.each(['AAPL', 'BTC/USD'])(
       ask === undefined
     )
       throw new Error('Missing funded crypto terms')
+    const referencePriceMicros =
+      symbol === 'BTC/USD'
+        ? BigInt(ask)
+        : jevMaximumEntryAskMicros(decision.evidence.observation.protocol, symbol, BigInt(ask))
     const pricing = Result.getOrThrow(
       deriveExecutionIntentPricing({
         symbol,
@@ -114,7 +118,7 @@ test.each(['AAPL', 'BTC/USD'])(
         orderType: OrderType.Limit,
         timeInForce,
         quantityAtoms: BigInt(quantity),
-        referencePriceMicros: BigInt(ask),
+        referencePriceMicros,
         limitSlippageBps: BigInt(
           jevEntryPriceAllowances(decision.evidence.observation.protocol, symbol).limitSlippageBps,
         ),
@@ -153,7 +157,7 @@ test('crypto entry does not chase a fresh narrow quote above the inference ask',
 test('equity entry retains the real refreshed ask and its funded buy ceiling', () => {
   const original = pricingFixture(100, 100.02).fixture.snapshot.latestQuotes['AAPL']
   if (original === undefined) throw new Error('Missing inference quote')
-  const ask = original.askPrice + 0.01
+  const ask = original.askPrice + 0.15
   const { fixture, decision, pricing } = pricingFixture(ask - 0.02, ask)
   const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
   const plan = decision.exitPolicy.plans['AAPL']

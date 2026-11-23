@@ -1,0 +1,150 @@
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: paperless-agent-token
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  # Django REST Framework tokens have a 40-character primary key.
+  length: 40
+  digits: 10
+  symbols: 0
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: paperless-agent-api
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  refreshPolicy: CreatedOnce
+  target:
+    name: paperless-agent-api
+    creationPolicy: Orphan
+    deletionPolicy: Retain
+    template:
+      engineVersion: v2
+      metadata:
+        annotations:
+          argocd.argoproj.io/sync-options: Prune=false,Delete=false
+      data:
+        token: '{{ .password }}'
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: paperless-agent-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: paperless-agent-token-reader
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [paperless-agent-api]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: paperless-agent-token-reader
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: paperless-agent-token-reader
+subjects:
+  - kind: ServiceAccount
+    name: paperless-agent-token-reader
+    namespace: agents
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: paperless-agent-bootstrap
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paperless-agent-bootstrap
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          # Replaced from the Paperless Deployment image by Kustomize.
+          image: paperless-bootstrap
+          command: [python, /bootstrap/bootstrap_agent.py]
+          workingDir: /usr/src/paperless/src
+          envFrom:
+            - configMapRef:
+                name: paperless-config
+          env:
+            - name: PAPERLESS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-runtime
+                  key: PAPERLESS_SECRET_KEY
+            - name: PAPERLESS_REDIS
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-runtime
+                  key: PAPERLESS_REDIS
+            - name: PAPERLESS_DBUSER
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-db-app
+                  key: username
+            - name: PAPERLESS_DBPASS
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-db-app
+                  key: password
+            - name: PAPERLESS_AGENT_TOKEN_FILE
+              value: /var/run/secrets/paperless-agent-api/token
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: bootstrap
+              mountPath: /bootstrap
+              readOnly: true
+            - name: token
+              mountPath: /var/run/secrets/paperless-agent-api
+              readOnly: true
+      volumes:
+        - name: bootstrap
+          configMap:
+            name: paperless-agent-bootstrap
+        - name: token
+          secret:
+            secretName: paperless-agent-api
+            defaultMode: 0440

@@ -12,7 +12,9 @@ import uuid
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 JOB = ROOT / "signal-schema-job.yaml"
 SERVER = re.search(r"^\s+image: (\S+)", JOB.read_text(), re.MULTILINE).group(1)
-KEEPER = "mirror.gcr.io/clickhouse/clickhouse-keeper:26.8.2.7@sha256:0fbe266b275a23b53508a7a3dac2e6fe149d63cddf242897a5c5c3d7b5350568"
+KEEPER = re.search(
+    r"^\s+image: (\S+)", (ROOT / "clickhouse-keeper.yaml").read_text(), re.MULTILINE
+).group(1)
 PREFIX = "torghut-schema-" + uuid.uuid4().hex[:12]
 NAMES = [PREFIX + "-keeper", PREFIX + "-a", PREFIX + "-b"]
 
