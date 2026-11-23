@@ -90,7 +90,7 @@ export const assessSession = (
   definition: SystemRegistration['policies'][number],
   asOf: string,
   verifiedSources: ReadonlySet<string>,
-  version = registration.schemaVersion === 'bayn.system-registration.v4'
+  version = 'statisticalPlan' in registration
     ? JevAcceptanceVersion.Current
     : registration.schemaVersion === 'bayn.system-registration.v3'
       ? JevAcceptanceVersion.RetainedV5
@@ -177,6 +177,12 @@ export const assessSession = (
     if (financial === null) missing.push('MISSING_FINANCIAL_EVIDENCE')
     else {
       requireSource(financial.sourceHash)
+      if (
+        registration.schemaVersion === 'bayn.system-registration.v5' &&
+        session.sessionDate === registration.calendar.sessions[0]?.sessionDate &&
+        BigInt(financial.cashInventory.openingEquityMicros) !== BigInt(registration.allocationMicros)
+      )
+        violations.push('OPENING_ALLOCATION_MISMATCH')
       trading = netTradingPnl(financial)
       if (trading.toString() !== cashInventoryTradingPnl(financial.cashInventory))
         violations.push('CASH_INVENTORY_MISMATCH')

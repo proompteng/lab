@@ -1,3 +1,13 @@
+import stopFloorRewardRiskObserveCutover from '../../migrations/0216_stop_floor_reward_risk_observe_cutover'
+import executionExpectedSession from '../../migrations/0215_execution_expected_session'
+import singleControllerObservation from '../../migrations/0214_single_controller_observation'
+import riskSymmetryAdmission from '../../migrations/0213_risk_symmetry_admission'
+import riskSymmetryObserveCutover from '../../migrations/0212_risk_symmetry_observe_cutover'
+import durableBrokerActivities from '../../migrations/0211_durable_broker_activities'
+import pairedQualificationAdmission from '../../migrations/0210_paired_qualification_admission'
+import qualificationAuthorityWitness from '../../migrations/0209_qualification_authority_witness'
+import reconciliationSourceSnapshots from '../../migrations/0208_reconciliation_source_snapshots'
+import nativeQualificationCalendar from '../../migrations/0207_native_qualification_calendar'
 import durableBrokerSourceEvents from '../../migrations/0206_durable_broker_source_events'
 import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
 import protectionClosePlans from '../../migrations/0204_protection_close_plans'
@@ -207,6 +217,16 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '216_stop_floor_reward_risk_observe_cutover': stopFloorRewardRiskObserveCutover,
+  '215_execution_expected_session': executionExpectedSession,
+  '214_single_controller_observation': singleControllerObservation,
+  '213_risk_symmetry_admission': riskSymmetryAdmission,
+  '212_risk_symmetry_observe_cutover': riskSymmetryObserveCutover,
+  '211_durable_broker_activities': durableBrokerActivities,
+  '210_paired_qualification_admission': pairedQualificationAdmission,
+  '209_qualification_authority_witness': qualificationAuthorityWitness,
+  '208_reconciliation_source_snapshots': reconciliationSourceSnapshots,
+  '207_native_qualification_calendar': nativeQualificationCalendar,
   '206_durable_broker_source_events': durableBrokerSourceEvents,
   '205_inference_source_seals': inferenceSourceSeals,
   '204_protection_close_plans': protectionClosePlans,

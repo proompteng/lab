@@ -1,6 +1,6 @@
 # Bayn durable broker event architecture
 
-Status: direct trade-update projection implemented; Activity SSE ownership migration remains required.
+The source implements direct trade-update projection and a single durable Activity SSE cursor.
 
 ## Decision
 
@@ -140,7 +140,11 @@ nine-digit provider `updated_at`, retained as `orders.broker_updated_at`; local 
 lower-precision timestamp conversion never decide freshness. A delayed stream order reuses the receipt for the newer
 durable provider version instead of appending a regressive state. A complete-history snapshot selects the newest
 provider version per broker order and fails closed if that version is older than the one already retained. Reuse of
-one provider timestamp with a different source identity is a conflict. Any trade update arriving
+one provider timestamp with a different source identity is a conflict. Alpaca REST history can render the same order
+with a microsecond `updated_at` while the stream retains additional nanoseconds. That lower-precision observation
+reuses the retained stream receipt only when its raw timestamp is a strict prefix of the retained version and hashing
+the complete order state at the retained raw timestamp reproduces the retained content hash. A different state or a
+genuinely older microsecond remains a conflict. Any trade update arriving
 before the session proof, or any later invalid, unsupported, unbound or conflicting trade update, poisons only that
 session's fast lane; all subsequent updates in that session take canonical reconciliation. A new gap-free
 `SessionReady` session can re-enter the fast path only after its own boundary is financially reconciled.
@@ -150,7 +154,7 @@ serialized delivery alone cannot prove an economic prefix. The projector retains
 controller immediately, while complete-history reconciliation remains the only TigerBeetle writer. Activity SSE can
 move accounting onto the streaming path only after its replay cursor and correction chain establish that prefix.
 
-## Target financial-state path
+## Durable Activity SSE path
 
 Alpaca's current [Activity SSE guide](https://docs.alpaca.markets/us/docs/activity-sse) defines the financial-state
 replication contract: persist the last `event_id` ULID, reconnect with `since_id`, deduplicate with `ref_id`, and reverse
@@ -168,39 +172,35 @@ flowchart TB
   end
 
   Owner[One Dorvud broker connection owner]
-  Ingress[Restate per-account ingress]
+  Ingress[BaynBrokerActivities Restate object]
   Source[(Immutable source events + durable SSE cursor)]
-  Reducer[Versioned deterministic financial reducer]
+  Reducer[Fill and fee projection]
   Order[(Orders and fills)]
   Money[(TigerBeetle money)]
-  Verify[Independent convergence verifier]
+  Verify[Complete-history reconciliation]
   Strategy[Jev + deterministic strategy]
   Risk[Risk and capital authority]
 
-  TU --> Owner
+  TU --> Owner -->|Trade updates| Order
   AS --> Owner
-  Owner --> Ingress --> Source --> Reducer
-  Reducer --> Order
-  Reducer --> Money
+  Owner -->|Signed Activity messages| Ingress --> Source --> Reducer
+  Reducer --> Verify
   REST --> Verify
-  Order --> Verify
-  Money --> Verify
+  Order --> Verify --> Money
   Strategy --> Risk
   Verify --> Risk
   Risk -->|approved intents only| Owner
 ```
 
-The remaining hard migration is therefore explicit:
+The feed presents the exact provider payload, publication ULID, and `ref_id` and `previous_id` identities. The
+account-keyed Restate handler acknowledges after PostgreSQL commits the source, projection and cursor. Inclusive
+redelivery returns the retained disposition. An activity referencing an earlier fill or fee records a replacement
+or reversal in the projection. Canonical reconciliation owns the posted accounting entries.
 
-- move Activity SSE from replica-local Bayn memory into the single Dorvud owner;
-- persist the last successfully retained ULID and resume only with `since_id`;
-- preserve raw Activity JSON and `ref_id`/`previous_id` before projection;
-- implement correction/bust reversal as immutable compensating entries;
-- serve snapshot reconciliation from the durable activity projection, using provider REST only for startup, periodic
-  independent verification, a reported stream gap, an unsupported activity, or a failed invariant;
-- delete the in-process Activity SSE implementation and its fixed timestamp replay once live equivalence is proven.
-
-Until this migration is deployed, no reduction in Activity SSE connection count or provider REST calls is claimed.
+Initial catchup proves a provider publication interval. Its count and hash must match the durable events in that
+interval. A live heartbeat confirms session liveness after coverage completes. A contradictory publication or
+conflicting source payload invalidates broker observations and blocks ordinary submission. Canonical readback
+continues for reconciliation and investigation. A missing or expired Activity view selects canonical REST recovery.
 
 ## Profitability boundary
 

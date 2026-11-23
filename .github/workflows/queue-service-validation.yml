@@ -1,0 +1,80 @@
+name: Queue service validation
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  agentctl:
+    uses: ./.github/workflows/agentctl-ci.yml
+
+  codex:
+    uses: ./.github/workflows/codex-ci.yml
+
+  dernier:
+    uses: ./.github/workflows/dernier-ci.yml
+
+  dorvud:
+    uses: ./.github/workflows/dorvud.yml
+
+  facteur:
+    uses: ./.github/workflows/facteur-ci.yml
+
+  feature-flags:
+    uses: ./.github/workflows/feature-flags-ci.yml
+
+  flamingo:
+    uses: ./.github/workflows/flamingo-ci.yml
+
+  galette:
+    uses: ./.github/workflows/galette-ci.yml
+
+  golink:
+    uses: ./.github/workflows/golink-ci.yml
+
+  graf-service:
+    uses: ./.github/workflows/graf-service.yml
+
+  jangar-guardrails:
+    uses: ./.github/workflows/jangar-guardrails.yml
+
+  khoshut:
+    uses: ./.github/workflows/khoshut-ci.yml
+
+  miel:
+    uses: ./.github/workflows/miel-ci.yml
+
+  nuc-omni-serve:
+    uses: ./.github/workflows/nuc-omni-serve.yaml
+
+  orbit-salvage:
+    uses: ./.github/workflows/orbit-salvage-ci.yml
+
+  otel:
+    uses: ./.github/workflows/otel-ci.yml
+
+  reestr:
+    uses: ./.github/workflows/reestr-ci.yml
+
+  registry-cleanup:
+    uses: ./.github/workflows/registry-cleanup-ci.yml
+
+  ricochet-rush:
+    uses: ./.github/workflows/ricochet-rush-ci.yml
+
+  schematic:
+    uses: ./.github/workflows/schematic-ci.yml
+
+  signal-publisher:
+    uses: ./.github/workflows/signal-publisher-ci.yml
+
+  spire-migration:
+    uses: ./.github/workflows/spire-migration.yml
+
+  symphony:
+    uses: ./.github/workflows/symphony-ci.yml
+
+  synthesis:
+    uses: ./.github/workflows/synthesis-ci.yml

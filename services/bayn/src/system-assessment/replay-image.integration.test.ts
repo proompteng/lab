@@ -11,7 +11,7 @@ import { TestClock } from 'effect/testing'
 import { sha256 } from '../hash'
 import { nativeReplayPolicyManifest } from '../intraday-replay/native-policy'
 import { loadActiveStrategyProtocol } from '../strategy'
-import { testHash } from './fixtures.test-support'
+import { nativeRegistrationFixture, registrationFixture, testHash } from './fixtures.test-support'
 import {
   bindReplayImagePolicy,
   bindFrozenReplayImagePolicy,
@@ -22,7 +22,6 @@ import { frozenControlOrigin, frozenDeployedControlIdentity } from './frozen-con
 import { JevResearchPolicy } from '../jev/acceptance'
 import { JevCompilerDependencyReceiptSchema } from '../jev/instruction-variant'
 import { Schema } from 'effect'
-import { registrationFixture } from './fixtures.test-support'
 import {
   fullBatchLatencyFixture,
   latencyCalibrationDecisionFixture,
@@ -125,6 +124,40 @@ test.each([JevResearchPolicy.Ablation, JevResearchPolicy.Momentum])(
     ).toBe(true)
   },
 )
+
+test('the registered incumbent image binds the compiled Jev root', () => {
+  const compiled = Result.getOrThrow(Result.flatMap(loadActiveStrategyProtocol(), nativeReplayPolicyManifest))
+  const root = compiled.find((p) => p.policy === JevResearchPolicy.Candidate)
+  const registered = nativeRegistrationFixture(registrationFixture()).policies.find(
+    (p) => p.policy === JevResearchPolicy.Incumbent,
+  )
+  if (root === undefined || registered === undefined) throw new Error('Missing compiled Jev or registered incumbent')
+  const incumbent = {
+    ...registered,
+    strategyHash: root.strategy.behaviorHash,
+    parametersHash: root.strategy.parameterHash,
+    protocolHash: root.protocolHash,
+  }
+  const dependencies = Schema.decodeUnknownSync(JevCompilerDependencyReceiptSchema)({
+    schemaVersion: 'bayn.jev-compiler-dependencies.v4',
+    sourceRevision: incumbent.sourceRevision,
+    bunVersion: '1.4.2',
+    files: {},
+    controlFiles: {},
+    compilerFiles: {},
+    nativeReplayPolicies: compiled,
+  })
+  const labels = {
+    'proompteng.ai/bayn.strategy-behavior-hash': root.strategy.behaviorHash,
+    'proompteng.ai/bayn.strategy-parameter-hash': root.strategy.parameterHash,
+    'proompteng.ai/bayn.strategy-protocol-hash': root.protocolHash,
+  }
+  expect(Result.isSuccess(bindReplayImagePolicy(dependencies, labels, incumbent))).toBe(true)
+  for (const key of ['strategyHash', 'parametersHash', 'protocolHash'] as const)
+    expect(Result.isFailure(bindReplayImagePolicy(dependencies, labels, { ...incumbent, [key]: testHash(key) }))).toBe(
+      true,
+    )
+})
 
 nativeTest(
   'registry digest chain verifies Nix image members and rejects forged source, executable and layer bytes',
@@ -272,7 +305,7 @@ with tarfile.open(root / 'layer.tar', 'w') as archive:
             ),
         }
         const inspect = (
-          overrides: Partial<typeof policy> = {},
+          overrides: Partial<Parameters<typeof VerifiedReplayImage.inspect>[0]> = {},
           hash = sha256(executable),
           platform = ReplayImagePlatform.Amd64,
         ) =>
@@ -310,6 +343,21 @@ with tarfile.open(root / 'layer.tar', 'w') as archive:
           expect(controlImage.receipt.manifestDigest).toBe(image.receipt.manifestDigest)
           expect(controlImage.receipt.policyDefinitionHash).not.toBe(image.receipt.policyDefinitionHash)
         }
+        const registeredIncumbent = nativeRegistrationFixture(initial.registration).policies.find(
+          (p) => p.policy === JevResearchPolicy.Incumbent,
+        )
+        if (registeredIncumbent === undefined) throw new Error('Missing registered incumbent')
+        expect(
+          Exit.isFailure(yield* Effect.exit(inspect({ ...registeredIncumbent, imageDigest: policy.imageDigest }))),
+        ).toBe(true)
+        const incumbent = {
+          ...registeredIncumbent,
+          sourceRevision: policy.sourceRevision,
+          imageDigest: policy.imageDigest,
+        }
+        const incumbentImage = yield* inspect(incumbent)
+        expect(incumbentImage.receipt.policyDefinitionHash).toBe(testHash(incumbent))
+        expect(incumbentImage.receipt.policyDefinitionHash).not.toBe(image.receipt.policyDefinitionHash)
         const replay = nativeLatencyBacktestFixture(calibration, {
           imageRepository: repository,
           imageDigest: `sha256:${policy.imageDigest}`,

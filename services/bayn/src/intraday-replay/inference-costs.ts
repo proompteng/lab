@@ -26,7 +26,7 @@ export const registeredReplayInferenceTariff = (
     const { rates } = yield* prepareInferenceRateCard(rateCard)
     const jevOnly = protocol.entrySignalPolicy === 'jev-only'
     const requiredModels =
-      policy === JevResearchPolicy.Candidate
+      policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Incumbent
         ? [
             { provider: 'typesafe', model: protocol.model },
             ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),
