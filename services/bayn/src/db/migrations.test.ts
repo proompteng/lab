@@ -5,7 +5,7 @@ import { migrationLoader } from './migrations'
 
 test('runtime migration loader preserves the retained controller cutover sequence', () => {
   const migrations = Effect.runSync(migrationLoader)
-  expect(migrations.filter(([id]) => id >= 187 && id <= 215).map(([id, name]) => [id, name])).toEqual([
+  expect(migrations.filter(([id]) => id >= 187 && id <= 216).map(([id, name]) => [id, name])).toEqual([
     [187, 'inference_request_generation_index'],
     [188, 'jev_box_inference'],
     [189, 'native_protection_cancel_receipts'],
@@ -34,6 +34,7 @@ test('runtime migration loader preserves the retained controller cutover sequenc
     [213, 'risk_symmetry_admission'],
     [214, 'single_controller_observation'],
     [215, 'execution_expected_session'],
+    [216, 'v42_sandbox_observe_cutover'],
   ])
 })
 

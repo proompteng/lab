@@ -7,6 +7,7 @@ import v38ObserveCutover from '../../migrations/0183_effective_entry_observe_cut
 import v39ObserveCutover from '../../migrations/0186_jev114_observe_cutover'
 import v40ObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
 import v41ObserveCutover from '../../migrations/0212_risk_symmetry_observe_cutover'
+import v42ObserveCutover from '../../migrations/0216_v42_sandbox_observe_cutover'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -24,6 +25,7 @@ for (const {
   parameterHash,
   protocolHash,
   rejectionMessage,
+  boundGenerationHash,
 } of [
   {
     schemaVersion: 'bayn.jev.protocol.v38',
@@ -61,6 +63,16 @@ for (const {
     rejectionMessage:
       'risk-symmetry OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
   },
+  {
+    schemaVersion: 'bayn.jev.protocol.v42',
+    migrationId: 216,
+    effectiveEntryObserveCutover: v42ObserveCutover,
+    parameterHash: 'c78a10a127b6d4fbfd2fa3d2a433744f02295aa9a2b47b20bacfbd9804ba8ed5',
+    protocolHash: '825c8806ba7d16783fcb96fc0d12f49b1e35f03ee81d82f6990bc7b11174d339',
+    rejectionMessage:
+      'v42 sandbox OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
+    boundGenerationHash: '66d0718b5500dfc3424087d8d3500c693779169281f7630eed666391ccbbb4f0',
+  },
 ]) {
   const behaviorHash = '76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
   const hash = (value: string) => Result.getOrThrow(canonicalHashV1Result({ value }))
@@ -77,14 +89,14 @@ for (const {
     CREATE TEMP TABLE autonomous_cycles(state text) ON COMMIT DROP;
     CREATE TEMP TABLE accounting_transactions(account_id text,symbol text,quantity_delta_atoms bigint,cost_basis_delta_micros bigint,broker_event_id text,transaction_id text DEFAULT 'transaction') ON COMMIT DROP;
     CREATE TEMP TABLE broker_inventory_debits(account_id text,symbol text,quantity_atoms bigint,cost_basis_micros bigint,posted boolean) ON COMMIT DROP;
-    CREATE TEMP TABLE position_snapshots(account_id text,position_count integer,observed_at timestamptz,snapshot_id text) ON COMMIT DROP;
+    CREATE TEMP TABLE position_snapshots(account_id text,position_count integer,observed_at timestamptz,snapshot_id text,ingestion_order_trusted boolean DEFAULT true,ingestion_sequence bigint GENERATED ALWAYS AS IDENTITY) ON COMMIT DROP;
     CREATE TEMP TABLE accounting_receipts(broker_event_id text,receipt_id text) ON COMMIT DROP;
     CREATE TEMP TABLE fills(event_id text) ON COMMIT DROP;
-    CREATE TEMP TABLE orders(account_id text,broker_order_id text,status text,event_id text) ON COMMIT DROP;
+    CREATE TEMP TABLE orders(account_id text,broker_order_id text,status text,event_id text,broker_updated_at text DEFAULT '2026-11-01T00:00:00.000000000Z') ON COMMIT DROP;
     CREATE TEMP TABLE broker_events(event_id text,source_sequence bigint) ON COMMIT DROP;
-    CREATE TEMP TABLE authority_generations(generation_hash text,account_id text,strategy_name text,strategy_parameter_schema_version text,strategy_behavior_hash text,strategy_parameter_hash text,strategy_protocol_hash text) ON COMMIT DROP;
+    CREATE TEMP TABLE authority_generations(generation_hash text,account_id text,strategy_name text,strategy_parameter_schema_version text,strategy_behavior_hash text,strategy_parameter_hash text,strategy_protocol_hash text,broker_environment text DEFAULT 'sandbox',activation_schema_version text DEFAULT 'bayn.paper-authority-generation.v3') ON COMMIT DROP;
     CREATE TEMP TABLE authority_state(generation_hash text,maximum text,effective text,kill_state text,reason text,version bigint,updated_at timestamptz) ON COMMIT DROP;
-    CREATE TEMP TABLE reconciliations(account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP;
+    CREATE TEMP TABLE reconciliations(account_id text,status text,reconciled_at timestamptz,reconciliation_id text,expected_hash text DEFAULT 'exact',observed_hash text DEFAULT 'exact',discrepancies jsonb DEFAULT '[]',account_event_id text DEFAULT 'account-event',position_snapshot_id text DEFAULT 'reconciled-position') ON COMMIT DROP;
     CREATE TEMP TABLE mutation_events(intent_id text,occurred_at timestamptz) ON COMMIT DROP;
     CREATE TEMP TABLE jev_evaluation_requests(request_id text,payload jsonb) ON COMMIT DROP;
     CREATE TEMP TABLE jev_evaluation_resolutions(request_id text) ON COMMIT DROP;
@@ -96,11 +108,14 @@ for (const {
     CREATE TEMP TABLE jev_staged_dispatch_claims(unused integer) ON COMMIT DROP;
     CREATE TEMP TABLE jev_staged_terminal_receipts(unused integer) ON COMMIT DROP;
     CREATE TEMP TABLE jev_staged_skip_receipts(unused integer) ON COMMIT DROP;
-    INSERT INTO authority_state VALUES ('current','PAPER','PAPER','CLEAR',NULL,17,clock_timestamp()-interval '1 second');
+    INSERT INTO position_snapshots VALUES ('account',0,clock_timestamp()-interval '2 seconds','reconciled-position');
     INSERT INTO reconciliations VALUES ('account','EXACT',clock_timestamp(),'fresh');
   END $fixture$`)
+    const generationHash = boundGenerationHash ?? 'current'
+    yield* sql`INSERT INTO authority_state VALUES
+    (${generationHash},'PAPER','PAPER','CLEAR',NULL,17,clock_timestamp()-interval '1 second')`
     yield* sql`INSERT INTO authority_generations VALUES
-    ('current','account','jev',${schemaVersion},${behaviorHash},${parameterHash},${protocolHash})`
+    (${generationHash},'account','jev',${schemaVersion},${behaviorHash},${parameterHash},${protocolHash})`
   })
 
   const withGuardFixture = <A, E, R>(seed: string, body: Effect.Effect<A, E, R>) =>
@@ -209,6 +224,28 @@ for (const {
       name: 'newer nonexact reconciliation after an exact one',
       seed: "INSERT INTO reconciliations VALUES ('account','DISCREPANCY',clock_timestamp(),'newer')",
     },
+    ...(boundGenerationHash === undefined
+      ? []
+      : [
+          { name: 'unequal reconciliation hashes', seed: "UPDATE reconciliations SET observed_hash='different'" },
+          { name: 'nonempty discrepancies', seed: "UPDATE reconciliations SET discrepancies='[{}]'" },
+          {
+            name: 'missing reconciliation snapshot pair',
+            seed: 'UPDATE reconciliations SET account_event_id=NULL,position_snapshot_id=NULL',
+          },
+          { name: 'untrusted position ordering', seed: 'UPDATE position_snapshots SET ingestion_order_trusted=false' },
+          {
+            name: 'flat position observed after the reconciled snapshot',
+            seed: "INSERT INTO position_snapshots VALUES ('account',0,clock_timestamp(),'new-flat')",
+          },
+          {
+            name: 'newer provider order is open despite an older terminal receipt with a larger sequence',
+            seed: `INSERT INTO broker_events VALUES ('provider-latest',1),('provider-earlier',2);
+            INSERT INTO orders VALUES
+              ('account','order','NEW','provider-latest','2026-11-01T00:00:00.000000002Z'),
+              ('account','order','FILLED','provider-earlier','2026-11-01T00:00:00.000000001Z')`,
+          },
+        ]),
   ]
 
   const preservedStates = [
@@ -242,6 +279,15 @@ for (const {
       name: 'another protocol hash',
       seed: `UPDATE authority_generations SET strategy_protocol_hash='${'0'.repeat(64)}'`,
     },
+    ...(boundGenerationHash === undefined
+      ? []
+      : [
+          {
+            name: 'different v42 sandbox grant',
+            seed: "UPDATE authority_state SET generation_hash='other'; UPDATE authority_generations SET generation_hash='other'",
+          },
+          { name: 'different environment', seed: "UPDATE authority_generations SET broker_environment='live'" },
+        ]),
   ]
 
   const unsettledHistory = `
@@ -278,6 +324,7 @@ for (const {
          INSERT INTO broker_events VALUES ('order-opened',1),('order-filled',2);
          INSERT INTO orders VALUES ('account','order','NEW','order-opened'),('account','order','FILLED','order-filled');
          INSERT INTO mutation_events VALUES ('intent',clock_timestamp()-interval '1 second');
+         UPDATE reconciliations SET reconciled_at=clock_timestamp(),position_snapshot_id='latest';
          UPDATE authority_state SET updated_at=clock_timestamp()+interval '1 second'`,
           Effect.gen(function* () {
             const sql = yield* PgClient.PgClient
@@ -375,6 +422,17 @@ for (const {
         name: 'unrelated account mutation after reconciliation',
         seed: "INSERT INTO intents VALUES ('intent','TERMINAL','another-account'); INSERT INTO mutation_events VALUES ('intent',clock_timestamp())",
       },
+      ...(boundGenerationHash === undefined
+        ? []
+        : [
+            {
+              name: 'late open receipt for an older provider order version',
+              seed: `INSERT INTO broker_events VALUES ('provider-latest',1),('provider-earlier',2);
+              INSERT INTO orders VALUES
+                ('account','order','FILLED','provider-latest','2026-11-01T00:00:00.000000002Z'),
+                ('account','order','NEW','provider-earlier','2026-11-01T00:00:00.000000001Z')`,
+            },
+          ]),
     ])('$name does not prevent a settled restriction', async ({ seed }) => {
       await runtime.runPromise(
         withGuardFixture(
@@ -425,18 +483,34 @@ for (const {
             }),
           )
           const original = hash('effective-entry-root')
-          const paper = hash('effective-entry-v38-paper')
+          const paper = boundGenerationHash ?? hash('effective-entry-v38-paper')
           const successor = hash('effective-entry-observe-successor')
           const authority = makeAuthorityPostgres(sql)
           const { ensureAuthorityGeneration: ensure } = makeObserveAuthorityInterpreter(sql, authority, broker)
           yield* ensure({ generationHash: original, maximum: Authority.Observe })
           const reconcile = (label: string) =>
             Effect.gen(function* () {
+              const positionId = hash(`${label}-positions`)
               yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at)
-              VALUES(${hash(`${label}-positions`)},'bayn.paper-position-snapshot.v1',${broker.accountId},${hash(label)},${hash(label)},0,clock_timestamp())`
+              VALUES(${positionId},'bayn.paper-position-snapshot.v1',${broker.accountId},${hash(label)},${hash(label)},0,clock_timestamp())`
+              if (boundGenerationHash !== undefined) {
+                const accountEventId = hash(`${label}-account`)
+                yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+                  source_event_id,source_sequence,occurred_at,observed_at)
+                VALUES(${accountEventId},'bayn.paper-broker-event.v1',${accountEventId},'ACCOUNT','ALPACA',
+                  ${broker.accountId},${label},${label.endsWith('before') ? 1 : 2},clock_timestamp(),clock_timestamp())`
+                yield* sql`INSERT INTO account_snapshots(event_id,account_id,schema_version,status,currency,cash_micros,
+                  equity_micros,buying_power_micros)
+                VALUES(${accountEventId},${broker.accountId},'bayn.paper-account-snapshot.v2','ACTIVE','USD',0,0,0)`
+                yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,
+                  observed_hash,content_hash,status,discrepancies,reconciled_at,account_event_id,position_snapshot_id)
+                VALUES(${hash(label)},'bayn.paper-reconciliation.v1',${broker.accountId},${hash(label)},${hash(label)},
+                  ${hash(label)},'EXACT','[]'::jsonb,clock_timestamp(),${accountEventId},${positionId})`
+                return
+              }
               yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
               VALUES(${hash(label)},'bayn.paper-reconciliation.v1',${broker.accountId},${hash(label)},${hash(label)},${hash(label)},'EXACT','[]'::jsonb,clock_timestamp())`
-            })
+            }).pipe(sql.withTransaction)
           yield* reconcile('effective-entry-before')
           yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,activation_schema_version,
           previous_generation_hash,maximum,authority_version,broker_identity_schema_version,broker_identity_hash,
