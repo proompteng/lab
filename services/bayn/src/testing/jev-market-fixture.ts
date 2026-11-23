@@ -10,7 +10,7 @@ export const makeJevMarketTestSnapshot = (...input: Parameters<typeof makeIntrad
     bars: raw.bars.map((bar) => {
       const quote = quotes.get(bar.symbol)
       return bar.eventAt === firstMinute && bar.symbol !== 'SPY' && quote !== undefined
-        ? { ...bar, high: Math.max(bar.high, quote.askPrice * 1.06), low: Math.min(bar.low, quote.bidPrice * 0.95) }
+        ? { ...bar, high: Math.max(bar.high, quote.askPrice * 1.08), low: Math.min(bar.low, quote.bidPrice * 0.95) }
         : bar
     }),
   }

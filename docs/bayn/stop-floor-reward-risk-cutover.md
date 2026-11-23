@@ -1,6 +1,7 @@
 # Stop-Floor & Reward-Risk Cutover (v43)
 
-The v43 release tightens candidate funding on top of v42 while preserving the Alpaca sandbox account, monetary limits, and immutable financial evidence:
+The v43 release (admission identity: parameter `810fedc00003ee940f3af6982ce65357662e241ec8c43b7d89922f6766108774`,
+protocol `f9eaf3c7258e7f9bb5c4f070cfbde7d119cd6cd43f1272653f713bea680da17e`) tightens candidate funding on top of v42 while preserving the Alpaca sandbox account, monetary limits, and immutable financial evidence:
 
 1. Enforce a minimum `15 bps` chart-referenced protective stop distance (`stop >= 15 bps` below spot bid for longs and `stop >= 15 bps` above spot ask for shorts) before admitting source candidates or funding entry proposals, eliminating the sub-`15 bps` stop-noise bucket (`-$504.35` across `163` historical fills).
 2. Require modeled reward-to-risk `G/L >= 1.20` (`modeledGain * 5 >= modeledLoss * 6`) net of conservative entry/exit fees and stop slippage before any candidate proposal is funded.
