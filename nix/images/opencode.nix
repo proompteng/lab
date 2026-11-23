@@ -8,7 +8,15 @@ let
   researchRoot = import ./bayn-runtime-root.nix {
     inherit pkgs lib repoRoot dependencySource depsHash bun nodejs;
     buildCommands = [
-      "BAYN_TEST_OPENCODE_BINARY=${cli}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
+      ''
+        opencode_test_tmpdir="$TMPDIR"
+        # ARC scratch disks can stall the test's SQLite startup during a journal commit.
+        if [ -w /dev/shm ]; then
+          opencode_test_tmpdir=/dev/shm
+        fi
+        TMPDIR="$opencode_test_tmpdir" BAYN_TEST_OPENCODE_BINARY=${cli}/bin/opencode \
+          bun test services/bayn/src/opencode/server.integration.test.ts
+      ''
       "bun build services/bayn/src/opencode-command.ts --target=node --format=esm --packages=bundle --outfile=research.js"
     ];
     runtimeInstallPhase = ''

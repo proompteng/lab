@@ -3,8 +3,7 @@ import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
 import { SystemSourceCutSchema } from './source-cut'
 import { CapturedTradingFactsSchema } from './session'
 
-export const emptySourceCutFixture = () => {
-  const { input, verifiedSources } = supportedAssessmentFixture()
+export const emptySourceCutFixture = ({ input, verifiedSources } = supportedAssessmentFixture()) => {
   const candidate = input.registration.policies.find((p) => p.policy === 'JEV')
   const policy = input.policies.find((p) => p.policy === 'JEV')
   if (candidate === undefined || policy === undefined) throw new Error('Missing candidate fixture')
@@ -41,8 +40,8 @@ export const emptySourceCutFixture = () => {
   return { input: { ...input, sourceCutHash: testHash(cut) }, cut, verifiedSources }
 }
 
-export const capturedAccountsFixture = () => {
-  const { input, cut, verifiedSources } = emptySourceCutFixture()
+export const capturedAccountsFixture = (assessment = supportedAssessmentFixture()) => {
+  const { input, cut, verifiedSources } = emptySourceCutFixture(assessment)
   const financial = input.registration.policies.map((definition) => {
     const policy = input.policies.find((policy) => policy.policy === definition.policy)
     if (policy === undefined) throw new Error('Missing policy fixture')

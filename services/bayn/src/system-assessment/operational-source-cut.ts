@@ -11,6 +11,7 @@ import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } fro
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import {
   ControllerPassEvidenceSchema,
+  RetainedV37ControllerPassEvidenceSchema,
   controllerBuildMatchesRegistration,
   decisionMarketScopeSupported,
   type ControllerBuildBindingPolicy,
@@ -95,7 +96,7 @@ const readDecision = (reference: SourceReference, registration: OperationalRegis
       Schema.Struct({ sessionDate: IsoDateSchema, document: Schema.Unknown }),
       strictParseOptions,
     )(record.payload)
-    const document = !['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'].includes(
+    const document = !['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42'].includes(
       registration.obligations.configuration.protocol.schemaVersion,
     )
       ? yield* Effect.fromResult(decodeRetainedJevExecutionDecisionDocument(row.document))
@@ -107,12 +108,16 @@ const readDecision = (reference: SourceReference, registration: OperationalRegis
     return { ...row, document }
   })
 
-const readController = (reference: SourceReference) =>
+const readController = (reference: SourceReference, registration: OperationalRegistration) =>
   Effect.gen(function* () {
     const record = yield* readSystemSourceRecord(reference.recordHash)
     if (record.kind !== SystemSourceRecordKind.Controller || reference.kind !== record.kind)
       return yield* new SystemAssessmentError({ message: 'Controller source record kind differs' })
-    const pass = yield* Schema.decodeUnknownEffect(ControllerPassEvidenceSchema, strictParseOptions)(record.payload)
+    const schema =
+      registration.obligations.configuration.protocol.schemaVersion === 'bayn.jev.protocol.v37'
+        ? RetainedV37ControllerPassEvidenceSchema
+        : ControllerPassEvidenceSchema
+    const pass = yield* Schema.decodeUnknownEffect(schema, strictParseOptions)(record.payload)
     if (pass.receiptHash !== reference.sourceId)
       return yield* new SystemAssessmentError({ message: 'Controller source identity differs' })
     return pass
@@ -193,7 +198,7 @@ export const replayOperationalSourceRecords = (
     const unboundControllerBuilds: VerifiedOperationalSourceCut['unboundControllerBuilds'][number][] = []
     const witnesses = earliestDurableWitnesses(cut)
     for (const reference of controllers.values()) {
-      const pass = yield* readController(reference)
+      const pass = yield* readController(reference, registration)
       // Retain only small provenance/timing evidence, including passes with no durable work witness.
       if (!controllerBuildMatchesRegistration(pass, registration))
         unboundControllerBuilds.push({

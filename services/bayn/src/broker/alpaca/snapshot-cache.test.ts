@@ -3,7 +3,12 @@ import { observedBrokerState } from './observed-snapshot'
 import { describe, expect, test } from 'bun:test'
 import type { PgClient } from '@effect/sql-pg'
 import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit } from 'effect'
-import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBrokerSnapshot } from './observed-snapshot'
+import {
+  BrokerObservations,
+  decodeObservedBrokerSnapshot,
+  validateObservedBrokerSnapshot,
+  type ObservedBrokerSnapshot,
+} from './observed-snapshot'
 import { TestClock } from 'effect/testing'
 import { observedBrokerSnapshotFixture } from './observed-snapshot.fixture'
 
@@ -11,7 +16,8 @@ import { canonicalHashV1Result } from '../../hash'
 import { brokerPollFailureAnnotations } from '../../composition/broker-observation-runtime'
 import { checkHealth } from '../../health/program'
 import { makeBrokerObservationStore } from '../../db/broker-observations'
-import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtures'
+import { config as runtimeConfig, provenance, readyState } from '../../testing/runtime-fixtures'
+import { statusFacts } from '../../http'
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../alpaca-test-support'
@@ -36,6 +42,8 @@ import { brokerSnapshotCacheConfig, makeBrokerObservationCapture, makeProjectedB
 
 const config = { maxAgeMs: 60_000 }
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
+const forReconciliation = <E, R>(read: Effect.Effect<ObservedBrokerSnapshot, E, R>) =>
+  read.pipe(Effect.map((observation) => ({ observation, complete: Effect.void })))
 
 const fixture = (
   history: {
@@ -171,6 +179,57 @@ const healthPass = (read: BrokerReadShape, timeoutMs = 1000) =>
   })
 
 describe('durable broker observations', () => {
+  test('status identifies pending cash fees and clears the reason only after the canonical cut settles', async () => {
+    const source = fixture()
+    let snapshot = { ...observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z'), pendingCashFeeCount: 2 }
+    let failure: BrokerReadError | undefined
+    const observed = Effect.suspend(() => (failure === undefined ? Effect.succeed(snapshot) : Effect.fail(failure)))
+    await run(
+      Effect.gen(function* () {
+        const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+          Effect.provideService(BrokerObservations, {
+            read: observed,
+            readForReconciliation: forReconciliation(observed),
+            readState: observed,
+            readForSubmit: () => observed,
+            invalidate: Effect.void,
+          }),
+        )
+        const facts = () =>
+          healthPass(projected).pipe(
+            Effect.map((broker) =>
+              statusFacts(
+                { ...readyState(), broker },
+                runtimeConfig.execution,
+                provenance,
+                runtimeConfig.build.verification,
+              ),
+            ),
+          )
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_CASH_FEES_PENDING', error: 'BROKER_CASH_FEES_PENDING' },
+        })
+        snapshot = { ...snapshot, pendingCashFeeCount: 0 }
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: true },
+          broker: { readAvailable: true, reasonCode: null, error: null },
+        })
+        failure = new BrokerReadError({
+          operation: 'preflight',
+          kind: BrokerReadErrorKind.Timeout,
+          retryable: true,
+          message: 'Broker observation is awaiting authoritative cash fee records',
+        })
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
+        })
+        expect(source.calls).toEqual([])
+      }),
+    )
+  })
+
   test('requires a new poll cut after history changes instead of retrying the original ticket', async () => {
     const source = fixture()
     let scans = 0
@@ -317,6 +376,7 @@ describe('durable broker observations', () => {
               reads += 1
               return value
             }),
+            readForReconciliation: forReconciliation(Effect.succeed(value)),
             readState: Effect.sync(() => {
               reads += 1
               return value
@@ -355,6 +415,7 @@ describe('durable broker observations', () => {
             queries += 1
             return [
               {
+                generation: 1,
                 state_hash: snapshotHash,
                 snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)),
                 observedAt: value.observedAt,
@@ -433,6 +494,7 @@ describe('durable broker observations', () => {
                   )
                 : Effect.succeed(current)
             }),
+            readForReconciliation: forReconciliation(Effect.succeed(value)),
             readState: Effect.suspend(() => {
               reads += 1
               return unavailable
@@ -507,6 +569,7 @@ describe('durable broker observations', () => {
                   }),
                 ),
               ),
+              readForReconciliation: Effect.die('unexpected reconciliation read'),
               readState: Effect.sync(() => {
                 reads += 1
               }).pipe(
@@ -584,6 +647,7 @@ describe('durable broker observations', () => {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
             read: Effect.succeed(value),
+            readForReconciliation: forReconciliation(Effect.succeed(value)),
             readState: Effect.succeed(value),
             readForSubmit: () => Effect.succeed(value),
             invalidate: Effect.void,
@@ -614,6 +678,7 @@ describe('durable broker observations', () => {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
             read: Effect.succeed(value),
+            readForReconciliation: forReconciliation(Effect.succeed(value)),
             readState: Effect.succeed(value),
             readForSubmit: () => Effect.succeed(value),
             invalidate: Effect.sync(() => {
@@ -674,6 +739,7 @@ describe('durable broker observations', () => {
                 message: 'unavailable',
               }),
             ),
+            readForReconciliation: Effect.die('unexpected reconciliation read'),
             readState: Effect.fail(
               new BrokerReadError({
                 operation: 'preflight',
@@ -811,7 +877,13 @@ describe('complete history reuse between broker captures', () => {
             Effect.map((observedAt) => {
               source.calls.push('execution-stream-view')
               const evidence = { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt }
-              return { fills: fills.map((value) => ({ value, evidence })), feeCounts, evidence }
+              return {
+                version: `${fills.length}:${JSON.stringify([...feeCounts])}`,
+                feeVersion: JSON.stringify([...feeCounts]),
+                fills: fills.map((value) => ({ value, evidence })),
+                feeCounts,
+                evidence,
+              }
             }),
           ),
         }
@@ -846,10 +918,11 @@ describe('complete history reuse between broker captures', () => {
         })
         const recovered = yield* capture(replayRead, { generation: 6, startedAt: yield* currentUtcInstant }, 15_000)
         expect(recovered.snapshot.history.fills[0]?.value).toEqual(fills[0])
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(5)
         const unavailableReplay = (kind: BrokerReadErrorKind) => ({
           ...read,
           accountActivity: Effect.fail(
-            new BrokerReadError({ operation: 'activity-stream', kind, message: 'fixture', retryable: true }),
+            new BrokerReadError({ operation: 'fill-activities', kind, message: 'fixture', retryable: true }),
           ),
         })
         const timedOut = yield* capture(
@@ -877,6 +950,8 @@ describe('complete history reuse between broker captures', () => {
       fillActivities: () => Effect.die('unexpected REST fill read'),
       accountActivity: currentUtcInstant.pipe(
         Effect.map((observedAt) => ({
+          version: JSON.stringify([...feeCounts]),
+          feeVersion: JSON.stringify([...feeCounts]),
           fills: [],
           feeCounts,
           evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },
@@ -949,6 +1024,8 @@ describe('complete history reuse between broker captures', () => {
       fillActivities: () => Effect.die('unexpected REST fill read'),
       accountActivity: currentUtcInstant.pipe(
         Effect.map((observedAt) => ({
+          version: JSON.stringify([...feeCounts]),
+          feeVersion: JSON.stringify([...feeCounts]),
           fills: [],
           feeCounts,
           evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },

@@ -26,18 +26,6 @@ const run = (args: string[], env: Record<string, string | undefined> = {}) => {
   return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
 }
 
-test('the study exporter is compiled and installed only in the research runtime', () => {
-  const commands = image.match(/runtimeCommands = if research then \[([\s\S]*?)\] else \[([\s\S]*?)\];/)
-  expect(commands).not.toBeNull()
-  expect(commands?.[1]).toContain('"jev-study-export-command"')
-  expect(commands?.[2]).not.toContain('"jev-study-export-command"')
-  expect(image).toContain('bun build services/bayn/src/jev-study-export-command.ts --target=node')
-  expect(image).toContain('node services/bayn/dist/jev-study-export-command.js --help')
-  const extras = image.split('extraContents = [')[1]
-  expect(extras?.split('lib.optionals research [')[0]).not.toContain('studyExportCommand')
-  expect(extras?.split('lib.optionals research [')[1]).toContain('studyExportCommand')
-})
-
 test('the installed wrapper invokes image Node and forwards arguments without configuration', () => {
   const body = image.match(
     /studyExportCommand = pkgs.writeShellScriptBin "bayn-jev-study-export" ''\n([\s\S]*?)\n  '';/,

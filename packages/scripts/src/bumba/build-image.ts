@@ -51,6 +51,5 @@ if (import.meta.main) {
 }
 
 export const __private = {
-  execGit,
   resolveBuildArgs,
 }

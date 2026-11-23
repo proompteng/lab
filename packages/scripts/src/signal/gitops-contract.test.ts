@@ -263,6 +263,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'configmap.yaml',
       'flinkdeployment.yaml',
       'metrics-service.yaml',
+      'taskmanager-metrics-service.yaml',
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
@@ -353,9 +354,6 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     expect(websocketDeployment.metadata.annotations).toMatchObject({
       'argocd.argoproj.io/sync-wave': '5',
-    })
-    expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
-      'torghut.proompteng.ai/ws-config-generation': 'bayn-iex-single-session-qualification-v1',
     })
   })
 

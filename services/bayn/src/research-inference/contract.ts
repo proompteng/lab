@@ -23,12 +23,13 @@ export const maximumResearchStreamBytes = 2 * 1024 * 1024
 export const maximumResearchReceiptBytes = 5 * 1024 * 1024
 const Text = StrictNonEmptyStringSchema.check(Schema.isMaxLength(100_000))
 const Unit = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
-export const FlamingoResearchPolicySchema = Schema.Struct({
-  model: Schema.Literal(editorModel),
-  checkpoint: Schema.Literal(editorCheckpoint),
+// Retained receipt identities must not inherit changes to current inference admission.
+const RetainedFlamingoResearchPolicySchema = Schema.Struct({
+  model: Schema.Literal('qwen38-flamingo'),
+  checkpoint: Schema.Literal('482ca0f3832238542f8f5295dde86b5f22711d80'),
   servingImage: Schema.Literal('sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2'),
-  tokenizerRevision: Schema.Literal(editorCheckpoint),
-  chatTemplateRevision: Schema.Literal(editorCheckpoint),
+  tokenizerRevision: Schema.Literal('482ca0f3832238542f8f5295dde86b5f22711d80'),
+  chatTemplateRevision: Schema.Literal('482ca0f3832238542f8f5295dde86b5f22711d80'),
   temperature: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 2 })),
   top_p: Unit,
   top_k: Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1)),
@@ -40,6 +41,14 @@ export const FlamingoResearchPolicySchema = Schema.Struct({
   enable_thinking: Schema.Boolean,
   max_tokens: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(4096)),
   stop: Schema.Array(Text).check(Schema.isMaxLength(8)),
+})
+export const FlamingoResearchPolicySchema = Schema.Struct({
+  ...RetainedFlamingoResearchPolicySchema.fields,
+  model: Schema.Literal(editorModel),
+  checkpoint: Schema.Literal(editorCheckpoint),
+  servingImage: Schema.Literal('sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1'),
+  tokenizerRevision: Schema.Literal(editorCheckpoint),
+  chatTemplateRevision: Schema.Literal(editorCheckpoint),
 })
 export const OpenCodeResearchPolicySchema = Schema.Struct({
   harness: Schema.Literal('opencode'),
@@ -83,21 +92,22 @@ const RetainedResearchRunSchema = Schema.Struct({
   ...ResearchRunSchema.fields,
   policy: Schema.Union([
     ResearchPolicySchema,
+    RetainedFlamingoResearchPolicySchema,
     Schema.Struct({
-      ...FlamingoResearchPolicySchema.fields,
+      ...RetainedFlamingoResearchPolicySchema.fields,
       checkpoint: Schema.Literal('017b9c7af6b5689d5dd426a76e0bc077eb5ca20a'),
       tokenizerRevision: Schema.Literal('017b9c7af6b5689d5dd426a76e0bc077eb5ca20a'),
       chatTemplateRevision: Schema.Literal('017b9c7af6b5689d5dd426a76e0bc077eb5ca20a'),
     }),
     Schema.Struct({
-      ...FlamingoResearchPolicySchema.fields,
+      ...RetainedFlamingoResearchPolicySchema.fields,
       model: Schema.Literal('qwen36-flamingo'),
       checkpoint: Schema.Literal('739af1e7aac320af1682ed1e0cce369af4c5265d'),
       tokenizerRevision: Schema.Literal('739af1e7aac320af1682ed1e0cce369af4c5265d'),
       chatTemplateRevision: Schema.Literal('739af1e7aac320af1682ed1e0cce369af4c5265d'),
     }),
     Schema.Struct({
-      ...FlamingoResearchPolicySchema.fields,
+      ...RetainedFlamingoResearchPolicySchema.fields,
       model: Schema.Literal('qwen3-jev-editor-b968826d9c46'),
       checkpoint: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),
       tokenizerRevision: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),

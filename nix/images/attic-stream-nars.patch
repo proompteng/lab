@@ -1,7 +1,16 @@
 diff --git a/server/src/api/binary_cache.rs b/server/src/api/binary_cache.rs
 --- a/server/src/api/binary_cache.rs
 +++ b/server/src/api/binary_cache.rs
-@@ -215,7 +215,7 @@
+@@ -35,6 +35,8 @@
+ use attic::io::merge_chunks;
+ use attic::mime;
+ use attic::nix_store::StorePathHash;
++
++mod stream_error;
+
+ /// Nix cache information.
+ ///
+@@ -215,12 +217,11 @@
          let chunk = chunks[0].as_ref().unwrap();
          let remote_file = &chunk.remote_file.0;
          let storage = state.storage().await?;
@@ -9,4 +18,317 @@ diff --git a/server/src/api/binary_cache.rs b/server/src/api/binary_cache.rs
 +        match storage.download_file_db(remote_file, true).await? {
              Download::Url(url) => Ok(Redirect::temporary(&url).into_response()),
              Download::AsyncRead(stream) => {
-                 let stream = ReaderStream::new(stream).map_err(|e| {
+-                let stream = ReaderStream::new(stream).map_err(|e| {
+-                    tracing::error!(%e, "Stream error");
+-                    e
++                let stream = ReaderStream::new(stream).map_err(move |e| {
++                    stream_error::observe(e, &store_path_hash, stream_error::Mode::SingleChunk)
+                 });
+                 let body = Body::from_stream(stream);
+
+@@ -262,9 +263,8 @@
+
+         // TODO: Make num_prefetch configurable
+         // The ideal size depends on the average chunk size
+-        let merged = merge_chunks(chunks, streamer, storage, 2).map_err(|e| {
+-            tracing::error!(%e, "Stream error");
+-            e
++        let merged = merge_chunks(chunks, streamer, storage, 2).map_err(move |e| {
++            stream_error::observe(e, &store_path_hash, stream_error::Mode::ChunkReassembly)
+         });
+         let body = Body::from_stream(merged);
+
+diff --git a/server/src/api/binary_cache/stream_error.rs b/server/src/api/binary_cache/stream_error.rs
+new file mode 100644
+--- /dev/null
++++ b/server/src/api/binary_cache/stream_error.rs
+@@ -0,0 +1,289 @@
++use std::error::Error;
++use std::fmt;
++use std::io::{Error as IoError, ErrorKind};
++
++use attic::nix_store::StorePathHash;
++
++const MAX_SOURCES: u8 = 8;
++// aws-smithy-runtime 1.8.3 keeps this error type private. Match only its
++// fixed prefix; never collect or log its Display output.
++const THROUGHPUT_PREFIX: &[u8] = b"minimum throughput was specified at ";
++
++#[derive(Clone, Copy)]
++pub(super) enum Mode {
++    SingleChunk,
++    ChunkReassembly,
++}
++
++#[derive(Debug, PartialEq, Eq)]
++struct Diagnostic {
++    class: &'static str,
++    sources_examined: u8,
++    chain_limit_reached: bool,
++}
++
++pub(super) fn observe(error: IoError, store_path_hash: &StorePathHash, mode: Mode) -> IoError {
++    let diagnostic = classify(&error);
++    let mode = match mode {
++        Mode::SingleChunk => "single_chunk",
++        Mode::ChunkReassembly => "chunk_reassembly",
++    };
++    tracing::error!(
++        error_class = diagnostic.class,
++        sources_examined = diagnostic.sources_examined,
++        chain_limit_reached = diagnostic.chain_limit_reached,
++        store_path_hash = store_path_hash.as_str(),
++        stream_mode = mode,
++        "Stream error"
++    );
++    error
++}
++
++fn classify(error: &(dyn Error + 'static)) -> Diagnostic {
++    let mut source = Some(error);
++    let mut sources_examined = 0;
++    while let Some(current) = source {
++        if sources_examined == MAX_SOURCES {
++            break;
++        }
++        sources_examined += 1;
++        let io = current.downcast_ref::<IoError>();
++        let class = io.and_then(|error| match error.kind() {
++            ErrorKind::TimedOut => Some("io_timeout"),
++            ErrorKind::ConnectionReset => Some("connection_reset"),
++            ErrorKind::ConnectionAborted => Some("connection_aborted"),
++            ErrorKind::BrokenPipe => Some("broken_pipe"),
++            ErrorKind::UnexpectedEof => Some("unexpected_eof"),
++            ErrorKind::InvalidData => Some("invalid_data"),
++            _ => None,
++        });
++        if let Some(class) = class.or_else(|| {
++            matches_throughput_prefix(current).then_some("sdk_minimum_throughput")
++        }) {
++            return Diagnostic {
++                class,
++                sources_examined,
++                chain_limit_reached: false,
++            };
++        }
++        // io::Error::source can skip its immediate wrapped error.
++        source = io
++            .and_then(IoError::get_ref)
++            .map(|inner| inner as &(dyn Error + 'static))
++            .or_else(|| current.source());
++    }
++    Diagnostic {
++        class: "unclassified_body_read",
++        sources_examined,
++        chain_limit_reached: source.is_some(),
++    }
++}
++
++fn matches_throughput_prefix(error: &dyn Error) -> bool {
++    struct Prefix {
++        remaining: &'static [u8],
++        matched: bool,
++    }
++    impl fmt::Write for Prefix {
++        fn write_str(&mut self, text: &str) -> fmt::Result {
++            let length = self.remaining.len().min(text.len());
++            if self.remaining[..length] != text.as_bytes()[..length] {
++                self.matched = false;
++                return Err(fmt::Error);
++            }
++            self.remaining = &self.remaining[length..];
++            if self.remaining.is_empty() {
++                // Stop formatting before any variable text is visited.
++                return Err(fmt::Error);
++            }
++            Ok(())
++        }
++    }
++    let mut prefix = Prefix {
++        remaining: THROUGHPUT_PREFIX,
++        matched: true,
++    };
++    let _ = fmt::write(&mut prefix, format_args!("{error}"));
++    prefix.matched && prefix.remaining.is_empty()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use bytes::Bytes;
++    use futures::{stream, StreamExt, TryStreamExt};
++    use std::collections::VecDeque;
++    use std::sync::{Arc, Mutex};
++
++    const PRIVATE_TEXT: &str =
++        "https://private-rgw/object?X-Amz-Credential=SECRET_KEY&X-Amz-Signature=SECRET_SIGNATURE Authorization: SECRET_TOKEN";
++    const HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
++
++    #[derive(Debug)]
++    struct Wrapped {
++        message: String,
++        cause: Option<Box<dyn Error + Send + Sync>>,
++    }
++    impl fmt::Display for Wrapped {
++        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++            f.write_str(&self.message)
++        }
++    }
++    impl Error for Wrapped {
++        fn source(&self) -> Option<&(dyn Error + 'static)> {
++            self.cause.as_ref().map(|cause| cause.as_ref() as _)
++        }
++    }
++    fn wrapped(cause: impl Error + Send + Sync + 'static) -> IoError {
++        IoError::new(
++            ErrorKind::Other,
++            Wrapped {
++                message: PRIVATE_TEXT.to_owned(),
++                cause: Some(Box::new(cause)),
++            },
++        )
++    }
++    fn throughput() -> IoError {
++        wrapped(Wrapped {
++            message: format!(
++                "minimum throughput was specified at 1 B/s, but throughput of 0 B/s was observed {PRIVATE_TEXT}"
++            ),
++            cause: None,
++        })
++    }
++
++    #[test]
++    fn classifies_wrapped_io_causes() {
++        for (kind, class) in [
++            (ErrorKind::TimedOut, "io_timeout"),
++            (ErrorKind::ConnectionReset, "connection_reset"),
++            (ErrorKind::ConnectionAborted, "connection_aborted"),
++            (ErrorKind::BrokenPipe, "broken_pipe"),
++            (ErrorKind::UnexpectedEof, "unexpected_eof"),
++            (ErrorKind::InvalidData, "invalid_data"),
++        ] {
++            assert_eq!(classify(&wrapped(IoError::new(kind, PRIVATE_TEXT))).class, class);
++        }
++        assert_eq!(classify(&throughput()).class, "sdk_minimum_throughput");
++        let embedded = IoError::new(
++            ErrorKind::Other,
++            format!("{PRIVATE_TEXT}/minimum throughput was specified at 1 B/s"),
++        );
++        assert_eq!(classify(&embedded).class, "unclassified_body_read");
++    }
++
++    #[test]
++    fn bounds_deep_and_cyclic_sources() {
++        #[derive(Debug)]
++        struct Cycle;
++        impl fmt::Display for Cycle {
++            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++                f.write_str(PRIVATE_TEXT)
++            }
++        }
++        impl Error for Cycle {
++            fn source(&self) -> Option<&(dyn Error + 'static)> {
++                Some(self)
++            }
++        }
++        let mut deep = IoError::new(ErrorKind::ConnectionReset, PRIVATE_TEXT);
++        for _ in 0..MAX_SOURCES {
++            deep = wrapped(deep);
++        }
++        for diagnostic in [classify(&deep), classify(&Cycle)] {
++            assert_eq!(diagnostic.class, "unclassified_body_read");
++            assert_eq!(diagnostic.sources_examined, MAX_SOURCES);
++            assert!(diagnostic.chain_limit_reached);
++        }
++    }
++
++    #[derive(Clone, Default)]
++    struct Capture(Arc<Mutex<Vec<u8>>>);
++    impl std::io::Write for Capture {
++        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
++            self.0.lock().unwrap().extend_from_slice(bytes);
++            Ok(bytes.len())
++        }
++        fn flush(&mut self) -> std::io::Result<()> {
++            Ok(())
++        }
++    }
++    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
++        type Writer = Self;
++        fn make_writer(&'a self) -> Self::Writer {
++            self.clone()
++        }
++    }
++
++    #[test]
++    fn emitted_fields_never_contain_raw_causes_or_secrets() {
++        let capture = Capture::default();
++        let subscriber = tracing_subscriber::fmt()
++            .without_time()
++            .with_ansi(false)
++            .with_writer(capture.clone())
++            .finish();
++        tracing::subscriber::with_default(subscriber, || {
++            let hash = StorePathHash::new(HASH.to_owned()).unwrap();
++            for mode in [Mode::SingleChunk, Mode::ChunkReassembly] {
++                for error in [
++                    wrapped(IoError::new(ErrorKind::TimedOut, PRIVATE_TEXT)),
++                    throughput(),
++                    IoError::new(ErrorKind::Other, PRIVATE_TEXT),
++                ] {
++                    let _ = observe(error, &hash, mode);
++                }
++            }
++        });
++        let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
++        assert_eq!(output.lines().count(), 6);
++        for expected in [
++            HASH,
++            "single_chunk",
++            "chunk_reassembly",
++            "io_timeout",
++            "sdk_minimum_throughput",
++            "unclassified_body_read",
++        ] {
++            assert!(output.contains(expected), "{output}");
++        }
++        for forbidden in [
++            "SECRET", "https://", "private-rgw", "X-Amz", "Authorization",
++            "minimum throughput was specified at",
++        ] {
++            assert!(!output.contains(forbidden), "{output}");
++        }
++    }
++
++    #[tokio::test]
++    async fn preserves_partial_body_and_original_error_in_both_stream_modes() {
++        for mode in [Mode::SingleChunk, Mode::ChunkReassembly] {
++            let error = wrapped(IoError::new(ErrorKind::ConnectionReset, PRIVATE_TEXT));
++            let original = error.get_ref().unwrap() as *const _ as *const ();
++            let prefix = Bytes::from_static(b"partial-nar");
++            let body: futures::stream::BoxStream<'static, Result<Bytes, IoError>> = match mode {
++                Mode::SingleChunk => Box::pin(stream::iter([Ok(prefix.clone()), Err(error)])),
++                Mode::ChunkReassembly => {
++                    let chunks: VecDeque<futures::stream::BoxStream<'static, Result<Bytes, IoError>>> =
++                        VecDeque::from([
++                            Box::pin(stream::iter([Ok(prefix.clone())])) as _,
++                            Box::pin(stream::iter([Err(error)])) as _,
++                        ]);
++                    Box::pin(attic::io::merge_chunks(
++                        chunks,
++                        |chunk, ()| async move { Ok::<_, IoError>(chunk) },
++                        (),
++                        2,
++                    ))
++                }
++            };
++            let hash = StorePathHash::new(HASH.to_owned()).unwrap();
++            let mut body = body.map_err(move |error| observe(error, &hash, mode));
++            assert_eq!(body.next().await.unwrap().unwrap(), prefix);
++            let returned = body.next().await.unwrap().unwrap_err();
++            assert_eq!(returned.get_ref().unwrap() as *const _ as *const (), original);
++            assert_eq!(classify(&returned).class, "connection_reset");
++            assert!(body.next().await.is_none());
++        }
++    }
++}

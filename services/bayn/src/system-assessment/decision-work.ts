@@ -3,7 +3,12 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
-import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
+import {
+  cyclePassObservationSchemaForHold,
+  RetainedAutonomousCyclePassObservationSchema,
+} from '../cycle/runner/pass-observation'
+import { JevPositionHoldSchema } from '../jev/hold'
+import { RetainedV37JevPositionHoldSchema } from '../jev/retained-v37-hold'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { jevSignalDueAtMs, jevSignalWindowEndMs } from '../jev/observation-query'
@@ -38,7 +43,14 @@ export const ControllerPassEvidenceSchema = Schema.Struct({
   completedAt: UtcInstantSchema,
   observation: RetainedAutonomousCyclePassObservationSchema,
 })
+export const RetainedV37ControllerPassEvidenceSchema = Schema.Struct({
+  ...ControllerPassEvidenceSchema.fields,
+  observation: cyclePassObservationSchemaForHold(
+    Schema.Union([JevPositionHoldSchema, RetainedV37JevPositionHoldSchema]),
+  ),
+})
 export type ControllerPassEvidence = typeof ControllerPassEvidenceSchema.Type
+export type RecordedControllerPassEvidence = typeof RetainedV37ControllerPassEvidenceSchema.Type
 
 const sourceMarketScopeSupported = (
   manifest: Readonly<Record<string, unknown>>,
@@ -69,8 +81,8 @@ const sourceMarketScopeSupported = (
     )
   )
     return false
-  if (native) return true
-  const calendar = qualificationCalendar(manifest['calendar'])
+  if (native && registration.schemaVersion !== 'bayn.system-registration.v5') return true
+  const calendar = qualificationCalendar(manifest['calendar'], registration.calendar.operatingHours)
   if (Result.isFailure(calendar)) return false
   const source = calendar.success.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
   return source !== undefined && source.openAt === registered.openAt && source.closeAt === registered.closeAt
@@ -164,7 +176,10 @@ export const decisionDocumentWork = (document: ExecutionDecisionDocument, regist
   return undefined
 }
 
-export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence, registration: ScheduledEvaluation) => {
+export const controllerBuildMatchesRegistration = (
+  pass: RecordedControllerPassEvidence,
+  registration: ScheduledEvaluation,
+) => {
   const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
   const build = pass.observation.executionBuild
   return (
@@ -181,7 +196,7 @@ export type ControllerBuildBindingPolicy = 'CURRENT' | 'RETAINED_OPERATIONAL_V1'
 
 /** Frozen receipt reproduction only. New claims use controllerBuildMatchesRegistration. */
 const retainedOperationalV1ControllerBuildMatches = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
 ) => {
   const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
@@ -195,7 +210,7 @@ const retainedOperationalV1ControllerBuildMatches = (
 }
 
 const registeredControllerOwns = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   accountId: string,
   generationHash: string,
@@ -262,7 +277,7 @@ export const closedEntryWindowTimingSupported = (clock: {
 
 /** Reproduce an idle discovery result; a bare closed/healthy tick cannot supply decision evidence. */
 export const closedEntryWindowWork = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   witnessedAt: string,
   buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
@@ -327,7 +342,7 @@ export const closedEntryWindowWork = (
   })
 
 export const entryAbstentionWork = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   witnessedAt: string,
   buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
@@ -376,7 +391,7 @@ export const holdCompletionSupported = (evidence: {
   evidence.witnessedAt < evidence.validUntil
 
 export const accountProtectionWork = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   witnessedAt: string,
   buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
@@ -424,7 +439,7 @@ export const accountProtectionWork = (
 
 /** A successful controller tick is insufficient: reproduce the retained strategy conclusion and its owner. */
 export const positionHoldWork = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   decisions: readonly { readonly sessionDate: string; readonly document: ExecutionDecisionDocument }[],
   witnessedAt: string,

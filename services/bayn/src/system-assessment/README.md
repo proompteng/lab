@@ -131,16 +131,73 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 ## Prospective registration
 
-`validateSystemRegistration` validates current `bayn.system-registration.v4` registrations and retained historical
-versions; new admission accepts only v4. It binds a nonempty prospective calendar, candidate and at least one
-selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original deadlines,
-allocation, and sourced conditional statistical support and assumptions before the first open. Current registrations
-have no bootstrap plan. The allocation must fit every bound source-approved risk policy. Both existing
+`validateProspectiveSystemRegistration` admits only `bayn.system-registration.v5`. Stored prior versions retain
+their original registration and assessment paths. Native admission binds a candidate and an `INCUMBENT_JEV`
+control to separate account and authority identities under the same execution risk policy. The incumbent's
+PostgreSQL store locks its active PAPER authority through candidate admission and writes its own witness.
+The candidate store seals the pair after the peer witness commits. Both commit deadlines precede the first
+open. An interrupted attempt without a peer witness remains incomplete and retains its attempt index.
+Admission also binds the nonempty
+calendar, source, image, prompts, cost weights, inference tariffs, original deadlines, allocation, and conditional
+statistical support before the first open. Current registrations
+have no bootstrap plan. The allocation must fit every bound source-approved risk policy and match each account's
+verified opening equity at the first session. Subsequent sessions use their own observed equity. Both existing
 PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
-The financial market scope must cover every registered runtime entry market and may retain additional native
-markets for existing-position exits. An equity-only runtime can register an equity-only evaluation without
-enabling crypto. Captured activity outside that financial scope remains an evidence failure. Historical runtime
+New registrations bind the explicit equity entry scope and the complete canonical Alpaca calendar as a verified
+source artifact. Both application and database admission recompute the calendar's source and normalized-response
+hashes. The execution and reporting windows use the same native equity hours derived from this calendar.
+This preserves daylight saving changes, holidays, shortened sessions, and the native controller's deadline
+alignment. The financial market scope can also retain markets for existing-position exits. Historical runtime
 commitments without an entry scope still require every market in their original protocol.
+Capture requires reconciliation through the final broker recovery window. Transactions between registered
+windows or after the final native data close within the broker recovery window leave economics incomplete.
+For each native qualification date, capture computes the expected equity charges from the full account equity fills
+and registered dated fee schedule. Every equity fill must belong to the registered policy and window. The expected
+fee amounts must match distinct posted activities on that date, and each activity must belong to the policy's verified
+financial evidence. The registered rate supplies the comparison amount. Posted receipts supply the actual cost.
+Terminal inventory, unresolved orders, the independent cash bridge, and operating costs retain their evidence requirements.
+Native registration, capture, and assessment read the incumbent store through
+`BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_URL`. The connection inherits the candidate's TLS mode. Set
+`BAYN_QUALIFICATION_INCUMBENT_JEV_POSTGRES_CA_PATH` when the incumbent uses a different CA. Registration writes the incumbent
+witness. Capture and assessment use read-only PostgreSQL connections. Capture also reads
+`BAYN_QUALIFICATION_INCUMBENT_JEV_TIGERBEETLE_CLUSTER_ID`, `_TIGERBEETLE_ADDRESSES`, and
+`_TIGERBEETLE_LEDGER` for the incumbent. The cut records each account's snapshot time. Assessment
+checks the incumbent seal and cash prefix against that account's store and its own cutoff.
+
+After broker recovery, native financial capture reads an authenticated Alpaca non-trade statement for every registered
+PAPER account. `--system-capture` uses the configured broker connection for the candidate. The private command's
+environment supplies a separate `BAYN_QUALIFICATION_<POLICY>_ALPACA_KEY_ID` and
+`BAYN_QUALIFICATION_<POLICY>_ALPACA_SECRET_KEY` for each registered control. Use the registered policy value in the
+variable name, such as `INCUMBENT_JEV`. The command uses the existing PAPER endpoint and proxy and verifies each
+credential pair against the account in that policy's registration. It fails the cut if any statement is missing, names
+a different account, or was observed after the database snapshot. The activity read scans all non-trade types, follows
+provider cursors to an empty terminal page in both directions, and requires the same normalized rows. The private
+source cut retains the original JSON response bodies, recorded response digests, requested creation-time interval,
+and actual observation time. Assessment checks each digest and derives the activity rows and cursors from those
+bodies. This statement covers the provider's reported activity during that interval. Capture also retains actual
+before-open, broker recovery, and later
+exact reconciliation cash observations with their inventory witnesses and fee posting timestamps. The reconciliation
+transaction retains the exact account event and position snapshot it compared. Settlement capture uses that pair.
+Historical reconciliations without the durable pair provide no settlement witness. For independent opening and recovery
+observations, inventory must precede or coincide with the cash event's economic timestamp.
+
+Native assessment uses a fee-adjusted cash path for flat equity endpoints, exact fills, and later posted fees with
+no other cash movements in the statement. It uses the registered effective-dated fee schedule. When TAF applies,
+the cash path requires exact posted charges and a total sell fee at or below the per-trade cap. This makes the
+charge independent of how partial fills are grouped into trades.
+The cash leg starts at observed opening cash, adds receipted trade cash and rounding, and subtracts incurred fee
+prefixes. The assessment reconstructs it from the underlying retained account records, settlement snapshots, and
+both authenticated activity page chains. Stored calculated cash points cannot supply a risk mark. The recovery
+bridge checks physical cash before the late fees. The later bridge independently checks the
+full fee debit. Cash or fee contradictions withhold financial evidence. Retained physical observations and the
+assessment's after-the-fact availability remain explicit. Opening liabilities, early debits, accrual matches,
+unsupported activity classes and other schedules require additional evidence before use in qualification. Other
+registered accounts require their own authenticated activity source.
+
+An inventory quote used for financial valuation also retains a later arrival from the same contiguous journal.
+The later arrival must be strictly after the valuation mark. The quote itself must already have arrived by the mark.
+Reaching a journal's end does not establish coverage after its last durable arrival. Financial valuation provenance
+does not substitute for the trading controller's observed market-data inputs.
 Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.
@@ -180,6 +237,9 @@ Stream command output to a private file. A local capacity measurement using 540 
 source observations, decisions, mutation events, fills, cash observations, and durable controller witnesses. Missing
 accounts or evidence remain missing; a submitted assessment packet cannot replace captured facts with claimed profit
 or reliability. The capture checks each account's risk, source, image, strategy, and protocol against registration.
+Native fee evidence binds the retained Alpaca account response and both activity scans to the same registered account
+as its ledger and settlement anchors. Missing statements leave that account's session economics unresolved.
+Economic capture returns the source-cut hash and latency measurements. The raw broker evidence stays in the private cut.
 Runtime capture preserves the original unscoped hash of historical financial registrations that omit `entryMarkets`.
 All originally committed runtime fields must still match; registrations that include entry scope retain its exact
 hash commitment. Capture stores the matching runtime shape without rewriting the immutable registration.
@@ -249,7 +309,7 @@ Missing stress evidence leaves that diagnostic unresolved; supplied contradictor
 There is no fixed session count. Candidate and selected controls must cover every registered session exactly,
 including losses, downtime, blocked decisions, and zero-trade costs.
 
-New `bayn.system-registration.v4` registrations require `statisticalPlan.method: CONDITIONAL_HOEFFDING_V1` and one
+New `bayn.system-registration.v5` registrations require `statisticalPlan.method: CONDITIONAL_HOEFFDING_V1` and one
 prospective support interval, source artifact and explicit assumption for every selected policy. They have no
 bootstrap or replicate budget. `economic-qualification.ts` uses actual fully attributed session net profit and exact
 conditional Hoeffding lower bounds for the candidate and every paired control. Its estimand is average registered
@@ -264,15 +324,14 @@ and rational mean bound. The familywise 0.05 budget is shared across all claims 
 cannot qualify. Failed statistical targets report `NOT_ESTABLISHED`; an incomplete result remains `UNDETERMINED`.
 See the [statistical procedure](../../../../docs/bayn/jev-migration-validation.md#statistical-comparison).
 
-Stored v5 research assessments retain `STATISTICAL_COVERAGE_NOT_ESTABLISHED`, their original bootstrap outputs and
-policy hash. Stored v4 and earlier assessments retain their original rules. New admission accepts only v4 registration
-with the current policy identities; it cannot upgrade an earlier attempt or reset the history. The private reporting
+Stored `RESEARCH_EVIDENCE_V5` assessments retain `STATISTICAL_COVERAGE_NOT_ESTABLISHED`, their original bootstrap outputs
+and policy hash. Earlier registration versions retain their original rules. New admission uses the current policy
+identities and extends the immutable attempt history. The private reporting
 command owns current assessment. `tools/jev-acceptance.ts --retained-input` reproduces the retained v5 numerical research
 checker and is not a current qualification route.
 
 A complete failed window and an incomplete window retain distinct outcomes. Source calendar evidence must support
-the market and hours claimed. The supported reference calendar remains broker-observed US regular sessions;
-that scope does not establish continuous-market performance.
+the market and hours claimed. The current reference calendar covers broker-observed US equity trading hours.
 
 Latency stress replays the selected native policy with recorded response occurrences and the registered execution
 model. CHART, BASE_START, and Jev retain separate costs and clocks. Replay image verification binds the immutable
@@ -376,6 +435,31 @@ reporting do not change trading authority or risk limits. Stored v1 and v2 input
 receipts only on historical read and cannot enter current assessment admission.
 Their original source/digest controller comparison is frozen separately from the current build matcher.
 Those historical results do not establish a certificate under the current build-binding rule.
+Stored v37 operational registrations also preserve their original frozen protocol schema and exact default parameter
+hash from `4467bce540bb135b96a59b1ee37396885914df0a`. Historical registration, source-cut and receipt readers can
+reproduce those bytes; current registration and assessment admission still reject v37. The synthetic fixture
+`original-v37-operational.test-fixture.json` was generated from that source's fixture and evaluator with the current
+Effect 4.1.4 test harness. Its original registration, source-cut and inconclusive receipt hashes are fixed regression
+goldens. It contains no production account evidence, and replay grants no trading or economic qualification.
+Archived v37 position holds also retain that exact default parameter hash. Only the verified v37 operational
+source reader selects their historical decoder; current position-hold, controller, registration and assessment
+admission stay strict. The shared pure hold calculation reproduces the original evidence without current defaults,
+while canonical archive, hold, source-cut and receipt hashes remain mandatory. The synthetic held-controller golden
+in `original-v37-held-controller.test-fixture.json` was generated by the native fixture, hold decision and public
+receipt reader at `0506c9d7eec58844f78e893158dd9027ab69b86d`, using Effect 4.1.4. It fixes the original rejected
+outcome and rejects unknown policy hashes, changed parameters, deadlines and noncanonical archive bytes.
+Its portfolio domain stays long-only with positive quantity and cost basis and no short plan. It also excludes
+the protection-evidence marker introduced by `adb5213ced690a551b0b83eb1a56561a73661f64` under v41. Resealed
+negative fixtures first validate through the general current portfolio and shared calculation, then prove that
+these later features cannot enter the historical reader. Current long and short management remain unchanged.
+
+A bounded read-only replay on 2026-11-21 used the existing seven operational receipts and 1,650 archived references
+(1,608 unique records), with exact captured PostgreSQL text supplied to the public source functions. All seven
+receipt hashes reproduced: six remained `INCONCLUSIVE`, and one remained `REJECTED` with 550
+`UNBOUND_CONTROLLER_BUILD` entries and `INCOMPLETE_SAFETY_AUDIT`. All remained economically `NOT_ASSESSED`.
+This verified source-function replay, not a deployed HTTP endpoint, and created no assessment, registration,
+approval, inference or financial effect.
+
 Compact source replay carries the selected policy only in verified in-memory evidence; its immutable manifest is
 unchanged. Current evaluation checks every retained controller build, including unwitnessed passes, using small
 receipt/timing summaries without retaining complete archived records. A replay-policy/input mismatch is rejected.

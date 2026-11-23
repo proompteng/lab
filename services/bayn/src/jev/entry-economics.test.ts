@@ -15,7 +15,7 @@ import { makeJevTradingSignalRequest } from './trading-signals'
 import { checkProperty } from '../testing/property-test-support'
 import { maximumAllocatedBuyQuantities, maximumFundedBuyQuantities } from './entry-sizing'
 import { jevEntryEconomics, jevMaximumEntryAskMicros } from './entry-economics'
-import { defaultJevProtocolDocument, retainedJevProtocolV39Document } from './protocol'
+import { defaultJevProtocolDocument, retainedJevProtocolV39Document, retainedJevProtocolV41Document } from './protocol'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { calculateSessionFees } from '../strategy/execution-model/fees'
@@ -42,8 +42,8 @@ test('crypto funding binds the inference ask instead of spending the adverse-pri
   expect(economics.takeProfitRequiredBidRiseBps).toBeLessThan(44)
   expect(economics.entryTakerFeeBps).toBe(18)
   expect(economics.maximumExitTakerFeeBps).toBe(25)
-  expect(defaultJevProtocolDocument.maximumEntryQuoteDriftBps).toBe(10)
-  expect(defaultJevProtocolDocument.maximumEntryLimitSlippageBps).toBe(10)
+  expect(defaultJevProtocolDocument.maximumEntryQuoteDriftBps).toBe(5)
+  expect(defaultJevProtocolDocument.maximumEntryLimitSlippageBps).toBe(5)
   expect(defaultJevProtocolDocument.maximumHoldingMinutes).toBe(15)
 })
 
@@ -130,7 +130,8 @@ test('the capped crypto order funds a source target that the former buy allowanc
       entrySignalPolicy: 'openai-decisions-then-jev' as const,
     }).resistanceBarIds,
   ).toEqual([])
-  expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toEqual(['bar_2026-10-23T14:28:00.000Z'])
+  expect(candidates(retainedJevProtocolV41Document).resistanceBarIds).toEqual(['bar_2026-10-23T14:28:00.000Z'])
+  expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toEqual([])
 })
 
 test('an equity buy capped at its inference ask funds the observed target without spending price allowances', () => {
@@ -169,7 +170,8 @@ test('an equity buy capped at its inference ask funds the observed target withou
       entrySignalPolicy: 'openai-decisions-then-jev' as const,
     }).resistanceBarIds,
   ).toEqual([])
-  expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toContain('bar_2026-10-23T14:28:00.000Z')
+  expect(candidates(retainedJevProtocolV41Document).resistanceBarIds).toContain('bar_2026-10-23T14:28:00.000Z')
+  expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toEqual([])
 })
 
 test('the sealed model state uses the account tier for entry and the maximum future exit fee', () => {
@@ -208,7 +210,7 @@ test('the sealed model state uses the account tier for entry and the maximum fut
 })
 
 test('funding values a native take-profit at its submitted minimum sell price', () => {
-  const protocol = defaultJevProtocolDocument
+  const protocol = retainedJevProtocolV41Document
   const economics = Result.getOrThrow(
     jevEntryEconomics({
       feeAt: '2026-09-04T14:15:00.000Z',
@@ -286,6 +288,19 @@ test('funding values a native take-profit at its submitted minimum sell price', 
   )
   expect(request.take_profit?.limit_price).toBe('100.21')
   expect(BigInt(funded.estimatedTargetNetMicros)).toBeGreaterThan(BigInt(economics.acquisitionCostMicros))
+
+  const v42Economics = Result.getOrThrow(
+    jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
+      cryptoFeeTier: null,
+      protocol: defaultJevProtocolDocument,
+      symbol: 'AAPL',
+      bidMicros: 100_000_000n,
+      askMicros: 100_000_000n,
+      capitalMicros: '100000000000',
+    }),
+  )
+  expect(v42Economics?.maximumEntryPriceMicros).toBe('100100000')
 })
 
 test('supported atomic judgments admit a funded proposal while uncertain judgments abstain', () => {
@@ -348,7 +363,7 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
         const received = quantity - (quantity * 25n + 9999n) / 10_000n
         const acquired = (entryPrice * quantity + 999_999_999n) / 1_000_000_000n
         const net = (bid: bigint) => {
-          const boundary = (bid * 9990n + 9999n) / 10000n
+          const boundary = (bid * BigInt(10_000 - protocol.maximumEntryLimitSlippageBps) + 9999n) / 10000n
           const proceeds = (boundary * received) / 1_000_000_000n
           const fee = ((proceeds * 25n + 99_999_999n) / 100_000_000n) * 10_000n
           return proceeds - fee

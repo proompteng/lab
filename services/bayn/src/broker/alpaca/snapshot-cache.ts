@@ -46,9 +46,7 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
         readonly latestFillId: string | null
       }
     | undefined
-  let verifiedFees:
-    | { readonly counts: ReadonlyMap<string, number>; readonly rows: readonly Observed<FeeActivity>[] }
-    | undefined
+  let verifiedFees: { readonly feeVersion: string; readonly rows: readonly Observed<FeeActivity>[] } | undefined
   return (
     fresh: BrokerReadShape,
     ticket: BrokerObservationTicket,
@@ -69,7 +67,7 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
           const accountActivity = fresh.accountActivity
           let sampledFees:
             | {
-                readonly counts: ReadonlyMap<string, number>
+                readonly feeVersion: string
                 readonly fees: readonly Observed<FeeActivity>[]
                 readonly pendingCashFeeCount: number
               }
@@ -79,20 +77,20 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
               ? undefined
               : Effect.gen(function* () {
                   const cut = yield* accountActivity
-                  if (verifiedFees?.counts === cut.feeCounts)
+                  if (verifiedFees?.feeVersion === cut.feeVersion)
                     return { cut, fees: verifiedFees.rows, pendingCashFeeCount: 0 }
-                  if (sampledFees?.counts === cut.feeCounts) return { cut, ...sampledFees }
+                  if (sampledFees?.feeVersion === cut.feeVersion) return { cut, ...sampledFees }
                   const fees = yield* readFeePages(fresh)
                   const confirmed = yield* accountActivity
                   const pendingCashFeeCount = pendingCashFees(cut.feeCounts, fees, startedAt)
-                  if (confirmed.feeCounts !== cut.feeCounts || pendingCashFeeCount === undefined)
+                  if (confirmed.version !== cut.version || pendingCashFeeCount === undefined)
                     return yield* observationUnavailable(
                       'Alpaca Activity SSE and fee authority have not converged',
                       undefined,
                       BrokerPollFailureReason.SnapshotRejected,
                     )
-                  if (pendingCashFeeCount === 0) verifiedFees = { counts: cut.feeCounts, rows: fees }
-                  sampledFees = { counts: cut.feeCounts, fees, pendingCashFeeCount }
+                  if (pendingCashFeeCount === 0) verifiedFees = { feeVersion: cut.feeVersion, rows: fees }
+                  sampledFees = { feeVersion: cut.feeVersion, fees, pendingCashFeeCount }
                   return { cut: confirmed, ...sampledFees }
                 })
           if (previous !== undefined) {
@@ -102,7 +100,7 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
             } else {
               const cut = yield* accountActivity
               if (
-                verifiedFees?.counts !== cut.feeCounts ||
+                verifiedFees?.feeVersion !== cut.feeVersion ||
                 previous.latestFillId !== (cut.fills.at(-1)?.value.activityId ?? null)
               )
                 previous = undefined
@@ -190,7 +188,9 @@ export const makeProjectedBrokerRead = (
         healthSnapshot: cached.pipe(Effect.tap(requireSettledCashFees)),
         fresh,
         invalidate,
-        snapshot: observations.read.pipe(Effect.map((value) => value.snapshot)),
+        reconciliationSnapshot: observations.readForReconciliation.pipe(
+          Effect.map(({ observation, complete }) => ({ snapshot: observation.snapshot, complete })),
+        ),
         submissionSnapshot: (intentId) =>
           observations.readForSubmit(intentId).pipe(
             Effect.map((value) => ({

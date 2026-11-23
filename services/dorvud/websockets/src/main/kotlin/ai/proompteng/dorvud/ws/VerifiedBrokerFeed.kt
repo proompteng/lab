@@ -35,6 +35,7 @@ internal class BrokerFeedConnection(
   val sourceRevision: String,
   val accountUrl: String = "https://paper-api.alpaca.markets/v2/account",
   val streamUrl: String = "wss://paper-api.alpaca.markets/stream",
+  val activityUrl: String = "https://paper-api.alpaca.markets/v2beta1/events/activities",
 )
 
 @Serializable
@@ -87,7 +88,7 @@ internal data class SignedBrokerNotification(
 internal fun brokerFeedSha256(value: String): String =
   MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).toHex()
 
-private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it.toInt() and 0xff) }
+internal fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
 // This is the existing bayn.broker-identity.v2 canonical material, not a new routing identity.
 internal fun brokerFeedIdentityHash(accountId: String): String =
@@ -115,9 +116,10 @@ internal fun signBrokerNotification(
 internal class VerifiedBrokerFeed(
   private val connection: BrokerFeedConnection,
   private val client: HttpClient,
-  private val publish: suspend (String, SignedBrokerNotification) -> Unit,
+  private val publish: suspend (String, BrokerDeliveryIdentity, SignedBrokerNotification) -> Unit,
   private val now: () -> Instant = Instant::now,
   private val newSessionId: () -> String = { UUID.randomUUID().toString() },
+  private val onReady: () -> Unit = {},
 ) {
   suspend fun collect() {
     val response =
@@ -153,11 +155,13 @@ internal class VerifiedBrokerFeed(
             authenticatedAt = brokerFeedTime.format(subscription.authenticatedAt),
             subscribedAt = brokerFeedTime.format(subscription.subscribedAt),
           )
+        val eventId = brokerFeedSha256("$identityHash\n$sessionId\nready")
         publish(
           identityHash,
+          brokerDeliveryIdentity(connection.sourceRevision, proof.credentialHash, sessionId, "notify", eventId),
           signBrokerNotification(
             BrokerFeedNotification.SessionReady(
-              eventId = brokerFeedSha256("$identityHash\n$sessionId\nready"),
+              eventId = eventId,
               session = proof,
               receivedAt = brokerFeedTime.format(subscription.subscribedAt),
             ),
@@ -165,6 +169,7 @@ internal class VerifiedBrokerFeed(
           ),
         )
         session = proof
+        onReady()
       },
       onUpdate = { update ->
         val proof = checkNotNull(session) { "broker session proof was not published" }
@@ -178,7 +183,17 @@ internal class VerifiedBrokerFeed(
           )
         // Publication must finish durably before consuming the next update. A failure ends the
         // session; its replacement publishes a new verified readiness event for canonical gap repair.
-        publish(identityHash, signBrokerNotification(notification, connection.secretKey))
+        publish(
+          identityHash,
+          brokerDeliveryIdentity(
+            connection.sourceRevision,
+            proof.credentialHash,
+            proof.sessionId,
+            "notify",
+            notification.eventId,
+          ),
+          signBrokerNotification(notification, connection.secretKey),
+        )
       },
     )
   }
