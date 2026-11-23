@@ -59,7 +59,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: execution-controller
-          image: registry.ide-newton.ts.net/lab/bayn@sha256:6a57c6da24fc486e9523cf2408359df60ab9561da27f9c5ea5a2491a8286b501
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:14179c676683e296fe95a05617aa3786712e1486cebe1a65ddbafae82305d383
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -75,7 +75,7 @@ spec:
             - name: BAYN_REPORTING_ALLOWED
               value: "false"
             - name: BAYN_CODE_REVISION
-              value: c01d8c0356e76d08293a25a93f17c9871564547b
+              value: 9fa46d91e3e99c72a2287968e87304cf987c1618
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:
@@ -84,7 +84,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:6a57c6da24fc486e9523cf2408359df60ab9561da27f9c5ea5a2491a8286b501
+              value: sha256:14179c676683e296fe95a05617aa3786712e1486cebe1a65ddbafae82305d383
             # Bind the replacement to the exact immutable execution generation
             # currently owned by the active controller. The deployment stays
             # read-only; only the sealed, validated research mandate can
@@ -92,7 +92,7 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "c78a10a127b6d4fbfd2fa3d2a433744f02295aa9a2b47b20bacfbd9804ba8ed5"
+              value: "810fedc00003ee940f3af6982ce65357662e241ec8c43b7d89922f6766108774"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

@@ -363,7 +363,8 @@ export const jevTradingSignalRequestMaterial = (
         capitalMicros: native.portfolio.brokerState.account.equityMicros,
         cryptoFeeTier,
         ...((native.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
-          native.protocol.schemaVersion === 'bayn.jev.protocol.v42') &&
+          native.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+          native.protocol.schemaVersion === 'bayn.jev.protocol.v43') &&
         equityClockSession(snapshot.manifest.observedAt) === 'regular' &&
         equityShortIsEligible(
           native.equityShortEligibility?.[symbol],
