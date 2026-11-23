@@ -3695,6 +3695,14 @@ data:
                   )
                 ) == 0
               )
+              or on(job, namespace, service)
+              max by (job, namespace, service) (
+                (bayn_capital_activation_state{job="bayn",namespace="bayn",service="bayn",state="realized"} == 1)
+                and on(job, namespace, service, instance)
+                (time() >= bayn_execution_missing_cycle_alert_start_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})
+                and on(job, namespace, service, instance)
+                (time() < bayn_execution_missing_cycle_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})
+              )
             for: 1m
             keep_firing_for: 5m
             labels:
@@ -3704,7 +3712,7 @@ data:
               notify: email
             annotations:
               summary: Bayn execution session is not ready in its submission window
-              description: A realized unbound execution session is within ten minutes of submission open or inside its submission window, but its durable prerequisites or evaluation path are unavailable. Input-window failures and decision lag use their dedicated alerts.
+              description: A realized execution session has unavailable prerequisites, missed its first cycle, or cannot evaluate its active cycle. Input-window failures and decision lag use their dedicated alerts.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynInputWindowUnavailable
             expr: |
