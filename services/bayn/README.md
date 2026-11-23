@@ -8,7 +8,7 @@ Current entry scope is **equity-only**. Retained crypto positions keep protectio
 reconciliation and accounting. The scope is enforced by
 [`currentEntryMarkets`](src/execution/trading-scope.ts), independently of the broader retained mandate.
 
-The active v41 strategy supports equity long and short positions. Short entries require the protocol's direction
+The active strategy supports equity long and short positions. Short entries require the protocol's direction
 policy, fresh broker account and asset eligibility, and the same durable grant and risk checks as long entries.
 [Stock-short research and accounting](../../docs/bayn/stock-short-research-2026-11-13.md) retains the earlier research
 context; the current [protocol](src/jev/protocol.ts) and [short eligibility checks](src/execution/equity-short.ts)
@@ -46,10 +46,10 @@ define executable behavior.
 - **Costs and qualification stay explicit.** Known execution and operating costs are deducted; missing costs remain
   unknown. Prospective economic acceptance and operational reliability use their registered evidence contracts.
 
-Current inference uses protocol v41, numerical input v24, batch v8, entry input v8 and handoff v5 with pinned
-`jev-1.14.0`. The [Jev 1.14 cutover](../../docs/bayn/jev114-box-cutover.md) describes the authority and retained-evidence
-transition. The [pre-chart feasibility contract](../../docs/bayn/pre-chart-feasibility.md) explains which impossible
-source proposals can be rejected before paid inference.
+The [compiled Jev protocol](src/jev/protocol.ts) defines the active model, input, and execution settings. The
+[v42 cutover](../../docs/bayn/risk-symmetry-cutover.md) records the reviewed release and authority transition.
+The [pre-chart feasibility contract](../../docs/bayn/pre-chart-feasibility.md) explains when Bayn rejects a proposal
+before paid inference.
 
 This guide describes current source behavior. Historical implementation notes remain in the
 [pre-cleanup revision](https://github.com/proompteng/lab/blob/ce24661870dd490c1fac592227f77027f7c6ddab/services/bayn/README.md);
@@ -780,19 +780,21 @@ proposal economics. Current [chart questions](src/jev/staged-chart-questions.ts)
 2. **Funding:** code constructs at most one support-recovery and one base-breakout proposal using verified source
    prices, quantities, costs, stops and targets. The [source-feasibility gate](../../docs/bayn/pre-chart-feasibility.md)
    can reject impossible sources before either paid call.
-3. **JEV:** the final call judges the funded proposal's setup and stop with the existing 0.70/0.30 thresholds.
-   Retained crypto contracts also require target-obstruction evidence.
+3. **JEV:** the final call judges the funded proposal's setup, stop and target obstruction under the compiled
+   question policy.
 
 Each symbol commits its CHART terminal and handoff before final inference. Fast symbols may proceed while other
 charts run, but selection requires the complete batch. Claims prevent repeated paid calls after retries or lost
-acknowledgements. Current v41 cost projection expects CHART and JEV; historical BASE_START claims, skips, question
-bytes and financial hashes remain readable through their original codecs. The original ten-second deadline bounds
+acknowledgements. Current cost projection expects CHART and JEV. Historical BASE_START claims, skips, question bytes
+and financial hashes remain readable through their original codecs. The original ten-second deadline bounds
 inference and persistence. Bayn computes execution quantities, risk and exit triggers; current candidate admission
 uses [candidate-only queries](src/jev/observation-query.ts).
 
-Jev's structural checks return every supported funded proposal. After verifying the quotes, the entry selector ranks
-that set by structural support, modeled loss, symbol and proposal ID. It binds protection only for the selected
-proposal. Native execution, replay and the target verifier reproduce that choice from the same batch evidence.
+Jev's structural checks return every supported funded proposal. V42 requires fee-inclusive modeled gain at least
+equal to modeled stop loss. After verifying the quotes, the entry selector ranks by modeled net value per unit of
+modeled stop loss, using structural support to weight gain and loss. Ties use structural support, modeled loss,
+symbol and proposal ID. Native execution, replay and the target verifier reproduce the selected protection from
+the same batch evidence.
 
 The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
 describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
@@ -828,12 +830,10 @@ The submission window follows the entitled equity market calendar. Bayn can eval
 and the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Equity entries
 use up to 30 minutes of actual completed history and evaluate the source-controlled candidates independently until
 five minutes before the close. The retained protocol also defines 120-minute crypto context for historical evidence
-and position recovery; the current discovery and submission guards do not permit new crypto entries. The sequential
-chart and Jev pipeline derives source-anchored proposals and ranks funded eligible entries by their weakest required
-judgment, then modeled loss and stable proposal identity. Entry spreads may not exceed five basis
-points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
-the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
-includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
+and position recovery. The [compiled market profiles](src/jev/protocol.ts) bind the entry spread and positioning
+limits. The current protocol permits one equity long or short position with a gross weight capped at 20% of account
+equity. Allocation reduces the target when required by order, symbol, exposure or remaining daily turnover limits.
+The daily counter includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
@@ -1064,7 +1064,7 @@ The frozen v2 contract remains available for historical verification.
   Only broker configuration and the durable grant differ.
 - Every intent, client-order ID, risk decision, and mutation transition is committed before broker I/O. Unknown broker
   outcomes block new exposure until deterministic lookup and reconciliation resolve them.
-- Equity entries follow the v41 long/short direction policy and fresh broker eligibility. Risk-reducing sells of long
+- Equity entries follow the compiled long/short direction policy and fresh broker eligibility. Risk-reducing sells of long
   inventory and buys covering short inventory remain bounded by the reconciled position. Entry, gross exposure,
   turnover, loss, drawdown, cutoff, and stale-data limits fail closed.
 - PostgreSQL and TigerBeetle must reconcile exactly. Identity drift, unresolved mutations, stale broker evidence,
