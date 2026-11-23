@@ -1,5 +1,6 @@
 """Disposable MCP server used by the Relay and real Ofz execution fixtures."""
 
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -47,9 +48,10 @@ for line in sys.stdin:
         if mode == "hang":
             pid = os.fork()
             if pid == 0:
-                time.sleep(1)
-                calls.with_suffix(".escaped").write_text("escaped")
-                time.sleep(30)
+                with Path("child.lock").open("r+") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    Path("started").touch()
+                    time.sleep(6)
             else:
                 time.sleep(30)
         result = {

@@ -1248,7 +1248,25 @@ const sandboxExecutionProgram = (
   }
 }
 
-const executionLifecycleFixture = async (
+const lifecycleMarketData = (snapshotRequests: IntradaySnapshotRequest[]): IntradayMarketDataService => ({
+  check: Effect.void,
+  loadSnapshot: (query) =>
+    Effect.sync(() => {
+      snapshotRequests.push({ ...query, archiveWatermarks: [] })
+      return streamingFixtureFromRaw(
+        makeIntradayMomentumTestSnapshot(
+          currentIntradayProtocol,
+          { ...query, archiveWatermarks: [] },
+          { NVDA: 0.02 },
+          10,
+        ),
+        query,
+      ).snapshot
+    }),
+  verifyReference: fixtureStreamingReference,
+})
+
+const makeExecutionLifecycleFixture = async (
   transformPolicy: (policy: Policy) => Policy = (policy) => policy,
   strategy: StrategyRuntime = currentIntradayRuntime,
   compileDecision: typeof buildMutationShadowCycleDecision = buildMutationShadowCycleDecision,
@@ -1271,23 +1289,7 @@ const executionLifecycleFixture = async (
   const selectedCycle = { ...cycle, identity: selectedIdentity }
 
   const snapshotRequests: IntradaySnapshotRequest[] = []
-  const intradayMarketData: IntradayMarketDataService = {
-    check: Effect.void,
-    loadSnapshot: (query) =>
-      Effect.sync(() => {
-        snapshotRequests.push({ ...query, archiveWatermarks: [] })
-        return streamingFixtureFromRaw(
-          makeIntradayMomentumTestSnapshot(
-            currentIntradayProtocol,
-            { ...query, archiveWatermarks: [] },
-            { NVDA: 0.02 },
-            10,
-          ),
-          query,
-        ).snapshot
-      }),
-    verifyReference: fixtureStreamingReference,
-  }
+  const intradayMarketData = lifecycleMarketData(snapshotRequests)
   const input = {
     accountId,
     authorityGenerationHash: generationHash,
@@ -1359,6 +1361,22 @@ const executionLifecycleFixture = async (
   const risk = document.deltaRisk[0]
   if (intent === undefined || risk === undefined) throw new Error('PAPER lifecycle fixture requires one planned intent')
   return { boundCycle, document, input, intent, intents, policy, preparation, risk, snapshotRequests }
+}
+
+let defaultLifecycleFixture: ReturnType<typeof makeExecutionLifecycleFixture> | undefined
+const executionLifecycleFixture = async (...args: Parameters<typeof makeExecutionLifecycleFixture>) => {
+  if (args.length > 0) return makeExecutionLifecycleFixture(...args)
+  const { input, ...state } = await (defaultLifecycleFixture ??= makeExecutionLifecycleFixture())
+  // Each case owns the initial observations and the market service that records later requests.
+  const copy = structuredClone(state)
+  return {
+    ...copy,
+    input: {
+      ...input,
+      intradayMarketData: lifecycleMarketData(copy.snapshotRequests),
+      executionProgram: sandboxExecutionProgram(),
+    },
+  }
 }
 
 const reconciliationResultAt = (
@@ -5924,7 +5942,7 @@ describe('OBSERVE runtime composition', () => {
     expect(risk.limitPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
     expect(risk.facts.state.expectedExecutionPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
     expect(BigInt(risk.facts.state.referencePriceMicros)).toBeGreaterThan(BigInt(risk.limitPriceMicros))
-    expect(document.entryLimitSlippageBps).toBe(0)
+    expect(document.entryLimitSlippageBps).toBe(5)
     expect(risk.facts.state.entryQuote?.maximumAgeMs).toBe(10_000)
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
   })
@@ -7675,7 +7693,7 @@ test('settles the committed close after native protection observes a flat accoun
 
 test('persists the pricing quote event and its full freshness deadline for every entry target', async () => {
   const fixture = await executionLifecycleFixture()
-  expect(fixture.document.entryLimitSlippageBps).toBe(0)
+  expect(fixture.document.entryLimitSlippageBps).toBe(5)
   expect(fixture.policy.maxAdverseSlippageBps).toBe(10)
   expect(Result.isSuccess(decodeExecutionDecisionDocument(fixture.document))).toBeTrue()
   expect(fixture.document.deltaRisk.length).toBeGreaterThan(0)
@@ -7690,7 +7708,7 @@ test('persists the pricing quote event and its full freshness deadline for every
     expect(limit).toBe(reference)
   }
   const { contentHash: _contentHash, ...material } = fixture.document
-  expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, entryLimitSlippageBps: 1 }))).toBeTrue()
+  expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, entryLimitSlippageBps: 6 }))).toBeTrue()
   expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, closeLimitSlippageBps: 10 }))).toBeTrue()
   const { entryLimitSlippageBps: _allowance, ...withoutAllowance } = material
   const unpadded = Result.getOrThrow(makeExecutionDecisionDocument(withoutAllowance))

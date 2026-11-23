@@ -85,6 +85,10 @@ production workflows watch the same cohort inputs so a component change cannot s
 The four component READMEs are excluded from publication triggers. A push with a changed runtime input still
 publishes the full cohort.
 
+Tengri and Nanoagent build on native GitHub-hosted Linux runners. Each build hands an OCI archive with its
+provenance and SBOM to the private publisher. The publisher imports all four architecture images, verifies
+the paired guest boot checksums and source labels, and signs the indexes before exposing Kargo aliases.
+
 The `ofz` Stage promotes first. Its Argo sync must finish the checksum-bound `migrate-runtime` hook and the healthy
 Ofz rollout before Freight is verified. The `tengri` Stage accepts only that verified upstream Freight, and
 `proompteng` accepts the same Freight only after Tengri is verified. Both consumers use `MatchUpstream` and cannot

@@ -12,7 +12,6 @@ const previousKey = 'polling'
 const budgetKey = 'next-poll-not-before-ms'
 const recoveryDelayMs = 1_000
 const coalescingDelayMs = 100
-const protectionSettlementDelayMs = 200
 export const brokerSourceProjectionContract = 'bayn.broker-source-projection.v1'
 // Explicit intervals override the finite handler retry policy. Accepted notifications must survive a database
 // outage without recording a terminal run result; leave attempt and duration limits unset for idempotent writes.
@@ -291,8 +290,6 @@ export const makeBaynBrokerObservations = (
           ctx.set(key, state)
           const cycleId = binding.cycleId
           if (cycleId !== undefined) {
-            const settleInMs = receivedAt + protectionSettlementDelayMs - (await ctx.date.now())
-            if (settleInMs > 0) await ctx.sleep({ milliseconds: settleInMs })
             let proof: ProtectionReleaseReference | null = null
             try {
               proof = await ctx.run(

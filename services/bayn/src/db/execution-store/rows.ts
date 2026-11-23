@@ -45,6 +45,7 @@ export type HistoryEventRow = typeof HistoryEventRow.Type
 
 export const CurrentOrderVersionRow = Schema.Struct({
   event_id: Sha256,
+  content_hash: Sha256,
   broker_order_id: NonEmptyString,
   source_event_id: NonEmptyString,
   source_sequence: Schema.String,
@@ -208,6 +209,7 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.jev.protocol.v39',
       'bayn.jev.protocol.v40',
       'bayn.jev.protocol.v41',
+      'bayn.jev.protocol.v42',
       'bayn.entry-ablation-policy.v1',
       'bayn.repeated-momentum-policy.v1',
     ]),

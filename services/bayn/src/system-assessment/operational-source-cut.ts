@@ -96,7 +96,7 @@ const readDecision = (reference: SourceReference, registration: OperationalRegis
       Schema.Struct({ sessionDate: IsoDateSchema, document: Schema.Unknown }),
       strictParseOptions,
     )(record.payload)
-    const document = !['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'].includes(
+    const document = !['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42'].includes(
       registration.obligations.configuration.protocol.schemaVersion,
     )
       ? yield* Effect.fromResult(decodeRetainedJevExecutionDecisionDocument(row.document))

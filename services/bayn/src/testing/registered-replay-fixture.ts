@@ -186,7 +186,7 @@ export const registeredTradeReplayFixture = () => {
     const bars = raw.bars.map((bar) => ({
       ...bar,
       sourceOffset: next(bar.sourceTopic),
-      high: bar.symbol !== 'SPY' && Date.parse(bar.eventAt) === open ? 105 : bar.high,
+      high: bar.symbol !== 'SPY' && Date.parse(bar.eventAt) === open ? 110 : bar.high,
       low: bar.symbol !== 'SPY' && Date.parse(bar.eventAt) === open ? 95 : bar.low,
     }))
     for (const bar of bars)

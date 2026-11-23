@@ -277,6 +277,13 @@ test('promotes the broker feed digest and its exact source into the Bayn applica
   ])
 })
 
+test('activates broker observation ownership before waiting for broker feed readiness', () => {
+  const wave = (file: string) =>
+    Number(read(`argocd/applications/bayn/${file}.yaml`).metadata.annotations['argocd.argoproj.io/sync-wave'])
+  expect(wave('execution-controller')).toBeLessThan(wave('execution-activation'))
+  expect(wave('execution-activation')).toBeLessThan(wave('broker-feed'))
+})
+
 test('writes source, digest, and research lineage into the correct field in every runtime', () => {
   const lineageValues: string[] = []
   for (const file of ['deployment', 'execution-controller', 'execution-activation']) {

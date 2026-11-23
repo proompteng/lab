@@ -160,4 +160,36 @@ theorem executable_radius_covers_registered_expected_profit
     exact_mod_cast normalized
   · exact positiveAlpha
 
+/-- A zero-width policy uses a strict lower-bound failure event. Its point-support premise is an
+    explicit registration obligation; observed equal values do not establish it. -/
+theorem zero_width_point_support_has_no_strict_lower_bound_failure
+    {Ω : Type*} {mΩ : MeasurableSpace Ω} {μ : Measure Ω}
+    [IsProbabilityMeasure μ] {X : ℕ → Ω → ℝ}
+    (values : ℕ → ℝ) (n denominator : Nat)
+    (pointSupport : ∀ i < n, ∀ᵐ ω ∂μ, X i ω = values i) :
+    μ.real {ω | (∑ i ∈ Finset.range n, ∫ x, X i x ∂μ) <
+      (∑ i ∈ Finset.range n, X i ω) - (conditionalRadius n 0 denominator : ℝ)} = 0 := by
+  have radiusZero : (conditionalRadius n 0 denominator : ℝ) = 0 := by
+    simp [conditionalRadius, ceilSquareRoot]
+  have expected : (∑ i ∈ Finset.range n, ∫ x, X i x ∂μ) =
+      ∑ i ∈ Finset.range n, values i := by
+    apply Finset.sum_congr rfl
+    intro i member
+    calc
+      (∫ x, X i x ∂μ) = ∫ _x, values i ∂μ :=
+        integral_congr_ae (pointSupport i (Finset.mem_range.mp member))
+      _ = values i := by simp
+  have jointSupport : ∀ᵐ ω ∂μ, ∀ i ∈ (Finset.range n : Set ℕ), X i ω = values i :=
+    (ae_ball_iff (Finset.range n).finite_toSet.countable).mpr fun i member =>
+      pointSupport i (Finset.mem_range.mp member)
+  have noFailure : ∀ᵐ ω ∂μ, ¬ (∑ i ∈ Finset.range n, ∫ x, X i x ∂μ) <
+      (∑ i ∈ Finset.range n, X i ω) - (conditionalRadius n 0 denominator : ℝ) := by
+    filter_upwards [jointSupport] with ω supported
+    have actual : (∑ i ∈ Finset.range n, X i ω) = ∑ i ∈ Finset.range n, values i :=
+      Finset.sum_congr rfl supported
+    rw [radiusZero, sub_zero, expected, actual]
+    exact lt_irrefl _
+  simpa only [Measure.real, not_not, ENNReal.toReal_zero] using
+    congrArg ENNReal.toReal (ae_iff.mp noFailure)
+
 end Bayn

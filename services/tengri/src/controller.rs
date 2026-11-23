@@ -428,14 +428,24 @@ pub async fn converge(
                 update_slot_image(client, namespace, &pod, "runner", runtime_image, leadership)
                     .await?;
             }
-            let kubelet_observed = pod
+            let running_image = pod
                 .status
                 .as_ref()
-                .and_then(|status| status.observed_generation)
-                .zip(pod.metadata.generation)
-                .is_none_or(|(observed, desired)| observed >= desired);
-            if image_configured && kubelet_observed {
-                // An old runner still shutting down rejects restore from Failed.
+                .and_then(|status| status.container_statuses.as_ref())
+                .and_then(|containers| {
+                    containers
+                        .iter()
+                        .find(|container| container.name == "runner")
+                })
+                .filter(|container| {
+                    container
+                        .state
+                        .as_ref()
+                        .is_some_and(|state| state.running.is_some())
+                })
+                .map(|container| container.image_id.trim_start_matches("docker-pullable://"));
+            // An observed Pod spec can still have its previous runner serving the socket.
+            if image_configured && running_image == Some(runtime_image.as_ref()) {
                 supervisor
                     .restore(&microvm, authorization, leadership)
                     .await?
@@ -2539,6 +2549,7 @@ mod tests {
             Preparing,
             Failed,
             TimedOut,
+            TimedOutWithOldRunner,
             Stopped,
         }
         use ObservedSlot::*;
@@ -2552,6 +2563,7 @@ mod tests {
             (6, Preparing),
             (6, Failed),
             (6, TimedOut),
+            (6, TimedOutWithOldRunner),
             (7, TimedOut),
             (6, Stopped),
         ] {
@@ -2584,7 +2596,7 @@ mod tests {
                         claim: Some(claim.clone()),
                         message: "disk flush failed".into(),
                     },
-                    TimedOut => SlotState::Failed {
+                    TimedOut | TimedOutWithOldRunner => SlotState::Failed {
                         claim: Some(claim.clone()),
                         message: crate::slot::GUEST_LIFECYCLE_TIMEOUT.into(),
                     },
@@ -2654,6 +2666,12 @@ mod tests {
                 }},
                 "spec":{"holderIdentity":serde_json::to_string(&claim.allocation()).unwrap()}
             });
+            let runtime_image = "registry.test/tengri@sha256:new";
+            let runner_image_id = if matches!(observed_slot, TimedOutWithOldRunner) {
+                "registry.test/tengri@sha256:old"
+            } else {
+                runtime_image
+            };
             let (client, pending) = mock(vec![
                 get(
                     "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
@@ -2667,8 +2685,11 @@ mod tests {
                     "/api/v1/namespaces/tengri/pods/slot-test",
                     json!({
                         "apiVersion":"v1", "kind":"Pod", "metadata":{"name":"slot-test", "uid":"original-pod"},
-                        "spec":{"containers":[{"name":"runner","image":"runtime-image"}]},
-                        "status":{"podIP":"127.0.0.1"}
+                        "spec":{"containers":[{"name":"runner","image":runtime_image}]},
+                        "status":{"podIP":"127.0.0.1","containerStatuses":[{
+                            "name":"runner","image":runtime_image,"imageID":runner_image_id,
+                            "ready":true,"restartCount":1,"state":{"running":{}}
+                        }]}
                     }),
                 ),
                 get(
@@ -2684,6 +2705,7 @@ mod tests {
                 },
             ]);
             let mut context = context(client);
+            context.runtime_image = Arc::from(runtime_image);
             context.identity = WorkloadIdentity::Fixture(port);
             context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(mode);
             let result = converge(&context, &microvm, context.leader().unwrap()).await;
@@ -2693,7 +2715,7 @@ mod tests {
                 assert_eq!(
                     restores.load(Ordering::SeqCst),
                     usize::from(matches!(observed_slot, Sleeping | PreviousAwake | TimedOut)),
-                    "a committed snapshot or a fenced timeout can recover the same workspace"
+                    "a fenced timeout must wait for the new runner even after its image is set in the Pod spec"
                 );
                 assert_eq!(sleeps.load(Ordering::SeqCst), usize::from(old_awake));
                 assert!(pending.lock().unwrap().is_empty());
