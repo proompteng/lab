@@ -44,9 +44,11 @@ export const entryEvaluationRequestFixture = (
       minuteBeforeWindowEnd: 2,
       open: 103,
       high:
-        protocol.schemaVersion === 'bayn.jev.protocol.v42' || protocol.schemaVersion === 'bayn.jev.protocol.v43'
-          ? 113
-          : 108,
+        protocol.schemaVersion === 'bayn.jev.protocol.v43'
+          ? 115
+          : protocol.schemaVersion === 'bayn.jev.protocol.v42'
+            ? 113
+            : 108,
       low: 102,
       close: 104,
       volume: 100,
