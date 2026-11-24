@@ -1,6 +1,7 @@
 import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import riskSymmetryAdmission from '../../migrations/0213_risk_symmetry_admission'
 import stopFloorRewardRiskAdmission from '../../migrations/0217_stop_floor_reward_risk_admission'
+import positiveNetTargetAdmission from '../../migrations/0219_positive_net_target_admission'
 import jevBoxInference from '../../migrations/0188_jev_box_inference'
 import {
   defaultJevProtocolDocument,
@@ -8,6 +9,7 @@ import {
   retainedJevProtocolV40Document,
   retainedJevProtocolV41Document,
   retainedJevProtocolV42Document,
+  retainedJevProtocolV43Document,
 } from '../jev/protocol'
 import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
 import webullEntryContext from '../../migrations/0178_webull_entry_context'
@@ -2459,8 +2461,17 @@ integration('committed sequential provider handoff', () => {
         'stop-floor reward-risk migration 217 enforces OBSERVE cutover guard, admits v43 equity (5,5) and crypto (0,0), and rejects v42 claims',
       admission: stopFloorRewardRiskAdmission,
       priorProtocol: retainedJevProtocolV42Document,
-      nextProtocol: defaultJevProtocolDocument,
+      nextProtocol: retainedJevProtocolV43Document,
       cutoverErrorPrefix: 'stop-floor reward-risk cutover requires',
+    },
+    {
+      migrationId: 219,
+      label:
+        'positive net target migration 219 enforces OBSERVE cutover guard, admits v44 equity (5,5) and crypto (0,0), and rejects v43 claims',
+      admission: positiveNetTargetAdmission,
+      priorProtocol: retainedJevProtocolV43Document,
+      nextProtocol: defaultJevProtocolDocument,
+      cutoverErrorPrefix: 'positive-net-target cutover requires',
     },
   ])
     test(label, async () =>

@@ -95,6 +95,7 @@ export const operationalRegistrationFixture = (base = registrationFixture()): Op
     'bayn.jev.protocol.v41',
     'bayn.jev.protocol.v42',
     'bayn.jev.protocol.v43',
+    'bayn.jev.protocol.v44',
   ].includes(sourceConfiguration.protocol.schemaVersion)
     ? {
         ...common,
