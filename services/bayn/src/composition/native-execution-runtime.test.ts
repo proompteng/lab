@@ -765,7 +765,7 @@ describe('native execution runtime', () => {
     },
   )
 
-  test('authority preflight rejects an account change without a handoff', async () => {
+  test('authority preflight recognizes a different configured account', async () => {
     const other = Result.getOrThrow(
       makeBrokerIdentity({
         schemaVersion: brokerIdentity.schemaVersion,
@@ -776,13 +776,18 @@ describe('native execution runtime', () => {
     )
     const result = await Effect.runPromise(
       observePreflight(
-        Effect.succeed([{ ...authorityRow, account_id: other.accountId, broker_identity_hash: other.identityHash }]),
+        Effect.succeed([
+          {
+            ...authorityRow,
+            maximum: 'PAPER',
+            effective: 'PAPER',
+            account_id: other.accountId,
+            broker_identity_hash: other.identityHash,
+          },
+        ]),
       ).pipe(Effect.result),
     )
-    expect(result).toMatchObject({
-      _tag: 'Failure',
-      failure: { message: 'changing the active broker account requires the reviewed PAPER account handoff' },
-    })
+    expect(Result.isSuccess(result)).toBe(true)
   })
 
   test.each([

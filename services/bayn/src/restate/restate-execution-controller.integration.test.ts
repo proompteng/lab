@@ -630,7 +630,6 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
       ...original,
       controllerKey: randomUUID().replaceAll('-', '').repeat(2),
       sourceRevision: '8'.repeat(40),
-      paperAccountHandoffFrom: original.controllerKey,
     }
     const projections: Array<{ key: string; active: boolean }> = []
     let selectionCount = 0
@@ -638,8 +637,14 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
       const controller = alwaysReplay(
         makeBaynExecutionController(config, {
           prepareActivation: async () => {},
-          selectPaperAccount: async () => {
-            selectionCount += 1
+          brokerAccount: {
+            bind: async () => {
+              if (config.controllerKey === original.controllerKey) return null
+              selectionCount += 1
+              return original.controllerKey
+            },
+            previousController: async () =>
+              config.controllerKey === replacement.controllerKey ? original.controllerKey : null,
           },
           projectState: async (key, state) => {
             projections.push({ key, active: state.active })
