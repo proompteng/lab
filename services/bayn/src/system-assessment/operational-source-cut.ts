@@ -101,6 +101,7 @@ const readDecision = (reference: SourceReference, registration: OperationalRegis
       'bayn.jev.protocol.v41',
       'bayn.jev.protocol.v42',
       'bayn.jev.protocol.v43',
+      'bayn.jev.protocol.v44',
     ].includes(registration.obligations.configuration.protocol.schemaVersion)
       ? yield* Effect.fromResult(decodeRetainedJevExecutionDecisionDocument(row.document))
       : yield* Effect.fromResult(decodeExecutionDecisionDocument(row.document))

@@ -31,7 +31,8 @@ export const jevEntryPriceAllowances = (protocol: JevProtocolMaterial, symbol: s
   protocol.schemaVersion === 'bayn.jev.protocol.v28' ||
   ((protocol.schemaVersion === 'bayn.jev.protocol.v27' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
-    protocol.schemaVersion === 'bayn.jev.protocol.v43') &&
+    protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v44') &&
     instrumentMarket(symbol) === MarketKind.Crypto)
     ? { quoteDriftBps: 0, limitSlippageBps: 0 }
     : {
@@ -46,6 +47,7 @@ export const jevMaximumEntryAskMicros = (
 ): bigint => {
   const maximumAsk = (observedAsk * BigInt(10_000 + jevEntryPriceAllowances(protocol, symbol).quoteDriftBps)) / 10_000n
   return protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
@@ -146,6 +148,7 @@ export const jevEntryEconomics = (input: {
       // shared protocol allowances still bind exit and proposal economics.
       maximumEntryQuoteDriftBps:
         protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
@@ -154,6 +157,7 @@ export const jevEntryEconomics = (input: {
           : protocol.maximumEntryQuoteDriftBps,
       maximumEntryLimitSlippageBps:
         protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v40' ||

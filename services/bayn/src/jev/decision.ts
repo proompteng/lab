@@ -203,7 +203,8 @@ export const selectJevEntryCandidates = (
         eligible,
         observation.protocol.maximumPositions,
         observation.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
-          observation.protocol.schemaVersion === 'bayn.jev.protocol.v43',
+          observation.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+          observation.protocol.schemaVersion === 'bayn.jev.protocol.v44',
       ).map(({ symbol, proposal }) => ({
         symbol,
         weight: proposal.funding.maximumTargetWeight * (isShortEntryProposal(proposal) ? -1 : 1),
