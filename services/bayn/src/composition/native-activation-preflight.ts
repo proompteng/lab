@@ -63,8 +63,7 @@ export const nativeActivationPreflight = (plan: ApplicationPlan) =>
       Effect.mapError(
         () =>
           new PaperAccountHandoffError({
-            message:
-              'changing the active broker account requires the reviewed PAPER account handoff',
+            message: 'changing the active broker account requires the reviewed PAPER account handoff',
           }),
       ),
     )
