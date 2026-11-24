@@ -232,7 +232,8 @@ export const evaluateEntrySourceFeasibility = (
     const shortEnabled =
       input.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
       input.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
-      input.protocol.schemaVersion === 'bayn.jev.protocol.v43'
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v44'
     const shortFeasible =
       shortEnabled && input.funding.equityShortEligibility !== undefined
         ? yield* mayHaveFundableShortSource({
@@ -322,7 +323,8 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
           })
     const symmetric =
       input.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
-      input.protocol.schemaVersion === 'bayn.jev.protocol.v43'
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v44'
     const shortEnabled = input.protocol.schemaVersion === 'bayn.jev.protocol.v41' || symmetric
     const shortProposals =
       shortEnabled && input.funding.equityShortEligibility !== undefined

@@ -12,6 +12,7 @@ import {
   retainedJevProtocolV40Document,
   retainedJevProtocolV41Document,
   retainedJevProtocolV42Document,
+  retainedJevProtocolV43Document,
   decodeJevProtocol,
   type JevProtocolMaterial,
 } from './protocol'
@@ -348,7 +349,7 @@ describe('native JeV equity shorts', () => {
   })
 
   test('v42 applies 5 bps drift/slippage allowances and enforces G/L >= 1.0 on equity shorts', () => {
-    const input = fixture()
+    const input = fixture(retainedJevProtocolV42Document)
     const proposals = Result.getOrThrow(makeShortEntryProposals(input))
     expect(proposals.map((proposal) => proposal.source.setup)).toEqual([ShortEntrySetup.ResistanceRejection])
     expect(proposals[0]?.minimumEntryPriceMicros).toBe('100390000')
@@ -471,7 +472,7 @@ describe('native JeV equity shorts', () => {
     expect(proposals.map((proposal) => proposal.source.setup)).toEqual([ShortEntrySetup.ResistanceRejection])
   })
 
-  test('v43 enforces minimum 15 bps protective stop floor and G/L >= 1.20 on equity shorts', () => {
+  test('v44 retains the 15 bps short stop floor while accepting positive targets rejected by v43', () => {
     const base = fixture()
     const subRatioChart = Result.getOrThrow(
       makeNativeChartEvidence({
@@ -508,8 +509,13 @@ describe('native JeV equity shorts', () => {
     expect(
       Result.getOrThrow(mayHaveFundableShortSource({ ...subRatioSource, protocol: retainedJevProtocolV42Document })),
     ).toBe(true)
-    expect(Result.getOrThrow(makeShortEntryProposals(subRatioSource))).toEqual([])
-    expect(Result.getOrThrow(mayHaveFundableShortSource(subRatioSource))).toBe(false)
+    const v43Source = { ...subRatioSource, protocol: retainedJevProtocolV43Document }
+    expect(Result.getOrThrow(makeShortEntryProposals(v43Source))).toEqual([])
+    expect(Result.getOrThrow(mayHaveFundableShortSource(v43Source))).toBe(false)
+    expect(Result.getOrThrow(makeShortEntryProposals(subRatioSource)).map((proposal) => proposal.source.setup)).toEqual(
+      [ShortEntrySetup.ResistanceRejection],
+    )
+    expect(Result.getOrThrow(mayHaveFundableShortSource(subRatioSource))).toBe(true)
 
     const makeStopFloorSource = (resistanceHigh: number) => {
       const stopChart = Result.getOrThrow(

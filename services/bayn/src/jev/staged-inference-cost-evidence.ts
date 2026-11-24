@@ -327,6 +327,7 @@ export const readStagedInferenceCostEvidence = (row: {
       return yield* invalid('Undispatched visual evidence conflicts with a provider handoff or evaluation receipt')
     const stageNames: readonly ('CHART' | 'BASE_START')[] =
       request.request.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
       request.request.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
       request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
       request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40'
