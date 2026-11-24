@@ -379,11 +379,26 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
     })
     yield* Effect.logInfo(candidateObservationLog(observation))
     const decidedAt = yield* currentUtcInstant
-    const availability =
-      saved.result === null
-        ? null
-        : usableEntryBatchInferences(saved.plan, saved.result, Date.parse(decidedAt), planVersion)
-    if (saved.result === null || availability === null || Result.isFailure(availability)) {
+    const decidedAtMs = Date.parse(decidedAt)
+    const batchExpiresAtMs = Date.parse(saved.plan.expiresAt)
+    if (saved.result === null) {
+      const deadlineMs = Math.min(batchExpiresAtMs, options.admissionDeadlineAt ?? batchExpiresAtMs)
+      if (Date.parse(saved.plan.observedAt) <= decidedAtMs && decidedAtMs < deadlineMs)
+        return yield* new JevAwaitingEvidence({
+          message: 'Jev batch is awaiting its durable result',
+          availableAt: utcInstantFromEpochMillis(deadlineMs),
+          readiness: DecisionReadinessReason.DecisionPending,
+        })
+      return yield* new JevAwaitingEvidence({
+        message: jevAvailabilityMessage(JevAvailabilityReason.NotCommitted),
+        readiness:
+          decidedAtMs >= deadlineMs
+            ? DecisionReadinessReason.InferenceExpired
+            : DecisionReadinessReason.InferenceUnavailable,
+      })
+    }
+    const availability = usableEntryBatchInferences(saved.plan, saved.result, decidedAtMs, planVersion)
+    if (Result.isFailure(availability)) {
       // Explain verified source exclusions without reclassifying expired or corrupt evidence.
       // This remains a failed observation and cannot authorize a no-entry decision or an order.
       const sourceExclusions = batchPlan.candidates.flatMap((candidate) =>
@@ -393,10 +408,9 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           : [],
       )
       if (
-        saved.result !== null &&
         saved.plan.batchId === batchPlan.batchId &&
-        Date.parse(decidedAt) >= Date.parse(saved.result.completedAt) &&
-        Date.parse(decidedAt) < Date.parse(batchPlan.expiresAt) &&
+        decidedAtMs >= Date.parse(saved.result.completedAt) &&
+        decidedAtMs < batchExpiresAtMs &&
         batchPlan.candidates.every(({ status }) => status === JevCandidatePlanStatus.Excluded) &&
         sourceExclusions.length > 0 &&
         Result.isSuccess(decodeJevBatchPlan(saved.plan)) &&
@@ -414,28 +428,15 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             : DecisionReadinessReason.SnapshotStale,
         })
       const reason =
-        availability === null
-          ? JevAvailabilityReason.NotCommitted
-          : Result.isFailure(availability) && availability.failure._tag === 'JevEvidenceError'
-            ? (availability.failure.availabilityReason ?? JevAvailabilityReason.InvalidEvidence)
-            : JevAvailabilityReason.InvalidEvidence
+        availability.failure._tag === 'JevEvidenceError'
+          ? (availability.failure.availabilityReason ?? JevAvailabilityReason.InvalidEvidence)
+          : JevAvailabilityReason.InvalidEvidence
       return yield* new JevAwaitingEvidence({
         message: jevAvailabilityMessage(reason),
-        ...(saved.result === null
-          ? {
-              availableAt: utcInstantFromEpochMillis(
-                Math.min(
-                  Date.parse(saved.plan.expiresAt),
-                  options.admissionDeadlineAt ?? Date.parse(saved.plan.expiresAt),
-                ),
-              ),
-            }
-          : {}),
         readiness:
           reason === JevAvailabilityReason.OutsideValidityWindow &&
-          saved.result !== null &&
-          Date.parse(decidedAt) >= Date.parse(saved.result.completedAt) &&
-          Date.parse(decidedAt) >= Date.parse(saved.plan.expiresAt)
+          decidedAtMs >= Date.parse(saved.result.completedAt) &&
+          decidedAtMs >= batchExpiresAtMs
             ? DecisionReadinessReason.InferenceExpired
             : DecisionReadinessReason.InferenceUnavailable,
       })
