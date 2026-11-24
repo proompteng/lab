@@ -91,6 +91,27 @@ integration('Configured broker account against migrated PostgreSQL', () => {
         yield* reconcile('nonflat reconciliation', 1)
         expect(Result.isFailure(yield* select.pipe(Effect.result))).toBe(true)
         yield* reconcile('settled reconciliation', 0)
+        const pending = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO intents (
+            intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id, decision_hash, policy_hash,
+            account_id, client_order_id, symbol, side, order_type, time_in_force, quantity_atoms,
+            notional_limit_micros, limit_price_micros, state, created_at, updated_at
+          ) VALUES (
+            ${sha256('pending intent')}, 'bayn.execution-intent.v5', ${active}, 'jev',
+            ${sha256('pending cycle')}, ${sha256('pending decision')}, ${sha256('pending policy')},
+            ${from.accountId}, 'pending-intent', 'AAPL', 'BUY', 'LIMIT', 'DAY',
+            1000000, 1000000000, 1000000000000, 'PLANNED', ${activatedAt}, ${activatedAt}
+          )`
+              return yield* select
+            }),
+          )
+          .pipe(Effect.result)
+        expect(pending).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'the current broker account has not settled' },
+        })
         expect(yield* predecessorStore.readAuthorityState).toEqual(unchanged)
         expect(yield* sql`SELECT generation_hash FROM authority_generations ORDER BY authority_version`).toEqual([
           { generation_hash: root },

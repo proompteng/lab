@@ -224,6 +224,24 @@ export const selectConfiguredBrokerAccount = (identity: BrokerIdentity, staleThr
             AND r.reconciled_at > clock_timestamp() - ${staleThresholdMs}::bigint * interval '1 millisecond'
             AND position.position_count = 0 AND position.observed_at <= r.reconciled_at
             AND observe_recovery_account_settled(s.generation_hash, g.account_id, r.reconciled_at)
+            AND NOT EXISTS (
+              WITH pending_inference AS MATERIALIZED (
+                SELECT request.payload FROM jev_evaluation_requests request
+                JOIN autonomous_cycles cycle USING (cycle_id)
+                LEFT JOIN jev_evaluation_resolutions resolution USING (request_id)
+                WHERE cycle.account_id = g.account_id AND resolution.request_id IS NULL
+                UNION ALL
+                SELECT plan.payload FROM jev_inference_work work JOIN jev_batch_plans plan USING (batch_id)
+                JOIN autonomous_cycles cycle ON cycle.cycle_id = plan.cycle_id
+                LEFT JOIN jev_batch_results result USING (batch_id)
+                WHERE cycle.account_id = g.account_id AND result.batch_id IS NULL
+              )
+              SELECT 1 FROM autonomous_cycles WHERE account_id = g.account_id AND state IN ('PENDING', 'ACTIVE')
+              UNION ALL
+              SELECT 1 FROM intents WHERE account_id = g.account_id AND state <> 'TERMINAL'
+              UNION ALL
+              SELECT 1 FROM pending_inference WHERE (payload ->> 'expiresAt')::timestamptz > clock_timestamp()
+            )
           RETURNING generation_hash
         `
         if (inserted.length === 0) {
