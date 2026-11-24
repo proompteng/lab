@@ -1,11 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bayn-execution-activate-96f48f1ae9ec
+  name: bayn-execution-activate-da9e6d2f89eb
   labels:
     app.kubernetes.io/name: bayn-execution-activate
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: sha-96f48f1ae9ec
+    app.kubernetes.io/version: sha-da9e6d2f89eb
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -19,7 +19,7 @@ spec:
       labels:
         app.kubernetes.io/name: bayn-execution-activate
         app.kubernetes.io/part-of: bayn
-        app.kubernetes.io/version: sha-96f48f1ae9ec
+        app.kubernetes.io/version: sha-da9e6d2f89eb
     spec:
       nodeSelector:
         network.proompteng.ai/100g: "true"
@@ -35,16 +35,16 @@ spec:
           type: RuntimeDefault
       containers:
         - name: activate
-          image: registry.ide-newton.ts.net/lab/bayn@sha256:8ca014aa92fedbaf2fd4ef9b1e101eb78555262d94b700ab45d53fab1bd3e0d6
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:985ff34315961867f898bb57be1a1c10315a0c7a8dc9fc2de91fe0710ef81f25
           imagePullPolicy: IfNotPresent
           command:
             - node
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: 8ca014aa92fedbaf2fd4ef9b1e101eb78555262d94b700ab45d53fab1bd3e0d6
+              value: 985ff34315961867f898bb57be1a1c10315a0c7a8dc9fc2de91fe0710ef81f25
             - name: BAYN_CODE_REVISION
-              value: 96f48f1ae9ec8890c2985340568932c3ab583a68
+              value: da9e6d2f89eb082737916f87edea1826e29d8259
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:
@@ -53,7 +53,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:8ca014aa92fedbaf2fd4ef9b1e101eb78555262d94b700ab45d53fab1bd3e0d6
+              value: sha256:985ff34315961867f898bb57be1a1c10315a0c7a8dc9fc2de91fe0710ef81f25
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -70,7 +70,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:8ca014aa92fedbaf2fd4ef9b1e101eb78555262d94b700ab45d53fab1bd3e0d6\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"96f48f1ae9ec8890c2985340568932c3ab583a68\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:26dcb9bb2826d4caeec8f5b6ef652e7334ab51de96889b0b672667b271e3ddfa\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"7da517d4bf0b16a4a6a22e8137877aa798aef594\"\n  },\n  \"requestHash\": \"68078cee54eb59d11b6def34037bad0766061731effc3a7e8e4fdc933f42db84\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
+              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:985ff34315961867f898bb57be1a1c10315a0c7a8dc9fc2de91fe0710ef81f25\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"da9e6d2f89eb082737916f87edea1826e29d8259\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:26dcb9bb2826d4caeec8f5b6ef652e7334ab51de96889b0b672667b271e3ddfa\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"7da517d4bf0b16a4a6a22e8137877aa798aef594\"\n  },\n  \"requestHash\": \"68078cee54eb59d11b6def34037bad0766061731effc3a7e8e4fdc933f42db84\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
             - name: BAYN_AUTHORITY_GENERATION_HASH
               value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
             - name: BAYN_BROKER_PROVIDER
