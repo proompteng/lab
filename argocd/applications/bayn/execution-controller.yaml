@@ -114,6 +114,12 @@ spec:
               value: sandbox
             - name: BAYN_ALPACA_BASE_URL
               value: https://paper-api.alpaca.markets
+            - name: BAYN_PAPER_ACCOUNT_HANDOFF_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: paper-account-handoff-from
+                  optional: true
             - name: BAYN_ALPACA_ACCOUNT_ID
               valueFrom:
                 secretKeyRef:

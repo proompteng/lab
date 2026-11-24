@@ -3,7 +3,9 @@ import { Data, Effect, Result } from 'effect'
 
 import type { ApplicationPlan } from '../app'
 import { databaseUtcInstant } from '../db/clock'
-import { authorityStateFromRow } from '../db/execution-store/authority-shared'
+import { authorityStateFromRow, makeAuthorityPostgres } from '../db/execution-store/authority-shared'
+import { validateObserveGenerationBrokerIdentityReplay } from '../db/execution-store/observe-authority'
+import { PaperAccountHandoffError, verifyPaperAccountHandoff } from '../db/execution-store/paper-account-handoff'
 import { decodeAuthorityStateObservationRows } from '../db/execution-store/rows'
 import { observeCycleGenerationHash, validateAuthorityObservation } from '../execution/capital-grant-algebra'
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
@@ -34,6 +36,15 @@ export const nativeActivationPreflight = (plan: ApplicationPlan) =>
   Effect.gen(function* () {
     const configured = yield* Effect.fromResult(configuredCapitalActivation(plan))
     if (configured !== null) return
+    const from = plan.config.paperAccountHandoffFrom
+    if (from !== undefined) {
+      yield* verifyPaperAccountHandoff({
+        from,
+        to: plan.config.alpaca.identity,
+        reconciliationStaleThresholdMs: plan.config.reconciliationStaleThresholdMs,
+      })
+      return
+    }
     const sql = yield* PgClient.PgClient
     const rows = yield* sql<Record<string, unknown>>`
       SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
@@ -46,11 +57,25 @@ export const nativeActivationPreflight = (plan: ApplicationPlan) =>
     const authority = yield* authorityStateFromRow(row)
     yield* Effect.fromResult(validateAuthorityObservation(authority, row.observed_at))
     yield* Effect.fromResult(validateObserveActivationAuthority(authority))
+    const [history] = yield* makeAuthorityPostgres(sql).readGeneration(authority.generationHash)
+    if (history === undefined) return yield* Effect.fail('native deployment authority history is missing')
+    yield* Effect.fromResult(validateObserveGenerationBrokerIdentityReplay(history, plan.config.alpaca.identity)).pipe(
+      Effect.mapError(
+        () =>
+          new PaperAccountHandoffError({
+            message:
+              'changing the active broker account requires the reviewed PAPER account handoff',
+          }),
+      ),
+    )
   }).pipe(
     Effect.mapError(
       (cause) =>
         new NativeActivationPreflightError({
-          message: 'native deployment authority preflight failed; predecessor was not deactivated',
+          message:
+            cause instanceof PaperAccountHandoffError
+              ? cause.message
+              : 'native deployment authority preflight failed; predecessor was not deactivated',
           cause,
         }),
     ),

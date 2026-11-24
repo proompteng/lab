@@ -25,6 +25,7 @@ export interface RuntimeConfig {
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
   readonly researchCapitalBuildLineageJson?: string | undefined
+  readonly paperAccountHandoffFrom?: string | undefined
   readonly execution: ExecutionPolicy
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
@@ -74,6 +75,7 @@ export interface ParsedRuntimeConfig {
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
   readonly researchCapitalBuildLineageJson?: string | undefined
+  readonly paperAccountHandoffFromAccountId?: Redacted.Redacted<string> | undefined
   readonly brokerAccess: BrokerAccess
   readonly capitalAuthority: CapitalAuthoritySelection
   readonly persistedCapitalGrantHash: string | undefined
@@ -128,6 +130,7 @@ export type RuntimeConfigResolutionFailure =
       readonly _tag: 'IncompleteAlpacaCredentials'
       readonly configured: AlpacaCredentialPresence
     }
+  | { readonly _tag: 'InvalidPaperAccountHandoff' }
   | {
       readonly _tag: 'MissingAlpacaCredentials'
     }

@@ -30,6 +30,7 @@ const files = [
   'src/db/broker-observations.integration.test.ts',
   'src/cycle/store/observability.integration.test.ts',
   'src/db/execution-store.integration.test.ts',
+  'src/db/execution-store/paper-account-handoff.integration.test.ts',
   'src/db/execution-controller-status-postgres.integration.test.ts',
   'src/cycle/store/integration.test.ts',
   'src/execution/intents/blocked-cycle-postgres.integration.test.ts',
