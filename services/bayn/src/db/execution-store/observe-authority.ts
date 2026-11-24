@@ -40,7 +40,7 @@ import {
   decodeAuthorityStateRows,
   decodeDatabaseInstant,
   decodeEnsureAuthorityGenerationInput,
-  type AuthorityGenerationRow,
+  type AuthorityGenerationBrokerBinding,
 } from './rows'
 
 export const LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH =
@@ -90,7 +90,10 @@ const exactBrokerIdentity = (persisted: BrokerIdentity, configured: BrokerIdenti
   persisted.environment === configured.environment &&
   persisted.accountId === configured.accountId
 
-const legacyAutonomousObserveCompatible = (history: AuthorityGenerationRow, configured: BrokerIdentity): boolean =>
+const legacyAutonomousObserveCompatible = (
+  history: AuthorityGenerationBrokerBinding,
+  configured: BrokerIdentity,
+): boolean =>
   history.generation_hash === LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH &&
   history.previous_generation_hash === null &&
   history.maximum === Authority.Observe &&
@@ -100,7 +103,7 @@ const legacyAutonomousObserveCompatible = (history: AuthorityGenerationRow, conf
   configured.environment === BrokerEnvironment.Sandbox
 
 export const validateObserveGenerationBrokerIdentityReplay = (
-  history: AuthorityGenerationRow,
+  history: AuthorityGenerationBrokerBinding,
   configured: BrokerIdentity | undefined,
 ): Result.Result<void, ObserveGenerationBrokerIdentityFailure> => {
   if (configured === undefined) {
