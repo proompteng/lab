@@ -86,12 +86,14 @@ export const executionControllerDeploymentCompletionPollIntervalMs = 5_000
 
 export interface ExecutionControllerConfig {
   readonly controllerKey: string
+  readonly paperAccountHandoffFrom?: string | undefined
   readonly operationTimeoutMs: number
   readonly planHash: string
   readonly sourceRevision: string
 }
 
 export interface NativeExecutionRuntime {
+  readonly selectPaperAccount?: (signal: AbortSignal) => Promise<void>
   readonly prepareActivation: (signal: AbortSignal) => Promise<void>
   readonly advance: (
     command: import('../execution/advance').AdvanceExecutionCommand,
@@ -265,7 +267,7 @@ const verifyDeactivationBinding = (
   key: string,
   request: ExecutionControllerDeactivation,
 ): void => {
-  if (key !== config.controllerKey || request.controllerKey !== config.controllerKey) {
+  if (key !== request.controllerKey || (key !== config.controllerKey && key !== config.paperAccountHandoffFrom)) {
     throw terminal('execution controller deactivation does not match this immutable deployment')
   }
 }
@@ -438,6 +440,33 @@ export const makeBaynExecutionController = (
   hooks: readonly restate.HooksProvider[] = [],
   clock: Pick<Clock.Clock, 'currentTimeMillisUnsafe'> = Clock.Clock.defaultValue(),
 ) => {
+  const handoffPaperAccount = async (ctx: restate.ObjectContext<ControllerObjectState>): Promise<void> => {
+    const from = config.paperAccountHandoffFrom
+    if (from === undefined) return
+    const selectPaperAccount = runtime.selectPaperAccount
+    if (selectPaperAccount === undefined) throw terminal('PAPER account handoff is missing its authority transition')
+    const client = ctx.objectClient(controller, from)
+    const predecessor = await client.status(undefined)
+    if (predecessor === null) throw terminal('PAPER account handoff cannot verify the predecessor controller')
+
+    // Select OBSERVE under the financial writer fence before retiring the old owner. A new entry
+    // that wins the fence first must prevent selection, leaving the predecessor able to manage it.
+    await ctx.run(
+      'select the replacement PAPER account in OBSERVE',
+      () => selectPaperAccount(ctx.request().attemptCompletedSignal),
+      { maxRetryAttempts: 0 },
+    )
+    if (!predecessor.active) return
+    const retired = await client.deactivate({
+      schemaVersion: 'bayn.execution-controller-deactivation.v1',
+      controllerKey: from,
+      epoch: predecessor.epoch,
+      planHash: predecessor.planHash,
+      sourceRevision: predecessor.sourceRevision,
+    })
+    if (retired.active) throw terminal('PAPER account handoff predecessor is still active')
+  }
+
   const controller = restate.object({
     name: 'BaynExecutionController',
     handlers: {
@@ -450,6 +479,7 @@ export const makeBaynExecutionController = (
           )
           verifyActivationBinding(config, ctx.key, request)
           const decision = decisionOrTerminal(decideExecutionControllerActivation(await readState(ctx), request))
+          await handoffPaperAccount(ctx)
           await ctx.run(
             'project Bayn execution controller activation',
             () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
@@ -514,6 +544,7 @@ export const makeBaynExecutionController = (
           verifyDeploymentBinding(config, ctx.key, request.deployment)
           verifyDeactivationBinding(config, ctx.key, request.predecessor)
           const decision = decisionOrTerminal(decideExecutionControllerRotation(await readState(ctx), request))
+          await handoffPaperAccount(ctx)
           await ctx.run(
             'project Bayn execution controller rotation',
             () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),

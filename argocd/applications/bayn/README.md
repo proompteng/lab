@@ -723,6 +723,29 @@ returns to OBSERVE-only operation. Never recreate the retired legacy controller.
 CRDs, PVCs, durable state, or controller pods by hand. Confirm exact reconciliation, zero unresolved mutations, and no
 broker-ledger advance before and after the handoff.
 
+### Replace an Alpaca PAPER account
+
+Use the read-only deployment between sessions and keep the previous account available for recovery. In the
+`bayn-alpaca-auth` SealedSecret, set `account-id`, `key-id`, and `secret-key` for the replacement account.
+Set `paper-account-handoff-from` to the previous Alpaca account ID. The controller derives the previous
+identity from that value. Use the IDs returned by each account's Alpaca account endpoint.
+
+1. In the reviewed handoff change, remove the current sealed capital request and its identity annotation.
+   Remove the request, kind, and build-lineage environment entries from the controller, activation Job,
+   and status Deployment together.
+2. Deliver the change through Kargo and Argo. The activation checks the replacement's broker observation
+   and requires the named predecessor to be flat and clear, with fresh exact reconciliation, no open
+   orders, and settled cycles, intents, and inference. Under the existing writer fence it appends a new
+   OBSERVE generation, preserves both account identities and their history, and retires the old controller
+   before starting the replacement controller.
+3. Verify the new account is bound and reconciles exactly in OBSERVE. Remove
+   `paper-account-handoff-from` when installing the new account's PAPER mandate using the rotation above.
+   Verify the matching account and the first natural order lifecycle.
+
+A retry of the same handoff reuses the selected OBSERVE generation. To move back after selection, use a
+reviewed handoff in the reverse direction with the same settlement checks. Same-account API key rotation uses
+the existing SealedSecret and requires no handoff field.
+
 ### Execution activation service migration
 
 This is a hard route migration from `BaynExecutionBootstrap/start` to
