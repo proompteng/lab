@@ -239,8 +239,8 @@ const run = (claim: Parameters<typeof evaluateFixtureEntry>[0], setup: ReturnTyp
 
 describe('claimed sequential entry inference', () => {
   test.each([
-    { presence: { support_present: 0.1 }, setups: [], visualCalls: 1 },
-    { presence: { resistance_present: 0.25 }, setups: [], visualCalls: 1 },
+    { presence: { support_present: 0.1 }, setups: [EntrySetup.BaseBreakout], visualCalls: 1 },
+    { presence: { resistance_present: 0.25 }, setups: [EntrySetup.BaseBreakout], visualCalls: 1 },
     { presence: { base_present: 0.3 }, setups: [EntrySetup.SupportRecovery], visualCalls: 1 },
     {
       presence: { support_present: 0.1, resistance_present: 0.25, base_present: 0.1 },
@@ -249,7 +249,7 @@ describe('claimed sequential entry inference', () => {
     },
     {
       presence: { support_present: 0.5, resistance_present: 0.5, base_present: 0.5 },
-      setups: [EntrySetup.SupportRecovery],
+      setups: [EntrySetup.SupportRecovery, EntrySetup.BaseBreakout],
       visualCalls: 1,
     },
   ])('presence $presence removes only inapplicable downstream questions', async ({ presence, setups, visualCalls }) => {

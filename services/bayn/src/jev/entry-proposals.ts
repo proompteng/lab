@@ -2,6 +2,7 @@ import { BigDecimal, Result, Schema } from 'effect'
 
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { canonicalHashV1Result } from '../hash'
+import { instrumentMarket, MarketKind } from '../instruments'
 import { PositiveIntegerSchema, Sha256Schema, SymbolSchema, UtcInstantSchema } from '../schemas'
 import { numberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import type { NativeChartEvidence } from './chart-evidence'
@@ -99,7 +100,7 @@ type ProposalFundingInput = {
 }
 
 export const minimumProtectiveStopDistanceBps = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>): bigint =>
-  protocol.schemaVersion === 'bayn.jev.protocol.v43' ? 15n : 0n
+  protocol.schemaVersion === 'bayn.jev.protocol.v43' || protocol.schemaVersion === 'bayn.jev.protocol.v44' ? 15n : 0n
 
 export const meetsMinimumProtectiveStopDistance = (input: {
   readonly protocol: Pick<JevProtocolMaterial, 'schemaVersion'>
@@ -119,16 +120,18 @@ export const meetsMinimumProtectiveStopDistance = (input: {
 
 export const hasRequiredRewardRiskRatio = (
   protocol: Pick<JevProtocolMaterial, 'schemaVersion'>,
+  market: MarketKind,
   modeledGainMicros: bigint,
   modeledLossMicros: bigint,
 ): boolean => {
-  if (protocol.schemaVersion === 'bayn.jev.protocol.v43') return modeledGainMicros * 5n >= modeledLossMicros * 6n
+  if (
+    protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+    (protocol.schemaVersion === 'bayn.jev.protocol.v44' && market === MarketKind.Crypto)
+  )
+    return modeledGainMicros * 5n >= modeledLossMicros * 6n
   if (protocol.schemaVersion === 'bayn.jev.protocol.v42') return modeledGainMicros >= modeledLossMicros
   return true
 }
-
-export const requiresPositiveRewardRiskRatio = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>): boolean =>
-  protocol.schemaVersion === 'bayn.jev.protocol.v42' || protocol.schemaVersion === 'bayn.jev.protocol.v43'
 
 const fundProposalPrices = (input: ProposalFundingInput) =>
   Result.gen(function* () {
@@ -161,7 +164,7 @@ const fundProposalPrices = (input: ProposalFundingInput) =>
       stopValue.conservativeNetMicros <= 0n ||
       modeledLoss <= 0n ||
       modeledGain <= 0n ||
-      !hasRequiredRewardRiskRatio(protocol, modeledGain, modeledLoss)
+      !hasRequiredRewardRiskRatio(protocol, instrumentMarket(symbol), modeledGain, modeledLoss)
     )
       return { status: 'REJECTED', reason: ProposalRejection.Unfunded } as const
     return {
@@ -262,7 +265,7 @@ export const makeEntrySourceCandidates = (input: {
       if (funding.status === 'FUNDED') {
         supportBarIds.push(bar.id)
         admittedStop =
-          protocol.schemaVersion === 'bayn.jev.protocol.v43' && admittedStop !== undefined
+          minimumProtectiveStopDistanceBps(protocol) > 0n && admittedStop !== undefined
             ? stop > admittedStop
               ? stop
               : admittedStop

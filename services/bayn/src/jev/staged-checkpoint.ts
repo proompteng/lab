@@ -164,6 +164,7 @@ export const decodeStagedCheckpointForRequest = (
         return yield* invalid('Duplicate staged journal row')
     if (
       (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        request.request.protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
         request.request.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
         request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40') &&
@@ -238,7 +239,8 @@ export const decodeStagedCheckpointForRequest = (
         if (
           (request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v41' &&
             request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v42' &&
-            request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v43') ||
+            request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v43' &&
+            request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v44') ||
           terminal.stage !== 'CHART' ||
           proof.checkedAt < claim.claimedAt ||
           proof.checkedAt > terminal.recordedAt ||

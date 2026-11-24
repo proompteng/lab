@@ -3,10 +3,12 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { MarketKind } from '../instruments'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { jevEntryEconomics } from './entry-economics'
 import {
   EntrySetup,
+  hasRequiredRewardRiskRatio,
   makeEntryProposals,
   makeEntrySourceCandidates,
   mayHaveRetainedFundableSourceProposal,
@@ -16,6 +18,7 @@ import {
   defaultJevProtocolDocument,
   retainedJevProtocolV41Document,
   retainedJevProtocolV42Document,
+  retainedJevProtocolV43Document,
   type JevProtocolMaterial,
 } from './protocol'
 
@@ -203,11 +206,17 @@ describe('source-anchored complete entry proposals', () => {
     expect(admitted.rejections).toEqual([{ setup: EntrySetup.BaseBreakout, reason: ProposalRejection.Unfunded }])
   })
 
-  test('v43 enforces minimum 15 bps protective stop floor and G/L >= 1.20 on longs', () => {
-    const subRatio = fixture({
+  test('v44 keeps the existing modeled reward-to-risk cutoff for crypto', () => {
+    expect(hasRequiredRewardRiskRatio(defaultJevProtocolDocument, MarketKind.Crypto, 119n, 100n)).toBe(false)
+    expect(hasRequiredRewardRiskRatio(defaultJevProtocolDocument, MarketKind.Crypto, 120n, 100n)).toBe(true)
+  })
+
+  test('v44 retains the 15 bps long stop floor while accepting positive targets rejected by v43', () => {
+    const subRatioSource = {
       ...source,
       bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 112 } : bar)),
-    })
+    }
+    const subRatio = fixture(subRatioSource, retainedJevProtocolV43Document)
     const rejectedSubRatio = Result.getOrThrow(makeEntryProposals(subRatio))
     expect(rejectedSubRatio.proposals).toEqual([])
     expect(rejectedSubRatio.rejections).toEqual([
@@ -215,10 +224,16 @@ describe('source-anchored complete entry proposals', () => {
       { setup: EntrySetup.BaseBreakout, reason: ProposalRejection.Unfunded },
     ])
 
-    const favorable = fixture({
-      ...source,
-      bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 113 } : bar)),
-    })
+    const active = Result.getOrThrow(makeEntryProposals(fixture(subRatioSource)))
+    expect(active.proposals.map((proposal) => proposal.source.setup)).toContain(EntrySetup.SupportRecovery)
+
+    const favorable = fixture(
+      {
+        ...source,
+        bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 113 } : bar)),
+      },
+      retainedJevProtocolV43Document,
+    )
     const admitted = Result.getOrThrow(makeEntryProposals(favorable))
     expect(admitted.proposals.map((proposal) => proposal.source.setup)).toEqual([EntrySetup.SupportRecovery])
 
