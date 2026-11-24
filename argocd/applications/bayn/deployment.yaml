@@ -111,12 +111,9 @@ spec:
                 secretKeyRef:
                   name: bayn-alpaca-auth
                   key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
+                  optional: true
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"activation":{"imageDigest":"sha256:26dcb9bb2826d4caeec8f5b6ef652e7334ab51de96889b0b672667b271e3ddfa","imageRepository":"registry.ide-newton.ts.net/lab/bayn","sourceRevision":"7da517d4bf0b16a4a6a22e8137877aa798aef594"},"authoredActivation":{"imageDigest":"sha256:26dcb9bb2826d4caeec8f5b6ef652e7334ab51de96889b0b672667b271e3ddfa","imageRepository":"registry.ide-newton.ts.net/lab/bayn","sourceRevision":"7da517d4bf0b16a4a6a22e8137877aa798aef594"},"requestHash":"68078cee54eb59d11b6def34037bad0766061731effc3a7e8e4fdc933f42db84","schemaVersion":"bayn.research-capital-build-lineage.v1"}'
-            - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
+              value: '{}'
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
