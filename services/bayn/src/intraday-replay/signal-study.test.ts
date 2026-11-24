@@ -179,6 +179,9 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
     'equity_support_recovery_confirmed',
     'equity_support_recovery_stop_invalidates',
     'equity_support_recovery_target_obstructed',
+    'equity_base_breakout_confirmed',
+    'equity_base_breakout_stop_invalidates',
+    'equity_base_breakout_target_obstructed',
   ])
   expect(factors.answers['equity_support_recovery_confirmed']).toMatchObject({
     type: 'noul',
