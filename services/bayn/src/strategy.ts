@@ -4,18 +4,35 @@ import { makeJevDefinition, type JevDecisionEvidence } from './jev/decision'
 import type { JevContractError } from './jev/contract'
 import type { StrategyDefinition } from './strategy/core'
 import type { ChartEntryTarget } from './strategy/runtime-decision'
-import { decodeJevProtocol, defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
+import { decodeJevProtocol, defaultJevProtocolDocument, type JevProtocol } from './jev/protocol'
+import { Result } from 'effect'
 import type { makeRepeatedMomentumDefinition } from './strategy/repeated-momentum/decision'
-import type { makeIntradayAlphaDefinition } from './strategy/intraday-alpha/decision'
+import { makeIntradayAlphaDefinition } from './strategy/intraday-alpha/decision'
+import {
+  decodeIntradayAlphaPolicy,
+  intradayAlphaBehaviorHash,
+  makeIntradayAlphaPolicy,
+  type IntradayAlphaPolicy,
+} from './strategy/intraday-alpha/policy'
+
+/** Shared Jev protocol supplying execution-model, market-profile, and session bounds. */
+export const loadSharedJevProtocol = () => decodeJevProtocol(defaultJevProtocolDocument)
+
+export const makeJevStrategyRuntime = (protocol: JevProtocol, provenance: RuntimeProvenance) =>
+  ({
+    definition: makeJevDefinition(protocol),
+    provenance,
+  }) satisfies StrategyRuntime
 
 /** The application root composes exactly one reviewed strategy implementation. */
 export const activeStrategyName = 'jev' as const
-export const activeStrategyBehaviorHash = jevBehaviorHash
-export const loadActiveStrategyProtocol = () => decodeJevProtocol(defaultJevProtocolDocument)
+export const activeStrategyBehaviorHash = intradayAlphaBehaviorHash
+export const loadActiveStrategyProtocol = () =>
+  loadSharedJevProtocol().pipe(Result.flatMap((shared) => decodeIntradayAlphaPolicy(makeIntradayAlphaPolicy(shared))))
 
-export const makeActiveStrategyRuntime = (protocol: JevProtocol, provenance: RuntimeProvenance) =>
+export const makeActiveStrategyRuntime = (policy: IntradayAlphaPolicy, provenance: RuntimeProvenance) =>
   ({
-    definition: makeJevDefinition(protocol),
+    definition: makeIntradayAlphaDefinition(policy),
     provenance,
   }) satisfies StrategyRuntime
 

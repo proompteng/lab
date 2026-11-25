@@ -32,7 +32,12 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import { loadActiveStrategyProtocol, makeActiveStrategyRuntime } from '../strategy'
+import {
+  activeStrategyBehaviorHash,
+  loadActiveStrategyProtocol,
+  loadSharedJevProtocol,
+  makeJevStrategyRuntime,
+} from '../strategy'
 import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevResearchPolicy } from '../jev/acceptance'
@@ -251,7 +256,9 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
           new ReplayBrokerFailure({ message: 'Retained inference differs from the replay source, policy or interval' }),
         )
     }
-    const baselineProtocol = yield* loadActiveStrategyProtocol()
+    const baselineProtocol = yield* loadSharedJevProtocol()
+    const activePolicy = yield* loadActiveStrategyProtocol()
+    const activeParameterHash = yield* canonicalHashV1Result(activePolicy)
     if (decoded.jevInstructionsHash !== (yield* canonicalHashV1Result(jevInstructions)))
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay instructions differ from its compiled executable' }),
@@ -265,15 +272,23 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay must use the unchanged source-controlled strategy' }),
       )
+    const allowedEmbeddedBuilds = [
+      yield* canonicalHashV1Result({
+        sourceRevision: decoded.build.sourceRevision,
+        imageRepository: decoded.build.imageRepository,
+        strategyBehaviorHash: activeStrategyBehaviorHash,
+        strategyParameterHash: activeParameterHash,
+      }),
+      yield* canonicalHashV1Result({
+        sourceRevision: decoded.build.sourceRevision,
+        imageRepository: decoded.build.imageRepository,
+        strategyBehaviorHash: executableIdentity.strategy.behaviorHash,
+        strategyParameterHash: executableIdentity.strategy.parameterHash,
+      }),
+    ]
     if (
       embeddedBuildMetadata !== undefined &&
-      (yield* canonicalHashV1Result(embeddedBuildMetadata)) !==
-        (yield* canonicalHashV1Result({
-          sourceRevision: decoded.build.sourceRevision,
-          imageRepository: decoded.build.imageRepository,
-          strategyBehaviorHash: executableIdentity.strategy.behaviorHash,
-          strategyParameterHash: executableIdentity.strategy.parameterHash,
-        }))
+      !allowedEmbeddedBuilds.includes(yield* canonicalHashV1Result(embeddedBuildMetadata))
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay build differs from the executable embedded build' }),
@@ -430,7 +445,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
           ? makeEntryAblationRuntime(makeEntryAblationPolicy(protocol), provenance)
           : decoded.policy === JevResearchPolicy.Momentum
             ? makeRepeatedMomentumRuntime(makeRepeatedMomentumPolicy(protocol), provenance)
-            : makeActiveStrategyRuntime(protocol, provenance),
+            : makeJevStrategyRuntime(protocol, provenance),
     }
   })
 export type PreparedBacktest = Result.Result.Success<ReturnType<typeof prepareBacktest>>

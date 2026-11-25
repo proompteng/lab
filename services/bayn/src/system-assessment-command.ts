@@ -27,7 +27,7 @@ import { ValkeyCacheLive } from './valkey-cache'
 import { qualificationRuntime } from './system-assessment/configuration'
 import { validateProspectiveSystemRegistration } from './system-assessment/policy'
 import { SystemAssessmentError } from './system-assessment/economics'
-import { loadActiveStrategyProtocol } from './strategy'
+import { loadSharedJevProtocol } from './strategy'
 import { SystemAssessmentInputSchema } from './system-assessment/assessment'
 import { verifyLatencyStressImages } from './system-assessment/latency-report'
 import { CaptureReplayExecutionSchema, captureReplayExecution } from './system-assessment/replay-execution'
@@ -101,7 +101,7 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
           const { registration } = Schema.is(OperationalRegistrationSchema)(packet.payload)
             ? yield* Effect.fromResult(validateOperationalRegistration(packet.payload))
             : yield* Effect.fromResult(validateProspectiveSystemRegistration(packet.payload))
-          const runtime = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
+          const runtime = qualificationRuntime(config, yield* Effect.fromResult(loadSharedJevProtocol()))
           if (
             (yield* Effect.fromResult(canonicalHashV1Result(runtime))) !==
             registration.obligations.runtimeConfigurationHash

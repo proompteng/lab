@@ -10,7 +10,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
 import { Authority, type AuthorityState } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
-import { loadActiveStrategyProtocol, strategyTradingProtocol } from '../strategy'
+import { loadSharedJevProtocol, strategyTradingProtocol } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   MutationCycleExecutionMode,
@@ -73,7 +73,7 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const sourceProtocolHash = loadActiveStrategyProtocol().pipe(
+  const sourceProtocolHash = loadSharedJevProtocol().pipe(
     Result.flatMap((protocol) =>
       canonicalHashV1Result(
         alpha

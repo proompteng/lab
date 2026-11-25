@@ -39,8 +39,9 @@ test('runtime migration loader preserves the retained controller cutover sequenc
     [218, 'v43_paper_settlement'],
     [219, 'positive_net_target_admission'],
   ])
-  expect(migrations.filter(([id]) => id === 220).map(([id, name]) => [id, name])).toEqual([
+  expect(migrations.filter(([id]) => id >= 220).map(([id, name]) => [id, name])).toEqual([
     [220, 'intraday_alpha_admission'],
+    [221, 'v44_paper_settlement'],
   ])
 })
 
