@@ -235,6 +235,18 @@ const conflictingSourceActivity = (event: BrokerActivityEvent): BrokerActivityEv
     eventId: sha256(`${event.session.identityHash}\nactivity\n${event.sourceEventId}\n${contentHash}`),
   }
 }
+const reformattedSourceActivity = (event: BrokerActivityEvent): BrokerActivityEvent => {
+  const fields = Object.entries(JSON.parse(event.activityJson) as Record<string, unknown>)
+  const activityJson = JSON.stringify(Object.fromEntries(fields.reverse()), null, 2)
+  const contentHash = sha256(activityJson)
+  return {
+    ...event,
+    eventId: sha256(`${event.session.identityHash}\nactivity\n${event.sourceEventId}\n${contentHash}`),
+    session: { ...event.session, sessionId: 'reconnect', requestId: 'reconnect-request' },
+    activityJson,
+    contentHash,
+  }
+}
 const activityCatchup = (
   events: readonly BrokerActivityEvent[],
   replayUntilId = events.at(-1)?.sourceEventId ?? activityCursor(0),
@@ -280,15 +292,18 @@ const accepted = <A>(result: unknown): A => {
     throw new Error('Expected accepted broker activity persistence')
   return result.receipt as A
 }
-const activityHeartbeat = (cursor: string | null): BrokerActivityHeartbeat => {
+const activityHeartbeat = (
+  cursor: string | null,
+  session: BrokerActivityHeartbeat['session'] = activitySession,
+): BrokerActivityHeartbeat => {
   const receivedAt = new Date().toISOString()
   return {
     _tag: 'Heartbeat',
     schemaVersion: brokerActivityVersion,
     eventId: sha256(
-      `${activitySession.identityHash}\nactivity-heartbeat\n${activitySession.sessionId}\n${cursor ?? 'empty'}\n${receivedAt}`,
+      `${session.identityHash}\nactivity-heartbeat\n${session.sessionId}\n${cursor ?? 'empty'}\n${receivedAt}`,
     ),
-    session: activitySession,
+    session,
     receivedAt,
     cursor,
   }
@@ -846,6 +861,44 @@ describePostgres('Durable per-account broker observations', () => {
       }),
     ))
 
+  test('resumes from a reformatted cursor event and recovers complete fill and fee coverage', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const original = activityEvent(1, 1, 'fill')
+        accepted<BrokerActivityReceipt>(yield* store.recordActivity(original, projectBrokerActivity(original)))
+        accepted<BrokerActivityCursorState>(yield* store.recordActivityCatchup(activityCatchup([original])))
+        const replay = reformattedSourceActivity(original)
+        expect(replay.contentHash).not.toBe(original.contentHash)
+        yield* sql`INSERT INTO broker_activity_source_conflicts(
+          account_id,source_event_id,retained_source_event_hash,conflicting_source_event_hash,
+          transport_event_id,source_revision,session_id,request_id,received_at,activity_json
+        ) VALUES (
+          ${accountId},${original.sourceEventId},${original.contentHash},${replay.contentHash},
+          ${replay.eventId},${revision},${replay.session.sessionId},${replay.session.requestId},
+          ${replay.receivedAt}::timestamptz,${replay.activityJson}
+        )`
+        yield* sql`UPDATE broker_activity_cursors SET fill_fee_complete = false WHERE account_id = ${accountId}`
+
+        expect(
+          accepted<BrokerActivityReceipt>(yield* store.recordActivity(replay, projectBrokerActivity(replay))),
+        ).toMatchObject({ cursor: original.sourceEventId, caughtUp: true, fillFeeComplete: true, replayed: true })
+        const heartbeat = activityHeartbeat(original.sourceEventId, replay.session)
+        expect(accepted<BrokerActivityHeartbeatReceipt>(yield* store.recordActivityHeartbeat(heartbeat))).toMatchObject(
+          { cursor: original.sourceEventId, fillFeeComplete: true, activated: true },
+        )
+        expect((yield* store.readAccountActivity).fills).toHaveLength(1)
+        expect(
+          yield* sql`SELECT source_event_hash,activity_json,outcome FROM broker_activity_events
+          JOIN broker_activity_event_projections USING (account_id,source_event_id) WHERE account_id = ${accountId}`,
+        ).toEqual([{ source_event_hash: original.contentHash, activity_json: original.activityJson, outcome: 'FILL' }])
+        expect(
+          yield* sql`SELECT conflicting_source_event_hash FROM broker_activity_source_conflicts
+          WHERE account_id = ${accountId}`,
+        ).toEqual([{ conflicting_source_event_hash: replay.contentHash }])
+      }),
+    ))
+
   test('retains authenticated source equivocation, poisons readiness once and preserves the original event', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
@@ -868,6 +921,9 @@ describePostgres('Durable per-account broker observations', () => {
           _tag: 'SourceConflict',
           eventId: conflict.eventId,
         })
+        expect(
+          accepted<BrokerActivityReceipt>(yield* store.recordActivity(original, projectBrokerActivity(original))),
+        ).toMatchObject({ fillFeeComplete: false })
         expect(
           yield* sql`SELECT retained_source_event_hash,conflicting_source_event_hash,transport_event_id
             FROM broker_activity_source_conflicts WHERE account_id = ${accountId}`,
@@ -1008,6 +1064,11 @@ describePostgres('Durable per-account broker observations', () => {
         expect(yield* store.recordActivity(late, projectBrokerActivity(late))).toEqual({
           _tag: 'CoverageConflict',
           eventId: late.eventId,
+        })
+        const replay = reformattedSourceActivity(late)
+        expect(yield* store.recordActivity(replay, projectBrokerActivity(replay))).toEqual({
+          _tag: 'CoverageConflict',
+          eventId: replay.eventId,
         })
         const observedEvidence = brokerActivityPrefixEvidence(
           [original, late].map(({ sourceEventId, contentHash: sourceEventHash }) => ({

@@ -403,16 +403,13 @@ export const decideBrokerActivityEvent = (
   current: BrokerActivityCursorDecisionState,
   event: {
     readonly sourceEventId: string
-    readonly contentHash: string
     readonly session: { readonly sessionId: string; readonly requestId: string }
   },
-  retainedContentHash: string | undefined,
+  matchesReplay: boolean,
   projectionSupported: boolean,
 ): Result.Result<BrokerActivityEventDecision, BrokerActivityCursorRejection> => {
   if (current.cursor !== null && event.sourceEventId <= current.cursor)
-    return retainedContentHash === event.contentHash
-      ? Result.succeed({ _tag: 'Replay' })
-      : Result.fail(BrokerActivityCursorRejection.Replay)
+    return matchesReplay ? Result.succeed({ _tag: 'Replay' }) : Result.fail(BrokerActivityCursorRejection.Replay)
   const invalidatesCoverage =
     current.caughtUp &&
     current.replayFromId !== null &&

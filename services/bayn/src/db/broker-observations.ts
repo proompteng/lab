@@ -82,10 +82,12 @@ const ActivityOwnerRows = Schema.Array(Schema.Struct({ sourceRevision: Schema.St
 
 const ActivityPrefixRows = Schema.Array(Schema.Struct({ sourceEventId: Schema.String, sourceEventHash: Schema.String }))
 
-const ActivityProjectionRows = Schema.Array(
+const ActivityReplayRows = Schema.Array(
   Schema.Struct({
     projection: Schema.Literals(['FILL', 'FEE', 'BUST', 'CANONICAL_ONLY', 'DUPLICATE', 'RECONCILE_REQUIRED']),
     sourceEventHash: Schema.String,
+    transportEventId: Schema.String,
+    matchesReplay: Schema.Boolean,
   }),
 ).check(Schema.isMaxLength(1))
 
@@ -347,14 +349,28 @@ export const makeBrokerObservationStore = (
       })),
     ),
   )
-  const retainedActivityProjection = (sourceEventId: string) =>
-    sql`SELECT projection.outcome AS projection, event.source_event_hash AS "sourceEventHash"
+  const retainedActivityReplay = (event: BrokerActivityEvent) =>
+    sql`SELECT projection.outcome AS projection, event.source_event_hash AS "sourceEventHash",
+        event.transport_event_id AS "transportEventId",
+        event.activity_json::jsonb = ${event.activityJson}::jsonb AS "matchesReplay"
       FROM broker_activity_events AS event
       JOIN broker_activity_event_projections AS projection USING (account_id,source_event_id)
-      WHERE event.account_id = ${accountId} AND event.source_event_id = ${sourceEventId}`.pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(ActivityProjectionRows, strictParseOptions)),
+      WHERE event.account_id = ${accountId} AND event.source_event_id = ${event.sourceEventId}`.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(ActivityReplayRows, strictParseOptions)),
       Effect.map((rows) => rows[0]),
     )
+  const restoreActivityFillFeeCoverage = sql`UPDATE broker_activity_cursors SET fill_fee_complete = true,
+      updated_at = clock_timestamp()
+    WHERE account_id = ${accountId}
+      AND NOT EXISTS (SELECT 1 FROM broker_activity_event_projections
+        WHERE account_id = ${accountId} AND outcome = 'RECONCILE_REQUIRED')
+      AND NOT EXISTS (
+        SELECT 1 FROM broker_activity_source_conflicts AS conflict
+        LEFT JOIN broker_activity_events AS event USING (account_id,source_event_id)
+        WHERE conflict.account_id = ${accountId}
+          AND conflict.activity_json::jsonb IS DISTINCT FROM event.activity_json::jsonb
+      )
+    RETURNING fill_fee_complete`
   const activityPrefixRows = (replayFromId: string, replayUntilId: string) =>
     sql`SELECT source_event_id AS "sourceEventId", source_event_hash AS "sourceEventHash"
       FROM broker_activity_events
@@ -400,9 +416,9 @@ export const makeBrokerObservationStore = (
           if (current === undefined) return yield* observationUnavailable('Durable activity cursor is absent')
           const retained =
             current.cursor !== null && event.sourceEventId <= current.cursor
-              ? yield* retainedActivityProjection(event.sourceEventId)
+              ? yield* retainedActivityReplay(event)
               : undefined
-          const admission = decideBrokerActivityEvent(current, event, retained?.sourceEventHash, true)
+          const admission = decideBrokerActivityEvent(current, event, retained?.matchesReplay === true, true)
           if (Result.isFailure(admission)) {
             const inserted = yield* sql`INSERT INTO broker_activity_source_conflicts(
               account_id,source_event_id,retained_source_event_hash,conflicting_source_event_hash,
@@ -425,8 +441,10 @@ export const makeBrokerObservationStore = (
           if (admission.success._tag === 'Replay') {
             if (retained === undefined)
               return yield* observationUnavailable('Activity replay is missing its retained projection')
-            if (yield* activityCoveragePoisonedBy(event.eventId))
+            if (yield* activityCoveragePoisonedBy(retained.transportEventId))
               return { _tag: 'CoverageConflict', eventId: event.eventId } as const
+            const fillFeeComplete =
+              current.fillFeeComplete || (current.caughtUp && (yield* restoreActivityFillFeeCoverage).length === 1)
             return {
               _tag: 'Accepted',
               receipt: {
@@ -438,7 +456,7 @@ export const makeBrokerObservationStore = (
                 replayUntilId: current.replayUntilId,
                 completionHash: current.completionHash,
                 sourceRevision,
-                fillFeeComplete: current.fillFeeComplete,
+                fillFeeComplete,
                 replayed: true,
                 projection: activityProjectionReceipt(retained.projection),
                 projectionContract: brokerActivityProjectionContract,
@@ -543,7 +561,7 @@ export const makeBrokerObservationStore = (
             ${projection._tag === 'Fee' ? projection.feeKey : null},
             ${projection._tag === 'ReconcileRequired' || projection._tag === 'CanonicalOnly' ? projection.reason : null}
           )`
-          const append = decideBrokerActivityEvent(current, event, undefined, projection._tag !== 'ReconcileRequired')
+          const append = decideBrokerActivityEvent(current, event, false, projection._tag !== 'ReconcileRequired')
           if (Result.isFailure(append) || append.success._tag !== 'Append')
             return yield* observationUnavailable('Activity append no longer advances the durable cursor')
           const { fillFeeComplete, invalidatesCoverage, preserveHeartbeat } = append.success

@@ -434,8 +434,10 @@ Each capture brackets account and position reads with matching complete order, f
 successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
 The single Dorvud broker feed owns PAPER Activity SSE. `BaynBrokerActivities` receives signed events and commits their
 original bytes, fill or fee projection, and cursor together in PostgreSQL. The feed resumes with the retained
-`since_id` and verifies inclusive redelivery. Bayn compares the initial finite replay with the durable source rows
-before accepting a live heartbeat. All execution replicas read that same projection.
+`since_id` and accepts inclusive redelivery when the event ID and JSON fields match the original. The journal retains
+the original event bytes. A valid replay can restore fill and fee completeness when all retained projections are
+resolved and every recorded conflict was a formatting difference. Bayn compares the initial finite replay with the
+durable source rows before accepting a live heartbeat. All execution replicas read that same projection.
 
 PAPER captures take immutable views of the durable fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
