@@ -5,7 +5,6 @@ on:
     paths:
       - .github/workflows/arc-scratch-benchmark.yml
       - argocd/applications/arc/application.yaml
-      - .github/workflows/arc-placement-acceptance.yml
 
 permissions:
   contents: read
@@ -19,29 +18,25 @@ jobs:
     name: ${{ matrix.runner }} Ceph and tmpfs pair ${{ matrix.pair }}
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 6
       matrix:
-        runner: [arc-amd64, arc-arm64]
         pair: [1, 2, 3, 4, 5]
+        runner: [arc-amd64, arc-arm64]
     env:
       PAIR: ${{ matrix.pair }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      ARCHITECTURE: ${{ matrix.runner == 'arc-amd64' && 'amd64' || 'arm64' }}
-      EXPECTED_NODE: ${{ matrix.runner == 'arc-amd64' && 'turin' || 'talos-192-168-1-85' }}
-      ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 2
           persist-credentials: false
-      - name: Build the same broker-feed image on both filesystems
+      - name: Compare seed copy and offline OCI export
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$ATTIC_PUBLIC_KEY"
           evidence="$RUNNER_TEMP/arc-scratch-benchmark"
           mkdir -p "$evidence"
           manifest=argocd/applications/arc/application.yaml
@@ -52,106 +47,84 @@ jobs:
           [[ "$size" =~ ^[0-9]+Gi$ ]]
           capacity_bytes=$(( ${size%Gi} * 1024 * 1024 * 1024 ))
 
+          nix_binary="$(readlink -f "$(command -v nix)")"
+          nix-store --query --requisites "${nix_binary%/bin/nix}" | sed 's@^/nix/store/@@' | sort > "$evidence/paths"
+          tar -C /nix/store -cf "$evidence/payload.tar" -T "$evidence/paths"
+          sha="$(sha256sum "$evidence/payload.tar" | cut -d' ' -f1)"
           order=(ceph tmpfs)
           if (( PAIR % 2 == 0 )); then order=(tmpfs ceph); fi
-          for filesystem in prepare "${order[@]}"; do
+          for filesystem in "${order[@]}"; do
             sudo -n -E /usr/bin/env "PATH=$PATH" unshare --mount --propagation private \
-              bash -s -- "$filesystem" "$evidence" "$GITHUB_WORKSPACE" "$capacity_bytes" <<'BENCHMARK'
+              bash -s -- "$filesystem" "$evidence" "$capacity_bytes" "$sha" <<'BENCHMARK'
           set -euo pipefail
           filesystem="$1"
           evidence="$2"
-          source="$3"
-          capacity_bytes="$4"
-          if [[ "$filesystem" != prepare ]]; then exec 3>"$evidence/$filesystem.json"; fi
+          capacity_bytes="$3"
+          expected_sha="$4"
+          exec 3>"$evidence/$filesystem.json"
           cd /
           mkdir -p /scratch
-          init="$evidence/ceph.sh"
-          if [[ "$filesystem" == tmpfs ]]; then
-            mount -t tmpfs -o "size=$capacity_bytes" tmpfs /scratch
-            init="$evidence/tmpfs.sh"
+          if [[ "$filesystem" == ceph ]]; then
+            mkdir "$evidence/ceph"
+            mount --bind "$evidence/ceph" /scratch
           else
-            # The runner already owns an RBD volume. Seed a separate directory for each trial.
-            mkdir "$evidence/$filesystem"
-            mount --bind "$evidence/$filesystem" /scratch
+            mount -t tmpfs -o "size=$capacity_bytes" tmpfs /scratch
           fi
           uptime
           start="$(date +%s%N)"
-          bash "$init"
+          bash "$evidence/$filesystem.sh"
           bootstrapped="$(date +%s%N)"
-          if [[ "$filesystem" != prepare ]]; then
-            cp -a "$evidence/prepare/nix/." /scratch/nix/
-          fi
 
-          mkdir -p /scratch/work/repository
-          cp -a "$source/." /scratch/work/repository/
-          chown 1001:1001 /scratch/work/repository
+          work=/scratch/work
+          context="$work/context"
+          install -d -o 1001 -g 1001 "$context"
+          cp --reflink=never "$evidence/payload.tar" "$context/payload.tar"
+          printf 'FROM scratch\nCOPY payload.tar /payload.tar\n' > "$context/Dockerfile"
           for mount_spec in nix:/nix cache:/home/runner/.cache tmp:/tmp var-tmp:/var/tmp work:/home/runner/_work; do
             mount --bind "/scratch/${mount_spec%%:*}" "${mount_spec#*:}"
+            test "$(stat -c %d "${mount_spec#*:}")" = "$(stat -c %d /scratch)"
           done
-          cd /home/runner/_work/repository
-          export RUNNER_TEMP=/home/runner/_work/_temp
-          install -d -o 1001 -g 1001 "$RUNNER_TEMP"
-          export NIX_CONFIG="experimental-features = nix-command flakes
-          substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
-          extra-trusted-public-keys = $ATTIC_PUBLIC_KEY
-          fallback = false
-          connect-timeout = 10
-          stalled-download-timeout = 60
-          download-attempts = 3"
-          export NIX_REMOTE=local
           as_runner=(setpriv --reuid=1001 --regid=1001 --init-groups)
-          build=(nix build .#bayn-broker-feed-image --print-build-logs --out-link "$RUNNER_TEMP/result")
-          if [[ "$filesystem" == prepare ]]; then
-            "${as_runner[@]}" bash nix/ci-retry-attic-download.sh "${build[@]}"
-            exit
-          fi
+          test "$("${as_runner[@]}" nix eval --offline --expr '40 + 2')" = 42
+          export BUILDKIT_HOST="unix://$work/buildkitd.sock"
+          buildkitd --addr "$BUILDKIT_HOST" --root "$work/buildkit" --group 1001 \
+            --oci-worker=true --containerd-worker=false >"$work/buildkitd.log" 2>&1 &
+          pid="$!"
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" || true' EXIT
+          for _ in $(seq 1 45); do
+            if "${as_runner[@]}" buildctl debug workers > "$work/workers.txt" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if ! test -s "$work/workers.txt"; then cat "$work/buildkitd.log" >&2; exit 1; fi
+
+          archive="$context/image.tar"
           build_start="$(date +%s%N)"
-          "${as_runner[@]}" "${build[@]}" --offline --rebuild
+          "${as_runner[@]}" buildctl build --frontend dockerfile.v0 --local "context=$context" \
+            --local "dockerfile=$context" --output "type=oci,dest=$archive"
           built="$(date +%s%N)"
-          archive="$(readlink -f "$RUNNER_TEMP/result")"
-          "${as_runner[@]}" bash nix/oci-inspect-archive.sh "$archive"
-          inspected="$(date +%s%N)"
-          sha="$(sha256sum "$archive" | cut -d' ' -f1)"
-          cg="/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)"
+          manifest_digest="$(tar -xOf "$archive" index.json | jq -er '.manifests[0].digest')"
+          layer_digest="$(tar -xOf "$archive" "blobs/sha256/${manifest_digest#sha256:}" | jq -er '.layers | select(length == 1) | .[0].digest')"
+          sha="$(tar -xOf "$archive" "blobs/sha256/${layer_digest#sha256:}" | tar -xzOf - --wildcards '*payload.tar' | sha256sum | cut -d' ' -f1)"
+          verified="$(date +%s%N)"
+          test "$sha" = "$expected_sha"
           read -r scratch_bytes capacity < <(df -P -B1 /scratch | awk 'NR == 2 { print $3, $2 }')
+          if [[ "$filesystem" == tmpfs ]]; then test "$capacity" = "$capacity_bytes"; fi
+          cg="/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)"
           jq -n --arg filesystem "$filesystem" --arg node "$ARC_RUNNER_NODE_NAME" --arg pod "$ACTIONS_RUNNER_POD_NAME" \
             --arg sha256 "$sha" --argjson pair "$PAIR" --argjson initNs "$((bootstrapped-start))" \
-            --argjson buildNs "$((built-build_start))" --argjson inspectNs "$((inspected-built))" \
-            --argjson scratchBytes "$scratch_bytes" --argjson capacityBytes "$capacity" \
-            --argjson memoryPeakBytes "$(cat "$cg/memory.peak")" --argjson memoryLimitBytes "$(cat "$cg/memory.max")" \
+            --argjson buildNs "$((built-build_start))" --argjson verifyNs "$((verified-built))" \
+            --argjson payloadBytes "$(wc -c < "$context/payload.tar")" --argjson scratchBytes "$scratch_bytes" \
+            --argjson memoryPeakBytes "$(cat "$cg/memory.peak")" \
             '{filesystem:$filesystem,node:$node,pod:$pod,sha256:$sha256,pair:$pair,initNs:$initNs,buildNs:$buildNs,
-              inspectNs:$inspectNs,scratchBytes:$scratchBytes,capacityBytes:$capacityBytes,memoryPeakBytes:$memoryPeakBytes,
-              memoryLimitBytes:$memoryLimitBytes}' >&3
-
-          if [[ "$filesystem" == tmpfs ]]; then
-            state="$RUNNER_TEMP/buildkit.smoke"
-            install -d -o 1001 -g 1001 "$state"
-            export BUILDKIT_HOST="unix://$state/buildkitd.sock"
-            export SLOT="$PAIR"
-            buildkitd --addr "$BUILDKIT_HOST" --root "$state/cache" --group 1001 \
-              --oci-worker=true --containerd-worker=false >"$state/buildkitd.log" 2>&1 &
-            pid="$!"
-            trap 'kill "$pid"; wait "$pid" || true' EXIT
-            for _ in $(seq 1 45); do
-              if "${as_runner[@]}" buildctl debug workers >/dev/null 2>&1; then break; fi
-              sleep 1
-            done
-            yq '.jobs.build.steps[] | select(.id == "verify-scratch") | .run' \
-              .github/workflows/arc-placement-acceptance.yml > "$RUNNER_TEMP/verify-scratch.sh"
-            if ! "${as_runner[@]}" bash "$RUNNER_TEMP/verify-scratch.sh"; then
-              cat "$state/buildkitd.log" >&2
-              exit 1
-            fi
-            cat "$RUNNER_TEMP/arc-ready.json"
-          fi
+              verifyNs:$verifyNs,payloadBytes:$payloadBytes,scratchBytes:$scratchBytes,memoryPeakBytes:$memoryPeakBytes}' >&3
           BENCHMARK
             if [[ "$filesystem" == ceph ]]; then sudo -n rm -rf -- "$evidence/ceph"; fi
           done
           jq -s -e 'length == 2 and ([.[].sha256] | unique | length) == 1' "$evidence/"{ceph,tmpfs}.json
           {
-            echo '| Filesystem | Seed init (s) | Image build (s) | Archive inspect (s) |'
+            echo '| Filesystem | Seed init (s) | OCI build (s) | Layer verification (s) |'
             echo '|---|---:|---:|---:|'
-            jq -r '"| \(.filesystem) | \(.initNs / 1e9) | \(.buildNs / 1e9) | \(.inspectNs / 1e9) |"' "$evidence/"{ceph,tmpfs}.json
+            jq -r '"| \(.filesystem) | \(.initNs / 1e9) | \(.buildNs / 1e9) | \(.verifyNs / 1e9) |"' "$evidence/"{ceph,tmpfs}.json
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()

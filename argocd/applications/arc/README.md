@@ -93,9 +93,8 @@ reported BlueStore slow operation indications on OSDs 3 and 5. Recheck that warn
 ARM64 builds reproduced the same system-disk contention on Altra later that day. From 13:20:49 to 13:23:35 UTC,
 the active Kata ARM64 runner Pod wrote 19.75 MB/s to Altra's system NVMe, while the device averaged 42.67 MB/s.
 The Pod's workspace was a local XFS `emptyDir`; its Nix and temporary/cache paths were on the overlay.
-Altra's etcd logged 1.459, 2.421 and 1.074-second WAL syncs inside that measured interval. The ARM64 build set now
-uses the same verified Ceph bootstrap, five mounts and Rust cache homes as AMD64, with its five-to-ten
-capacity, ARM64 placement, service account and runner resources. Accepted jobs finish on their existing storage.
+Altra's etcd logged 1.459, 2.421 and 1.074-second WAL syncs inside that measured interval. ARC moved ARM64
+to the same Ceph scratch configuration as AMD64 and let active jobs finish on their existing storage.
 At 13:25 UTC, `replicapool` had 9.66TiB `MAX AVAIL` and the cluster had 29.45TiB raw free, with replication still two.
 The Ceph claims were thin provisioned. Their provisioned capacity was separate from both pod memory and
 node-local ephemeral-storage reservations.
@@ -105,11 +104,9 @@ window at the intended concurrency. Check API/etcd readiness, slow WAL syncs, re
 system-device write and flush latency, memory pressure, runner OOM kills, build duration and errors over that
 window. Verify cold runner registration separately.
 
-The PR scratch benchmark compares the current and proposed seed scripts and runs the same nonpublishing
-Bayn broker-feed image rebuild and archive inspection on both filesystems. It prepares dependencies once per pair
-and verifies identical output hashes for the forced offline rebuilds.
-The comparison runs inside existing ARC worker pods, so bootstrap measurements exclude PVC provisioning,
-Pod startup and runner registration.
+The PR scratch benchmark runs the base and candidate seed scripts followed by a fresh BuildKit OCI build
+with the runner's preinstalled Nix closure as input. It verifies identical payload checksums. It runs inside
+existing ARC worker Pods, so the measurements exclude PVC provisioning, Pod startup and runner registration.
 
 GitHub can reject an outdated runner binary and ARC then marks its scale set `Outdated`, removes its listener, and
 stops scheduling jobs. A successful controller health check does not prove runner capacity. If every build runner
