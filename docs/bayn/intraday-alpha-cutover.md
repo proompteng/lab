@@ -7,12 +7,12 @@
 1. **Phase 2 — Bounded-Hold Morning `30m` Opening Range Breakout (`10:00–10:45 ET`):**
    - `1` concurrent leg at `20%` equity weight (`Long` or `Short` aligned with both symbol session VWAP and `SPY` session VWAP, `minimumOpeningRangeBars = 27`, `minimumRecent15MinBars = 13`, `maxTradesPerSession = 2`, one entry per symbol per morning).
    - `50 bp` protective stop / `100 bp` profit target (`1:2` native Alpaca `BRACKET`/`OCO`/`STOP_LIMIT` with `#16289` single-sided IEX stop guard).
-   - Hard holding limit `min(45m, 118 - entryMinuteFromOpen)` guarantees flat inventory before `11:28 ET`, eliminating slot conflict with Phase 1.
+   - The software close becomes due after `min(45m, 118 - entryMinuteFromOpen)` to target flat inventory before `11:28 ET`.
 
 2. **Phase 1 — Midday-to-Close Dollar-Neutral Relative-VWAP Overreaction Reversion (`11:30–12:00 ET -> 15:55 EOD`):**
    - Computes gap-resilient session VWAP directly from full-session observed 1m bars (`09:30 ET` through completed window end, avoiding Flink's single-minute `GAP` resets on `COHR`, `SNDK`, `LITE`, `CRDO`, `MRVL`).
    - Requires `minimumSessionBars >= 90` and `minimumRecent15MinBars >= 13` (strictly causal recent-tape liquidity filter) plus `maximumEntrySpreadBps = 25` (eliminating `v44`'s `5 bps` single-exchange IEX starvation).
-   - Ranks cross-sectional `rel_VWAP_vs_SPY = (close/vwap - 1) - (spyClose/spyVwap - 1)` and selects `2` Long laggards + `2` Short leaders at `18%` weight per leg (`36%` Long + `54%` Short `150%`-collateral = `90%` max buying power — fits both `1×` cash-only and `2×` margin accounts with `0` `InsufficientBuyingPower` blocks). Falls back to a single `20%` extreme Long if borrow eligibility blocks all shorts.
+   - Ranks cross-sectional `rel_VWAP_vs_SPY = (close/vwap - 1) - (spyClose/spyVwap - 1)` and selects `2` Long laggards + `2` Short leaders at `18%` weight per leg (`36%` Long + `54%` Short `150%`-collateral = `90%` max buying power — fits both `1×` cash-only and `2×` margin accounts with `0` `InsufficientBuyingPower` blocks). Checks executable long and short notionals after applying liquidity caps, allowing whole-share rounding. Falls back to a single `20%` extreme Long if borrow eligibility blocks all shorts.
    - `300 bp` protective stop / `400 bp` profit target held until `15:55 ET` EOD flatten.
    - Repurposes `jev-1.14.0` as a fast single-stage numerical `catalyst_dislocation_veto` (`>= 0.85` threshold) across top candidates; vetoed names cleanly fall through to the next ranked candidate, and provider outages fail open (`status: UNAVAILABLE`) so inference incidents never starve sessions.
 
@@ -20,14 +20,16 @@
 
 The verifier exercises the production signal, exit sizing, and target planner on $100,000 of cash buying power with
 whole-share quantities and 0.21 bp sell-side fees. A simulated fill requires a bar open after the decision, before the
-modeled 60-second order cutoff, at a price within the funded limit after entry slippage. The model uses minute bars
-and synthetic quotes and short eligibility. It does not model broker queue priority or live fill probability.
+modeled 60-second order cutoff, at a price within the funded limit after entry slippage. A stop-limit order that
+gaps through its limit stays pending until an executable price returns or the scheduled close takes over.
+The model uses minute bars and synthetic quotes and short eligibility. Live fill probability and broker queue
+priority are outside its scope.
 
 | Round-trip slippage | Active sessions | Morning trades and net P&L | Midday trades and net P&L | Combined net P&L | Three chronological folds   | Max drawdown | Sharpe |
 | ------------------- | --------------- | -------------------------- | ------------------------- | ---------------- | --------------------------- | ------------ | ------ |
-| 2 bp                | 65/65           | 99, +$486                  | 206, +$6,665              | +$7,151          | +$1,642 / +$2,436 / +$3,073 | $2,409       | 3.34   |
-| 5 bp                | 65/65           | 100, −$108                 | 206, +$5,996              | +$5,888          | +$1,629 / +$1,973 / +$2,286 | $2,594       | 2.77   |
-| 10 bp               | 65/65           | 104, −$1,346               | 205, +$4,141              | +$2,796          | +$79 / +$1,155 / +$1,561    | $3,129       | 1.29   |
+| 2 bp                | 65/65           | 98, +$215                  | 206, +$6,590              | +$6,804          | +$1,602 / +$2,232 / +$2,971 | $2,458       | 3.18   |
+| 5 bp                | 65/65           | 99, −$380                  | 206, +$5,999              | +$5,619          | +$1,622 / +$1,869 / +$2,128 | $2,613       | 2.65   |
+| 10 bp               | 65/65           | 103, −$1,076               | 205, +$4,233              | +$3,158          | +$417 / +$1,148 / +$1,593   | $3,097       | 1.47   |
 
 The combined strategy passed the offline activity and chronological profitability gate with zero planner blocks.
 The morning phase lost money in the 5 and 10 bp runs.

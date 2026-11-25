@@ -73,11 +73,12 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(
   >
   readonly policy: IntradayAlphaPolicy
   readonly admissionExpiresAt: number
-  readonly morningOrbTakenSymbols?: readonly string[]
-  readonly middayReversionCompleted?: boolean
 }) =>
   Effect.gen(function* () {
     const store = yield* CandidateObservationStore
+    const readSessionState = store.readIntradayAlphaSessionState
+    if (readSessionState === undefined)
+      return yield* new JevContractError({ message: 'Intraday alpha requires durable session history' })
     const latest = yield* store.latestJevWindowEnd({
       cycleId: input.observation.cycleId,
       purpose: input.observation.portfolio.purpose,
@@ -117,26 +118,17 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(
     yield* store.record(observationRecord, input.policy)
     yield* Effect.logInfo(candidateObservationLog(observationRecord))
 
-    const readSessionState = store.readIntradayAlphaSessionState
-    const sessionState =
-      input.morningOrbTakenSymbols !== undefined ||
-      input.middayReversionCompleted !== undefined ||
-      readSessionState === undefined
-        ? {
-            morningOrbTakenSymbols: input.morningOrbTakenSymbols ?? [],
-            middayReversionCompleted: input.middayReversionCompleted === true,
-          }
-        : yield* Effect.fromResult(intradayAlphaStrategyIdentity(input.policy)).pipe(
-            Effect.mapError((cause) => new JevContractError({ message: 'Intraday alpha identity is invalid', cause })),
-            Effect.flatMap((identity) =>
-              readSessionState({
-                cycleId: input.observation.cycleId,
-                accountId: owned.payload.portfolio.brokerState.account.accountId,
-                sessionDate: snapshot.manifest.sessionDate,
-                strategyProtocolHash: identity.protocolHash,
-              }),
-            ),
-          )
+    const sessionState = yield* Effect.fromResult(intradayAlphaStrategyIdentity(input.policy)).pipe(
+      Effect.mapError((cause) => new JevContractError({ message: 'Intraday alpha identity is invalid', cause })),
+      Effect.flatMap((identity) =>
+        readSessionState({
+          cycleId: input.observation.cycleId,
+          accountId: owned.payload.portfolio.brokerState.account.accountId,
+          sessionDate: snapshot.manifest.sessionDate,
+          strategyProtocolHash: identity.protocolHash,
+        }),
+      ),
+    )
 
     const extracted = yield* Effect.fromResult(
       extractIntradayAlphaCandidates({

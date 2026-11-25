@@ -1,10 +1,12 @@
 import { Result, Schema } from 'effect'
 
+import { OrderSide } from '../../execution/contracts'
 import { canonicalHashV1Result } from '../../hash'
 import { JevContractError } from '../../jev/contract'
 import { positionProtectionIntervalMs } from '../../jev/exit-policy'
 import { JevPurpose } from '../../jev/portfolio'
 import { exchangeSessions, isContinuousMarket } from '../../market-hours'
+import { quantityScale } from '../../quantity'
 import {
   IsoDateSchema,
   PositiveIntegerSchema,
@@ -13,6 +15,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../../schemas'
+import type { TargetPlanResult } from '../../target-planner/result'
 import type { StrategyDefinition } from '../core'
 import { CatalystVetoReceiptSchema } from './catalyst-veto'
 import {
@@ -30,6 +33,41 @@ import {
   type IntradayAlphaPolicyMaterial,
 } from './policy'
 import { extractIntradayAlphaCandidates, selectIntradayAlphaLegs } from './signals'
+
+/** Compare executable quantities using the same adverse quote prices that size the legs. */
+export const isBalancedMiddayBasket = (
+  plan: Pick<TargetPlanResult, 'intentTargets' | 'targets'>,
+  selectedSymbols: readonly string[],
+): boolean => {
+  if (selectedSymbols.length <= 1 || plan.intentTargets.length === 0) return true
+  if (!selectedSymbols.every((symbol) => plan.intentTargets.some((intent) => intent.symbol === symbol))) return false
+
+  let longNotional = 0n
+  let shortNotional = 0n
+  let longShareRounding = 0n
+  let shortShareRounding = 0n
+  for (const intent of plan.intentTargets) {
+    const price = plan.targets.find((target) => target.symbol === intent.symbol)?.referencePriceMicros
+    if (price === undefined || !selectedSymbols.includes(intent.symbol)) return false
+    const priceMicros = BigInt(price)
+    const notional = priceMicros * BigInt(intent.quantityAtoms)
+    if (intent.side === OrderSide.Buy) {
+      longNotional += notional
+      longShareRounding += priceMicros * quantityScale
+    } else {
+      shortNotional += notional
+      shortShareRounding += priceMicros * quantityScale
+    }
+  }
+
+  // Each leg can lose less than one share when the planner rounds its allocation down.
+  return (
+    longNotional > 0n &&
+    shortNotional > 0n &&
+    longNotional - shortNotional <= shortShareRounding &&
+    shortNotional - longNotional <= longShareRounding
+  )
+}
 
 export enum IntradayAlphaDecisionReason {
   SelectedMorningOrb = 'SELECTED_MORNING_ORB',

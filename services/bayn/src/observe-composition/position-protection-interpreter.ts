@@ -176,14 +176,16 @@ export const advancePositionProtection = (request: {
         _tag: 'Wait',
         details: { waitReason: 'JEV_POSITION_HELD' },
       }
-      if (quantityAtoms !== 0n && !request.closeDue && !brokerManagedExits) {
-        if (
-          state.reconciliation.status !== 'EXACT' ||
+      if (
+        quantityAtoms !== 0n &&
+        !request.closeDue &&
+        (state.reconciliation.status !== 'EXACT' ||
           !reconciliation.report.metrics.accountingExact ||
           reconciliation.riskContext.unknownMutationCount !== 0 ||
-          state.unknownOrderCount !== 0
-        )
-          return wait('PROTECTION_AWAITING_RECONCILIATION')
+          state.unknownOrderCount !== 0)
+      )
+        return wait('PROTECTION_AWAITING_RECONCILIATION')
+      if (quantityAtoms !== 0n && !request.closeDue && !brokerManagedExits) {
         if (input.intradayMarketData === undefined || document.executionSession === undefined)
           return yield* mutationRunnerError({
             message: 'Strategy protection requires its bound market reader and session',
@@ -335,16 +337,20 @@ export const advancePositionProtection = (request: {
       if (action._tag === 'Arm') {
         if (capability._tag === 'RecoveryOnly' || observedAt >= request.closeExpiresAt)
           return wait('PROTECTION_AUTHORITY_UNAVAILABLE')
-        const portfolio = yield* JevPositionStore.pipe(
-          Effect.flatMap((store) =>
-            store.read({
-              cycleId: cycle.identity.cycleId,
-              entryDecisionHash: document.contentHash,
-              brokerState: state,
-            }),
-          ),
-        )
-        if (portfolio.exitRequestedAt !== null) return wait('PROTECTION_EXIT_COMMITTED')
+        // For midday, an exit on one leg cannot prevent another leg from restoring exact native coverage.
+        // The close window still cancels coverage and liquidates any residual inventory.
+        if (!brokerManagedExits) {
+          const portfolio = yield* JevPositionStore.pipe(
+            Effect.flatMap((store) =>
+              store.read({
+                cycleId: cycle.identity.cycleId,
+                entryDecisionHash: document.contentHash,
+                brokerState: state,
+              }),
+            ),
+          )
+          if (portfolio.exitRequestedAt !== null) return wait('PROTECTION_EXIT_COMMITTED')
+        }
         const facts = document.deltaRisk[0]?.facts
         if (facts === undefined)
           return yield* mutationRunnerError({

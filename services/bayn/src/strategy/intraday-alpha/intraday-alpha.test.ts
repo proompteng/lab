@@ -54,7 +54,12 @@ import { TargetPlanStatus, planTargets, quoteBoundTargetPlannerInputSchemaVersio
 import { fixtureRuntime } from '../../testing/runtime-fixtures'
 import { utcInstantFromEpochMillis } from '../../time'
 import { evaluateCatalystVetos } from './catalyst-veto'
-import { IntradayAlphaDecisionReason, IntradayAlphaTargetSchema, decideIntradayAlphaEntry } from './decision'
+import {
+  IntradayAlphaDecisionReason,
+  IntradayAlphaTargetSchema,
+  decideIntradayAlphaEntry,
+  isBalancedMiddayBasket,
+} from './decision'
 import { makeOwnedIntradayAlphaObservation, reproduceIntradayAlphaObservation } from './observation'
 import {
   IntradayAlphaPhase,
@@ -694,37 +699,36 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
     askPriceMicros,
   }
   const refHash = Result.getOrThrow(canonicalHashV1Result(refMaterial))
-  const planned = Result.getOrThrow(
-    planTargets({
-      schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
-      strategyName: 'jev',
-      cycleId,
-      decisionHash: '3'.repeat(64),
-      policyHash: '4'.repeat(64),
-      accountId,
-      signalDate: sessionDate,
-      targetWeights: compiled.planningTargetWeights ?? target.targetWeights,
-      referencePrices: { ...refMaterial, contentHash: refHash },
-      brokerState: portfolio.brokerState,
-      precision: protocol.executionModel.precision,
-      allocationCapitalMicros: portfolio.brokerState.account.equityMicros,
-      maximumInputAgeMs: 60_000,
-      submissionCutoffAt: utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000),
-      observedAt,
-      executionTerms: {
-        orderType: OrderType.Limit,
-        timeInForce: TimeInForce.Day,
-        priceReference: 'verified-adverse-quote-boundary',
-        snapshotId: snapshot.manifest.snapshotId,
-        snapshotContentHash: snapshot.manifest.contentHash,
-        maximumBuyQuantityAtoms: compiled.maximumBuyQuantityAtoms,
-        maximumSellQuantityAtoms: compiled.maximumSellQuantityAtoms,
-        equityShortEntries: Object.fromEntries(
-          ['CRDO', 'SNDK'].map((symbol) => [symbol, eligibility[symbol]]).filter((entry) => entry[1] !== undefined),
-        ),
-      },
-    }),
-  )
+  const plannerInput = {
+    schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
+    strategyName: 'jev',
+    cycleId,
+    decisionHash: '3'.repeat(64),
+    policyHash: '4'.repeat(64),
+    accountId,
+    signalDate: sessionDate,
+    targetWeights: compiled.planningTargetWeights ?? target.targetWeights,
+    referencePrices: { ...refMaterial, contentHash: refHash },
+    brokerState: portfolio.brokerState,
+    precision: protocol.executionModel.precision,
+    allocationCapitalMicros: portfolio.brokerState.account.equityMicros,
+    maximumInputAgeMs: 60_000,
+    submissionCutoffAt: utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000),
+    observedAt,
+    executionTerms: {
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      priceReference: 'verified-adverse-quote-boundary',
+      snapshotId: snapshot.manifest.snapshotId,
+      snapshotContentHash: snapshot.manifest.contentHash,
+      maximumBuyQuantityAtoms: compiled.maximumBuyQuantityAtoms,
+      maximumSellQuantityAtoms: compiled.maximumSellQuantityAtoms,
+      equityShortEntries: Object.fromEntries(
+        ['CRDO', 'SNDK'].map((symbol) => [symbol, eligibility[symbol]]).filter((entry) => entry[1] !== undefined),
+      ),
+    },
+  } as const
+  const planned = Result.getOrThrow(planTargets(plannerInput))
   // Proves 2L + 2S at 18% per leg (36% Long + 54% Short collateral = 90% BP) plans with ZERO InsufficientBuyingPower!
   expect(planned.status).toBe(TargetPlanStatus.Planned)
   expect(planned.intentTargets.length).toBe(4)
@@ -740,6 +744,32 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
       .map((i) => i.symbol)
       .sort(),
   ).toEqual(['CRDO', 'SNDK'])
+  expect(isBalancedMiddayBasket(planned, target.selectedSymbols)).toBe(true)
+
+  const shallowShortQuotes = {
+    ...snapshot,
+    latestQuotes: Object.fromEntries(
+      Object.entries(snapshot.latestQuotes).map(([symbol, quote]) => [
+        symbol,
+        symbol === 'CRDO' || symbol === 'SNDK' ? { ...quote, bidSize: 100 } : quote,
+      ]),
+    ),
+  }
+  const capped = Result.getOrThrow(compileJevEntry(target, snapshot, shallowShortQuotes))
+  const cappedPlan = Result.getOrThrow(
+    planTargets({
+      ...plannerInput,
+      executionTerms: {
+        ...plannerInput.executionTerms,
+        maximumSellQuantityAtoms: capped.maximumSellQuantityAtoms,
+      },
+    }),
+  )
+  expect(cappedPlan.status).toBe(TargetPlanStatus.Planned)
+  expect(
+    cappedPlan.intentTargets.filter(({ side }) => side === OrderSide.Sell).map(({ quantityAtoms }) => quantityAtoms),
+  ).toEqual(['100000000000', '100000000000'])
+  expect(isBalancedMiddayBasket(cappedPlan, target.selectedSymbols)).toBe(false)
 
   // 3) Catalyst veto on #1 oversold (COHR) cleanly falls through to #3 (WDC) instead of starving!
   const withVeto = Result.getOrThrow(
@@ -812,6 +842,7 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
   const portfolio = makeFlatPortfolio(observedAt)
   const eligibility = makeShortEligibility(intradayAlphaCandidateSymbols, observedAt)
   const recorded: string[] = []
+  let middayCompleted = false
   const failingJevClient = Layer.succeed(JevClient, {
     evaluate: () =>
       Effect.fail(
@@ -828,7 +859,7 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
       }),
     latestJevWindowEnd: () => Effect.succeed(Option.none()),
     readIntradayAlphaSessionState: () =>
-      Effect.succeed({ morningOrbTakenSymbols: [], middayReversionCompleted: false }),
+      Effect.sync(() => ({ morningOrbTakenSymbols: [], middayReversionCompleted: middayCompleted })),
   })
 
   const candidate = {
@@ -952,6 +983,24 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
   )
   expect(vetoedEval.decision.selectedSymbols).not.toContain('COHR')
   expect(vetoedEval.decision.selectedSymbols.length).toBe(4)
+
+  middayCompleted = true
+  const repeated = await Effect.runPromise(
+    TestClock.setTime(Date.parse(observedAt)).pipe(
+      Effect.andThen(
+        evaluateIntradayAlphaFromSnapshot({
+          observation: { cycleId, authorityGenerationHash, protocol, portfolio, equityShortEligibility: eligibility },
+          rangeEndAt,
+          loadSnapshot: Effect.succeed(snapshot),
+          policy,
+          admissionExpiresAt: Date.parse(observedAt) + 60_000,
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(vetoingJevClient, obsStore, TestClock.layer())),
+    ),
+  )
+  expect(repeated.decision.evidence.middayReversionCompleted).toBe(true)
+  expect(repeated.decision.selectedSymbols).toEqual([])
 })
 
 test('multi-position (2L + 2S) JevPortfolio validates 4 legs, partial early leg close, and per-symbol MaximumHold exit', () => {

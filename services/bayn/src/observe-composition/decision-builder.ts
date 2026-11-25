@@ -1,6 +1,7 @@
 import { buildExecutionDecision, buildObserveShadowDecision, type DecisionConstruction } from '../decision-construction'
 import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
+  isMiddayAlphaTarget,
   isProtectedEntryTarget,
   protectedEntryExpiresAtMs,
   protectedEntryBuyPriceCeilings,
@@ -8,6 +9,7 @@ import {
   protectedEntryShortEligibility,
   type ProtectedEntryTarget,
 } from '../strategy/runtime-decision'
+import { isBalancedMiddayBasket } from '../strategy/intraday-alpha/decision'
 import { jevEntryPriceAllowances } from '../jev/entry-economics'
 import type { EquityShortEligibility } from '../execution/equity-short'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
@@ -1459,6 +1461,15 @@ export function buildStrategyCycleDecision<R>(
       )
     }
     const entryDecision = compiled.decision
+    if (isMiddayAlphaTarget(entryDecision) && !isBalancedMiddayBasket(targetPlan, entryDecision.selectedSymbols)) {
+      const message = 'Executable midday basket exceeds whole-share notional imbalance'
+      return yield* new ObserveDecisionAwaitingSignal({
+        message,
+        observedAt: facts.evaluatedAt,
+        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        readiness: { reason: DecisionReadinessReason.NoEligibleCandidate, message },
+      })
+    }
     const entryLimitSlippageBps =
       requirements.documentMode === Authority.Execution
         ? isProtectedEntryTarget(entryDecision)

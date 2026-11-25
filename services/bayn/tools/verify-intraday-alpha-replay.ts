@@ -17,6 +17,7 @@ import type { StrategyMarketSnapshot } from '../src/market-data/streaming/snapsh
 import { IsoDateSchema } from '../src/schemas'
 import { reconciledStateHash } from '../src/simulation-reconciliation/broker-model'
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
+import { isBalancedMiddayBasket } from '../src/strategy/intraday-alpha/decision'
 import { makeIntradayAlphaFundedExitPlan } from '../src/strategy/intraday-alpha/exit-plan'
 import {
   IntradayAlphaPhase,
@@ -503,7 +504,11 @@ const simulateSession = (input: {
         },
       }),
     )
-    if (planned.status !== TargetPlanStatus.Planned) {
+    if (
+      planned.status !== TargetPlanStatus.Planned ||
+      (extracted.context.phase === IntradayAlphaPhase.MiddayReversion &&
+        !isBalancedMiddayBasket(planned, selectedSymbols))
+    ) {
       plannerBlocks++
       return
     }
@@ -539,7 +544,8 @@ const simulateSession = (input: {
       if (shares <= 0) continue
 
       const stopPrice = Number(BigInt(funded.plan.levels.stopPriceMicros)) / 1_000_000
-      const targetPrice = Number(BigInt(funded.plan.levels.profitLimitPriceMicros)) / 1_000_000
+      const stopLimitPrice = Number(BigInt(levels.stopLimitPriceMicros)) / 1_000_000
+      const targetPrice = Number(BigInt(levels.profitLimitPriceMicros)) / 1_000_000
       const maxHoldMinute = Math.min(
         extracted.context.phase === IntradayAlphaPhase.MorningOrb
           ? policy.morningOrb.hardExitMinuteFromOpen
@@ -552,43 +558,51 @@ const simulateSession = (input: {
       let exitReason: TradeOutcome['exitReason'] =
         maxHoldMinute >= policy.middayReversion.flattenMinuteFromOpen ? 'EOD' : 'MAX_HOLD'
 
+      let stopTriggered = false
+      const clearsStopLimit = (price: number) => (isLong ? price >= stopLimitPrice : price <= stopLimitPrice)
       for (let m = fillMinute; m <= maxHoldMinute; m++) {
         const bar = symBars?.get(m)
         if (bar === undefined) continue
         exitPrice = bar.close
         exitMinute = m
-        if (isLong) {
-          if (bar.low <= stopPrice) {
-            exitPrice = Math.min(bar.open, stopPrice)
-            exitReason = 'STOP'
-            break
+        const openedThroughStop = isLong ? bar.open <= stopPrice : bar.open >= stopPrice
+        const touchedStop = isLong ? bar.low <= stopPrice : bar.high >= stopPrice
+        if (stopTriggered || touchedStop) {
+          // After activation, a gap through the limit leaves a working order. Use the open only
+          // when activation is already known, otherwise require an executable price after the trigger.
+          const activeAtOpen = stopTriggered || openedThroughStop
+          stopTriggered = true
+          if (activeAtOpen && clearsStopLimit(bar.open)) {
+            exitPrice = bar.open
+          } else if (
+            clearsStopLimit(activeAtOpen ? (isLong ? bar.high : bar.low) : bar.close) ||
+            clearsStopLimit(isLong ? bar.low : bar.high)
+          ) {
+            exitPrice = stopLimitPrice
+          } else {
+            continue
           }
-          if (bar.high >= targetPrice) {
-            exitPrice = Math.max(bar.open, targetPrice)
-            exitReason = 'TARGET'
-            break
-          }
-        } else {
-          if (bar.high >= stopPrice) {
-            exitPrice = Math.max(bar.open, stopPrice)
-            exitReason = 'STOP'
-            break
-          }
-          if (bar.low <= targetPrice) {
-            exitPrice = Math.min(bar.open, targetPrice)
-            exitReason = 'TARGET'
-            break
-          }
+          exitReason = 'STOP'
+          break
+        }
+        if (isLong ? bar.high >= targetPrice : bar.low <= targetPrice) {
+          exitPrice = isLong ? Math.max(bar.open, targetPrice) : Math.min(bar.open, targetPrice)
+          exitReason = 'TARGET'
+          break
         }
         if (bar.eventMs >= flattenMs) {
-          exitPrice = bar.close
           exitReason = 'EOD'
           break
         }
       }
-      // Native LIMIT take-profit fills at or better than limit (0 exit slip); stops & EOD pay per-side exit slip.
       const exitSlipMult = exitReason === 'TARGET' ? 0 : perSideSlipMult
-      const realizedExit = isLong ? exitPrice * (1 - exitSlipMult) : exitPrice * (1 + exitSlipMult)
+      const slippedExit = isLong ? exitPrice * (1 - exitSlipMult) : exitPrice * (1 + exitSlipMult)
+      const realizedExit =
+        exitReason === 'STOP'
+          ? isLong
+            ? Math.max(stopLimitPrice, slippedExit)
+            : Math.min(stopLimitPrice, slippedExit)
+          : slippedExit
       const grossPnlUsd = isLong ? (realizedExit - entryPrice) * shares : (entryPrice - realizedExit) * shares
       const sellNotional = isLong ? realizedExit * shares : entryPrice * shares
       const feeUsd = (sellNotional * LIVE_SELL_FEE_BPS) / 10_000
