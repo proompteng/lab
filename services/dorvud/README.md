@@ -267,11 +267,20 @@ discriminator and complete provider payload. Preserve the original Kafka envelop
 required beyond Kafka's configured retention period.
 
 Roll out the TA sample exclusions and the producer implementation first. Verify the deployed TA image contains the
-exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The intended missing set is
-`AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC`; keep the existing 16 bar and seven quote/trade WebSocket subscriptions.
-Activation requires regular-session proof that actual provider events for these symbols reach Bayn and change its
-candidate coverage. Access checks and readiness alone cannot establish this. Existing historical captures retain their
-gaps, and completing the input stream does not establish a profitable strategy.
+exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The shared IEX plan streams completed bars for all
+22 source symbols, plus quotes and trades for `AAPL,AMZN,NVDA,SPY`, within the existing 30-unit admission budget.
+The remaining 18 symbols use latest REST quotes and trades. Bayn's entry candidates, the retained Torghut candidate
+configuration, and SPY keep their quote/trade paths. `IWM,QQQ,SMH` retain native streamed bars but receive sampled quotes/trades;
+their trade-derived microbars are no longer populated from the stream, so do not admit them to an execution universe
+requiring tick-volume evidence without reviewing this source allocation.
+
+The plan removes completed REST-bar polling from the live decision path. The six additional Bayn equities otherwise
+race the two-second minute decision cut when the next poll observes a newly completed provider bar. Streaming their
+native bars improves arrival opportunity without revising an immutable cut or extending data/inference deadlines.
+The pod-template subscription-plan annotation rolls the env-based configuration through normal GitOps. Activation
+requires regular-session proof of subscription acknowledgements, actual bar-to-feature arrival, and candidate coverage.
+Access checks and readiness alone cannot establish this. Existing historical captures retain their gaps, and completing
+the input stream does not establish a profitable strategy.
 
 Disabling polling does not remove retained sampled records. Keep compatible volume exclusions during rollback, or
 verify that restored offsets cannot replay sampled records into an older volume consumer.

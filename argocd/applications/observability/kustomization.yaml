@@ -72,7 +72,7 @@ helmCharts:
     valuesFile: tempo-v3-values.yaml
   - name: grafana
     repo: https://grafana-community.github.io/helm-charts
-    version: 14.5.0
+    version: 14.5.1
     releaseName: observability-grafana
     namespace: observability
     valuesFile: grafana-values.yaml

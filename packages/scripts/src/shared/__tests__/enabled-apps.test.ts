@@ -458,11 +458,11 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
-    expect(argoCdKustomization).toContain('argo-cd/v3.6.2/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argo-cd/v3.6.3/manifests/ha/install.yaml')
     expect(argoCdKustomization).not.toContain('argo-cd/v3.4.6/')
-    expect(applicationSetsReadme.split('argo-cd/v3.6.2/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
+    expect(applicationSetsReadme.split('argo-cd/v3.6.3/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
     expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
-    expect(argoCdReadme).toContain('## Argo CD v3.6.2 upgrade')
+    expect(argoCdReadme).toContain('## Argo CD v3.6.3 upgrade')
     expect(argoCdReadme).toContain('argocd login argocd.proompteng.ai --username admin --grpc-web')
     expect(argoCdReadme).not.toContain('argocd login argocd.proompteng.ai --sso')
     expect(argoCdReadme).toContain('kargo login https://kargo.ide-newton.ts.net --sso')
