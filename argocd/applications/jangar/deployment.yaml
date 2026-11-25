@@ -59,9 +59,9 @@ spec:
             - name: UI_PORT
               value: '8080'
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: a28f5a75191cda113b3069fa3a015f797c4d03aa
+              value: bf140931cde7cbd682922e0f94dcc13a9de454fb
             - name: JANGAR_GITOPS_REVISION
-              value: a28f5a75191cda113b3069fa3a015f797c4d03aa
+              value: bf140931cde7cbd682922e0f94dcc13a9de454fb
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: '120'
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -351,15 +351,15 @@ spec:
             - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
               value: '5000'
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "45125794438"
+              value: "45564192523"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:6000a822d9fab111fbe349be1235b8d744d017b1102e6342e90433ccfa9b9b13
+              value: sha256:99d41393521783991253350e02fc6c999f084ac786dced4385c2d15946c99fb7
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: a28f5a75191cda113b3069fa3a015f797c4d03aa
+              value: bf140931cde7cbd682922e0f94dcc13a9de454fb
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:6000a822d9fab111fbe349be1235b8d744d017b1102e6342e90433ccfa9b9b13
+              value: sha256:99d41393521783991253350e02fc6c999f084ac786dced4385c2d15946c99fb7
             - name: JANGAR_FLAMINGO_MODEL
               value: qwen38-flamingo
             - name: JANGAR_FLAMINGO_REASONING_EFFORT

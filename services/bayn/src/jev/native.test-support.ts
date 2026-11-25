@@ -72,13 +72,25 @@ export const withObservedEntryBars = <
             ...bar,
             high: Math.max(
               bar.high,
-              protocol.schemaVersion === 'bayn.jev.protocol.v42' && quote !== undefined
-                ? quote.askPrice * (shortFavored ? 1.04 : 1.035)
+              (protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v44') &&
+                quote !== undefined
+                ? quote.askPrice *
+                    (shortFavored
+                      ? 1.04
+                      : protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                          protocol.schemaVersion === 'bayn.jev.protocol.v44'
+                        ? 1.045
+                        : 1.035)
                 : bar.open * 1.05,
             ),
             low: Math.min(
               bar.low,
-              protocol.schemaVersion === 'bayn.jev.protocol.v42' && quote !== undefined
+              (protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v44') &&
+                quote !== undefined
                 ? quote.bidPrice * (shortFavored ? 0.94 : 0.97)
                 : bar.open * 0.95,
             ),
@@ -272,8 +284,8 @@ export const nativeJevFixture = (
                   symbol: 'AAPL',
                   windowEndAt: new Date(Math.floor(Date.parse(at) / 60_000) * 60_000 - 3 * 60_000).toISOString(),
                   bars: [
-                    { minuteBeforeWindowEnd: 27, open: 102, high: 103, low: 99.51, close: 102, volume: 100 },
-                    { minuteBeforeWindowEnd: 2, open: 102, high: 105.01, low: 101, close: 102, volume: 100 },
+                    { minuteBeforeWindowEnd: 27, open: 102, high: 103, low: 99.75, close: 102, volume: 100 },
+                    { minuteBeforeWindowEnd: 2, open: 102, high: 105.05, low: 101, close: 102, volume: 100 },
                     { minuteBeforeWindowEnd: 1, open: 102, high: 103, low: 101, close: 102, volume: 100 },
                   ],
                 }),

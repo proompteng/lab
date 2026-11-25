@@ -179,7 +179,10 @@ test('new native source obtains fresh eligibility before sampling its observatio
   )
   expect(Result.isFailure(outcome)).toBe(true)
   if (Result.isFailure(outcome) && outcome.failure._tag === 'JevAwaitingEvidence')
-    expect(outcome.failure.readiness).toBe(DecisionReadinessReason.InferenceUnavailable)
+    expect(outcome.failure).toMatchObject({
+      readiness: DecisionReadinessReason.DecisionPending,
+      availableAt: new Date(Date.parse(eligibilityAt) + fresh.protocol.inferenceValidityMs).toISOString(),
+    })
   else throw new Error('Expected a durably admitted batch awaiting inference')
   expect(admitted).toHaveLength(1)
   const admission = admitted[0]!

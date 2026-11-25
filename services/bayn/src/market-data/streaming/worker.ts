@@ -1,13 +1,10 @@
-import type { LoadedRuntimeConfig } from '../../config/model'
 import { Worker } from 'node:worker_threads'
 import { Deferred, Effect, Exit, Match, Queue, Redacted, Result, Schema } from 'effect'
 import { MarketChangedSchema, type MarketChangedWakeup } from '../../execution/events'
 import { strictParseOptions } from '../../schemas'
 import { marketHintRecoverySchedule } from './readiness'
 
-import { observeCaptureWorker, type CaptureHealth } from './capture-health'
 import { observeWorkerMemory, RuntimeIsolate, type RuntimeMemorySample } from '../../telemetry-memory'
-import type { NativeArrivalEpoch } from './native-arrival'
 import type { MarketSources } from './raw-events'
 import {
   KafkaMarketFailure,
@@ -20,14 +17,9 @@ import { IntradaySnapshotFailure, type IntradaySnapshotQuery } from '../intraday
 export type ProjectionStatus = Effect.Success<KafkaMarketProjection['Service']['status']>
 
 export interface ProjectionWorkerOptions {
-  readonly controllerKey: string
   readonly kafka: Omit<KafkaMarketConfig, 'password'> & { readonly password: string }
-  readonly database: {
-    readonly postgres: { readonly url: string; readonly tls: boolean; readonly caPath: string }
-    readonly operationTimeoutMs: number
-  }
   readonly sources: MarketSources
-  readonly build: NativeArrivalEpoch['build']
+  readonly sourceRevision: string
 }
 
 type ProjectionWorkerOperation =
@@ -36,12 +28,12 @@ type ProjectionWorkerOperation =
   | { readonly operation: 'read'; readonly query: IntradaySnapshotQuery }
 export type ProjectionWorkerRequest =
   | (ProjectionWorkerOperation & { readonly id: number })
-  | { readonly operation: 'health-ack' }
+  | { readonly operation: 'memory-ack' }
   | { readonly operation: 'market-changed-ack'; readonly eventId: string }
 
 export type ProjectionWorkerResponse =
   | { readonly _tag: 'MarketChanged'; readonly event: MarketChangedWakeup }
-  | { readonly _tag: 'CaptureHealth'; readonly health: CaptureHealth; readonly memory: RuntimeMemorySample | undefined }
+  | { readonly _tag: 'Memory'; readonly memory: RuntimeMemorySample | undefined }
   | { readonly _tag: 'Ready'; readonly value: ProjectionStatus }
   | {
       readonly _tag: 'Read'
@@ -69,20 +61,16 @@ export type ProjectionWorkerResponse =
       readonly cause: string
     }
 
-type Reply = Exclude<ProjectionWorkerResponse, { readonly _tag: 'Ready' | 'CaptureHealth' | 'MarketChanged' }>
+type Reply = Exclude<ProjectionWorkerResponse, { readonly _tag: 'Ready' | 'Memory' | 'MarketChanged' }>
 
 export const projectionWorkerOptions = (
   kafka: KafkaMarketConfig,
-  database: Pick<LoadedRuntimeConfig, 'postgres' | 'operationTimeoutMs'>,
   sources: MarketSources,
-  build: NativeArrivalEpoch['build'],
-  controllerKey: string,
+  sourceRevision: string,
 ): ProjectionWorkerOptions => ({
-  controllerKey,
   kafka: { ...kafka, password: Redacted.value(kafka.password) },
-  database: { ...database, postgres: { ...database.postgres, url: Redacted.value(database.postgres.url) } },
   sources,
-  build,
+  sourceRevision,
 })
 
 export const makeThreadedKafkaProjection = (
@@ -94,7 +82,6 @@ export const makeThreadedKafkaProjection = (
     }),
 ) =>
   Effect.gen(function* () {
-    const receiveHealth = yield* observeCaptureWorker
     const memory = yield* observeWorkerMemory(RuntimeIsolate.MarketProjection)
     const changed = yield* Queue.sliding<{ readonly event: MarketChangedWakeup; readonly worker: Worker }>(1)
     const restart = yield* Queue.dropping<void>(1)
@@ -152,11 +139,10 @@ export const makeThreadedKafkaProjection = (
           Queue.offerUnsafe(changed, { event: event.success, worker })
           return
         }
-        if (reply._tag === 'CaptureHealth') {
-          receiveHealth(reply.health)
+        if (reply._tag === 'Memory') {
           memory.receive(reply.memory)
           try {
-            worker.postMessage({ operation: 'health-ack' } satisfies ProjectionWorkerRequest)
+            worker.postMessage({ operation: 'memory-ack' } satisfies ProjectionWorkerRequest)
           } catch {}
           return
         }

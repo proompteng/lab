@@ -8,7 +8,12 @@ import { chartAssessmentsFixture } from './entry-inference.test-support'
 import { EntrySetup, makeEntryProposals } from './entry-proposals'
 import { evaluateSupportedEntryProposals, makeEntryJudgmentRequest } from './entry-questions'
 import { selectJevEntryCandidatesFromSupported } from './decision'
-import { defaultJevProtocolDocument, retainedJevProtocolV41Document, type JevProtocolMaterial } from './protocol'
+import {
+  defaultJevProtocolDocument,
+  retainedJevProtocolV41Document,
+  retainedJevProtocolV42Document,
+  type JevProtocolMaterial,
+} from './protocol'
 import { WebullSession } from '../market-data/webull-contract'
 import { webullEntryContextPolicy, type WebullEntryContext } from './webull-entry-context'
 
@@ -18,7 +23,7 @@ const fixture = (
   structureHigh = 103,
   webullContext: WebullEntryContext = null,
   protocol: JevProtocolMaterial = defaultJevProtocolDocument,
-  resistanceHigh = 112,
+  resistanceHigh = 113,
 ) => {
   const chart = Result.getOrThrow(
     makeNativeChartEvidence({
@@ -86,7 +91,10 @@ const fixture = (
   const prepared = Result.getOrThrow(
     makeEntryJudgmentRequest({
       ...input,
-      includeEquityObstruction: protocol.schemaVersion === 'bayn.jev.protocol.v42',
+      includeEquityObstruction:
+        protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v44',
     }),
   )
   if (prepared === null) throw new Error('Expected proposal questions')
@@ -324,7 +332,7 @@ describe('proposal-specific Jev structural judgments', () => {
   })
 
   test('v42 symmetric equity entries require overhead-resistance non-obstruction <= 0.30', () => {
-    const { input, responseFor, prepared } = fixture('AAPL', 104, 103, null, defaultJevProtocolDocument, 113)
+    const { input, responseFor, prepared } = fixture('AAPL', 104, 103, null, retainedJevProtocolV42Document, 113)
     expect(Object.keys(prepared.request.questions)).toEqual([
       'equity_support_recovery_confirmed',
       'equity_support_recovery_stop_invalidates',
@@ -333,7 +341,7 @@ describe('proposal-specific Jev structural judgments', () => {
     const admitted = Result.getOrThrow(
       evaluateSupportedEntryProposals({
         proposals: input.proposals,
-        protocol: defaultJevProtocolDocument,
+        protocol: retainedJevProtocolV42Document,
         response: responseFor({
           equity_support_recovery_confirmed: 0.9,
           equity_support_recovery_stop_invalidates: 0.85,
@@ -347,7 +355,7 @@ describe('proposal-specific Jev structural judgments', () => {
     const uncertain = Result.getOrThrow(
       evaluateSupportedEntryProposals({
         proposals: input.proposals,
-        protocol: defaultJevProtocolDocument,
+        protocol: retainedJevProtocolV42Document,
         response: responseFor({
           equity_support_recovery_confirmed: 0.9,
           equity_support_recovery_stop_invalidates: 0.85,
@@ -361,7 +369,7 @@ describe('proposal-specific Jev structural judgments', () => {
     const obstructed = Result.getOrThrow(
       evaluateSupportedEntryProposals({
         proposals: input.proposals,
-        protocol: defaultJevProtocolDocument,
+        protocol: retainedJevProtocolV42Document,
         response: responseFor({
           equity_support_recovery_confirmed: 0.9,
           equity_support_recovery_stop_invalidates: 0.85,

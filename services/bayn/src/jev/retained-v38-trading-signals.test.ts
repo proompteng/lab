@@ -258,7 +258,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
         planVersion: JevBatchPlanVersion.V8,
       }),
     )
-    expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v42')
+    expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v44')
     expect(defaultJevProtocolDocument.maximumEntryQuoteDriftBps).toBe(5)
     expect(defaultJevProtocolDocument.maximumEntryLimitSlippageBps).toBe(5)
     for (const candidate of plan.candidates) {

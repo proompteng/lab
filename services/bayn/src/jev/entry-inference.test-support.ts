@@ -43,7 +43,12 @@ export const entryEvaluationRequestFixture = (
     {
       minuteBeforeWindowEnd: 2,
       open: 103,
-      high: protocol.schemaVersion === 'bayn.jev.protocol.v42' ? 113 : 108,
+      high:
+        protocol.schemaVersion === 'bayn.jev.protocol.v43' || protocol.schemaVersion === 'bayn.jev.protocol.v44'
+          ? 115
+          : protocol.schemaVersion === 'bayn.jev.protocol.v42'
+            ? 113
+            : 108,
       low: 102,
       close: 104,
       volume: 100,
@@ -60,9 +65,18 @@ export const entryEvaluationRequestFixture = (
         schemaVersion: protocol.inputDefinition,
         webullContext: null,
         entryEconomics: {
-          maximumEntryQuoteDriftBps: protocol.schemaVersion === 'bayn.jev.protocol.v42' ? allowances.quoteDriftBps : 0,
+          maximumEntryQuoteDriftBps:
+            protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+            protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+            protocol.schemaVersion === 'bayn.jev.protocol.v44'
+              ? allowances.quoteDriftBps
+              : 0,
           maximumEntryLimitSlippageBps:
-            protocol.schemaVersion === 'bayn.jev.protocol.v42' ? allowances.limitSlippageBps : 0,
+            protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+            protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+            protocol.schemaVersion === 'bayn.jev.protocol.v44'
+              ? allowances.limitSlippageBps
+              : 0,
         },
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol, bars1m: bars },
@@ -93,7 +107,9 @@ export const chartInferenceFixture = (input: EntryInferenceMaterial, at: string)
   const prepared = Result.getOrThrow(
     (input.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
       input.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
-      input.protocol.schemaVersion === 'bayn.jev.protocol.v42'
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v44'
       ? makeInitialChartStageRequest
       : retainedJevChartStages.makeInitialChartStageRequest)({
       chart,
@@ -234,7 +250,9 @@ export const chartAssessmentsFixture = (source: ChartDecisionSource, at = source
   const stages =
     source.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
     source.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
-    source.protocol.schemaVersion === 'bayn.jev.protocol.v42'
+    source.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+    source.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+    source.protocol.schemaVersion === 'bayn.jev.protocol.v44'
       ? { makeInitialChartStageRequest, stagedChartAssessments }
       : retainedJevChartStages
   const initial = Result.getOrThrow(stages.makeInitialChartStageRequest(source))
@@ -328,14 +346,18 @@ export const entryCompletionFixture = (
     baseStart === null &&
     request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v40' &&
     request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v41' &&
-    request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v42'
+    request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v42' &&
+    request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v43' &&
+    request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v44'
   )
     throw new Error('Expected fixture base outcome')
   const nativeChart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
   const assessments = Result.getOrThrow(
     (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
       request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
-      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v42'
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v44'
       ? stagedChartAssessments
       : retainedJevChartStages.stagedChartAssessments)(
       { chart: nativeChart, protocol: request.request.protocol, funding: request.request.funding },
@@ -404,7 +426,9 @@ export const stagedCheckpointFixture = (
   at = request.observedAt,
   stages: ChartCheckpointCodecs = request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
   request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
-  request.request.protocol.schemaVersion === 'bayn.jev.protocol.v42'
+  request.request.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+  request.request.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+  request.request.protocol.schemaVersion === 'bayn.jev.protocol.v44'
     ? { makeInitialChartStageRequest }
     : retainedJevChartStages,
 ): Omit<StagedCheckpoint, 'terminals'> & {

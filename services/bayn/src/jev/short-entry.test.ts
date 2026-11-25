@@ -11,6 +11,8 @@ import {
   defaultJevProtocolDocument,
   retainedJevProtocolV40Document,
   retainedJevProtocolV41Document,
+  retainedJevProtocolV42Document,
+  retainedJevProtocolV43Document,
   decodeJevProtocol,
   type JevProtocolMaterial,
 } from './protocol'
@@ -347,7 +349,7 @@ describe('native JeV equity shorts', () => {
   })
 
   test('v42 applies 5 bps drift/slippage allowances and enforces G/L >= 1.0 on equity shorts', () => {
-    const input = fixture()
+    const input = fixture(retainedJevProtocolV42Document)
     const proposals = Result.getOrThrow(makeShortEntryProposals(input))
     expect(proposals.map((proposal) => proposal.source.setup)).toEqual([ShortEntrySetup.ResistanceRejection])
     expect(proposals[0]?.minimumEntryPriceMicros).toBe('100390000')
@@ -468,5 +470,99 @@ describe('native JeV equity shorts', () => {
       }),
     )
     expect(proposals.map((proposal) => proposal.source.setup)).toEqual([ShortEntrySetup.ResistanceRejection])
+  })
+
+  test('v44 retains the 15 bps short stop floor while accepting positive targets rejected by v43', () => {
+    const base = fixture()
+    const subRatioChart = Result.getOrThrow(
+      makeNativeChartEvidence({
+        symbol: 'AAPL',
+        windowEndAt: '2026-11-13T15:00:00.000Z',
+        bars: [
+          { minuteBeforeWindowEnd: 5, open: 101, high: 102, low: 100.5, close: 101, volume: 100 },
+          { minuteBeforeWindowEnd: 4, open: 101, high: 102, low: 100.5, close: 101, volume: 100 },
+          { minuteBeforeWindowEnd: 3, open: 100.8, high: 102, low: 98.55, close: 100.4, volume: 100 },
+          { minuteBeforeWindowEnd: 2, open: 100.2, high: 102, low: 99.6, close: 99.8, volume: 100 },
+          { minuteBeforeWindowEnd: 1, open: 99.8, high: 100.1, low: 99.7, close: 100.0, volume: 100 },
+        ],
+      }),
+    )
+    const subRatioAssessments = {
+      ...base.assessments,
+      barsHash: subRatioChart.barsHash,
+      pngHash: subRatioChart.pngHash,
+      support: {
+        ...base.assessments.support,
+        anchor: { status: 'ASSESSED' as const, barId: subRatioChart.bars[2]!.id, probability: 0.9 },
+      },
+      resistance: {
+        ...base.assessments.resistance,
+        anchor: { status: 'ASSESSED' as const, barId: subRatioChart.bars[0]!.id, probability: 0.9 },
+      },
+      base: { ...base.assessments.base, presence: { status: 'ASSESSED' as const, probability: 0.1 } },
+    }
+    const subRatioSource = { ...base, chart: subRatioChart, assessments: subRatioAssessments }
+    const v42Proposals = Result.getOrThrow(
+      makeShortEntryProposals({ ...subRatioSource, protocol: retainedJevProtocolV42Document }),
+    )
+    expect(v42Proposals.map((proposal) => proposal.source.setup)).toEqual([ShortEntrySetup.ResistanceRejection])
+    expect(
+      Result.getOrThrow(mayHaveFundableShortSource({ ...subRatioSource, protocol: retainedJevProtocolV42Document })),
+    ).toBe(true)
+    const v43Source = { ...subRatioSource, protocol: retainedJevProtocolV43Document }
+    expect(Result.getOrThrow(makeShortEntryProposals(v43Source))).toEqual([])
+    expect(Result.getOrThrow(mayHaveFundableShortSource(v43Source))).toBe(false)
+    expect(Result.getOrThrow(makeShortEntryProposals(subRatioSource)).map((proposal) => proposal.source.setup)).toEqual(
+      [ShortEntrySetup.ResistanceRejection],
+    )
+    expect(Result.getOrThrow(mayHaveFundableShortSource(subRatioSource))).toBe(true)
+
+    const makeStopFloorSource = (resistanceHigh: number) => {
+      const stopChart = Result.getOrThrow(
+        makeNativeChartEvidence({
+          symbol: 'AAPL',
+          windowEndAt: '2026-11-13T15:00:00.000Z',
+          bars: [
+            { minuteBeforeWindowEnd: 5, open: 100.1, high: resistanceHigh, low: 99.9, close: 100, volume: 100 },
+            { minuteBeforeWindowEnd: 4, open: 100.05, high: resistanceHigh, low: 95.0, close: 100, volume: 100 },
+            { minuteBeforeWindowEnd: 3, open: 100.05, high: resistanceHigh, low: 98.0, close: 100, volume: 100 },
+            { minuteBeforeWindowEnd: 2, open: 100.05, high: resistanceHigh, low: 99.5, close: 100, volume: 100 },
+            { minuteBeforeWindowEnd: 1, open: 100.0, high: 100.05, low: 99.95, close: 100, volume: 100 },
+          ],
+        }),
+      )
+      return {
+        chart: stopChart,
+        protocol: defaultJevProtocolDocument,
+        bidMicros: 100_000_000n,
+        askMicros: 100_000_000n,
+        capitalMicros: base.capitalMicros,
+        assessments: {
+          ...base.assessments,
+          barsHash: stopChart.barsHash,
+          pngHash: stopChart.pngHash,
+          support: {
+            ...base.assessments.support,
+            anchor: { status: 'ASSESSED' as const, barId: stopChart.bars[1]!.id, probability: 0.9 },
+          },
+          resistance: {
+            ...base.assessments.resistance,
+            anchor: { status: 'ASSESSED' as const, barId: stopChart.bars[0]!.id, probability: 0.9 },
+          },
+          base: { ...base.assessments.base, presence: { status: 'ASSESSED' as const, probability: 0.1 } },
+        },
+      }
+    }
+
+    // ask = 100.00: high = 100.13 -> stop = 100.14 (14 bps < 15 bps) must be rejected; high = 100.14 -> stop = 100.15 (15 bps) admitted
+    const tightSource = makeStopFloorSource(100.13)
+    expect(Result.getOrThrow(makeShortEntryProposals(tightSource))).toEqual([])
+    expect(Result.getOrThrow(mayHaveFundableShortSource(tightSource))).toBe(false)
+
+    const validSource = makeStopFloorSource(100.14)
+    expect(Result.getOrThrow(mayHaveFundableShortSource(validSource))).toBe(true)
+    const validProposals = Result.getOrThrow(makeShortEntryProposals(validSource))
+    expect(validProposals.map((proposal) => proposal.source.setup)).toEqual([ShortEntrySetup.ResistanceRejection])
+    expect(validProposals[0]?.stopPriceMicros).toBe('100150000')
   })
 })

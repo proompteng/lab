@@ -217,6 +217,8 @@ export const decodeStagedEntryHandoff = (
 ) =>
   Result.gen(function* () {
     if (
+      source.input.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      source.input.protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
       source.input.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
       source.input.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
       source.input.protocol.schemaVersion === 'bayn.jev.protocol.v40'
