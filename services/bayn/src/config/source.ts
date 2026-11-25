@@ -89,7 +89,6 @@ export const runtimeConfigSource = Config.all({
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
   capitalActivationRequestJson: Config.option(nonEmptyString('BAYN_CAPITAL_ACTIVATION_REQUEST')),
   researchCapitalBuildLineageJson: Config.option(nonEmptyString('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')),
-  paperAccountHandoffFromAccountId: Config.option(secretString('BAYN_PAPER_ACCOUNT_HANDOFF_FROM')),
   brokerAccess: Config.schema(BrokerAccessSchema, 'BAYN_BROKER_ACCESS').pipe(Config.withDefault(BrokerAccess.ReadOnly)),
   capitalAuthority: Config.schema(CapitalAuthoritySelectionSchema, 'BAYN_CAPITAL_AUTHORITY').pipe(
     Config.withDefault(CapitalAuthoritySelection.None),
@@ -140,7 +139,6 @@ export const runtimeConfigSource = Config.all({
       port: config.port,
       capitalActivationRequestJson: Option.getOrUndefined(config.capitalActivationRequestJson),
       researchCapitalBuildLineageJson: Option.getOrUndefined(config.researchCapitalBuildLineageJson),
-      paperAccountHandoffFromAccountId: Option.getOrUndefined(config.paperAccountHandoffFromAccountId),
       brokerAccess: config.brokerAccess,
       capitalAuthority: config.capitalAuthority,
       persistedCapitalGrantHash: Option.getOrUndefined(config.persistedCapitalGrantHash),

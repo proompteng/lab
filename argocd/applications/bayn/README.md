@@ -677,14 +677,14 @@ build lineage. It has no calendar expiry and does not need a daily rotation. Eve
 separate durable cycle with its own entry cutoff, forced-flatten window, risk budget, reconciliation gate, and terminal
 state. Rotate the mandate only when one of its bound identities changes.
 
-A mandate rotation must update the request content hash, build lineage, and activation generation in one reviewed
-change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, and runs the idempotent activation hook in
+Rotate the sealed request and its identity annotation together. Kargo derives the build lineage and activation
+generation from the reviewed Secret and the promoted build. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, and runs the idempotent activation hook in
 wave `0`. The broker feed and read-only status service roll in wave `1`. The activation hook binds the broker observation
 owner before the feed can persist Activity events and pass readiness. The hook itself cannot reach the broker.
 
 The SealedSecret's `proompteng.ai/bayn.mandate-identity` annotation records the request hash, strategy identity, authored
 build, and ciphertext hash without exposing the broker account. The manifest check compares it with the compiled
-strategy and all three runtime lineages. Regenerate this annotation from the validated request when sealing it;
+strategy. Kargo uses the annotation to populate the runtime lineage. Regenerate it from the validated request;
 changing an annotation does not authorize a different encrypted request. Runtime validation remains authoritative.
 Invalid static mandate configuration fails preparation with its specific reason before authority recovery begins.
 
@@ -701,8 +701,8 @@ The automatic Stage checks out that image revision, updates the status, worker, 
 image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
 research build lineage while preserving its authored request and build. The native hook still verifies the exact
 controller binding before the status service rolls out.
-Image and source bindings always update. Mandate lookup and lineage updates run only when the reviewed source contains
-that lineage, so an OBSERVE-only deactivation can use the same Stage without fabricating a mandate.
+Image and source bindings always update. The Stage populates mandate lineage when the SealedSecret includes a
+mandate identity.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
@@ -723,28 +723,13 @@ returns to OBSERVE-only operation. Never recreate the retired legacy controller.
 CRDs, PVCs, durable state, or controller pods by hand. Confirm exact reconciliation, zero unresolved mutations, and no
 broker-ledger advance before and after the handoff.
 
-### Replace an Alpaca PAPER account
+### Change the Alpaca account
 
-Use the read-only deployment between sessions and keep the previous account available for recovery. In the
-`bayn-alpaca-auth` SealedSecret, set `account-id`, `key-id`, and `secret-key` for the replacement account.
-Set `paper-account-handoff-from` to the previous Alpaca account ID. The controller derives the previous
-identity from that value. Use the IDs returned by each account's Alpaca account endpoint.
-
-1. In the reviewed handoff change, remove the current sealed capital request and its identity annotation.
-   Remove the request, kind, and build-lineage environment entries from the controller, activation Job,
-   and status Deployment together.
-2. Deliver the change through Kargo and Argo. The activation checks the replacement's broker observation
-   and requires the named predecessor to be flat and clear, with fresh exact reconciliation, no open
-   orders, and settled cycles, intents, and inference. Under the existing writer fence it appends a new
-   OBSERVE generation, preserves both account identities and their history, and retires the old controller
-   before starting the replacement controller.
-3. Verify the new account is bound and reconciles exactly in OBSERVE. Remove
-   `paper-account-handoff-from` when installing the new account's PAPER mandate using the rotation above.
-   Verify the matching account and the first natural order lifecycle.
-
-A retry of the same handoff reuses the selected OBSERVE generation. To move back after selection, use a
-reviewed handoff in the reverse direction with the same settlement checks. Same-account API key rotation uses
-the existing SealedSecret and requires no handoff field.
+Bayn uses the account configured in the `bayn-alpaca-auth` SealedSecret. Change `account-id`, `key-id`,
+and `secret-key` together. Between sessions, normal activation replaces the settled account and
+preserves its trading history. Include the configured account's PAPER mandate to enable trading,
+or omit `capital-activation-request` and its mandate annotation for OBSERVE. Key rotation for the
+same account only changes the API keys.
 
 ### Execution activation service migration
 

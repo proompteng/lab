@@ -1,7 +1,6 @@
-import { Redacted, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { decodeBrokerConnection, type BrokerConnection } from '../broker/connection'
-import { BrokerEnvironment, makeBrokerIdentity } from '../broker/identity'
 import { EmbeddedBuildMetadataSchema, type EmbeddedBuildMetadata } from '../build'
 import { BrokerAccess } from '../execution/authority'
 import { CapitalAuthoritySelection, resolveExecutionPolicy, type ExecutionPolicy } from '../execution/configuration'
@@ -62,7 +61,6 @@ const decodeAlpaca = (
   const count = configuredCredentialCount(configured)
   if (count === 0) return fail({ _tag: 'MissingAlpacaCredentials' })
   if (count !== 3) return fail({ _tag: 'IncompleteAlpacaCredentials', configured })
-  if (parsed.authorityGenerationHash === undefined) return fail({ _tag: 'MissingAlpacaAuthorityGeneration' })
 
   const accountId = parsed.configuredAlpaca.accountId
   const key = parsed.configuredAlpaca.key
@@ -85,7 +83,7 @@ const decodeAlpaca = (
     ? fail({ _tag: 'InvalidBrokerConnection', cause: decoded.failure })
     : Result.succeed({
         ...decoded.success,
-        authorityGenerationHash: parsed.authorityGenerationHash,
+        authorityGenerationHash: parsed.authorityGenerationHash ?? decoded.success.identity.identityHash,
         reconciliationIntervalMs: parsed.configuredAlpaca.reconciliationIntervalMs,
       })
 }
@@ -173,33 +171,6 @@ const runtimeBuildMetadata = (
   })
 }
 
-const resolvePaperAccountHandoff = (
-  parsed: ParsedRuntimeConfig,
-  alpaca: AlpacaRuntimeConfig,
-): Result.Result<string | undefined, RuntimeConfigResolutionFailure> => {
-  if (parsed.paperAccountHandoffFromAccountId === undefined) return Result.succeed(undefined)
-  const accountId = Redacted.value(parsed.paperAccountHandoffFromAccountId)
-  if (
-    alpaca.identity.environment !== BrokerEnvironment.Sandbox ||
-    parsed.brokerAccess !== BrokerAccess.ReadOnly ||
-    parsed.capitalAuthority !== CapitalAuthoritySelection.None ||
-    parsed.capitalActivationRequestJson !== undefined ||
-    parsed.researchCapitalBuildLineageJson !== undefined ||
-    parsed.persistedCapitalGrantHash !== undefined ||
-    accountId === alpaca.expectedAccountId
-  )
-    return fail({ _tag: 'InvalidPaperAccountHandoff' })
-  return makeBrokerIdentity({
-    schemaVersion: alpaca.identity.schemaVersion,
-    provider: alpaca.identity.provider,
-    environment: BrokerEnvironment.Sandbox,
-    accountId,
-  }).pipe(
-    Result.map((identity) => identity.identityHash),
-    Result.mapError(() => ({ _tag: 'InvalidPaperAccountHandoff' as const })),
-  )
-}
-
 const baseConfig = (
   parsed: ParsedRuntimeConfig,
   execution: ExecutionPolicy,
@@ -231,13 +202,11 @@ const loadedConfig = (
   execution: ExecutionPolicy,
   build: RuntimeBuildMetadata,
   alpaca: AlpacaRuntimeConfig,
-  paperAccountHandoffFrom: string | undefined,
 ): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
   const common = baseConfig(parsed, execution, build, alpaca)
   return Result.succeed({
     ...common,
     runtimeMode: 'AutonomousService',
-    ...(paperAccountHandoffFrom === undefined ? {} : { paperAccountHandoffFrom }),
     execution: execution as LoadedRuntimeConfig['execution'],
     alpaca,
   })
@@ -250,8 +219,6 @@ export const resolveRuntimeConfig = (
   const alpaca = decodeAlpaca(parsed)
   if (Result.isFailure(alpaca)) return Result.fail(alpaca.failure)
   if (alpaca.success === undefined) return Result.fail({ _tag: 'MissingAlpacaCredentials' })
-  const paperAccountHandoffFrom = resolvePaperAccountHandoff(parsed, alpaca.success)
-  if (Result.isFailure(paperAccountHandoffFrom)) return Result.fail(paperAccountHandoffFrom.failure)
   const execution = resolvePolicy(parsed, alpaca.success)
   if (Result.isFailure(execution)) return Result.fail(execution.failure)
   const reconciliationTiming = validateExecutionReconciliationTiming(parsed, execution.success, alpaca.success)
@@ -262,7 +229,7 @@ export const resolveRuntimeConfig = (
   if (Result.isFailure(postgresTls)) return Result.fail(postgresTls.failure)
   const build = runtimeBuildMetadata(parsed, input.embeddedBuildMetadata)
   if (Result.isFailure(build)) return Result.fail(build.failure)
-  return loadedConfig(parsed, execution.success, build.success, alpaca.success, paperAccountHandoffFrom.success)
+  return loadedConfig(parsed, execution.success, build.success, alpaca.success)
 }
 
 export type { BrokerConnection }

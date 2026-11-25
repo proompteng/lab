@@ -5,14 +5,17 @@ import { Effect, Layer, Redacted, Result } from 'effect'
 
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
 import { makeAuthorityPostgres } from './authority-shared'
-import { makeObserveAuthorityInterpreter } from './observe-authority'
+import {
+  makeObserveAuthorityInterpreter,
+  previousConfiguredController,
+  selectConfiguredBrokerAccount,
+} from './observe-authority'
 import { migrationLoader } from '../migrations'
 import { Authority } from '../../execution/contracts'
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from '../../strategy'
 import { makeStrategyProtocolHashResult } from '../../contracts'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
-import { selectPaperAccount, verifyPaperAccountHandoff } from './paper-account-handoff'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const broker = (accountId: string) =>
@@ -25,7 +28,7 @@ const broker = (accountId: string) =>
     }),
   )
 
-integration('PAPER account handoff against migrated PostgreSQL', () => {
+integration('Configured broker account against migrated PostgreSQL', () => {
   test('requires fresh, flat predecessor evidence and creates one linked OBSERVE generation', async () => {
     if (baynTestPostgresUrl === undefined) throw new Error('Missing test PostgreSQL URL')
     const postgres = PgClient.layer({ url: Redacted.make(baynTestPostgresUrl), maxConnections: 1 }).pipe(
@@ -82,25 +85,42 @@ integration('PAPER account handoff against migrated PostgreSQL', () => {
           VALUES (${from.identityHash}, ${sha256('controller plan')}, true, 1, 0)`
 
         const unchanged = yield* predecessorStore.readAuthorityState
-        const handoff = { from: from.identityHash, to, reconciliationStaleThresholdMs: 120_000 }
-        expect(Result.isFailure(yield* selectPaperAccount(handoff).pipe(Effect.result))).toBe(true)
+        const select = selectConfiguredBrokerAccount(to, 120_000)
+        expect(yield* selectConfiguredBrokerAccount(from, 120_000)).toBeNull()
+        expect(Result.isFailure(yield* select.pipe(Effect.result))).toBe(true)
         yield* reconcile('nonflat reconciliation', 1)
-        expect(Result.isFailure(yield* selectPaperAccount(handoff).pipe(Effect.result))).toBe(true)
+        expect(Result.isFailure(yield* select.pipe(Effect.result))).toBe(true)
         yield* reconcile('settled reconciliation', 0)
-        expect(
-          Result.isFailure(
-            yield* selectPaperAccount({ ...handoff, from: sha256('wrong account') }).pipe(Effect.result),
-          ),
-        ).toBe(true)
+        const pending = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO intents (
+            intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id, decision_hash, policy_hash,
+            account_id, client_order_id, symbol, side, order_type, time_in_force, quantity_atoms,
+            notional_limit_micros, limit_price_micros, state, created_at, updated_at
+          ) VALUES (
+            ${sha256('pending intent')}, 'bayn.execution-intent.v5', ${active}, 'jev',
+            ${sha256('pending cycle')}, ${sha256('pending decision')}, ${sha256('pending policy')},
+            ${from.accountId}, 'pending-intent', 'AAPL', 'BUY', 'LIMIT', 'DAY',
+            1000000, 1000000000, 1000000000000, 'PLANNED', ${activatedAt}, ${activatedAt}
+          )`
+              return yield* select
+            }),
+          )
+          .pipe(Effect.result)
+        expect(pending).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'the current broker account has not settled' },
+        })
         expect(yield* predecessorStore.readAuthorityState).toEqual(unchanged)
         expect(yield* sql`SELECT generation_hash FROM authority_generations ORDER BY authority_version`).toEqual([
           { generation_hash: root },
           { generation_hash: active },
         ])
 
-        yield* verifyPaperAccountHandoff(handoff)
-        expect(yield* predecessorStore.readAuthorityState).toEqual(unchanged)
-        yield* selectPaperAccount(handoff)
+        expect(yield* select).toBe(from.identityHash)
+        expect(yield* previousConfiguredController(sql, to)).toBe(from.identityHash)
+        expect(yield* previousConfiguredController(sql, from)).toBeNull()
         const targetStore = makeObserveAuthorityInterpreter(sql, authority, to)
         const selected = yield* targetStore.readOrInitializeObserveAuthority({
           generationHash: root,
@@ -118,7 +138,7 @@ integration('PAPER account handoff against migrated PostgreSQL', () => {
           ),
         ).toBe(true)
 
-        yield* selectPaperAccount(handoff)
+        expect(yield* select).toBe(from.identityHash)
         expect(yield* targetStore.readAuthorityState).toEqual(selected)
         expect(
           yield* sql`SELECT generation_hash,previous_generation_hash,account_id,maximum
