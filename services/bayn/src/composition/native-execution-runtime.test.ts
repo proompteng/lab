@@ -740,13 +740,7 @@ describe('native execution runtime', () => {
     version: '1',
     updated_at: '2026-11-05T18:00:00.000Z',
     observed_at: new Date('2026-11-05T18:01:00.000Z'),
-    previous_generation_hash: null,
-    authority_version: '1',
-    account_id: brokerIdentity.accountId,
-    broker_identity_schema_version: brokerIdentity.schemaVersion,
-    broker_identity_hash: brokerIdentity.identityHash,
-    broker_provider: brokerIdentity.provider,
-    broker_environment: brokerIdentity.environment,
+    replaces_account: false,
   }
 
   test.each([{ rows: [] }, { rows: [authorityRow] }])(
@@ -766,25 +760,9 @@ describe('native execution runtime', () => {
   )
 
   test('authority preflight recognizes a different configured account', async () => {
-    const other = Result.getOrThrow(
-      makeBrokerIdentity({
-        schemaVersion: brokerIdentity.schemaVersion,
-        provider: brokerIdentity.provider,
-        environment: brokerIdentity.environment,
-        accountId: 'other-paper-account',
-      }),
-    )
     const result = await Effect.runPromise(
       observePreflight(
-        Effect.succeed([
-          {
-            ...authorityRow,
-            maximum: 'PAPER',
-            effective: 'PAPER',
-            account_id: other.accountId,
-            broker_identity_hash: other.identityHash,
-          },
-        ]),
+        Effect.succeed([{ ...authorityRow, maximum: 'PAPER', effective: 'PAPER', replaces_account: true }]),
       ).pipe(Effect.result),
     )
     expect(Result.isSuccess(result)).toBe(true)
@@ -795,6 +773,7 @@ describe('native execution runtime', () => {
     { ...authorityRow, maximum: 'invalid' },
     { ...authorityRow, version: '0' },
     { ...authorityRow, updated_at: '2026-11-05T18:02:00.000Z' },
+    { ...authorityRow, replaces_account: null },
   ])('authority preflight rejects incompatible or invalid durable state: %j', async (row) => {
     const result = await Effect.runPromise(observePreflight(Effect.succeed([row])).pipe(Effect.result))
     expect(Result.isFailure(result)).toBe(true)

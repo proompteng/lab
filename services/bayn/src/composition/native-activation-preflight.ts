@@ -4,8 +4,7 @@ import { Data, Effect, Result, Schema } from 'effect'
 import type { ApplicationPlan } from '../app'
 import { databaseUtcInstant } from '../db/clock'
 import { authorityStateFromRow } from '../db/execution-store/authority-shared'
-import { validateObserveGenerationBrokerIdentityReplay } from '../db/execution-store/observe-authority'
-import { AuthorityGenerationBrokerBinding, AuthorityStateObservationRow } from '../db/execution-store/rows'
+import { AuthorityStateObservationRow } from '../db/execution-store/rows'
 import { observeCycleGenerationHash, validateAuthorityObservation } from '../execution/capital-grant-algebra'
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
 import { isExecutionMandateRecoveryRestriction, isRetiredOneShotMandateRestriction } from '../execution/mandate'
@@ -33,9 +32,9 @@ export const validateObserveActivationAuthority = (authority: AuthorityState | n
 }
 
 const decodePreflightRows = Schema.decodeUnknownEffect(
-  Schema.Array(
-    Schema.Struct({ ...AuthorityStateObservationRow.fields, ...AuthorityGenerationBrokerBinding.fields }),
-  ).check(Schema.isMaxLength(1)),
+  Schema.Array(Schema.Struct({ ...AuthorityStateObservationRow.fields, replaces_account: Schema.Boolean })).check(
+    Schema.isMaxLength(1),
+  ),
   strictParseOptions,
 )
 
@@ -48,8 +47,9 @@ export const nativeActivationPreflight = (plan: ApplicationPlan) =>
       SELECT s.schema_version, s.generation_hash, s.maximum, s.effective, s.kill_state, s.reason,
         s.version::text AS version, ${databaseUtcInstant(sql, sql`s.updated_at`)} AS updated_at,
         clock_timestamp() AS observed_at,
-        g.previous_generation_hash, g.authority_version::text AS authority_version, g.account_id,
-        g.broker_identity_schema_version, g.broker_identity_hash, g.broker_provider, g.broker_environment
+        CASE WHEN g.generation_hash IS NOT NULL
+          THEN coalesce(g.broker_identity_hash <> ${plan.config.alpaca.identity.identityHash}, false)
+        END AS replaces_account
       FROM authority_state s LEFT JOIN authority_generations g USING (generation_hash)
       WHERE s.singleton
     `.pipe(Effect.flatMap(decodePreflightRows))
@@ -57,10 +57,7 @@ export const nativeActivationPreflight = (plan: ApplicationPlan) =>
     if (row === undefined) return
     const authority = yield* authorityStateFromRow(row)
     yield* Effect.fromResult(validateAuthorityObservation(authority, row.observed_at))
-    const binding = validateObserveGenerationBrokerIdentityReplay(row, plan.config.alpaca.identity)
-    if (Result.isFailure(binding) && binding.failure.failure === 'conflict' && row.broker_identity_hash !== null) return
-    yield* Effect.fromResult(binding)
-    yield* Effect.fromResult(validateObserveActivationAuthority(authority))
+    if (!row.replaces_account) yield* Effect.fromResult(validateObserveActivationAuthority(authority))
   }).pipe(
     Effect.mapError(
       (cause) =>
