@@ -41,7 +41,7 @@ test('autonomous startup admits the exact source-selected intraday-alpha active 
   const activeRuntime = makeActiveStrategyRuntime(activePolicy, provenance)
   const result = Result.getOrThrow(prepare(activeRuntime))
   expect(result.strategyProtocolHash).toBe(Result.getOrThrow(makeStrategyProtocolHashResult(provenance.strategy)))
-  expect(result.strategyProtocolHash).toBe('9db5136164b24b72ecc56970707ce67d1db35af73cafd174be9ca614d8bba60c')
+  expect(result.strategyProtocolHash).toBe('1e5cec4058a836a1124b381a1ddc8ec849237fc0011a9425c21254a18beaa9e1')
 })
 
 test('autonomous startup also admits retained shared v44 protocol evidence', () => {

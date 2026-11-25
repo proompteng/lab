@@ -44,6 +44,7 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner/index'
 import { strategyTradingProtocol } from '../strategy'
 import { isMiddayAlphaTarget } from '../strategy/runtime-decision'
+import { resolveAlphaRegularSession } from '../strategy/intraday-alpha/signals'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import type { JevExitTarget } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
@@ -778,29 +779,52 @@ interface ExecutionReconciliation {
   readonly refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>
 }
 
-const closeWindowForCycle = (
+export const closeWindowForCycle = (
   cycle: AutonomousCycle,
   document: ExecutionDecisionDocument,
   protocol: ReturnType<typeof strategyTradingProtocol>,
   observedAt: string,
 ) =>
-  Effect.fromResult(
-    resolveExecutionCycleCloseWindow({
-      executionCalendarSchemaVersion: cycle.window.executionCalendarSchemaVersion,
-      recoveryExpiresAt:
-        document.executionSession === undefined
-          ? null
-          : executionCloseRecoveryExpiry(document.executionSession.calendar, observedAt),
-      observedAt,
-      executionCloseAt: cycle.window.executionCloseAt,
-      sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
-      sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
-    }),
-  ).pipe(
-    Effect.mapError((cause) =>
-      mutationRunnerError({ message: 'execution cycle close window is invalid', cause, failure: 'contract' }),
-    ),
-  )
+  Effect.gen(function* () {
+    const target = document.strategyDecision
+    let executionCloseAt = cycle.window.executionCloseAt
+    let sessionCloseStartLeadMs = protocol.flattenBeforeCloseMinutes * 60_000
+    if (target?.schemaVersion === 'bayn.intraday-alpha-target.v1' && document.executionSession !== undefined) {
+      // Intraday alpha flattens before the NYSE regular-session close (16:00 ET), even when the
+      // data calendar spans extended hours (08:00-17:00 ET).
+      const regular = yield* Effect.fromResult(
+        resolveAlphaRegularSession(document.executionSession.calendar, target.sessionDate),
+      ).pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({
+            message: 'intraday alpha close window requires regular session hours',
+            cause,
+            failure: 'contract',
+          }),
+        ),
+      )
+      if (regular.closeAt < executionCloseAt) executionCloseAt = regular.closeAt
+      const flattenDeadlineMs = regular.openMs + target.policy.middayReversion.flattenMinuteFromOpen * 60_000
+      sessionCloseStartLeadMs = Math.max(sessionCloseStartLeadMs, regular.closeMs - flattenDeadlineMs)
+    }
+    return yield* Effect.fromResult(
+      resolveExecutionCycleCloseWindow({
+        executionCalendarSchemaVersion: cycle.window.executionCalendarSchemaVersion,
+        recoveryExpiresAt:
+          document.executionSession === undefined
+            ? null
+            : executionCloseRecoveryExpiry(document.executionSession.calendar, observedAt),
+        observedAt,
+        executionCloseAt,
+        sessionCloseStartLeadMs,
+        sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
+      }),
+    ).pipe(
+      Effect.mapError((cause) =>
+        mutationRunnerError({ message: 'execution cycle close window is invalid', cause, failure: 'contract' }),
+      ),
+    )
+  })
 
 const executeBoundExecutionCycle = (
   input: ObserveAutonomousCycleInput,

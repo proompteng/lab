@@ -163,7 +163,7 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(
 
     const maxPerSide = input.policy.catalystVeto.maxCandidatesPerSide
     const vetoCandidates: CatalystVetoRequestInput[] =
-      extracted.context.phase === IntradayAlphaPhase.OutsideWindow
+      !input.policy.catalystVeto.enabled || extracted.context.phase === IntradayAlphaPhase.OutsideWindow
         ? []
         : [...extracted.longPool.slice(0, maxPerSide), ...extracted.shortPool.slice(0, maxPerSide)].map(
             (candidate) => ({

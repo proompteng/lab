@@ -63,10 +63,10 @@ let
   # SHA-256 identity for bayn.intraday-alpha.behavior.v2, verified by the production executable.
   strategyBehaviorHash = "e5a5943391910843c5c9e78a07f5acfe51fb2f18486abf3ddd09f71b441cda59";
   # Canonical hash of the compiled bayn.intraday-alpha-policy.v1 document.
-  strategyParameterHash = "3ada679a485106bffbd19cce134eec2f0e72d89043516d0fb62bf12c072215a8";
+  strategyParameterHash = "fd17d5baaa8ab23cb7bc10dfa357aeef4d2e990b58e2a7fb20e0f00b5d8e634b";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "9db5136164b24b72ecc56970707ce67d1db35af73cafd174be9ca614d8bba60c";
+  strategyProtocolHash = "1e5cec4058a836a1124b381a1ddc8ec849237fc0011a9425c21254a18beaa9e1";
   # Canonical uncapped sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "817efba3d61cf0c3845999988cf4507e015a60ccf3d13c7f840dac366173007e";

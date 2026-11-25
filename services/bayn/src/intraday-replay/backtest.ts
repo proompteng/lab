@@ -272,15 +272,23 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay must use the unchanged source-controlled strategy' }),
       )
+    const allowedEmbeddedBuilds = [
+      yield* canonicalHashV1Result({
+        sourceRevision: decoded.build.sourceRevision,
+        imageRepository: decoded.build.imageRepository,
+        strategyBehaviorHash: activeStrategyBehaviorHash,
+        strategyParameterHash: activeParameterHash,
+      }),
+      yield* canonicalHashV1Result({
+        sourceRevision: decoded.build.sourceRevision,
+        imageRepository: decoded.build.imageRepository,
+        strategyBehaviorHash: executableIdentity.strategy.behaviorHash,
+        strategyParameterHash: executableIdentity.strategy.parameterHash,
+      }),
+    ]
     if (
       embeddedBuildMetadata !== undefined &&
-      (yield* canonicalHashV1Result(embeddedBuildMetadata)) !==
-        (yield* canonicalHashV1Result({
-          sourceRevision: decoded.build.sourceRevision,
-          imageRepository: decoded.build.imageRepository,
-          strategyBehaviorHash: activeStrategyBehaviorHash,
-          strategyParameterHash: activeParameterHash,
-        }))
+      !allowedEmbeddedBuilds.includes(yield* canonicalHashV1Result(embeddedBuildMetadata))
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay build differs from the executable embedded build' }),

@@ -13,8 +13,8 @@ import {
   type RecordedRuntimeStrategyDecision,
 } from './strategy/runtime-decision'
 import { MarketKind, instrumentMarket } from './instruments'
-import { compareRecords, normalizeQuote } from './market-data/intraday/verification'
-import { decodeIntradayQuoteRows } from './market-data/intraday/rows'
+import { compareRecords, normalizeBar, normalizeQuote } from './market-data/intraday/verification'
+import { decodeIntradayBarRows, decodeIntradayQuoteRows } from './market-data/intraday/rows'
 import { RetainedJevEntryTargetSchema, RetainedJevExitTargetSchema } from './jev/retained-jev-targets'
 import { RetainedJevAblationTargetSchema, RetainedJevMomentumTargetSchema } from './jev/retained-jev-control-targets'
 import { JevContractError } from './jev/contract'
@@ -1042,6 +1042,39 @@ const streamingPricingEvidenceIssues = (
     terms === undefined
   )
     return [{ path: ['plannerInput'], issue: 'streaming execution requires quote-bound planner inputs' }]
+  const target = document.strategyDecision
+  const isIntradayAlpha = target?.schemaVersion === 'bayn.intraday-alpha-target.v1'
+  const alphaBarCloses = isIntradayAlpha
+    ? Result.gen(function* () {
+        const rangeEndAt = target.evidence.observation.manifest['rangeEndAt']
+        if (typeof rangeEndAt !== 'string')
+          return yield* Result.fail(
+            new JevContractError({ message: 'Intraday alpha observation manifest lacks rangeEndAt' }),
+          )
+        const expectedBarMs = Date.parse(rangeEndAt) - 60_000
+        const decodedBars = yield* decodeIntradayBarRows(target.evidence.observation.rows.bars)
+        const bars = yield* Result.all(decodedBars.map(normalizeBar))
+        const closes = new Map<string, { readonly bid: bigint; readonly ask: bigint }>()
+        for (const bar of bars) {
+          if (Date.parse(bar.eventAt) !== expectedBarMs) continue
+          if (!Number.isFinite(bar.close) || bar.close <= 0) continue
+          const bid = quantizeInstrumentPriceMicros(
+            bar.symbol,
+            yield* priceNumberToMicros(bar.close, `bar close for ${bar.symbol}`, 'DOWN'),
+            'DOWN',
+          )
+          const ask = quantizeInstrumentPriceMicros(
+            bar.symbol,
+            yield* priceNumberToMicros(bar.close, `bar close for ${bar.symbol}`, 'UP'),
+            'UP',
+          )
+          if (bid > 0n && ask > 0n) closes.set(bar.symbol, { bid, ask })
+        }
+        return closes
+      })
+    : undefined
+  if (alphaBarCloses !== undefined && Result.isFailure(alphaBarCloses))
+    return [{ path: ['strategyDecision', 'evidence'], issue: 'intraday alpha bar evidence is invalid' }]
   for (const symbol of binding.symbols) {
     const quote = snapshot.latestQuotes[symbol]
     if (quote === undefined)
@@ -1055,25 +1088,61 @@ const streamingPricingEvidenceIssues = (
     if (Result.isFailure(values))
       return [{ path: ['executionMarketDataRows'], issue: 'streaming quote exceeds exact numeric bounds' }]
     const { bid, ask, bidSize, askSize } = values.success
-    const target = document.strategyDecision
     if (isProtectedEntryTarget(target) && target.selectedSymbols.includes(symbol)) {
       const plan = target.exitPolicy.plans[symbol]
       const short = plan !== undefined && isShortExitPlan(plan)
-      // Match compileJevEntry at the exact executable closing side before price quantization.
+      if (isIntradayAlpha) {
+        const twoSided = bid > 0n && ask > 0n
+        if (
+          plan === undefined ||
+          (twoSided &&
+            (short
+              ? bid >= BigInt(plan.levels.stopPriceMicros) && ask >= BigInt(plan.levels.stopPriceMicros)
+              : bid <= BigInt(plan.levels.stopPriceMicros) && ask <= BigInt(plan.levels.stopPriceMicros))) ||
+          (twoSided &&
+            (short
+              ? bid <= BigInt(plan.levels.profitLimitPriceMicros) && ask <= BigInt(plan.levels.profitLimitPriceMicros)
+              : bid >= BigInt(plan.levels.profitLimitPriceMicros) && ask >= BigInt(plan.levels.profitLimitPriceMicros)))
+        )
+          return [
+            {
+              path: ['executionMarketDataRows'],
+              issue: 'entry pricing must remain strictly between the selected stop and profit target',
+            },
+          ]
+      } else {
+        // Match compileJevEntry at the exact executable closing side before price quantization.
+        if (
+          plan === undefined ||
+          (short ? ask >= BigInt(plan.levels.stopPriceMicros) : bid <= BigInt(plan.levels.stopPriceMicros)) ||
+          (short
+            ? ask <= BigInt(plan.levels.profitLimitPriceMicros)
+            : bid >= BigInt(plan.levels.profitLimitPriceMicros))
+        )
+          return [
+            {
+              path: ['executionMarketDataRows'],
+              issue: 'entry pricing must remain strictly between the selected stop and profit target',
+            },
+          ]
+      }
+    }
+    const increment = BigInt(plannerInput.precision.quantityIncrementAtoms)
+    if (isIntradayAlpha) {
+      const barClose = alphaBarCloses?.success.get(symbol)
       if (
-        plan === undefined ||
-        (short ? ask >= BigInt(plan.levels.stopPriceMicros) : bid <= BigInt(plan.levels.stopPriceMicros)) ||
-        (short ? ask <= BigInt(plan.levels.profitLimitPriceMicros) : bid >= BigInt(plan.levels.profitLimitPriceMicros))
+        barClose === undefined ||
+        prices.bidPriceMicros[symbol] !== barClose.bid.toString() ||
+        prices.askPriceMicros[symbol] !== barClose.ask.toString() ||
+        prices.priceMicros[symbol] !== prices.askPriceMicros[symbol]
       )
         return [
           {
-            path: ['executionMarketDataRows'],
-            issue: 'entry pricing must remain strictly between the selected stop and profit target',
+            path: ['plannerInput'],
+            issue: `intraday alpha entry price does not match the verified completed bar close for ${symbol}`,
           },
         ]
-    }
-    const increment = BigInt(plannerInput.precision.quantityIncrementAtoms)
-    if (
+    } else if (
       prices.bidPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, bid, 'DOWN').toString() ||
       prices.askPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, ask, 'UP').toString() ||
       prices.priceMicros[symbol] !== prices.askPriceMicros[symbol] ||
@@ -1409,6 +1478,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
             targetWeights: jevPlanningTargetWeights(target),
             capitalMicros: observation.portfolio.brokerState.account.equityMicros,
             precision: observation.protocol.executionModel.precision,
+            ...(target.schemaVersion === 'bayn.intraday-alpha-target.v1' ? { ignoreDisplayedBidSize: true } : {}),
           }),
           equityShortEntries: protectedEntryShortEligibility(target),
         }
@@ -1458,7 +1528,10 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     target.selectedSymbols.some(
       (symbol) =>
-        (document.entryLimitSlippageBps ?? 0) > jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps,
+        (document.entryLimitSlippageBps ?? 0) >
+        (target.schemaVersion === 'bayn.intraday-alpha-target.v1'
+          ? target.policy.entryLimitSlippageBps
+          : jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps),
     )
   )
     issues.push({

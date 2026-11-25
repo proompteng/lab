@@ -14,8 +14,8 @@
    - Computes gap-resilient session VWAP directly from full-session RTH 1m bars (`09:30 ET` through completed window end, avoiding Flink's single-minute `GAP` resets).
    - Requires `minimumSessionBars >= 90` and `minimumRecent15MinBars >= 13` (strictly causal recent-tape liquidity filter).
    - Ranks cross-sectional `rel_VWAP_vs_SPY = (close/vwap - 1) - (spyClose/spyVwap - 1)` and selects `2` Long laggards + `2` Short leaders at `18%` weight per leg (`36%` Long + `54%` Short `150%`-collateral = `90%` max buying power — fits both `1×` cash-only and `2×` margin accounts with `0` `InsufficientBuyingPower` blocks). Falls back to a single `20%` extreme Long if borrow eligibility blocks all shorts.
-   - `500 bp` catastrophe protective stop / `800 bp` profit target held until `15:55 ET` EOD flatten (`flattenMinuteFromOpen = 385`), allowing afternoon institutional rebalancing reversion to play out without noise stop-outs.
-   - Uses `jev-1.14.0` as a fast single-stage numerical `catalyst_dislocation_veto` (`>= 0.85` threshold) across top candidates; vetoed names fall through to the next ranked candidate and provider outages fail open (`status: UNAVAILABLE`).
+   - `500 bp` catastrophe protective stop / `800 bp` profit target held until `15:55 ET` EOD flatten (`flattenMinuteFromOpen = 385`), anchored strictly to the NYSE regular-session close (`16:00 ET`) even when the data calendar spans extended hours (`08:00–17:00 ET`).
+   - Runs purely deterministically (`catalystVeto.enabled = false`) with zero live un-journaled Jev API calls; enabling live catalyst vetos in a future policy requires durable inference expense journaling first.
 
 3. **Completed-Bar-Close Execution Pricing (`±10 bps` Limit):**
    - Single-exchange free IEX quotes exhibit `50–400+ bps` spreads and thin top-of-book `bidSize` on high-dispersion equities (`COHR`, `LITE`, `MRVL`, `SNDK`, `WDC`, `AMD`, `MU`), whereas IEX 1m bar closes track consolidated SIP within `0.5–3.6 bps` and Alpaca executes marketable limits against consolidated NBBO.

@@ -70,6 +70,9 @@ export const intradayAlphaDefinition = Object.freeze({
     flattenMinuteFromOpen: 385,
   }),
   catalystVeto: Object.freeze({
+    // Deterministic peer-reviewed alpha runs without live Jev API calls until catalyst inference is
+    // routed through durable inference expense journaling.
+    enabled: false,
     model: jevModel,
     vetoThreshold: 0.85,
     maxCandidatesPerSide: 4,
@@ -126,6 +129,7 @@ export const IntradayAlphaPolicySchema = Schema.Struct({
     flattenMinuteFromOpen: Schema.Literal(intradayAlphaDefinition.middayReversion.flattenMinuteFromOpen),
   }),
   catalystVeto: Schema.Struct({
+    enabled: Schema.Literal(intradayAlphaDefinition.catalystVeto.enabled),
     model: Schema.Literal(intradayAlphaDefinition.catalystVeto.model),
     vetoThreshold: Schema.Literal(intradayAlphaDefinition.catalystVeto.vetoThreshold),
     maxCandidatesPerSide: Schema.Literal(intradayAlphaDefinition.catalystVeto.maxCandidatesPerSide),
