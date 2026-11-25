@@ -437,6 +437,13 @@ original bytes, fill or fee projection, and cursor together in PostgreSQL. The f
 `since_id` and verifies inclusive redelivery. Bayn compares the initial finite replay with the durable source rows
 before accepting a live heartbeat. All execution replicas read that same projection.
 
+Live inclusive replays compare the complete JSON values in PostgreSQL, preserving exact numbers and every field,
+so whitespace, key order and equivalent JSON spelling do not create false financial conflicts. Original bytes,
+hashes, projections and conflict witnesses remain immutable. A current owner's signed, cursor-bound heartbeat can
+restore completeness after a historical formatting-only conflict when every projection is supported and coverage
+is intact. Fresh heartbeat evidence and a new reconciliation still gate ordinary execution. Genuine content changes
+and poisoned coverage remain blocked; finite bootstrap proofs retain their original byte-exact prefix checks.
+
 PAPER captures take immutable views of the durable fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
 the same connection. Bayn fetches REST fee records on startup, when the streamed fee history changes, and during
@@ -579,9 +586,7 @@ rejects the exit; accepting a cached position does not extend an executable quot
 publication, and completed inference wake that owner. A successful pass does not schedule another ordinary pass.
 The removed `BAYN_CYCLE_POLL_INTERVAL_MS` setting cannot select a second discovery path.
 
-The market worker sends an advisory `MarketChanged` hint immediately after updating its projection. Native arrival
-persistence retains its existing size/time limits and runs independently. There is no market-readiness SQL outbox or
-audit-flush barrier before the hint. A scoped publisher retains one immutable request until its private wake completes,
+The market worker sends an advisory `MarketChanged` hint immediately after updating its in-memory Kafka projection. A scoped publisher retains one immutable request until its private wake completes,
 and conflates newer changes into one pending request. Each producer has its own UUID and increasing sequence;
 unrelated workers' clocks never order or suppress one another's hints.
 
@@ -790,11 +795,13 @@ and financial hashes remain readable through their original codecs. The original
 inference and persistence. Bayn computes execution quantities, risk and exit triggers; current candidate admission
 uses [candidate-only queries](src/jev/observation-query.ts).
 
-Jev's structural checks return every supported funded proposal. V42 requires fee-inclusive modeled gain at least
-equal to modeled stop loss. After verifying the quotes, the entry selector ranks by modeled net value per unit of
-modeled stop loss, using structural support to weight gain and loss. Ties use structural support, modeled loss,
-symbol and proposal ID. Native execution, replay and the target verifier reproduce the selected protection from
-the same batch evidence.
+Jev's structural checks return every supported funded proposal. Current v44 equity proposals require strictly
+positive modeled profit at the source-bound target after execution costs, while preserving the 15-basis-point
+protective-stop floor. They have no fixed reward-to-risk admission ratio. After verifying the quotes, the entry
+selector ranks by a risk-normalized gain/loss heuristic weighted by structural support. That structural judgment
+is not a calibrated probability of a profitable trade, and the ranking is not an estimate of expected returns.
+Ties use structural support, modeled loss, symbol and proposal ID. Native execution, replay and the target verifier
+reproduce the selected protection from the same batch evidence. Retained protocols reproduce their original rules.
 
 The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
 describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
@@ -911,14 +918,19 @@ An already verified equity bracket or OCO may retain fractional residual invento
 Exact child coverage and sealed prices remain required; new protection still follows provider sizing restrictions,
 and session transitions, unknown protection or a due exit retain their existing recovery behavior.
 
-New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
-tick. Current numerical evidence reports effective values of 0 bps for `numericalState.entryEconomics.maximumEntryQuoteDriftBps`
-and `maximumEntryLimitSlippageBps`. Retained v38 inputs still record the original 10 bps values and reconstruct their
-unchanged request and batch hashes. Both versions enforce the same zero entry allowances and broker tick rounding.
-Shared protocol fields remain 10 bps because liquidation and proposal stop economics still consume them. Fees,
-funding, exit prices and thresholds retain their existing contracts. Retained v38/v39 inputs and the original
-[allowance cutover](../../docs/bayn/effective-entry-allowance-cutover.md) remain historical evidence; current activation
-uses the [Jev 1.14 procedure](../../docs/bayn/jev114-box-cutover.md).
+Current v44 equity entries use native LIMIT/DAY orders. Refreshed entry quotes have a five-basis-point drift allowance,
+and the order limit has a separate five-basis-point allowance within the original funded price bound. Funding reserves
+both allowances and the applicable fees. Long and short entries retain their direction-specific price bounds,
+instrument rounding, quantity ceilings and source-bound protective prices. Retained inputs reconstruct their original
+allowances, request bytes and hashes; the [allowance cutover](../../docs/bayn/effective-entry-allowance-cutover.md)
+describes an earlier contract.
+
+A known, still-unfilled entry can be canceled before its original expiry when a fresh, reproduced quote crosses its
+original stop or target. The quote must also pass the existing spread and displayed-size eligibility rules, so an
+isolated wide IEX quote does not establish invalidation. This check requires fresh exact broker/accounting evidence
+and no unresolved order or mutation. Missing or stale market evidence retains the original expiry behavior; malformed
+evidence fails verification. Cancellation uses the existing durable owner, and a fill racing with cancellation still
+requires reconciliation and protection of actual inventory before another entry.
 
 Quote-backed instrument-quantized closes use LIMIT/DAY equity or LIMIT/IOC crypto orders with an allowance bounded
 by the existing risk policy, currently ten basis points from the verified bid. Close prices round toward the quote
@@ -1337,9 +1349,13 @@ Dorvud's optional technical-indicator stream is joined as immutable decision evi
 source matching, replay and delivery requirements.
 
 Alpaca WebSocket events enter the existing raw Kafka topics. Each execution worker owns a scoped Node worker thread
-for its `@platformatic/kafka` projection and native arrival retention. The controller receives detached requested
-cuts; readiness transfers no retained records. Shutdown joins journal finalizers, worker failure invalidates reads,
-and interrupted snapshot requests cancel remote work.
+for its in-memory `@platformatic/kafka` projection. The controller receives requested cuts and readiness status.
+Worker failure invalidates reads, and interrupted snapshot requests cancel remote work.
+
+The [shared IEX producer](../dorvud/README.md) streams completed minute bars for all 22 source symbols within the
+existing 30-unit subscription budget. Every current Bayn candidate retains its existing quote/trade path. GOOGL,
+INTC, META, MSFT, NFLX and TSLA no longer wait for the completed-bar REST polling phase. Source identity, bar finality,
+original arrival evidence, immutable decision cuts and freshness deadlines still determine actual eligibility.
 
 Dorvud/Flink independently publishes rolling features to `torghut.market-features.v1`; ClickHouse retains the archive.
 The equity [market profile](src/jev/markets.ts) defines the core universe and excludes SPY from entry candidates.
@@ -2125,18 +2141,9 @@ rolling back the application image through Kargo; do not remove retained evidenc
 The execution endpoint's startup probe allows twenty minutes for this bounded migration and initialization. Its
 readiness and liveness probes retain their normal cadence after startup.
 
-The native market recorder, execution state and financial evidence share the `bayn` PostgreSQL database in
-`bayn-db`. Both replicas use existing local NVMe storage on Turin and Altra, with separate NVMe WAL volumes and
-required cross-host synchronous replication. The recorder and read-only native export command use
-`BAYN_POSTGRES_URL` and `/var/run/secrets/bayn/postgres/ca.crt`. The projection thread owns a single scoped connection;
-application startup owns the complete schema migrations. No separate archive database or schema initializer remains.
-
-The unified database retains every historical and current capture, original compressed byte, checksum and
-ordered-prefix/append-only guard. Archive appends emit `bayn.native-arrival.append` spans including the durable
-commit and retries. Retryable connection failures and statement timeouts retain the same immutable batch through
-roughly one minute of reconnection attempts. Each SQL attempt and shutdown keep their existing deadlines, and the
-compressed queue keeps its byte bound. Lost commit acknowledgements still reconcile the exact prefix before
-returning success. TLS, checksums, backups, strategy, authority, accounting and freshness contracts are unchanged.
+Execution state and financial evidence use the `bayn` PostgreSQL database in `bayn-db`. Both replicas use local
+NVMe storage on Turin and Altra, with separate NVMe WAL volumes and required cross-host synchronous replication.
+The read-only native export command can read historical captures from a database that still contains them.
 
 Each PostgreSQL instance reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 8 GiB memory limit.
 LZ4 WAL compression reduces full-page image traffic. A 4 GiB WAL checkpoint threshold and 15-minute checkpoint

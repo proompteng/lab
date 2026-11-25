@@ -644,7 +644,7 @@ describe('Kargo direct-push GitOps contract', () => {
   })
 
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
-    expect(kargoHelmElement?.version).toBe('1.12.6')
+    expect(kargoHelmElement?.version).toBe('1.12.7')
     expect(kargoHelmValues.global.systemResources).toEqual({ namespace: 'kargo', createNamespace: false })
     expect(kargoHelmValues.global.sharedResources).toEqual({ namespace: 'kargo', createNamespace: false })
     expect(kargoHelmValues.global).not.toHaveProperty('clusterSecretsNamespace')

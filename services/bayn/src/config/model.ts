@@ -132,9 +132,6 @@ export type RuntimeConfigResolutionFailure =
       readonly _tag: 'MissingAlpacaCredentials'
     }
   | {
-      readonly _tag: 'MissingAlpacaAuthorityGeneration'
-    }
-  | {
       readonly _tag: 'InvalidBrokerConnection'
       readonly cause: BrokerConnectionDecodeFailure
     }

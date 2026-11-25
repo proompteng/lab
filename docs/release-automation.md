@@ -5,7 +5,7 @@ source, workload configuration, and Kargo resources are reviewed in Git. Kargo o
 has been published; it directly manages a deployment branch and does not open a second pull request to rewrite a SHA or
 digest in the source repository.
 
-The cluster installation is pinned to Kargo v1.12.6. Keep Warehouse, Freight, Stage, and
+The cluster installation is pinned to Kargo v1.12.7. Keep Warehouse, Freight, Stage, and
 promotion-step fields aligned with that pinned version when enrolling an application. The Warehouse webhook rejects
 unknown subscription fields. Use `constraint` for image subscriptions and `semverConstraint` for chart and Git subscriptions.
 

@@ -104,7 +104,9 @@ export const isShortPayoffFunded = (
   targetPnlMicros: bigint,
   stopPnlMicros: bigint,
 ): boolean =>
-  stopPnlMicros < 0n && targetPnlMicros > 0n && hasRequiredRewardRiskRatio(protocol, targetPnlMicros, -stopPnlMicros)
+  stopPnlMicros < 0n &&
+  targetPnlMicros > 0n &&
+  hasRequiredRewardRiskRatio(protocol, MarketKind.Equity, targetPnlMicros, -stopPnlMicros)
 
 export const jevShortEntryEconomics = (input: {
   readonly protocol: JevProtocolMaterial
