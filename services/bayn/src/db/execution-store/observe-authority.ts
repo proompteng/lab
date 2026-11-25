@@ -43,7 +43,7 @@ import {
   decodeAuthorityStateRows,
   decodeDatabaseInstant,
   decodeEnsureAuthorityGenerationInput,
-  type AuthorityGenerationBrokerBinding,
+  type AuthorityGenerationRow,
 } from './rows'
 
 export const LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH =
@@ -93,10 +93,7 @@ const exactBrokerIdentity = (persisted: BrokerIdentity, configured: BrokerIdenti
   persisted.environment === configured.environment &&
   persisted.accountId === configured.accountId
 
-const legacyAutonomousObserveCompatible = (
-  history: AuthorityGenerationBrokerBinding,
-  configured: BrokerIdentity,
-): boolean =>
+const legacyAutonomousObserveCompatible = (history: AuthorityGenerationRow, configured: BrokerIdentity): boolean =>
   history.generation_hash === LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH &&
   history.previous_generation_hash === null &&
   history.maximum === Authority.Observe &&
@@ -105,8 +102,8 @@ const legacyAutonomousObserveCompatible = (
   configured.provider === BrokerProvider.Alpaca &&
   configured.environment === BrokerEnvironment.Sandbox
 
-export const validateObserveGenerationBrokerIdentityReplay = (
-  history: AuthorityGenerationBrokerBinding,
+const validateObserveGenerationBrokerIdentityReplay = (
+  history: AuthorityGenerationRow,
   configured: BrokerIdentity | undefined,
 ): Result.Result<void, ObserveGenerationBrokerIdentityFailure> => {
   if (configured === undefined) {
@@ -184,12 +181,11 @@ export const selectConfiguredBrokerAccount = (identity: BrokerIdentity, staleThr
         const [source] = yield* authority.readGeneration(current.generation_hash)
         if (source === undefined)
           return yield* failExecutionStore('authority', 'invariant', 'authority history is missing')
-        if (source.broker_identity_hash === null) return null
         const binding = validateObserveGenerationBrokerIdentityReplay(source, identity)
         if (Result.isSuccess(binding)) {
-          return yield* previousConfiguredController(sql, identity)
+          return source.broker_identity_hash === null ? null : yield* previousConfiguredController(sql, identity)
         }
-        if (binding.failure.failure === 'invariant') {
+        if (binding.failure.failure === 'invariant' || source.broker_identity_hash === null) {
           return yield* executionStoreError({ operation: 'authority', ...binding.failure })
         }
         const predecessor = source.broker_identity_hash
