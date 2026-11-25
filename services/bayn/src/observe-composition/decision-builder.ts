@@ -1675,7 +1675,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
       target.entryDecisionHash === entryDocument.contentHash &&
       target.sessionDate === cycle.identity.executionSessionDate &&
       target.evidence.portfolio.brokerState.account.accountId === cycle.identity.accountId &&
-      entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7' &&
+      isProtectedEntryTarget(entryDocument.strategyDecision) &&
       canonicalJsonEqualV1(target.evidence.portfolio.exitPolicy, entryDocument.strategyDecision.exitPolicy)
         ? target
         : undefined
@@ -1683,7 +1683,16 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
       const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
       const portfolio = mandatoryExit?.evidence.portfolio
-      const firstFill = portfolio?.purpose === JevPurpose.Manage ? portfolio.entryFills[0] : undefined
+      const targetSymbol = mandatoryExit?.symbols[0]
+      const firstFill =
+        portfolio?.purpose === JevPurpose.Manage
+          ? (portfolio.entryFills.find((fill) => targetSymbol === undefined || fill.symbol === targetSymbol) ??
+            portfolio.entryFills[0])
+          : undefined
+      const managedPlan =
+        portfolio?.purpose === JevPurpose.Manage && targetSymbol !== undefined
+          ? portfolio.exitPolicy.plans[targetSymbol]
+          : undefined
       // The sealed first-fill deadline authorizes a timed exit independently of any price trigger.
       // Before it elapses, a mark may only resume an already committed non-profit exit.
       const resumeMandatoryExit =
@@ -1691,7 +1700,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
         portfolio?.purpose === JevPurpose.Manage &&
         mandatoryExit.observedAt <= observedAt &&
         ((firstFill !== undefined &&
-          observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)) ||
+          observedAt >=
+            jevMaximumHoldDueAt(
+              firstFill.occurredAt,
+              managedPlan?.levels.maximumHoldingMinutes ?? portfolio.exitPolicy.maximumHoldingMinutes,
+            )) ||
           (mandatoryExit.reason === JevExitReason.ProtectionReleased &&
             portfolio.exitRequestedAt !== null &&
             !portfolio.profitExitRequested))
@@ -1768,7 +1781,12 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
       reconciliation.brokerState.positions,
       persistedUniverse ?? intradayParameters.universe,
     )
-    const symbols = closingPass.symbols
+    const exitTargetMatchesPass =
+      request.exitTarget !== undefined &&
+      request.exitTarget.symbols.length > 0 &&
+      request.exitTarget.symbols.every((symbol) => closingPass.symbols.includes(symbol))
+    const symbols =
+      exitTargetMatchesPass && request.exitTarget !== undefined ? request.exitTarget.symbols : closingPass.symbols
     const closingSymbol = symbols[0]
     const closeDecision = yield* Effect.fromResult(
       request.exitTarget === undefined
@@ -1776,8 +1794,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
         : request.exitTarget.cycleId === cycle.identity.cycleId &&
             request.exitTarget.entryDecisionHash === entryDocument.contentHash &&
             request.exitTarget.sessionDate === cycle.identity.executionSessionDate &&
-            symbols.length === request.exitTarget.symbols.length &&
-            symbols.every((symbol, index) => symbol === request.exitTarget?.symbols[index])
+            exitTargetMatchesPass
           ? Result.succeed(request.exitTarget)
           : Result.fail(
               compositionFailure('cycle-binding', 'Jev exit target does not match this entry and remaining position'),

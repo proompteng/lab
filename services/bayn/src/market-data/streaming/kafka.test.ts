@@ -1230,9 +1230,10 @@ describe('Kafka bootstrap and scoped consumption', () => {
         const projection = yield* makeKafkaMarketProjection(config, [equity, crypto], () => transport)
         yield* TestClock.adjust('1 second')
         expect(seeks).toEqual([
-          { topics: ['bars', 'features'], timestamp: BigInt(Date.parse('2026-10-29T00:29:55.000Z')) },
+          { topics: ['bars'], timestamp: BigInt(Date.parse('2026-10-28T18:29:55.000Z')) },
           { topics: ['quotes'], timestamp: BigInt(Date.parse('2026-10-29T00:59:43.000Z')) },
           { topics: ['trades'], timestamp: BigInt(Date.parse('2026-10-29T00:29:50.000Z')) },
+          { topics: ['features'], timestamp: BigInt(Date.parse('2026-10-29T00:29:55.000Z')) },
           {
             topics: ['webull', 'crypto', 'crypto-features'],
             timestamp: BigInt(Date.parse('2026-10-29T00:57:55.000Z')),
@@ -1839,9 +1840,10 @@ describe('Kafka bootstrap and scoped consumption', () => {
         expect(transport.lookups).toEqual([
           -2n,
           -1n,
-          BigInt(Date.parse('2026-09-11T13:29:55Z')),
+          BigInt(Date.parse('2026-09-11T07:29:55Z')),
           BigInt(Date.parse('2026-09-11T13:59:42Z')),
           BigInt(Date.parse('2026-09-11T13:29:50Z')),
+          BigInt(Date.parse('2026-09-11T13:29:55Z')),
         ])
         expect(cut.bootstrap.epoch).toBe(cut.projection.epoch)
       }),

@@ -829,7 +829,7 @@ describe('native execution runtime', () => {
     } as CandidateObservation
     const batch = { plan: { observationHash: recoveredHash }, result: null } as JevBatchEvidence
     const momentum = makeRepeatedMomentumPolicy(fixtureRuntime.definition.parameters)
-    const retainedPolicies: Array<typeof momentum | undefined> = []
+    const retainedPolicies: Array<Parameters<CandidateObservationStore['Service']['record']>[1]> = []
     let advances = 0
     const currentDriver = {
       ...driver,

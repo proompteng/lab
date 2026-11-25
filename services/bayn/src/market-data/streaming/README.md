@@ -76,7 +76,7 @@ Durable decision snapshots retain their source cuts and PostgreSQL references in
 The live worker keeps its Kafka projection in memory. Historical research can use original delivery files
 that were previously exported, preserving consumer order, bytes, and availability times.
 
-The projection retains 61 bar minutes, 512
+The projection retains 391 equity bar minutes (121 for crypto), 512
 quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
 remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
 Windows that need the applicable discarded rejection history fail verification. Liquidation checks quote retention
@@ -242,7 +242,7 @@ decision reproduction in addition to infrastructure readiness. The protocol bind
 clock allowance, bootstrap policy and exact-window freshness rule. Reverting the runtime requires a reviewed source
 and protocol change through the same delivery path; retaining archived feature history is required.
 
-Bar history retains at most four winning revisions for each of 61 minutes per symbol. As-of joins select the latest revision received by the observation time. If revision eviction removes the history needed for a cut, the projection rejects that observation.
+Bar history retains at most four winning revisions for each of 391 equity minutes (121 crypto minutes) per symbol. As-of joins select the latest revision received by the observation time. If revision eviction removes the history needed for a cut, the projection rejects that observation.
 
 ## Technical indicator evidence
 
