@@ -30,8 +30,8 @@ const receipts = () =>
     slot: index + 1,
     pod: `runner-${index}`,
     node: 'turin',
-    scratchFilesystem: 'ext4',
-    scratchDevice: `/dev/rbd${index}`,
+    scratchFilesystem: 'tmpfs',
+    scratchDevice: String(index),
     nativeStart: 1000,
     nativeEnd: 3100,
     iterations: [{ iteration: 1, start: 1000, end: 3100, rebuild: true, exitCode: 0, image }],
@@ -40,7 +40,7 @@ const receipts = () =>
 describe('ARC native image qualification', () => {
   it('keeps native work opt-in and preserves bounded jobs and failure artifacts', () => {
     expect(workflow.on.workflow_dispatch.inputs.native_qualification).toMatchObject({ type: 'boolean', default: false })
-    const job = workflow.jobs['ceph-build']
+    const job = workflow.jobs.build
     expect(job['timeout-minutes']).toBe(
       "${{ inputs.native_qualification && matrix.architecture == 'amd64' && 110 || 20 }}",
     )

@@ -84,11 +84,6 @@ describe('ARC Nix runner toolchain', () => {
         .filter(Boolean),
     ).toEqual(['arc-arm64', 'arc-amd64'])
     expect(arcApplication).not.toContain('image: docker:dind')
-    const armBlock = runnerScaleSetBlock('arc-arm64')
-    expect(armBlock).toContain('storageClassName: rook-ceph-block')
-    expect(armBlock).toContain('storage: 64Gi')
-    expect(armBlock).not.toContain('emptyDir:')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('storageClassName: rook-ceph-block')
     expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
@@ -127,9 +122,9 @@ describe('ARC Nix runner toolchain', () => {
     }
   })
 
-  it('places AMD64 Nix and workspace writes on one disposable Ceph RBD volume', () => {
+  it('places AMD64 Nix and workspace writes on one disposable tmpfs', () => {
     const application = YAML.parseDocument(arcApplication)
-    for (const [index, name, storageClass] of [[2, 'arc-amd64', 'rook-ceph-block']] as const) {
+    for (const [index, name] of [[2, 'arc-amd64']] as const) {
       const valuesPath = ['spec', 'sources', index, 'helm', 'valuesObject']
       expect(application.getIn([...valuesPath, 'runnerScaleSetName'])).toBe(name)
       expect(application.getIn([...valuesPath, 'scaleSetLabels']).toJSON()).toContain('arc-amd64')
@@ -159,16 +154,7 @@ describe('ARC Nix runner toolchain', () => {
         volumes: expect.arrayContaining([
           {
             name: 'scratch',
-            ephemeral: {
-              volumeClaimTemplate: expect.objectContaining({
-                spec: {
-                  accessModes: ['ReadWriteOnce'],
-                  storageClassName: storageClass,
-                  volumeMode: 'Filesystem',
-                  resources: { requests: { storage: '64Gi' } },
-                },
-              }),
-            },
+            emptyDir: { medium: 'Memory', sizeLimit: '24Gi' },
           },
         ]),
       })
@@ -240,7 +226,7 @@ describe('ARC Nix runner toolchain', () => {
     }
   })
 
-  it('gives ARM64 the same verified Ceph scratch and pins its workers to Altra', () => {
+  it('gives ARM64 the same verified tmpfs scratch and pins its workers to Altra', () => {
     const application = YAML.parse(arcApplication)
     const arm = application.spec.sources[1].helm.valuesObject
     const amd = application.spec.sources[2].helm.valuesObject
@@ -260,8 +246,8 @@ describe('ARC Nix runner toolchain', () => {
     expect(pod.initContainers).toEqual(amd.template.spec.initContainers)
     expect(runner.volumeMounts).toEqual(amd.template.spec.containers[0].volumeMounts)
     expect(runner.resources).toEqual({
-      requests: { cpu: '4', memory: '8Gi', 'ephemeral-storage': '10Gi' },
-      limits: { cpu: '20', memory: '16Gi', 'ephemeral-storage': '100Gi' },
+      requests: { cpu: '4', memory: '16Gi', 'ephemeral-storage': '10Gi' },
+      limits: { cpu: '20', memory: '28Gi', 'ephemeral-storage': '100Gi' },
     })
     expect(runner.resources).toEqual(amd.template.spec.containers[0].resources)
     expect(runner.securityContext).toEqual({ privileged: true })
@@ -269,13 +255,8 @@ describe('ARC Nix runner toolchain', () => {
     expect(runner.image).toBe(amd.template.spec.containers[0].image)
     expect(pod.containers).toHaveLength(1)
     expect(pod.volumes).toHaveLength(1)
-    const claim = pod.volumes[0].ephemeral.volumeClaimTemplate
-    expect(pod.volumes[0].name).toBe('scratch')
-    expect(claim.spec).toEqual(amd.template.spec.volumes[0].ephemeral.volumeClaimTemplate.spec)
-    expect(claim.metadata.labels).toEqual({
-      'actions.github.com/scale-set-name': 'arc-arm64',
-      'storage.proompteng.ai/durability': 'rebuildable',
-    })
+    expect(pod.volumes[0]).toEqual({ name: 'scratch', emptyDir: { medium: 'Memory', sizeLimit: '24Gi' } })
+    expect(pod.volumes).toEqual(amd.template.spec.volumes)
     for (const name of ['CARGO_HOME', 'RUSTUP_HOME']) {
       expect(runner.env.find((entry: { name: string }) => entry.name === name)).toEqual(
         amd.template.spec.containers[0].env.find((entry: { name: string }) => entry.name === name),
@@ -288,7 +269,6 @@ describe('ARC Nix runner toolchain', () => {
       const block = runnerScaleSetBlock(name)
       expect(block).toContain('minRunners: 5')
       expect(block).toContain('maxRunners: 10')
-      expect(block).toContain('storage: 64Gi')
     }
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-publish')
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
@@ -307,10 +287,7 @@ describe('ARC Nix runner toolchain', () => {
       'kubernetes.io/arch': 'amd64',
       'kubernetes.io/hostname': 'turin',
     })
-    expect(pod.getIn(['volumes', 0, 'ephemeral', 'volumeClaimTemplate', 'spec', 'storageClassName'])).toBe(
-      'rook-ceph-block',
-    )
-    expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('8Gi')
+    expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('16Gi')
     const config = YAML.parseDocument(
       readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
     )
@@ -328,7 +305,7 @@ describe('ARC Nix runner toolchain', () => {
     ])
   })
 
-  it('admits only a separate Ceph RBD ext4 scratch mount before touching files', () => {
+  it('admits only a separate tmpfs scratch mount before touching files', () => {
     const application = YAML.parse(arcApplication)
     const script = application.spec.sources[2].helm.valuesObject.template.spec.initContainers[0].args[0] as string
     const boundary = script.indexOf('# A terminated init')
@@ -350,12 +327,10 @@ fi
     )
     try {
       for (const [device, filesystem, root, status] of [
-        ['/dev/rbd0', 'ext4', 'overlay', 0],
-        ['/dev/rbd12', 'ext4', 'overlay', 0],
-        ['/dev/nvme3n1p4', 'ext4', 'overlay', 1],
-        ['/dev/rbd0', 'xfs', 'overlay', 1],
+        ['tmpfs', 'tmpfs', 'overlay', 0],
+        ['/dev/rbd0', 'ext4', 'overlay', 1],
         ['overlay', 'overlay', 'overlay', 1],
-        ['/dev/rbd0', 'ext4', '/dev/rbd0', 1],
+        ['tmpfs', 'tmpfs', 'tmpfs', 1],
       ] as const) {
         const result = spawnSync('bash', ['-c', admission], {
           encoding: 'utf8',
@@ -374,13 +349,13 @@ fi
     }
   })
 
-  it('requires ten Ceph builders per architecture without weakening the overlap proof', () => {
+  it('requires ten tmpfs builders per architecture without weakening the overlap proof', () => {
     const jobs = YAML.parse(arcPlacementAcceptance).jobs
-    expect(jobs['ceph-build'].strategy.matrix.slot).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    expect(jobs['ceph-build'].strategy.matrix.architecture).toEqual(['amd64', 'arm64'])
-    expect(jobs['ceph-build'].strategy['max-parallel']).toBe(20)
+    expect(jobs.build.strategy.matrix.slot).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(jobs.build.strategy.matrix.architecture).toEqual(['amd64', 'arm64'])
+    expect(jobs.build.strategy['max-parallel']).toBe(20)
     expect(jobs['publication-tools']).toBeUndefined()
-    expect(jobs['verify-placement'].needs).toEqual(['ceph-build'])
+    expect(jobs['verify-placement'].needs).toEqual(['build'])
     for (const job of Object.values(jobs) as { steps: { run?: string }[] }[]) {
       for (const step of job.steps) {
         if (step.run) {
@@ -397,7 +372,7 @@ fi
     expect(arcPlacementAcceptance).toContain('([.[].end] | min) - ([.[].start] | max) >= 45')
   })
 
-  it('validates both hosts, per-host RBD identity, capacity and shared occupancy', () => {
+  it('validates both hosts, per-host tmpfs identity, capacity and shared occupancy', () => {
     const jobs = YAML.parse(arcPlacementAcceptance).jobs
     const step = jobs['verify-placement'].steps.find(
       (candidate: { name?: string }) => candidate.name === 'Verify ten builders per architecture overlapped',
@@ -412,9 +387,9 @@ fi
           slot: index + 1,
           node: architecture === 'amd64' ? 'turin' : 'talos-192-168-1-85',
           pod: `runner-${architecture}-${index}`,
-          scratchDevice: `/dev/rbd${index}`,
-          scratchFilesystem: 'ext4',
-          scratchCapacityBytes: 62 * 1024 ** 3,
+          scratchDevice: String(index),
+          scratchFilesystem: 'tmpfs',
+          scratchCapacityBytes: 24 * 1024 ** 3,
           runnerTemp: '/home/runner/_work/_temp',
           buildkitRoot: '/home/runner/_work/_temp/buildkit.test/cache',
           inputBytes: 16777216,
@@ -466,10 +441,7 @@ fi
     for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
       const block = runnerScaleSetBlock(scaleSet)
       expect(block).toContain('ephemeral-storage: "10Gi"')
-      expect(block).not.toContain('storage: 20Gi')
     }
-
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('storage: 64Gi')
   })
 
   it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {

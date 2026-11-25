@@ -1,0 +1,149 @@
+name: ARC scratch benchmark
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/arc-scratch-benchmark.yml
+      - argocd/applications/arc/application.yaml
+      - .github/workflows/arc-placement-acceptance.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arc-scratch-benchmark-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: ${{ matrix.runner }} Ceph and tmpfs pair ${{ matrix.pair }}
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        runner: [arc-amd64, arc-arm64]
+        pair: [1, 2, 3, 4, 5]
+    env:
+      PAIR: ${{ matrix.pair }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      ARCHITECTURE: ${{ matrix.runner == 'arc-amd64' && 'amd64' || 'arm64' }}
+      EXPECTED_NODE: ${{ matrix.runner == 'arc-amd64' && 'turin' || 'talos-192-168-1-85' }}
+      ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Build the same broker-feed image on both filesystems
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ATTIC_PUBLIC_KEY"
+          evidence="$RUNNER_TEMP/arc-scratch-benchmark"
+          mkdir -p "$evidence"
+          manifest=argocd/applications/arc/application.yaml
+          template='.spec.sources[1].helm.valuesObject.template.spec'
+          git show "$BASE_SHA:$manifest" | yq "$template.initContainers[0].args[0]" - > "$evidence/ceph.sh"
+          yq "$template.initContainers[0].args[0]" "$manifest" > "$evidence/tmpfs.sh"
+          size="$(yq "$template.volumes[0].emptyDir.sizeLimit" "$manifest")"
+          [[ "$size" =~ ^[0-9]+Gi$ ]]
+          capacity_bytes=$(( ${size%Gi} * 1024 * 1024 * 1024 ))
+
+          order=(ceph tmpfs)
+          if (( PAIR % 2 == 0 )); then order=(tmpfs ceph); fi
+          for filesystem in "${order[@]}"; do
+            sudo -n -E /usr/bin/env "PATH=$PATH" unshare --mount --propagation private \
+              bash -s -- "$filesystem" "$evidence" "$GITHUB_WORKSPACE" "$capacity_bytes" <<'BENCHMARK'
+          set -euo pipefail
+          filesystem="$1"
+          evidence="$2"
+          source="$3"
+          capacity_bytes="$4"
+          exec 3>"$evidence/$filesystem.json"
+          cd /
+          mkdir -p /scratch
+          if [[ "$filesystem" == ceph ]]; then
+            # The current runner owns an RBD volume. Give the base init a fresh directory on it.
+            mkdir "$evidence/ceph"
+            mount --bind "$evidence/ceph" /scratch
+          else
+            mount -t tmpfs -o "size=$capacity_bytes" tmpfs /scratch
+          fi
+          uptime
+          start="$(date +%s%N)"
+          bash "$evidence/$filesystem.sh"
+          bootstrapped="$(date +%s%N)"
+
+          mkdir -p /scratch/work/repository
+          cp -a "$source/." /scratch/work/repository/
+          chown 1001:1001 /scratch/work/repository
+          for mount_spec in nix:/nix cache:/home/runner/.cache tmp:/tmp var-tmp:/var/tmp work:/home/runner/_work; do
+            mount --bind "/scratch/${mount_spec%%:*}" "${mount_spec#*:}"
+          done
+          cd /home/runner/_work/repository
+          export RUNNER_TEMP=/home/runner/_work/_temp
+          install -d -o 1001 -g 1001 "$RUNNER_TEMP"
+          export NIX_CONFIG="experimental-features = nix-command flakes
+          substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+          extra-trusted-public-keys = $ATTIC_PUBLIC_KEY
+          fallback = false"
+          export NIX_REMOTE=local
+          as_runner=(setpriv --reuid=1001 --regid=1001 --init-groups)
+          build_start="$(date +%s%N)"
+          "${as_runner[@]}" nix build .#bayn-broker-feed-image --print-build-logs --out-link "$RUNNER_TEMP/result"
+          built="$(date +%s%N)"
+          archive="$(readlink -f "$RUNNER_TEMP/result")"
+          "${as_runner[@]}" bash nix/oci-inspect-archive.sh "$archive"
+          inspected="$(date +%s%N)"
+          sha="$(sha256sum "$archive" | cut -d' ' -f1)"
+          cg="/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)"
+          read -r scratch_bytes capacity < <(df -P -B1 /scratch | awk 'NR == 2 { print $3, $2 }')
+          jq -n --arg filesystem "$filesystem" --arg node "$ARC_RUNNER_NODE_NAME" --arg pod "$ACTIONS_RUNNER_POD_NAME" \
+            --arg sha256 "$sha" --argjson pair "$PAIR" --argjson initNs "$((bootstrapped-start))" \
+            --argjson buildNs "$((built-build_start))" --argjson inspectNs "$((inspected-built))" \
+            --argjson scratchBytes "$scratch_bytes" --argjson capacityBytes "$capacity" \
+            --argjson memoryPeakBytes "$(cat "$cg/memory.peak")" --argjson memoryLimitBytes "$(cat "$cg/memory.max")" \
+            '{filesystem:$filesystem,node:$node,pod:$pod,sha256:$sha256,pair:$pair,initNs:$initNs,buildNs:$buildNs,
+              inspectNs:$inspectNs,scratchBytes:$scratchBytes,capacityBytes:$capacityBytes,memoryPeakBytes:$memoryPeakBytes,
+              memoryLimitBytes:$memoryLimitBytes}' >&3
+
+          if [[ "$filesystem" == tmpfs ]]; then
+            state="$RUNNER_TEMP/buildkit.smoke"
+            install -d -o 1001 -g 1001 "$state"
+            export BUILDKIT_HOST="unix://$state/buildkitd.sock"
+            export SLOT="$PAIR"
+            buildkitd --addr "$BUILDKIT_HOST" --root "$state/cache" --group 1001 \
+              --oci-worker=true --containerd-worker=false >"$state/buildkitd.log" 2>&1 &
+            pid="$!"
+            trap 'kill "$pid"; wait "$pid" || true' EXIT
+            for _ in $(seq 1 45); do
+              if "${as_runner[@]}" buildctl debug workers >/dev/null 2>&1; then break; fi
+              sleep 1
+            done
+            yq '.jobs.build.steps[] | select(.id == "verify-scratch") | .run' \
+              .github/workflows/arc-placement-acceptance.yml > "$RUNNER_TEMP/verify-scratch.sh"
+            if ! "${as_runner[@]}" bash "$RUNNER_TEMP/verify-scratch.sh"; then
+              cat "$state/buildkitd.log" >&2
+              exit 1
+            fi
+            cat "$RUNNER_TEMP/arc-ready.json"
+          fi
+          BENCHMARK
+            if [[ "$filesystem" == ceph ]]; then sudo -n rm -rf -- "$evidence/ceph"; fi
+          done
+          jq -s -e 'length == 2 and ([.[].sha256] | unique | length) == 1' "$evidence/"{ceph,tmpfs}.json
+          {
+            echo '| Filesystem | Seed init (s) | Image build (s) | Archive inspect (s) |'
+            echo '|---|---:|---:|---:|'
+            jq -r '"| \(.filesystem) | \(.initNs / 1e9) | \(.buildNs / 1e9) | \(.inspectNs / 1e9) |"' "$evidence/"{ceph,tmpfs}.json
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arc-scratch-${{ matrix.runner }}-${{ matrix.pair }}
+          path: ${{ runner.temp }}/arc-scratch-benchmark/*.json
+          if-no-files-found: error
+          retention-days: 7
