@@ -94,7 +94,8 @@ type PriceExitSource = {
   readonly rows: typeof JevObservationSchema.fields.rows.Type
 }
 
-export const verifiedPositionQuote = (
+/** Reproduce source identity and prices without treating transient quote availability as a contract failure. */
+export const reproducePositionQuote = (
   input: Pick<JevExitEvidenceMaterial, 'protocol' | 'sessionDate' | 'observedAt'> & {
     readonly symbol: string
     readonly positionSide?: 'SHORT'
@@ -133,15 +134,22 @@ export const verifiedPositionQuote = (
     )
       return yield* invalid('Price exit requires a fresh reproduced liquidation quote from the exact market source')
     const quote = snapshot.latestQuotes[symbol]
-    if (
-      quote === undefined ||
-      (input.positionSide === 'SHORT' ? quote.askSize <= 0 : quote.bidSize <= 0) ||
-      !jevProtectiveQuoteIsFresh(quote, observedAt, protocol.maximumQuoteAgeMs)
-    )
-      return yield* invalid('Price exit has no fresh executable bid')
+    if (quote === undefined) return yield* invalid('Price exit has no fresh executable bid')
     const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
     const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
     return { bid, ask, quote }
+  })
+
+export const verifiedPositionQuote = (input: Parameters<typeof reproducePositionQuote>[0], source: PriceExitSource) =>
+  Result.gen(function* () {
+    const evidence = yield* reproducePositionQuote(input, source)
+    const { quote } = evidence
+    if (
+      (input.positionSide === 'SHORT' ? quote.askSize <= 0 : quote.bidSize <= 0) ||
+      !jevProtectiveQuoteIsFresh(quote, input.observedAt, input.protocol.maximumQuoteAgeMs)
+    )
+      return yield* invalid('Price exit has no fresh executable bid')
+    return evidence
   })
 
 export const validateJevPositionEvidence = (evidence: Omit<JevExitEvidenceMaterial, 'trigger'>) =>

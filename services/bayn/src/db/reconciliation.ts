@@ -1,6 +1,7 @@
 import { isStopProtection, isEquityShortProtection } from '../execution/contracts'
 import { PgClient } from '@effect/sql-pg'
 import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
+import { brokerActivitySourceContentIsConsistent } from './broker-activity-conflicts'
 import { Data, Effect, Option, Result, Schema } from 'effect'
 import {
   CryptoFeeTierSchema,
@@ -522,7 +523,9 @@ export const verifyBrokerStateVersion = (
         AND observed_at > ${version.reconciledAt}::timestamptz)
       AND NOT EXISTS (SELECT 1 FROM broker_activity_events WHERE account_id = ${accountId}
         AND recorded_at > ${version.reconciledAt}::timestamptz)
-      AND NOT EXISTS (SELECT 1 FROM broker_activity_source_conflicts WHERE account_id = ${accountId})
+      AND (${brokerActivitySourceContentIsConsistent(sql, accountId)})
+      AND NOT EXISTS (SELECT 1 FROM broker_activity_source_conflicts WHERE account_id = ${accountId}
+        AND recorded_at > ${version.reconciledAt}::timestamptz)
       AND NOT EXISTS (SELECT 1 FROM broker_activity_coverage_receipts WHERE account_id = ${accountId}
         AND status = 'POISONED')
     ) AS valid

@@ -4,9 +4,9 @@ Seal the secret
 kubeseal --controller-name sealed-secrets -f secret.yaml -w sealed.yaml
 ```
 
-## Argo CD v3.6.2 upgrade
+## Argo CD v3.6.3 upgrade
 
-Reconcile the complete upstream Argo CD v3.6.2 HA manifest through GitOps. Argo CD uses Helm 4 for OCI charts over
+Reconcile the complete upstream Argo CD v3.6.3 HA manifest through GitOps. Argo CD uses Helm 4 for OCI charts over
 HTTPS and Lovely for Applications that select that plugin. Applications with server-side apply use server-side diff,
 so admission failures can surface during comparison.
 
@@ -211,9 +211,9 @@ in under a second. The longer, finite budget addresses the observed cold-acquisi
 failed fetch still requires investigation rather than an unlimited deadline or manual writes to Argo's cache.
 
 Argo CD applies the RPC deadline around the entire
-[repo-server client call](https://github.com/argoproj/argo-cd/blob/v3.6.2/reposerver/apiclient/clientset.go).
-Its [Git commands](https://github.com/argoproj/argo-cd/blob/v3.6.2/util/git/client.go) also inherit that context and
-the independent [command timeout](https://github.com/argoproj/argo-cd/blob/v3.6.2/util/exec/exec.go), so both bounds
+[repo-server client call](https://github.com/argoproj/argo-cd/blob/v3.6.3/reposerver/apiclient/clientset.go).
+Its [Git commands](https://github.com/argoproj/argo-cd/blob/v3.6.3/util/git/client.go) also inherit that context and
+the independent [command timeout](https://github.com/argoproj/argo-cd/blob/v3.6.3/util/exec/exec.go), so both bounds
 must allow the cold fetch. The standard ConfigMap keys feed the controller and API-server environment at Pod start;
 the committed `repo-budget-revision` annotations roll those consumers when this budget changes. Keep both annotations
 in step with future budget updates. Repo-server's environment change uses its existing one-at-a-time rollout.
