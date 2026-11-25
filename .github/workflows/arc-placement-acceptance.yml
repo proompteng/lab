@@ -55,7 +55,6 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-buildkit
       - name: Verify tmpfs scratch, Nix, and BuildKit output bytes
-        id: verify-scratch
         shell: bash
         run: |
           set -euo pipefail

@@ -104,10 +104,6 @@ window at the intended concurrency. Check API/etcd readiness, slow WAL syncs, re
 system-device write and flush latency, memory pressure, runner OOM kills, build duration and errors over that
 window. Verify cold runner registration separately.
 
-The PR scratch benchmark runs the base and candidate seed scripts followed by a fresh BuildKit OCI build
-with the runner's preinstalled Nix closure as input. It verifies identical payload checksums. It runs inside
-existing ARC worker Pods, so the measurements exclude PVC provisioning, Pod startup and runner registration.
-
 GitHub can reject an outdated runner binary and ARC then marks its scale set `Outdated`, removes its listener, and
 stops scheduling jobs. A successful controller health check does not prove runner capacity. If every build runner
 is stopped, the runner image workflow cannot rebuild itself. An explicitly authorized bootstrap must first restore
