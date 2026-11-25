@@ -1472,15 +1472,17 @@ export function buildStrategyCycleDecision<R>(
     }
     const entryLimitSlippageBps =
       requirements.documentMode === Authority.Execution
-        ? isProtectedEntryTarget(entryDecision)
-          ? Math.min(
-              input.policy.maxAdverseSlippageBps,
-              ...entryDecision.selectedSymbols.map(
-                (symbol) =>
-                  jevEntryPriceAllowances(entryDecision.evidence.observation.protocol, symbol).limitSlippageBps,
-              ),
-            )
-          : input.policy.maxAdverseSlippageBps
+        ? entryDecision.schemaVersion === 'bayn.intraday-alpha-target.v1'
+          ? Math.min(input.policy.maxAdverseSlippageBps, entryDecision.policy.entryLimitSlippageBps)
+          : isProtectedEntryTarget(entryDecision)
+            ? Math.min(
+                input.policy.maxAdverseSlippageBps,
+                ...entryDecision.selectedSymbols.map(
+                  (symbol) =>
+                    jevEntryPriceAllowances(entryDecision.evidence.observation.protocol, symbol).limitSlippageBps,
+                ),
+              )
+            : input.policy.maxAdverseSlippageBps
         : 0
     const riskInputs = yield* Effect.fromResult(
       reduceObserveRiskInputs(

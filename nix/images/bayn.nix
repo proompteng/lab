@@ -60,13 +60,13 @@ let
     "control-opening-command"
     "valkey-command"
   ];
-  # SHA-256 identity for bayn.candidate-chart-entry.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
-  # Canonical hash of the compiled bayn.jev.protocol.v44 document.
-  strategyParameterHash = "ba1bf25a3c184102bb0243ee2311cd76406a952f48533d7e4bfe1dd04c80e2b3";
+  # SHA-256 identity for bayn.intraday-alpha.behavior.v2, verified by the production executable.
+  strategyBehaviorHash = "e5a5943391910843c5c9e78a07f5acfe51fb2f18486abf3ddd09f71b441cda59";
+  # Canonical hash of the compiled bayn.intraday-alpha-policy.v1 document.
+  strategyParameterHash = "3ada679a485106bffbd19cce134eec2f0e72d89043516d0fb62bf12c072215a8";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "a6b1d3f53ffefeb407e82c2821c7843f4ff0c952ff66ebf714d30aa24f6257f1";
+  strategyProtocolHash = "9db5136164b24b72ecc56970707ce67d1db35af73cafd174be9ca614d8bba60c";
   # Canonical uncapped sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "817efba3d61cf0c3845999988cf4507e015a60ccf3d13c7f840dac366173007e";

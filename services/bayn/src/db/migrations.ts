@@ -1,3 +1,4 @@
+import v44PaperSettlement from '../../migrations/0221_v44_paper_settlement'
 import intradayAlphaAdmission from '../../migrations/0220_intraday_alpha_admission'
 import positiveNetTargetAdmission from '../../migrations/0219_positive_net_target_admission'
 import v43PaperSettlement from '../../migrations/0218_v43_paper_settlement'
@@ -221,6 +222,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '221_v44_paper_settlement': v44PaperSettlement,
   '220_intraday_alpha_admission': intradayAlphaAdmission,
   '219_positive_net_target_admission': positiveNetTargetAdmission,
   '218_v43_paper_settlement': v43PaperSettlement,

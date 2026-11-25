@@ -1,4 +1,4 @@
-import { intradayUniverse } from '../intraday-market'
+import { currentEquityUniverse } from '../intraday-market'
 
 export enum IntradayAlphaPhase {
   MorningOrb = 'MORNING_ORB',
@@ -13,9 +13,12 @@ export enum IntradayAlphaSetup {
   MiddayVwapReversionShort = 'MIDDAY_VWAP_REVERSION_SHORT',
 }
 
-/** 15 real-time WebSocket equities from intradayUniverse (excluding SPY benchmark). */
+/**
+ * 20 liquid real-time equities from torghut-core-equity-v3 (excluding SPY benchmark and thin CRDO).
+ * Every candidate is marginable, shortable, easy-to-borrow on Alpaca, and streams full RTH bars.
+ */
 export const intradayAlphaCandidateSymbols = Object.freeze(
-  intradayUniverse.symbols.filter((symbol) => symbol !== 'SPY'),
+  currentEquityUniverse.symbols.filter((symbol) => symbol !== 'SPY' && symbol !== 'CRDO'),
 )
 
 export const intradayAlphaBenchmarkSymbol = 'SPY' as const

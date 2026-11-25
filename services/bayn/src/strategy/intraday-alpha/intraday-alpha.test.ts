@@ -73,10 +73,10 @@ import {
 } from './policy'
 import { evaluateIntradayAlphaFromSnapshot, makeIntradayAlphaEntryQuery } from './runtime'
 import {
-  alphaQuoteSpreadAcceptable,
   computeObservedSessionVwap,
   computeOpeningRange,
   extractIntradayAlphaCandidates,
+  resolveAlphaRegularSession,
   selectIntradayAlphaLegs,
 } from './signals'
 
@@ -446,20 +446,57 @@ test('gap-resilient session VWAP and 30m Opening Range handle silent IEX minutes
   expect(orb?.barCount).toBe(28)
 })
 
-test('25 bps IEX spread cap passes realistic 15 bps equity quotes and blocks 30 bps quotes', () => {
-  expect(
-    Result.getOrThrow(
-      alphaQuoteSpreadAcceptable({ bidPrice: 100.0, askPrice: 100.15, bidSize: 200, askSize: 200 }, 25),
+test('resolves 09:30–16:00 ET regular hours even on extended 08:00–17:00 ET Alpaca calendars', () => {
+  const extendedCalendar = Result.getOrThrow(
+    normalizeMarketCalendarResult(
+      [{ session_open: '0400', session_close: '2000', date: '2026-09-04', open: '09:30', close: '16:00' }],
+      { start: '2026-09-04', end: '2026-09-04' },
     ),
-  ).toBe(true)
-  expect(
-    Result.getOrThrow(
-      alphaQuoteSpreadAcceptable({ bidPrice: 100.0, askPrice: 100.32, bidSize: 200, askSize: 200 }, 25),
-    ),
-  ).toBe(false)
+  )
+  // Calendar sessions envelope is 08:00–17:00 EDT (12:00Z–21:00Z), while regular hours are 09:30–16:00 EDT (13:30Z–20:00Z).
+  expect(extendedCalendar.sessions[0]?.openAt).toBe('2026-09-04T12:00:00.000Z')
+  const regular = Result.getOrThrow(resolveAlphaRegularSession(extendedCalendar, sessionDate))
+  expect(regular.openAt).toBe('2026-09-04T13:30:00.000Z')
+  expect(regular.closeAt).toBe('2026-09-04T20:00:00.000Z')
+
+  // Pre-market (08:30 EDT = 12:30Z) waits cleanly for the first completed RTH minute instead of shifting clocks.
+  const preMarket = makeIntradayAlphaEntryQuery({
+    policy,
+    calendar: extendedCalendar,
+    sessionDate,
+    observedAtMs: Date.parse('2026-09-04T12:30:02.000Z'),
+  })
+  expect(Result.isFailure(preMarket)).toBe(true)
+  if (Result.isFailure(preMarket)) {
+    expect(preMarket.failure._tag).toBe('JevAwaitingEvidence')
+  }
+
+  // Regular midday (11:31:02 EDT = 15:31:02Z) anchors rangeStartAt to 09:30 EDT (13:30Z), NOT 08:00 EDT!
+  const middayQuery = Result.getOrThrow(
+    makeIntradayAlphaEntryQuery({
+      policy,
+      calendar: extendedCalendar,
+      sessionDate,
+      observedAtMs: Date.parse('2026-09-04T15:31:02.000Z'),
+    }),
+  )
+  expect(middayQuery.rangeStartAt).toBe('2026-09-04T13:30:00.000Z')
+  expect(middayQuery.rangeEndAt).toBe('2026-09-04T15:31:00.000Z')
+
+  // Post-market (16:05 EDT = 20:05Z) waits cleanly instead of creating >390m snapshot queries.
+  const postMarket = makeIntradayAlphaEntryQuery({
+    policy,
+    calendar: extendedCalendar,
+    sessionDate,
+    observedAtMs: Date.parse('2026-09-04T20:05:02.000Z'),
+  })
+  expect(Result.isFailure(postMarket)).toBe(true)
+  if (Result.isFailure(postMarket)) {
+    expect(postMarket.failure._tag).toBe('JevAwaitingEvidence')
+  }
 })
 
-test('Phase 2 Morning ORB30 selects aligned Long breakout, enforces hold cap before 11:28 ET, and respects re-entry limits', () => {
+test('Phase 2 Morning ORB30 requires Zarattini opening-candle direction, tolerates wide IEX spreads, and caps hold before 11:28 ET', () => {
   // Minute 40 from open (10:10 ET): rangeEnd = 10:11 ET -> completedMinuteFromOpen = 40
   const { snapshot, observedAt } = makeAlphaStreamingSnapshot({
     minutesFromOpen: 41,
@@ -467,21 +504,21 @@ test('Phase 2 Morning ORB30 selects aligned Long breakout, enforces hold cap bef
     profiles: {
       NVDA: {
         basePrice: 140,
-        endReturnBps: 40,
+        endReturnBps: 40, // green opening range (orClose > orOpen)
         openingRangeHigh: 141.0,
         openingRangeLow: 139.0,
         overridePrevClose: 140.9,
         overrideLatestClose: 141.65,
-        spreadBps: 14, // passes 25 bps cap (would have starved at v44's 5 bps!)
+        spreadBps: 180, // wide single-exchange IEX quote must NOT block bar-close-anchored entry!
       },
       AMD: {
         basePrice: 160,
-        endReturnBps: 30,
-        openingRangeHigh: 161.0,
-        openingRangeLow: 159.0,
-        overridePrevClose: 160.8,
+        endReturnBps: -30, // red opening range (orClose < orOpen) -> blocked for LONG by Zarattini rule!
+        openingRangeHigh: 160.2,
+        openingRangeLow: 158.0,
+        overridePrevClose: 160.1,
         overrideLatestClose: 161.2,
-        spreadBps: 35, // blocked by 25 bps cap
+        spreadBps: 6,
       },
     },
   })
@@ -517,7 +554,12 @@ test('Phase 2 Morning ORB30 selects aligned Long breakout, enforces hold cap bef
   expect(target.targetWeights['NVDA']).toBe(0.2)
   const nvdaPlan = target.exitPolicy.plans['NVDA']
   expect(nvdaPlan?.schemaVersion).toBe('bayn.intraday-alpha-long-funded-exit-plan.v1')
-  expect(nvdaPlan?.levels.maximumHoldingMinutes).toBe(45)
+  expect(nvdaPlan?.levels.maximumHoldingMinutes).toBe(60)
+  // Entry ceiling anchors to completed bar close ($141.65 + 10 bps = $141.79), NOT the wide IEX ask ($142.92)!
+  expect(
+    nvdaPlan?.schemaVersion === 'bayn.intraday-alpha-long-funded-exit-plan.v1' &&
+      Number(nvdaPlan.levels.maximumEntryPriceMicros) / 1_000_000,
+  ).toBeCloseTo(141.79, 2)
   expect(Result.isSuccess(Schema.decodeUnknownResult(IntradayAlphaTargetSchema, strictParseOptions)(target))).toBe(true)
 
   // Re-entry blocked when NVDA already taken or maxTradesPerSession (2) reached
@@ -537,9 +579,9 @@ test('Phase 2 Morning ORB30 selects aligned Long breakout, enforces hold cap bef
   expect(blockedSame.selectedSymbols).toEqual([])
   expect(blockedSame.reason).toBe(IntradayAlphaDecisionReason.NoSignal)
 
-  // Late morning entry (minute 75 = 10:45 ET): hold must be capped at 118 - 76 = 42 minutes (< 45)
+  // Late morning entry (minute 80 = 10:50 ET): hold must be capped at 118 - 81 = 37 minutes (< 60)
   const late = makeAlphaStreamingSnapshot({
-    minutesFromOpen: 76,
+    minutesFromOpen: 81,
     spyProfile: { basePrice: 550, endReturnBps: 50 },
     profiles: {
       NVDA: {
@@ -568,7 +610,7 @@ test('Phase 2 Morning ORB30 selects aligned Long breakout, enforces hold cap bef
     vetoedSymbols: new Set(),
   })
   expect(lateLegs[0]?.symbol).toBe('NVDA')
-  expect(lateLegs[0]?.maximumHoldingMinutes).toBe(42)
+  expect(lateLegs[0]?.maximumHoldingMinutes).toBe(37)
 })
 
 test('Phase 2 Morning ORB30 selects Short breakdown with short exit plan when SPY < VWAP and borrowable', () => {
@@ -624,11 +666,11 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
     minutesFromOpen: 121,
     spyProfile: { basePrice: 550, endReturnBps: 10 },
     profiles: {
-      COHR: { basePrice: 100, endReturnBps: -420, gapMinutes: [12, 44] }, // #1 oversold (will test veto fall-through)
-      LITE: { basePrice: 90, endReturnBps: -310 }, // #2 oversold -> Long
+      COHR: { basePrice: 100, endReturnBps: -420, gapMinutes: [12, 44], spreadBps: 210 }, // #1 oversold (wide IEX spread allowed)
+      LITE: { basePrice: 90, endReturnBps: -310, spreadBps: 240 }, // #2 oversold -> Long
       WDC: { basePrice: 70, endReturnBps: -220 }, // #3 oversold -> Long (on COHR veto)
-      SNDK: { basePrice: 60, endReturnBps: 380 }, // #1 overbought -> Short
-      CRDO: { basePrice: 80, endReturnBps: 290 }, // #2 overbought -> Short
+      SNDK: { basePrice: 60, endReturnBps: 380, spreadBps: 150 }, // #1 overbought -> Short
+      MU: { basePrice: 80, endReturnBps: 290, spreadBps: 90 }, // #2 overbought -> Short
       MRVL: { basePrice: 85, endReturnBps: 180 }, // #3 overbought
     },
   })
@@ -648,7 +690,7 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
   const reproducedObs = Result.getOrThrow(reproduceIntradayAlphaObservation(owned.payload))
   expect(reproducedObs.contentHash).toBe(owned.contentHash)
 
-  // 1) Normal 2L + 2S selection without vetos -> Long COHR, LITE + Short SNDK, CRDO
+  // 1) Normal 2L + 2S selection without vetos -> Long COHR, LITE + Short MU, SNDK
   const target = Result.getOrThrow(
     decideIntradayAlphaEntry(
       {
@@ -665,10 +707,10 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
 
   expect(target.phase).toBe(IntradayAlphaPhase.MiddayReversion)
   expect(target.reason).toBe(IntradayAlphaDecisionReason.SelectedMiddayReversion)
-  expect(target.selectedSymbols).toEqual(['COHR', 'CRDO', 'LITE', 'SNDK'])
+  expect(target.selectedSymbols).toEqual(['COHR', 'LITE', 'MU', 'SNDK'])
   expect(target.targetWeights['COHR']).toBe(0.18)
   expect(target.targetWeights['LITE']).toBe(0.18)
-  expect(target.targetWeights['CRDO']).toBe(-0.18)
+  expect(target.targetWeights['MU']).toBe(-0.18)
   expect(target.targetWeights['SNDK']).toBe(-0.18)
   expect(Result.isSuccess(Schema.decodeUnknownResult(IntradayAlphaTargetSchema, strictParseOptions)(target))).toBe(true)
 
@@ -724,7 +766,7 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
       maximumBuyQuantityAtoms: compiled.maximumBuyQuantityAtoms,
       maximumSellQuantityAtoms: compiled.maximumSellQuantityAtoms,
       equityShortEntries: Object.fromEntries(
-        ['CRDO', 'SNDK'].map((symbol) => [symbol, eligibility[symbol]]).filter((entry) => entry[1] !== undefined),
+        ['MU', 'SNDK'].map((symbol) => [symbol, eligibility[symbol]]).filter((entry) => entry[1] !== undefined),
       ),
     },
   } as const
@@ -743,33 +785,36 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
       .filter((intent) => intent.side === OrderSide.Sell)
       .map((i) => i.symbol)
       .sort(),
-  ).toEqual(['CRDO', 'SNDK'])
+  ).toEqual(['MU', 'SNDK'])
   expect(isBalancedMiddayBasket(planned, target.selectedSymbols)).toBe(true)
 
+  // Shallow IEX displayed bidSize (100 shares) must NOT throttle consolidated-NBBO intraday-alpha shorts!
   const shallowShortQuotes = {
     ...snapshot,
     latestQuotes: Object.fromEntries(
       Object.entries(snapshot.latestQuotes).map(([symbol, quote]) => [
         symbol,
-        symbol === 'CRDO' || symbol === 'SNDK' ? { ...quote, bidSize: 100 } : quote,
+        symbol === 'MU' || symbol === 'SNDK' ? { ...quote, bidSize: 100 } : quote,
       ]),
     ),
   }
-  const capped = Result.getOrThrow(compileJevEntry(target, snapshot, shallowShortQuotes))
-  const cappedPlan = Result.getOrThrow(
+  const uncapped = Result.getOrThrow(compileJevEntry(target, snapshot, shallowShortQuotes))
+  const uncappedPlan = Result.getOrThrow(
     planTargets({
       ...plannerInput,
       executionTerms: {
         ...plannerInput.executionTerms,
-        maximumSellQuantityAtoms: capped.maximumSellQuantityAtoms,
+        maximumSellQuantityAtoms: uncapped.maximumSellQuantityAtoms,
       },
     }),
   )
-  expect(cappedPlan.status).toBe(TargetPlanStatus.Planned)
+  expect(uncappedPlan.status).toBe(TargetPlanStatus.Planned)
+  expect(isBalancedMiddayBasket(uncappedPlan, target.selectedSymbols)).toBe(true)
   expect(
-    cappedPlan.intentTargets.filter(({ side }) => side === OrderSide.Sell).map(({ quantityAtoms }) => quantityAtoms),
-  ).toEqual(['100000000000', '100000000000'])
-  expect(isBalancedMiddayBasket(cappedPlan, target.selectedSymbols)).toBe(false)
+    uncappedPlan.intentTargets
+      .filter(({ side }) => side === OrderSide.Sell)
+      .every(({ quantityAtoms }) => BigInt(quantityAtoms) > 100_000_000_000n),
+  ).toBe(true)
 
   // 3) Catalyst veto on #1 oversold (COHR) cleanly falls through to #3 (WDC) instead of starving!
   const withVeto = Result.getOrThrow(
@@ -797,7 +842,7 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
       policy,
     ),
   )
-  expect(withVeto.selectedSymbols).toEqual(['CRDO', 'LITE', 'SNDK', 'WDC'])
+  expect(withVeto.selectedSymbols).toEqual(['LITE', 'MU', 'SNDK', 'WDC'])
 
   // 4) Single-extreme anti-starvation fallback if zero equities are shortable
   const longOnlyEligibility = makeShortEligibility(intradayAlphaCandidateSymbols, observedAt, new Set())
@@ -836,7 +881,7 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
       COHR: { basePrice: 100, endReturnBps: -350 },
       LITE: { basePrice: 90, endReturnBps: -280 },
       SNDK: { basePrice: 60, endReturnBps: 340 },
-      CRDO: { basePrice: 80, endReturnBps: 250 },
+      MU: { basePrice: 80, endReturnBps: 250 },
     },
   })
   const portfolio = makeFlatPortfolio(observedAt)
@@ -935,7 +980,7 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
     ),
   )
   expect(recorded.length).toBe(1)
-  expect(evaluated.decision.selectedSymbols).toEqual(['COHR', 'CRDO', 'LITE', 'SNDK'])
+  expect(evaluated.decision.selectedSymbols).toEqual(['COHR', 'LITE', 'MU', 'SNDK'])
   expect(evaluated.decision.evidence.catalystVetos.every((v) => v.status === 'UNAVAILABLE' && !v.vetoed)).toBe(true)
 
   // Also test JevClient returning high probability (>= 0.85) for COHR -> vetoes COHR cleanly!
@@ -1011,7 +1056,7 @@ test('multi-position (2L + 2S) JevPortfolio validates 4 legs, partial early leg 
       COHR: { basePrice: 100, endReturnBps: -350 },
       LITE: { basePrice: 90, endReturnBps: -280 },
       SNDK: { basePrice: 60, endReturnBps: 340 },
-      CRDO: { basePrice: 80, endReturnBps: 250 },
+      MU: { basePrice: 80, endReturnBps: 250 },
     },
   })
   const flatPortfolio = makeFlatPortfolio(observedAt)
@@ -1078,7 +1123,7 @@ test('multi-position (2L + 2S) JevPortfolio validates 4 legs, partial early leg 
       brokerOrderId: 'o3',
       clientOrderId: 'c3',
       intentId: entryIntentIds[2],
-      symbol: 'CRDO',
+      symbol: 'MU',
       side: OrderSide.Sell,
       quantityAtoms: '100000000000',
       priceAtoms: '82000000000',
@@ -1105,18 +1150,6 @@ test('multi-position (2L + 2S) JevPortfolio validates 4 legs, partial early leg 
     {
       schemaVersion: 'bayn.position.v2',
       accountId,
-      symbol: 'CRDO',
-      quantityAtoms: '-100000000000',
-      averageEntryPriceMicros: '82000000',
-      costBasisMicros: '-8200000000',
-      marketPriceMicros: '81000000',
-      marketValueMicros: '-8100000000',
-      unrealizedPnlMicros: '100000000',
-      observedAt: checkTime,
-    },
-    {
-      schemaVersion: 'bayn.position.v2',
-      accountId,
       symbol: 'LITE',
       quantityAtoms: '100000000000',
       averageEntryPriceMicros: '87480000',
@@ -1124,6 +1157,18 @@ test('multi-position (2L + 2S) JevPortfolio validates 4 legs, partial early leg 
       marketPriceMicros: '88000000',
       marketValueMicros: '8800000000',
       unrealizedPnlMicros: '52000000',
+      observedAt: checkTime,
+    },
+    {
+      schemaVersion: 'bayn.position.v2',
+      accountId,
+      symbol: 'MU',
+      quantityAtoms: '-100000000000',
+      averageEntryPriceMicros: '82000000',
+      costBasisMicros: '-8200000000',
+      marketPriceMicros: '81000000',
+      marketValueMicros: '-8100000000',
+      unrealizedPnlMicros: '100000000',
       observedAt: checkTime,
     },
   ]
@@ -1166,7 +1211,7 @@ test('multi-position (2L + 2S) JevPortfolio validates 4 legs, partial early leg 
       brokerOrderId: 'o3',
       clientOrderId: 'c3',
       intentId: entryIntentIds[2],
-      symbol: 'CRDO',
+      symbol: 'MU',
       side: OrderSide.Sell,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
@@ -1221,21 +1266,21 @@ test('multi-position (2L + 2S) JevPortfolio validates 4 legs, partial early leg 
     }),
   )
 
-  // Per-symbol MaximumHold exit on Short leg CRDO succeeds cleanly!
-  const crdoExit = Result.getOrThrow(
+  // Per-symbol MaximumHold exit on Short leg MU succeeds cleanly!
+  const muExit = Result.getOrThrow(
     decideJevExit({
       cycleId,
       sessionDate,
       protocol,
       portfolio: managePortfolio,
       observedAt: checkTime,
-      symbol: 'CRDO',
+      symbol: 'MU',
       trigger: { reason: JevExitReason.MaximumHold },
     }),
   )
-  expect(crdoExit.symbols).toEqual(['CRDO'])
-  expect(crdoExit.reason).toBe(JevExitReason.MaximumHold)
-  expect(crdoExit.targetWeights).toEqual({ CRDO: 0 })
+  expect(muExit.symbols).toEqual(['MU'])
+  expect(muExit.reason).toBe(JevExitReason.MaximumHold)
+  expect(muExit.targetWeights).toEqual({ MU: 0 })
 
   // Per-symbol MaximumHold exit on Long leg COHR succeeds independently as well!
   const cohrExit = Result.getOrThrow(

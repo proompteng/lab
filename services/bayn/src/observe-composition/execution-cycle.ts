@@ -585,6 +585,16 @@ export const ensureExecutionCycleClosure = <R>({
       if (terminalization !== undefined) return terminalization
     }
 
+    const remainingOpenSymbols = residualReconciliation.brokerState.positions
+      .filter((position) => BigInt(position.quantityAtoms) !== 0n)
+      .map((position) => position.symbol)
+      .toSorted((left, right) => left.localeCompare(right))
+    const reusableExitTarget =
+      existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' &&
+      existing.document.strategyDecision.symbols.length === remainingOpenSymbols.length &&
+      existing.document.strategyDecision.symbols.every((symbol, index) => symbol === remainingOpenSymbols[index])
+        ? existing.document.strategyDecision
+        : undefined
     const prepared = yield* prepareClosingExecutionCycleDecision({
       input,
       preparation,
@@ -612,9 +622,7 @@ export const ensureExecutionCycleClosure = <R>({
       initialReconciliation: residualReconciliation,
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
-      ...(existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5'
-        ? { exitTarget: existing.document.strategyDecision }
-        : {}),
+      ...(reusableExitTarget === undefined ? {} : { exitTarget: reusableExitTarget }),
     }).pipe(
       Effect.catchTag('CycleRunnerError', (failure) =>
         failure.operation === 'reconcile' &&

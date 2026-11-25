@@ -78,6 +78,7 @@ export const maximumFundedSellQuantities = (input: {
   readonly capitalMicros: string
   readonly precision: ExecutionModel['precision']
   readonly plans: Readonly<Record<string, FundedEntryExitPlan>>
+  readonly ignoreDisplayedBidSize?: boolean
 }) =>
   Result.gen(function* () {
     const allocated = yield* maximumAllocatedBuyQuantities({
@@ -91,6 +92,10 @@ export const maximumFundedSellQuantities = (input: {
     for (const [symbol, plan] of Object.entries(input.plans).sort(([a], [b]) => a.localeCompare(b))) {
       const quantity = BigInt(allocated[symbol] ?? '0')
       const maximum = isShortFundedExitPlan(plan) ? BigInt(plan.maximumQuantityAtoms) : 0n
+      if (input.ignoreDisplayedBidSize === true) {
+        quantities[symbol] = (quantity < maximum ? quantity : maximum).toString()
+        continue
+      }
       const displayed = yield* quantityFromNumber(input.bidSize[symbol] ?? 0).pipe(
         Result.mapError((cause) => new JevContractError({ message: 'Short displayed bid quantity is invalid', cause })),
       )

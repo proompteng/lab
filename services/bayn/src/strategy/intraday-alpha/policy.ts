@@ -19,14 +19,13 @@ import {
 export { IntradayAlphaPhase, IntradayAlphaSetup, intradayAlphaBenchmarkSymbol, intradayAlphaCandidateSymbols }
 
 /**
- * Matches live Dorvud/Flink torghut-core-equity-v3 identity while restricting entries
- * to the 15 high-dispersion WebSocket equities with SPY completed-bar benchmark and
- * a 25 bps IEX spread bound (avoiding the 5 bps single-exchange starvation filter).
+ * Matches live Dorvud/Flink torghut-core-equity-v3 identity for the 20-symbol candidate
+ * universe with SPY completed-bar benchmark. Entry pricing anchors to completed 1m bar
+ * closes (±10 bps limit) so wide single-exchange IEX quotes do not distort NBBO execution.
  */
 export const intradayAlphaEquityMarketProfile = Object.freeze({
   ...retainedEquityMarketProfile,
   market: MarketKind.Equity,
-  maximumEntrySpreadBps: 25,
   universeId: currentEquityUniverse.id,
   universeSymbolHash: currentEquityUniverse.symbolHash,
   universe: currentEquityUniverse.symbols,
@@ -35,7 +34,7 @@ export const intradayAlphaEquityMarketProfile = Object.freeze({
 })
 
 export const intradayAlphaDefinition = Object.freeze({
-  maximumEntrySpreadBps: 25,
+  entryLimitSlippageBps: 10,
   maximumPositions: 4,
   maximumGrossWeight: 0.8,
   maximumSymbolWeight: 0.2,
@@ -45,14 +44,15 @@ export const intradayAlphaDefinition = Object.freeze({
     minimumOpeningRangeBars: 27,
     minimumRecent15MinBars: 13,
     entryStartMinuteFromOpen: 30,
-    entryEndMinuteFromOpen: 75,
-    maximumHoldingMinutes: 45,
+    entryEndMinuteFromOpen: 80,
+    maximumHoldingMinutes: 60,
     hardExitMinuteFromOpen: 118,
-    protectiveStopBps: 50,
-    profitTargetBps: 100,
+    protectiveStopBps: 100,
+    profitTargetBps: 200,
     maximumPositions: 1,
     maxTradesPerSession: 2,
     targetWeightPerLeg: 0.2,
+    requireOpeningCandleDirection: true,
   }),
   middayReversion: Object.freeze({
     entryStartMinuteFromOpen: 120,
@@ -65,8 +65,8 @@ export const intradayAlphaDefinition = Object.freeze({
     // Fits safely inside both 1x cash-only and 2x margin accounts without InsufficientBuyingPower.
     targetWeightPerLeg: 0.18,
     fallbackSingleLegWeight: 0.2,
-    protectiveStopBps: 300,
-    profitTargetBps: 400,
+    protectiveStopBps: 500,
+    profitTargetBps: 800,
     flattenMinuteFromOpen: 385,
   }),
   catalystVeto: Object.freeze({
@@ -90,9 +90,9 @@ export const intradayAlphaPromptsHash = () => canonicalHashV1Result(intradayAlph
 export const IntradayAlphaPolicySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.intraday-alpha-policy.v1'),
   sharedProtocol: JevProtocolSchema,
-  candidateSymbols: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
+  candidateSymbols: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(24)),
   benchmarkSymbol: Schema.Literal(intradayAlphaBenchmarkSymbol),
-  maximumEntrySpreadBps: Schema.Literal(intradayAlphaDefinition.maximumEntrySpreadBps),
+  entryLimitSlippageBps: Schema.Literal(intradayAlphaDefinition.entryLimitSlippageBps),
   maximumPositions: Schema.Literal(intradayAlphaDefinition.maximumPositions),
   maximumGrossWeight: Schema.Literal(intradayAlphaDefinition.maximumGrossWeight),
   maximumSymbolWeight: Schema.Literal(intradayAlphaDefinition.maximumSymbolWeight),
@@ -110,6 +110,7 @@ export const IntradayAlphaPolicySchema = Schema.Struct({
     maximumPositions: Schema.Literal(intradayAlphaDefinition.morningOrb.maximumPositions),
     maxTradesPerSession: Schema.Literal(intradayAlphaDefinition.morningOrb.maxTradesPerSession),
     targetWeightPerLeg: Schema.Literal(intradayAlphaDefinition.morningOrb.targetWeightPerLeg),
+    requireOpeningCandleDirection: Schema.Literal(intradayAlphaDefinition.morningOrb.requireOpeningCandleDirection),
   }),
   middayReversion: Schema.Struct({
     entryStartMinuteFromOpen: Schema.Literal(intradayAlphaDefinition.middayReversion.entryStartMinuteFromOpen),
@@ -133,7 +134,7 @@ export const IntradayAlphaPolicySchema = Schema.Struct({
   Schema.makeFilter((policy) =>
     policy.candidateSymbols.join(',') === intradayAlphaCandidateSymbols.join(',')
       ? []
-      : [{ path: ['candidateSymbols'], issue: 'must bind the exact reviewed 15-symbol intraday alpha universe' }],
+      : [{ path: ['candidateSymbols'], issue: 'must bind the exact reviewed 20-symbol intraday alpha universe' }],
   ),
 )
 export type IntradayAlphaPolicy = typeof IntradayAlphaPolicySchema.Type
@@ -141,7 +142,7 @@ export type IntradayAlphaPolicyMaterial = Omit<IntradayAlphaPolicy, 'sharedProto
   readonly sharedProtocol: JevProtocolMaterial
 }
 
-export const intradayAlphaBehaviorHash = sha256('bayn.intraday-alpha.behavior.v1')
+export const intradayAlphaBehaviorHash = sha256('bayn.intraday-alpha.behavior.v2')
 
 export const makeIntradayAlphaPolicy = <P extends JevProtocolMaterial>(
   sharedProtocol: P,
@@ -150,7 +151,7 @@ export const makeIntradayAlphaPolicy = <P extends JevProtocolMaterial>(
   sharedProtocol,
   candidateSymbols: [...intradayAlphaCandidateSymbols],
   benchmarkSymbol: intradayAlphaBenchmarkSymbol,
-  maximumEntrySpreadBps: intradayAlphaDefinition.maximumEntrySpreadBps,
+  entryLimitSlippageBps: intradayAlphaDefinition.entryLimitSlippageBps,
   maximumPositions: intradayAlphaDefinition.maximumPositions,
   maximumGrossWeight: intradayAlphaDefinition.maximumGrossWeight,
   maximumSymbolWeight: intradayAlphaDefinition.maximumSymbolWeight,
