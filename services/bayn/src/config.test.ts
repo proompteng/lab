@@ -315,10 +315,6 @@ describe('pure runtime configuration resolution', () => {
       },
     )
     expectFailure(
-      { configuredAlpaca: alpaca(BrokerEnvironment.Sandbox), authorityGenerationHash: undefined },
-      { _tag: 'MissingAlpacaAuthorityGeneration' },
-    )
-    expectFailure(
       {
         configuredAlpaca: {
           ...baseParsedConfig.configuredAlpaca,
@@ -329,6 +325,18 @@ describe('pure runtime configuration resolution', () => {
       },
       { _tag: 'MissingAlpacaCredentials' },
     )
+  })
+
+  test('derives the read-only bootstrap generation from the configured account', () => {
+    const config = Result.getOrThrow(
+      resolveRuntimeConfig(
+        resolutionInput({
+          configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+          authorityGenerationHash: undefined,
+        }),
+      ),
+    )
+    expect(config.alpaca.authorityGenerationHash).toBe(config.alpaca.identity.identityHash)
   })
 
   test('rejects every authority mismatch before startup', () => {

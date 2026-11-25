@@ -32,5 +32,5 @@ configMapGenerator:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-d279748cf73d4a69812e9c9e452fe41a694cc249
-    digest: sha256:f11a46db299a56e1ca372fe1aefb3d7e42bd18dd206a5b2bb0851e5c583a4c37
+    newTag: kargo-sha-892f9290e9704b3d754cdede40e0406a5eb11616
+    digest: sha256:872f47053adce459d15a0ae5f14fd263b288d0aa73c053787a567941ac0e0cae

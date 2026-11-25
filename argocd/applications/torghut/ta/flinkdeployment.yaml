@@ -8,7 +8,7 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:db4f3172100b955334ea7030f25ea0660c3d45b623b4061ffba4b7b81b6cc4db
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:1ca9d5a3c97ae8f013d71b0d2ef6d93ffa94a94878064843528392bfb4351c57
   imagePullPolicy: IfNotPresent
   restartNonce: 38
   flinkVersion: v2_2
@@ -164,9 +164,9 @@ spec:
                   name: flink-checkpoints
                   key: AWS_SECRET_ACCESS_KEY
             - name: TORGHUT_TA_VERSION
-              value: kargo-sha-d279748cf73d4a69812e9c9e452fe41a694cc249
+              value: kargo-sha-892f9290e9704b3d754cdede40e0406a5eb11616
             - name: TORGHUT_TA_COMMIT
-              value: d279748cf73d4a69812e9c9e452fe41a694cc249
+              value: 892f9290e9704b3d754cdede40e0406a5eb11616
             - name: DORVUD_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:

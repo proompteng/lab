@@ -51,6 +51,7 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeExecutionCycleDriver } from './autonomous-runtime'
 import { nativeActivationPreflight } from './native-activation-preflight'
+import { previousConfiguredController, selectConfiguredBrokerAccount } from '../db/execution-store/observe-authority'
 import {
   AutonomousWorkerApplicationResourcesLive,
   ExecutionControllerStatusResourceLive,
@@ -740,9 +741,24 @@ export const acquireNativeExecutionRuntime = (
           { signal },
         ),
     )
+    const identity = plan.config.alpaca.identity
     return {
       config,
-      runtime,
+      runtime: {
+        ...runtime,
+        brokerAccount: {
+          bind: (signal) =>
+            projectionManaged.runPromise(
+              selectConfiguredBrokerAccount(identity, plan.config.reconciliationStaleThresholdMs),
+              { signal },
+            ),
+          previousController: (signal) =>
+            projectionManaged.runPromise(
+              PgClient.PgClient.pipe(Effect.flatMap((sql) => previousConfiguredController(sql, identity))),
+              { signal },
+            ),
+        },
+      },
       inferenceRuntime: makeNativeEntryInferenceRuntime(inferenceManaged, {
         accountId: plan.config.alpaca.expectedAccountId,
         planHash: config.planHash,
