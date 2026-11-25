@@ -23,6 +23,11 @@ import {
   repeatedMomentumStrategyIdentity,
   type RepeatedMomentumPolicy,
 } from './strategy/repeated-momentum/policy'
+import {
+  intradayAlphaStrategyIdentity,
+  makeIntradayAlphaPolicy,
+  type IntradayAlphaPolicy,
+} from './strategy/intraday-alpha/policy'
 import { entryBracketProtection } from './execution/position-protection'
 import { jevProfitTargetLimitFloors, jevProfitTargetLimitCeilings } from './jev/exit'
 import { isShortExitPlan } from './strategy/funded-exit-plan'
@@ -1339,6 +1344,24 @@ const momentumProtocolIdentityMatches = (
   )
 }
 
+const intradayAlphaProtocolIdentityMatches = (
+  policy: Omit<IntradayAlphaPolicy, 'sharedProtocol'> & {
+    readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
+  },
+  strategyProtocolHash: string,
+): boolean => {
+  const parameters = canonicalHashV1Result(policy.sharedProtocol)
+  const expected = canonicalHashV1Result({ ...retainedExpectedProtocolDocument(policy.sharedProtocol) })
+  const identity = intradayAlphaStrategyIdentity(policy)
+  return (
+    Result.isSuccess(parameters) &&
+    Result.isSuccess(expected) &&
+    parameters.success === expected.success &&
+    Result.isSuccess(identity) &&
+    identity.success.protocolHash === strategyProtocolHash
+  )
+}
+
 const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
   const plannerInput = executionDecisionPlannerInput(document)
@@ -1456,9 +1479,11 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     !(target.schemaVersion === 'bayn.repeated-momentum-target.v1'
       ? momentumProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
-      : target.schemaVersion === 'bayn.entry-ablation-target.v1'
-        ? ablationProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
-        : recordedJevProtocolIdentityMatches(observation.protocol, document.bindings.strategyProtocolHash)) ||
+      : target.schemaVersion === 'bayn.intraday-alpha-target.v1'
+        ? intradayAlphaProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
+        : target.schemaVersion === 'bayn.entry-ablation-target.v1'
+          ? ablationProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
+          : recordedJevProtocolIdentityMatches(observation.protocol, document.bindings.strategyProtocolHash)) ||
     observation.cycleId !== document.bindings.cycleId ||
     observation.authorityGenerationHash !== document.bindings.authorityGenerationHash ||
     observation.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
@@ -1491,9 +1516,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
     !equal(plannerInput.targetWeights, jevPlanningTargetWeights(target)) ||
     document.targetPlan.intentTargets.some((intent) => {
       const plan = target.exitPolicy.plans[intent.symbol]
-      return (
-        intent.side !== (plan?.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1' ? OrderSide.Sell : OrderSide.Buy)
-      )
+      return plan === undefined || intent.side !== (isShortExitPlan(plan) ? OrderSide.Sell : OrderSide.Buy)
     })
   )
     issues.push({
@@ -1533,7 +1556,18 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
   if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') return []
   const evidence = target.evidence
   const input = executionDecisionPlannerInput(document)
-  const position = evidence.portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
+  const exitSymbol = target.symbols[0]
+  const position =
+    exitSymbol === undefined
+      ? undefined
+      : evidence.portfolio.brokerState.positions.find(
+          ({ symbol, quantityAtoms }) => symbol === exitSymbol && BigInt(quantityAtoms) !== 0n,
+        )
+  const priorPositionsBySymbol = new Map(
+    evidence.portfolio.brokerState.positions
+      .filter(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
+      .map((held) => [held.symbol, held] as const),
+  )
   if (
     input === undefined ||
     position === undefined ||
@@ -1547,6 +1581,10 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
       momentumProtocolIdentityMatches(
         makeRepeatedMomentumPolicy(evidence.protocol),
         document.bindings.strategyProtocolHash,
+      ) ||
+      intradayAlphaProtocolIdentityMatches(
+        makeIntradayAlphaPolicy(evidence.protocol),
+        document.bindings.strategyProtocolHash,
       )
     ) ||
     target.cycleId !== document.bindings.cycleId ||
@@ -1555,13 +1593,15 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
     document.createdAt < target.observedAt ||
     (document.replanGenerationHash === undefined && document.createdAt >= target.commitDeadlineAt) ||
     input.brokerState.reconciliation.reconciledAt < evidence.portfolio.brokerState.reconciliation.reconciledAt ||
-    input.brokerState.positions.some(
-      (held) =>
-        BigInt(held.quantityAtoms) !== 0n &&
-        (held.symbol !== position.symbol ||
-          BigInt(held.quantityAtoms) < 0n !== BigInt(position.quantityAtoms) < 0n ||
-          absoluteMicros(BigInt(held.quantityAtoms)) > absoluteMicros(BigInt(position.quantityAtoms))),
-    ) ||
+    input.brokerState.positions.some((held) => {
+      if (BigInt(held.quantityAtoms) === 0n) return false
+      const prior = priorPositionsBySymbol.get(held.symbol)
+      return (
+        prior === undefined ||
+        BigInt(held.quantityAtoms) < 0n !== BigInt(prior.quantityAtoms) < 0n ||
+        absoluteMicros(BigInt(held.quantityAtoms)) > absoluteMicros(BigInt(prior.quantityAtoms))
+      )
+    }) ||
     Object.values(input.targetWeights).some((weight) => weight !== 0) ||
     document.targetPlan.intentTargets.some(
       (intent) =>

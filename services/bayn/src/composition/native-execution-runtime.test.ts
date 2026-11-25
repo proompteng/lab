@@ -829,14 +829,25 @@ describe('native execution runtime', () => {
     } as CandidateObservation
     const batch = { plan: { observationHash: recoveredHash }, result: null } as JevBatchEvidence
     const momentum = makeRepeatedMomentumPolicy(fixtureRuntime.definition.parameters)
-    const retainedPolicies: Array<typeof momentum | undefined> = []
+    const retainedPolicies: Array<Parameters<CandidateObservationStore['Service']['record']>[1]> = []
+    const sessionState = { morningOrbTakenSymbols: ['COHR'], middayReversionCompleted: true }
     let advances = 0
     const currentDriver = {
       ...driver,
       advance: Effect.gen(function* () {
         if (++advances === 1) {
-          yield* (yield* CandidateObservationStore).record(candidate, momentum).pipe(Effect.orDie)
-          yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.orDie)
+          const observations = yield* CandidateObservationStore
+          const readSessionState = observations.readIntradayAlphaSessionState
+          if (readSessionState === undefined) return yield* Effect.die('Wrapped store lost session history')
+          const history = yield* readSessionState({
+            cycleId: hash('d'),
+            accountId: 'paper-fixture',
+            sessionDate: '2026-09-04',
+            strategyProtocolHash: hash('e'),
+          }).pipe(Effect.orDie)
+          expect(history).toEqual(sessionState)
+          yield* observations.record(candidate, momentum).pipe(Effect.orDie)
+          yield* observations.record(candidate).pipe(Effect.orDie)
           yield* (yield* JevBatchStore).finish(hash('c')).pipe(Effect.orDie)
         }
         return { observation: windowClosedObservation }
@@ -848,6 +859,7 @@ describe('native execution runtime', () => {
           retainedPolicies.push(policy)
         }),
       latestJevWindowEnd: () => Effect.succeed(Option.none()),
+      readIntradayAlphaSessionState: () => Effect.succeed(sessionState),
     }).pipe(
       Context.add(JevBatchStore, {
         read: () => Effect.succeed(batch),

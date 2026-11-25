@@ -16,6 +16,7 @@ import { JevPositionHoldSchema } from '../../jev/hold'
 import { JevEntryTargetSchema } from '../../jev/decision'
 import { EntryAblationTargetSchema } from '../../jev/entry-ablation'
 import { RepeatedMomentumTargetSchema } from '../../strategy/repeated-momentum/decision'
+import { IntradayAlphaTargetSchema } from '../../strategy/intraday-alpha/decision'
 import { AccountProtectionInputsSchema } from '../../jev/account-protection'
 
 export const AdmissionProtectionEvidenceSchema = Schema.Struct({
@@ -86,7 +87,12 @@ export const cyclePassObservationSchemaForHold = <Hold extends { readonly eviden
       positionHold: Schema.optionalKey(positionHold),
       protectionReleaseCycleId: Schema.optionalKey(Sha256Schema),
       entryAbstention: Schema.optionalKey(
-        Schema.Union([JevEntryTargetSchema, EntryAblationTargetSchema, RepeatedMomentumTargetSchema]).check(
+        Schema.Union([
+          JevEntryTargetSchema,
+          EntryAblationTargetSchema,
+          RepeatedMomentumTargetSchema,
+          IntradayAlphaTargetSchema,
+        ]).check(
           Schema.makeFilter((target) => target.selectedSymbols.length === 0, {
             expected: 'a reproduced decision with no selected entries',
           }),
