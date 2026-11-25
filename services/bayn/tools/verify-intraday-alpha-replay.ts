@@ -396,6 +396,7 @@ const simulateSession = (input: {
       quoteHalfSpreadBps: Math.max(1, input.slippageRtBps / 2),
     })
     const observedAt = snapshot.manifest.observedAt
+    const orderExpiresAtMs = Date.parse(observedAt) + 60_000
     const eligibility = makeShortEligibility(observedAt)
     const extracted = Result.getOrThrow(
       extractIntradayAlphaCandidates({
@@ -488,7 +489,7 @@ const simulateSession = (input: {
         precision: protocol.executionModel.precision,
         allocationCapitalMicros: portfolio.brokerState.account.equityMicros,
         maximumInputAgeMs: 60_000,
-        submissionCutoffAt: utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000),
+        submissionCutoffAt: utcInstantFromEpochMillis(orderExpiresAtMs),
         observedAt,
         executionTerms: {
           orderType: OrderType.Limit,
@@ -507,36 +508,42 @@ const simulateSession = (input: {
       return
     }
 
-    const entryMinute = completedMinute + 1
+    const entryMinute = Math.ceil((Date.parse(observedAt) - sessionOpenMs) / 60_000)
     let latestExitMinute = entryMinute
     const spyByMin = barByMinute.get(intradayAlphaBenchmarkSymbol)
+    const perSideSlipMult = input.slippageRtBps / 2 / 10_000
     for (const intent of planned.intentTargets) {
       const funded = fundedPlans[intent.symbol]
       if (funded === undefined) continue
       const symBars = barByMinute.get(intent.symbol)
-      // Strictly causal next-available bar fill within 5 minutes (never look back into completedMinute.open)
-      let fillMinute = entryMinute
-      let entryBar: RawBar | undefined
-      const maxWait = extracted.context.phase === IntradayAlphaPhase.MorningOrb ? 3 : 5
-      for (let w = 0; w < maxWait; w++) {
-        const candidateBar = symBars?.get(entryMinute + w)
-        if (candidateBar !== undefined) {
-          fillMinute = entryMinute + w
-          entryBar = candidateBar
+      const isLong = intent.side === OrderSide.Buy
+      const levels = funded.plan.levels
+      const limitPrice =
+        Number('maximumEntryPriceMicros' in levels ? levels.maximumEntryPriceMicros : levels.minimumEntryPriceMicros) /
+        1_000_000
+      // Minute bars cannot establish the time or queue priority of an intrabar touch.
+      // A post-decision open within the working window is our conservative executable-price proxy.
+      let fill: { readonly minute: number; readonly bar: RawBar; readonly price: number } | undefined
+      for (let minute = entryMinute; sessionOpenMs + minute * 60_000 < orderExpiresAtMs; minute++) {
+        const bar = symBars?.get(minute)
+        if (bar === undefined) continue
+        const price = bar.open * (isLong ? 1 + perSideSlipMult : 1 - perSideSlipMult)
+        if (isLong ? price <= limitPrice : price >= limitPrice) {
+          fill = { minute, bar, price }
           break
         }
       }
-      if (entryBar === undefined) continue
+      if (fill === undefined) continue
+      const { minute: fillMinute, bar: entryBar, price: entryPrice } = fill
       const shares = Number(BigInt(intent.quantityAtoms) / 1_000_000_000n)
       if (shares <= 0) continue
 
-      const isLong = intent.side === OrderSide.Buy
-      const perSideSlipMult = input.slippageRtBps / 2 / 10_000
-      const entryPrice = isLong ? entryBar.open * (1 + perSideSlipMult) : entryBar.open * (1 - perSideSlipMult)
       const stopPrice = Number(BigInt(funded.plan.levels.stopPriceMicros)) / 1_000_000
       const targetPrice = Number(BigInt(funded.plan.levels.profitLimitPriceMicros)) / 1_000_000
       const maxHoldMinute = Math.min(
-        policy.middayReversion.flattenMinuteFromOpen,
+        extracted.context.phase === IntradayAlphaPhase.MorningOrb
+          ? policy.morningOrb.hardExitMinuteFromOpen
+          : policy.middayReversion.flattenMinuteFromOpen,
         fillMinute + funded.plan.levels.maximumHoldingMinutes,
       )
 

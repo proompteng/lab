@@ -27,6 +27,7 @@ import {
 import { strictParseOptions } from './schemas'
 import { BrokerMutationError, MutationFailure } from './broker/alpaca-mutations/model'
 import { advancePositionProtection } from './observe-composition/position-protection-interpreter'
+import { IntradayAlphaPhase } from './strategy/intraday-alpha/constants'
 import { withProviderSessions } from './testing/market-calendar-fixture'
 import { currentEquityMarketProfile as equityMarketProfile } from './jev/markets'
 import { CandidateObservationStore } from './observe-composition/candidate-observation'
@@ -9810,8 +9811,8 @@ test.each(['known', 'unknown', 'publication', 'filled', 'unaccounted'] as const)
   },
 )
 
-test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
-  'advancePositionProtection respects opposite IEX stop confirmation when native protection is armed: %s',
+test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent', 'midday-native'] as const)(
+  'advancePositionProtection preserves native exits at the strategy boundary: %s',
   async (scenario) => {
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
@@ -9987,7 +9988,7 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
     }
     const stopPrice = Number(levels.stopPriceMicros) / 1_000_000
     const quotesRange =
-      scenario === 'gap-armed'
+      scenario === 'gap-armed' || scenario === 'midday-native'
         ? { bidPrice: stopPrice - 0.15, askPrice: stopPrice - 0.05 }
         : { bidPrice: stopPrice - 0.15, askPrice: stopPrice + 0.15 }
     const marketData = {
@@ -10038,13 +10039,32 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
           } as const
         }),
     }
+    const document: typeof fixture.document =
+      scenario === 'midday-native'
+        ? {
+            ...fixture.document,
+            // Exercise the interpreter with the same sealed protection facts and the midday target discriminator.
+            strategyDecision: {
+              ...decision,
+              schemaVersion: 'bayn.intraday-alpha-target.v1',
+              phase: IntradayAlphaPhase.MiddayReversion,
+              exitPolicy: {
+                ...decision.exitPolicy,
+                plans: {
+                  ...decision.exitPolicy.plans,
+                  AAPL: { ...plan, levels: { ...levels, symbol: 'AAPL' } },
+                },
+              },
+            } as unknown as NonNullable<typeof fixture.document.strategyDecision>,
+          }
+        : fixture.document
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
         return yield* advancePositionProtection({
           input: { ...fixture.input, intradayMarketData: marketData },
           cycle: fixture.boundCycle,
-          document: fixture.document,
+          document,
           protocol: currentIntradayProtocol,
           policy: fixture.policy,
           reconciliation,
@@ -10081,6 +10101,11 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
         Effect.provide(TestClock.layer()),
       ),
     )
+    if (scenario === 'midday-native') {
+      expect(result).toEqual({ _tag: 'Step', step: { _tag: 'Wait', observedAt, waitReason: 'JEV_POSITION_HELD' } })
+      expect(calls).toEqual([])
+      return
+    }
     if (scenario === 'wide-iex-armed') {
       expect(result).toEqual({
         _tag: 'Step',

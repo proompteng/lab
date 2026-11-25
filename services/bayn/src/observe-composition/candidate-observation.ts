@@ -74,6 +74,7 @@ export class CandidateObservationStore extends Context.Service<
     readonly latestJevWindowEnd: (input: {
       readonly cycleId: string
       readonly purpose: JevPurpose
+      readonly schemaVersion?: 'bayn.jev-observation.v1' | 'bayn.intraday-alpha-observation.v1'
     }) => Effect.Effect<Option.Option<string>, OperationalError>
     readonly readIntradayAlphaSessionState?: (input: {
       readonly cycleId: string

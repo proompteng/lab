@@ -18,24 +18,27 @@
 
 ## 2. Production TypeScript 65-Session Offline Replay Verification (`2026-08-25` – `2026-11-24`)
 
-Executed via `bun run tools/verify-intraday-alpha-replay.ts` exercising the actual production TypeScript strategy (`extractIntradayAlphaCandidates`, `selectIntradayAlphaLegs`, `makeIntradayAlphaFundedExitPlan`) and production `target-planner` (`planTargets`) on `$100,000` `1×` cash-only capital with whole-share quantization, `0.21 bps` live Alpaca sell fees, and zero lookahead:
+The verifier exercises the production signal, exit sizing, and target planner on $100,000 of cash buying power with
+whole-share quantities and 0.21 bp sell-side fees. A simulated fill requires a bar open after the decision, before the
+modeled 60-second order cutoff, at a price within the funded limit after entry slippage. The model uses minute bars
+and synthetic quotes and short eligibility. It does not model broker queue priority or live fill probability.
 
-| Slippage Stress (RT) | Active Sessions | Total Trades (`ORB30` / `MR`) | Net P&L | SPY-Excess (`Long` / `Short`) | Monthly Folds (`F0` / `F1` / `F2`) | Max DD | Sharpe | `planTargets` Blocks |
-| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **`2.0 bp` RT** | **`65 / 65` (`100.0%`)** | `358` (`98` / `260`) | **`+$8,617`** | **`+$1,452` / `+$6,639`** | **`+$2,718` / `+$2,668` / `+$3,231`** | `$2,114` | **`+3.99`** | **`0`** |
-| **`5.0 bp` RT** | **`65 / 65` (`100.0%`)** | `359` (`99` / `260`) | **`+$6,669`** | **`+$464` / `+$5,630`** | **`+$2,066` / `+$1,977` / `+$2,626`** | `$2,481` | **`+3.07`** | **`0`** |
-| **`10.0 bp` RT** | **`65 / 65` (`100.0%`)** | `362` (`102` / `260`) | **`+$3,120`** | `-$1,510` / `+$4,033` | **`+$362` / `+$987` / `+$1,771`** | `$3,056` | **`+1.41`** | **`0`** |
+| Round-trip slippage | Active sessions | Morning trades and net P&L | Midday trades and net P&L | Combined net P&L | Three chronological folds   | Max drawdown | Sharpe |
+| ------------------- | --------------- | -------------------------- | ------------------------- | ---------------- | --------------------------- | ------------ | ------ |
+| 2 bp                | 65/65           | 99, +$486                  | 206, +$6,665              | +$7,151          | +$1,642 / +$2,436 / +$3,073 | $2,409       | 3.34   |
+| 5 bp                | 65/65           | 100, −$108                 | 206, +$5,996              | +$5,888          | +$1,629 / +$1,973 / +$2,286 | $2,594       | 2.77   |
+| 10 bp               | 65/65           | 104, −$1,346               | 205, +$4,141              | +$2,796          | +$79 / +$1,155 / +$1,561    | $3,129       | 1.29   |
 
-Recent session spot checks (`2.0 bp` RT):
-- `2026-11-20` (live `v41` lost `-$955`): `6` trades, **`+$551.80`**
-- `2026-11-23` (Monday; live `v43` had `0` trades): **`6` trades**, `-$19.16` (zero starvation)
-- `2026-11-24` (live `v44` made `+$275`): `6` trades, **`+$980.58`**
+The combined strategy passed the offline activity and chronological profitability gate with zero planner blocks.
+The morning phase lost money in the 5 and 10 bp runs.
 
 ## 3. Infrastructure & Schema Compatibility
 
 - **Zero Flink Changes:** Only Bayn's Kafka bootstrap seek for equity `bars` (`390m`) and in-memory bar projection (`391` minutes) were extended; `quotes` (`10s`), `trades` (`30m`), and Flink `PT30M` rolling features (`30m` suffix verified against `[max(rangeEnd - 30m, rangeStart), rangeEnd)`) remain unchanged.
 - **Non-Destructive Admission Migration:** Migration `0220_intraday_alpha_admission.ts` widens `authority_generations` constraints, `intraday_candidate_observations_check`, `enforce_entry_policy_identity()`, and `enforce_strategy_protection_plan()` to admit `bayn.intraday-alpha-policy.v1` / `bayn.intraday-alpha-target.v1` alongside running `bayn.jev.protocol.v44` without touching live `v44` authority or retained `v28–v44` evidence.
-- **Multi-Position Portfolio & Protection Support:** `JevPortfolioSchema`, `position-protection-interpreter`, `jev-position-postgres`, `shadow-decision-contract`, and `buildClosingExecutionCycleDecisionWithSource` support `1..4` mixed Long+Short legs, independent per-leg native `BRACKET`/`OCO`/`STOP_LIMIT` arming, partial early leg exits, and atomic multi-leg EOD flattening.
+- **Multi-position protection.** The midday basket uses independent native `BRACKET`, `OCO`, or `STOP_LIMIT` orders for
+  early fills. Bayn reconciles those fills and maintains protection for the other legs. Its cycle-wide close owns
+  the remaining basket at end of day. The single-leg morning strategy also uses the existing timed software exit.
 
 ## 4. Safe Live Cutover Procedure (When Authorized)
 

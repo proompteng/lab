@@ -6,6 +6,7 @@ import { JevEntryTargetSchema } from '../jev/decision'
 import { JevExitTargetSchema } from '../jev/exit'
 import { RepeatedMomentumTargetSchema } from './repeated-momentum/decision'
 import { IntradayAlphaTargetSchema } from './intraday-alpha/decision'
+import { IntradayAlphaPhase } from './intraday-alpha/constants'
 import type { RetainedJevEntryTarget, RetainedJevExitTarget } from '../jev/retained-jev-targets'
 import type { RetainedJevAblationTarget, RetainedJevMomentumTarget } from '../jev/retained-jev-control-targets'
 import { isShortExitPlan } from './funded-exit-plan'
@@ -116,6 +117,9 @@ export const isProtectedEntryTarget = <Decision extends RecordedRuntimeStrategyD
   isChartEntryTarget(decision) ||
   decision?.schemaVersion === 'bayn.repeated-momentum-target.v1' ||
   decision?.schemaVersion === 'bayn.intraday-alpha-target.v1'
+
+export const isMiddayAlphaTarget = (decision: RecordedRuntimeStrategyDecision | undefined): boolean =>
+  decision?.schemaVersion === 'bayn.intraday-alpha-target.v1' && decision.phase === IntradayAlphaPhase.MiddayReversion
 
 export const protectedEntryBuyPriceCeilings = (
   decision: RecordedRuntimeStrategyDecision | undefined,

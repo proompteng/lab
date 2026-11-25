@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Effect, Layer, Option, Result, Schema } from 'effect'
+import { Effect, Fiber, Layer, Option, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { normalizeMarketCalendarResult } from '../../broker/alpaca/normalizers'
@@ -831,26 +831,24 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
       Effect.succeed({ morningOrbTakenSymbols: [], middayReversionCompleted: false }),
   })
 
-  // Test direct fail-open veto evaluation
+  const candidate = {
+    model: policy.catalystVeto.model,
+    symbol: 'COHR',
+    phase: IntradayAlphaPhase.MiddayReversion,
+    direction: 'LONG' as const,
+    windowEndAt: rangeEndAt,
+    sessionOpenPrice: 100,
+    sessionVwap: 98.5,
+    latestClose: 96.5,
+    relVwapDevBps: -200,
+    recentBars: snapshot.bars
+      .filter((b) => b.symbol === 'COHR')
+      .slice(-5)
+      .map(({ eventAt, open, high, low, close, volume }) => ({ eventAt, open, high, low, close, volume })),
+  } as const
   const receipts = await Effect.runPromise(
     evaluateCatalystVetos({
-      candidates: [
-        {
-          model: policy.catalystVeto.model,
-          symbol: 'COHR',
-          phase: IntradayAlphaPhase.MiddayReversion,
-          direction: 'LONG',
-          windowEndAt: rangeEndAt,
-          sessionOpenPrice: 100,
-          sessionVwap: 98.5,
-          latestClose: 96.5,
-          relVwapDevBps: -200,
-          recentBars: snapshot.bars
-            .filter((b) => b.symbol === 'COHR')
-            .slice(-5)
-            .map(({ eventAt, open, high, low, close, volume }) => ({ eventAt, open, high, low, close, volume })),
-        },
-      ],
+      candidates: [candidate],
       vetoThreshold: 0.85,
       budgetMs: 5_000,
       recordedAt: observedAt,
@@ -858,6 +856,31 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
   )
   expect(receipts[0]?.status).toBe('UNAVAILABLE')
   expect(receipts[0]?.vetoed).toBe(false)
+
+  const budgets: number[] = []
+  const delayed = Layer.succeed(JevClient, {
+    evaluate: (_request, budgetMs) =>
+      Effect.sync(() => budgets.push(budgetMs)).pipe(
+        Effect.andThen(Effect.sleep(6_000)),
+        Effect.andThen(Effect.fail(new JevError({ failure: JevFailure.Transport, message: 'provider unavailable' }))),
+      ),
+  })
+  const timed = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const vetoes = yield* evaluateCatalystVetos({
+          candidates: Array.from({ length: 8 }, () => candidate),
+          vetoThreshold: 0.85,
+          budgetMs: 10_000,
+          recordedAt: observedAt,
+        }).pipe(Effect.forkScoped)
+        yield* TestClock.adjust(10_000)
+        return yield* Fiber.join(vetoes)
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(delayed, TestClock.layer()))),
+  )
+  expect(budgets).toEqual([10_000, 10_000, 10_000, 10_000, 4_000, 4_000, 4_000, 4_000])
+  expect(timed.map(({ status }) => status)).toEqual(Array.from({ length: 8 }, () => 'UNAVAILABLE'))
 
   // Test full runtime evaluation: records observation durably and selects all 4 legs despite JevClient outage!
   const evaluated = await Effect.runPromise(

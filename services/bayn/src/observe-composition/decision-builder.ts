@@ -1781,12 +1781,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
       reconciliation.brokerState.positions,
       persistedUniverse ?? intradayParameters.universe,
     )
-    const exitTargetMatchesPass =
-      request.exitTarget !== undefined &&
-      request.exitTarget.symbols.length > 0 &&
-      request.exitTarget.symbols.every((symbol) => closingPass.symbols.includes(symbol))
-    const symbols =
-      exitTargetMatchesPass && request.exitTarget !== undefined ? request.exitTarget.symbols : closingPass.symbols
+    const symbols = closingPass.symbols
     const closingSymbol = symbols[0]
     const closeDecision = yield* Effect.fromResult(
       request.exitTarget === undefined
@@ -1794,7 +1789,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
         : request.exitTarget.cycleId === cycle.identity.cycleId &&
             request.exitTarget.entryDecisionHash === entryDocument.contentHash &&
             request.exitTarget.sessionDate === cycle.identity.executionSessionDate &&
-            exitTargetMatchesPass
+            canonicalJsonEqualV1(request.exitTarget.symbols, symbols)
           ? Result.succeed(request.exitTarget)
           : Result.fail(
               compositionFailure('cycle-binding', 'Jev exit target does not match this entry and remaining position'),

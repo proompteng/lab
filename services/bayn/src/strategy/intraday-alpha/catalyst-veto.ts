@@ -1,4 +1,4 @@
-import { Effect, Option, Result, Schema } from 'effect'
+import { Clock, Effect, Option, Result, Schema } from 'effect'
 
 import { JevClient, type JevInference } from '../../jev/client'
 import { JevContractError, prepareJevRequest, type JevRequest } from '../../jev/contract'
@@ -113,27 +113,35 @@ export const evaluateCatalystVetos = (input: {
 }): Effect.Effect<readonly CatalystVetoReceipt[]> =>
   Effect.gen(function* () {
     const client = yield* Effect.serviceOption(JevClient)
-    if (Option.isNone(client) || input.candidates.length === 0 || input.budgetMs <= 0) return []
-    const boundedBudgetMs = Math.max(1, Math.min(10_000, Math.floor(input.budgetMs)))
+    const budgetMs = Math.max(0, Math.min(10_000, Math.floor(input.budgetMs)))
+    const deadline = (yield* Clock.monotonicTimeNanos) + BigInt(budgetMs) * 1_000_000n
     return yield* Effect.forEach(
       input.candidates,
       (candidate) =>
         Effect.gen(function* () {
+          const unavailable = (
+            requestHash: string | null,
+            responseHash: string | null = null,
+          ): CatalystVetoReceipt => ({
+            symbol: candidate.symbol,
+            phase: candidate.phase,
+            direction: candidate.direction,
+            status: 'UNAVAILABLE',
+            requestHash,
+            responseHash,
+            vetoProbability: null,
+            vetoed: false,
+            recordedAt: input.recordedAt,
+          })
           const prepared = makeCatalystVetoRequest(candidate)
-          if (Result.isFailure(prepared)) {
-            return {
-              symbol: candidate.symbol,
-              phase: candidate.phase,
-              direction: candidate.direction,
-              status: 'UNAVAILABLE' as const,
-              requestHash: null,
-              responseHash: null,
-              vetoProbability: null,
-              vetoed: false,
-              recordedAt: input.recordedAt,
-            }
-          }
-          const result = yield* client.value.evaluate(prepared.success.request, boundedBudgetMs).pipe(Effect.result)
+          if (Result.isFailure(prepared)) return unavailable(null)
+          const { request, requestHash } = prepared.success
+          const remainingMs = Number((deadline - (yield* Clock.monotonicTimeNanos)) / 1_000_000n)
+          if (Option.isNone(client) || remainingMs <= 0) return unavailable(requestHash)
+
+          const result = yield* client.value
+            .evaluate(request, remainingMs)
+            .pipe(Effect.timeoutOption(remainingMs), Effect.result)
           if (Result.isFailure(result)) {
             yield* Effect.logWarning('Intraday alpha catalyst veto unavailable; preserving quant candidate').pipe(
               Effect.annotateLogs({
@@ -142,38 +150,18 @@ export const evaluateCatalystVetos = (input: {
                 failure: result.failure.failure,
               }),
             )
-            return {
-              symbol: candidate.symbol,
-              phase: candidate.phase,
-              direction: candidate.direction,
-              status: 'UNAVAILABLE' as const,
-              requestHash: prepared.success.requestHash,
-              responseHash: null,
-              vetoProbability: null,
-              vetoed: false,
-              recordedAt: input.recordedAt,
-            }
+            return unavailable(requestHash)
           }
+          if (Option.isNone(result.success)) return unavailable(requestHash)
+          const inference = result.success.value
           const evaluated = evaluateCatalystVetoInference({
             symbol: candidate.symbol,
             phase: candidate.phase,
             direction: candidate.direction,
-            inference: result.success,
+            inference,
             vetoThreshold: input.vetoThreshold,
           })
-          return Result.isSuccess(evaluated)
-            ? evaluated.success
-            : {
-                symbol: candidate.symbol,
-                phase: candidate.phase,
-                direction: candidate.direction,
-                status: 'UNAVAILABLE' as const,
-                requestHash: prepared.success.requestHash,
-                responseHash: result.success.responseHash,
-                vetoProbability: null,
-                vetoed: false,
-                recordedAt: input.recordedAt,
-              }
+          return Result.isSuccess(evaluated) ? evaluated.success : unavailable(requestHash, inference.responseHash)
         }),
       { concurrency: 4 },
     )

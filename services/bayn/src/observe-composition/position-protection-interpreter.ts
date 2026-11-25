@@ -1,4 +1,4 @@
-import { isProtectedEntryTarget } from '../strategy/runtime-decision'
+import { isMiddayAlphaTarget, isProtectedEntryTarget } from '../strategy/runtime-decision'
 import { Effect, Option, Result } from 'effect'
 
 import { BrokerMutationError, MutationOperation } from '../broker/alpaca-mutations/model'
@@ -156,7 +156,8 @@ export const advancePositionProtection = (request: {
       return { _tag: 'Ready' } as const
     }
 
-    const multiLeg = planEntries.length > 1
+    // The midday basket exits early through each leg's native orders. A software exit closes the cycle.
+    const brokerManagedExits = isMiddayAlphaTarget(target)
     let pendingWait: Effect.Success<ReturnType<typeof evaluateJevPositionManagement>> | undefined
     let liquidationReady: { readonly _tag: 'Ready'; readonly exitTarget?: JevExitTarget } | undefined
 
@@ -175,7 +176,7 @@ export const advancePositionProtection = (request: {
         _tag: 'Wait',
         details: { waitReason: 'JEV_POSITION_HELD' },
       }
-      if (quantityAtoms !== 0n && !request.closeDue) {
+      if (quantityAtoms !== 0n && !request.closeDue && !brokerManagedExits) {
         if (
           state.reconciliation.status !== 'EXACT' ||
           !reconciliation.report.metrics.accountingExact ||
@@ -196,7 +197,6 @@ export const advancePositionProtection = (request: {
           calendar: document.executionSession.calendar,
           brokerState: state,
           marketData: input.intradayMarketData,
-          ...(multiLeg ? { symbol } : {}),
         })
       }
       let protection: ProtectionOrderState = { _tag: 'Absent' }

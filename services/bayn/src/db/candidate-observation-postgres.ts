@@ -127,20 +127,24 @@ export const recordReproducedJevObservation = (
 
 export const latestJevObservationWindowQuery = (
   sql: PgClient.PgClient,
-  { cycleId, purpose }: Parameters<CandidateObservationStore['Service']['latestJevWindowEnd']>[0],
-) =>
-  purpose !== JevPurpose.Entry
+  { cycleId, purpose, schemaVersion }: Parameters<CandidateObservationStore['Service']['latestJevWindowEnd']>[0],
+) => {
+  const schema =
+    schemaVersion === 'bayn.intraday-alpha-observation.v1'
+      ? sql`'bayn.intraday-alpha-observation.v1'`
+      : sql`'bayn.jev-observation.v1'`
+  return purpose !== JevPurpose.Entry
     ? sql`
         SELECT max(payload #>> '{manifest,rangeEndAt}') AS at FROM intraday_candidate_observations
         WHERE cycle_id = ${cycleId}
-          AND payload ->> 'schemaVersion' IN ('bayn.jev-observation.v1', 'bayn.intraday-alpha-observation.v1')
+          AND payload ->> 'schemaVersion' = ${schema}
           AND payload #>> '{portfolio,purpose}' = ${purpose}
       `
     : sql`
         SELECT max(latest.at) AS at FROM (
           SELECT observation.payload #>> '{manifest,rangeEndAt}' AS at
           FROM intraday_candidate_observations AS observation
-          WHERE observation.payload ->> 'schemaVersion' IN ('bayn.jev-observation.v1', 'bayn.intraday-alpha-observation.v1')
+          WHERE observation.payload ->> 'schemaVersion' = ${schema}
             AND observation.payload #>> '{portfolio,purpose}' = ${purpose}
             AND observation.payload #>> '{manifest,rangeEndAt}' IS NOT NULL
             AND observation.cycle_id = ANY(ARRAY(
@@ -168,6 +172,7 @@ export const latestJevObservationWindowQuery = (
           ORDER BY observation.payload #>> '{manifest,rangeEndAt}' DESC LIMIT 1
         ) AS latest
       `
+}
 
 export const makeCandidateObservationStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient

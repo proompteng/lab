@@ -81,6 +81,7 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(
     const latest = yield* store.latestJevWindowEnd({
       cycleId: input.observation.cycleId,
       purpose: input.observation.portfolio.purpose,
+      schemaVersion: 'bayn.intraday-alpha-observation.v1',
     })
     if (Option.isSome(latest) && latest.value >= input.rangeEndAt)
       return yield* new JevAwaitingFreshWindow({
