@@ -1,4 +1,4 @@
-import { Schema, Struct } from 'effect'
+import { Schema } from 'effect'
 
 import { AccountingTransactionSchema } from '../../accounting/schema'
 import {
@@ -226,20 +226,6 @@ export const AuthorityGenerationRow = Schema.Struct({
   activated_at: Schema.Date,
 })
 export type AuthorityGenerationRow = typeof AuthorityGenerationRow.Type
-export const AuthorityGenerationBrokerBinding = AuthorityGenerationRow.mapFields(
-  Struct.pick([
-    'generation_hash',
-    'previous_generation_hash',
-    'maximum',
-    'authority_version',
-    'broker_identity_schema_version',
-    'broker_identity_hash',
-    'broker_provider',
-    'broker_environment',
-    'account_id',
-  ]),
-)
-export type AuthorityGenerationBrokerBinding = typeof AuthorityGenerationBrokerBinding.Type
 
 export const AuthorityGenerationRows = Schema.Array(AuthorityGenerationRow).check(Schema.isMaxLength(1))
 export const ActivationReconciliationRow = Schema.Struct({
