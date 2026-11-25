@@ -209,7 +209,7 @@ The existing parent OTLP exporter publishes `bayn_runtime_process_resident_memor
 `bayn_runtime_memory_bytes{isolate,kind}` for the fixed `main`, `market-projection` and `decision-construction` roles.
 Kinds are `heap_used`, `heap_total`, `external`, `array_buffers` and `heap_limit`. `array_buffers` is included in
 `external`; `heap_used` is included in `heap_total`. These overlapping measures must not be added together.
-Projection memory travels in the bounded 15-second capture-health frame; decision memory travels in completed
+Projection memory travels in the bounded 15-second memory sample; decision memory travels in completed
 decision replies. Workers acquire no additional exporter or diagnostic request channel.
 
 Always display `time() - bayn_runtime_memory_sample_timestamp_seconds` beside worker memory. An idle decision
@@ -291,19 +291,12 @@ prior resource values through a reviewed commit and the same Kargo path. Infrast
 
 ## Unified PostgreSQL storage
 
-`postgres-cluster.yaml` owns the two-instance `bayn-db` cluster and the `bayn` application database. Financial
-records and immutable native-arrival captures share this database. Both PGDATA claims use the existing
-`local-path` NVMe filesystems on Turin and Altra with a 500Gi working allowance; WAL uses separate 32Gi
-NVMe claims. Required host anti-affinity, synchronous `ANY 1`, TLS, checksums and backups remain enabled.
+`postgres-cluster.yaml` owns the two-instance `bayn-db` cluster and the `bayn` application database. Both PGDATA
+claims use the existing `local-path` NVMe filesystems on Turin and Altra with a 500Gi working allowance. WAL uses
+separate 32Gi NVMe claims. Required host anti-affinity, synchronous `ANY 1`, TLS, checksums and backups remain enabled.
 
-The projection thread uses the existing application PostgreSQL connection and a single scoped client. Application
-startup alone owns schema migrations. Native capture and read-only exports retain the original checksum,
-ordered-prefix and immutable guards, and use the same PostgreSQL endpoint and CA as financial reads.
-
-The hard migration must merge all retained capture epochs, chunks and end markers before the replacement image
-is activated. Verify exact identities and content; do not infer duplicates from table names. Keep the old archive
-and original financial volumes until both unified NVMe replicas, backups, recovery and actual Bayn consumers pass.
-The [migration procedure](../../../docs/bayn/unified-nvme-migration.md) records the ordered data cutover and evidence.
+The [November 9 migration record](../../../docs/bayn/unified-nvme-migration.md) documents the bulk archive copy
+into this database. Live Kafka projection now runs in memory and application startup owns financial schema migrations.
 
 ## Isolated Jev instruction research
 
