@@ -8,7 +8,6 @@ import { cashSpotLimitTimeInForce } from '../../execution/order-terms'
 import { canonicalHashV1Result } from '../../hash'
 import { instrumentMarket, MarketKind } from '../../instruments'
 import { JevContractError } from '../../jev/contract'
-import { jevEntryPriceAllowances } from '../../jev/entry-economics'
 import { jevExitLimitValue } from '../../jev/liquidation-economics'
 import type { reproduceJevCandidateObservation } from '../../jev/observation'
 import { shortCoverCostMicros } from '../../jev/short-entry'
@@ -167,14 +166,16 @@ export const makeIntradayAlphaFundedExitPlan = (input: {
     const quote = observation.snapshot.latestQuotes[symbol]
     if (quote === undefined)
       return yield* Result.fail(
-        new JevContractError({ message: `Intraday alpha funding requires quote for ${symbol}` }),
+        new JevContractError({ message: `Intraday alpha funding requires live quote liveness for ${symbol}` }),
       )
-    const bid = yield* priceNumberToMicros(quote.bidPrice, 'alpha bid', 'DOWN')
-    const ask = yield* priceNumberToMicros(quote.askPrice, 'alpha ask', 'UP')
-    if (bid <= 0n || ask < bid) return null
+    const expectedLatestBarMs = Date.parse(observation.snapshot.manifest.rangeEndAt) - 60_000
+    const latestBar = observation.snapshot.bars.find(
+      (bar) => bar.symbol === symbol && Date.parse(bar.eventAt) === expectedLatestBarMs,
+    )
+    if (latestBar === undefined || !Number.isFinite(latestBar.close) || latestBar.close <= 0) return null
     const capitalMicros = BigInt(observation.portfolio.brokerState.account.equityMicros)
     if (capitalMicros <= 0n) return null
-    const allowances = jevEntryPriceAllowances(protocol, symbol)
+    const limitSlippageBps = BigInt(policy.entryLimitSlippageBps)
     const policyHash = yield* canonicalHashV1Result(policy)
     const quoteHash = yield* canonicalHashV1Result(quote)
     const source = {
@@ -186,19 +187,20 @@ export const makeIntradayAlphaFundedExitPlan = (input: {
     }
 
     if (leg.direction === 'LONG') {
-      const maxAsk = quantizeInstrumentPriceMicros(
+      const barCloseUp = quantizeInstrumentPriceMicros(
         symbol,
-        (ask * BigInt(10_000 + allowances.quoteDriftBps)) / 10_000n,
+        yield* priceNumberToMicros(latestBar.close, 'alpha bar close', 'UP'),
         'UP',
       )
+      if (barCloseUp <= 0n) return null
       const maximumEntryPrice = (yield* deriveExecutionIntentPricing({
         symbol,
         side: OrderSide.Buy,
         orderType: OrderType.Limit,
         timeInForce: cashSpotLimitTimeInForce(MarketKind.Equity),
         quantityAtoms: quantityScale,
-        referencePriceMicros: maxAsk,
-        limitSlippageBps: BigInt(allowances.limitSlippageBps),
+        referencePriceMicros: barCloseUp,
+        limitSlippageBps,
       })).expectedExecutionPriceMicros
       const shares =
         (yield* desiredQuantityAtoms(capitalMicros, leg.targetWeight, maximumEntryPrice, {
@@ -213,7 +215,7 @@ export const makeIntradayAlphaFundedExitPlan = (input: {
       )
       const stopLimit = quantizeInstrumentPriceMicros(
         symbol,
-        (stop * BigInt(10_000 - protocol.maximumEntryLimitSlippageBps) + 9_999n) / 10_000n,
+        (stop * (10_000n - limitSlippageBps) + 9_999n) / 10_000n,
         'UP',
       )
       const target = quantizeInstrumentPriceMicros(
@@ -221,7 +223,7 @@ export const makeIntradayAlphaFundedExitPlan = (input: {
         (maximumEntryPrice * BigInt(10_000 + leg.profitTargetBps) + 9_999n) / 10_000n,
         'UP',
       )
-      if (stopLimit <= 0n || stopLimit > stop || stop >= bid || target <= maximumEntryPrice) return null
+      if (stopLimit <= 0n || stopLimit > stop || stop >= barCloseUp || target <= maximumEntryPrice) return null
       const buyNotional = (maximumEntryPrice * quantityAtoms + quantityScale - 1n) / quantityScale
       const buyFees = yield* calculateSessionFees(
         [{ symbol, side: 'buy', quantityAtoms, notionalMicros: buyNotional }],
@@ -278,20 +280,21 @@ export const makeIntradayAlphaFundedExitPlan = (input: {
       return { plan, signedWeight: leg.targetWeight }
     }
 
-    // SHORT leg funding
-    const referenceBid = quantizeInstrumentPriceMicros(
+    // SHORT leg funding anchored to completed 1m bar close
+    const barCloseDown = quantizeInstrumentPriceMicros(
       symbol,
-      (bid * BigInt(10_000 - allowances.quoteDriftBps) + 9_999n) / 10_000n,
+      yield* priceNumberToMicros(latestBar.close, 'alpha bar close', 'DOWN'),
       'DOWN',
     )
+    if (barCloseDown <= 0n) return null
     const minimumEntryPrice = (yield* deriveExecutionIntentPricing({
       symbol,
       side: OrderSide.Sell,
       orderType: OrderType.Limit,
       timeInForce: cashSpotLimitTimeInForce(MarketKind.Equity),
       quantityAtoms: quantityScale,
-      referencePriceMicros: referenceBid,
-      limitSlippageBps: BigInt(allowances.limitSlippageBps),
+      referencePriceMicros: barCloseDown,
+      limitSlippageBps,
     })).expectedExecutionPriceMicros
     if (minimumEntryPrice <= 0n) return null
     const sharesByWeight =
@@ -317,17 +320,13 @@ export const makeIntradayAlphaFundedExitPlan = (input: {
       (minimumEntryPrice * BigInt(10_000 + leg.protectiveStopBps) + 9_999n) / 10_000n,
       'UP',
     )
-    const stopLimit = quantizeInstrumentPriceMicros(
-      symbol,
-      (stop * BigInt(10_000 + protocol.maximumEntryLimitSlippageBps)) / 10_000n,
-      'DOWN',
-    )
+    const stopLimit = quantizeInstrumentPriceMicros(symbol, (stop * (10_000n + limitSlippageBps)) / 10_000n, 'DOWN')
     const target = quantizeInstrumentPriceMicros(
       symbol,
       (minimumEntryPrice * BigInt(10_000 - leg.profitTargetBps)) / 10_000n,
       'DOWN',
     )
-    if (target <= 0n || target >= minimumEntryPrice || stop <= ask || stopLimit < stop) return null
+    if (target <= 0n || target >= minimumEntryPrice || stop <= barCloseDown || stopLimit < stop) return null
     const stopCover = yield* shortCoverCostMicros({
       protocol,
       symbol,

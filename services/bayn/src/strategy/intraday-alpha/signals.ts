@@ -2,13 +2,41 @@ import { Result } from 'effect'
 
 import { equityShortIsEligible, type EquityShortEligibility } from '../../execution/equity-short'
 import { JevContractError } from '../../jev/contract'
-import { exchangeSessions, isContinuousMarket } from '../../market-hours'
-import type { IntradayBar, IntradayQuote } from '../../market-data/intraday/model'
+import { exchangeSessions, isContinuousMarket, type MarketHours } from '../../market-hours'
+import type { IntradayBar } from '../../market-data/intraday/model'
 import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
-import { priceNumberToMicros } from '../execution-model/fixed-point'
 import { IntradayAlphaPhase, IntradayAlphaSetup, type IntradayAlphaPolicyMaterial } from './policy'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
+
+export interface RegularAlphaSessionBounds {
+  readonly openAt: string
+  readonly closeAt: string
+  readonly openMs: number
+  readonly closeMs: number
+}
+
+/**
+ * Resolve regular US equity trading hours (09:30–16:00 America/New_York) from broker
+ * providerSessions rather than the extended 08:00–17:00 IEX data-session envelope.
+ */
+export const resolveAlphaRegularSession = (
+  calendar: MarketHours,
+  sessionDate: string,
+): Result.Result<RegularAlphaSessionBounds, JevContractError> => {
+  if (isContinuousMarket(calendar)) return unavailable('Intraday alpha requires an exchange-session equity calendar')
+  const session = exchangeSessions(calendar).find((entry) => entry.date === sessionDate)
+  if (session === undefined) return unavailable('Intraday alpha snapshot has no matching regular session')
+  const provider = calendar.providerSessions.find((entry) => entry.date === sessionDate)
+  const openAt = provider?.regularOpenAt ?? session.openAt
+  const closeAt = provider?.regularCloseAt ?? session.closeAt
+  const openMs = Date.parse(openAt)
+  const closeMs = Date.parse(closeAt)
+  if (!Number.isFinite(openMs) || !Number.isFinite(closeMs) || openMs >= closeMs) {
+    return unavailable('Intraday alpha regular session bounds are invalid')
+  }
+  return Result.succeed({ openAt, closeAt, openMs, closeMs })
+}
 
 export interface SessionBarStats {
   readonly symbol: string
@@ -21,6 +49,8 @@ export interface SessionBarStats {
 }
 
 export interface OpeningRange {
+  readonly open: number
+  readonly close: number
   readonly high: number
   readonly low: number
   readonly barCount: number
@@ -89,35 +119,41 @@ export const computeOpeningRange = (
   minimumBars: number,
 ): OpeningRange | null => {
   const cutoffMs = sessionOpenMs + openingRangeMinutes * 60_000
+  let open = Number.NaN
+  let close = Number.NaN
+  let firstAt = Number.POSITIVE_INFINITY
+  let lastAt = Number.NEGATIVE_INFINITY
   let high = Number.NEGATIVE_INFINITY
   let low = Number.POSITIVE_INFINITY
   let barCount = 0
   for (const bar of bars) {
     const at = Date.parse(bar.eventAt)
     if (at < sessionOpenMs || at >= cutoffMs) continue
+    if (at < firstAt) {
+      firstAt = at
+      open = bar.open
+    }
+    if (at >= lastAt) {
+      lastAt = at
+      close = bar.close
+    }
     if (bar.high > high) high = bar.high
     if (bar.low < low) low = bar.low
     barCount++
   }
-  if (barCount < minimumBars || !Number.isFinite(high) || !Number.isFinite(low) || high <= low) return null
-  return { high, low, barCount }
+  if (
+    barCount < minimumBars ||
+    !Number.isFinite(open) ||
+    !Number.isFinite(close) ||
+    !Number.isFinite(high) ||
+    !Number.isFinite(low) ||
+    open <= 0 ||
+    close <= 0 ||
+    high <= low
+  )
+    return null
+  return { open, close, high, low, barCount }
 }
-
-export const alphaQuoteSpreadAcceptable = (
-  quote: Pick<IntradayQuote, 'bidPrice' | 'askPrice' | 'bidSize' | 'askSize'>,
-  maximumEntrySpreadBps: number,
-): Result.Result<boolean, JevContractError> =>
-  Result.gen(function* () {
-    if (quote.bidSize <= 0 || quote.askSize <= 0) return false
-    const bid = yield* priceNumberToMicros(quote.bidPrice, 'alpha bid', 'DOWN').pipe(
-      Result.mapError((cause) => new JevContractError({ message: 'Alpha quote bid is invalid', cause })),
-    )
-    const ask = yield* priceNumberToMicros(quote.askPrice, 'alpha ask', 'UP').pipe(
-      Result.mapError((cause) => new JevContractError({ message: 'Alpha quote ask is invalid', cause })),
-    )
-    if (bid <= 0n || ask < bid) return false
-    return (ask - bid) * 20_000n <= BigInt(maximumEntrySpreadBps) * (ask + bid)
-  })
 
 export const resolveAlphaSessionContext = (input: {
   readonly snapshot: Pick<StrategyMarketSnapshot, 'manifest'>
@@ -125,12 +161,10 @@ export const resolveAlphaSessionContext = (input: {
   readonly middayReversionCompleted?: boolean
 }): Result.Result<AlphaSessionContext, JevContractError> => {
   const { manifest } = input.snapshot
-  if (isContinuousMarket(manifest.calendar))
-    return unavailable('Intraday alpha requires an exchange-session equity calendar')
-  const session = exchangeSessions(manifest.calendar).find((entry) => entry.date === manifest.sessionDate)
-  if (session === undefined) return unavailable('Intraday alpha snapshot has no matching regular session')
-  const sessionOpenMs = Date.parse(session.openAt)
-  const sessionCloseMs = Date.parse(session.closeAt)
+  const regular = resolveAlphaRegularSession(manifest.calendar, manifest.sessionDate)
+  if (Result.isFailure(regular)) return Result.fail(regular.failure)
+  const sessionOpenMs = regular.success.openMs
+  const sessionCloseMs = regular.success.closeMs
   const rangeEndMs = Date.parse(manifest.rangeEndAt)
   // The latest completed 1m bar starts at rangeEndMs - 60_000.
   const completedMinuteFromOpen = Math.floor((rangeEndMs - sessionOpenMs) / 60_000) - 1
@@ -253,11 +287,11 @@ export const extractIntradayAlphaCandidates = (input: {
         return { context, spyVwapDevBps: spy.vwapDevBps, longPool, shortPool }
       }
       const spyAboveVwap = spy.latestBar.close > spy.sessionVwap
+      const requireOrDirection = input.policy.morningOrb.requireOpeningCandleDirection
       for (const symbol of input.policy.candidateSymbols) {
         if (excluded.has(symbol) || takenOrb.has(symbol)) continue
         const quote = input.snapshot.latestQuotes[symbol]
         if (quote === undefined) continue
-        if (!(yield* alphaQuoteSpreadAcceptable(quote, input.policy.maximumEntrySpreadBps))) continue
         const stats = symbolSessionStats(
           input.snapshot.bars,
           symbol,
@@ -280,6 +314,7 @@ export const extractIntradayAlphaCandidates = (input: {
         const relVwapDevBps = stats.vwapDevBps - spy.vwapDevBps
         if (
           spyAboveVwap &&
+          (!requireOrDirection || openingRange.close > openingRange.open) &&
           close > openingRange.high &&
           previousClose <= openingRange.high &&
           close > stats.sessionVwap
@@ -299,6 +334,7 @@ export const extractIntradayAlphaCandidates = (input: {
         } else if (
           !spyAboveVwap &&
           canShort(symbol) &&
+          (!requireOrDirection || openingRange.close < openingRange.open) &&
           close < openingRange.low &&
           previousClose >= openingRange.low &&
           close < stats.sessionVwap
@@ -332,7 +368,6 @@ export const extractIntradayAlphaCandidates = (input: {
       if (excluded.has(symbol)) continue
       const quote = input.snapshot.latestQuotes[symbol]
       if (quote === undefined) continue
-      if (!(yield* alphaQuoteSpreadAcceptable(quote, input.policy.maximumEntrySpreadBps))) continue
       const stats = symbolSessionStats(
         input.snapshot.bars,
         symbol,

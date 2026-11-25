@@ -15,7 +15,6 @@ import {
   type JevPortfolio,
 } from '../../jev/portfolio'
 import { JevProtocolSchema, type JevProtocol } from '../../jev/protocol'
-import { exchangeSessions, isContinuousMarket } from '../../market-hours'
 import { IntradayBenchmarkEvidencePolicy, IntradayCandidateEvidencePolicy } from '../../market-data/intraday/model'
 import { intradayAgeNanos } from '../../market-data/intraday/time'
 import { persistIntradayRecordRows } from '../../market-data/intraday/verification'
@@ -27,6 +26,7 @@ import {
 } from '../../market-data/streaming/snapshot'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../../schemas'
 import { intradayAlphaBenchmarkSymbol, intradayAlphaCandidateSymbols, intradayAlphaEquityMarketProfile } from './policy'
+import { resolveAlphaRegularSession } from './signals'
 
 export const IntradayAlphaObservationSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.intraday-alpha-observation.v1'),
@@ -61,10 +61,7 @@ const verifyAlphaObservation = (observation: IntradayAlphaObservation, snapshot:
       )
     )
       return yield* fail('Intraday alpha snapshot contains future-dated market records')
-    if (isContinuousMarket(manifest.calendar))
-      return yield* fail('Intraday alpha requires an equity exchange-session calendar')
-    const session = exchangeSessions(manifest.calendar).find((entry) => entry.date === manifest.sessionDate)
-    if (session === undefined) return yield* fail('Intraday alpha observation has no matching regular session')
+    const regularSession = yield* resolveAlphaRegularSession(manifest.calendar, manifest.sessionDate)
     const observed = Date.parse(observation.observedAt)
     const end = jevSignalWindowEndMs(observed, protocol)
     const expectedCandidates = [...intradayAlphaCandidateSymbols]
@@ -85,12 +82,12 @@ const verifyAlphaObservation = (observation: IntradayAlphaObservation, snapshot:
       manifest.sourceTopics.quotes !== market.sourceTopics.quotes ||
       manifest.sourceTopics.trades !== market.sourceTopics.trades
     )
-      return yield* fail('Intraday alpha snapshot manifest violates its bound 15-symbol SPY-benchmarked contract')
-    if (Date.parse(manifest.rangeEndAt) !== end || manifest.rangeStartAt !== session.openAt)
+      return yield* fail('Intraday alpha snapshot manifest violates its bound 20-symbol SPY-benchmarked contract')
+    if (Date.parse(manifest.rangeEndAt) !== end || manifest.rangeStartAt !== regularSession.openAt)
       return yield* fail('Intraday alpha snapshot must span from regular session open to the latest completed minute')
     if (observed - end - protocol.decisionDelaySeconds * 1000 > protocol.maximumDecisionLagMs)
       return yield* fail('Intraday alpha observation exceeds its decision lag bound')
-    if (observed >= Date.parse(session.closeAt) - protocol.entryCutoffMinutesBeforeClose * 60_000)
+    if (observed >= regularSession.closeMs - protocol.entryCutoffMinutesBeforeClose * 60_000)
       return yield* fail('Intraday alpha observation is past its entry cutoff')
     const state = portfolio.brokerState
     for (const at of [

@@ -1,7 +1,7 @@
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { nativeReplayPolicyIdentity } from './native-policy'
-import { loadActiveStrategyProtocol } from '../strategy'
+import { loadSharedJevProtocol } from '../strategy'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { replayTestInstruments } from '../testing/replay-instruments'
@@ -308,9 +308,7 @@ durableTest.each([
     }
     const { verification: _verification, ...rootBuild } = config.build
     const policy = boundary.startsWith('momentum-') ? JevResearchPolicy.Momentum : JevResearchPolicy.Candidate
-    const identity = Result.getOrThrow(
-      nativeReplayPolicyIdentity(policy, Result.getOrThrow(loadActiveStrategyProtocol())),
-    )
+    const identity = Result.getOrThrow(nativeReplayPolicyIdentity(policy, Result.getOrThrow(loadSharedJevProtocol())))
     const build = {
       ...rootBuild,
       strategyBehaviorHash: identity.strategy.behaviorHash,

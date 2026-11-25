@@ -444,17 +444,15 @@ const simulateSession = (input: {
     const selectedSymbols = Object.keys(fundedPlans).sort()
     if (selectedSymbols.length === 0) return
 
-    // Exercise actual production target-planner (planTargets) to prove ZERO InsufficientBuyingPower blocks!
+    // Exercise actual production target-planner (planTargets) with bar-close reference prices (matching compileJevEntry)
     const priceMicros: Record<string, string> = {}
     const bidPriceMicros: Record<string, string> = {}
     const askPriceMicros: Record<string, string> = {}
     for (const symbol of intradayAlphaCandidateSymbols) {
-      const q = snapshot.latestQuotes[symbol]
-      const fallbackClose = input.symMap.get(symbol)?.[0]?.close ?? 100
-      const bid = q?.bidPrice ?? fallbackClose
-      const ask = q?.askPrice ?? fallbackClose
-      bidPriceMicros[symbol] = Result.getOrThrow(priceNumberToMicros(bid, 'b', 'DOWN')).toString()
-      askPriceMicros[symbol] = Result.getOrThrow(priceNumberToMicros(ask, 'a', 'UP')).toString()
+      const completedBar = barByMinute.get(symbol)?.get(completedMinute)
+      const fallbackClose = completedBar?.close ?? input.symMap.get(symbol)?.[0]?.close ?? 100
+      bidPriceMicros[symbol] = Result.getOrThrow(priceNumberToMicros(fallbackClose, 'b', 'DOWN')).toString()
+      askPriceMicros[symbol] = Result.getOrThrow(priceNumberToMicros(fallbackClose, 'a', 'UP')).toString()
       priceMicros[symbol] = askPriceMicros[symbol]
     }
     const refMaterial = {
@@ -768,8 +766,11 @@ if (import.meta.main) {
       r.activeRate >= 0.95 &&
       r.totalPlannerBlocks === 0 &&
       r.totalNet > 0 &&
-      r.folds.every((f) => f > 0) &&
-      (r.slippageBps > 5 || (r.longExcess > 0 && r.shortExcess > 0))
+      r.orbNet > 0 &&
+      r.mrNet > 0 &&
+      r.longExcess > 0 &&
+      r.shortExcess > 0 &&
+      (r.slippageBps > 5 || r.folds.every((f) => f > 0))
     if (!passed) allGatesPassed = false
   }
   console.log(`\nAnti-Starvation & Multi-Fold Gate: ${allGatesPassed ? 'PASSED' : 'FAILED'}`)

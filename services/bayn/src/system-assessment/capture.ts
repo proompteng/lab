@@ -27,7 +27,7 @@ import { readAssessmentRegistration } from './postgres'
 import { SystemAssessmentError } from './economics'
 import { captureForwardFinancialEvidence } from './forward-evidence'
 import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
-import { loadActiveStrategyProtocol } from '../strategy'
+import { loadSharedJevProtocol } from '../strategy'
 import { captureQualificationRuntime, qualificationRuntime } from './configuration'
 import { BrokerEnvironment } from '../broker/identity'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
@@ -69,7 +69,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         return yield* captureOperationalSourceCut(config, registrationHash, registration)
       const { runtimeConfiguration, runtimeConfigurationHash } = yield* Effect.fromResult(
         captureQualificationRuntime(
-          qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol())),
+          qualificationRuntime(config, yield* Effect.fromResult(loadSharedJevProtocol())),
           registration.obligations,
         ),
       )

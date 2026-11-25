@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 import { compilerDependencyBytes } from './jev-compiler-dependencies'
 import { Result } from 'effect'
 import { nativeReplayPolicyManifest } from '../src/intraday-replay/native-policy'
-import { loadActiveStrategyProtocol } from '../src/strategy'
+import { loadSharedJevProtocol } from '../src/strategy'
 
 const [outputFlag, output, sourceFlag, sourceRevision, ...args] = process.argv.slice(2)
 if (
@@ -64,6 +64,6 @@ await writeFile(
     files: dependencies.files(),
     controlFiles: controlDependencies.files(),
     compilerFiles: compilerDependencies.files(),
-    nativeReplayPolicies: Result.getOrThrow(Result.flatMap(loadActiveStrategyProtocol(), nativeReplayPolicyManifest)),
+    nativeReplayPolicies: Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayPolicyManifest)),
   }),
 )

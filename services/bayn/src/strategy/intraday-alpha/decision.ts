@@ -5,7 +5,6 @@ import { canonicalHashV1Result } from '../../hash'
 import { JevContractError } from '../../jev/contract'
 import { positionProtectionIntervalMs } from '../../jev/exit-policy'
 import { JevPurpose } from '../../jev/portfolio'
-import { exchangeSessions, isContinuousMarket } from '../../market-hours'
 import { quantityScale } from '../../quantity'
 import {
   IsoDateSchema,
@@ -32,7 +31,7 @@ import {
   type IntradayAlphaPolicy,
   type IntradayAlphaPolicyMaterial,
 } from './policy'
-import { extractIntradayAlphaCandidates, selectIntradayAlphaLegs } from './signals'
+import { extractIntradayAlphaCandidates, resolveAlphaRegularSession, selectIntradayAlphaLegs } from './signals'
 
 /** Compare executable quantities using the same adverse quote prices that size the legs. */
 export const isBalancedMiddayBasket = (
@@ -117,16 +116,14 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
     const protocol = policy.sharedProtocol
     const decided = Date.parse(evidence.decidedAt)
     const hours = observation.snapshot.manifest.calendar
-    const session = isContinuousMarket(hours)
-      ? undefined
-      : exchangeSessions(hours).find((entry) => entry.date === observation.snapshot.manifest.sessionDate)
+    const regularSession = resolveAlphaRegularSession(hours, observation.snapshot.manifest.sessionDate)
     if (
       observation.portfolio.purpose !== JevPurpose.Entry ||
       (yield* canonicalHashV1Result(protocol)) !== (yield* canonicalHashV1Result(observation.protocol)) ||
       decided < Date.parse(observation.observedAt) ||
       decided >= Date.parse(observation.observedAt) + protocol.inferenceValidityMs ||
-      session === undefined ||
-      decided >= Date.parse(session.closeAt) - protocol.entryCutoffMinutesBeforeClose * 60_000
+      Result.isFailure(regularSession) ||
+      decided >= regularSession.success.closeMs - protocol.entryCutoffMinutesBeforeClose * 60_000
     )
       return yield* Result.fail(
         new JevContractError({
@@ -182,7 +179,7 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
           balancedCount > 0
             ? new Set([...fundedLongs.slice(0, balancedCount), ...fundedShorts.slice(0, balancedCount)])
             : new Set([selectedSymbols[0] ?? ''])
-        for (const symbol of [...selectedSymbols]) {
+        for (const symbol of selectedSymbols) {
           if (!keep.has(symbol)) {
             delete plans[symbol]
             weights[symbol] = 0

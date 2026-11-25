@@ -2,9 +2,14 @@ import { Effect, Option, Result } from 'effect'
 
 import { DecisionReadinessReason } from '../../cycle/runner/readiness'
 import { JevContractError } from '../../jev/contract'
-import { jevSignalDueAtMs, jevSignalIntervalMs, jevSignalWindowEndMs } from '../../jev/observation-query'
+import {
+  jevFirstSignalDueMs,
+  jevSignalDueAtMs,
+  jevSignalIntervalMs,
+  jevSignalWindowEndMs,
+} from '../../jev/observation-query'
 import { JevAwaitingEvidence, JevAwaitingFreshWindow } from '../../jev/runtime'
-import { exchangeSessions, isContinuousMarket, type MarketHours } from '../../market-hours'
+import type { MarketHours } from '../../market-hours'
 import {
   IntradayBenchmarkEvidencePolicy,
   IntradayCandidateEvidencePolicy,
@@ -23,28 +28,43 @@ import {
   intradayAlphaStrategyIdentity,
   type IntradayAlphaPolicy,
 } from './policy'
-import { extractIntradayAlphaCandidates } from './signals'
+import { extractIntradayAlphaCandidates, resolveAlphaRegularSession } from './signals'
 
 export const makeIntradayAlphaEntryQuery = (input: {
   readonly policy: IntradayAlphaPolicy
   readonly calendar: MarketHours
   readonly sessionDate: IntradaySnapshotQuery['sessionDate']
   readonly observedAtMs: number
-}): Result.Result<IntradaySnapshotQuery, JevContractError> => {
-  if (isContinuousMarket(input.calendar))
-    return Result.fail(new JevContractError({ message: 'Intraday alpha requires an equity exchange calendar' }))
-  const session = exchangeSessions(input.calendar).find((entry) => entry.date === input.sessionDate)
-  if (session === undefined)
-    return Result.fail(new JevContractError({ message: 'Intraday alpha query has no matching regular session' }))
+}): Result.Result<IntradaySnapshotQuery, JevContractError | JevAwaitingEvidence> => {
+  const regular = resolveAlphaRegularSession(input.calendar, input.sessionDate)
+  if (Result.isFailure(regular)) return Result.fail(regular.failure)
   const protocol = input.policy.sharedProtocol
   const rangeEndMs = jevSignalWindowEndMs(input.observedAtMs, protocol)
+  if (rangeEndMs <= regular.success.openMs) {
+    return Result.fail(
+      new JevAwaitingEvidence({
+        message: 'Intraday alpha awaits the first completed regular-session minute',
+        readiness: DecisionReadinessReason.LookbackWarmup,
+        availableAt: utcInstantFromEpochMillis(jevFirstSignalDueMs(regular.success.openMs, protocol)),
+      }),
+    )
+  }
+  const entryCutoffMs = regular.success.closeMs - protocol.entryCutoffMinutesBeforeClose * 60_000
+  if (rangeEndMs > regular.success.closeMs || input.observedAtMs >= entryCutoffMs) {
+    return Result.fail(
+      new JevAwaitingEvidence({
+        message: 'Intraday alpha regular-session entry window has closed',
+        readiness: DecisionReadinessReason.NoEligibleCandidate,
+      }),
+    )
+  }
   const market = intradayAlphaEquityMarketProfile
   const candidates = [...intradayAlphaCandidateSymbols]
   return Result.succeed({
     sessionDate: input.sessionDate,
     calendar: input.calendar,
     observedAt: utcInstantFromEpochMillis(input.observedAtMs),
-    rangeStartAt: session.openAt,
+    rangeStartAt: regular.success.openAt,
     rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
     universeId: market.universeId,
     universeSymbolHash: market.universeSymbolHash,
@@ -143,7 +163,7 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(
 
     const maxPerSide = input.policy.catalystVeto.maxCandidatesPerSide
     const vetoCandidates: CatalystVetoRequestInput[] =
-      extracted.context.phase === IntradayAlphaPhase.OutsideWindow
+      !input.policy.catalystVeto.enabled || extracted.context.phase === IntradayAlphaPhase.OutsideWindow
         ? []
         : [...extracted.longPool.slice(0, maxPerSide), ...extracted.shortPool.slice(0, maxPerSide)].map(
             (candidate) => ({
