@@ -20,6 +20,7 @@ export const historicalAblationQuestionPolicyHash = (protocol: JevProtocolMateri
   canonicalHashV1Result(
     usesJevOnlyInference(protocol)
       ? protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v40'

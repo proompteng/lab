@@ -38,7 +38,12 @@ import {
   jevProfitTargetStopCrossed,
 } from '../jev/exit'
 import { jevPricingQuery } from '../jev/runtime'
-import { protectedEntryBuyPriceCeilings, protectedEntrySellPriceFloors } from '../strategy/runtime-decision'
+import { jevPendingEntryBoundaryCrossed } from '../jev/entry-invalidation'
+import {
+  isProtectedEntryTarget,
+  protectedEntryBuyPriceCeilings,
+  protectedEntrySellPriceFloors,
+} from '../strategy/runtime-decision'
 import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data/intraday/model'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
@@ -966,10 +971,112 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
                 observedAt: facts.evaluatedAt,
               }
             }
+            // An unfilled entry must not remain available for a later rebound after a fresh
+            // quote reaches its original stop or already-fulfilled target. Only the existing
+            // mutation owner cancels; terminal reconciliation still owns every fill race.
+            const entryTarget = document.strategyDecision
+            const state = facts.reconciliation.brokerState
+            if (
+              mutationPhase === 'ENTRY' &&
+              isProtectedEntryTarget(entryTarget) &&
+              entryTarget.selectedSymbols.includes(record.intent.symbol) &&
+              !hasOpenPosition &&
+              input.intradayMarketData !== undefined &&
+              document.executionSession !== undefined &&
+              state.account.accountId === input.accountId &&
+              state.reconciliation.status === ReconciliationStatus.Exact &&
+              facts.reconciliation.report.reconciliation.status === ReconciliationStatus.Exact &&
+              facts.reconciliation.report.metrics.accountingExact &&
+              (latest === undefined || state.reconciliation.reconciledAt >= latest.occurredAt) &&
+              state.unknownOrderCount === 0 &&
+              facts.reconciliation.riskContext.unknownMutationCount === 0
+            ) {
+              const observedAt = yield* dependencies.now
+              const brokerTimes = [
+                state.account.observedAt,
+                state.positionsObservedAt,
+                state.ordersObservedAt,
+                state.reconciliation.reconciledAt,
+                facts.reconciliation.report.reconciliation.reconciledAt,
+              ]
+              const freshUntil = Math.min(
+                jevBrokerEvidenceFreshUntilMs(state),
+                ...brokerTimes.map((at) => Date.parse(at) + policy.maxBrokerStateAgeMs),
+              )
+              const expiresAt = executionSubmitExpiresAt(
+                submissionCutoffAt,
+                prepared.riskBinding.evaluation.decision.expiresAt,
+              )
+              if (allowSubmit && observedAt >= expiresAt)
+                return { _tag: 'Execute', action: 'CANCEL', intentId: prepared.intent.intentId, observedAt }
+              const budgetMs = Math.max(
+                0,
+                Math.min(
+                  entryTarget.evidence.observation.protocol.maximumQuoteAgeMs,
+                  Date.parse(expiresAt) - Date.parse(observedAt),
+                  freshUntil - Date.parse(observedAt) - 1,
+                ),
+              )
+              if (budgetMs > 0 && brokerTimes.every((at) => at <= observedAt)) {
+                const marketData = input.intradayMarketData
+                const calendar = document.executionSession.calendar
+                const invalidated = yield* Effect.gen(function* () {
+                  const query = yield* Effect.fromResult(
+                    jevPricingQuery(
+                      cycle,
+                      entryTarget.evidence.observation.protocol,
+                      calendar,
+                      observedAt,
+                      [record.intent.symbol],
+                      IntradaySnapshotPurpose.Liquidation,
+                    ),
+                  )
+                  const pricing = yield* loadIntradaySnapshot(marketData, query)
+                  const rows = yield* Effect.fromResult(persistIntradayRecordRows(pricing))
+                  const checkedAt = yield* dependencies.now
+                  if (Date.parse(checkedAt) >= freshUntil) return undefined
+                  const crossed = yield* Effect.fromResult(
+                    jevPendingEntryBoundaryCrossed(entryTarget, record.intent.symbol, observedAt, checkedAt, {
+                      manifest: pricing.manifest,
+                      rows,
+                    }),
+                  )
+                  return crossed ? checkedAt : undefined
+                }).pipe(
+                  Effect.catchTags({
+                    JevAwaitingEvidence: () => Effect.void,
+                    OperationalError: (cause) =>
+                      isIntradaySnapshotPending(cause.cause) || cause.retryable ? Effect.void : Effect.fail(cause),
+                  }),
+                  Effect.timeoutOption(Duration.millis(budgetMs)),
+                  Effect.mapError((cause) =>
+                    mutationRunnerError({
+                      message: 'Pending entry boundary evidence could not be verified',
+                      cause,
+                      failure: 'market-data',
+                    }),
+                  ),
+                )
+                const checkedAt = yield* dependencies.now
+                if (allowSubmit && checkedAt >= expiresAt)
+                  return {
+                    _tag: 'Execute',
+                    action: 'CANCEL',
+                    intentId: prepared.intent.intentId,
+                    observedAt: checkedAt,
+                  }
+                if (Option.isSome(invalidated) && invalidated.value !== undefined)
+                  return {
+                    _tag: 'Execute',
+                    action: 'CANCEL',
+                    intentId: prepared.intent.intentId,
+                    observedAt: invalidated.value,
+                  }
+              }
+            }
             // A resting funded profit limit must release the outstanding order when its
             // entry-bound stop crosses, including recovery where new submissions are forbidden.
             // Cancellation is the only action here; terminal reconciliation still precedes any replan.
-            const state = facts.reconciliation.brokerState
             if (
               mutationPhase === 'CLOSE' &&
               profitTarget !== undefined &&

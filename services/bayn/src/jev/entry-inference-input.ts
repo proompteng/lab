@@ -80,7 +80,8 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
       if (
         (value.protocol.schemaVersion !== 'bayn.jev.protocol.v41' &&
           value.protocol.schemaVersion !== 'bayn.jev.protocol.v42' &&
-          value.protocol.schemaVersion !== 'bayn.jev.protocol.v43') ||
+          value.protocol.schemaVersion !== 'bayn.jev.protocol.v43' &&
+          value.protocol.schemaVersion !== 'bayn.jev.protocol.v44') ||
         equityClockSession(timing.observedAt) !== 'regular' ||
         !equityShortIsEligible(
           value.funding.equityShortEligibility,
@@ -124,7 +125,8 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
     }
     if (
       value.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
-      value.protocol.schemaVersion === 'bayn.jev.protocol.v43'
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v44'
     ) {
       const allowances = jevEntryPriceAllowances(value.protocol, source.symbol)
       yield* Schema.decodeUnknownResult(
