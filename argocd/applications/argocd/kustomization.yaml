@@ -14,8 +14,8 @@ resources:
   - alloy-deployment.yaml
 images:
   - name: public.ecr.aws/docker/library/redis
-    newTag: 8.10.3-alpine
-    digest: sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
+    newTag: 8.12.0-alpine
+    digest: sha256:5af80107c1eeecb484a2269b80a26d12bfa6521787da4663bd9f19f60a163483
   - name: ghcr.io/dexidp/dex
     newTag: v2.46.1
     digest: sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab

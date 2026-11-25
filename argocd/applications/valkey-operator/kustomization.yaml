@@ -71,7 +71,7 @@ patches:
               # digests belong in image references, never in this field.
               operatorVersion: v2.1.1
               valkeyVersionMap: '{"9.2":"9.2.0"}'
-              defaultExporterVersion: v1.97.0-alpine
+              defaultExporterVersion: v1.99.0-alpine
           spec:
             securityContext:
               runAsNonRoot: true

@@ -220,6 +220,7 @@ export const bindRecoveryFirstCycleDriver = (
         if (Option.isSome(observations)) {
           const store = observations.value
           observedContext = Context.add(observedContext, CandidateObservationStore, {
+            ...store,
             record: (observation, policy) =>
               observe(store.record(observation, policy), () =>
                 observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
