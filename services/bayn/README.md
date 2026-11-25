@@ -579,9 +579,7 @@ rejects the exit; accepting a cached position does not extend an executable quot
 publication, and completed inference wake that owner. A successful pass does not schedule another ordinary pass.
 The removed `BAYN_CYCLE_POLL_INTERVAL_MS` setting cannot select a second discovery path.
 
-The market worker sends an advisory `MarketChanged` hint immediately after updating its projection. Native arrival
-persistence retains its existing size/time limits and runs independently. There is no market-readiness SQL outbox or
-audit-flush barrier before the hint. A scoped publisher retains one immutable request until its private wake completes,
+The market worker sends an advisory `MarketChanged` hint immediately after updating its in-memory Kafka projection. A scoped publisher retains one immutable request until its private wake completes,
 and conflates newer changes into one pending request. Each producer has its own UUID and increasing sequence;
 unrelated workers' clocks never order or suppress one another's hints.
 
@@ -1337,9 +1335,8 @@ Dorvud's optional technical-indicator stream is joined as immutable decision evi
 source matching, replay and delivery requirements.
 
 Alpaca WebSocket events enter the existing raw Kafka topics. Each execution worker owns a scoped Node worker thread
-for its `@platformatic/kafka` projection and native arrival retention. The controller receives detached requested
-cuts; readiness transfers no retained records. Shutdown joins journal finalizers, worker failure invalidates reads,
-and interrupted snapshot requests cancel remote work.
+for its in-memory `@platformatic/kafka` projection. The controller receives requested cuts and readiness status.
+Worker failure invalidates reads, and interrupted snapshot requests cancel remote work.
 
 Dorvud/Flink independently publishes rolling features to `torghut.market-features.v1`; ClickHouse retains the archive.
 The equity [market profile](src/jev/markets.ts) defines the core universe and excludes SPY from entry candidates.
@@ -2125,18 +2122,9 @@ rolling back the application image through Kargo; do not remove retained evidenc
 The execution endpoint's startup probe allows twenty minutes for this bounded migration and initialization. Its
 readiness and liveness probes retain their normal cadence after startup.
 
-The native market recorder, execution state and financial evidence share the `bayn` PostgreSQL database in
-`bayn-db`. Both replicas use existing local NVMe storage on Turin and Altra, with separate NVMe WAL volumes and
-required cross-host synchronous replication. The recorder and read-only native export command use
-`BAYN_POSTGRES_URL` and `/var/run/secrets/bayn/postgres/ca.crt`. The projection thread owns a single scoped connection;
-application startup owns the complete schema migrations. No separate archive database or schema initializer remains.
-
-The unified database retains every historical and current capture, original compressed byte, checksum and
-ordered-prefix/append-only guard. Archive appends emit `bayn.native-arrival.append` spans including the durable
-commit and retries. Retryable connection failures and statement timeouts retain the same immutable batch through
-roughly one minute of reconnection attempts. Each SQL attempt and shutdown keep their existing deadlines, and the
-compressed queue keeps its byte bound. Lost commit acknowledgements still reconcile the exact prefix before
-returning success. TLS, checksums, backups, strategy, authority, accounting and freshness contracts are unchanged.
+Execution state and financial evidence use the `bayn` PostgreSQL database in `bayn-db`. Both replicas use local
+NVMe storage on Turin and Altra, with separate NVMe WAL volumes and required cross-host synchronous replication.
+The read-only native export command can read historical captures from a database that still contains them.
 
 Each PostgreSQL instance reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 8 GiB memory limit.
 LZ4 WAL compression reduces full-page image traffic. A 4 GiB WAL checkpoint threshold and 15-minute checkpoint
