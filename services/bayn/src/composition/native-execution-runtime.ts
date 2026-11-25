@@ -51,7 +51,7 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeExecutionCycleDriver } from './autonomous-runtime'
 import { nativeActivationPreflight } from './native-activation-preflight'
-import { selectPaperAccount } from '../db/execution-store/paper-account-handoff'
+import { previousConfiguredController, selectConfiguredBrokerAccount } from '../db/execution-store/observe-authority'
 import {
   AutonomousWorkerApplicationResourcesLive,
   ExecutionControllerStatusResourceLive,
@@ -106,9 +106,6 @@ export const executionControllerConfig = (
 ): Result.Result<ExecutionControllerConfig, NativeExecutionRuntimeError> =>
   Result.succeed({
     controllerKey: plan.config.alpaca.identity.identityHash,
-    ...(plan.config.paperAccountHandoffFrom === undefined
-      ? {}
-      : { paperAccountHandoffFrom: plan.config.paperAccountHandoffFrom }),
     operationTimeoutMs: plan.config.operationTimeoutMs,
     planHash: executionControllerPlanHash,
     sourceRevision: plan.config.build.sourceRevision,
@@ -744,24 +741,24 @@ export const acquireNativeExecutionRuntime = (
           { signal },
         ),
     )
-    const from = config.paperAccountHandoffFrom
+    const identity = plan.config.alpaca.identity
     return {
       config,
-      runtime:
-        from === undefined
-          ? runtime
-          : {
-              ...runtime,
-              selectPaperAccount: (signal) =>
-                projectionManaged.runPromise(
-                  selectPaperAccount({
-                    from,
-                    to: plan.config.alpaca.identity,
-                    reconciliationStaleThresholdMs: plan.config.reconciliationStaleThresholdMs,
-                  }),
-                  { signal },
-                ),
-            },
+      runtime: {
+        ...runtime,
+        brokerAccount: {
+          bind: (signal) =>
+            projectionManaged.runPromise(
+              selectConfiguredBrokerAccount(identity, plan.config.reconciliationStaleThresholdMs),
+              { signal },
+            ),
+          previousController: (signal) =>
+            projectionManaged.runPromise(
+              PgClient.PgClient.pipe(Effect.flatMap((sql) => previousConfiguredController(sql, identity))),
+              { signal },
+            ),
+        },
+      },
       inferenceRuntime: makeNativeEntryInferenceRuntime(inferenceManaged, {
         accountId: plan.config.alpaca.expectedAccountId,
         planHash: config.planHash,

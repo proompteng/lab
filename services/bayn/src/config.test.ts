@@ -315,10 +315,6 @@ describe('pure runtime configuration resolution', () => {
       },
     )
     expectFailure(
-      { configuredAlpaca: alpaca(BrokerEnvironment.Sandbox), authorityGenerationHash: undefined },
-      { _tag: 'MissingAlpacaAuthorityGeneration' },
-    )
-    expectFailure(
       {
         configuredAlpaca: {
           ...baseParsedConfig.configuredAlpaca,
@@ -329,6 +325,18 @@ describe('pure runtime configuration resolution', () => {
       },
       { _tag: 'MissingAlpacaCredentials' },
     )
+  })
+
+  test('derives the read-only bootstrap generation from the configured account', () => {
+    const config = Result.getOrThrow(
+      resolveRuntimeConfig(
+        resolutionInput({
+          configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+          authorityGenerationHash: undefined,
+        }),
+      ),
+    )
+    expect(config.alpaca.authorityGenerationHash).toBe(config.alpaca.identity.identityHash)
   })
 
   test('rejects every authority mismatch before startup', () => {
@@ -409,43 +417,6 @@ const provideEnvironment = <A, E>(effect: Effect.Effect<A, E>, environment: Map<
   )
 
 describe('runtime configuration loading', () => {
-  test('binds a configured PAPER handoff to the prior account without retaining its plaintext ID', async () => {
-    const priorAccountId = 'old-paper-account'
-    const config = await Effect.runPromise(
-      provideEnvironment(
-        loadConfig(buildMetadata),
-        new Map([...runtimeEnvironment, ['BAYN_PAPER_ACCOUNT_HANDOFF_FROM', priorAccountId]]),
-      ),
-    )
-    const predecessor = Result.getOrThrow(
-      makeBrokerIdentity({
-        schemaVersion: 'bayn.broker-identity.v2',
-        provider: BrokerProvider.Alpaca,
-        environment: BrokerEnvironment.Sandbox,
-        accountId: priorAccountId,
-      }),
-    )
-    expect(config.paperAccountHandoffFrom).toBe(predecessor.identityHash)
-    expect(config.alpaca.expectedAccountId).toBe(alpacaAccountId)
-    expect(config).not.toHaveProperty('paperAccountHandoffFromAccountId')
-  })
-
-  test('rejects self-handoffs, live handoffs and handoffs carrying a capital mandate', () => {
-    const previous = Redacted.make('old-paper-account')
-    expectFailure(
-      { paperAccountHandoffFromAccountId: Redacted.make(alpacaAccountId) },
-      { _tag: 'InvalidPaperAccountHandoff' },
-    )
-    expectFailure(
-      { paperAccountHandoffFromAccountId: previous, configuredAlpaca: alpaca(BrokerEnvironment.Live) },
-      { _tag: 'InvalidPaperAccountHandoff' },
-    )
-    expectFailure(
-      { paperAccountHandoffFromAccountId: previous, capitalActivationRequestJson: '{}' },
-      { _tag: 'InvalidPaperAccountHandoff' },
-    )
-  })
-
   test('loads the live service without historical snapshot settings', async () => {
     const loaded = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
     expect(loaded.clickhouse).toEqual({

@@ -25,20 +25,10 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
         operation: 'broker-connection',
         message: 'Alpaca account ID, key ID, and secret key must be configured together',
       }
-    case 'InvalidPaperAccountHandoff':
-      return {
-        operation: 'broker-connection',
-        message: 'PAPER account handoff requires a different sandbox account, read-only access and no capital mandate',
-      }
     case 'MissingAlpacaCredentials':
       return {
         operation: 'broker-connection',
         message: 'the autonomous service requires an Alpaca account ID, key ID, and secret key',
-      }
-    case 'MissingAlpacaAuthorityGeneration':
-      return {
-        operation: 'authority-generation',
-        message: 'Alpaca account binding requires an authority generation hash',
       }
     case 'InvalidBrokerConnection':
       return { operation: 'broker-connection', message: renderBrokerConnectionDecodeFailure(failure.cause) }
