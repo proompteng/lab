@@ -70,7 +70,9 @@ export const makeBaynEntryInference = (
           const request = Schema.decodeUnknownResult(InferenceWatchSchema, strictParseOptions)(candidate)
           if (Result.isFailure(request)) throw new restate.TerminalError('inference watch failed validation')
           const { schemaVersion, pending, ...scope } = request.success
-          if (scope.controllerKey !== config.controllerKey || scope.sourceRevision !== config.sourceRevision)
+          // Restate can route a departing watch's continuation to the newly registered revision.
+          if (scope.sourceRevision !== config.sourceRevision) return
+          if (scope.controllerKey !== config.controllerKey)
             throw new restate.TerminalError('inference watch differs from its immutable account deployment')
           const observed = await ctx.run(
             'await committed Bayn inference work',
