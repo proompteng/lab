@@ -7,7 +7,7 @@ import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import { beforeAll, describe, expect, test } from 'bun:test'
-import { Clock, Effect, Exit, Option, Result, Schema } from 'effect'
+import { Cause, Clock, Effect, Exit, Fiber, Option, Result, Schema } from 'effect'
 
 const runWithConstruction = <A, E>(program: Effect.Effect<A, E, DecisionConstruction>) =>
   Effect.runPromise(
@@ -319,7 +319,15 @@ describe('closing market-data fallback boundaries', () => {
     'wide-stop',
     'inside',
     'pending',
+    'typed-error',
+    'defect',
+    'interruption',
+    'timeout',
+    'near-expiry',
+    'expired',
     'stale',
+    'missing-bid',
+    'missing-ask',
     'malformed',
     'partial',
     'cancel-accepted',
@@ -333,8 +341,13 @@ describe('closing market-data fallback boundaries', () => {
     const target = document.targetPlan.intentTargets[0]
     if (plan === undefined || risk === undefined || target === undefined) throw new Error('Expected a funded entry')
     const buildAt = document.createdAt
-    const checkAt = new Date(Date.parse(buildAt) + 1_499).toISOString()
-    expect(checkAt < risk.evaluation.decision.expiresAt).toBe(true)
+    const checkAt =
+      scenario === 'expired'
+        ? risk.evaluation.decision.expiresAt
+        : scenario === 'near-expiry'
+          ? new Date(Date.parse(risk.evaluation.decision.expiresAt) - 1).toISOString()
+          : new Date(Date.parse(buildAt) + 1_499).toISOString()
+    expect(checkAt <= risk.evaluation.decision.expiresAt).toBe(true)
     const initial = factsAt(checkAt)
     const authority = initial.riskContext.authority
     if (authority === null) throw new Error('Expected entry authority')
@@ -396,12 +409,23 @@ describe('closing market-data fallback boundaries', () => {
           ? profit
           : stop
     let marketReads = 0
+    const finalizedAt: number[] = []
+    const defect = new Error('Pending entry source defect')
+    const typedFailure = new OperationalError({
+      component: 'market-data',
+      operation: 'snapshot',
+      message: 'Pending entry source contract failed',
+      retryable: false,
+    })
     const market: IntradayMarketDataService = {
       ...freshMarket,
       loadSnapshot: (query) =>
         Effect.suspend(() => {
           marketReads += 1
           if (scenario === 'pending') return Effect.fail(marketFailure)
+          if (scenario === 'typed-error') return Effect.fail(typedFailure)
+          if (scenario === 'defect') return Effect.die(defect)
+          if (scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption') return Effect.never
           const raw = makeIntradayMomentumTestSnapshot(
             native.protocol,
             { ...query, archiveWatermarks: [] },
@@ -413,8 +437,14 @@ describe('closing market-data fallback boundaries', () => {
               ...raw,
               quotes: raw.quotes.map((quote) => ({
                 ...quote,
+                eventAt:
+                  scenario === 'stale'
+                    ? new Date(Date.parse(checkAt) - native.protocol.maximumQuoteAgeMs + 1).toISOString()
+                    : quote.eventAt,
                 bidPrice: bid,
                 askPrice: bid + (scenario === 'wide-stop' ? 1 : 0.001),
+                bidSize: scenario === 'missing-bid' ? 0 : quote.bidSize,
+                askSize: scenario === 'missing-ask' ? 0 : quote.askSize,
               })),
             },
             query,
@@ -424,7 +454,15 @@ describe('closing market-data fallback boundaries', () => {
               ? { ...snapshot, manifest: { ...snapshot.manifest, contentHash: '0'.repeat(64) } }
               : snapshot,
           )
-        }),
+        }).pipe(
+          Effect.ensuring(
+            Clock.currentTimeMillis.pipe(
+              Effect.map((now) => {
+                finalizedAt.push(now)
+              }),
+            ),
+          ),
+        ),
     }
     const unused = () => Effect.die(new Error('Pending entry must retain its immutable commit and mutation owner'))
     const cancel: MutationEvent = {
@@ -434,53 +472,88 @@ describe('closing market-data fallback boundaries', () => {
       eventType: MutationEventType.CancelAccepted,
       occurredAt: checkAt,
     }
-    const outcome = await runWithConstruction(
-      prepareMutationIntent(
-        { ...request.input, intradayMarketData: market },
-        request.preparation,
-        request.policy,
-        request.cycle,
-        document,
-        Effect.succeed(reconciliation),
-        true,
-        false,
-        {
-          now: Effect.sync(() =>
-            scenario === 'stale' && marketReads > 0
-              ? new Date(Date.parse(checkAt) + native.protocol.maximumQuoteAgeMs + 1).toISOString()
-              : checkAt,
+    const program = prepareMutationIntent(
+      { ...request.input, intradayMarketData: market },
+      request.preparation,
+      request.policy,
+      request.cycle,
+      document,
+      Effect.succeed(reconciliation),
+      true,
+      false,
+      {
+        now:
+          scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption'
+            ? currentUtcInstant
+            : Effect.sync(() =>
+                scenario === 'stale' && marketReads > 0 ? new Date(Date.parse(checkAt) + 2).toISOString() : checkAt,
+              ),
+        restrictAuthority: unused,
+        readFacts: () =>
+          Effect.succeed({
+            snapshot: {
+              contentHash: document.bindings.snapshotContentHash,
+              finalizedAt: document.bindings.snapshotFinalizedAt,
+            },
+            reconciliation,
+            authority,
+            evaluatedAt: checkAt,
+          }),
+      },
+    ).pipe(
+      Effect.provideService(IntentStore, {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: unused,
+        recordProtectionCancelAccepted: unused,
+        read: () => Effect.succeed(Option.some(record)),
+        commit: unused,
+        commitClosing: unused,
+      }),
+      Effect.provideService(MutationStore, {
+        latest: (_id: string, operation: MutationOperation) =>
+          Effect.succeed(
+            operation === MutationOperation.Submit ? accepted : scenario === 'cancel-accepted' ? cancel : undefined,
           ),
-          restrictAuthority: unused,
-          readFacts: () =>
-            Effect.succeed({
-              snapshot: {
-                contentHash: document.bindings.snapshotContentHash,
-                finalizedAt: document.bindings.snapshotFinalizedAt,
-              },
-              reconciliation,
-              authority,
-              evaluatedAt: checkAt,
-            }),
-        },
-      ).pipe(
-        Effect.provideService(IntentStore, {
-          protectionForCycle: () => Effect.succeed([]),
-          beginProtectionCancel: unused,
-          recordProtectionCancelAccepted: unused,
-          read: () => Effect.succeed(Option.some(record)),
-          commit: unused,
-          commitClosing: unused,
-        }),
-        Effect.provideService(MutationStore, {
-          latest: (_id: string, operation: MutationOperation) =>
-            Effect.succeed(
-              operation === MutationOperation.Submit ? accepted : scenario === 'cancel-accepted' ? cancel : undefined,
-            ),
-        } as unknown as MutationStoreShape),
-        Effect.result,
-      ),
+      } as unknown as MutationStoreShape),
+      Effect.result,
     )
-    if (scenario === 'stale' || scenario === 'malformed') {
+    const exit = await runWithConstruction(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(checkAt))
+        const fiber = yield* program.pipe(Effect.forkChild({ startImmediately: true }))
+        if (scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption') {
+          yield* Effect.yieldNow
+          expect(marketReads).toBe(1)
+          expect(finalizedAt).toEqual([])
+          if (scenario === 'interruption') yield* Fiber.interrupt(fiber)
+          else {
+            const budget = Math.min(
+              native.protocol.maximumQuoteAgeMs,
+              Date.parse(risk.evaluation.decision.expiresAt) - Date.parse(checkAt),
+            )
+            yield* TestClock.adjust(budget - 1)
+            expect(finalizedAt).toEqual([])
+            yield* TestClock.adjust(1)
+            expect(finalizedAt).toEqual([Date.parse(checkAt) + budget])
+            expect(finalizedAt[0]).toBeLessThanOrEqual(Date.parse(risk.evaluation.decision.expiresAt))
+          }
+        }
+        return yield* Fiber.await(fiber)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(finalizedAt).toHaveLength(marketReads)
+    if (scenario === 'defect' || scenario === 'interruption') {
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        if (scenario === 'defect') expect(Cause.squash(exit.cause)).toBe(defect)
+        else expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+      }
+      expect(marketReads).toBe(1)
+      return
+    }
+    if (Exit.isFailure(exit)) throw Cause.squash(exit.cause)
+    const outcome = exit.value
+    if (scenario === 'malformed' || scenario === 'typed-error') {
       expect(Result.isFailure(outcome)).toBe(true)
       if (Result.isFailure(outcome))
         expect(outcome.failure.message).toBe('Pending entry boundary evidence could not be verified')
@@ -488,12 +561,23 @@ describe('closing market-data fallback boundaries', () => {
       expect(Result.getOrThrow(outcome)).toEqual(
         scenario === 'cancel-accepted'
           ? { _tag: 'Wait', observedAt: checkAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
-          : scenario === 'inside' || scenario === 'pending' || scenario === 'wide-stop'
+          : scenario === 'inside' ||
+              scenario === 'pending' ||
+              scenario === 'wide-stop' ||
+              scenario === 'stale' ||
+              scenario === 'missing-bid' ||
+              scenario === 'missing-ask'
             ? { _tag: 'Wait', observedAt: checkAt, waitReason: 'intent-nonterminal' }
-            : { _tag: 'Execute', action: 'CANCEL', intentId: intent.intentId, observedAt: checkAt },
+            : {
+                _tag: 'Execute',
+                action: 'CANCEL',
+                intentId: intent.intentId,
+                observedAt:
+                  scenario === 'timeout' || scenario === 'near-expiry' ? risk.evaluation.decision.expiresAt : checkAt,
+              },
       )
     }
-    expect(marketReads).toBe(scenario === 'partial' || scenario === 'cancel-accepted' ? 0 : 1)
+    expect(marketReads).toBe(scenario === 'partial' || scenario === 'cancel-accepted' || scenario === 'expired' ? 0 : 1)
   })
 
   test.each([

@@ -1007,6 +1007,8 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
                 submissionCutoffAt,
                 prepared.riskBinding.evaluation.decision.expiresAt,
               )
+              if (allowSubmit && observedAt >= expiresAt)
+                return { _tag: 'Execute', action: 'CANCEL', intentId: prepared.intent.intentId, observedAt }
               const budgetMs = Math.max(
                 0,
                 Math.min(
@@ -1055,6 +1057,14 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
                     }),
                   ),
                 )
+                const checkedAt = yield* dependencies.now
+                if (allowSubmit && checkedAt >= expiresAt)
+                  return {
+                    _tag: 'Execute',
+                    action: 'CANCEL',
+                    intentId: prepared.intent.intentId,
+                    observedAt: checkedAt,
+                  }
                 if (Option.isSome(invalidated) && invalidated.value !== undefined)
                   return {
                     _tag: 'Execute',

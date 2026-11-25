@@ -84,29 +84,34 @@ describe.each([
       rows: Result.getOrThrow(persistIntradayRecordRows(snapshot)),
     }
     const result = jevPendingEntryBoundaryCrossed(target, 'AAPL', observedAt, evaluatedAt, source)
-    if (scenario === 'stop' || scenario === 'target' || scenario === 'inside' || scenario.startsWith('wide-'))
+    if (
+      scenario === 'stop' ||
+      scenario === 'target' ||
+      scenario === 'inside' ||
+      scenario.startsWith('wide-') ||
+      scenario === 'stale' ||
+      scenario === 'missing-bid' ||
+      scenario === 'missing-ask'
+    )
       expect(Result.getOrThrow(result)).toBe(scenario === 'stop' || scenario === 'target')
     else expect(Result.isFailure(result)).toBe(true)
   })
+})
 
-  test.each([
-    [153.22, 153.67, false],
-    [153.6, 153.61, true],
-    [153.58, 153.59, false],
-    [153.09, 153.1, true],
-  ] as const)(
-    'NVDA pending short quote %s/%s preserves existing entry spread quality',
-    (bidPrice, askPrice, crossed) => {
-      const quote = short.snapshot.latestQuotes['AAPL']
-      if (quote === undefined) throw new Error('Expected quote fixture')
-      expect(
-        Result.getOrThrow(
-          jevEligibleEntryBoundaryCrossed(
-            { short: true, stopPriceMicros: '153600000', profitLimitPriceMicros: '153100000' },
-            { ...quote, symbol: 'NVDA', bidPrice, askPrice },
-          ),
-        ),
-      ).toBe(crossed)
-    },
-  )
+test.each([
+  [153.22, 153.67, false],
+  [153.6, 153.61, true],
+  [153.58, 153.59, false],
+  [153.09, 153.1, true],
+] as const)('NVDA pending short quote %s/%s preserves existing entry spread quality', (bidPrice, askPrice, crossed) => {
+  const quote = short.snapshot.latestQuotes['AAPL']
+  if (quote === undefined) throw new Error('Expected quote fixture')
+  expect(
+    Result.getOrThrow(
+      jevEligibleEntryBoundaryCrossed(
+        { short: true, stopPriceMicros: '153600000', profitLimitPriceMicros: '153100000' },
+        { ...quote, symbol: 'NVDA', bidPrice, askPrice },
+      ),
+    ),
+  ).toBe(crossed)
 })

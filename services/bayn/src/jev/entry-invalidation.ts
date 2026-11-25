@@ -1,12 +1,13 @@
 import { Result } from 'effect'
 
 import { JevContractError } from './contract'
-import { jevProtectiveQuoteIsFresh, verifiedPositionQuote } from './exit'
+import { jevProtectiveQuoteIsFresh, reproducePositionQuote } from './exit'
 import { isShortExitPlan } from '../strategy/funded-exit-plan'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { jevEntryQuoteExclusion } from './trading-signals'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { compareIntradayInstants } from '../market-data/intraday/time'
 
 export const jevEligibleEntryBoundaryCrossed = (
   levels: { readonly short: boolean; readonly stopPriceMicros: string; readonly profitLimitPriceMicros: string },
@@ -31,7 +32,7 @@ export const jevPendingEntryBoundaryCrossed = (
   symbol: string,
   observedAt: string,
   evaluatedAt: string,
-  source: Parameters<typeof verifiedPositionQuote>[1],
+  source: Parameters<typeof reproducePositionQuote>[1],
 ) =>
   Result.gen(function* () {
     const plan = target.exitPolicy.plans[symbol]
@@ -39,7 +40,7 @@ export const jevPendingEntryBoundaryCrossed = (
       return yield* Result.fail(new JevContractError({ message: 'Pending entry requires its selected funded plan' }))
     const protocol = target.evidence.observation.protocol
     const short = isShortExitPlan(plan)
-    const { quote } = yield* verifiedPositionQuote(
+    const { quote } = yield* reproducePositionQuote(
       {
         protocol,
         sessionDate: target.sessionDate,
@@ -50,14 +51,13 @@ export const jevPendingEntryBoundaryCrossed = (
       source,
     )
     if (
-      quote.bidSize <= 0 ||
-      quote.askSize <= 0 ||
       observedAt < target.evidence.decidedAt ||
       evaluatedAt < observedAt ||
-      !jevProtectiveQuoteIsFresh(quote, evaluatedAt, protocol.maximumQuoteAgeMs)
+      compareIntradayInstants(quote.eventAt, observedAt) > 0
     )
       return yield* Result.fail(
-        new JevContractError({ message: 'Pending entry cancellation requires a current complete quote' }),
+        new JevContractError({ message: 'Pending entry cancellation evidence cannot precede its decision or quote' }),
       )
+    if (!jevProtectiveQuoteIsFresh(quote, evaluatedAt, protocol.maximumQuoteAgeMs)) return false
     return yield* jevEligibleEntryBoundaryCrossed({ ...plan.levels, short }, quote)
   })
