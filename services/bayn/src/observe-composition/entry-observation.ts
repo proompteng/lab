@@ -11,7 +11,8 @@ import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevAwaitingEvidence, evaluateJevObservationFromSnapshot } from '../jev/runtime'
 import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
-import { isRepeatedMomentumRuntime, type StrategyRuntime } from '../strategy'
+import { isIntradayAlphaRuntime, isRepeatedMomentumRuntime, type StrategyRuntime } from '../strategy'
+import { evaluateIntradayAlphaFromSnapshot, makeIntradayAlphaEntryQuery } from '../strategy/intraday-alpha/runtime'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { strictParseOptions } from '../schemas'
 import type { ObserveDecisionAwaitingSignal } from './decision-builder'
@@ -62,7 +63,7 @@ export const observeChartEntry = (
 ) =>
   Effect.gen(function* () {
     const strategy = context.strategy
-    if (isRepeatedMomentumRuntime(strategy))
+    if (isRepeatedMomentumRuntime(strategy) || isIntradayAlphaRuntime(strategy))
       return yield* operationalError({
         component: 'strategy',
         operation: 'current-decision',
@@ -98,8 +99,45 @@ export const observeChartEntry = (
     return { snapshot: evaluated.snapshot, decision }
   })
 
-export const observeNativeEntry = (context: EntryObservationContext) =>
-  context.strategy.definition.parameters.schemaVersion === defaultJevProtocolDocument.schemaVersion
+export const observeNativeEntry: EntryObservation = (context) => {
+  if (isIntradayAlphaRuntime(context.strategy)) {
+    const policy = context.strategy.definition.parameters
+    return Effect.fromResult(
+      makeIntradayAlphaEntryQuery({
+        policy,
+        calendar: context.calendar,
+        sessionDate: context.sessionDate,
+        observedAtMs: Date.parse(context.observedAt),
+      }),
+    ).pipe(
+      Effect.flatMap((query) =>
+        evaluateIntradayAlphaFromSnapshot({
+          observation: context.observation,
+          rangeEndAt: query.rangeEndAt,
+          loadSnapshot: currentUtcInstant.pipe(
+            Effect.flatMap((observedAt) => context.loadSnapshot({ ...query, observedAt })),
+          ),
+          ...(equityClockSession(context.observedAt) === 'regular'
+            ? {
+                loadEligibility: readEquityShortEligibility(query.candidateSymbols ?? []).pipe(
+                  Effect.mapError((cause) =>
+                    operationalError({
+                      component: 'strategy',
+                      operation: 'current-decision',
+                      message: 'Intraday alpha broker eligibility could not be observed',
+                      cause,
+                    }),
+                  ),
+                ),
+              }
+            : {}),
+          policy,
+          admissionExpiresAt: context.admissionExpiresAt,
+        }),
+      ),
+    )
+  }
+  return context.strategy.definition.parameters.schemaVersion === defaultJevProtocolDocument.schemaVersion
     ? observeChartEntry(
         {
           ...context,
@@ -127,3 +165,4 @@ export const observeNativeEntry = (context: EntryObservationContext) =>
           message: 'Native entry requires the source-controlled Jev protocol',
         }),
       )
+}

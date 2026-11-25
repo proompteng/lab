@@ -43,7 +43,7 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
       WHERE decision.cycle_id = ${cycleId} AND decision.decision_hash = ${portfolio.entryDecisionHash}
         AND cycle.strategy_name = 'jev' AND cycle.account_id = ${state.account.accountId}
         AND decision.document #>> '{bindings,accountId}' = cycle.account_id
-        AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v7', 'bayn.entry-ablation-target.v1', 'bayn.repeated-momentum-target.v1')
+        AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v7', 'bayn.entry-ablation-target.v1', 'bayn.repeated-momentum-target.v1', 'bayn.intraday-alpha-target.v1')
         AND decision.document #> '{strategyDecision,exitPolicy}' = ${JSON.stringify(portfolio.exitPolicy)}::jsonb
         AND NOT EXISTS (
           SELECT 1 FROM intents AS intent WHERE intent.cycle_id = ${cycleId} AND decision.document -> 'orderedIntentIds' ? intent.intent_id
@@ -82,7 +82,7 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
     const debit = yield* readEntryInventoryDebit(
       sql,
       portfolio.brokerState.account.accountId,
-      portfolio.entryFills[0]?.symbol ?? '',
+      [...new Set(portfolio.entryFills.map((fill) => fill.symbol))].sort(),
       portfolio.entryFills[0]?.occurredAt ?? r.reconciledAt,
       r.reconciledAt,
     )
@@ -122,18 +122,19 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
 const readEntryInventoryDebit = (
   sql: PgClient.PgClient,
   accountId: string,
-  symbol: string,
+  symbols: readonly string[],
   firstFillAt: string,
   reconciledAt: string,
 ) =>
   Effect.gen(function* () {
+    if (symbols.length === 0) return { quantityAtoms: '0', costBasisMicros: '0' }
     const [debit] = yield* Schema.decodeUnknownEffect(
       Schema.Tuple([JevInventoryDebitSchema]),
       strictParseOptions,
     )(
       yield* sql`
       SELECT COALESCE(sum(quantity_atoms),0)::text AS "quantityAtoms", COALESCE(sum(cost_basis_micros),0)::text AS "costBasisMicros"
-      FROM broker_inventory_debits WHERE account_id=${accountId} AND symbol=${symbol} AND posted
+      FROM broker_inventory_debits WHERE account_id=${accountId} AND symbol = ANY(${symbols}::text[]) AND posted
         AND effective_at >= ${firstFillAt}::timestamptz AND effective_at <= ${reconciledAt}::timestamptz
     `,
     )
@@ -390,7 +391,7 @@ export const makeJevPositionStore = Effect.gen(function* () {
             entryInventoryDebit: yield* readEntryInventoryDebit(
               sql,
               brokerState.account.accountId,
-              rows[0]?.fill.symbol ?? '',
+              [...new Set(rows.map(({ fill }) => fill.symbol))].sort(),
               rows[0]?.fill.occurredAt ?? brokerState.reconciliation.reconciledAt,
               brokerState.reconciliation.reconciledAt,
             ),

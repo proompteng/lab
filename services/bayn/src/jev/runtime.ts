@@ -493,7 +493,9 @@ export const compileJevEntry = (
       const originalQuote = decisionSnapshot.latestQuotes[symbol]
       if (plan === undefined || quote === undefined || originalQuote === undefined)
         return yield* Result.fail(new JevContractError({ message: `Jev target ${symbol} lacks execution pricing` }))
-      const exclusion = yield* jevEntryQuoteExclusion(quote)
+      const spreadCap =
+        decision.schemaVersion === 'bayn.intraday-alpha-target.v1' ? decision.policy.maximumEntrySpreadBps : undefined
+      const exclusion = yield* jevEntryQuoteExclusion(quote, spreadCap)
       const originalAsk = yield* priceNumberToMicros(originalQuote.askPrice, 'ask', 'UP')
       const withinCostBound =
         BigInt(quotePrices.askPriceMicros[symbol] ?? '0') <=
@@ -563,6 +565,7 @@ export const evaluateJevPositionManagement = (input: {
   readonly calendar: MarketHours
   readonly brokerState: ReconciledBrokerState
   readonly marketData: IntradayMarketDataService
+  readonly symbol?: string
 }) =>
   Effect.suspend(() => {
     // Per-evaluation only: failures before the validated portfolio read have no holding deadline.
@@ -584,16 +587,26 @@ export const evaluateJevPositionManagement = (input: {
         protocol: input.protocol,
         portfolio,
         observedAt,
+        ...(input.symbol === undefined ? {} : { symbol: input.symbol }),
       }
       if (portfolio.exitRequestedAt !== null)
         return yield* Effect.fromResult(
           decideJevExit({ ...evidence, trigger: { reason: JevExitReason.ProtectionReleased } }),
         )
-      const firstFill = portfolio.entryFills[0]
-      const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
+      const position =
+        input.symbol === undefined
+          ? portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
+          : portfolio.brokerState.positions.find(
+              (entry) => entry.symbol === input.symbol && BigInt(entry.quantityAtoms) !== 0n,
+            )
+      const firstFill =
+        position === undefined
+          ? undefined
+          : (portfolio.entryFills.find((fill) => fill.symbol === position.symbol) ?? portfolio.entryFills[0])
       if (firstFill === undefined || position === undefined)
         return yield* new JevContractError({ message: 'Managed position is missing its validated fill or cost basis' })
-      maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)
+      const exitPlan = yield* Effect.fromResult(jevManagedExitPlan(portfolio, position.symbol))
+      maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, exitPlan.levels.maximumHoldingMinutes)
       maximumHoldEvaluatedAt = observedAt
       maximumHoldEvidence = { ...evidence, trigger: { reason: JevExitReason.MaximumHold } }
       if (Date.parse(observedAt) >= Date.parse(maximumHoldDueAt)) {
@@ -626,7 +639,6 @@ export const evaluateJevPositionManagement = (input: {
             message: 'Held position has no verified current quote',
             readiness: DecisionReadinessReason.SnapshotStale,
           })
-        const exitPlan = yield* Effect.fromResult(jevManagedExitPlan(portfolio))
         const short = isShortExitPlan(exitPlan)
         const bid = yield* Effect.fromResult(
           priceNumberToMicros(short ? quote.askPrice : quote.bidPrice, short ? 'ask' : 'bid', short ? 'UP' : 'DOWN'),
@@ -639,7 +651,7 @@ export const evaluateJevPositionManagement = (input: {
         const stopped = jevProtectiveStopCrossed(bid, exitPlan.levels)
         const reason = stopped
           ? JevExitReason.ProtectiveStop
-          : (yield* Effect.fromResult(jevProfitTargetCrossed(portfolio, bid)))
+          : (yield* Effect.fromResult(jevProfitTargetCrossed(portfolio, bid, position.symbol)))
             ? JevExitReason.ProfitTarget
             : undefined
         if (reason === undefined) {

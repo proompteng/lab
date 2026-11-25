@@ -43,6 +43,7 @@ import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner/index'
 import { strategyTradingProtocol } from '../strategy'
+import { isMiddayAlphaTarget } from '../strategy/runtime-decision'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import type { JevExitTarget } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
@@ -1134,6 +1135,7 @@ export const executeProtectionReleaseClose = (
     const entryDocument = yield* readBoundMutationDocument(cycle)
     if (
       entryDocument.mode === 'OBSERVE' ||
+      isMiddayAlphaTarget(entryDocument.strategyDecision) ||
       entryDocument.bindings.authorityGenerationHash !== input.authorityGenerationHash
     )
       return undefined

@@ -443,7 +443,8 @@ export const makeCycleQueries = (
         : undefined
     const momentum =
       document.mode === legacyExecutionAuthorityToken &&
-      document.strategyDecision?.schemaVersion === 'bayn.repeated-momentum-target.v1'
+      (document.strategyDecision?.schemaVersion === 'bayn.repeated-momentum-target.v1' ||
+        document.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v1')
         ? document.strategyDecision.evidence.observation
         : undefined
     const momentumEvidence =
