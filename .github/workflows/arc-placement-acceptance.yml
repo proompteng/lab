@@ -8,7 +8,7 @@ name: ARC placement acceptance
 # preparation, slot-check sleeps and gaps between iterations do not count.
 # Inspect arc-native-proof-* for per-command timings/errors
 # and arc-native-qualified-* for commonStart/commonEnd. Match that interval to the
-# API/etcd, system-device and Ceph observations required by the ARC runbook before
+# API/etcd, system-device and memory observations required by the ARC runbook before
 # claiming throughput or storage stability. No image/alias or cache is published.
 on:
   # Run after the existing build wave clears; the readiness check has a five-minute budget.

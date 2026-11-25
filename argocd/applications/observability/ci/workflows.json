@@ -23,7 +23,7 @@
   ],
   "arc-placement-acceptance.yml": [
     {
-      "id": "ceph-build",
+      "id": "build",
       "pattern": "^.* build slot .*(?: \\(.*\\))?$"
     },
     {

@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 35
     strategy:
       fail-fast: false
-      max-parallel: 10
+      max-parallel: 5
       matrix:
         runner: [arc-amd64, arc-arm64]
         pair: [1, 2, 3, 4, 5]
@@ -54,7 +54,7 @@ jobs:
 
           order=(ceph tmpfs)
           if (( PAIR % 2 == 0 )); then order=(tmpfs ceph); fi
-          for filesystem in "${order[@]}"; do
+          for filesystem in prepare "${order[@]}"; do
             sudo -n -E /usr/bin/env "PATH=$PATH" unshare --mount --propagation private \
               bash -s -- "$filesystem" "$evidence" "$GITHUB_WORKSPACE" "$capacity_bytes" <<'BENCHMARK'
           set -euo pipefail
@@ -62,20 +62,25 @@ jobs:
           evidence="$2"
           source="$3"
           capacity_bytes="$4"
-          exec 3>"$evidence/$filesystem.json"
+          if [[ "$filesystem" != prepare ]]; then exec 3>"$evidence/$filesystem.json"; fi
           cd /
           mkdir -p /scratch
-          if [[ "$filesystem" == ceph ]]; then
-            # The current runner owns an RBD volume. Give the base init a fresh directory on it.
-            mkdir "$evidence/ceph"
-            mount --bind "$evidence/ceph" /scratch
-          else
+          init="$evidence/ceph.sh"
+          if [[ "$filesystem" == tmpfs ]]; then
             mount -t tmpfs -o "size=$capacity_bytes" tmpfs /scratch
+            init="$evidence/tmpfs.sh"
+          else
+            # The runner already owns an RBD volume. Seed a separate directory for each trial.
+            mkdir "$evidence/$filesystem"
+            mount --bind "$evidence/$filesystem" /scratch
           fi
           uptime
           start="$(date +%s%N)"
-          bash "$evidence/$filesystem.sh"
+          bash "$init"
           bootstrapped="$(date +%s%N)"
+          if [[ "$filesystem" != prepare ]]; then
+            cp -a "$evidence/prepare/nix/." /scratch/nix/
+          fi
 
           mkdir -p /scratch/work/repository
           cp -a "$source/." /scratch/work/repository/
@@ -89,11 +94,19 @@ jobs:
           export NIX_CONFIG="experimental-features = nix-command flakes
           substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
           extra-trusted-public-keys = $ATTIC_PUBLIC_KEY
-          fallback = false"
+          fallback = false
+          connect-timeout = 10
+          stalled-download-timeout = 60
+          download-attempts = 3"
           export NIX_REMOTE=local
           as_runner=(setpriv --reuid=1001 --regid=1001 --init-groups)
+          build=(nix build .#bayn-broker-feed-image --print-build-logs --out-link "$RUNNER_TEMP/result")
+          if [[ "$filesystem" == prepare ]]; then
+            "${as_runner[@]}" bash nix/ci-retry-attic-download.sh "${build[@]}"
+            exit
+          fi
           build_start="$(date +%s%N)"
-          "${as_runner[@]}" nix build .#bayn-broker-feed-image --print-build-logs --out-link "$RUNNER_TEMP/result"
+          "${as_runner[@]}" "${build[@]}" --offline --rebuild
           built="$(date +%s%N)"
           archive="$(readlink -f "$RUNNER_TEMP/result")"
           "${as_runner[@]}" bash nix/oci-inspect-archive.sh "$archive"

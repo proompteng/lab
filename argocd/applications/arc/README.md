@@ -106,7 +106,8 @@ system-device write and flush latency, memory pressure, runner OOM kills, build 
 window. Verify cold runner registration separately.
 
 The PR scratch benchmark compares the current and proposed seed scripts and runs the same nonpublishing
-Bayn broker-feed image build and archive inspection on both filesystems. It verifies identical output hashes.
+Bayn broker-feed image rebuild and archive inspection on both filesystems. It prepares dependencies once per pair
+and verifies identical output hashes for the forced offline rebuilds.
 The comparison runs inside existing ARC worker pods, so bootstrap measurements exclude PVC provisioning,
 Pod startup and runner registration.
 
