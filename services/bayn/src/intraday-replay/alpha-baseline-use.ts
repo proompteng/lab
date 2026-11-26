@@ -30,3 +30,23 @@ export const ReplayAlphaBaselineUseSchema = Schema.Struct({
 
 export type ReplayAlphaBaselineUse = typeof ReplayAlphaBaselineUseSchema.Type
 export type ReplayAlphaBaselineAdmissionUse = Omit<ReplayAlphaBaselineUse, 'commandIssuedAt'>
+
+const {
+  schemaVersion: _version,
+  sourceObservationHash: _observation,
+  ...preparedUseFields
+} = ReplayAlphaBaselineUseSchema.fields
+export const PreparedReplayAlphaBaselineUseSchema = Schema.Struct({
+  ...preparedUseFields,
+  schemaVersion: Schema.Literal('bayn.replay-alpha-baseline-use.v2'),
+  sourcePreparationHash: Sha256Schema,
+})
+export type PreparedReplayAlphaBaselineUse = typeof PreparedReplayAlphaBaselineUseSchema.Type
+export const AnyReplayAlphaBaselineUseSchema = Schema.Union([
+  ReplayAlphaBaselineUseSchema,
+  PreparedReplayAlphaBaselineUseSchema,
+])
+export type AnyReplayAlphaBaselineUse = typeof AnyReplayAlphaBaselineUseSchema.Type
+export type AnyReplayAlphaBaselineAdmissionUse =
+  | ReplayAlphaBaselineAdmissionUse
+  | Omit<PreparedReplayAlphaBaselineUse, 'commandIssuedAt'>

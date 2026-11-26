@@ -18,7 +18,7 @@ import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { currentUtcInstant } from '../time'
 import { ResearchStrategyEngine } from '../system-assessment/strategy-binding'
 import { selectReplayAlphaBaselineSource } from './alpha-baseline'
-import type { ReplayAlphaBaselineAdmissionUse } from './alpha-baseline-use'
+import type { AnyReplayAlphaBaselineAdmissionUse } from './alpha-baseline-use'
 import { alphaReplayBaselineFixture } from './alpha-replay.test-support'
 import { observeResearchEntry } from './decision-builder'
 import { operationalError } from '../errors'
@@ -59,7 +59,7 @@ const run = async (
   const snapshots: string[] = []
   const baselineCuts: string[] = []
   const recorded: unknown[] = []
-  const uses: ReplayAlphaBaselineAdmissionUse[] = []
+  const uses: AnyReplayAlphaBaselineAdmissionUse[] = []
   const latency = makeReplayDecisionLatency(
     currentUtcInstant,
     options.failRelease

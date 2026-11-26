@@ -18,15 +18,18 @@ import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
 import type { AlphaBaselineSource } from '../system-assessment/alpha-observation-witness'
-import { ReplayAlphaObservationCommit, type ReplayAlphaBaselineAdmissionUse } from './alpha-baseline-use'
+import type { PreparedAlphaBaselineSource } from '../system-assessment/alpha-baseline-witness'
+import { ReplayAlphaObservationCommit, type AnyReplayAlphaBaselineAdmissionUse } from './alpha-baseline-use'
+
+export type ResearchAlphaBaselineSource = AlphaBaselineSource | PreparedAlphaBaselineSource
 
 export type ResearchAlphaBaselineLoader = (
   query: TrailingBaselineQuery,
   observedAt: string,
-) => Effect.Effect<AlphaBaselineSource, OperationalError>
+) => Effect.Effect<ResearchAlphaBaselineSource, OperationalError>
 
 export type ResearchAlphaBaselineUseRecorder = (
-  use: ReplayAlphaBaselineAdmissionUse,
+  use: AnyReplayAlphaBaselineAdmissionUse,
 ) => Effect.Effect<void, OperationalError>
 
 export const observeResearchEntry =
@@ -40,7 +43,7 @@ export const observeResearchEntry =
       const policy = strategy.definition.parameters
       if (loadAlphaBaseline === undefined) return observeNativeAlphaEntry(context)
       return Effect.gen(function* () {
-        let selected: { readonly source: AlphaBaselineSource; readonly windowEndAt: string } | undefined
+        let selected: { readonly source: ResearchAlphaBaselineSource; readonly windowEndAt: string } | undefined
         const record: ReplayAlphaObservationCommit['Service']['record'] = (observation) =>
           Effect.gen(function* () {
             const selection = selected
@@ -56,7 +59,11 @@ export const observeResearchEntry =
                 message: 'Alpha observation has no exact original admission and selected baseline',
               })
             const baselineHash = yield* Effect.fromResult(
-              canonicalHashV1Result(selection.source.payload.trailingBaseline),
+              canonicalHashV1Result(
+                'preparationHash' in selection.source
+                  ? selection.source.payload.acquisition.trailingBaseline
+                  : selection.source.payload.trailingBaseline,
+              ),
             )
             if (
               baselineHash !== (yield* Effect.fromResult(canonicalHashV1Result(observation.payload.trailingBaseline)))
@@ -68,7 +75,15 @@ export const observeResearchEntry =
               })
             if (recordAlphaBaselineUse !== undefined)
               yield* recordAlphaBaselineUse({
-                schemaVersion: 'bayn.replay-alpha-baseline-use.v1',
+                ...('preparationHash' in selection.source
+                  ? {
+                      schemaVersion: 'bayn.replay-alpha-baseline-use.v2' as const,
+                      sourcePreparationHash: selection.source.preparationHash,
+                    }
+                  : {
+                      schemaVersion: 'bayn.replay-alpha-baseline-use.v1' as const,
+                      sourceObservationHash: selection.source.observationHash,
+                    }),
                 observationHash: observation.contentHash,
                 cycleId: context.observation.cycleId,
                 authorityGenerationHash: context.observation.authorityGenerationHash,
@@ -76,7 +91,6 @@ export const observeResearchEntry =
                 windowEndAt: selection.windowEndAt,
                 admissionObservedAt: context.observedAt,
                 admissionExpiresAt: utcInstantFromEpochMillis(context.admissionExpiresAt),
-                sourceObservationHash: selection.source.observationHash,
                 sourceWitnessHash: selection.source.witnessSourceHash,
                 baselineHash,
               })
@@ -109,7 +123,9 @@ export const observeResearchEntry =
           ).pipe(
             Effect.map((source) => {
               selected = { source, windowEndAt: query.rangeEndAt }
-              return source.payload.trailingBaseline
+              return 'preparationHash' in source
+                ? source.payload.acquisition.trailingBaseline
+                : source.payload.trailingBaseline
             }),
             Effect.mapError((cause) =>
               cause.retryable && cause.operation === 'replay-alpha-baseline'

@@ -620,6 +620,8 @@ durableTest.each([
             expect(report.alphaBaselineGaps).toEqual([])
             for (const observation of report.alphaObservations ?? []) {
               const use = observation.baselineUse
+              if (use.schemaVersion !== 'bayn.replay-alpha-baseline-use.v1')
+                throw new Error('Retained v12 replay changed its baseline-use contract')
               expect(use.observationHash).toBe(observation.contentHash)
               expect(use.cycleId).toBe(observation.payload.cycleId)
               expect(use.authorityGenerationHash).toBe(observation.payload.authorityGenerationHash)
