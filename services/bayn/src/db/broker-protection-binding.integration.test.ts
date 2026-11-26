@@ -112,23 +112,28 @@ const retainProtectionIdentity = (
       SELECT (COALESCE(MAX(source_sequence), -1) + 1)::text AS "nextSequence"
       FROM broker_events WHERE broker = 'ALPACA' AND account_id = ${replayAccountId}`
     if (sequenceStart === undefined) throw new Error('Expected an account source sequence')
-    for (const [sequence, row] of rows.entries()) {
-      const eventId = sha256(row.id)
-      yield* sql`INSERT INTO broker_events (
+    // The deferred payload constraint requires each broker event and its typed order to commit together.
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        for (const [sequence, row] of rows.entries()) {
+          const eventId = sha256(row.id)
+          yield* sql`INSERT INTO broker_events (
         event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,occurred_at,observed_at
       ) VALUES (
         ${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${replayAccountId},
         ${`order:${row.id}:${observedAt}`},${(BigInt(sequenceStart.nextSequence) + BigInt(sequence)).toString()},
         ${observedAt}::timestamptz,${observedAt}::timestamptz
       )`
-      yield* sql`INSERT INTO orders (
+          yield* sql`INSERT INTO orders (
         event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,symbol,side,order_type,time_in_force,
         quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,parent_broker_order_id,status
       ) VALUES (
         ${eventId},${replayAccountId},'bayn.order.v3',${row.id},${row.client},${row.intent},${row.symbol},${row.side},
         ${row.type},${row.duration},${row.quantity},0,${row.limit},${row.stop},${row.parent},'PENDING'
       )`
-    }
+        }
+      }),
+    )
     return { intentId, protection: intent.protection }
   })
 
