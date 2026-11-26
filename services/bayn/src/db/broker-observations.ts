@@ -17,7 +17,7 @@ import {
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { protectionReleaseReadCount, type ProtectionReadAllowance } from '../broker/alpaca/poll-budget'
-import { IntentState } from '../execution/contracts'
+import { IntentState, OrderSchema } from '../execution/contracts'
 import type { NativeProtectionCancelCommand } from '../execution/intents/domain'
 import { currentUtcInstant } from '../time'
 import { canonicalHashV1Result, sha256 } from '../hash'
@@ -916,6 +916,52 @@ export const makeBrokerObservationStore = (
         )
       }),
     )
+  const readProtectionOrder = (brokerOrderId: string, clientOrderId: string) =>
+    run(
+      // Canonical nested protection normalization is the only first writer of this association. Stream updates
+      // can reuse that exact identity, never create one. This proves identity, while the independent session
+      // financial fence and complete-history reconciliation continue to govern readiness and money.
+      sql`SELECT jsonb_strip_nulls(jsonb_build_object(
+        'schemaVersion', child.schema_version, 'accountId', child.account_id,
+        'brokerOrderId', child.broker_order_id, 'parentBrokerOrderId', child.parent_broker_order_id,
+        'clientOrderId', child.client_order_id, 'intentId', child.intent_id, 'symbol', child.symbol,
+        'side', child.side, 'orderType', child.order_type, 'timeInForce', child.time_in_force,
+        'quantityAtoms', child.quantity_atoms::text, 'notionalMicros', child.notional_micros::text,
+        'filledQuantityAtoms', child.filled_quantity_atoms::text, 'limitPriceMicros', child.limit_price_micros::text,
+        'stopPriceMicros', child.stop_price_micros::text, 'status', child.status,
+        'observedAt', to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      )) AS value
+      FROM orders AS child JOIN broker_events AS event USING (event_id)
+      JOIN intents AS intent ON intent.intent_id = child.intent_id AND intent.account_id = child.account_id
+      WHERE child.account_id = ${accountId} AND child.broker_order_id = ${brokerOrderId}
+        AND child.client_order_id = ${clientOrderId} AND child.parent_broker_order_id IS NOT NULL
+        AND child.symbol = intent.symbol AND child.quantity_atoms > 0 AND child.quantity_atoms <= intent.quantity_atoms
+        AND child.time_in_force = 'DAY' AND child.notional_micros IS NULL
+        AND intent.protection->>'_tag' IN ('Bracket','EquityShortBracket','Oco','EquityShortOco')
+        AND child.side = CASE WHEN intent.protection->>'_tag' IN ('EquityShortBracket','EquityShortOco') THEN 'BUY' ELSE 'SELL' END
+        AND ((child.order_type = 'STOP_LIMIT' AND child.stop_price_micros = (intent.protection->>'stopPriceMicros')::numeric
+          AND child.limit_price_micros = (intent.protection->>'stopLimitPriceMicros')::numeric)
+          OR (child.order_type = 'LIMIT' AND child.stop_price_micros IS NULL
+            AND child.limit_price_micros = (intent.protection->>'profitLimitPriceMicros')::numeric))
+        AND EXISTS (
+          SELECT 1 FROM orders AS parent WHERE parent.account_id = child.account_id
+            AND parent.broker_order_id = child.parent_broker_order_id AND parent.intent_id = child.intent_id
+            AND parent.client_order_id = intent.client_order_id AND parent.parent_broker_order_id IS NULL
+            AND parent.symbol = intent.symbol AND parent.side = intent.side
+            AND parent.quantity_atoms = intent.quantity_atoms AND parent.notional_micros IS NULL
+            AND parent.order_type = intent.order_type AND parent.time_in_force = intent.time_in_force
+            AND parent.limit_price_micros = intent.limit_price_micros AND parent.stop_price_micros IS NULL
+        )
+      ORDER BY event.source_sequence DESC LIMIT 1`.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Array(Schema.Struct({ value: OrderSchema })).check(Schema.isMaxLength(1)),
+            strictParseOptions,
+          ),
+        ),
+        Effect.map((rows) => rows[0]?.value),
+      ),
+    )
   const readSourceProjection = (eventId: string) =>
     run(
       sql`SELECT CASE
@@ -1420,6 +1466,7 @@ export const makeBrokerObservationStore = (
     isNotificationCovered,
     isSessionBoundaryCovered,
     readNotification,
+    readProtectionOrder,
     readSourceProjection,
     readProjectionBacklog,
     recordProjection,
