@@ -131,8 +131,12 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 ## Prospective registration
 
-`validateProspectiveSystemRegistration` admits only `bayn.system-registration.v5`. Stored prior versions retain
-their original registration and assessment paths. Native admission binds a candidate and an `INCUMBENT_JEV`
+`validateProspectiveSystemRegistration` admits only `bayn.system-registration.v6`. Stored prior versions retain
+their original registration, policy hashes, and assessment paths. Each v6 policy definition carries a complete
+`bayn.research-strategy-binding.v1`: engine, concrete parameters, strategy identity, and protocol hash. Candidate
+and `INCUMBENT_JEV` are comparison roles; either may explicitly bind Jev v44 or intraday alpha v2. Their role names
+and the shared internal strategy name `jev` never select an implementation. The incumbent must match its separately
+witnessed serving generation, including its complete strategy material. Native admission binds a candidate and an `INCUMBENT_JEV`
 control to separate account and authority identities under the same execution risk policy. The incumbent's
 PostgreSQL store locks its active PAPER authority through candidate admission and writes its own witness.
 The candidate store seals the pair after the peer witness commits. Both commit deadlines precede the first
@@ -205,7 +209,10 @@ Contracted inference discounts are permitted; all costs still require evidence.
 The v37 and v38 candidate and chart ablation require continuous Jev tariff coverage from the first open through the final close.
 Retained historical protocols still require their original provider tariffs for financial verification. The frozen deterministic deployed control and repeated momentum do not
 require inference tariffs. Missing models, expired rates, and gaps reject registration before its terms become immutable.
-Replay requests use `bayn.backtest.v11` and the same `bayn.inference-rate-card.v1` contract as operating-cost reporting.
+Retained replay requests use `bayn.backtest.v11`; engine-bound requests use `bayn.backtest.v12`. Both use the same
+`bayn.inference-rate-card.v1` contract as operating-cost reporting. Required provider models derive from the bound
+engine. The current alpha v2 policy disables catalyst veto, so its replay acquires no provider client and requires
+zero provider dispatches and retained calls. This does not waive broker, data, infrastructure, or other operating costs.
 Adjacent periods may have different prices. Each retained call uses the registered provider/model rate effective at its
 simulated start, with per-call rounding retained. Missing, overlapping, or substituted rates leave usage unresolved.
 The replay binder retains the complete registered schedule; replacing it with one fixed price fails source binding.
@@ -220,6 +227,53 @@ content-addressed documents. Migration 156 makes history and registrations appen
 program row, and requires the next attempt index and predecessor hash. Both insertion and deferred transaction
 completion must precede the first open. Retries return the same registration; failures and candidate changes cannot
 reset the attempt history. These functions require verified audit and allocation-source hashes from their caller.
+
+### Native engine replay and timing
+
+New economic registrations bind `bayn.qualification-runtime.v3`, the explicit candidate strategy, and latency stress
+protocol v4. They require source-cut v5. Historical registrations, runtime v1/v2, source-cut v4, replay v11 and their
+stored hashes remain reproducible. A v12 input cannot replace a retained polling input, and a polling replay cannot
+establish a streaming registration.
+
+The replay image's compiler receipt v5 binds its complete root strategy and explicit compiled engine catalog.
+Each candidate or incumbent executes the exact strategy in its own registration. The native broker, risk checks,
+order terms, shared liquidity, partial fills, fees, accounting and recovery remain the execution path. A declaration
+of alpha with a Jev executable fails identity binding.
+
+Version 12 schedules work from retained arrival times, observable broker transitions, and native deadlines.
+The live controller and replay share the successor deadline and market-eligibility calculation. Suppressed market
+hints still advance their frontier; they cannot reappear later as new arrivals. Broker changes wake independently.
+Arrivals during work are serialized after the active pass. Reporting cuts preserve the owner and its pending
+deadline. They do not create a trading poll or a forced terminal trade. Registered streaming stress requires an
+original-capture delivery receipt; reconstructed archive timestamps cannot stand in for original availability.
+
+Source-cut v5 retains standalone alpha observations even when no funded decision exists. Their source transaction
+queues an `ALPHA_OBSERVATION` evidence row. A later committed native controller observation supplies the independent
+durability witness. Observation `observedAt` is a logical source timestamp, never a commit time. There is no historical
+backfill. Rolled-back sources, released savepoints, direct witness inserts and uncommitted rows cannot establish
+availability. Missing witnesses stay unknown.
+
+Alpha replay baseline carriers retain the complete source observation, its hash, the independent witness hash, and
+availability time. The provider reproduces each observation and uses only the trailing baseline matching the exact
+session, provider, feed, topics, universe and lookback, with strictly prior baseline dates. Source portfolio state and
+short eligibility are not copied into the replay account. The baseline must already be available at the decision's
+original observation cut; a later processing clock cannot make it causal. A registered carrier array must exactly
+match the authenticated source cut. Standalone v12 fixtures remain declared research input, not qualification evidence.
+
+The first alpha observation of a session cannot retroactively witness its own earlier baseline availability. Without
+an earlier independent witness, replay records `MISSING_CAUSAL_ALPHA_BASELINE`, including the first later availability
+when known, and withholds complete results. A later successful decision does not erase that gap. A Jev candidate's
+source cut also cannot invent an alpha incumbent's missing baseline inventory. These cases require additional retained
+source evidence before economic qualification; changing timestamps or treating the gap as no-signal is invalid.
+
+`measureRegisteredDecisionLatency` selects the engine's calibration. Jev retains its full-batch measurement; alpha
+uses reproduced observations and decisions or verified abstentions, separately bounded pass references, independent
+durable witnesses, and complete submission/recovery histories. Resolved failures remain timing samples. Missing
+sources, references, original commands, routing or unresolved submissions withhold the complete percentile. All
+registered controller windows remain in the reliability denominator. The shared `p95FullBatchMs` intervention field
+retains the command-through-durable-completion bound; alpha's report identifies observation counts explicitly and
+does not invent inference batches. The same floor applies to each control's own actual completion, preserving expiry
+and downstream pricing/risk checks. A measured percentile or a passing replay test does not establish profit.
 
 ## Evidence and assessment
 
@@ -309,7 +363,7 @@ Missing stress evidence leaves that diagnostic unresolved; supplied contradictor
 There is no fixed session count. Candidate and selected controls must cover every registered session exactly,
 including losses, downtime, blocked decisions, and zero-trade costs.
 
-New `bayn.system-registration.v5` registrations require `statisticalPlan.method: CONDITIONAL_HOEFFDING_V1` and one
+Native `bayn.system-registration.v5` and v6 registrations require `statisticalPlan.method: CONDITIONAL_HOEFFDING_V1` and one
 prospective support interval, source artifact and explicit assumption for every selected policy. They have no
 bootstrap or replicate budget. `economic-qualification.ts` uses actual fully attributed session net profit and exact
 conditional Hoeffding lower bounds for the candidate and every paired control. Its estimand is average registered
