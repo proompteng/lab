@@ -1849,10 +1849,11 @@ postgres('PostgreSQL prospective system qualification', () => {
         ...first,
         policies: first.policies.map((policy) => ({
           ...policy,
-          promptsHash: policy.policy === 'JEV' ? sha256('different candidate prompt') : policy.promptsHash,
+          sourceRevision: policy.policy === 'JEV' ? 'b'.repeat(40) : policy.sourceRevision,
         })),
       }),
     ]
+    expect(testHash(candidates[0])).not.toBe(testHash(candidates[1]))
     for (const candidate of candidates) expect(Result.isSuccess(validateSystemRegistration(candidate))).toBe(true)
     const exits = await Promise.all(
       candidates.map((input) => runtime.runPromiseExit(asApplication(registerFixture(input)))),
