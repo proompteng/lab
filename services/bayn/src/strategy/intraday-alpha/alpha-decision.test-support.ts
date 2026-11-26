@@ -24,6 +24,7 @@ import { defaultJevProtocolDocument, decodeJevProtocol } from '../../jev/protoco
 import {
   NativeAlphaBaselinePreparation,
   reproduceAlphaBaselinePreparation,
+  type RecordedAlphaBaselinePreparation,
 } from '../../observe-composition/alpha-baseline-preparation'
 import { preparedAlphaBaselineFixture } from '../../observe-composition/alpha-baseline-preparation.test-support'
 import { constructStreamingSnapshot } from '../../market-data/streaming/snapshot'
@@ -43,6 +44,7 @@ export const nativeAlphaDecisionFixture = async (
     readonly accountId?: string
     readonly authorityGenerationHash?: string
     readonly calendar?: typeof MarketCalendarObservationSchema.Type
+    readonly baselinePreparation?: RecordedAlphaBaselinePreparation
   } = {},
 ) => {
   const accountId = options.accountId ?? 'alpha-test-account'
@@ -50,7 +52,7 @@ export const nativeAlphaDecisionFixture = async (
   const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)('2026-09-04')
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
   const policy = makeIntradayAlphaPolicy(protocol)
-  const preparedBaseline = preparedAlphaBaselineFixture()
+  const preparedBaseline = options.baselinePreparation ?? preparedAlphaBaselineFixture()
   const testTrailingBaselineLayer = Layer.succeed(NativeAlphaBaselinePreparation, {
     prepare: (request) =>
       Effect.fromResult(reproduceAlphaBaselinePreparation({ ...preparedBaseline.payload, ...request })).pipe(

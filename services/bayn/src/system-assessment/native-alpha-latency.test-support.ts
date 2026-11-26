@@ -24,7 +24,10 @@ import { StrategyBoundSystemSourceCutSchema } from './source-cut'
 import { ResearchStrategyEngine } from './strategy-binding'
 import { strategyBoundRegistrationFixture } from './strategy-registration.test-support'
 
-export const alphaLatencyFixture = () => {
+export const alphaLatencyFixture = (
+  engines: Parameters<typeof strategyBoundRegistrationFixture>[1] = {},
+  trailingBaseline = makeTestTrailingBaseline(),
+) => {
   const calendar = Result.getOrThrow(
     normalizeMarketCalendarResult(
       ['2026-09-04', '2026-09-08'].map((date) => ({
@@ -46,6 +49,7 @@ export const alphaLatencyFixture = () => {
       },
       calendar,
     ),
+    engines,
   )
   const registration = withRegistrationCommitments({
     ...bound,
@@ -76,7 +80,7 @@ export const alphaLatencyFixture = () => {
       authorityGenerationHash: candidate.authorityGenerationHash,
       protocol: candidate.strategyBinding.parameters.sharedProtocol,
       portfolio: makeFlatAlphaPortfolio(snapshot.observedAt, undefined, undefined, candidate.riskPolicy.accountId),
-      trailingBaseline: makeTestTrailingBaseline(),
+      trailingBaseline,
       snapshot: snapshot.snapshot,
     }),
   )
