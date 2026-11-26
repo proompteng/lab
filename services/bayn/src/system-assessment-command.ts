@@ -25,7 +25,7 @@ import { registerPairedSystemQualification } from './system-assessment/paired-ad
 import { openIncumbentPostgres } from './system-assessment/incumbent-store'
 import { ValkeyCacheLive } from './valkey-cache'
 import { configuredQualificationRuntime } from './system-assessment/configuration'
-import { validateProspectiveSystemRegistration } from './system-assessment/policy'
+import { isNativeSystemRegistration, validateProspectiveSystemRegistration } from './system-assessment/policy'
 import { SystemAssessmentError } from './system-assessment/economics'
 import { SystemAssessmentInputSchema } from './system-assessment/assessment'
 import { verifyLatencyStressImages } from './system-assessment/latency-report'
@@ -169,10 +169,9 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
           input.registration,
           packet.artifacts,
         )
-        const peer =
-          input.registration.schemaVersion === 'bayn.system-registration.v5'
-            ? yield* openIncumbentPostgres(config, true)
-            : undefined
+        const peer = isNativeSystemRegistration(input.registration)
+          ? yield* openIncumbentPostgres(config, true)
+          : undefined
         return yield* assessAndPersistSystem(input, packet.verifiedSources, packet.artifacts, images, peer)
       }).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command owns the scoped database layer
