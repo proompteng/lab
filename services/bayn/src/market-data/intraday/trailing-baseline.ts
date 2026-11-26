@@ -3,6 +3,8 @@ import { Context, Effect, Layer, Result, Schema } from 'effect'
 
 import { OperationalError, operationalError, retryableOperationalError } from '../../errors'
 import { IsoDateSchema, PositiveIntegerSchema, SymbolSchema, strictParseOptions, type IsoDate } from '../../schemas'
+import { currentUtcInstant } from '../../time'
+import type { TrailingBaselineAcquisition } from './baseline-acquisition'
 
 export const intradayAlphaTrailingBaselineSchemaVersion = 'bayn.intraday-alpha-trailing-baseline.v1' as const
 
@@ -75,6 +77,8 @@ export interface TrailingBaselineQuery {
 
 export interface IntradayTrailingBaselineService {
   readonly load: (query: TrailingBaselineQuery) => Effect.Effect<IntradayAlphaTrailingBaseline, OperationalError>
+  /** Native acquisition retains actual read clocks and builder inputs; replay intentionally provides only load. */
+  readonly acquire?: (query: TrailingBaselineQuery) => Effect.Effect<TrailingBaselineAcquisition, OperationalError>
 }
 
 export class IntradayTrailingBaseline extends Context.Service<
@@ -267,16 +271,23 @@ const toFiniteNumber = (value: number | string): number => (typeof value === 'nu
 export const makeClickhouseTrailingBaseline = (
   sql: ClickhouseClient.ClickhouseClient,
 ): IntradayTrailingBaselineService => {
-  const cache = new Map<string, IntradayAlphaTrailingBaseline>()
+  const cache = new Map<string, TrailingBaselineAcquisition>()
 
-  const load: IntradayTrailingBaselineService['load'] = (query) =>
+  const acquire = (query: TrailingBaselineQuery): Effect.Effect<TrailingBaselineAcquisition, OperationalError> =>
     Effect.gen(function* () {
       const sortedSymbols = [...new Set(query.symbols)].sort()
       const sortedNoise = [...new Set(query.noiseAreaSymbols)].sort()
       const { provider, feed, sourceTopic, universeId } = query.sourceContract
-      const cacheKey = `${query.sessionDate}|${query.lookbackSessions}|${provider}|${feed}|${sourceTopic}|${universeId ?? ''}|${sortedSymbols.join(',')}|${sortedNoise.join(',')}`
+      const cacheKey = `${query.sessionDate}|${query.lookbackSessions}|${query.minimumSessions}|${provider}|${feed}|${sourceTopic}|${universeId ?? ''}|${sortedSymbols.join(',')}|${sortedNoise.join(',')}`
       const cached = cache.get(cacheKey)
       if (cached !== undefined) return cached
+      if (provider !== 'alpaca' || feed !== 'iex' || universeId === undefined)
+        return yield* operationalError({
+          component: 'market-data',
+          operation: 'trailing-baseline',
+          message: 'Native alpha acquisition requires its exact Alpaca IEX universe source contract',
+        })
+      const startedAt = yield* currentUtcInstant
 
       const lookbackCalendarDays = Math.max(35, query.lookbackSessions * 3)
       const checkpointMins = [...noiseAreaCheckpointMinutes]
@@ -370,12 +381,29 @@ export const makeClickhouseTrailingBaseline = (
         low: toFiniteNumber(row.low),
         close: toFiniteNumber(row.close),
       }))
-      const checkpointRows: PriorSessionCheckpointSummary[] = decodedCheckpoints.map((row) => ({
-        symbol: row.symbol,
-        sessionDate: row.session_date,
-        minuteFromOpen: Math.trunc(toFiniteNumber(row.minute_from_open)),
-        close: toFiniteNumber(row.close),
-      }))
+      const checkpointRows: TrailingBaselineAcquisition['inputs']['checkpointRows'] = yield* Effect.forEach(
+        decodedCheckpoints,
+        (row) =>
+          Effect.gen(function* () {
+            const minuteFromOpen = noiseAreaCheckpointMinutes.find(
+              (minute) => minute === toFiniteNumber(row.minute_from_open),
+            )
+            if (minuteFromOpen === undefined)
+              return yield* operationalError({
+                component: 'market-data',
+                operation: 'trailing-baseline',
+                message: 'Trailing baseline source returned an unrequested checkpoint',
+              })
+            return {
+              symbol: row.symbol,
+              sessionDate: row.session_date,
+              minuteFromOpen,
+              close: toFiniteNumber(row.close),
+            }
+          }),
+      )
+      const intradayDailyRows = [...dailyRows]
+      let adjustedDailyFallback: TrailingBaselineAcquisition['inputs']['adjustedDailyFallback'] = null
 
       // Supplement any symbol lacking enough intraday sessions from the single latest coherent published
       // snapshot in signal.adjusted_daily_bars_v2 (< sessionDate) using the authoritative adjusted_* columns.
@@ -412,6 +440,17 @@ export const makeClickhouseTrailingBaseline = (
             ORDER BY symbol, session_date
           `
           const decodedFallback = yield* Schema.decodeUnknownEffect(Schema.Array(DailyRowSchema))(fallbackRaw)
+          adjustedDailyFallback = {
+            snapshotId: latestSnapshotId,
+            dailyRows: decodedFallback.map((row) => ({
+              symbol: row.symbol,
+              sessionDate: row.session_date,
+              open: toFiniteNumber(row.open),
+              high: toFiniteNumber(row.high),
+              low: toFiniteNumber(row.low),
+              close: toFiniteNumber(row.close),
+            })),
+          }
           const fallbackBySymbol = new Map<string, PriorSessionDailySummary[]>()
           for (const row of decodedFallback) {
             const list = fallbackBySymbol.get(row.symbol) ?? []
@@ -458,8 +497,27 @@ export const makeClickhouseTrailingBaseline = (
         const oldest = cache.keys().next()
         if (oldest.done !== true) cache.delete(oldest.value)
       }
-      cache.set(cacheKey, baseline)
-      return baseline
+      const acquisition: TrailingBaselineAcquisition = {
+        schemaVersion: 'bayn.intraday-alpha-baseline-acquisition.v1',
+        query: {
+          sessionDate: query.sessionDate,
+          symbols: sortedSymbols,
+          noiseAreaSymbols: sortedNoise,
+          lookbackSessions: query.lookbackSessions,
+          minimumSessions: query.minimumSessions,
+          sourceContract: { provider, feed, sourceTopic, universeId },
+        },
+        startedAt,
+        completedAt: yield* currentUtcInstant,
+        inputs: {
+          intradayDailyRows,
+          checkpointRows,
+          adjustedDailyFallback,
+        },
+        trailingBaseline: baseline,
+      }
+      cache.set(cacheKey, acquisition)
+      return acquisition
     }).pipe(
       Effect.mapError((cause) =>
         cause instanceof OperationalError
@@ -473,7 +531,7 @@ export const makeClickhouseTrailingBaseline = (
       ),
     )
 
-  return { load }
+  return { load: (query) => acquire(query).pipe(Effect.map((source) => source.trailingBaseline)), acquire }
 }
 
 export const ClickhouseTrailingBaselineLive = Layer.effect(

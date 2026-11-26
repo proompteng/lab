@@ -3,6 +3,7 @@ import type { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, Exit, Result, Schema } from 'effect'
 
 import { IsoDateSchema } from '../../schemas'
+import { reproduceTrailingBaselineAcquisition } from './baseline-acquisition'
 import {
   buildTrailingBaseline,
   intradayAlphaTrailingBaselineSchemaVersion,
@@ -159,6 +160,16 @@ test('makeClickhouseTrailingBaseline binds provider/feed/source_topic/finality a
   expect(result.symbols['QQQ']?.priorSessions).toBe(5)
   expect(result.symbols['NVDA']?.priorSessions).toBe(5)
   expect(result.symbols['NVDA']?.atr14Ratio).toBeCloseTo(0.06, 5)
+  if (service.acquire === undefined) throw new Error('Missing native acquisition capability')
+  const queryCount = executed.length
+  const acquired = await Effect.runPromise(service.acquire(query))
+  expect(executed).toHaveLength(queryCount)
+  expect(acquired.trailingBaseline).toEqual(result)
+  expect(Result.getOrThrow(reproduceTrailingBaselineAcquisition(acquired))).toEqual(acquired)
+  expect(acquired.inputs.intradayDailyRows.find((row) => row.symbol === 'NVDA')?.close).toBe(1000)
+  expect(acquired.inputs.adjustedDailyFallback?.snapshotId).toBe('snap-2026-09-01')
+  expect(acquired.inputs.adjustedDailyFallback?.dailyRows.map((row) => row.close)).toEqual([100, 100, 100, 100, 100])
+  expect(acquired.completedAt >= acquired.startedAt).toBe(true)
 
   // Both intraday queries must bind provider, feed, source_topic, and is_final = 1 before deduplication.
   const intradayQueries = executed.filter((entry) => entry.sql.includes('FROM signal.intraday_bars_1m_v2'))

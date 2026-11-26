@@ -17,13 +17,17 @@ export const PreparedAlphaBaselineSourceSchema = Schema.Struct({
   witnessSourceHash: Sha256Schema,
 })
 export type PreparedAlphaBaselineSource = typeof PreparedAlphaBaselineSourceSchema.Type
-export const AlphaBaselineWitnessSchema = Schema.Struct({
-  registrationHash: Sha256Schema,
+const AlphaBaselineWitnessFields = {
   kind: Schema.Literal('ALPHA_BASELINE'),
   sourceHash: Sha256Schema,
   sourceAt: UtcInstantSchema,
   witnessedAt: UtcInstantSchema,
   correct: Schema.Boolean,
+}
+const AlphaBaselineWitnessRecordSchema = Schema.Struct(AlphaBaselineWitnessFields)
+export const AlphaBaselineWitnessSchema = Schema.Struct({
+  registrationHash: Sha256Schema,
+  ...AlphaBaselineWitnessFields,
 })
 
 interface PreparedAlphaBaselineCut {
@@ -42,11 +46,19 @@ interface PreparedAlphaBaselineCut {
 /** No registration admission or later identical insertion can manufacture an earlier availability. */
 export const derivePreparedAlphaBaselineSources = (cut: PreparedAlphaBaselineCut) =>
   Result.gen(function* () {
+    yield* Schema.decodeUnknownResult(
+      Schema.Struct({ registrationHash: Sha256Schema, asOf: UtcInstantSchema }),
+      strictParseOptions,
+    )({ registrationHash: cut.registrationHash, asOf: cut.asOf })
     const sources: PreparedAlphaBaselineSource[] = []
     const seen = new Set<string>()
     const witnesses = new Map<string, (typeof cut.durableObservations)[number][]>()
     for (const witness of cut.durableObservations) {
       if (witness.kind !== 'ALPHA_BASELINE') continue
+      if (witnesses.has(witness.sourceHash))
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Source cut repeats a prepared baseline witness identity' }),
+        )
       const rows = witnesses.get(witness.sourceHash) ?? []
       rows.push(witness)
       witnesses.set(witness.sourceHash, rows)
@@ -60,10 +72,8 @@ export const derivePreparedAlphaBaselineSources = (cut: PreparedAlphaBaselineCut
       seen.add(record.contentHash)
       let first: typeof AlphaBaselineWitnessSchema.Type | undefined
       for (const witness of witnesses.get(record.contentHash) ?? []) {
-        const verified = yield* Schema.decodeUnknownResult(
-          AlphaBaselineWitnessSchema,
-          strictParseOptions,
-        )({ registrationHash: cut.registrationHash, ...witness })
+        const row = yield* Schema.decodeUnknownResult(AlphaBaselineWitnessRecordSchema, strictParseOptions)(witness)
+        const verified = { ...row, registrationHash: cut.registrationHash }
         if (
           verified.sourceAt !== record.recordedAt ||
           verified.witnessedAt < record.recordedAt ||

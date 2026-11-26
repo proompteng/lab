@@ -100,7 +100,7 @@ export const alphaBaselinePreparationIdentity = (
         universeId: intradayAlphaEquityMarketProfile.universeId,
       },
     })
-    const scopeHash = yield* canonicalHashV1Result({
+    const scope = {
       schemaVersion: 'bayn.intraday-alpha-baseline-preparation-scope.v1',
       accountId: request.accountId,
       authorityGenerationHash: request.authorityGenerationHash,
@@ -110,8 +110,9 @@ export const alphaBaselinePreparationIdentity = (
       nativeSession: native,
       providerSession: provider,
       executionBuild: build,
-    })
-    return { scopeHash, query, nativeSession: native, providerSession: provider }
+    }
+    const scopeHash = yield* canonicalHashV1Result(scope)
+    return { scopeHash, scope, query, nativeSession: native, providerSession: provider }
   }).pipe(
     Result.mapError((cause) =>
       operationalError({

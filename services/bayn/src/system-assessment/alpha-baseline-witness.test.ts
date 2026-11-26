@@ -44,4 +44,16 @@ test('an unwitnessed retained preparation remains unavailable; only the actual l
   expect(
     Result.isFailure(derivePreparedAlphaBaselineSources({ ...cut, alphaBaselinePreparations: [source, source] })),
   ).toBe(true)
+  expect(
+    Result.isFailure(derivePreparedAlphaBaselineSources({ ...cut, durableObservations: [witness, witness] })),
+  ).toBe(true)
+  const scopeOverride = { ...witness, registrationHash: 'e'.repeat(64) }
+  expect(
+    Result.isFailure(
+      derivePreparedAlphaBaselineSources({
+        ...cut,
+        durableObservations: [scopeOverride],
+      }),
+    ),
+  ).toBe(true)
 })
