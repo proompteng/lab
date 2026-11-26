@@ -1,0 +1,14 @@
+
+=== Production TypeScript Intraday Alpha Replay (66 sessions: 2026-08-25 .. 2026-11-25) ===
+
+[Slip 2.0 bp RT] Active=66/66 (100.0%) | Trades=282 (ORB30=73 $2390, MR=209 $9620) | Net=$12010 (L/S=$4445/$7566, SPY-Excess L/S=$5783/$4912) | Folds=[$922, $3449, $7640] | MaxDD=$1259 | Sharpe=4.48 | PlannerBlocks=0
+  Recent 5 sessions @ 2bp RT:
+    2026-11-19: trades=4, net=$-851.62
+    2026-11-20: trades=6, net=$1434.58
+    2026-11-23: trades=3, net=$-1169.50
+    2026-11-24: trades=5, net=$1094.48
+    2026-11-25: trades=4, net=$1655.31
+[Slip 5.0 bp RT] Active=66/66 (100.0%) | Trades=274 (ORB30=74 $2272, MR=200 $7021) | Net=$9293 (L/S=$3423/$5870, SPY-Excess L/S=$4782/$3546) | Folds=[$675, $3096, $5523] | MaxDD=$1575 | Sharpe=3.68 | PlannerBlocks=0
+[Slip 10.0 bp RT] Active=66/66 (100.0%) | Trades=253 (ORB30=73 $781, MR=180 $5886) | Net=$6667 (L/S=$1501/$5166, SPY-Excess L/S=$2899/$2836) | Folds=[$-142, $2221, $4589] | MaxDD=$2102 | Sharpe=2.68 | PlannerBlocks=0
+
+Anti-Starvation & Multi-Fold Gate: PASSED

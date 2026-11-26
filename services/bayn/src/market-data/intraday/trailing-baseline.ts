@@ -7,8 +7,8 @@ import { IsoDateSchema, PositiveIntegerSchema, SymbolSchema, strictParseOptions,
 export const intradayAlphaTrailingBaselineSchemaVersion = 'bayn.intraday-alpha-trailing-baseline.v1' as const
 
 // Completed top-of-hour 1m bar checkpoints (10:00..15:00 ET => elapsed 31, 91, 151, 211, 271, 331 minutes from 09:30).
-// Evaluating after the XX:00 bar absorbs 10:00 ET macro releases and top-of-hour institutional rebalance flows,
-// winning 6/6 half-years across 2024–2026 (703 OOS sessions) with higher Sharpe and lower drawdown than 30m grids.
+// This grid adapts the noise-area hypothesis to Bayn's ETF sleeve; its profitability and out-of-sample status
+// require retained, reproducible validation with documented model-selection chronology.
 export const noiseAreaCheckpointMinutes = Object.freeze([31, 91, 151, 211, 271, 331] as const)
 
 export const SymbolTrailingBaselineSchema = Schema.Struct({
