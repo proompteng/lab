@@ -35,11 +35,11 @@ The request was constructed and strictly decoded using the canonical constructor
 | Behavior hash           | `d04cc79fb733975def34d2f2ced4f0d647bc76ed17fa2506e677d4dc73ba28de` |
 | Parameter hash          | `f632170473534577a59a98c800bca69917b710c3857a68d0c52ec776ebcdd509` |
 | Protocol hash           | `5863a919110021b7bf7f27872aafe0bed44092cf832f8d0e3a6fdb66fb73ff2d` |
-| Ciphertext SHA-256      | `b29f1ee51d49c9a58f32818d3ae2e184535c14fec42ff74885caf9e957e055fb` |
+| Ciphertext SHA-256      | `37f9ad603db74d66391637ec40517e23ff2a1f6663dbfaaaa9a5f425039856b1` |
 
 The existing v6 PAPER policy caps each order and symbol at $40,000, gross exposure at $180,000, net exposure at $100,000, daily loss at $5,000, and drawdown at $10,000. Its existing daily-turnover setting is uncapped. Request limits of zero open orders and zero positions require an empty activation boundary; they do not replace the runtime order and exposure limits. The request explicitly resolves the account-bound sandbox risk hash.
 
-Sealing used the installed controller's active public certificate and strict scope for namespace `bayn`, Secret `bayn-alpaca-auth`. Only `capital-activation-request` and the corresponding `proompteng.ai/bayn.mandate-identity` annotation are added. Existing credential ciphertext is preserved.
+Independent preparation used the installed controller's active public certificate and strict scope for namespace `bayn`, Secret `bayn-alpaca-auth`. Concurrent [PR #16345](https://github.com/proompteng/lab/pull/16345) merged as `60d55abaaf1c451e23284bce7752196fb6e024c0` with the identical canonical request, plan, risk and strategy identities. This follow-up preserves that reviewed SealedSecret byte-for-byte, including its ciphertext hash recorded above. The independently prepared randomized ciphertext was never deployed. Existing account and broker credential ciphertexts remain unchanged; this follow-up introduces no further mandate change.
 
 ## Delivery and acceptance
 
