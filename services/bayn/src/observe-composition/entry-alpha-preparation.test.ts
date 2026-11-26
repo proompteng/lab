@@ -10,6 +10,7 @@ import { JevClient } from '../jev/client'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevEvaluationStore } from '../jev/evaluation'
+import { TrailingBaselinePendingCoverage } from '../market-data/intraday/trailing-baseline'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { makeAlphaStreamingSnapshot, makeFlatAlphaPortfolio } from '../strategy/intraday-alpha/test-support'
 import { intradayAlphaStrategyIdentity } from '../strategy/intraday-alpha/policy'
@@ -124,6 +125,25 @@ test('the existing preopen wake retains preparation before the regular-minute wa
     }),
   )
   expect(retained).toEqual(source)
+  expect(Result.isFailure(observed.result) && observed.result.failure).toMatchObject({
+    _tag: 'JevAwaitingEvidence',
+    readiness: DecisionReadinessReason.LookbackWarmup,
+    availableAt: '2026-09-04T13:31:02.000Z',
+  })
+
+  expect(observed.snapshots).toEqual([])
+  expect(observed.observations).toEqual([])
+})
+
+test('incomplete preopen preparation waits for the existing first provider regular-minute wake', async () => {
+  const observed = await run('2026-09-04T12:01:02.000Z', () =>
+    Effect.fail(
+      new TrailingBaselinePendingCoverage({
+        message: 'Synthetic preopen source is missing a required checkpoint',
+        regularOpenAt: '2026-09-04T13:30:00.000Z',
+      }),
+    ),
+  )
   expect(Result.isFailure(observed.result) && observed.result.failure).toMatchObject({
     _tag: 'JevAwaitingEvidence',
     readiness: DecisionReadinessReason.LookbackWarmup,

@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
+import { reproduceTrailingBaselineAcquisition } from '../market-data/intraday/baseline-acquisition'
 import { buildTrailingBaseline, noiseAreaCheckpointMinutes } from '../market-data/intraday/trailing-baseline'
 import { IsoDateSchema } from '../schemas'
 import { makeIntradayAlphaPolicy } from '../strategy/intraday-alpha/policy'
@@ -91,4 +92,32 @@ export const preparedAlphaBaselineFixture = (): RecordedAlphaBaselinePreparation
     }),
   )
   return { contentHash: source.contentHash, payload: source.payload, recordedAt: '2026-09-04T12:01:03.001Z' }
+}
+
+/** Reproducible partial inputs, without claiming they satisfy preopen preparation readiness. */
+export const partialAlphaBaselineAcquisitionFixture = (
+  missing: 'symbols' | 'checkpoint' = 'symbols',
+  startedAt = '2026-09-04T12:01:02.000Z',
+  completedAt = '2026-09-04T12:01:03.000Z',
+) => {
+  const source = preparedAlphaBaselineFixture().payload.acquisition
+  const intradayDailyRows =
+    missing === 'symbols'
+      ? source.inputs.intradayDailyRows.filter((row) => row.symbol === 'AAPL')
+      : source.inputs.intradayDailyRows
+  const checkpointRows =
+    missing === 'symbols'
+      ? []
+      : source.inputs.checkpointRows.filter((row) => row.symbol !== 'QQQ' || row.minuteFromOpen !== 31)
+  return Result.getOrThrow(
+    reproduceTrailingBaselineAcquisition({
+      ...source,
+      startedAt,
+      completedAt,
+      inputs: { intradayDailyRows, checkpointRows, adjustedDailyFallback: null },
+      trailingBaseline: Result.getOrThrow(
+        buildTrailingBaseline({ ...source.query, dailyRows: intradayDailyRows, checkpointRows }),
+      ),
+    }),
+  )
 }

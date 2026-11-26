@@ -17,11 +17,15 @@ import { postgresMigrations } from '../db/postgres-migrations'
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import { JevAwaitingEvidence } from '../jev/runtime'
 import { exchangeSessions } from '../market-hours'
+import { TrailingBaselinePendingCoverage } from '../market-data/intraday/trailing-baseline'
 import {
   RecordedAlphaBaselinePreparationSchema,
   reproduceAlphaBaselinePreparation,
 } from '../observe-composition/alpha-baseline-preparation'
-import { preparedAlphaBaselineFixture } from '../observe-composition/alpha-baseline-preparation.test-support'
+import {
+  partialAlphaBaselineAcquisitionFixture,
+  preparedAlphaBaselineFixture,
+} from '../observe-composition/alpha-baseline-preparation.test-support'
 import { makeIntradayAlphaEntryQuery } from '../strategy/intraday-alpha/runtime'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import {
@@ -213,6 +217,128 @@ postgres('committed prospective alpha baseline preparation', () => {
   })
   afterAll(async () => {
     await template?.dispose()
+  })
+
+  for (const regularCoverage of ['improved', 'still-partial'] as const) {
+    test(`pending preopen coverage leaves no source or witness and a new regular acquisition is ${regularCoverage}`, async () => {
+      await runtime.runPromise(register.pipe(Effect.andThen(initializeCycle)))
+      let acquisition = partialAlphaBaselineAcquisitionFixture()
+      let acquisitions = 0
+      const service = await runtime.runPromise(
+        Effect.map(PgClient.PgClient, (sql) =>
+          makeNativeAlphaBaselinePreparation(
+            sql,
+            {
+              load: () => Effect.die('Preparation must not fall back to the legacy load'),
+              acquire: (query, window) =>
+                Effect.sync(() => {
+                  acquisitions++
+                  expect(query).toEqual(source.payload.acquisition.query)
+                  expect(window).toEqual({ regularOpenAt: '2026-09-04T13:30:00.000Z' })
+                  return acquisition
+                }),
+            },
+            executionBuild,
+          ),
+        ),
+      )
+      // Even a stale service returning its earlier partial result after open cannot relabel that acquisition.
+      for (const at of ['2026-09-04T12:01:03.000500Z', '2026-09-04T13:31:02.000Z']) {
+        await runtime.runPromise(setClock(at))
+        const pending = await runtime.runPromise(service.prepare(request).pipe(Effect.result))
+        expect(Result.isFailure(pending)).toBe(true)
+        if (Result.isFailure(pending)) expect(pending.failure).toBeInstanceOf(TrailingBaselinePendingCoverage)
+        expect(await runtime.runPromise(readSources)).toEqual([])
+        expect(await runtime.runPromise(readPending)).toEqual([])
+        await runtime.runPromise(witness)
+        expect(await runtime.runPromise(readWitnesses)).toEqual([])
+      }
+      acquisition = {
+        ...(regularCoverage === 'improved' ? source.payload.acquisition : acquisition),
+        startedAt: '2026-09-04T13:31:02.000Z',
+        completedAt: '2026-09-04T13:31:03.000Z',
+      }
+      await runtime.runPromise(setClock('2026-09-04T13:31:03.000500Z'))
+      const record = await runtime.runPromise(service.prepare(request))
+      expect(record.recordedAt).toBe('2026-09-04T13:31:03.001Z')
+      expect(record.payload.acquisition).toEqual(acquisition)
+      expect(Object.keys(record.payload.acquisition.trailingBaseline.symbols)).toHaveLength(
+        regularCoverage === 'improved' ? 20 : 1,
+      )
+      expect(await runtime.runPromise(readPending)).toEqual([
+        { source_hash: record.contentHash, source_at: record.recordedAt },
+      ])
+      await runtime.runPromise(setClock('2026-09-04T13:31:03.250500Z').pipe(Effect.andThen(witness)))
+      const durableObservations = await runtime.runPromise(readWitnesses)
+      expect(durableObservations).toHaveLength(1)
+      const asOf = '2026-09-04T13:32:02.000Z'
+      const records = await runtime.runPromise(readSystemAlphaBaselinePreparations(registration, asOf))
+      expect(records).toEqual([record])
+      expect(
+        Result.getOrThrow(
+          derivePreparedAlphaBaselineSources({
+            registrationHash,
+            asOf,
+            alphaBaselinePreparations: records,
+            durableObservations,
+          }),
+        )[0]?.availableAt,
+      ).toBe('2026-09-04T13:31:03.251Z')
+      const restarted = await runtime.runPromise(
+        Effect.map(PgClient.PgClient, (sql) =>
+          makeNativeAlphaBaselinePreparation(
+            sql,
+            {
+              load: () => Effect.die('Restart must not load new inputs'),
+              acquire: () => Effect.die('The first regular source stays immutable even if coverage later improves'),
+            },
+            executionBuild,
+          ),
+        ),
+      )
+      await runtime.runPromise(setClock(asOf))
+      expect(await runtime.runPromise(restarted.prepare(request))).toEqual(record)
+      expect(acquisitions).toBe(3)
+    })
+  }
+
+  test('direct and raw SQL writers cannot persist partial preopen queries by completing or recording them after open', async () => {
+    await runtime.runPromise(
+      register.pipe(Effect.andThen(initializeCycle), Effect.andThen(setClock('2026-09-04T13:31:04.000Z'))),
+    )
+    for (const missing of ['symbols', 'checkpoint'] as const) {
+      for (const [startedAt, completedAt] of [
+        ['2026-09-04T12:01:02.000Z', '2026-09-04T12:01:03.000Z'],
+        ['2026-09-04T13:29:59.999Z', '2026-09-04T13:30:01.000Z'],
+      ] as const) {
+        const payload = {
+          ...source.payload,
+          acquisition: partialAlphaBaselineAcquisitionFixture(missing, startedAt, completedAt),
+        }
+        const direct = await runtime.runPromiseExit(
+          Effect.flatMap(PgClient.PgClient, (sql) => recordNativeAlphaBaselinePreparation(sql, payload)),
+        )
+        expect(Exit.isFailure(direct)).toBe(true)
+        if (Exit.isFailure(direct)) expect(Cause.pretty(direct.cause)).toContain('Preopen baseline preparation')
+        const bypass = await runtime.runPromiseExit(
+          Effect.flatMap(
+            PgClient.PgClient,
+            (sql) => sql`INSERT INTO intraday_alpha_baseline_preparations
+              (content_hash,scope_hash,scope_text,cycle_id,authority_generation_hash,account_id,session_date,payload_text)
+              VALUES (${testHash(payload)},${source.scopeHash},${Result.getOrThrow(canonicalJsonV1Result(source.scope))},
+                ${payload.cycleId},${payload.authorityGenerationHash},${payload.accountId},${payload.sessionDate},
+                ${Result.getOrThrow(canonicalJsonV1Result(payload))})`,
+          ),
+        )
+        expect(Exit.isFailure(bypass)).toBe(true)
+        if (Exit.isFailure(bypass))
+          expect(Cause.pretty(bypass.cause)).toContain('preopen baseline preparation requires complete')
+      }
+    }
+    await runtime.runPromise(witness)
+    expect(await runtime.runPromise(readSources)).toEqual([])
+    expect(await runtime.runPromise(readPending)).toEqual([])
+    expect(await runtime.runPromise(readWitnesses)).toEqual([])
   })
 
   test('warmup preserves its committed source, the next controller witnesses it, and restart reuses the first baseline', async () => {

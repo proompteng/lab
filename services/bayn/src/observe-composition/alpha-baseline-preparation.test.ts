@@ -7,7 +7,10 @@ import {
   reproduceAlphaBaselinePreparation,
   reproduceRecordedAlphaBaselinePreparation,
 } from './alpha-baseline-preparation'
-import { preparedAlphaBaselineFixture } from './alpha-baseline-preparation.test-support'
+import {
+  partialAlphaBaselineAcquisitionFixture,
+  preparedAlphaBaselineFixture,
+} from './alpha-baseline-preparation.test-support'
 
 test('preparation reproduces a prior-session baseline before any completed regular-session observation', () => {
   const record = preparedAlphaBaselineFixture()
@@ -15,6 +18,37 @@ test('preparation reproduces a prior-session baseline before any completed regul
   expect(record.payload.acquisition.completedAt < '2026-09-04T13:30:00.000Z').toBe(true)
   expect(record.payload.acquisition.trailingBaseline.latestPriorSessionDate).toBe('2026-09-03')
   expect(Object.keys(record.payload.acquisition.trailingBaseline.symbols)).toHaveLength(20)
+})
+
+test('partial preparation eligibility uses the original acquisition start and never its later completion or record time', () => {
+  const { payload } = preparedAlphaBaselineFixture()
+  for (const missing of ['symbols', 'checkpoint'] as const) {
+    for (const [startedAt, completedAt] of [
+      ['2026-09-04T12:01:02.000Z', '2026-09-04T12:01:03.000Z'],
+      ['2026-09-04T13:29:59.999Z', '2026-09-04T13:30:01.000Z'],
+    ] as const) {
+      const acquisition = partialAlphaBaselineAcquisitionFixture(missing, startedAt, completedAt)
+      const rejected = reproduceAlphaBaselinePreparation({ ...payload, acquisition })
+      expect(Result.isFailure(rejected)).toBe(true)
+      if (Result.isFailure(rejected)) expect(rejected.failure.message).toContain('Preopen baseline preparation')
+    }
+    const acquisition = partialAlphaBaselineAcquisitionFixture(
+      missing,
+      '2026-09-04T13:30:00.000Z',
+      '2026-09-04T13:30:01.000Z',
+    )
+    const regular = Result.getOrThrow(reproduceAlphaBaselinePreparation({ ...payload, acquisition }))
+    expect(
+      Result.isSuccess(
+        reproduceRecordedAlphaBaselinePreparation({
+          contentHash: regular.contentHash,
+          payload: regular.payload,
+          recordedAt: '2026-09-04T13:30:01.001Z',
+        }),
+      ),
+    ).toBe(true)
+    expect(regular.payload.acquisition).toEqual(acquisition)
+  }
 })
 
 test('scope survives cycle rollover and calendar range changes but separates releases and accounts', () => {

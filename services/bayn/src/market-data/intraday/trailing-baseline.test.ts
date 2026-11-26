@@ -1,14 +1,18 @@
 import { expect, test } from 'bun:test'
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, Exit, Result, Schema } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import { IsoDateSchema } from '../../schemas'
+import { preparedAlphaBaselineFixture } from '../../observe-composition/alpha-baseline-preparation.test-support'
 import { reproduceTrailingBaselineAcquisition } from './baseline-acquisition'
 import {
   buildTrailingBaseline,
   intradayAlphaTrailingBaselineSchemaVersion,
   makeClickhouseTrailingBaseline,
   noiseAreaCheckpointMinutes,
+  trailingBaselineCoversQuery,
+  TrailingBaselinePendingCoverage,
   type PriorSessionCheckpointSummary,
   type PriorSessionDailySummary,
 } from './trailing-baseline'
@@ -44,6 +48,151 @@ test('buildTrailingBaseline enforces strict causality and rejects same-day or fu
     checkpointRows: [{ symbol: 'QQQ', sessionDate: iso('2026-09-09'), minuteFromOpen: 31, close: 515 }],
   })
   expect(Result.isFailure(leakyCheckpoint)).toBe(true)
+})
+
+type CoverageMode = 'complete' | 'one-symbol' | 'missing-checkpoint' | 'empty'
+
+const preparationLoaderFixture = (initial: CoverageMode) => {
+  const source = preparedAlphaBaselineFixture().payload.acquisition
+  let mode = initial
+  let readCount = 0
+  let finishReadAt: string | undefined
+  const sql = Object.assign(
+    (strings: TemplateStringsArray) => {
+      const query = strings.join('?')
+      readCount++
+      if (query.includes('FROM signal.intraday_bars_1m_v2') && query.includes('ARRAY JOIN'))
+        return Effect.succeed(
+          source.inputs.checkpointRows
+            .filter(
+              (row) =>
+                mode === 'complete' ||
+                (mode === 'missing-checkpoint' && !(row.symbol === 'QQQ' && row.minuteFromOpen === 31)),
+            )
+            .map((row) => ({
+              symbol: row.symbol,
+              session_date: row.sessionDate,
+              minute_from_open: row.minuteFromOpen,
+              close: row.close,
+            })),
+        )
+      if (query.includes('FROM signal.intraday_bars_1m_v2'))
+        return Effect.gen(function* () {
+          if (finishReadAt !== undefined) yield* TestClock.setTime(Date.parse(finishReadAt))
+          return source.inputs.intradayDailyRows
+            .filter(
+              (row) =>
+                mode === 'complete' ||
+                mode === 'missing-checkpoint' ||
+                (mode === 'one-symbol' && row.symbol === 'AAPL'),
+            )
+            .map((row) => ({
+              symbol: row.symbol,
+              session_date: row.sessionDate,
+              open: row.open,
+              high: row.high,
+              low: row.low,
+              close: row.close,
+            }))
+        })
+      return Effect.succeed([])
+    },
+    { param: (type: string, value: unknown) => ({ type, value }) },
+  ) as unknown as ClickhouseClient.ClickhouseClient
+  const service = makeClickhouseTrailingBaseline(sql)
+  const acquire = service.acquire
+  if (acquire === undefined) throw new Error('Missing native acquisition')
+  return {
+    service,
+    acquire,
+    query: source.query,
+    window: { regularOpenAt: '2026-09-04T13:30:00.000Z' },
+    reads: () => readCount,
+    change: (next: CoverageMode) => {
+      mode = next
+    },
+    finishAt: (at: string | undefined) => {
+      finishReadAt = at
+    },
+  }
+}
+
+test('incomplete preopen symbol, checkpoint and empty coverage stay pending without caching later inputs', async () => {
+  for (const mode of ['one-symbol', 'missing-checkpoint', 'empty'] as const) {
+    const f = preparationLoaderFixture(mode)
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-09-04T12:01:02.000Z'))
+        const pending = yield* f.acquire(f.query, f.window).pipe(Effect.result)
+        expect(Result.isFailure(pending)).toBe(true)
+        if (Result.isFailure(pending)) expect(pending.failure).toBeInstanceOf(TrailingBaselinePendingCoverage)
+        const earlyReads = f.reads()
+        f.change('complete')
+        yield* TestClock.setTime(Date.parse('2026-09-04T13:31:02.000Z'))
+        const regular = yield* f.acquire(f.query, f.window)
+        expect(f.reads()).toBeGreaterThan(earlyReads)
+        expect(regular.startedAt).toBe('2026-09-04T13:31:02.000Z')
+        expect(trailingBaselineCoversQuery(f.query, regular.trailingBaseline)).toBe(true)
+        expect(Result.getOrThrow(reproduceTrailingBaselineAcquisition(regular))).toEqual(regular)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+  }
+})
+
+test('complete preopen acquisition is reused with original clocks while regular partial coverage remains allowed', async () => {
+  for (const initial of ['complete', 'one-symbol'] as const) {
+    const f = preparationLoaderFixture(initial)
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const startedAt = initial === 'complete' ? '2026-09-04T12:01:02.000Z' : f.window.regularOpenAt
+        yield* TestClock.setTime(Date.parse(startedAt))
+        const first = yield* f.acquire(f.query, f.window)
+        expect(trailingBaselineCoversQuery(f.query, first.trailingBaseline)).toBe(initial === 'complete')
+        const reads = f.reads()
+        f.change(initial === 'complete' ? 'one-symbol' : 'complete')
+        yield* TestClock.setTime(Date.parse('2026-09-04T13:31:02.000Z'))
+        const reused = yield* f.acquire(f.query, f.window)
+        expect(reused).toEqual(first)
+        expect(reused.startedAt).toBe(startedAt)
+        expect(f.reads()).toBe(reads)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+  }
+})
+
+test('a partial query begun preopen cannot become regular by finishing later or by reusing an old cache entry', async () => {
+  const crossing = preparationLoaderFixture('one-symbol')
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse('2026-09-04T13:29:59.000Z'))
+      crossing.finishAt('2026-09-04T13:30:01.000Z')
+      const pending = yield* crossing.acquire(crossing.query, crossing.window).pipe(Effect.result)
+      expect(Result.isFailure(pending)).toBe(true)
+      if (Result.isFailure(pending)) expect(pending.failure).toBeInstanceOf(TrailingBaselinePendingCoverage)
+      const firstReads = crossing.reads()
+      crossing.finishAt(undefined)
+      yield* TestClock.setTime(Date.parse('2026-09-04T13:31:02.000Z'))
+      const regular = yield* crossing.acquire(crossing.query, crossing.window)
+      expect(regular.startedAt).toBe('2026-09-04T13:31:02.000Z')
+      expect(trailingBaselineCoversQuery(crossing.query, regular.trailingBaseline)).toBe(false)
+      expect(crossing.reads()).toBeGreaterThan(firstReads)
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+
+  const cached = preparationLoaderFixture('one-symbol')
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse('2026-09-04T12:01:02.000Z'))
+      const legacy = yield* cached.service.load(cached.query)
+      expect(trailingBaselineCoversQuery(cached.query, legacy)).toBe(false)
+      const earlyReads = cached.reads()
+      yield* TestClock.setTime(Date.parse('2026-09-04T13:31:02.000Z'))
+      const acquired = yield* cached.acquire(cached.query, cached.window)
+      expect(cached.reads()).toBeGreaterThan(earlyReads)
+      expect(acquired.startedAt).toBe('2026-09-04T13:31:02.000Z')
+      expect(acquired.trailingBaseline).toEqual(legacy)
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
 })
 
 test('buildTrailingBaseline computes causal ATR14 True Range ratios and noise-area checkpoint swings', () => {
