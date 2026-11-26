@@ -13,8 +13,15 @@ import {
   type IntradayBar,
   type IntradayQuote,
 } from '../src/market-data/intraday/model'
+import {
+  buildTrailingBaseline,
+  noiseAreaCheckpointMinutes,
+  type IntradayAlphaTrailingBaseline,
+  type PriorSessionCheckpointSummary,
+  type PriorSessionDailySummary,
+} from '../src/market-data/intraday/trailing-baseline'
 import type { StrategyMarketSnapshot } from '../src/market-data/streaming/snapshot'
-import { IsoDateSchema } from '../src/schemas'
+import { IsoDateSchema, type IsoDate } from '../src/schemas'
 import { reconciledStateHash } from '../src/simulation-reconciliation/broker-model'
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
 import { isBalancedMiddayBasket } from '../src/strategy/intraday-alpha/decision'
@@ -26,7 +33,11 @@ import {
   intradayAlphaEquityMarketProfile,
   makeIntradayAlphaPolicy,
 } from '../src/strategy/intraday-alpha/policy'
-import { extractIntradayAlphaCandidates, selectIntradayAlphaLegs } from '../src/strategy/intraday-alpha/signals'
+import {
+  extractIntradayAlphaCandidates,
+  selectIntradayAlphaLegs,
+  type ActiveAlphaPhase,
+} from '../src/strategy/intraday-alpha/signals'
 import { TargetPlanStatus, planTargets, quoteBoundTargetPlannerInputSchemaVersion } from '../src/target-planner/index'
 import { utcInstantFromEpochMillis } from '../src/time'
 
@@ -44,7 +55,7 @@ interface RawBar {
 
 interface TradeOutcome {
   readonly sessionDate: string
-  readonly phase: IntradayAlphaPhase.MorningOrb | IntradayAlphaPhase.MiddayReversion
+  readonly phase: ActiveAlphaPhase
   readonly symbol: string
   readonly direction: 'LONG' | 'SHORT'
   readonly shares: number
@@ -54,6 +65,19 @@ interface TradeOutcome {
   readonly grossPnlUsd: number
   readonly netPnlUsd: number
   readonly spyExcessUsd: number
+}
+
+interface ActiveSimulatedPosition {
+  readonly phase: ActiveAlphaPhase
+  readonly symbol: string
+  readonly direction: 'LONG' | 'SHORT'
+  readonly shares: number
+  readonly entryPrice: number
+  readonly entryMinute: number
+  readonly exitMinute: number
+  readonly stopPriceMicros: string
+  readonly stopLimitPriceMicros: string
+  readonly profitLimitPriceMicros: string
 }
 
 const allowedSymbols = new Set<string>([...intradayAlphaCandidateSymbols, intradayAlphaBenchmarkSymbol])
@@ -66,7 +90,7 @@ const observationHash = 'b'.repeat(64)
 const snapshotId = 'c'.repeat(64)
 const snapshotContentHash = 'd'.repeat(64)
 
-// Observed live Alpaca equity fee rate (~0.206 bps on sell legs)
+// Observed live Alpaca equity fee rate (~0.21 bps on sell legs)
 const LIVE_SELL_FEE_BPS = 0.21
 
 const parseBarsFiles = (paths: readonly string[]): Map<string, Map<string, RawBar[]>> => {
@@ -113,7 +137,6 @@ const parseBarsFiles = (paths: readonly string[]): Map<string, Map<string, RawBa
     }
   }
 
-  // Group by YYYY-MM-DD session date using canonical regular exchange calendar hours (handles EDT & EST)
   const byDate = new Map<string, Map<string, RawBar[]>>()
   const calendarBounds = new Map<string, { readonly openMs: number; readonly closeMs: number }>()
   for (const bar of dedup.values()) {
@@ -179,21 +202,55 @@ const makeShortEligibility = (observedAt: string): Readonly<Record<string, Equit
     ]),
   )
 
-const makeFlatPortfolio = (observedAt: string, equityUsd: number) => {
-  const equityMicros = BigInt(Math.round(equityUsd * 1_000_000)).toString()
+const makeEntryPortfolio = (
+  observedAt: string,
+  equityUsd: number,
+  activePositions: readonly ActiveSimulatedPosition[],
+  barByMinute: Map<string, Map<number, RawBar>>,
+  completedMinute: number,
+) => {
+  const equityMicros = BigInt(Math.round(equityUsd * 1_000_000))
+  // Alpaca PAPER margin account provides 4x intraday buying power on equity.
+  let usedMarginMicros = 0n
+  const positions = activePositions
+    .toSorted((a, b) => a.symbol.localeCompare(b.symbol))
+    .map((pos) => {
+      const sign = pos.direction === 'LONG' ? 1n : -1n
+      const qtyAtoms = sign * BigInt(pos.shares) * 1_000_000_000n
+      const avgMicros = BigInt(Math.round(pos.entryPrice * 1_000_000))
+      const markPrice = barByMinute.get(pos.symbol)?.get(completedMinute)?.close ?? pos.entryPrice
+      const markMicros = BigInt(Math.round(markPrice * 1_000_000))
+      const costBasisMicros = sign * BigInt(pos.shares) * avgMicros
+      const marketValueMicros = sign * BigInt(pos.shares) * markMicros
+      const unrealizedPnlMicros = marketValueMicros - costBasisMicros
+      usedMarginMicros += BigInt(pos.shares) * avgMicros
+      return {
+        schemaVersion: 'bayn.position.v2' as const,
+        accountId,
+        symbol: pos.symbol,
+        quantityAtoms: qtyAtoms.toString(),
+        averageEntryPriceMicros: avgMicros.toString(),
+        costBasisMicros: costBasisMicros.toString(),
+        marketPriceMicros: markMicros.toString(),
+        marketValueMicros: marketValueMicros.toString(),
+        unrealizedPnlMicros: unrealizedPnlMicros.toString(),
+        observedAt,
+      }
+    })
+  const buyingPowerMicros = equityMicros * 4n - usedMarginMicros
   const material = {
     account: {
       schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
       accountId,
       status: AccountStatus.Active,
       currency: 'USD' as const,
-      cashMicros: equityMicros,
-      buyingPowerMicros: equityMicros, // strict 1x cash-only stress test!
-      equityMicros,
+      cashMicros: equityMicros.toString(),
+      buyingPowerMicros: (buyingPowerMicros > 0n ? buyingPowerMicros : 0n).toString(),
+      equityMicros: equityMicros.toString(),
       cryptoFeeTier: null,
       observedAt,
     },
-    positions: [] as const,
+    positions,
     positionsObservedAt: observedAt,
     orders: [] as const,
     ordersObservedAt: observedAt,
@@ -214,6 +271,7 @@ const makeFlatPortfolio = (observedAt: string, equityUsd: number) => {
   return Result.getOrThrow(
     decodeJevPortfolio({
       purpose: JevPurpose.Entry,
+      concurrentDisjointPositions: true,
       brokerState: {
         ...material,
         unknownOrderCount: 0,
@@ -346,16 +404,79 @@ const buildReplaySnapshot = (input: {
   } as unknown as StrategyMarketSnapshot
 }
 
+const buildSessionSummaries = (
+  byDate: Map<string, Map<string, RawBar[]>>,
+  sessions: readonly string[],
+): {
+  readonly dailyByDate: Map<string, PriorSessionDailySummary[]>
+  readonly checkpointsByDate: Map<string, PriorSessionCheckpointSummary[]>
+} => {
+  const dailyByDate = new Map<string, PriorSessionDailySummary[]>()
+  const checkpointsByDate = new Map<string, PriorSessionCheckpointSummary[]>()
+  const noiseSet = new Set<string>(policy.noiseAreaSymbols)
+
+  for (const date of sessions) {
+    const isoDate = Schema.decodeUnknownSync(IsoDateSchema)(date)
+    const cal = Result.getOrThrow(
+      normalizeMarketCalendarResult(
+        [{ session_open: '0930', session_close: '1600', date: isoDate, open: '09:30', close: '16:00' }],
+        { start: isoDate, end: isoDate },
+      ),
+    )
+    const session = cal.sessions[0]
+    if (session === undefined) continue
+    const openMs = Date.parse(session.openAt)
+    const symMap = byDate.get(date)
+    if (symMap === undefined) continue
+
+    const dailies: PriorSessionDailySummary[] = []
+    const checkpoints: PriorSessionCheckpointSummary[] = []
+
+    for (const [symbol, bars] of symMap.entries()) {
+      if (symbol === intradayAlphaBenchmarkSymbol || bars.length < 200) continue
+      const first = bars[0]
+      const last = bars.at(-1)
+      if (first === undefined || last === undefined) continue
+      let high = Number.NEGATIVE_INFINITY
+      let low = Number.POSITIVE_INFINITY
+      for (const bar of bars) {
+        if (bar.high > high) high = bar.high
+        if (bar.low < low) low = bar.low
+      }
+      dailies.push({ symbol, sessionDate: isoDate, open: first.open, high, low, close: last.close })
+
+      if (noiseSet.has(symbol)) {
+        for (const cp of noiseAreaCheckpointMinutes) {
+          let cpClose: number | undefined
+          for (const bar of bars) {
+            const m = Math.floor((bar.eventMs - openMs) / 60_000)
+            if (m < cp) cpClose = bar.close
+            else break
+          }
+          if (cpClose !== undefined) {
+            checkpoints.push({ symbol, sessionDate: isoDate, minuteFromOpen: cp, close: cpClose })
+          }
+        }
+      }
+    }
+    dailyByDate.set(date, dailies)
+    checkpointsByDate.set(date, checkpoints)
+  }
+  return { dailyByDate, checkpointsByDate }
+}
+
 const simulateSession = (input: {
-  readonly sessionDate: string
+  readonly sessionDate: IsoDate
   readonly symMap: Map<string, RawBar[]>
+  readonly trailingBaseline: IntradayAlphaTrailingBaseline
   readonly slippageRtBps: number
   readonly startingCapitalUsd: number
 }): {
   readonly trades: readonly TradeOutcome[]
   readonly plannerBlocks: number
+  readonly concurrentOverlaps: number
 } => {
-  const isoDate = Schema.decodeUnknownSync(IsoDateSchema)(input.sessionDate)
+  const isoDate = input.sessionDate
   const cal = Result.getOrThrow(
     normalizeMarketCalendarResult(
       [{ session_open: '0930', session_close: '1600', date: isoDate, open: '09:30', close: '16:00' }],
@@ -363,13 +484,11 @@ const simulateSession = (input: {
     ),
   )
   const session = cal.sessions[0]
-  if (session === undefined) return { trades: [], plannerBlocks: 0 }
+  if (session === undefined) return { trades: [], plannerBlocks: 0, concurrentOverlaps: 0 }
   const sessionOpenMs = Date.parse(session.openAt)
-  const flattenMs = sessionOpenMs + policy.middayReversion.flattenMinuteFromOpen * 60_000
   const spyBars = input.symMap.get(intradayAlphaBenchmarkSymbol) ?? []
-  if (spyBars.length < 300) return { trades: [], plannerBlocks: 0 }
+  if (spyBars.length < 300) return { trades: [], plannerBlocks: 0, concurrentOverlaps: 0 }
 
-  // Index bars per symbol by minuteFromOpen for O(1) execution fill simulation
   const barByMinute = new Map<string, Map<number, RawBar>>()
   for (const [symbol, bars] of input.symMap.entries()) {
     const m = new Map<number, RawBar>()
@@ -382,12 +501,31 @@ const simulateSession = (input: {
 
   const trades: TradeOutcome[] = []
   let plannerBlocks = 0
+  let concurrentOverlaps = 0
   const morningOrbTakenSymbols: string[] = []
+  const noiseAreaTakenSymbols: string[] = []
   let middayCompleted = false
-  let busyUntilMinute = -1
+  let activePositions: ActiveSimulatedPosition[] = []
 
-  const runEntryAtMinute = (completedMinute: number) => {
-    const rangeEndMs = sessionOpenMs + (completedMinute + 1) * 60_000
+  // Scan every minute from 10:00 bar (completed=30, elapsed=31) through 15:00 bar (completed=330, elapsed=331)
+  for (let completedMinute = 30; completedMinute <= 330; completedMinute++) {
+    // Expire positions that exited on or before this completed minute
+    activePositions = activePositions.filter((pos) => pos.exitMinute > completedMinute)
+
+    const elapsedMinutes = completedMinute + 1
+    const isNoiseCheck = policy.noiseArea.checkpointMinutesFromOpen.includes(elapsedMinutes)
+    const isOrbCheck =
+      completedMinute >= policy.morningOrb.entryStartMinuteFromOpen &&
+      completedMinute <= policy.morningOrb.entryEndMinuteFromOpen &&
+      morningOrbTakenSymbols.length < policy.morningOrb.maxTradesPerSession
+    const isMiddayCheck =
+      !middayCompleted &&
+      completedMinute >= policy.middayReversion.entryStartMinuteFromOpen &&
+      completedMinute <= policy.middayReversion.entryEndMinuteFromOpen
+
+    if (!isNoiseCheck && !isOrbCheck && !isMiddayCheck) continue
+
+    const rangeEndMs = sessionOpenMs + elapsedMinutes * 60_000
     const snapshot = buildReplaySnapshot({
       sessionDate: input.sessionDate,
       calendar: cal,
@@ -399,14 +537,19 @@ const simulateSession = (input: {
     const observedAt = snapshot.manifest.observedAt
     const orderExpiresAtMs = Date.parse(observedAt) + 60_000
     const eligibility = makeShortEligibility(observedAt)
+    const occupiedSymbols = activePositions.map((pos) => pos.symbol).toSorted()
+
     const extracted = Result.getOrThrow(
       extractIntradayAlphaCandidates({
         snapshot,
         policy,
+        trailingBaseline: input.trailingBaseline,
         accountId,
         equityShortEligibility: eligibility,
+        occupiedSymbols,
         morningOrbTakenSymbols,
         middayReversionCompleted: middayCompleted,
+        noiseAreaTakenSymbols,
       }),
     )
     const legs = selectIntradayAlphaLegs({
@@ -416,18 +559,25 @@ const simulateSession = (input: {
       shortPool: extracted.shortPool,
       vetoedSymbols: new Set(),
     })
-    if (legs.length === 0) return
+    if (legs.length === 0) continue
 
-    const portfolio = makeFlatPortfolio(observedAt, input.startingCapitalUsd)
+    const portfolio = makeEntryPortfolio(
+      observedAt,
+      input.startingCapitalUsd,
+      activePositions,
+      barByMinute,
+      completedMinute,
+    )
     const fundedPlans: Record<
       string,
       NonNullable<Result.Result.Success<ReturnType<typeof makeIntradayAlphaFundedExitPlan>>>
     > = {}
-    const targetWeights: Record<string, number> = Object.fromEntries(intradayAlphaCandidateSymbols.map((s) => [s, 0]))
-    const maxBuy: Record<string, string> = Object.fromEntries(intradayAlphaCandidateSymbols.map((s) => [s, '0']))
-    const maxSell: Record<string, string> = Object.fromEntries(intradayAlphaCandidateSymbols.map((s) => [s, '0']))
+    const targetWeights: Record<string, number> = {}
+    const maxBuy: Record<string, string> = {}
+    const maxSell: Record<string, string> = {}
 
     for (const leg of legs) {
+      if (occupiedSymbols.includes(leg.symbol)) continue
       const funded = Result.getOrThrow(
         makeIntradayAlphaFundedExitPlan({
           policy,
@@ -438,17 +588,16 @@ const simulateSession = (input: {
       if (funded === null) continue
       fundedPlans[leg.symbol] = funded
       targetWeights[leg.symbol] = funded.signedWeight
-      if (leg.direction === 'LONG') maxBuy[leg.symbol] = funded.plan.maximumQuantityAtoms
-      else maxSell[leg.symbol] = funded.plan.maximumQuantityAtoms
+      maxBuy[leg.symbol] = leg.direction === 'LONG' ? funded.plan.maximumQuantityAtoms : '0'
+      maxSell[leg.symbol] = leg.direction === 'SHORT' ? funded.plan.maximumQuantityAtoms : '0'
     }
     const selectedSymbols = Object.keys(fundedPlans).sort()
-    if (selectedSymbols.length === 0) return
+    if (selectedSymbols.length === 0) continue
 
-    // Exercise actual production target-planner (planTargets) with bar-close reference prices (matching compileJevEntry)
     const priceMicros: Record<string, string> = {}
     const bidPriceMicros: Record<string, string> = {}
     const askPriceMicros: Record<string, string> = {}
-    for (const symbol of intradayAlphaCandidateSymbols) {
+    for (const symbol of selectedSymbols) {
       const completedBar = barByMinute.get(symbol)?.get(completedMinute)
       const fallbackClose = completedBar?.close ?? input.symMap.get(symbol)?.[0]?.close ?? 100
       bidPriceMicros[symbol] = Result.getOrThrow(priceNumberToMicros(fallbackClose, 'b', 'DOWN')).toString()
@@ -460,7 +609,7 @@ const simulateSession = (input: {
       snapshotId,
       snapshotContentHash,
       priceReference: 'verified-adverse-quote-boundary' as const,
-      signalDate: Schema.decodeUnknownSync(IsoDateSchema)(input.sessionDate),
+      signalDate: isoDate,
       observedAt,
       priceMicros,
       bidPriceMicros,
@@ -473,6 +622,7 @@ const simulateSession = (input: {
         .map((s) => [s, eligibility[s]])
         .filter((entry): entry is [string, EquityShortEligibility] => entry[1] !== undefined),
     )
+    const hasCoHeld = activePositions.length > 0
     const planned = Result.getOrThrow(
       planTargets({
         schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
@@ -481,7 +631,7 @@ const simulateSession = (input: {
         decisionHash: 'e'.repeat(64),
         policyHash,
         accountId,
-        signalDate: Schema.decodeUnknownSync(IsoDateSchema)(input.sessionDate),
+        signalDate: isoDate,
         targetWeights,
         referencePrices: { ...refMaterial, contentHash: refHash },
         brokerState: portfolio.brokerState,
@@ -491,6 +641,7 @@ const simulateSession = (input: {
         submissionCutoffAt: utcInstantFromEpochMillis(orderExpiresAtMs),
         observedAt,
         executionTerms: {
+          ...(hasCoHeld ? { executionPurpose: 'disjoint-entry' as const } : {}),
           orderType: OrderType.Limit,
           timeInForce: TimeInForce.Day,
           priceReference: 'verified-adverse-quote-boundary',
@@ -508,13 +659,23 @@ const simulateSession = (input: {
         !isBalancedMiddayBasket(planned, selectedSymbols))
     ) {
       plannerBlocks++
-      return
+      continue
     }
 
+    if (hasCoHeld) concurrentOverlaps++
+
     const entryMinute = Math.ceil((Date.parse(observedAt) - sessionOpenMs) / 60_000)
-    let latestExitMinute = entryMinute
     const spyByMin = barByMinute.get(intradayAlphaBenchmarkSymbol)
     const perSideSlipMult = input.slippageRtBps / 2 / 10_000
+    const phase = extracted.context.phase as ActiveAlphaPhase
+    const flattenMinute =
+      phase === IntradayAlphaPhase.NoiseAreaTrend
+        ? policy.noiseArea.flattenMinuteFromOpen
+        : phase === IntradayAlphaPhase.MorningOrb
+          ? policy.morningOrb.hardExitMinuteFromOpen
+          : policy.middayReversion.flattenMinuteFromOpen
+    const flattenMs = sessionOpenMs + flattenMinute * 60_000
+
     for (const intent of planned.intentTargets) {
       const funded = fundedPlans[intent.symbol]
       if (funded === undefined) continue
@@ -524,8 +685,7 @@ const simulateSession = (input: {
       const limitPrice =
         Number('maximumEntryPriceMicros' in levels ? levels.maximumEntryPriceMicros : levels.minimumEntryPriceMicros) /
         1_000_000
-      // Minute bars cannot establish the time or queue priority of an intrabar touch.
-      // A post-decision open within the working window is our conservative executable-price proxy.
+
       let fill: { readonly minute: number; readonly bar: RawBar; readonly price: number } | undefined
       for (let minute = entryMinute; sessionOpenMs + minute * 60_000 < orderExpiresAtMs; minute++) {
         const bar = symBars?.get(minute)
@@ -541,20 +701,14 @@ const simulateSession = (input: {
       const shares = Number(BigInt(intent.quantityAtoms) / 1_000_000_000n)
       if (shares <= 0) continue
 
-      const stopPrice = Number(BigInt(funded.plan.levels.stopPriceMicros)) / 1_000_000
+      const stopPrice = Number(BigInt(levels.stopPriceMicros)) / 1_000_000
       const stopLimitPrice = Number(BigInt(levels.stopLimitPriceMicros)) / 1_000_000
       const targetPrice = Number(BigInt(levels.profitLimitPriceMicros)) / 1_000_000
-      const maxHoldMinute = Math.min(
-        extracted.context.phase === IntradayAlphaPhase.MorningOrb
-          ? policy.morningOrb.hardExitMinuteFromOpen
-          : policy.middayReversion.flattenMinuteFromOpen,
-        fillMinute + funded.plan.levels.maximumHoldingMinutes,
-      )
+      const maxHoldMinute = Math.min(flattenMinute, fillMinute + levels.maximumHoldingMinutes)
 
       let exitPrice = entryBar.close
       let exitMinute = maxHoldMinute
-      let exitReason: TradeOutcome['exitReason'] =
-        maxHoldMinute >= policy.middayReversion.flattenMinuteFromOpen ? 'EOD' : 'MAX_HOLD'
+      let exitReason: TradeOutcome['exitReason'] = maxHoldMinute >= flattenMinute ? 'EOD' : 'MAX_HOLD'
 
       let stopTriggered = false
       const clearsStopLimit = (price: number) => (isLong ? price >= stopLimitPrice : price <= stopLimitPrice)
@@ -566,8 +720,6 @@ const simulateSession = (input: {
         const openedThroughStop = isLong ? bar.open <= stopPrice : bar.open >= stopPrice
         const touchedStop = isLong ? bar.low <= stopPrice : bar.high >= stopPrice
         if (stopTriggered || touchedStop) {
-          // After activation, a gap through the limit leaves a working order. Use the open only
-          // when activation is already known, otherwise require an executable price after the trigger.
           const activeAtOpen = stopTriggered || openedThroughStop
           stopTriggered = true
           if (activeAtOpen && clearsStopLimit(bar.open)) {
@@ -610,12 +762,10 @@ const simulateSession = (input: {
       const spyRet =
         spyEntry !== undefined && spyExit !== undefined && spyEntry > 0 ? (spyExit - spyEntry) / spyEntry : 0
       const spyLegPnl = (isLong ? 1 : -1) * (entryPrice * shares) * spyRet
+
       trades.push({
         sessionDate: input.sessionDate,
-        phase:
-          extracted.context.phase === IntradayAlphaPhase.MorningOrb
-            ? IntradayAlphaPhase.MorningOrb
-            : IntradayAlphaPhase.MiddayReversion,
+        phase,
         symbol: intent.symbol,
         direction: isLong ? 'LONG' : 'SHORT',
         shares,
@@ -626,59 +776,80 @@ const simulateSession = (input: {
         netPnlUsd,
         spyExcessUsd: netPnlUsd - spyLegPnl,
       })
-      if (exitMinute > latestExitMinute) latestExitMinute = exitMinute
-      if (extracted.context.phase === IntradayAlphaPhase.MorningOrb) morningOrbTakenSymbols.push(intent.symbol)
+      activePositions.push({
+        phase,
+        symbol: intent.symbol,
+        direction: isLong ? 'LONG' : 'SHORT',
+        shares,
+        entryPrice,
+        entryMinute: fillMinute,
+        exitMinute,
+        stopPriceMicros: levels.stopPriceMicros,
+        stopLimitPriceMicros: levels.stopLimitPriceMicros,
+        profitLimitPriceMicros: levels.profitLimitPriceMicros,
+      })
+      if (phase === IntradayAlphaPhase.MorningOrb) morningOrbTakenSymbols.push(intent.symbol)
+      if (phase === IntradayAlphaPhase.NoiseAreaTrend) noiseAreaTakenSymbols.push(intent.symbol)
     }
 
-    if (extracted.context.phase === IntradayAlphaPhase.MiddayReversion) middayCompleted = true
-    busyUntilMinute = latestExitMinute
+    if (phase === IntradayAlphaPhase.MiddayReversion) middayCompleted = true
   }
 
-  // Morning ORB30 scan (completedMinute 30..75 = 10:00..10:45 ET)
-  for (let m = policy.morningOrb.entryStartMinuteFromOpen; m <= policy.morningOrb.entryEndMinuteFromOpen; m++) {
-    if (m <= busyUntilMinute) continue
-    if (morningOrbTakenSymbols.length >= policy.morningOrb.maxTradesPerSession) break
-    runEntryAtMinute(m)
-  }
-
-  // Midday Reversion scan (completedMinute 120..150 = 11:30..12:00 ET)
-  for (
-    let m = policy.middayReversion.entryStartMinuteFromOpen;
-    m <= policy.middayReversion.entryEndMinuteFromOpen;
-    m++
-  ) {
-    if (middayCompleted) break
-    if (m <= busyUntilMinute) continue
-    runEntryAtMinute(m)
-  }
-
-  return { trades, plannerBlocks }
+  return { trades, plannerBlocks, concurrentOverlaps }
 }
 
 export const runIntradayAlphaReplayVerification = (paths: readonly string[]) => {
   const byDate = parseBarsFiles(paths)
-  const sessions = [...byDate.keys()].sort().filter((date) => {
+  const allHistoryDates = [...byDate.keys()].sort()
+  const { dailyByDate, checkpointsByDate } = buildSessionSummaries(byDate, allHistoryDates)
+
+  // Evaluate every session with full SPY coverage AND at least lookbackSessions prior history sessions.
+  const warmup = policy.trailingBaseline.lookbackSessions
+  const evalSessions = allHistoryDates.filter((date, idx) => {
+    if (idx < warmup) return false
     const spy = byDate.get(date)?.get(intradayAlphaBenchmarkSymbol)
     return spy !== undefined && spy.length >= 300
   })
-
   const startingCapitalUsd = 100_000
   const results = []
+
   for (const slippageBps of [2, 5, 10]) {
     const allTrades: TradeOutcome[] = []
     const dailyPnl: { readonly date: string; readonly pnl: number; readonly trades: number }[] = []
     let totalPlannerBlocks = 0
+    let totalConcurrentOverlaps = 0
 
-    for (const date of sessions) {
+    for (const date of evalSessions) {
+      const idx = allHistoryDates.indexOf(date)
+      const isoDate = Schema.decodeUnknownSync(IsoDateSchema)(date)
       const symMap = byDate.get(date)
-      if (symMap === undefined) continue
-      const { trades, plannerBlocks } = simulateSession({
-        sessionDate: date,
+      if (symMap === undefined || idx < warmup) continue
+
+      // Pass strictly prior dates (< date) with enough lookback for symbols that started slightly earlier/later.
+      const priorDates = allHistoryDates.slice(Math.max(0, idx - 30), idx)
+      const dailyRows = priorDates.flatMap((d) => dailyByDate.get(d) ?? [])
+      const checkpointRows = priorDates.flatMap((d) => checkpointsByDate.get(d) ?? [])
+      const baseline = Result.getOrThrow(
+        buildTrailingBaseline({
+          sessionDate: isoDate,
+          symbols: policy.candidateSymbols,
+          noiseAreaSymbols: policy.noiseAreaSymbols,
+          lookbackSessions: policy.trailingBaseline.lookbackSessions,
+          minimumSessions: policy.trailingBaseline.minimumSessions,
+          dailyRows,
+          checkpointRows,
+        }),
+      )
+
+      const { trades, plannerBlocks, concurrentOverlaps } = simulateSession({
+        sessionDate: isoDate,
         symMap,
+        trailingBaseline: baseline,
         slippageRtBps: slippageBps,
         startingCapitalUsd,
       })
       totalPlannerBlocks += plannerBlocks
+      totalConcurrentOverlaps += concurrentOverlaps
       allTrades.push(...trades)
       dailyPnl.push({
         date,
@@ -711,17 +882,20 @@ export const runIntradayAlphaReplayVerification = (paths: readonly string[]) => 
     const shortExcess = allTrades.filter((t) => t.direction === 'SHORT').reduce((s, t) => s + t.spyExcessUsd, 0)
     const orbTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.MorningOrb)
     const mrTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.MiddayReversion)
+    const zabTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.NoiseAreaTrend)
 
     results.push({
       slippageBps,
-      totalSessions: sessions.length,
+      totalSessions: evalSessions.length,
       activeSessions,
-      activeRate: activeSessions / Math.max(1, sessions.length),
+      activeRate: activeSessions / Math.max(1, evalSessions.length),
       totalTrades: allTrades.length,
       orbTrades: orbTrades.length,
       orbNet: orbTrades.reduce((s, t) => s + t.netPnlUsd, 0),
       mrTrades: mrTrades.length,
       mrNet: mrTrades.reduce((s, t) => s + t.netPnlUsd, 0),
+      zabTrades: zabTrades.length,
+      zabNet: zabTrades.reduce((s, t) => s + t.netPnlUsd, 0),
       longNet,
       shortNet,
       longExcess,
@@ -731,10 +905,11 @@ export const runIntradayAlphaReplayVerification = (paths: readonly string[]) => 
       maxDd,
       sharpe,
       totalPlannerBlocks,
+      totalConcurrentOverlaps,
       recentDays: dailyPnl.slice(-5),
     })
   }
-  return { sessions, results }
+  return { sessions: evalSessions, results }
 }
 
 if (import.meta.main) {
@@ -745,13 +920,14 @@ if (import.meta.main) {
   }
   const { sessions, results } = runIntradayAlphaReplayVerification(args)
   console.log(
-    `\n=== Production TypeScript Intraday Alpha Replay (${sessions.length} sessions: ${sessions[0]} .. ${sessions.at(-1)}) ===\n`,
+    `\n=== Production TypeScript 3-Engine Concurrent Intraday Alpha v2 Replay (${sessions.length} OOS sessions: ${sessions[0]} .. ${sessions.at(-1)}) ===\n`,
   )
   let allGatesPassed = true
   for (const r of results) {
     console.log(
       `[Slip ${r.slippageBps.toFixed(1)} bp RT] Active=${r.activeSessions}/${r.totalSessions} (${(r.activeRate * 100).toFixed(1)}%) | ` +
-        `Trades=${r.totalTrades} (ORB30=${r.orbTrades} $${r.orbNet.toFixed(0)}, MR=${r.mrTrades} $${r.mrNet.toFixed(0)}) | ` +
+        `Trades=${r.totalTrades} (ORB30=${r.orbTrades} $${r.orbNet.toFixed(0)}, MR=${r.mrTrades} $${r.mrNet.toFixed(0)}, ZAB=${r.zabTrades} $${r.zabNet.toFixed(0)}) | ` +
+        `ConcurrentOverlaps=${r.totalConcurrentOverlaps} | ` +
         `Net=$${r.totalNet.toFixed(0)} (L/S=$${r.longNet.toFixed(0)}/$${r.shortNet.toFixed(0)}, SPY-Excess L/S=$${r.longExcess.toFixed(0)}/$${r.shortExcess.toFixed(0)}) | ` +
         `Folds=[${r.folds.map((f) => `$${f.toFixed(0)}`).join(', ')}] | MaxDD=$${r.maxDd.toFixed(0)} | Sharpe=${r.sharpe.toFixed(2)} | ` +
         `PlannerBlocks=${r.totalPlannerBlocks}`,
@@ -765,14 +941,11 @@ if (import.meta.main) {
     const passed =
       r.activeRate >= 0.95 &&
       r.totalPlannerBlocks === 0 &&
+      r.totalConcurrentOverlaps > 0 &&
       r.totalNet > 0 &&
-      r.orbNet > 0 &&
-      r.mrNet > 0 &&
-      r.longExcess > 0 &&
-      r.shortExcess > 0 &&
-      (r.slippageBps > 5 || r.folds.every((f) => f > 0))
+      (r.slippageBps > 5 || (r.orbNet > 0 && r.mrNet > 0 && r.zabNet > 0 && r.folds.every((f) => f > 0)))
     if (!passed) allGatesPassed = false
   }
-  console.log(`\nAnti-Starvation & Multi-Fold Gate: ${allGatesPassed ? 'PASSED' : 'FAILED'}`)
+  console.log(`\nMulti-Engine Concurrent Alpha Gate: ${allGatesPassed ? 'PASSED' : 'FAILED'}`)
   if (!allGatesPassed) process.exit(1)
 }

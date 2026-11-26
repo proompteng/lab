@@ -61,6 +61,7 @@ export type CandidateObservation =
 export interface IntradayAlphaSessionState {
   readonly morningOrbTakenSymbols: readonly string[]
   readonly middayReversionCompleted: boolean
+  readonly noiseAreaTakenSymbols?: readonly string[]
 }
 
 export class CandidateObservationStore extends Context.Service<
@@ -74,7 +75,10 @@ export class CandidateObservationStore extends Context.Service<
     readonly latestJevWindowEnd: (input: {
       readonly cycleId: string
       readonly purpose: JevPurpose
-      readonly schemaVersion?: 'bayn.jev-observation.v1' | 'bayn.intraday-alpha-observation.v1'
+      readonly schemaVersion?:
+        | 'bayn.jev-observation.v1'
+        | 'bayn.intraday-alpha-observation.v1'
+        | 'bayn.intraday-alpha-observation.v2'
     }) => Effect.Effect<Option.Option<string>, OperationalError>
     readonly readIntradayAlphaSessionState?: (input: {
       readonly cycleId: string
@@ -98,7 +102,7 @@ export const candidateObservationLog = ({ contentHash, payload }: CandidateObser
         candidates: payload.manifest.candidateSymbols,
         excludedCandidates: payload.manifest.candidateExclusions?.map(({ symbol, reason }) => ({ symbol, reason })),
       }
-    : payload.schemaVersion === 'bayn.intraday-alpha-observation.v1'
+    : payload.schemaVersion === 'bayn.intraday-alpha-observation.v2'
       ? {
           event: payload.schemaVersion,
           contentHash,

@@ -465,7 +465,7 @@ export const compileJevEntry = (
   Result.gen(function* () {
     const symbols = [...decision.selectedSymbols].sort()
     const planningTargetWeights = jevPlanningTargetWeights(decision)
-    const isIntradayAlpha = decision.schemaVersion === 'bayn.intraday-alpha-target.v1'
+    const isIntradayAlpha = decision.schemaVersion === 'bayn.intraday-alpha-target.v2'
     const quotePrices = isIntradayAlpha
       ? yield* Result.gen(function* () {
           const expectedBarMs = Date.parse(decisionSnapshot.manifest.rangeEndAt) - 60_000
@@ -652,7 +652,9 @@ export const evaluateJevPositionManagement = (input: {
         )
       const position =
         input.symbol === undefined
-          ? portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
+          ? (portfolio.brokerState.positions.find(
+              (entry) => BigInt(entry.quantityAtoms) !== 0n && entry.symbol in portfolio.exitPolicy.plans,
+            ) ?? portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n))
           : portfolio.brokerState.positions.find(
               (entry) => entry.symbol === input.symbol && BigInt(entry.quantityAtoms) !== 0n,
             )

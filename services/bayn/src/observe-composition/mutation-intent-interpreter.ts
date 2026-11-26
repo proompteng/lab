@@ -893,7 +893,16 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       ),
       orders: facts.reconciliation.brokerState.orders,
     })
-    const hasOpenPosition = countOpenPositions(facts.reconciliation.brokerState.positions) > 0
+    const scopedSymbols = new Set(document.targetPlan.targets.map((target) => target.symbol))
+    const scopedPositions =
+      scopedSymbols.size > 0
+        ? facts.reconciliation.brokerState.positions.filter((position) => scopedSymbols.has(position.symbol))
+        : facts.reconciliation.brokerState.positions
+    const hasOpenPosition = countOpenPositions(scopedPositions) > 0
+    const symbolHasOpenPosition = (symbol: string) =>
+      facts.reconciliation.brokerState.positions.some(
+        (position) => position.symbol === symbol && BigInt(position.quantityAtoms) !== 0n,
+      )
     for (const prepared of preparedIntentsToInspect) {
       const stored = yield* intentStore.read(prepared.intent.intentId).pipe(
         Effect.mapError((cause) =>
@@ -959,7 +968,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
               (profitHoldingDeadlineAt !== undefined && facts.evaluatedAt >= profitHoldingDeadlineAt) ||
               (mutationPhase === 'ENTRY' &&
                 (record.intent.side === OrderSide.Buy || record.intent.protection?._tag === 'EquityShortBracket') &&
-                hasOpenPosition) ||
+                symbolHasOpenPosition(record.intent.symbol)) ||
               (allowSubmit &&
                 facts.evaluatedAt >=
                   executionSubmitExpiresAt(submissionCutoffAt, prepared.riskBinding.evaluation.decision.expiresAt))
@@ -980,7 +989,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
               mutationPhase === 'ENTRY' &&
               isProtectedEntryTarget(entryTarget) &&
               entryTarget.selectedSymbols.includes(record.intent.symbol) &&
-              !hasOpenPosition &&
+              !symbolHasOpenPosition(record.intent.symbol) &&
               input.intradayMarketData !== undefined &&
               document.executionSession !== undefined &&
               state.account.accountId === input.accountId &&
@@ -1304,7 +1313,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       accountingExact: facts.reconciliation.report.metrics.accountingExact,
       unknownMutationCount: facts.reconciliation.riskContext.unknownMutationCount,
       unknownOrderCount: facts.reconciliation.brokerState.unknownOrderCount,
-      openPositionCount: countOpenPositions(facts.reconciliation.brokerState.positions),
+      openPositionCount: countOpenPositions(scopedPositions),
     })
     return completion._tag === 'Complete'
       ? { _tag: 'Complete', observedAt: facts.evaluatedAt }

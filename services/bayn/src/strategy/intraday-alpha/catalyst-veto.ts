@@ -12,7 +12,11 @@ export type CatalystVetoDirection = typeof CatalystVetoDirectionSchema.Type
 
 export const CatalystVetoReceiptSchema = Schema.Struct({
   symbol: SymbolSchema,
-  phase: Schema.Literals([IntradayAlphaPhase.MorningOrb, IntradayAlphaPhase.MiddayReversion]),
+  phase: Schema.Literals([
+    IntradayAlphaPhase.MorningOrb,
+    IntradayAlphaPhase.MiddayReversion,
+    IntradayAlphaPhase.NoiseAreaTrend,
+  ]),
   direction: CatalystVetoDirectionSchema,
   status: Schema.Literals(['ASSESSED', 'UNAVAILABLE']),
   requestHash: Schema.NullOr(Sha256Schema),
@@ -26,7 +30,7 @@ export type CatalystVetoReceipt = typeof CatalystVetoReceiptSchema.Type
 export interface CatalystVetoRequestInput {
   readonly model: JevRequest['model']
   readonly symbol: string
-  readonly phase: IntradayAlphaPhase.MorningOrb | IntradayAlphaPhase.MiddayReversion
+  readonly phase: IntradayAlphaPhase.MorningOrb | IntradayAlphaPhase.MiddayReversion | IntradayAlphaPhase.NoiseAreaTrend
   readonly direction: CatalystVetoDirection
   readonly windowEndAt: string
   readonly sessionOpenPrice: number
@@ -79,7 +83,7 @@ export const makeCatalystVetoRequest = (input: CatalystVetoRequestInput) =>
 
 export const evaluateCatalystVetoInference = (input: {
   readonly symbol: string
-  readonly phase: IntradayAlphaPhase.MorningOrb | IntradayAlphaPhase.MiddayReversion
+  readonly phase: IntradayAlphaPhase.MorningOrb | IntradayAlphaPhase.MiddayReversion | IntradayAlphaPhase.NoiseAreaTrend
   readonly direction: CatalystVetoDirection
   readonly inference: JevInference
   readonly vetoThreshold: number

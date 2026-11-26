@@ -42,8 +42,9 @@ import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner/index'
-import { strategyTradingProtocol } from '../strategy'
-import { isMiddayAlphaTarget } from '../strategy/runtime-decision'
+import { isIntradayAlphaRuntime, strategyTradingProtocol } from '../strategy'
+import { isBrokerManagedAlphaTarget } from '../strategy/runtime-decision'
+import { IntradayAlphaPhase } from '../strategy/intraday-alpha/constants'
 import { resolveAlphaRegularSession } from '../strategy/intraday-alpha/signals'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import type { JevExitTarget } from '../jev/exit'
@@ -281,6 +282,7 @@ const readTerminalCloseReconciliation = <R>(
   document: ExecutionDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
   refreshReconciliation: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
+  ownedSymbols?: ReadonlySet<string>,
 ): Effect.Effect<TerminalCloseEvidence, CycleRunnerError, R | IntentStore> =>
   Effect.gen(function* () {
     const intentStore = yield* IntentStore
@@ -308,7 +310,7 @@ const readTerminalCloseReconciliation = <R>(
       document.createdAt,
     )
     let refreshed = yield* Effect.result(reconcile)
-    if (Result.isSuccess(refreshed) && !isTerminalCloseReconciliationReady(refreshed.success, settledAt))
+    if (Result.isSuccess(refreshed) && !isTerminalCloseReconciliationReady(refreshed.success, settledAt, ownedSymbols))
       refreshed = yield* Effect.result(refreshReconciliation)
     if (Result.isFailure(refreshed)) {
       if (refreshed.failure._tag === 'BrokerReadError' && refreshed.failure.retryable)
@@ -341,26 +343,51 @@ const terminalOrderStatuses = new Set<OrderStatus>([
   OrderStatus.Rejected,
 ])
 
-const isExecutionCycleReconciled = (facts: {
-  readonly report: {
-    readonly reconciliation: { readonly status: ReconciliationStatus }
-    readonly metrics: { readonly accountingExact: boolean }
-  }
-  readonly brokerState: {
-    readonly positions: readonly { readonly quantityAtoms: string }[]
-    readonly orders: readonly { readonly status: OrderStatus }[]
-    readonly unknownOrderCount: number
-  }
-  readonly riskContext: { readonly unknownMutationCount: number }
-}): boolean =>
+const ownedSymbolsForDocument = (document: ExecutionDecisionDocument): ReadonlySet<string> | undefined =>
+  document.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+    ? new Set(Object.keys(document.strategyDecision.exitPolicy.plans))
+    : undefined
+
+const isExecutionCycleReconciled = (
+  facts: {
+    readonly report: {
+      readonly reconciliation: { readonly status: ReconciliationStatus }
+      readonly metrics: { readonly accountingExact: boolean }
+    }
+    readonly brokerState: {
+      readonly positions: readonly { readonly symbol?: string; readonly quantityAtoms: string }[]
+      readonly orders: readonly { readonly symbol?: string; readonly status: OrderStatus; readonly intentId?: string }[]
+      readonly unknownOrderCount: number
+    }
+    readonly riskContext: { readonly unknownMutationCount: number }
+  },
+  ownedSymbols?: ReadonlySet<string>,
+): boolean =>
   facts.report.reconciliation.status === ReconciliationStatus.Exact &&
   facts.report.metrics.accountingExact &&
   facts.riskContext.unknownMutationCount === 0 &&
   facts.brokerState.unknownOrderCount === 0 &&
-  facts.brokerState.orders.every(({ status }) => terminalOrderStatuses.has(status))
+  facts.brokerState.orders.every(
+    (order) =>
+      terminalOrderStatuses.has(order.status) ||
+      (ownedSymbols !== undefined &&
+        order.symbol !== undefined &&
+        !ownedSymbols.has(order.symbol) &&
+        order.intentId !== undefined),
+  )
 
-export const isExecutionCycleReconciledFlat = (facts: Parameters<typeof isExecutionCycleReconciled>[0]): boolean =>
-  isExecutionCycleReconciled(facts) && countOpenPositions(facts.brokerState.positions) === 0
+export const isExecutionCycleReconciledFlat = (
+  facts: Parameters<typeof isExecutionCycleReconciled>[0],
+  ownedSymbols?: ReadonlySet<string>,
+): boolean =>
+  isExecutionCycleReconciled(facts, ownedSymbols) &&
+  countOpenPositions(
+    ownedSymbols === undefined
+      ? facts.brokerState.positions
+      : facts.brokerState.positions.filter(
+          (position) => position.symbol !== undefined && ownedSymbols.has(position.symbol),
+        ),
+  ) === 0
 
 const reconciliationObservationTimes = (facts: ReconciliationPassResult): readonly string[] => [
   facts.report.reconciliation.reconciledAt,
@@ -369,19 +396,26 @@ const reconciliationObservationTimes = (facts: ReconciliationPassResult): readon
   facts.brokerState.ordersObservedAt,
 ]
 
-const isTerminalCloseReconciliationReady = (facts: ReconciliationPassResult, settledAt: string): boolean =>
-  isExecutionCycleReconciled(facts) && reconciliationObservationTimes(facts).every((at) => at >= settledAt)
+const isTerminalCloseReconciliationReady = (
+  facts: ReconciliationPassResult,
+  settledAt: string,
+  ownedSymbols?: ReadonlySet<string>,
+): boolean =>
+  isExecutionCycleReconciled(facts, ownedSymbols) &&
+  reconciliationObservationTimes(facts).every((at) => at >= settledAt)
 
 export const decideReconciledExecutionCycleCompletion = (
   facts: ReconciliationPassResult,
+  ownedSymbols?: ReadonlySet<string>,
 ): { readonly _tag: 'Complete'; readonly observedAt: string } | undefined =>
-  isExecutionCycleReconciledFlat(facts)
+  isExecutionCycleReconciledFlat(facts, ownedSymbols)
     ? { _tag: 'Complete', observedAt: facts.report.reconciliation.reconciledAt }
     : undefined
 
 export const decideReconciledExecutionCycleTerminalization = (
   facts: ReconciliationPassResult,
   entryIntentEvidence: EntryExecutionCycleIntentEvidence,
+  ownedSymbols?: ReadonlySet<string>,
 ):
   | { readonly _tag: 'Complete'; readonly observedAt: string }
   | {
@@ -390,7 +424,7 @@ export const decideReconciledExecutionCycleTerminalization = (
       readonly observedAt: string
     }
   | undefined => {
-  const completion = decideReconciledExecutionCycleCompletion(facts)
+  const completion = decideReconciledExecutionCycleCompletion(facts, ownedSymbols)
   if (completion === undefined || entryIntentEvidence === 'COMPLETE' || entryIntentEvidence === 'BENIGN_ZERO_FILL')
     return completion
   return {
@@ -503,15 +537,17 @@ export const ensureExecutionCycleClosure = <R>({
         failure: 'contract',
       })
     }
+    const ownedSymbols = ownedSymbolsForDocument(entryDocument)
     if (existing === undefined) {
       const closeReconciliation = yield* reconcile.pipe(
         Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
       )
-      const completion = decideReconciledExecutionCycleCompletion(closeReconciliation)
+      const completion = decideReconciledExecutionCycleCompletion(closeReconciliation, ownedSymbols)
       if (completion !== undefined) {
         const terminalization = decideReconciledExecutionCycleTerminalization(
           closeReconciliation,
           yield* entryExecutionCycleIntentEvidence(entryDocument, closeReconciliation.brokerState.orders),
+          ownedSymbols,
         )
         if (terminalization !== undefined) return terminalization
       }
@@ -559,7 +595,12 @@ export const ensureExecutionCycleClosure = <R>({
 
     const latestReplan = yield* readLatestExecutionCycleCloseReplan(cycle.identity.cycleId, store)
     const active = latestReplan ?? existing
-    const terminal = yield* readTerminalCloseReconciliation(active.document, reconcile, refreshReconciliation)
+    const terminal = yield* readTerminalCloseReconciliation(
+      active.document,
+      reconcile,
+      refreshReconciliation,
+      ownedSymbols,
+    )
     if (terminal._tag === 'Unsettled') {
       return { _tag: 'Close', document: active.document } as const
     }
@@ -570,24 +611,28 @@ export const ensureExecutionCycleClosure = <R>({
         waitReason: terminal.observationPending ? 'BROKER_OBSERVATION_PENDING' : 'COMPLETION_EVIDENCE_PENDING',
       } as const
     const residualReconciliation = terminal.reconciliation
-    if (!isTerminalCloseReconciliationReady(residualReconciliation, terminal.settledAt))
+    if (!isTerminalCloseReconciliationReady(residualReconciliation, terminal.settledAt, ownedSymbols))
       return {
         _tag: 'Wait',
         observedAt: yield* currentUtcInstant,
-        waitReason: isExecutionCycleReconciled(residualReconciliation)
+        waitReason: isExecutionCycleReconciled(residualReconciliation, ownedSymbols)
           ? 'BROKER_OBSERVATION_PENDING'
           : 'COMPLETION_EVIDENCE_PENDING',
       } as const
-    if (isExecutionCycleReconciledFlat(residualReconciliation)) {
+    if (isExecutionCycleReconciledFlat(residualReconciliation, ownedSymbols)) {
       const terminalization = decideReconciledExecutionCycleTerminalization(
         residualReconciliation,
         yield* entryExecutionCycleIntentEvidence(entryDocument, residualReconciliation.brokerState.orders),
+        ownedSymbols,
       )
       if (terminalization !== undefined) return terminalization
     }
 
     const remainingOpenSymbols = residualReconciliation.brokerState.positions
-      .filter((position) => BigInt(position.quantityAtoms) !== 0n)
+      .filter(
+        (position) =>
+          BigInt(position.quantityAtoms) !== 0n && (ownedSymbols === undefined || ownedSymbols.has(position.symbol)),
+      )
       .map((position) => position.symbol)
       .toSorted((left, right) => left.localeCompare(right))
     const reusableExitTarget =
@@ -604,8 +649,12 @@ export const ensureExecutionCycleClosure = <R>({
       entryDocument,
       reconcile: refreshReconciliation.pipe(
         Effect.flatMap((facts) =>
-          isTerminalCloseReconciliationReady(facts, terminal.settledAt) &&
-          countOpenPositions(facts.brokerState.positions) > 0 &&
+          isTerminalCloseReconciliationReady(facts, terminal.settledAt, ownedSymbols) &&
+          countOpenPositions(
+            ownedSymbols === undefined
+              ? facts.brokerState.positions
+              : facts.brokerState.positions.filter((position) => ownedSymbols.has(position.symbol)),
+          ) > 0 &&
           reconciliationObservationTimes(facts).every(
             (at, index) => at >= (reconciliationObservationTimes(residualReconciliation)[index] ?? terminal.settledAt),
           )
@@ -789,7 +838,7 @@ export const closeWindowForCycle = (
     const target = document.strategyDecision
     let executionCloseAt = cycle.window.executionCloseAt
     let sessionCloseStartLeadMs = protocol.flattenBeforeCloseMinutes * 60_000
-    if (target?.schemaVersion === 'bayn.intraday-alpha-target.v1' && document.executionSession !== undefined) {
+    if (target?.schemaVersion === 'bayn.intraday-alpha-target.v2' && document.executionSession !== undefined) {
       // Intraday alpha flattens before the NYSE regular-session close (16:00 ET), even when the
       // data calendar spans extended hours (08:00-17:00 ET).
       const regular = yield* Effect.fromResult(
@@ -804,8 +853,18 @@ export const closeWindowForCycle = (
         ),
       )
       if (regular.closeAt < executionCloseAt) executionCloseAt = regular.closeAt
-      const flattenDeadlineMs = regular.openMs + target.policy.middayReversion.flattenMinuteFromOpen * 60_000
-      sessionCloseStartLeadMs = Math.max(sessionCloseStartLeadMs, regular.closeMs - flattenDeadlineMs)
+      const flattenMinute =
+        target.phase === IntradayAlphaPhase.NoiseAreaTrend
+          ? target.policy.noiseArea.flattenMinuteFromOpen
+          : target.phase === IntradayAlphaPhase.MorningOrb
+            ? target.policy.morningOrb.hardExitMinuteFromOpen
+            : target.policy.middayReversion.flattenMinuteFromOpen
+      const flattenDeadlineMs = regular.openMs + flattenMinute * 60_000
+      const minimumCloseLeadMs =
+        target.phase === IntradayAlphaPhase.NoiseAreaTrend
+          ? Math.max(60_000, (390 - target.policy.noiseArea.flattenMinuteFromOpen) * 60_000)
+          : protocol.flattenBeforeCloseMinutes * 60_000
+      sessionCloseStartLeadMs = Math.max(minimumCloseLeadMs, regular.closeMs - flattenDeadlineMs)
     }
     return yield* Effect.fromResult(
       resolveExecutionCycleCloseWindow({
@@ -1167,7 +1226,7 @@ export const executeProtectionReleaseClose = (
     const entryDocument = yield* readBoundMutationDocument(cycle)
     if (
       entryDocument.mode === 'OBSERVE' ||
-      isMiddayAlphaTarget(entryDocument.strategyDecision) ||
+      isBrokerManagedAlphaTarget(entryDocument.strategyDecision) ||
       entryDocument.bindings.authorityGenerationHash !== input.authorityGenerationHash
     )
       return undefined
@@ -1371,6 +1430,33 @@ export const readUnfinishedMutationCycle = (
       }),
     ),
     Effect.map(Option.getOrUndefined),
+  )
+
+export const readUnfinishedMutationCycles = (
+  context: Pick<CycleRunContext<ObserveDecisionRuntime>, 'cycleBindingId' | 'accountId'>,
+): Effect.Effect<readonly AutonomousCycle[], CycleRunnerError, CycleStore> =>
+  CycleStore.pipe(
+    Effect.flatMap((store) =>
+      store.readUnfinished !== undefined
+        ? store.readUnfinished({
+            qualificationRunId: context.cycleBindingId,
+            accountId: context.accountId,
+          })
+        : store
+            .readOldestUnfinished({
+              qualificationRunId: context.cycleBindingId,
+              accountId: context.accountId,
+            })
+            .pipe(Effect.map((maybe) => Option.toArray(maybe))),
+    ),
+    Effect.mapError((cause) =>
+      mutationRunnerError({
+        operation: 'read-oldest-unfinished',
+        message: 'oldest unfinished mutation cycle read failed',
+        cause,
+        failure: 'store',
+      }),
+    ),
   )
 
 const mutationBound = (cycle: AutonomousCycle): boolean =>
@@ -1586,6 +1672,28 @@ const recoverBoundMutationCycle = (
     ),
   )
 
+const isPassiveHeldCycleResult = (
+  result: RecoveryFirstCyclePassResult,
+): result is Extract<CycleRunResult, { readonly outcome: 'RECOVERED'; readonly action: 'WAITING' }> =>
+  !isPostMutationReconciliation(result) &&
+  result.outcome === 'RECOVERED' &&
+  result.action === 'WAITING' &&
+  result.waitReason === 'JEV_POSITION_HELD'
+
+const earliestHeldResult = (
+  heldResults: readonly Extract<CycleRunResult, { readonly outcome: 'RECOVERED'; readonly action: 'WAITING' }>[],
+): Extract<CycleRunResult, { readonly outcome: 'RECOVERED'; readonly action: 'WAITING' }> | undefined =>
+  heldResults.reduce<
+    Extract<CycleRunResult, { readonly outcome: 'RECOVERED'; readonly action: 'WAITING' }> | undefined
+  >((earliest, candidate) => {
+    if (earliest === undefined) return candidate
+    if (candidate.maximumHoldDueAt === undefined) return earliest
+    if (earliest.maximumHoldDueAt === undefined || candidate.maximumHoldDueAt < earliest.maximumHoldDueAt) {
+      return candidate
+    }
+    return earliest
+  }, undefined)
+
 export const runRecoveryFirstCyclePass = (
   input: ObserveAutonomousCycleInput,
   policy: Policy,
@@ -1593,10 +1701,44 @@ export const runRecoveryFirstCyclePass = (
   reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
   preflight?: ReconciliationPassResult,
-  unfinished?: { readonly cycle: AutonomousCycle | undefined },
+  unfinished?: {
+    readonly cycle?: AutonomousCycle | undefined
+    readonly cycles?: readonly AutonomousCycle[]
+  },
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
-    let cycle = unfinished === undefined ? yield* readUnfinishedMutationCycle(context) : unfinished.cycle
+    const initialCycles =
+      unfinished === undefined
+        ? yield* readUnfinishedMutationCycles(context)
+        : unfinished.cycles !== undefined
+          ? unfinished.cycles
+          : unfinished.cycle === undefined
+            ? []
+            : [unfinished.cycle]
+    const boundCycles = initialCycles.filter(mutationBound)
+    const unboundCycles = initialCycles.filter((candidate) => !mutationBound(candidate))
+
+    const heldResults: Extract<CycleRunResult, { readonly outcome: 'RECOVERED'; readonly action: 'WAITING' }>[] = []
+    for (const boundCycle of boundCycles) {
+      const boundResult = yield* recoverBoundMutationCycle(
+        input,
+        policy,
+        boundCycle,
+        context,
+        reconciliation,
+        capability,
+      )
+      if (!isPassiveHeldCycleResult(boundResult)) return boundResult
+      heldResults.push(boundResult)
+    }
+
+    const earliestHeld = earliestHeldResult(heldResults)
+    const concurrentMode = boundCycles.length > 0 && isIntradayAlphaRuntime(input.strategy)
+    if (boundCycles.length > 0 && (!concurrentMode || capability._tag !== 'Mutation')) {
+      if (earliestHeld !== undefined) return earliestHeld
+    }
+
+    let cycle = unboundCycles[0]
     const completedProgress = new Set<CyclePassProgress>()
     while (true) {
       if (cycle !== undefined && mutationBound(cycle)) {
@@ -1612,19 +1754,48 @@ export const runRecoveryFirstCyclePass = (
         if (terminalReason !== undefined)
           return yield* terminalizeUnboundMutationCycle(cycle, terminalReason, observedAt)
       }
-      if (capability._tag !== 'Mutation') return { outcome: 'WINDOW_CLOSED' as const, observedAt }
+      if (capability._tag !== 'Mutation') return earliestHeld ?? { outcome: 'WINDOW_CLOSED' as const, observedAt }
       if (cycle === undefined) {
         const protectedAdmission = protectedAccountAdmission(
           preflight,
           policy,
           input.authorityGenerationHash,
           observedAt,
+          concurrentMode,
         )
-        if (protectedAdmission !== undefined) return protectedAdmission
+        if (protectedAdmission !== undefined) return earliestHeld ?? protectedAdmission
       }
-      const result = yield* runAutonomousCyclePass(context, cycle)
+      const result = yield* runAutonomousCyclePass(
+        context,
+        cycle,
+        concurrentMode ? { allowConcurrentAdmission: true } : undefined,
+      )
       const continuation = selectCyclePassContinuation(result)
-      if (continuation._tag === 'RETURN') return result
+      if (continuation._tag === 'RETURN') {
+        if (earliestHeld === undefined) return result
+        if (
+          result.outcome === 'WINDOW_CLOSED' ||
+          result.outcome === 'ALREADY_TERMINAL' ||
+          result.outcome === 'ALREADY_ACQUIRED'
+        ) {
+          return earliestHeld
+        }
+        if (
+          result.outcome === 'RECOVERED' &&
+          result.action === 'WAITING' &&
+          earliestHeld.maximumHoldDueAt !== undefined &&
+          (result.maximumHoldDueAt === undefined || earliestHeld.maximumHoldDueAt < result.maximumHoldDueAt)
+        ) {
+          return {
+            ...result,
+            maximumHoldDueAt: earliestHeld.maximumHoldDueAt,
+            ...(earliestHeld.maximumHoldEvaluatedAt === undefined
+              ? {}
+              : { maximumHoldEvaluatedAt: earliestHeld.maximumHoldEvaluatedAt }),
+          }
+        }
+        return result
+      }
       if (completedProgress.has(continuation.progress))
         return yield* mutationRunnerError({
           operation: 'recover-cycle',
