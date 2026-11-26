@@ -1,25 +1,8 @@
-import { postgresQueryFixture } from '../../testing/postgres-fixture.test-support'
 import { mock } from 'bun:test'
 import { parentPort, workerData } from 'node:worker_threads'
 import { NodeRuntime } from '@effect/platform-node'
-import { PgClient } from '@effect/sql-pg'
-import { Effect, FiberSet, Layer, Logger } from 'effect'
+import { Effect, FiberSet, Logger } from 'effect'
 import { TestClock } from 'effect/testing'
-import type { NativeArrivalCaptureFactory, NativeArrivalStore } from './native-arrival-journal'
-import {
-  nativeArrivalEpochFixture as epoch,
-  nativeArrivalObservationFixture as observation,
-} from './native-arrival.test-support'
-
-const store: NativeArrivalStore = {
-  begin: () => Effect.void,
-  append: () => Effect.never,
-  end: () => Effect.void,
-}
-await mock.module('../../db/postgres-client', () => ({
-  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, postgresQueryFixture()),
-}))
-await mock.module('../../db/native-arrival-postgres', () => ({ makeNativeArrivalStore: () => store }))
 const kafka = await import('./kafka')
 await mock.module('./kafka', () => ({
   ...kafka,
@@ -28,12 +11,10 @@ await mock.module('./kafka', () => ({
     _sources: unknown,
     _factory: unknown,
     _clock: unknown,
-    capture: NativeArrivalCaptureFactory,
+    capture?: unknown,
   ) =>
     Effect.gen(function* () {
-      const failed = yield* capture(epoch.bootstrap, epoch.sources)
-      yield* failed.observe(observation(3))
-      yield* capture(epoch.bootstrap, epoch.sources)
+      if (capture !== undefined) return yield* Effect.die('Live projection must start without an arrival journal')
       const status = Effect.succeed({ epoch: 'fixture', sequence: 0, ready: true, bootstrapDeadlineAtMs: null })
       return {
         status,

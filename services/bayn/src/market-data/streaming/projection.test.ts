@@ -644,9 +644,27 @@ describe('streaming raw and rolling feature projection', () => {
   test('later corrections do not mutate an earlier persisted projection and raw retention is bounded', () => {
     const initial = incorporate([...raw(), featureRecord])
     let current = initial
-    for (let index = 30; index < 200; index++)
+    for (let index = 30; index < 390; index++)
       current = incorporateMarketRecord(current, barRecord(index), universe, start + (index + 2) * 60_000)
-    expect(current.bars.get('AAPL')).toHaveLength(61)
+    const nextDayStart = start + 3 * 24 * 60 * 60_000
+    for (let index = 0; index < 20; index++) {
+      const at = nextDayStart + index * 60_000
+      current = incorporateMarketRecord(
+        current,
+        rawRecord('bars', 390 + index, at, {
+          o: 100 + index,
+          h: 102 + index,
+          l: 99 + index,
+          c: 101 + index,
+          v: 10.25,
+          vw: 100.5 + index,
+          n: 2,
+        }),
+        universe,
+        at + 120_000,
+      )
+    }
+    expect(current.bars.get('AAPL')).toHaveLength(391)
     expect(Result.isSuccess(select(initial))).toBe(true)
   })
 })

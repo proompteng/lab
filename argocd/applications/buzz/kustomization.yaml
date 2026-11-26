@@ -20,12 +20,12 @@ resources:
   - alloy-configmap.yaml
   - alloy-deployment.yaml
 
-# Chart 0.1.7 was verified as
-# sha256:2cfedd09f20902c84afdefadf838f2975c19de5b15eea6c63e7d0d5f666171a3.
+# Chart 0.1.13 was verified as
+# sha256:006a821d1ba27e8341e5ac93c665976836770533184b47c1c9127cc8509cabbb.
 helmCharts:
   - name: buzz
     repo: oci://ghcr.io/block/buzz/charts
-    version: 0.1.7
+    version: 0.1.13
     releaseName: buzz
     namespace: buzz
     valuesFile: values.yaml

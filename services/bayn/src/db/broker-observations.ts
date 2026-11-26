@@ -26,6 +26,7 @@ import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerNotificationSchema, type BrokerNotification } from '../broker/notifications'
 import { acquireExecutionWriterFence } from '../execution/writer-fence'
+import { brokerActivitySourceContentIsConsistent } from './broker-activity-conflicts'
 import {
   BrokerSourceProjectionReceiptSchema,
   type BrokerSourceProjectionReceipt,
@@ -86,6 +87,7 @@ const ActivityProjectionRows = Schema.Array(
   Schema.Struct({
     projection: Schema.Literals(['FILL', 'FEE', 'BUST', 'CANONICAL_ONLY', 'DUPLICATE', 'RECONCILE_REQUIRED']),
     sourceEventHash: Schema.String,
+    equivalentContent: Schema.Boolean,
   }),
 ).check(Schema.isMaxLength(1))
 
@@ -347,11 +349,12 @@ export const makeBrokerObservationStore = (
       })),
     ),
   )
-  const retainedActivityProjection = (sourceEventId: string) =>
-    sql`SELECT projection.outcome AS projection, event.source_event_hash AS "sourceEventHash"
-      FROM broker_activity_events AS event
+  const retainedActivityProjection = (event: BrokerActivityEvent) =>
+    sql`SELECT projection.outcome AS projection, original.source_event_hash AS "sourceEventHash",
+        original.activity_json::jsonb = ${event.activityJson}::jsonb AS "equivalentContent"
+      FROM broker_activity_events AS original
       JOIN broker_activity_event_projections AS projection USING (account_id,source_event_id)
-      WHERE event.account_id = ${accountId} AND event.source_event_id = ${sourceEventId}`.pipe(
+      WHERE original.account_id = ${accountId} AND original.source_event_id = ${event.sourceEventId}`.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(ActivityProjectionRows, strictParseOptions)),
       Effect.map((rows) => rows[0]),
     )
@@ -400,9 +403,9 @@ export const makeBrokerObservationStore = (
           if (current === undefined) return yield* observationUnavailable('Durable activity cursor is absent')
           const retained =
             current.cursor !== null && event.sourceEventId <= current.cursor
-              ? yield* retainedActivityProjection(event.sourceEventId)
+              ? yield* retainedActivityProjection(event)
               : undefined
-          const admission = decideBrokerActivityEvent(current, event, retained?.sourceEventHash, true)
+          const admission = decideBrokerActivityEvent(current, event, retained, true)
           if (Result.isFailure(admission)) {
             const inserted = yield* sql`INSERT INTO broker_activity_source_conflicts(
               account_id,source_event_id,retained_source_event_hash,conflicting_source_event_hash,
@@ -753,8 +756,38 @@ export const makeBrokerObservationStore = (
           const admission = decideBrokerActivityHeartbeat(current, heartbeat)
           if (Result.isFailure(admission))
             return yield* observationUnavailable('Activity heartbeat does not cover a caught-up durable cursor')
-          const { activated } = admission.success
+          // Repair only historical representation-only conflicts on an authenticated, cursor-bound heartbeat.
+          // The existing heartbeat-age check still independently gates activity reads and readiness.
+          // Finite publication proofs keep their original raw hashes and remain independently fail-closed.
+          const recovered =
+            !current.fillFeeComplete &&
+            (yield* sql`SELECT (
+              EXISTS (SELECT 1 FROM broker_activity_source_conflicts WHERE account_id = ${accountId})
+              AND (${brokerActivitySourceContentIsConsistent(sql, accountId)})
+              AND NOT EXISTS (
+                SELECT 1 FROM broker_activity_events AS event
+                LEFT JOIN broker_activity_event_projections AS projection USING (account_id,source_event_id)
+                WHERE event.account_id = ${accountId}
+                  AND (projection.outcome IS NULL OR projection.outcome = 'RECONCILE_REQUIRED')
+              )
+              AND NOT EXISTS (SELECT 1 FROM broker_activity_coverage_receipts
+                WHERE account_id = ${accountId} AND status = 'POISONED')
+            ) AS recoverable`.pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(
+                  Schema.Tuple([Schema.Struct({ recoverable: Schema.Boolean })]),
+                  strictParseOptions,
+                ),
+              ),
+              Effect.map(([row]) => row.recoverable),
+            ))
+          const fillFeeComplete = current.fillFeeComplete || recovered
+          const activated = admission.success.activated || recovered
+          if (recovered)
+            yield* sql`UPDATE broker_observations SET generation = generation + 1, available = false
+              WHERE account_id = ${accountId}`
           yield* sql`UPDATE broker_activity_cursors SET source_revision = ${sourceRevision},
+              fill_fee_complete = ${fillFeeComplete},
               session_id = ${heartbeat.session.sessionId}, request_id = ${heartbeat.session.requestId},
               heartbeat_at = CASE
                 WHEN session_id = ${heartbeat.session.sessionId} AND request_id = ${heartbeat.session.requestId}
@@ -770,7 +803,7 @@ export const makeBrokerObservationStore = (
               replayFromId: current.replayFromId,
               replayUntilId: current.replayUntilId,
               completionHash: current.completionHash,
-              fillFeeComplete: current.fillFeeComplete,
+              fillFeeComplete,
               sourceRevision,
               activated,
             },

@@ -330,7 +330,7 @@ export const bindExecutionEvidence = (
           heldQuantity === 0n ||
           actual.side !== (heldQuantity < 0n ? OrderSide.Buy : OrderSide.Sell) ||
           quantity > (heldQuantity < 0n ? -heldQuantity : heldQuantity) ||
-          document.targetPlan.executionTerms?.executionPurpose === undefined
+          document.targetPlan.executionTerms?.executionPurpose !== 'forced-close'
         )
           return yield* Result.fail(
             new SystemAssessmentError({ message: 'Reconciled liquidation cannot price an entry' }),

@@ -18,7 +18,11 @@ import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation
 import { JevClient, JevError } from '../jev/client'
 import { JevFailure } from '../jev/contract'
 import { JevPurpose } from '../jev/portfolio'
-import { nativeJevFixture as fixtureForAccount, nativeJevInference } from '../jev/native.test-support'
+import {
+  nativeJevFixture as fixtureForAccount,
+  nativeJevInference,
+  withObservedEntryBars,
+} from '../jev/native.test-support'
 import {
   evaluateJevObservation,
   evaluateJevObservationFromSnapshot,
@@ -144,10 +148,9 @@ describeNativeJevPostgres((postgres) => {
               ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
           }
           const query = selected.managed.snapshot.manifest
-          const original = makeIntradayMomentumTestSnapshot(
+          const original = withObservedEntryBars(
+            makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] }, premiums),
             fixture.protocol,
-            { ...query, archiveWatermarks: [] },
-            premiums,
           )
           const raw = {
             ...original,
@@ -280,7 +283,10 @@ describeNativeJevPostgres((postgres) => {
           ${reconciliation.observedHash}, ${reconciliation.contentHash}, ${reconciliation.status}, '[]'::jsonb,
           ${reconciliation.reconciledAt})`
         const query = fresh.snapshot.manifest
-        const raw = makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] }, premiums)
+        const raw = withObservedEntryBars(
+          makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] }, premiums),
+          fixture.protocol,
+        )
         const staleAt = utcInstantFromEpochMillis(atMs - fixture.protocol.maximumQuoteAgeMs - 1)
         const staleEvidence = {
           ...raw,

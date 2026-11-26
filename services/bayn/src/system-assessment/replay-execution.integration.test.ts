@@ -9,7 +9,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Result, Schema } from
 import { sha256 } from '../hash'
 import { nativeReplayFixture as retainedReplayFixture } from '../testing/retained-replay-fixture'
 import { nativeReplayPolicyManifest } from '../intraday-replay/native-policy'
-import { loadActiveStrategyProtocol } from '../strategy'
+import { loadSharedJevProtocol } from '../strategy'
 import { testHash } from './fixtures.test-support'
 import { completeLatencyArtifactFixture } from './latency-report.test-support'
 import {
@@ -171,7 +171,7 @@ nativeTest.each([JevResearchPolicy.Candidate, JevResearchPolicy.Ablation, JevRes
             controlFiles: {},
             compilerFiles: {},
             nativeReplayPolicies: Result.getOrThrow(
-              Result.flatMap(loadActiveStrategyProtocol(), nativeReplayPolicyManifest),
+              Result.flatMap(loadSharedJevProtocol(), nativeReplayPolicyManifest),
             ),
           }),
         )

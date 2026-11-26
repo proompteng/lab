@@ -12,6 +12,7 @@ import {
   OrderSchema,
   OrderSide,
   OrderStatus,
+  OrderType,
   PositionSchema,
   ReconciliationSchema,
   ReconciliationStatus,
@@ -19,7 +20,12 @@ import {
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
-import { isShortExitPlan, entryPlanPriceMicros, type FundedEntryExitPlan } from '../strategy/funded-exit-plan'
+import {
+  isIntradayAlphaExitPlan,
+  isShortExitPlan,
+  entryPlanPriceMicros,
+  type FundedEntryExitPlan,
+} from '../strategy/funded-exit-plan'
 
 export enum JevPurpose {
   Entry = 'ENTRY',
@@ -45,7 +51,11 @@ export const JevInventoryDebitSchema = Schema.Struct({
 })
 
 const Base = Schema.Union([
-  Schema.Struct({ purpose: Schema.Literal(JevPurpose.Entry), brokerState: ReconciledStateSchema }),
+  Schema.Struct({
+    purpose: Schema.Literal(JevPurpose.Entry),
+    brokerState: ReconciledStateSchema,
+    concurrentDisjointPositions: Schema.optionalKey(Schema.Literal(true)),
+  }),
   Schema.Struct({
     purpose: Schema.Literal(JevPurpose.Manage),
     protectionEvidenceVersion: Schema.optionalKey(Schema.Literal(currentProtectionEvidenceVersion)),
@@ -62,6 +72,19 @@ const Base = Schema.Union([
   }),
 ])
 
+const isKnownProtectionOrderForHeldPosition = (
+  order: typeof OrderSchema.Type,
+  heldBySymbol: ReadonlyMap<string, bigint>,
+): boolean => {
+  if (order.intentId === undefined) return false
+  const heldQty = heldBySymbol.get(order.symbol) ?? 0n
+  if (heldQty === 0n) return false
+  const expectedExitSide = heldQty < 0n ? OrderSide.Buy : OrderSide.Sell
+  return (
+    order.side === expectedExitSide && (order.orderType === OrderType.StopLimit || order.orderType === OrderType.Limit)
+  )
+}
+
 export const JevPortfolioSchema = Base.check(
   Schema.makeFilter((context) => {
     const issues: Schema.FilterIssue[] = []
@@ -74,25 +97,36 @@ export const JevPortfolioSchema = Base.check(
       state.reconciliation.accountId !== state.account.accountId
     )
       issues.push({ path: ['brokerState'], issue: 'requires an exact reconciliation of these broker-state bytes' })
+    const held = state.positions.filter((position) => BigInt(position.quantityAtoms) !== 0n)
+    const heldBySymbol = new Map(held.map((position) => [position.symbol, BigInt(position.quantityAtoms)] as const))
+    const planEntries = context.purpose === JevPurpose.Manage ? Object.entries(context.exitPolicy.plans) : []
+    const isMultiLegManage =
+      context.purpose === JevPurpose.Manage &&
+      (planEntries.length > 1 || planEntries.some(([, plan]) => isIntradayAlphaExitPlan(plan)))
     if (
-      state.orders.some(
-        (order) =>
-          ![OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected].includes(
-            order.status,
-          ) &&
-          !(
-            context.purpose === JevPurpose.Manage &&
-            order.side ===
-              (context.exitPolicy.plans[order.symbol]?.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1'
-                ? OrderSide.Buy
-                : OrderSide.Sell) &&
-            order.intentId !== undefined &&
-            context.protectionIntentIds.includes(order.intentId) &&
-            (order.limitPriceMicros === context.exitPolicy.plans[order.symbol]?.levels.profitLimitPriceMicros ||
-              (order.stopPriceMicros === context.exitPolicy.plans[order.symbol]?.levels.stopPriceMicros &&
-                order.limitPriceMicros === context.exitPolicy.plans[order.symbol]?.levels.stopLimitPriceMicros))
-          ),
-      )
+      state.orders.some((order) => {
+        if (
+          [OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected].includes(order.status)
+        )
+          return false
+        if (order.intentId === undefined) return true
+        if (context.purpose === JevPurpose.Entry) {
+          return context.concurrentDisjointPositions === true
+            ? !isKnownProtectionOrderForHeldPosition(order, heldBySymbol)
+            : true
+        }
+        const protectionPlan = context.exitPolicy.plans[order.symbol]
+        if (protectionPlan === undefined) {
+          return isMultiLegManage ? !isKnownProtectionOrderForHeldPosition(order, heldBySymbol) : true
+        }
+        return !(
+          order.side === (isShortExitPlan(protectionPlan) ? OrderSide.Buy : OrderSide.Sell) &&
+          context.protectionIntentIds.includes(order.intentId) &&
+          (order.limitPriceMicros === protectionPlan.levels.profitLimitPriceMicros ||
+            (order.stopPriceMicros === protectionPlan.levels.stopPriceMicros &&
+              order.limitPriceMicros === protectionPlan.levels.stopLimitPriceMicros))
+        )
+      })
     )
       issues.push({ path: ['brokerState', 'orders'], issue: 'unsettled orders prevent a new model decision' })
     if (
@@ -112,53 +146,85 @@ export const JevPortfolioSchema = Base.check(
         path: ['brokerState'],
         issue: 'reconciliation requires unique account-bound positions and orders observed before their snapshot',
       })
-    const held = state.positions.filter((position) => BigInt(position.quantityAtoms) !== 0n)
     if (context.purpose === JevPurpose.Entry) {
-      if (held.length !== 0) issues.push({ path: ['purpose'], issue: 'entry requires a reconciled flat account' })
+      if (context.concurrentDisjointPositions !== true) {
+        if (held.length !== 0) issues.push({ path: ['purpose'], issue: 'entry requires a reconciled flat account' })
+      } else if (
+        held.some(
+          (position) =>
+            BigInt(position.costBasisMicros) === 0n ||
+            BigInt(position.quantityAtoms) < 0n !== BigInt(position.costBasisMicros) < 0n,
+        )
+      ) {
+        issues.push({
+          path: ['brokerState', 'positions'],
+          issue: 'concurrent disjoint entry requires coherent signed held positions',
+        })
+      }
       return issues
     }
-    const position = held[0]
+    const isMultiLeg = isMultiLegManage
+    const plannedSymbols = new Set(Object.keys(context.exitPolicy.plans))
+    const ownedHeld = isMultiLeg ? held.filter((position) => plannedSymbols.has(position.symbol)) : held
     if (
-      held.length !== 1 ||
-      position === undefined ||
-      BigInt(position.quantityAtoms) === 0n ||
-      BigInt(position.costBasisMicros) === 0n ||
-      BigInt(position.quantityAtoms) < 0n !== BigInt(position.costBasisMicros) < 0n
+      ownedHeld.length === 0 ||
+      (!isMultiLeg && ownedHeld.length !== 1) ||
+      ownedHeld.length > planEntries.length ||
+      ownedHeld.some(
+        (position) =>
+          BigInt(position.quantityAtoms) === 0n ||
+          BigInt(position.costBasisMicros) === 0n ||
+          BigInt(position.quantityAtoms) < 0n !== BigInt(position.costBasisMicros) < 0n,
+      )
     ) {
       issues.push({
         path: ['brokerState', 'positions'],
-        issue: 'management requires one reconciled signed position with matching cost basis',
+        issue: 'management requires reconciled signed position(s) with matching cost basis',
       })
       return issues
     }
     const fills = context.entryFills
     if (context.profitExitRequested && context.exitRequestedAt === null)
       issues.push({ path: ['profitExitRequested'], issue: 'requires a durable protection cancellation request' })
-    const plan = context.exitPolicy.plans[position.symbol]
-    if (
-      plan === undefined ||
-      Object.keys(context.exitPolicy.plans).length !== 1 ||
-      plan.levels.symbol !== position.symbol ||
-      plan.levels.maximumHoldingMinutes !== context.exitPolicy.maximumHoldingMinutes ||
-      isShortExitPlan(plan) !== BigInt(position.quantityAtoms) < 0n ||
-      fills.some(
-        (fill) =>
-          fill.occurredAt < plan.levels.sourceEndAt ||
-          (isShortExitPlan(plan)
-            ? BigInt(fill.priceAtoms) < entryPlanPriceMicros(plan) * 1000n
-            : BigInt(fill.priceAtoms) > entryPlanPriceMicros(plan) * 1000n),
-      ) ||
-      fills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n) > BigInt(plan.maximumQuantityAtoms)
-    )
+    let planInvalid =
+      (!isMultiLeg && planEntries.length !== 1) || ownedHeld.some((pos) => !plannedSymbols.has(pos.symbol))
+    for (const [symbol, plan] of planEntries) {
+      const symbolFills = fills.filter((fill) => fill.symbol === symbol)
+      const heldPosition = ownedHeld.find((pos) => pos.symbol === symbol)
+      if (
+        plan.levels.symbol !== symbol ||
+        (isIntradayAlphaExitPlan(plan)
+          ? plan.levels.maximumHoldingMinutes > context.exitPolicy.maximumHoldingMinutes
+          : plan.levels.maximumHoldingMinutes !== context.exitPolicy.maximumHoldingMinutes) ||
+        (heldPosition !== undefined && isShortExitPlan(plan) !== BigInt(heldPosition.quantityAtoms) < 0n) ||
+        symbolFills.some(
+          (fill) =>
+            fill.occurredAt < plan.levels.sourceEndAt ||
+            (isShortExitPlan(plan)
+              ? BigInt(fill.priceAtoms) < entryPlanPriceMicros(plan) * 1000n
+              : BigInt(fill.priceAtoms) > entryPlanPriceMicros(plan) * 1000n),
+        ) ||
+        symbolFills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n) > BigInt(plan.maximumQuantityAtoms)
+      ) {
+        planInvalid = true
+        break
+      }
+    }
+    if (planInvalid)
       issues.push({ path: ['exitPolicy'], issue: 'actual entry fills must remain within the immutable pre-entry plan' })
     const fillIds = new Set(fills.map((fill) => fill.fillId))
+    const totalHeldAbsAtoms = ownedHeld.reduce((sum, pos) => {
+      const qty = BigInt(pos.quantityAtoms)
+      return sum + (qty < 0n ? -qty : qty)
+    }, 0n)
     if (
       fillIds.size !== fills.length ||
-      fills.some(
-        (fill, index) =>
+      fills.some((fill, index) => {
+        const fillPlan = context.exitPolicy.plans[fill.symbol]
+        return (
+          fillPlan === undefined ||
           fill.accountId !== state.account.accountId ||
-          fill.symbol !== position.symbol ||
-          fill.side !== (plan !== undefined && isShortExitPlan(plan) ? OrderSide.Sell : OrderSide.Buy) ||
+          fill.side !== (isShortExitPlan(fillPlan) ? OrderSide.Sell : OrderSide.Buy) ||
           fill.intentId === undefined ||
           !context.entryIntentIds.includes(fill.intentId) ||
           fill.occurredAt > state.positionsObservedAt ||
@@ -171,24 +237,28 @@ export const JevPortfolioSchema = Base.check(
               order.clientOrderId === fill.clientOrderId &&
               order.symbol === fill.symbol &&
               order.side === fill.side,
-          ),
-      ) ||
+          )
+        )
+      }) ||
       fills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n) -
         BigInt(context.entryInventoryDebit.quantityAtoms) -
         BigInt(context.protectionDisposals.quantityAtoms) !==
-        (BigInt(position.quantityAtoms) < 0n ? -BigInt(position.quantityAtoms) : BigInt(position.quantityAtoms))
+        totalHeldAbsAtoms
     )
       issues.push({
         path: ['entryFills'],
         issue:
           'complete canonical entry fills minus posted inventory debits must explain the held quantity and match reconciled orders',
       })
-    for (const order of state.orders.filter(
-      (order) =>
-        order.side === (plan !== undefined && isShortExitPlan(plan) ? OrderSide.Sell : OrderSide.Buy) &&
+    for (const order of state.orders.filter((order) => {
+      const orderPlan = context.exitPolicy.plans[order.symbol]
+      return (
+        orderPlan !== undefined &&
+        order.side === (isShortExitPlan(orderPlan) ? OrderSide.Sell : OrderSide.Buy) &&
         order.intentId !== undefined &&
-        context.entryIntentIds.includes(order.intentId),
-    )) {
+        context.entryIntentIds.includes(order.intentId)
+      )
+    })) {
       const filled = fills
         .filter((fill) => fill.brokerOrderId === order.brokerOrderId)
         .reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n)
@@ -204,9 +274,15 @@ export type JevManagedPortfolio = Extract<JevPortfolio, { readonly purpose: JevP
 
 export const jevManagedExitPlan = (
   portfolio: JevManagedPortfolio,
+  symbol?: string,
 ): Result.Result<FundedEntryExitPlan, JevContractError> => {
-  const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
-  const plan = position === undefined ? undefined : portfolio.exitPolicy.plans[position.symbol]
+  const targetSymbol =
+    symbol ??
+    portfolio.brokerState.positions.find(
+      ({ symbol: heldSymbol, quantityAtoms }) =>
+        BigInt(quantityAtoms) !== 0n && portfolio.exitPolicy.plans[heldSymbol] !== undefined,
+    )?.symbol
+  const plan = targetSymbol === undefined ? undefined : portfolio.exitPolicy.plans[targetSymbol]
   return plan === undefined
     ? Result.fail(new JevContractError({ message: 'Held position has no immutable strategy exit plan' }))
     : Result.succeed(plan)
@@ -245,6 +321,9 @@ export const jevPortfolioCandidates = (portfolio: JevPortfolio, candidates: read
   portfolio.purpose === JevPurpose.Entry
     ? candidates
     : portfolio.brokerState.positions
-        .filter((position) => BigInt(position.quantityAtoms) !== 0n)
+        .filter(
+          (position) =>
+            BigInt(position.quantityAtoms) !== 0n && portfolio.exitPolicy.plans[position.symbol] !== undefined,
+        )
         .map((position) => position.symbol)
         .sort()

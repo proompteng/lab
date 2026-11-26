@@ -19,7 +19,11 @@ export const entryAblationBehaviorHash = sha256('bayn.chart-entry-ablation.behav
 export const historicalAblationQuestionPolicyHash = (protocol: JevProtocolMaterial) =>
   canonicalHashV1Result(
     usesJevOnlyInference(protocol)
-      ? protocol.schemaVersion === 'bayn.jev.protocol.v41' || protocol.schemaVersion === 'bayn.jev.protocol.v40'
+      ? protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v40'
         ? stagedChartQuestionPolicy
         : retainedJevChartPolicy
       : protocol.schemaVersion === 'bayn.jev.protocol.v36' || protocol.schemaVersion === 'bayn.jev.protocol.v35'

@@ -1,13 +1,37 @@
+import { Effect } from 'effect'
+
 import { Authority } from '../execution/contracts'
 import { JevBatchPlanVersion } from '../jev/batch'
 import { makeMomentumEntryQuery } from '../jev/observation-query'
 import { buildStrategyCycleDecision, type ObserveDecisionInput } from '../observe-composition/decision-builder'
 import { observeChartEntry, type EntryObservation } from '../observe-composition/entry-observation'
-import { isRepeatedMomentumRuntime } from '../strategy'
+import { isIntradayAlphaRuntime, isRepeatedMomentumRuntime } from '../strategy'
+import { evaluateIntradayAlphaFromSnapshot, makeIntradayAlphaEntryQuery } from '../strategy/intraday-alpha/runtime'
 import { evaluateRepeatedMomentumFromSnapshot } from '../strategy/repeated-momentum/runtime'
 
 const observeResearchEntry: EntryObservation = (context) => {
   const strategy = context.strategy
+  if (isIntradayAlphaRuntime(strategy)) {
+    const policy = strategy.definition.parameters
+    return Effect.fromResult(
+      makeIntradayAlphaEntryQuery({
+        policy,
+        calendar: context.calendar,
+        sessionDate: context.sessionDate,
+        observedAtMs: Date.parse(context.observedAt),
+      }),
+    ).pipe(
+      Effect.flatMap((query) =>
+        evaluateIntradayAlphaFromSnapshot({
+          observation: context.observation,
+          rangeEndAt: query.rangeEndAt,
+          loadSnapshot: context.loadSnapshot(query),
+          policy,
+          admissionExpiresAt: context.admissionExpiresAt,
+        }),
+      ),
+    )
+  }
   if (isRepeatedMomentumRuntime(strategy)) {
     const query = makeMomentumEntryQuery({
       protocol: context.observation.protocol,
