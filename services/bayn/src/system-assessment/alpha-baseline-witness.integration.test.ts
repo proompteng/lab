@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
@@ -411,6 +411,42 @@ postgres('committed prospective alpha baseline preparation', () => {
       ),
     )
     expect(await runtime.runPromise(readWitnesses)).toEqual([])
+  })
+
+  test('an uncommitted registration cannot enqueue acquisition and its late outer commit rolls everything back', async () => {
+    const rejected = await runtime.runPromiseExit(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            // Admission appears earlier by clock, but remains in the same uncommitted parent transaction.
+            yield* sql.withTransaction(register)
+            yield* initializeCycle
+            yield* setClock('2026-09-04T12:01:04.000Z')
+            yield* recordNativeAlphaBaselinePreparation(sql, source.payload)
+            expect(yield* readSources).toHaveLength(1)
+            expect(yield* readPending).toEqual([])
+            expect(yield* readWitnesses).toEqual([])
+          }),
+        )
+      }),
+    )
+    expect(Exit.isFailure(rejected)).toBe(true)
+    if (Exit.isFailure(rejected))
+      expect(Cause.pretty(rejected.cause)).toContain('registration committed after the first open')
+    await runtime.runPromise(setClock('2026-09-04T12:01:05.000Z').pipe(Effect.andThen(witness)))
+    expect(await runtime.runPromise(readWitnesses)).toEqual([])
+    expect(await runtime.runPromise(readSources)).toEqual([])
+    expect(await runtime.runPromise(readPending)).toEqual([])
+    expect(
+      await runtime.runPromise(
+        Effect.flatMap(
+          PgClient.PgClient,
+          (sql) =>
+            sql`SELECT registration_hash FROM system_qualification_registrations WHERE registration_hash=${registrationHash}`,
+        ),
+      ),
+    ).toEqual([])
   })
 
   test('another generation cannot claim a native cycle just by sharing its account and policy', async () => {

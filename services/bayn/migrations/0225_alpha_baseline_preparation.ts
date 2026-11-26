@@ -149,6 +149,7 @@ export default Effect.gen(function* () {
         AND (policy #>> '{capitalAuthorization,buildLineage,activation,imageRepository}' IS NULL
           OR NEW.payload #>> '{executionBuild,imageRepository}'=policy #>> '{capitalAuthorization,buildLineage,activation,imageRepository}')
         AND registered.created_at <= (NEW.payload #>> '{acquisition,startedAt}')::timestamptz
+        AND system_evidence_source_committed(registered.xmin)
         AND EXISTS (SELECT 1 FROM jsonb_array_elements(registered.payload_text::jsonb #> '{calendar,sessions}') session
           WHERE (session->>'sessionDate')::date=NEW.session_date
             AND NEW.recorded_at >= (session->>'openAt')::timestamptz AND NEW.recorded_at < (session->>'closeAt')::timestamptz
