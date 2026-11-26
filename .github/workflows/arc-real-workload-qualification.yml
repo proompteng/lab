@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: arc-real-workload-followup-${{ github.event.pull_request.number }}
+  group: arc-real-workload-registry-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -20,23 +20,15 @@ jobs:
     timeout-minutes: 38
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 2
       matrix:
         arch: [amd64, arm64]
         image:
           - package: opencode-image
             revision: 9af2ccad3e6579fb0417e9691287532a81fe8596
             build_from_inputs: true
-          - package: bayn-image
-            revision: d6316076f3668423dab04d6b65f3e95fd4da60fb
-            build_from_inputs: true
-          - package: bayn-research-image
-            revision: d6316076f3668423dab04d6b65f3e95fd4da60fb
-            build_from_inputs: true
-          - package: proompteng-image
-            revision: 547f3b5a3dfd16ccad7819c85426c4f8f1a0aec6
-            build_from_inputs: false
     env:
+      ARCH: ${{ matrix.arch }}
       PACKAGE: ${{ matrix.image.package }}
       BUILD_FROM_INPUTS: ${{ matrix.image.build_from_inputs }}
       EXPECTED_SOURCE: ${{ matrix.image.revision }}
@@ -54,6 +46,10 @@ jobs:
           test -n "$ATTIC_PUBLIC_KEY"
           evidence="$RUNNER_TEMP/arc-real-workload"
           mkdir -p "$evidence"
+          crane export --platform "linux/$ARCH" \
+            docker.io/library/registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33 - |
+            tar -x -C "$evidence" bin/registry
+          test -x "$evidence/bin/registry"
           sudo -n -E /usr/bin/env "PATH=$PATH" unshare --mount --propagation private \
             bash -s -- "$evidence" "$GITHUB_WORKSPACE" <<'TRIAL'
           set -euo pipefail
@@ -92,15 +88,22 @@ jobs:
           import time
 
           cgroup, state = map(pathlib.Path, sys.argv[1:])
-          print("epoch\tphase\tscratch\tmemory\tinactive_file\tanon\tshmem\tmax\toom\toom_kill", flush=True)
+          print("epoch\tphase\tscratch\tmemory\tinactive_file\tanon\tshmem\tmax\toom\toom_kill\tregistry_rss", flush=True)
           while True:
               fs = os.statvfs("/scratch")
               mem = dict(line.split() for line in (cgroup / "memory.stat").read_text().splitlines())
               events = dict(line.split() for line in (cgroup / "memory.events").read_text().splitlines())
+              try:
+                  pid = (state / "registry.pid").read_text().strip()
+                  status = (pathlib.Path("/proc") / pid / "status").read_text()
+                  registry_rss = next(int(line.split()[1]) * 1024 for line in status.splitlines()
+                                      if line.startswith("VmRSS:"))
+              except (FileNotFoundError, StopIteration):
+                  registry_rss = 0
               print(time.time(), (state / "phase").read_text().strip(),
                     (fs.f_blocks - fs.f_bfree) * fs.f_frsize, int((cgroup / "memory.current").read_text()),
                     mem["inactive_file"], mem["anon"], mem["shmem"],
-                    events["max"], events["oom"], events["oom_kill"], sep="\t", flush=True)
+                    events["max"], events["oom"], events["oom_kill"], registry_rss, sep="\t", flush=True)
               time.sleep(0.5)
           SAMPLER
           sampler=$!
@@ -167,8 +170,19 @@ jobs:
           phase=stage-to-loopback
           printf '%s\n' "$phase" > "$state/phase"
           mkdir "$state/registry"
-          crane registry serve --address 127.0.0.1:18251 --disk "$state/registry" > "$state/registry.log" 2>&1 &
+          cat > "$state/registry.yaml" <<'REGISTRY'
+          version: 0.1
+          log:
+            level: error
+          storage:
+            filesystem:
+              rootdirectory: /run/arc-real-workload/registry
+          http:
+            addr: 127.0.0.1:18251
+          REGISTRY
+          OTEL_TRACES_EXPORTER=none "$state/bin/registry" serve "$state/registry.yaml" > "$state/registry.log" 2>&1 &
           registry=$!
+          printf '%s\n' "$registry" > "$state/registry.pid"
           for _ in $(seq 1 15); do
             if curl -fsS http://127.0.0.1:18251/v2/ >/dev/null; then break; fi
             sleep 1
