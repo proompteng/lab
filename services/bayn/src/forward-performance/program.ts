@@ -823,6 +823,10 @@ const completeForwardPerformanceInput = (
           ...(record.coin_cost_basis_micros === null ? {} : { inventoryCostMicros: record.coin_cost_basis_micros }),
         })),
       executionEvidence,
+      ...(postgres.alphaDecisions === undefined ? {} : { alphaDecisions: postgres.alphaDecisions }),
+      ...(postgres.unverifiedAlphaDecisionHashes === undefined
+        ? {}
+        : { unverifiedAlphaDecisionHashes: postgres.unverifiedAlphaDecisionHashes }),
       ...(postgres.unverifiedDecisionHashes === undefined
         ? {}
         : { unverifiedDecisionHashes: postgres.unverifiedDecisionHashes }),
