@@ -77,6 +77,10 @@ The tool emits `bayn.intraday-alpha-bar-scenario.v2`, the exact policy hash and 
 
 ## Prospective evaluation and cutover
 
+The [native alpha performance report](native-alpha-performance.md) links retained engine decisions and selected baskets
+to actual execution and completed accounting episodes. Its explicit cost and ownership gaps retain the distinction
+between supported gross results and fully costed prospective evidence.
+
 Evaluate new sessions under the unchanged policy identity before claiming an executable edge or expanding capital. Report realized morning, midday and noise-engine net separately, including actual broker fees and any funding/borrow charges. Require canonical accounting coverage, settled inventory and valid reconciliation before labeling a session economically complete. Retain unavailable and unresolved outcomes.
 
 Record committed attempts versus fills, sleeve overlaps, complete/partial/fallback baskets, signed and gross notional through the holding period, and the account's actual margin/reservation/protection state. Preserve contemporaneous IEX arrival, baseline, eligibility, decision and broker order/fill evidence. Freeze evaluation rules before observing a new cohort; do not retune on these sessions and call later slices holdout validation.

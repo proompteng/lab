@@ -10,7 +10,7 @@ All 66 August 25–November 25, 2026 calendar sessions remain. November 17 remai
 
 ## What the diagnostic measures
 
-[The tool](../../../../services/bayn/tools/analyze-intraday-alpha-cost-cohorts.ts) validates the full replay report shape, unique ordered calendar, scenario counts, checkpoint availability, modeled fee/price/quantity arithmetic, and ownership of every closed or unresolved leg by a committed attempt. Duplicate entry identities, orphan outcomes and silently dropped dates are rejected.
+[The tool](../../../../services/bayn/tools/analyze-intraday-alpha-cost-cohorts.ts) validates the replay fields consumed by this diagnostic, unique ordered calendar, scenario counts, checkpoint availability, modeled fee/price/quantity arithmetic, and ownership of every closed or unresolved leg by a committed attempt. Duplicate entry identities, orphan outcomes and silently dropped dates are rejected.
 
 An entry identity is (sessionDate, phase, symbol, direction, entryAt). Cost-altered quantity, prices and exit outcomes are deliberately excluded from the join key and compared separately. The intersection contains 261 supported closed entries: 45 morning, 168 midday and 48 noise. All 261 preserve quantity, exit timestamp and exit reason across the three scenarios. The tool retains those invariants, membership hashes, every calendar row and unavailable observations in [results.json](results.json).
 
