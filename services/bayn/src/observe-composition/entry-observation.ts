@@ -1,10 +1,11 @@
-import { Effect, Schema } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { AutonomousCycle } from '../cycle/model'
 import { operationalError, type OperationalError } from '../errors'
 import type { ExecutionSessionBinding } from '../execution-session'
 import { JevBatchPlanVersion } from '../jev/batch'
+import { jevSignalDueAtMs, jevSignalIntervalMs } from '../jev/observation-query'
 import type { JevContractError } from '../jev/contract'
 import { JevDecisionEvidenceSchema, prepareJevDecisionEvidence } from '../jev/decision'
 import { defaultJevProtocolDocument } from '../jev/protocol'
@@ -18,8 +19,9 @@ import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { strictParseOptions } from '../schemas'
 import type { ObserveDecisionAwaitingSignal } from './decision-builder'
 import type { CandidateObservationStore } from './candidate-observation'
+import { NativeAlphaBaselinePreparation } from './alpha-baseline-preparation'
 import { readEquityShortEligibility } from '../execution/equity-short'
-import { currentUtcInstant } from '../time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { BrokerRead } from '../broker/alpaca/model'
 import { equityClockSession } from '../equity-hours'
 import { withObservedStage } from '../telemetry'
@@ -155,7 +157,46 @@ export const observeNativeAlphaEntry = (
 }
 
 export const observeNativeEntry: EntryObservation = (context) => {
-  if (isIntradayAlphaRuntime(context.strategy)) return observeNativeAlphaEntry(context)
+  if (isIntradayAlphaRuntime(context.strategy)) {
+    const policy = context.strategy.definition.parameters
+    return Effect.gen(function* () {
+      const preparation = yield* Effect.serviceOption(NativeAlphaBaselinePreparation)
+      if (Option.isNone(preparation))
+        return yield* operationalError({
+          component: 'market-data',
+          operation: 'alpha-baseline-preparation',
+          message: 'Native alpha requires its durable prospective baseline preparation',
+        })
+      // Preparation commits on the existing preopen wake even when the subsequent entry query is still warming up.
+      const recorded = yield* preparation.value.prepare({
+        cycleId: context.observation.cycleId,
+        authorityGenerationHash: context.observation.authorityGenerationHash,
+        accountId: context.observation.portfolio.brokerState.account.accountId,
+        sessionDate: context.sessionDate,
+        calendar: context.calendar,
+        policy,
+      })
+      const query = yield* Effect.fromResult(
+        makeIntradayAlphaEntryQuery({
+          policy,
+          calendar: context.calendar,
+          sessionDate: context.sessionDate,
+          observedAtMs: Date.parse(context.observedAt),
+        }),
+      )
+      if (Date.parse(recorded.recordedAt) > Date.parse(context.observedAt))
+        return yield* new JevAwaitingEvidence({
+          message: 'Native alpha baseline preparation committed after this original admission cut',
+          readiness: DecisionReadinessReason.SnapshotUnavailable,
+          availableAt: utcInstantFromEpochMillis(
+            jevSignalDueAtMs(Date.parse(query.rangeEndAt) + jevSignalIntervalMs, policy.sharedProtocol),
+          ),
+        })
+      return yield* observeNativeAlphaEntry(context, () =>
+        Effect.succeed(recorded.payload.acquisition.trailingBaseline),
+      )
+    })
+  }
   return context.strategy.definition.parameters.schemaVersion === defaultJevProtocolDocument.schemaVersion
     ? observeChartEntry(
         {
