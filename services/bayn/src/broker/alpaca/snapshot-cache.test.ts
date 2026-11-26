@@ -827,20 +827,18 @@ describe('complete open broker order capture', () => {
     const read: BrokerReadShape = {
       ...source.read,
       orders: (query) =>
-        source.read
-          .orders(query)
-          .pipe(
-            Effect.flatMap((result) =>
-              query?.status !== OrderCollection.Open
-                ? Effect.succeed(result)
-                : openFailure !== undefined
-                  ? Effect.fail(openFailure)
-                  : Effect.succeed({
-                      value: openRows,
-                      evidence: { ...result.evidence, contentHash: Result.getOrThrow(canonicalHashV1Result(openRows)) },
-                    }),
-            ),
+        source.read.orders(query).pipe(
+          Effect.flatMap((result) =>
+            query?.status !== OrderCollection.Open
+              ? Effect.succeed(result)
+              : openFailure !== undefined
+                ? Effect.fail(openFailure)
+                : Effect.succeed({
+                    value: openRows,
+                    evidence: { ...result.evidence, contentHash: Result.getOrThrow(canonicalHashV1Result(openRows)) },
+                  }),
           ),
+        ),
     }
     return {
       source,
