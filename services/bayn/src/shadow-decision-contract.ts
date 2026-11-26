@@ -1043,7 +1043,7 @@ const streamingPricingEvidenceIssues = (
   )
     return [{ path: ['plannerInput'], issue: 'streaming execution requires quote-bound planner inputs' }]
   const target = document.strategyDecision
-  const isIntradayAlpha = target?.schemaVersion === 'bayn.intraday-alpha-target.v1'
+  const isIntradayAlpha = target?.schemaVersion === 'bayn.intraday-alpha-target.v2'
   const alphaBarCloses = isIntradayAlpha
     ? Result.gen(function* () {
         const rangeEndAt = target.evidence.observation.manifest['rangeEndAt']
@@ -1478,7 +1478,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
             targetWeights: jevPlanningTargetWeights(target),
             capitalMicros: observation.portfolio.brokerState.account.equityMicros,
             precision: observation.protocol.executionModel.precision,
-            ...(target.schemaVersion === 'bayn.intraday-alpha-target.v1' ? { ignoreDisplayedBidSize: true } : {}),
+            ...(target.schemaVersion === 'bayn.intraday-alpha-target.v2' ? { ignoreDisplayedBidSize: true } : {}),
           }),
           equityShortEntries: protectedEntryShortEligibility(target),
         }
@@ -1529,7 +1529,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
     target.selectedSymbols.some(
       (symbol) =>
         (document.entryLimitSlippageBps ?? 0) >
-        (target.schemaVersion === 'bayn.intraday-alpha-target.v1'
+        (target.schemaVersion === 'bayn.intraday-alpha-target.v2'
           ? target.policy.entryLimitSlippageBps
           : jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps),
     )
@@ -1552,7 +1552,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     !(target.schemaVersion === 'bayn.repeated-momentum-target.v1'
       ? momentumProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
-      : target.schemaVersion === 'bayn.intraday-alpha-target.v1'
+      : target.schemaVersion === 'bayn.intraday-alpha-target.v2'
         ? intradayAlphaProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
         : target.schemaVersion === 'bayn.entry-ablation-target.v1'
           ? ablationProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
@@ -1794,7 +1794,7 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
       issue: 'close limit allowance must bind a close-only limit plan within the intraday risk policy',
     })
   }
-  const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose !== undefined
+  const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose === 'forced-close'
   const intentTargetSymbols = document.targetPlan.intentTargets.map(({ symbol }) => symbol).toSorted()
   const plannedTargetSymbols = document.targetPlan.targets.map(({ symbol }) => symbol).toSorted()
   if (usesLiquidationMarketData !== requiresLiquidationMarketData) {

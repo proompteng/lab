@@ -4,23 +4,33 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { IntradayAlphaPhase } from '../src/strategy/intraday-alpha/policy'
-import { runIntradayAlphaReplayVerification } from './verify-intraday-alpha-replay'
+import { runIntradayAlphaReplayVerification as runReplay } from './verify-intraday-alpha-replay'
+
+const historyDates = ['2026-11-18', '2026-11-19', '2026-11-20', '2026-11-23', '2026-11-24']
 
 const calendar = (dates: readonly string[], close = '13:00') => ({
-  query: { start: dates[0], end: dates.at(-1) },
-  response: dates.map((date) => ({
+  query: { start: historyDates[0], end: dates.at(-1) },
+  response: [...historyDates, ...dates].map((date) => ({
     date,
     open: '09:30',
-    close,
+    close: historyDates.includes(date) ? '16:00' : close,
     session_open: '0400',
     session_close: '2000',
   })),
 })
 
-const rows = (date: string, minutes: number, price: (symbol: string, minute: number) => number | null) => {
+const runIntradayAlphaReplayVerification = (paths: readonly string[], input: ReturnType<typeof calendar>) =>
+  runReplay(paths, input, { evaluationStart: input.response[historyDates.length]?.date })
+
+const rows = (
+  date: string,
+  minutes: number,
+  price: (symbol: string, minute: number) => number | null,
+  symbols: readonly string[] = ['SPY', 'AAPL', 'AMD', 'AMZN', 'AVGO'],
+) => {
   const result: string[] = []
   const openMs = Date.parse(`${date}T14:30:00.000Z`)
-  for (const symbol of ['SPY', 'AAPL', 'AMD', 'AMZN', 'AVGO']) {
+  for (const symbol of symbols) {
     for (let minute = 0; minute < minutes; minute++) {
       const close = price(symbol, minute)
       if (close === null) continue
@@ -46,11 +56,24 @@ const middayPrice = (symbol: string, minute: number) => {
   return 100 + Math.max(0, Math.min(minute, 120) - 90) * slope
 }
 
-const withRows = <A>(lines: readonly string[], run: (path: string) => A): A => {
+const withRows = <A>(lines: readonly string[], run: (path: string) => A, includeHistory = true): A => {
   const directory = mkdtempSync(join(tmpdir(), 'bayn-alpha-replay-'))
   const path = join(directory, 'bars.tsv')
   try {
-    writeFileSync(path, `${lines.join('\n')}\n`)
+    const history = includeHistory
+      ? historyDates.flatMap((date) =>
+          rows(date, 390, (_symbol, minute) => 100 + minute * 0.0001, [
+            'SPY',
+            'AAPL',
+            'AMD',
+            'AMZN',
+            'AVGO',
+            'QQQ',
+            'SMH',
+          ]),
+        )
+      : []
+    writeFileSync(path, `${[...history, ...lines].join('\n')}\n`)
     return run(path)
   } finally {
     rmSync(directory, { recursive: true })
@@ -79,7 +102,7 @@ test('includes a 210-minute early close and exits midday positions after 12:55 E
   }
 })
 
-test('unfilled morning intents consume the same two attempts as durable production session history', () => {
+test('an unfilled morning intent consumes the v2 single attempt from durable production history', () => {
   const date = '2026-11-27'
   const triggers: Readonly<Record<string, number>> = { AAPL: 30, AMD: 34, AMZN: 38 }
   const lines = rows(date, 210, (symbol, minute) => {
@@ -94,7 +117,7 @@ test('unfilled morning intents consume the same two attempts as durable producti
     const morning = scenario.sessionDetails[0]?.attempts.filter(
       (attempt) => attempt.phase === IntradayAlphaPhase.MorningOrb,
     )
-    expect(morning?.map((attempt) => attempt.selectedSymbols)).toEqual([['AAPL'], ['AMD']])
+    expect(morning?.map((attempt) => attempt.selectedSymbols)).toEqual([['AAPL']])
     expect(morning?.flatMap((attempt) => attempt.filledSymbols)).toEqual([])
     expect(scenario.sessionDetails[0]?.trades.filter((trade) => trade.phase === IntradayAlphaPhase.MorningOrb)).toEqual(
       [],
@@ -128,16 +151,28 @@ test('missing post-deadline exit prices retain unresolved inventory and withhold
   }
 })
 
-test('keeps calendar sessions with no captured benchmark instead of selecting only complete full days', () => {
+test('retains a session with no current benchmark as unavailable even when its prior baseline is valid', () => {
   const dates = ['2026-11-25', '2026-11-27']
   const report = withRows(rows(dates[0] ?? '', 210, middayPrice), (path) =>
     runIntradayAlphaReplayVerification([path], calendar(dates)),
   )
   expect(report.sessions).toEqual(dates)
-  const missing = report.results[0]?.sessionDetails[1]
-  expect(missing?.benchmarkMinutes).toBe(0)
-  expect(missing?.attempts).toEqual([])
-  expect(missing?.trades).toEqual([])
+  for (const scenario of report.results) {
+    const missing = scenario.sessionDetails[1]
+    expect(missing?.baselineAvailable).toBe(true)
+    expect(missing?.benchmarkAvailable).toBe(false)
+    expect(missing?.benchmarkMinutes).toBe(0)
+    expect(missing?.attempts).toEqual([])
+    expect(missing?.trades).toEqual([])
+    expect(scenario.totalSessions).toBe(2)
+    expect(scenario.evaluatedSessions).toBe(1)
+    expect(scenario.unavailableSessions).toBe(1)
+    expect(scenario.totalNet).toBeNull()
+    expect(scenario.sharpe).toBeNull()
+    expect(scenario.maxDd).toBeNull()
+    expect(scenario.chronologicalSlices).toBeNull()
+    expect(scenario.recentDays[1]?.modeledNet).toBeNull()
+  }
 })
 
 test('reports partially filled midday baskets instead of implying planned dollar neutrality was realized', () => {
@@ -228,6 +263,77 @@ test('missing current bars cannot be replaced by earlier or future references fo
   }
 })
 
+test('concurrent sleeves wait for entry resolution and retain only filled disjoint inventory', () => {
+  const date = '2026-11-27'
+  const equities = rows(date, 210, (symbol, minute) => {
+    if (symbol === 'SPY') return 100 + minute * 0.001
+    if (symbol === 'AAPL' && minute >= 30) return 101
+    return 100 + Math.min(minute, 29) * 0.001
+  })
+  const etfs = rows(
+    date,
+    210,
+    (symbol, minute) => {
+      if (symbol === 'SMH' && minute === 32) return 103
+      return 100 + Math.min(minute, 30) * 0.01
+    },
+    ['QQQ', 'SMH'],
+  )
+  const report = withRows([...equities, ...etfs], (path) =>
+    runIntradayAlphaReplayVerification([path], calendar([date])),
+  )
+  for (const scenario of report.results) {
+    const day = scenario.sessionDetails[0]
+    const noise = day?.attempts.find((attempt) => attempt.phase === IntradayAlphaPhase.NoiseAreaTrend)
+    const morning = day?.attempts.find((attempt) => attempt.phase === IntradayAlphaPhase.MorningOrb)
+    expect(noise?.selectedSymbols).toEqual(['QQQ', 'SMH'])
+    expect(noise?.filledSymbols).toEqual(['QQQ'])
+    expect(morning?.occupiedSymbols).toEqual(['QQQ'])
+    expect((morning?.observedAt ?? '') >= (noise?.orderExpiresAt ?? 'z')).toBe(true)
+    expect(scenario.concurrentOverlaps).toBeGreaterThan(0)
+    expect(scenario.maximumConcurrentLegs).toBeGreaterThanOrEqual(2)
+    expect(scenario.totalPlannerBlocks).toBe(0)
+    const qqq = day?.trades.find((trade) => trade.symbol === 'QQQ')
+    expect(qqq?.entryAt).toBe('2026-11-27T15:02:00.000Z')
+    expect(qqq?.exitAt).toBe('2026-11-27T17:59:00.000Z')
+    expect(day?.trades.some((trade) => trade.symbol === 'SMH')).toBe(false)
+  }
+})
+
+test('v2 morning flatten caps a late fill at the absolute 11:28 ET deadline', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, (symbol, minute) => {
+    if (symbol === 'SPY') return 100 + minute * 0.001
+    if (symbol === 'AAPL' && minute >= 80) return 101
+    return 100 + Math.min(minute, 29) * 0.001
+  })
+  const report = withRows(lines, (path) => runIntradayAlphaReplayVerification([path], calendar([date])))
+  for (const scenario of report.results) {
+    const trade = scenario.sessionDetails[0]?.trades.find((entry) => entry.phase === IntradayAlphaPhase.MorningOrb)
+    expect(trade?.entryAt).toBe('2026-11-27T15:52:00.000Z')
+    expect(trade?.exitAt).toBe('2026-11-27T16:29:00.000Z')
+  }
+})
+
+test('missing supplied trailing history remains unavailable and cannot become a zero-profit evaluation', () => {
+  const date = '2026-11-27'
+  const report = withRows(
+    rows(date, 210, middayPrice),
+    (path) => runIntradayAlphaReplayVerification([path], calendar([date])),
+    false,
+  )
+  expect(report.policySchemaVersion).toBe('bayn.intraday-alpha-policy.v2')
+  expect(report.sessions).toEqual([date])
+  for (const scenario of report.results) {
+    expect(scenario.unavailableSessions).toBe(1)
+    expect(scenario.evaluatedSessions).toBe(0)
+    expect(scenario.totalNet).toBeNull()
+    expect(scenario.sharpe).toBeNull()
+    expect(scenario.recentDays[0]?.modeledNet).toBeNull()
+    expect(scenario.sessionDetails[0]?.baselineAvailable).toBe(false)
+  }
+})
+
 test('rejects conflicting bar revisions and dates outside the supplied calendar', () => {
   const date = '2026-11-27'
   const original = rows(date, 1, () => 100)
@@ -245,8 +351,10 @@ test('rejects conflicting bar revisions and dates outside the supplied calendar'
 test('retains source hashes and counts harmless identical duplicates', () => {
   const date = '2026-11-27'
   const original = rows(date, 1, () => 100)
-  const report = withRows([...original, ...original], (path) =>
-    runIntradayAlphaReplayVerification([path], calendar([date])),
+  const report = withRows(
+    [...original, ...original],
+    (path) => runIntradayAlphaReplayVerification([path], calendar([date])),
+    false,
   )
   expect(report.inputRows.identicalDuplicates).toBe(5)
   expect(report.inputRows.uniqueBars).toBe(5)

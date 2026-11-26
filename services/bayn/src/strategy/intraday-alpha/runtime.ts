@@ -15,6 +15,10 @@ import {
   IntradayCandidateEvidencePolicy,
   type IntradaySnapshotQuery,
 } from '../../market-data/intraday/model'
+import {
+  IntradayTrailingBaseline,
+  type IntradayAlphaTrailingBaseline,
+} from '../../market-data/intraday/trailing-baseline'
 import { CandidateObservationStore, candidateObservationLog } from '../../observe-composition/candidate-observation'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../../time'
 import { evaluateCatalystVetos, type CatalystVetoRequestInput } from './catalyst-veto'
@@ -82,10 +86,11 @@ export const makeIntradayAlphaEntryQuery = (input: {
   })
 }
 
-export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(input: {
-  readonly observation: Omit<Parameters<typeof makeOwnedIntradayAlphaObservation>[0], 'snapshot'>
+export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never, EB = never, RB = never>(input: {
+  readonly observation: Omit<Parameters<typeof makeOwnedIntradayAlphaObservation>[0], 'snapshot' | 'trailingBaseline'>
   readonly rangeEndAt: string
   readonly loadSnapshot: Effect.Effect<Parameters<typeof makeOwnedIntradayAlphaObservation>[0]['snapshot'], E, R>
+  readonly loadTrailingBaseline?: Effect.Effect<IntradayAlphaTrailingBaseline, EB, RB>
   readonly loadEligibility?: Effect.Effect<
     Parameters<typeof makeOwnedIntradayAlphaObservation>[0]['equityShortEligibility'],
     EE,
@@ -102,7 +107,7 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(
     const latest = yield* store.latestJevWindowEnd({
       cycleId: input.observation.cycleId,
       purpose: input.observation.portfolio.purpose,
-      schemaVersion: 'bayn.intraday-alpha-observation.v1',
+      schemaVersion: 'bayn.intraday-alpha-observation.v2',
     })
     if (Option.isSome(latest) && latest.value >= input.rangeEndAt)
       return yield* new JevAwaitingFreshWindow({
@@ -116,9 +121,36 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(
     const snapshot = yield* input.loadSnapshot
     if (snapshot.manifest.rangeEndAt !== input.rangeEndAt)
       return yield* new JevContractError({ message: 'Intraday alpha snapshot differs from its admitted window' })
+
+    let trailingBaseline: IntradayAlphaTrailingBaseline
+    if (input.loadTrailingBaseline !== undefined) {
+      trailingBaseline = yield* input.loadTrailingBaseline
+    } else {
+      const baselineService = yield* Effect.serviceOption(IntradayTrailingBaseline)
+      if (Option.isNone(baselineService)) {
+        return yield* new JevContractError({
+          message: 'Intraday alpha v2 requires the causal trailing-baseline service',
+        })
+      }
+      trailingBaseline = yield* baselineService.value.load({
+        sessionDate: snapshot.manifest.sessionDate,
+        symbols: input.policy.candidateSymbols,
+        noiseAreaSymbols: input.policy.noiseAreaSymbols,
+        lookbackSessions: input.policy.trailingBaseline.lookbackSessions,
+        minimumSessions: input.policy.trailingBaseline.minimumSessions,
+        sourceContract: {
+          provider: 'alpaca',
+          feed: snapshot.manifest.feed,
+          sourceTopic: snapshot.manifest.sourceTopics.bars,
+          universeId: snapshot.manifest.universeId,
+        },
+      })
+    }
+
     const owned = yield* Effect.fromResult(
       makeOwnedIntradayAlphaObservation({
         ...input.observation,
+        trailingBaseline,
         ...(equityShortEligibility === undefined ? {} : { equityShortEligibility }),
         snapshot,
       }),
@@ -150,14 +182,22 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(
       ),
     )
 
+    const occupiedSymbols = owned.payload.portfolio.brokerState.positions
+      .filter((position) => BigInt(position.quantityAtoms) !== 0n)
+      .map((position) => position.symbol)
+      .toSorted()
+
     const extracted = yield* Effect.fromResult(
       extractIntradayAlphaCandidates({
         snapshot,
         policy: input.policy,
+        trailingBaseline,
         accountId: owned.payload.portfolio.brokerState.account.accountId,
         ...(equityShortEligibility === undefined ? {} : { equityShortEligibility }),
+        occupiedSymbols,
         morningOrbTakenSymbols: sessionState.morningOrbTakenSymbols,
         middayReversionCompleted: sessionState.middayReversionCompleted,
+        noiseAreaTakenSymbols: sessionState.noiseAreaTakenSymbols ?? [],
       }),
     )
 
@@ -206,10 +246,11 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never>(
         readiness: DecisionReadinessReason.NoEligibleCandidate,
       })
     const evidence = {
-      schemaVersion: 'bayn.intraday-alpha-evidence.v1' as const,
+      schemaVersion: 'bayn.intraday-alpha-evidence.v2' as const,
       observation: owned.payload,
       morningOrbTakenSymbols: [...sessionState.morningOrbTakenSymbols].sort(),
       middayReversionCompleted: sessionState.middayReversionCompleted,
+      noiseAreaTakenSymbols: [...(sessionState.noiseAreaTakenSymbols ?? [])].sort(),
       catalystVetos,
       decidedAt,
     }

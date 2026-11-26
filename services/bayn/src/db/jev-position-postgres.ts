@@ -4,7 +4,7 @@ import { Effect, Layer, Schema } from 'effect'
 import { JevExitReason, JevExitTargetSchema } from '../jev/exit'
 
 import { operationalError } from '../errors'
-import { FillSchema } from '../execution/contracts'
+import { FillSchema, OrderStatus } from '../execution/contracts'
 import {
   decodeJevPortfolio,
   currentProtectionEvidenceVersion,
@@ -34,6 +34,39 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
     ) AS matches
   `,
     )
+    const externalOpenIntentIds = [
+      ...new Set(
+        state.orders
+          .filter(
+            (order) =>
+              ![OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected].includes(
+                order.status,
+              ) &&
+              (portfolio.purpose === JevPurpose.Entry || portfolio.exitPolicy.plans[order.symbol] === undefined),
+          )
+          .map((order) => order.intentId),
+      ),
+    ]
+    if (externalOpenIntentIds.some((id) => id === undefined)) {
+      return yield* operationalError({
+        component: 'database',
+        operation: 'jev-position',
+        message: 'Concurrent open order is missing its durable intent identity',
+      })
+    }
+    const verifiedExternalIntentIds = externalOpenIntentIds.filter((id): id is string => id !== undefined).sort()
+    if (verifiedExternalIntentIds.length > 0) {
+      yield* requireMatch(
+        yield* sql`
+      SELECT (
+        SELECT count(*)::integer FROM intents
+        WHERE account_id = ${state.account.accountId}
+          AND intent_id = ANY(${verifiedExternalIntentIds}::text[])
+          AND protection IS NOT NULL
+      ) = ${verifiedExternalIntentIds.length} AS matches
+    `,
+      )
+    }
     if (portfolio.purpose !== JevPurpose.Manage) return
     yield* requireMatch(
       yield* sql`
@@ -43,7 +76,7 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
       WHERE decision.cycle_id = ${cycleId} AND decision.decision_hash = ${portfolio.entryDecisionHash}
         AND cycle.strategy_name = 'jev' AND cycle.account_id = ${state.account.accountId}
         AND decision.document #>> '{bindings,accountId}' = cycle.account_id
-        AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v7', 'bayn.entry-ablation-target.v1', 'bayn.repeated-momentum-target.v1', 'bayn.intraday-alpha-target.v1')
+        AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v7', 'bayn.entry-ablation-target.v1', 'bayn.repeated-momentum-target.v1', 'bayn.intraday-alpha-target.v1', 'bayn.intraday-alpha-target.v2')
         AND decision.document #> '{strategyDecision,exitPolicy}' = ${JSON.stringify(portfolio.exitPolicy)}::jsonb
         AND NOT EXISTS (
           SELECT 1 FROM intents AS intent WHERE intent.cycle_id = ${cycleId} AND decision.document -> 'orderedIntentIds' ? intent.intent_id

@@ -101,7 +101,7 @@ import {
   type TargetPlannerFailure,
   type TargetPlanResult,
 } from '../target-planner/index'
-import { strategyTradingProtocol, type StrategyRuntime } from '../strategy'
+import { isIntradayAlphaRuntime, strategyTradingProtocol, type StrategyRuntime } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import type { IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
@@ -673,8 +673,13 @@ export const readObserveDecisionFacts = <R>(
         operation: 'current-decision',
         message: 'Unresolved broker mutations prevent Jev entry',
       })
+    const concurrentEntry = isIntradayAlphaRuntime(input.strategy)
     const portfolio = yield* Effect.fromResult(
-      decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: reconciliation.brokerState }),
+      decodeJevPortfolio({
+        purpose: JevPurpose.Entry,
+        brokerState: reconciliation.brokerState,
+        ...(concurrentEntry ? { concurrentDisjointPositions: true as const } : {}),
+      }),
     ).pipe(
       Effect.mapError((cause) =>
         operationalError({
@@ -959,7 +964,14 @@ const compileObserveStrategyDecision = <R>(
     const reconciliation =
       pricingReconciliation?.reconciliation ??
       (yield* input.reconcile.pipe(Effect.mapError(reconciliationOperationalError)))
-    yield* Effect.fromResult(decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: reconciliation.brokerState }))
+    const concurrentEntry = isIntradayAlphaRuntime(input.strategy)
+    yield* Effect.fromResult(
+      decodeJevPortfolio({
+        purpose: JevPurpose.Entry,
+        brokerState: reconciliation.brokerState,
+        ...(concurrentEntry ? { concurrentDisjointPositions: true as const } : {}),
+      }),
+    )
     if (reconciliation.riskContext.unknownMutationCount !== 0)
       return yield* operationalError({
         component: 'strategy',
@@ -1123,6 +1135,9 @@ export const prepareObservePlanner = <R>(
             askPriceMicros: compiled.askPriceMicros,
           })
           if (Result.isFailure(boundPrices)) return Result.fail(boundPrices.failure)
+          const hasCoHeldPositions =
+            isIntradayAlphaRuntime(input.strategy) &&
+            facts.reconciliation.brokerState.positions.some((position) => BigInt(position.quantityAtoms) !== 0n)
           const plannerInput: TargetPlannerInput = {
             schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
             ...commonPlannerInput,
@@ -1134,6 +1149,7 @@ export const prepareObservePlanner = <R>(
             },
             allocationCapitalMicros: overrides.allocationCapitalMicros,
             executionTerms: {
+              ...(hasCoHeldPositions ? { executionPurpose: 'disjoint-entry' as const } : {}),
               orderType: OrderType.Limit,
               timeInForce: cashSpotLimitTimeInForce(
                 input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
@@ -1404,6 +1420,7 @@ export function buildStrategyCycleDecision<R>(
     )
     let allocationCapitalMicros: bigint | undefined
     if (requirements.authorityRequirement === Authority.Execution) {
+      const disjointEntry = isIntradayAlphaRuntime(input.strategy)
       allocationCapitalMicros = hasExternalPosition
         ? 0n
         : yield* Effect.fromResult(
@@ -1419,6 +1436,13 @@ export function buildStrategyCycleDecision<R>(
                     : BigInt(input.policy.maxDailyTradedNotionalMicros),
                 maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
                 targetWeights: allocationTargetWeights,
+                ...(disjointEntry
+                  ? {
+                      disjointEntry: true,
+                      signedTargetWeights: planningTargetWeights,
+                      openOrders: facts.reconciliation.brokerState.orders,
+                    }
+                  : {}),
                 positions: facts.reconciliation.brokerState.positions,
                 referencePriceMicros: compiled.priceMicros,
               }),
@@ -1472,7 +1496,7 @@ export function buildStrategyCycleDecision<R>(
     }
     const entryLimitSlippageBps =
       requirements.documentMode === Authority.Execution
-        ? entryDecision.schemaVersion === 'bayn.intraday-alpha-target.v1'
+        ? entryDecision.schemaVersion === 'bayn.intraday-alpha-target.v2'
           ? Math.min(input.policy.maxAdverseSlippageBps, entryDecision.policy.entryLimitSlippageBps)
           : isProtectedEntryTarget(entryDecision)
             ? Math.min(
@@ -1616,6 +1640,7 @@ export type ClosingSymbolPass = {
 export const selectClosingSymbolPass = (
   positions: readonly Pick<Position, 'symbol' | 'quantityAtoms'>[],
   universe: readonly string[],
+  ownedSymbols?: readonly string[],
 ): ClosingSymbolPass => {
   const activePositions = positions
     .filter(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
@@ -1625,7 +1650,10 @@ export const selectClosingSymbolPass = (
   const externalSymbols = activePositions
     .filter(({ symbol }) => !allowedSymbols.has(symbol))
     .map(({ symbol }) => symbol)
-  const symbols = externalSymbols.length > 0 ? externalSymbols : activePositions.map(({ symbol }) => symbol)
+  const ownedSet = ownedSymbols === undefined ? undefined : new Set(ownedSymbols)
+  const scopedPositions =
+    ownedSet === undefined ? activePositions : activePositions.filter(({ symbol }) => ownedSet.has(symbol))
+  const symbols = externalSymbols.length > 0 ? externalSymbols : scopedPositions.map(({ symbol }) => symbol)
   const first = symbols[0]
   return {
     kind: externalSymbols.length > 0 ? 'broker-position' : 'quote-bound',
@@ -1790,9 +1818,14 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
     const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
       ? entryMarketData.universe
       : undefined
+    const ownedSymbols =
+      entryDocument.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+        ? Object.keys(entryDocument.strategyDecision.exitPolicy.plans).sort()
+        : undefined
     const closingPass = selectClosingSymbolPass(
       reconciliation.brokerState.positions,
       persistedUniverse ?? intradayParameters.universe,
+      ownedSymbols,
     )
     const symbols = closingPass.symbols
     const closingSymbol = symbols[0]

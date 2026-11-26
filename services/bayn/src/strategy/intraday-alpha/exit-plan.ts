@@ -33,7 +33,11 @@ const AlphaPlanSourceSchema = Schema.Struct({
   observationHash: Sha256Schema,
   policyHash: Sha256Schema,
   quoteHash: Sha256Schema,
-  phase: Schema.Literals([IntradayAlphaPhase.MorningOrb, IntradayAlphaPhase.MiddayReversion]),
+  phase: Schema.Literals([
+    IntradayAlphaPhase.MorningOrb,
+    IntradayAlphaPhase.MiddayReversion,
+    IntradayAlphaPhase.NoiseAreaTrend,
+  ]),
   setup: Schema.Enum(IntradayAlphaSetup),
 })
 

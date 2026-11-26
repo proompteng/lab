@@ -16,6 +16,10 @@ At the pre-release audit cutoff, deployed source was `d6316076f3668423dab04d6b65
 At the 08:47 UTC read, it had **zero post-activation cycles**. The following realized results belong to the
 previous v41/v43/v44 strategies, not the newly activated two-phase alpha strategy.
 
+The subsequent main change `781245143760bf6bc78dbd8c4afe0770f254d0f4` introduces the three-engine v2
+protocol and a separate activation cutover. This audit predates that release and supplies no realized
+performance evidence for either alpha protocol. See the [current cutover guide](../../intraday-alpha-cutover.md)
+for version-specific research and activation requirements.
 
 ## Retained lifetime account bridge
 
@@ -222,8 +226,8 @@ results and limitations separately.
 
 ## Decisions supported by this evidence
 
-1. Keep realized performance of the newly activated two-phase strategy separate from the historical v44 results.
-   Its first prospective PAPER session is still needed to measure actual trade and basket economics.
+1. Measure each successor policy as a separate prospective cohort. Historical v41/v43/v44 results do not establish
+   either alpha protocol's realized trade or basket economics.
 2. Prioritize replay/runtime parity, session coverage, actual costs and portfolio-level partial-fill behavior before
    treating the attractive offline alpha study as executable expected profit.
 3. Repair demonstrated feed/reconciliation availability defects while retaining the existing financial checks.

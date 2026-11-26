@@ -12,6 +12,7 @@ import {
   OrderSchema,
   OrderSide,
   OrderStatus,
+  OrderType,
   PositionSchema,
   ReconciliationSchema,
   ReconciliationStatus,
@@ -50,7 +51,11 @@ export const JevInventoryDebitSchema = Schema.Struct({
 })
 
 const Base = Schema.Union([
-  Schema.Struct({ purpose: Schema.Literal(JevPurpose.Entry), brokerState: ReconciledStateSchema }),
+  Schema.Struct({
+    purpose: Schema.Literal(JevPurpose.Entry),
+    brokerState: ReconciledStateSchema,
+    concurrentDisjointPositions: Schema.optionalKey(Schema.Literal(true)),
+  }),
   Schema.Struct({
     purpose: Schema.Literal(JevPurpose.Manage),
     protectionEvidenceVersion: Schema.optionalKey(Schema.Literal(currentProtectionEvidenceVersion)),
@@ -67,6 +72,19 @@ const Base = Schema.Union([
   }),
 ])
 
+const isKnownProtectionOrderForHeldPosition = (
+  order: typeof OrderSchema.Type,
+  heldBySymbol: ReadonlyMap<string, bigint>,
+): boolean => {
+  if (order.intentId === undefined) return false
+  const heldQty = heldBySymbol.get(order.symbol) ?? 0n
+  if (heldQty === 0n) return false
+  const expectedExitSide = heldQty < 0n ? OrderSide.Buy : OrderSide.Sell
+  return (
+    order.side === expectedExitSide && (order.orderType === OrderType.StopLimit || order.orderType === OrderType.Limit)
+  )
+}
+
 export const JevPortfolioSchema = Base.check(
   Schema.makeFilter((context) => {
     const issues: Schema.FilterIssue[] = []
@@ -79,15 +97,28 @@ export const JevPortfolioSchema = Base.check(
       state.reconciliation.accountId !== state.account.accountId
     )
       issues.push({ path: ['brokerState'], issue: 'requires an exact reconciliation of these broker-state bytes' })
+    const held = state.positions.filter((position) => BigInt(position.quantityAtoms) !== 0n)
+    const heldBySymbol = new Map(held.map((position) => [position.symbol, BigInt(position.quantityAtoms)] as const))
+    const planEntries = context.purpose === JevPurpose.Manage ? Object.entries(context.exitPolicy.plans) : []
+    const isMultiLegManage =
+      context.purpose === JevPurpose.Manage &&
+      (planEntries.length > 1 || planEntries.some(([, plan]) => isIntradayAlphaExitPlan(plan)))
     if (
       state.orders.some((order) => {
         if (
           [OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected].includes(order.status)
         )
           return false
-        if (context.purpose !== JevPurpose.Manage || order.intentId === undefined) return true
+        if (order.intentId === undefined) return true
+        if (context.purpose === JevPurpose.Entry) {
+          return context.concurrentDisjointPositions === true
+            ? !isKnownProtectionOrderForHeldPosition(order, heldBySymbol)
+            : true
+        }
         const protectionPlan = context.exitPolicy.plans[order.symbol]
-        if (protectionPlan === undefined) return true
+        if (protectionPlan === undefined) {
+          return isMultiLegManage ? !isKnownProtectionOrderForHeldPosition(order, heldBySymbol) : true
+        }
         return !(
           order.side === (isShortExitPlan(protectionPlan) ? OrderSide.Buy : OrderSide.Sell) &&
           context.protectionIntentIds.includes(order.intentId) &&
@@ -115,18 +146,31 @@ export const JevPortfolioSchema = Base.check(
         path: ['brokerState'],
         issue: 'reconciliation requires unique account-bound positions and orders observed before their snapshot',
       })
-    const held = state.positions.filter((position) => BigInt(position.quantityAtoms) !== 0n)
     if (context.purpose === JevPurpose.Entry) {
-      if (held.length !== 0) issues.push({ path: ['purpose'], issue: 'entry requires a reconciled flat account' })
+      if (context.concurrentDisjointPositions !== true) {
+        if (held.length !== 0) issues.push({ path: ['purpose'], issue: 'entry requires a reconciled flat account' })
+      } else if (
+        held.some(
+          (position) =>
+            BigInt(position.costBasisMicros) === 0n ||
+            BigInt(position.quantityAtoms) < 0n !== BigInt(position.costBasisMicros) < 0n,
+        )
+      ) {
+        issues.push({
+          path: ['brokerState', 'positions'],
+          issue: 'concurrent disjoint entry requires coherent signed held positions',
+        })
+      }
       return issues
     }
-    const planEntries = Object.entries(context.exitPolicy.plans)
-    const isMultiLeg = planEntries.length > 1 || planEntries.some(([, plan]) => isIntradayAlphaExitPlan(plan))
+    const isMultiLeg = isMultiLegManage
+    const plannedSymbols = new Set(Object.keys(context.exitPolicy.plans))
+    const ownedHeld = isMultiLeg ? held.filter((position) => plannedSymbols.has(position.symbol)) : held
     if (
-      held.length === 0 ||
-      (!isMultiLeg && held.length !== 1) ||
-      held.length > planEntries.length ||
-      held.some(
+      ownedHeld.length === 0 ||
+      (!isMultiLeg && ownedHeld.length !== 1) ||
+      ownedHeld.length > planEntries.length ||
+      ownedHeld.some(
         (position) =>
           BigInt(position.quantityAtoms) === 0n ||
           BigInt(position.costBasisMicros) === 0n ||
@@ -142,11 +186,11 @@ export const JevPortfolioSchema = Base.check(
     const fills = context.entryFills
     if (context.profitExitRequested && context.exitRequestedAt === null)
       issues.push({ path: ['profitExitRequested'], issue: 'requires a durable protection cancellation request' })
-    const plannedSymbols = new Set(Object.keys(context.exitPolicy.plans))
-    let planInvalid = (!isMultiLeg && planEntries.length !== 1) || held.some((pos) => !plannedSymbols.has(pos.symbol))
+    let planInvalid =
+      (!isMultiLeg && planEntries.length !== 1) || ownedHeld.some((pos) => !plannedSymbols.has(pos.symbol))
     for (const [symbol, plan] of planEntries) {
       const symbolFills = fills.filter((fill) => fill.symbol === symbol)
-      const heldPosition = held.find((pos) => pos.symbol === symbol)
+      const heldPosition = ownedHeld.find((pos) => pos.symbol === symbol)
       if (
         plan.levels.symbol !== symbol ||
         (isIntradayAlphaExitPlan(plan)
@@ -169,7 +213,7 @@ export const JevPortfolioSchema = Base.check(
     if (planInvalid)
       issues.push({ path: ['exitPolicy'], issue: 'actual entry fills must remain within the immutable pre-entry plan' })
     const fillIds = new Set(fills.map((fill) => fill.fillId))
-    const totalHeldAbsAtoms = held.reduce((sum, pos) => {
+    const totalHeldAbsAtoms = ownedHeld.reduce((sum, pos) => {
       const qty = BigInt(pos.quantityAtoms)
       return sum + (qty < 0n ? -qty : qty)
     }, 0n)
@@ -233,7 +277,11 @@ export const jevManagedExitPlan = (
   symbol?: string,
 ): Result.Result<FundedEntryExitPlan, JevContractError> => {
   const targetSymbol =
-    symbol ?? portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)?.symbol
+    symbol ??
+    portfolio.brokerState.positions.find(
+      ({ symbol: heldSymbol, quantityAtoms }) =>
+        BigInt(quantityAtoms) !== 0n && portfolio.exitPolicy.plans[heldSymbol] !== undefined,
+    )?.symbol
   const plan = targetSymbol === undefined ? undefined : portfolio.exitPolicy.plans[targetSymbol]
   return plan === undefined
     ? Result.fail(new JevContractError({ message: 'Held position has no immutable strategy exit plan' }))
@@ -273,6 +321,9 @@ export const jevPortfolioCandidates = (portfolio: JevPortfolio, candidates: read
   portfolio.purpose === JevPurpose.Entry
     ? candidates
     : portfolio.brokerState.positions
-        .filter((position) => BigInt(position.quantityAtoms) !== 0n)
+        .filter(
+          (position) =>
+            BigInt(position.quantityAtoms) !== 0n && portfolio.exitPolicy.plans[position.symbol] !== undefined,
+        )
         .map((position) => position.symbol)
         .sort()

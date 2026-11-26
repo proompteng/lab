@@ -25,10 +25,34 @@ test('removes sandbox turnover cap while preserving the complete live policy and
   expect(live.maxDailyTradedNotionalMicros).toBe('200000000000')
   expect(paper).toEqual({
     ...live,
-    schemaVersion: 'bayn.execution-risk-policy.v5',
+    schemaVersion: 'bayn.execution-risk-policy.v6',
+    maxGrossExposureMicros: '180000000000',
     maxDailyTradedNotionalMicros: null,
     maxDrawdownMicros: '10000000000',
   })
+  const retainedV5 = {
+    ...live,
+    schemaVersion: 'bayn.execution-risk-policy.v5' as const,
+    maxDailyTradedNotionalMicros: null,
+    maxDrawdownMicros: '10000000000',
+  }
+  expect(
+    Result.getOrThrow(
+      strategyExecutionRiskPolicy(
+        'test-account',
+        fixtureRuntime,
+        BrokerEnvironment.Sandbox,
+        Result.getOrThrow(
+          canonicalHashV1Result({
+            ...retainedV5,
+            accountId: 'test-account',
+            allowedSymbols: [...fixtureProtocol.universe].sort(),
+            maxOpenOrders: fixtureProtocol.universe.length,
+          }),
+        ),
+      ),
+    ).schemaVersion,
+  ).toBe('bayn.execution-risk-policy.v5')
   expect(
     Result.isFailure(Schema.decodeUnknownResult(PolicySchema)({ ...paper, schemaVersion: live.schemaVersion })),
   ).toBe(true)
