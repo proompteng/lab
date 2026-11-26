@@ -36,6 +36,7 @@ const files = [
   'src/cycle/store/integration.test.ts',
   'src/execution/intents/blocked-cycle-postgres.integration.test.ts',
   'src/forward-performance/postgres/read.integration.test.ts',
+  'src/forward-performance/postgres/alpha-decisions.integration.test.ts',
   'src/forward-performance/postgres/cycles.integration.test.ts',
   'src/forward-performance/postgres/first-cycle-queries.integration.test.ts',
   'src/forward-performance/postgres/inference-expense-sessions.integration.test.ts',
