@@ -96,12 +96,14 @@ export default Effect.gen(function* () {
         WHERE conrelid='system_evidence_cuts'::regclass AND contype='c'
           AND strpos(pg_get_constraintdef(oid),'''bayn.system-source-cut.v4''::text')>0 LOOP
         cut_shapes := cut_shapes + 1;
+        IF strpos(constraint_row.definition,'''bayn.operational-source-cut.v1''::text')=0 THEN
+          RAISE EXCEPTION 'unexpected retained operational source cut shape predecessor'; END IF;
+        -- Preserve every retained branch and predicate, including operational records, before adding v5.
+        definition := substring(constraint_row.definition FROM 7);
         EXECUTE format('ALTER TABLE system_evidence_cuts DROP CONSTRAINT %I, ADD CONSTRAINT %I %s',
           constraint_row.conname, constraint_row.conname,
-          $shape$CHECK ((jsonb_typeof(payload_text::jsonb)='object'
-            AND payload_text::jsonb->>'schemaVersion' IN ('bayn.system-source-cut.v4','bayn.system-source-cut.v5')
-            AND payload_text::jsonb->>'registrationHash' IS NOT DISTINCT FROM registration_hash
-            AND (payload_text::jsonb->>'asOf')::timestamptz IS NOT DISTINCT FROM as_of) IS TRUE)$shape$);
+          'CHECK (' || definition || ' OR ' || replace(definition,
+            '''bayn.system-source-cut.v4''::text','''bayn.system-source-cut.v5''::text') || ')');
       END LOOP;
       IF cut_shapes<>1 THEN RAISE EXCEPTION 'unexpected strategy-bound source cut shape predecessor'; END IF;
     END $migration$`

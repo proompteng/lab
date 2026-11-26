@@ -428,6 +428,7 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('operational registration preserves capital, has its own retained history and cannot certify economics', async () => {
+    await restorePriorAdmission(223)
     const base = operationalRegistrationFixture()
     const definition = base.policies[0]
     const operationalHistory = {
@@ -688,6 +689,26 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       ).toBe(true)
     const storedCompact = await runtime.runPromise(asApplication(persistOperationalSourceCut(compact)))
+    const retainedOperationalHistory = Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      return {
+        registrations: yield* sql`SELECT * FROM system_qualification_registrations ORDER BY registration_hash`,
+        cuts: yield* sql`SELECT * FROM system_evidence_cuts ORDER BY source_cut_hash`,
+        receipts: yield* sql`SELECT * FROM system_assessment_receipts ORDER BY assessment_hash`,
+        sources: yield* sql`SELECT * FROM system_source_records ORDER BY record_hash`,
+      }
+    })
+    const beforeEngineMigration = await runtime.runPromise(retainedOperationalHistory)
+    await runtime.runPromise(postgresMigrations)
+    expect(await runtime.runPromise(retainedOperationalHistory)).toEqual(beforeEngineMigration)
+    const postMigrationCompact = { ...compact, asOf: await runtime.runPromise(databaseNow) }
+    const postMigrationStored = await runtime.runPromise(
+      asApplication(persistOperationalSourceCut(postMigrationCompact)),
+    )
+    const postMigrationReplayed = await runtime.runPromise(
+      readOperationalAssessmentSourceCut(postMigrationStored.sourceCutHash, prospective),
+    )
+    expect('cut' in postMigrationReplayed && postMigrationReplayed.cut).toEqual(postMigrationCompact)
     expect(await runtime.runPromise(readSystemSourceCut(savedCut.sourceCutHash))).toEqual(savedCut.cut)
     expect(Exit.isFailure(await runtime.runPromiseExit(readSystemSourceCut(storedCompact.sourceCutHash)))).toBe(true)
     const replayed = await runtime.runPromise(

@@ -235,6 +235,29 @@ postgres('committed alpha observation witnesses', () => {
     expect(await runtime.runPromise(retainedWitnesses)).toEqual([
       { source_hash: observed.contentHash, witnessed_at: at(3000) },
     ])
+    // The consumed queue key is absent: rejection must come from the source-trigger guard, not a duplicate key.
+    expect(
+      await runtime.runPromise(
+        Effect.flatMap(
+          PgClient.PgClient,
+          (sql) => sql`SELECT count(*)::integer AS count FROM system_pending_evidence WHERE kind='ALPHA_OBSERVATION'`,
+        ),
+      ),
+    ).toEqual([{ count: 0 }])
+    expect(
+      Exit.isFailure(
+        await runtime.runPromiseExit(
+          atClock(
+            at(5000),
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              yield* sql`INSERT INTO system_pending_evidence(registration_hash,kind,source_hash,source_at,correct)
+        VALUES (${registrationHash},'ALPHA_OBSERVATION',${observed.contentHash},${market.observedAt},true)`
+            }),
+          ),
+        ),
+      ),
+    ).toBe(true)
   })
 
   test('a deferred source rejection leaves no witness and manual witness insertion is rejected', async () => {
