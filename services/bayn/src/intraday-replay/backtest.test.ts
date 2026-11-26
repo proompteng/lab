@@ -45,7 +45,8 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { MarketSourcesSchema } from '../market-data/streaming/raw-events'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { nativeReplayPolicyIdentity } from './native-policy'
-import { loadSharedJevProtocol } from '../strategy'
+import { loadSharedJevProtocol, isIntradayAlphaRuntime } from '../strategy'
+import { alphaReplayBaselineFixture } from './alpha-replay.test-support'
 const fixture = () => {
   const source = currentJevReplayFixture()
   const { verification: _verification, ...build } = config.build
@@ -112,6 +113,41 @@ const fixture = () => {
     },
   }
 }
+test.each([JevResearchPolicy.Candidate, JevResearchPolicy.Incumbent])(
+  'explicit %s alpha preparation selects the real engine and no provider capability',
+  (policy) => {
+    const retained = alphaReplayBaselineFixture()
+    const old = fixture()
+    const input = {
+      ...old,
+      schemaVersion: 'bayn.backtest.v12',
+      policy,
+      strategyBinding: retained.binding,
+      alphaBaselineSources: [retained.source],
+      build: {
+        ...old.build,
+        strategyBehaviorHash: retained.binding.strategy.behaviorHash,
+        strategyParameterHash: retained.binding.strategy.parameterHash,
+      },
+    }
+    const prepared = Result.getOrThrow(prepareBacktest(input))
+    expect(isIntradayAlphaRuntime(prepared.strategy)).toBe(true)
+    expect(Result.getOrThrow(canonicalHashV1Result(prepared.strategy.definition.parameters))).toBe(
+      Result.getOrThrow(canonicalHashV1Result(retained.binding.parameters)),
+    )
+    expect(prepared.policyIdentity.protocolHash).toBe(retained.binding.protocolHash)
+    expect(prepared.requiresInference).toBe(false)
+    expect(prepared.input.inference.costs.rates).toEqual([])
+    expect(prepared.alphaBaselineSources).toEqual([retained.source])
+    expect(Result.isFailure(prepareBacktest({ ...input, build: old.build }))).toBe(true)
+    expect(Result.isFailure(prepareBacktest({ ...input, schemaVersion: 'bayn.backtest.v11' }))).toBe(true)
+    expect(Result.isFailure(prepareBacktest({ ...input, alphaBaselineSources: undefined }))).toBe(true)
+    expect(Result.isFailure(prepareBacktest({ ...input, policy: JevResearchPolicy.Momentum }))).toBe(true)
+    const legacy = Result.getOrThrow(prepareBacktest(old))
+    expect(isIntradayAlphaRuntime(legacy.strategy)).toBe(false)
+    expect(legacy.policyIdentity.strategy.parameterSchemaVersion).toBe('bayn.jev.protocol.v44')
+  },
+)
 test('session preparation freezes the unchanged strategy and complete calendar interval', () => {
   const input = fixture()
   const first = Result.getOrThrow(prepareBacktest(input))

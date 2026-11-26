@@ -35,3 +35,17 @@ export const systemLatencyStressProtocol = {
 } as const
 
 export const systemLatencyStressProtocolHash = () => canonicalHashV1Result(systemLatencyStressProtocol)
+
+/** New registrations bind the actual engine and its event-driven information availability. */
+export const strategyBoundSystemLatencyStressProtocol = {
+  ...systemLatencyStressProtocol,
+  schemaVersion: 'bayn.system-latency-stress-protocol.v4',
+  calibration: 'COMPLETE_REGISTERED_NATIVE_DECISION_DURATIONS',
+  strategyBinding: 'EXPLICIT_COMPLETE_ENGINE_POLICY',
+  scheduling: 'RETAINED_SOURCE_AVAILABILITY_AND_NATIVE_DEADLINES',
+  alphaBaseline: 'SAME_SESSION_STRICTLY_PRIOR_DAYS_WITH_INDEPENDENT_DURABLE_WITNESS',
+  sourceFailures: 'INCOMPLETE_WITHOUT_FABRICATED_AVAILABILITY',
+} as const
+
+export const strategyBoundSystemLatencyStressProtocolHash = () =>
+  canonicalHashV1Result(strategyBoundSystemLatencyStressProtocol)

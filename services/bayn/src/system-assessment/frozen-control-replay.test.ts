@@ -32,6 +32,7 @@ test('an original single-position control binds its own registered carrier and o
 
 test('the frozen polling engine cannot qualify a streaming runtime by resealing its registration', () => {
   const original = fixture.input.latencyStress.registration
+  if (original.schemaVersion === 'bayn.system-registration.v6') throw new Error('Expected retained registration')
   const retained = original.obligations.configuration
   if (retained.schemaVersion !== 'bayn.qualification-runtime.v1') throw new Error('Expected retained polling runtime')
   const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...common } = retained

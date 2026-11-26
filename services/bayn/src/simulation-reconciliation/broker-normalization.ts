@@ -23,6 +23,7 @@ import {
   type Observed,
   type OrderEventInput,
   type ReconciliationError,
+  type ReconciledProtectionGroup,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
 
@@ -165,6 +166,7 @@ export const normalizeSnapshot = (
       if (!bindingByClient.has(binding.clientOrderId)) bindingByClient.set(binding.clientOrderId, binding)
     }
     const rows: Observed<BrokerOrder>[] = []
+    const protectionGroups: ReconciledProtectionGroup[] = []
     const verifiedChildren = new Map<string, BrokerOrder>()
     for (const observed of snapshot.history.orders.rows) {
       rows.push(observed)
@@ -182,6 +184,13 @@ export const normalizeSnapshot = (
       })
       if (Result.isFailure(children))
         return yield* Result.fail(validationFailure('UnexpectedOrderEvent', children.failure))
+      protectionGroups.push({
+        intentId: binding.intentId,
+        symbol: binding.symbol,
+        quantityAtoms: binding.quantityAtoms,
+        protection: binding.protection,
+        parent: observed,
+      })
       for (const child of children.success) {
         if (verifiedChildren.has(child.brokerOrderId))
           return yield* Result.fail(
@@ -218,6 +227,7 @@ export const normalizeSnapshot = (
       cashReportingQuantumMicros: snapshot.account.value.cashReportingQuantumMicros,
       positions,
       orderEvents: Chunk.toReadonlyArray(orders.events),
+      protectionGroups,
       fillEvents,
       fees: snapshot.history.fees,
     }

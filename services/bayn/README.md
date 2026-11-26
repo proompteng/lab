@@ -679,8 +679,11 @@ capital-authorizing build. Compatible releases preserve the original generation 
 registration binds the existing approved request and build lineage to its physical build. Financial capture verifies
 that saved binding when the reporting worker is later upgraded, preserving late-fee evidence. An unknown or different
 worker build cannot establish correctly completed controller work or supported reporting provenance. Current qualification
-uses `bayn.qualification-runtime.v2` with `decisionTrigger: streaming`. Retained v1 registrations remain readable, while
-old polling latency/replay studies cannot qualify this runtime; a new prospective registration and live evidence are required.
+uses `bayn.qualification-runtime.v3` with `decisionTrigger: streaming` and an explicit complete strategy binding.
+Retained v1/v2 registrations remain readable. Old polling latency/replay studies cannot qualify this runtime;
+a new prospective v6 registration and independently witnessed live evidence are required. Candidate and incumbent
+are comparison roles; either can bind the native Jev v44 or intraday alpha v2 engine. The incumbent must still match
+its independently witnessed serving generation and retain separate account, store and authority identity.
 
 This hard migration changes handler and journal shapes. Roll out immutable `RestateDeployment` revisions so in-flight
 invocations retain their pinned old deployment. Do not force-repin an old invocation onto this revision. The controller
@@ -2318,8 +2321,8 @@ node services/bayn/dist/research/backtest-command.js \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
-Set `BAYN_JEV_API_KEY` and `BAYN_EGRESS_PROXY` through the existing protected environment. Current
-requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
+Provider-backed replay uses `BAYN_JEV_API_KEY` and `BAYN_EGRESS_PROXY` through the existing protected environment.
+Retained requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
 `models: {"jev": "jev-1.14.0"}`, `inputDefinition: "bayn.jev-entry-state.v24"` and a positive `maximumCalls`
 shared by every Jev stage. The input binds `jevInstructionsHash` to the exact compiled instruction document.
 `bayn-backtest --instructions` reports it. `costs` uses `bayn.inference-rate-card.v1` with effective-dated provider/model
@@ -2331,6 +2334,19 @@ The input also declares
 An unknown allocation preserves execution evidence while making sessions and net results incomplete; it never
 becomes a zero expense. Control comparisons and net-label training require a priced allocation. Changing these
 assumptions changes the run identity.
+
+New explicit-engine requests use `bayn.backtest.v12`, `strategyBinding` and `alphaBaselineSources`, and emit
+`bayn.backtest-report.v10`. Their decision scheduler consumes retained source arrivals, actual broker changes and
+the native controller's absolute deadlines across reporting boundaries. `pollIntervalMs` remains a legacy input
+field and does not schedule v12 decisions. Registered replay requires authenticated original arrival evidence,
+the complete native calendar, the exact engine policy and independently witnessed alpha baseline availability.
+See [native replay and qualification](src/system-assessment/README.md#native-engine-replay-and-timing).
+
+The current alpha v2 policy disables catalyst inference. Its replay acquires no provider client, requires no provider
+tariffs, and must retain zero provider calls; broker, data and operating costs keep their usual evidence requirements.
+Only a baseline witnessed before the replay's original decision cut can be used. An unwitnessed first baseline or
+unavailable peer-engine source remains an explicit gap and prevents complete economics. Historical observation
+timestamps cannot be substituted for independent availability.
 
 An unregistered equity backtest can pass `--equity-execution-tape execution.json` and include
 `equityExecutionTape` with the file's `sha256`, `startAt`, and `endAt` in its input. The tape uses
