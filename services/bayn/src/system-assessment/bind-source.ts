@@ -36,10 +36,13 @@ export const bindSystemSourceCut = (
   Result.gen(function* () {
     const data = yield* Schema.decodeUnknownResult(SystemAssessmentInputSchema)(input)
     const fail = (message: string) => Result.fail(new SystemAssessmentError({ message }))
-    if (
-      (data.registration.schemaVersion === 'bayn.system-registration.v6') !==
-      (cut.schemaVersion === 'bayn.system-source-cut.v5')
-    )
+    const expectedCutVersion =
+      data.registration.schemaVersion === 'bayn.system-registration.v7'
+        ? 'bayn.system-source-cut.v6'
+        : data.registration.schemaVersion === 'bayn.system-registration.v6'
+          ? 'bayn.system-source-cut.v5'
+          : 'bayn.system-source-cut.v4'
+    if (cut.schemaVersion !== expectedCutVersion)
       return yield* fail('Source cut version differs from the registered native engine contract')
     const cutHash = yield* canonicalHashV1Result(cut)
     if (
@@ -59,7 +62,9 @@ export const bindSystemSourceCut = (
     const witnessedCut: SystemSourceCut =
       cut.schemaVersion === 'bayn.system-source-cut.v4'
         ? { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
-        : { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
+        : cut.schemaVersion === 'bayn.system-source-cut.v5'
+          ? { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
+          : { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
     const definitionHash = yield* canonicalHashV1Result(candidate)
     const financialAccounts = yield* registeredFinancialAccounts(data.registration, cut.financial)
     const nativeCalendar = isNativeSystemRegistration(data.registration)

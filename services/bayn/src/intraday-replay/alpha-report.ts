@@ -10,8 +10,14 @@ import {
 } from '../strategy/intraday-alpha/observation'
 import { ResearchStrategyEngine, type ResearchStrategyBinding } from '../system-assessment/strategy-binding'
 import type { AlphaBaselineSource } from '../system-assessment/alpha-observation-witness'
+import type { PreparedAlphaBaselineSource } from '../system-assessment/alpha-baseline-witness'
 import { prepareReplayAlphaBaselineSources, selectReplayAlphaBaselineSource } from './alpha-baseline'
-import { ReplayAlphaBaselineUseSchema } from './alpha-baseline-use'
+import { prepareReplayAlphaBaselinePreparations, selectReplayAlphaBaselinePreparation } from './alpha-prepared-baseline'
+import {
+  AnyReplayAlphaBaselineUseSchema,
+  ReplayAlphaBaselineUseSchema,
+  PreparedReplayAlphaBaselineUseSchema,
+} from './alpha-baseline-use'
 import type { ReplayObservationLatencyReceipt } from './decision-latency'
 import { ReplayBrokerFailure } from './broker'
 
@@ -19,6 +25,11 @@ export const ReplayAlphaObservationSchema = Schema.Struct({
   contentHash: Sha256Schema,
   payload: IntradayAlphaObservationSchema,
   baselineUse: ReplayAlphaBaselineUseSchema,
+})
+export const PreparedReplayAlphaObservationSchema = Schema.Struct({
+  contentHash: Sha256Schema,
+  payload: IntradayAlphaObservationSchema,
+  baselineUse: PreparedReplayAlphaBaselineUseSchema,
 })
 export const ReplayAlphaBaselineGapSchema = Schema.Struct({
   reason: Schema.Literal('MISSING_CAUSAL_ALPHA_BASELINE'),
@@ -28,26 +39,38 @@ export const ReplayAlphaBaselineGapSchema = Schema.Struct({
 })
 export type ReplayAlphaBaselineGap = typeof ReplayAlphaBaselineGapSchema.Type
 
-/** Source portfolio and eligibility never replace the replay broker; only the witnessed historical baseline is reused. */
-export const verifyReplayAlphaEvidence = (input: {
+interface AlphaEvidenceInput {
   readonly binding: ResearchStrategyBinding
-  readonly sources: readonly AlphaBaselineSource[]
-  readonly observations: readonly (typeof ReplayAlphaObservationSchema.Type)[]
+  readonly observations: readonly (
+    | typeof ReplayAlphaObservationSchema.Type
+    | typeof PreparedReplayAlphaObservationSchema.Type
+  )[]
   readonly baselineGaps: readonly ReplayAlphaBaselineGap[]
   readonly decisions: readonly unknown[]
   readonly runId: string
   readonly observationReleases?: readonly ReplayObservationLatencyReceipt[]
-}) =>
+}
+type AlphaEvidenceSources =
+  | { readonly sourceKind: 'observation'; readonly sources: readonly AlphaBaselineSource[] }
+  | { readonly sourceKind: 'preparation'; readonly preparations: readonly PreparedAlphaBaselineSource[] }
+
+/** Source portfolio and eligibility never replace the replay broker; only the witnessed historical baseline is reused. */
+const verifyAlphaEvidence = (input: AlphaEvidenceInput & AlphaEvidenceSources) =>
   Result.gen(function* () {
     const fail = (message: string) => Result.fail(new ReplayBrokerFailure({ message }))
     const binding = input.binding
+    const preparations =
+      input.sourceKind === 'preparation'
+        ? yield* prepareReplayAlphaBaselinePreparations(binding, input.preparations)
+        : []
     if (binding.engine !== ResearchStrategyEngine.IntradayAlpha) {
       if (input.observations.length !== 0 || input.baselineGaps.length !== 0)
         return yield* fail('A different replay engine cannot claim alpha observations or baseline gaps')
       return []
     }
     const accountId = `replay-${input.runId}`
-    const sources = yield* prepareReplayAlphaBaselineSources(binding, input.sources)
+    const sources =
+      input.sourceKind === 'observation' ? yield* prepareReplayAlphaBaselineSources(binding, input.sources) : []
     const releases = new Map(input.observationReleases?.map((receipt) => [receipt.observationHash, receipt]) ?? [])
     if (releases.size !== (input.observationReleases?.length ?? 0))
       return yield* fail('Alpha observation release inventory duplicates its command identity')
@@ -56,7 +79,12 @@ export const verifyReplayAlphaEvidence = (input: {
     for (const row of input.observations) {
       const observed = yield* reproduceIntradayAlphaObservation(row.payload)
       const manifest = observed.snapshot.manifest
-      const use = yield* Schema.decodeUnknownResult(ReplayAlphaBaselineUseSchema, strictParseOptions)(row.baselineUse)
+      const use = yield* Schema.decodeUnknownResult(
+        AnyReplayAlphaBaselineUseSchema,
+        strictParseOptions,
+      )(row.baselineUse)
+      if ((input.sourceKind === 'preparation') !== (use.schemaVersion === 'bayn.replay-alpha-baseline-use.v2'))
+        return yield* fail('Alpha baseline-use receipt differs from its replay source version')
       const release = releases.get(row.contentHash)
       if (
         seen.has(row.contentHash) ||
@@ -82,28 +110,42 @@ export const verifyReplayAlphaEvidence = (input: {
           (release.commandIssuedAt !== use.commandIssuedAt || release.observedAt !== observed.observedAt))
       )
         return yield* fail('Alpha baseline-use receipt changed its original command, admission, owner or window')
-      const source = yield* selectReplayAlphaBaselineSource(
-        binding,
-        sources,
-        {
-          sessionDate: manifest.sessionDate,
-          symbols: binding.parameters.candidateSymbols,
-          noiseAreaSymbols: binding.parameters.noiseAreaSymbols,
-          lookbackSessions: binding.parameters.trailingBaseline.lookbackSessions,
-          minimumSessions: binding.parameters.trailingBaseline.minimumSessions,
-          sourceContract: {
-            provider: 'alpaca',
-            feed: manifest.feed,
-            sourceTopic: manifest.sourceTopics.bars,
-            universeId: manifest.universeId,
-          },
+      const query = {
+        sessionDate: manifest.sessionDate,
+        symbols: binding.parameters.candidateSymbols,
+        noiseAreaSymbols: binding.parameters.noiseAreaSymbols,
+        lookbackSessions: binding.parameters.trailingBaseline.lookbackSessions,
+        minimumSessions: binding.parameters.trailingBaseline.minimumSessions,
+        sourceContract: {
+          provider: 'alpaca' as const,
+          feed: manifest.feed,
+          sourceTopic: manifest.sourceTopics.bars,
+          universeId: manifest.universeId,
         },
-        use.admissionObservedAt,
-      )
-      const baselineHash = yield* canonicalHashV1Result(source.payload.trailingBaseline)
+      }
+      const selected =
+        input.sourceKind === 'preparation'
+          ? yield* selectReplayAlphaBaselinePreparation(binding, preparations, query, use.commandIssuedAt).pipe(
+              Result.map((source) => ({
+                sourceHash: source.preparationHash,
+                witnessSourceHash: source.witnessSourceHash,
+                baseline: source.payload.acquisition.trailingBaseline,
+              })),
+            )
+          : yield* selectReplayAlphaBaselineSource(binding, sources, query, use.admissionObservedAt).pipe(
+              Result.map((source) => ({
+                sourceHash: source.observationHash,
+                witnessSourceHash: source.witnessSourceHash,
+                baseline: source.payload.trailingBaseline,
+              })),
+            )
+      const baselineHash = yield* canonicalHashV1Result(selected.baseline)
       if (
-        source.observationHash !== use.sourceObservationHash ||
-        source.witnessSourceHash !== use.sourceWitnessHash ||
+        selected.sourceHash !==
+          (use.schemaVersion === 'bayn.replay-alpha-baseline-use.v2'
+            ? use.sourcePreparationHash
+            : use.sourceObservationHash) ||
+        selected.witnessSourceHash !== use.sourceWitnessHash ||
         baselineHash !== use.baselineHash ||
         baselineHash !== (yield* canonicalHashV1Result(observed.trailingBaseline))
       )
@@ -140,9 +182,13 @@ export const verifyReplayAlphaEvidence = (input: {
     for (const gap of input.baselineGaps) {
       const key = `${gap.sessionDate}:${gap.observedAt}`
       const firstAvailable =
-        input.sources
-          .filter((source) => source.payload.trailingBaseline.sessionDate === gap.sessionDate)
-          .toSorted((a, b) => Date.parse(a.availableAt) - Date.parse(b.availableAt))[0]?.availableAt ?? null
+        input.sourceKind === 'preparation'
+          ? (preparations
+              .filter((source) => source.payload.sessionDate === gap.sessionDate)
+              .toSorted((a, b) => Date.parse(a.availableAt) - Date.parse(b.availableAt))[0]?.availableAt ?? null)
+          : (sources
+              .filter((source) => source.payload.trailingBaseline.sessionDate === gap.sessionDate)
+              .toSorted((a, b) => Date.parse(a.availableAt) - Date.parse(b.availableAt))[0]?.availableAt ?? null)
       if (
         gapKeys.has(key) ||
         gap.firstAvailableAt !== firstAvailable ||
@@ -153,3 +199,17 @@ export const verifyReplayAlphaEvidence = (input: {
     }
     return observations
   })
+
+export const verifyReplayAlphaEvidence = (
+  input: Omit<AlphaEvidenceInput, 'observations'> & {
+    readonly observations: readonly (typeof ReplayAlphaObservationSchema.Type)[]
+    readonly sources: readonly AlphaBaselineSource[]
+  },
+) => verifyAlphaEvidence({ ...input, sourceKind: 'observation' })
+
+export const verifyPreparedReplayAlphaEvidence = (
+  input: Omit<AlphaEvidenceInput, 'observations'> & {
+    readonly observations: readonly (typeof PreparedReplayAlphaObservationSchema.Type)[]
+    readonly preparations: readonly PreparedAlphaBaselineSource[]
+  },
+) => verifyAlphaEvidence({ ...input, sourceKind: 'preparation' })

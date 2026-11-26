@@ -47,6 +47,7 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import { nativeReplayPolicyIdentity } from './native-policy'
 import { loadSharedJevProtocol, isIntradayAlphaRuntime } from '../strategy'
 import { alphaReplayBaselineFixture } from './alpha-replay.test-support'
+import { preparedReplayAlphaBaselineFixture } from './alpha-prepared-baseline.test-support'
 const fixture = () => {
   const source = currentJevReplayFixture()
   const { verification: _verification, ...build } = config.build
@@ -148,6 +149,34 @@ test.each([JevResearchPolicy.Candidate, JevResearchPolicy.Incumbent])(
     expect(legacy.policyIdentity.strategy.parameterSchemaVersion).toBe('bayn.jev.protocol.v44')
   },
 )
+test('v13 preparation uses its explicit prospective source contract without accepting a v12 source fallback', () => {
+  const retained = preparedReplayAlphaBaselineFixture()
+  const old = fixture()
+  const input = {
+    ...old,
+    schemaVersion: 'bayn.backtest.v13',
+    strategyBinding: retained.binding,
+    alphaBaselinePreparations: [retained.source],
+    build: {
+      ...old.build,
+      strategyBehaviorHash: retained.binding.strategy.behaviorHash,
+      strategyParameterHash: retained.binding.strategy.parameterHash,
+    },
+  }
+  const prepared = Result.getOrThrow(prepareBacktest(input))
+  expect(isIntradayAlphaRuntime(prepared.strategy)).toBe(true)
+  expect(prepared.requiresInference).toBe(false)
+  expect(prepared.input.schemaVersion).toBe('bayn.backtest.v13')
+  expect(prepared.alphaBaselinePreparations).toEqual([retained.source])
+  expect(prepared.alphaBaselineSources).toEqual([])
+  expect(Result.isSuccess(prepareBacktest({ ...input, alphaBaselinePreparations: [] }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, alphaBaselinePreparations: undefined }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, schemaVersion: 'bayn.backtest.v12' }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, build: old.build }))).toBe(true)
+  expect(
+    Result.isFailure(prepareBacktest({ ...input, alphaBaselineSources: [alphaReplayBaselineFixture().source] })),
+  ).toBe(true)
+})
 test('session preparation freezes the unchanged strategy and complete calendar interval', () => {
   const input = fixture()
   const first = Result.getOrThrow(prepareBacktest(input))

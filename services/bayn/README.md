@@ -2335,18 +2335,22 @@ An unknown allocation preserves execution evidence while making sessions and net
 becomes a zero expense. Control comparisons and net-label training require a priced allocation. Changing these
 assumptions changes the run identity.
 
-New explicit-engine requests use `bayn.backtest.v12`, `strategyBinding` and `alphaBaselineSources`, and emit
-`bayn.backtest-report.v10`. Their decision scheduler consumes retained source arrivals, actual broker changes and
+New explicit-engine requests use `bayn.backtest.v13`, `strategyBinding` and `alphaBaselinePreparations`, and emit
+`bayn.backtest-report.v11`. Retained v12 requests preserve their `alphaBaselineSources` and report-v10 contract.
+Their decision scheduler consumes retained source arrivals, actual broker changes and
 the native controller's absolute deadlines across reporting boundaries. `pollIntervalMs` remains a legacy input
-field and does not schedule v12 decisions. Registered replay requires authenticated original arrival evidence,
+field and does not schedule v12/v13 decisions. Registered replay requires authenticated original arrival evidence,
 the complete native calendar, the exact engine policy and independently witnessed alpha baseline availability.
 See [native replay and qualification](src/system-assessment/README.md#native-engine-replay-and-timing).
 
 The current alpha v2 policy disables catalyst inference. Its replay acquires no provider client, requires no provider
 tariffs, and must retain zero provider calls; broker, data and operating costs keep their usual evidence requirements.
-Only a baseline witnessed before the replay's original decision cut can be used. An unwitnessed first baseline or
-unavailable peer-engine source remains an explicit gap and prevents complete economics. Historical observation
-timestamps cannot be substituted for independent availability.
+Native alpha prepares and commits its pure market baseline on the existing native wake before regular-session warmup,
+retaining actual query inputs and acquisition clocks. Native reuse requires that source by the original observation
+cut. Research v13 additionally requires an independent committed witness by the original command start, retaining
+both clocks and exact source hashes in the report. An unwitnessed first baseline or unavailable peer-engine source
+remains an explicit gap and prevents complete economics. Historical observation timestamps and refreshed snapshots
+cannot be substituted for independent availability.
 
 An unregistered equity backtest can pass `--equity-execution-tape execution.json` and include
 `equityExecutionTape` with the file's `sha256`, `startAt`, and `endAt` in its input. The tape uses

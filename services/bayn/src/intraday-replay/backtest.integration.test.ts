@@ -2,6 +2,8 @@ import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { nativeReplayPolicyIdentity, nativeReplayStrategyIdentity } from './native-policy'
 import { alphaTradeReplayFixture } from './alpha-replay.test-support'
+import { preparedReplayAlphaBaselineFixture } from './alpha-prepared-baseline.test-support'
+import { PreparedReplayAlphaObservationSchema, ReplayAlphaObservationSchema } from './alpha-report'
 import { IntradayAlphaPhase, intradayAlphaEquityMarketProfile } from '../strategy/intraday-alpha/policy'
 import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
 import { loadSharedJevProtocol } from '../strategy'
@@ -248,6 +250,7 @@ durableTest.each([
   'momentum-trading',
   'momentum-trading-sip',
   'alpha-trading',
+  'alpha-prepared-trading',
 ] as const)(
   'native backtest retains %s execution through measured bootstrap and cleanup latency',
   async (boundary) => {
@@ -260,7 +263,8 @@ durableTest.each([
       !/^127\.0\.0\.1:\d+$/.test(baynTestTigerBeetleAddress)
     )
       throw new Error('Backtest acceptance requires isolated local test databases')
-    const alphaFixture = boundary === 'alpha-trading' ? alphaTradeReplayFixture() : null
+    const alphaFixture = boundary.startsWith('alpha-') ? alphaTradeReplayFixture() : null
+    const preparedFixture = boundary === 'alpha-prepared-trading' ? preparedReplayAlphaBaselineFixture() : null
     const trading = alphaFixture !== null || boundary === 'momentum-trading' || boundary === 'momentum-trading-sip'
     const retained = alphaFixture ?? (trading ? momentumTradeReplayFixture() : retainedReplayFixture())
     const market = alphaFixture === null ? equityMarketProfile : intradayAlphaEquityMarketProfile
@@ -339,9 +343,10 @@ durableTest.each([
           ...(alphaFixture === null
             ? { schemaVersion: 'bayn.backtest.v11' }
             : {
-                schemaVersion: 'bayn.backtest.v12',
+                ...(preparedFixture === null
+                  ? { schemaVersion: 'bayn.backtest.v12', alphaBaselineSources: alphaFixture.alphaBaselineSources }
+                  : { schemaVersion: 'bayn.backtest.v13', alphaBaselinePreparations: [preparedFixture.source] }),
                 strategyBinding: alphaFixture.binding,
-                alphaBaselineSources: alphaFixture.alphaBaselineSources,
                 equityShortAccount: {
                   shortingEnabled: true,
                   noShorting: false,
@@ -614,7 +619,9 @@ durableTest.each([
             )
           if (alphaFixture === null) expect(report.momentumObservations.length).toBeGreaterThan(0)
           else {
-            expect(report.schemaVersion).toBe('bayn.backtest-report.v10')
+            expect(report.schemaVersion).toBe(
+              preparedFixture === null ? 'bayn.backtest-report.v10' : 'bayn.backtest-report.v11',
+            )
             expect(report.momentumObservations).toEqual([])
             expect(report.alphaObservations?.length).toBeGreaterThan(0)
             expect(report.alphaBaselineGaps).toEqual([])
@@ -628,8 +635,23 @@ durableTest.each([
                 Date.parse(observation.payload.observedAt),
               )
               expect(Date.parse(observation.payload.observedAt)).toBeLessThan(Date.parse(use.admissionExpiresAt))
-              expect(use.sourceObservationHash).toBe(alphaFixture.alphaBaselineSources[0]?.observationHash)
-              expect(use.sourceWitnessHash).toBe(alphaFixture.alphaBaselineSources[0]?.witnessSourceHash)
+              if (preparedFixture === null) {
+                if (use.schemaVersion !== 'bayn.replay-alpha-baseline-use.v1')
+                  throw new Error('Retained v12 replay changed its baseline-use contract')
+                expect(use.sourceObservationHash).toBe(alphaFixture.alphaBaselineSources[0]?.observationHash)
+                expect(use.sourceWitnessHash).toBe(alphaFixture.alphaBaselineSources[0]?.witnessSourceHash)
+              } else {
+                if (use.schemaVersion !== 'bayn.replay-alpha-baseline-use.v2')
+                  throw new Error('Prepared v13 replay omitted its original command and source receipt')
+                expect(use.sourcePreparationHash).toBe(preparedFixture.source.preparationHash)
+                expect(use.sourceWitnessHash).toBe(preparedFixture.source.witnessSourceHash)
+                expect(use.baselineHash).toBe(
+                  Result.getOrThrow(canonicalHashV1Result(preparedFixture.source.payload.acquisition.trailingBaseline)),
+                )
+                expect(Date.parse(preparedFixture.source.availableAt)).toBeLessThanOrEqual(
+                  Date.parse(use.commandIssuedAt),
+                )
+              }
             }
             const documents = report.decisions.map((row) => Result.getOrThrow(decodeExecutionDecisionDocument(row)))
             const selected = documents.find(
@@ -717,7 +739,11 @@ durableTest.each([
                 Schema.fromJsonString(
                   Schema.Struct({
                     schemaVersion: Schema.Literal(
-                      alphaFixture === null ? 'bayn.backtest-report.v9' : 'bayn.backtest-report.v10',
+                      alphaFixture === null
+                        ? 'bayn.backtest-report.v9'
+                        : preparedFixture === null
+                          ? 'bayn.backtest-report.v10'
+                          : 'bayn.backtest-report.v11',
                     ),
                     profitability: Schema.Literal('UNPROVEN'),
                     completion: Schema.Literals(['COMPLETE', 'INCOMPLETE']),
@@ -729,6 +755,9 @@ durableTest.each([
                       equityExecutionTape: Schema.optionalKey(EquityExecutionTapeReferenceSchema),
                     }),
                     brokerCheckpoint: ReplayBrokerCheckpointSchema,
+                    alphaObservations: Schema.optionalKey(
+                      Schema.Array(Schema.Union([ReplayAlphaObservationSchema, PreparedReplayAlphaObservationSchema])),
+                    ),
                     inference: Schema.Struct({
                       providerDispatchCount: Schema.Number,
                       retainedCallCount: Schema.Number,
@@ -745,6 +774,24 @@ durableTest.each([
           })
           expect(cliReport.comparisonInput.equityExecutionTape).toEqual(tapeReference)
           expect(cliReport.brokerCheckpoint.state.ledger.openingCashMicros).toBe('100000000000')
+          if (preparedFixture !== null) {
+            expect(cliReport.alphaObservations?.length).toBeGreaterThan(0)
+            for (const observation of cliReport.alphaObservations ?? []) {
+              const use = observation.baselineUse
+              if (use.schemaVersion !== 'bayn.replay-alpha-baseline-use.v2')
+                throw new Error('Compiled v13 report changed its prepared source contract')
+              expect(use.sourcePreparationHash).toBe(preparedFixture.source.preparationHash)
+              expect(use.sourceWitnessHash).toBe(preparedFixture.source.witnessSourceHash)
+              expect(Date.parse(preparedFixture.source.availableAt)).toBeLessThanOrEqual(
+                Date.parse(use.commandIssuedAt),
+              )
+              expect(Date.parse(use.commandIssuedAt)).toBeLessThanOrEqual(Date.parse(use.admissionObservedAt))
+            }
+            expect(cliReport.brokerCheckpoint.state.fills.length).toBeGreaterThanOrEqual(8)
+            expect(new Set(cliReport.brokerCheckpoint.state.fills.map((fill) => fill.symbol))).toEqual(
+              new Set(['COHR', 'LITE', 'MU', 'SNDK']),
+            )
+          }
           if (trading) {
             expect(cliReport.executableSha256).toBe(sha256(yield* fs.readFile(commandPath)))
             expect(cliReport.completion).toBe('COMPLETE')

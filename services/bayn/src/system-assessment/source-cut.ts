@@ -22,6 +22,7 @@ import { ControllerPassEvidenceSchema } from './decision-work'
 import { JevBatchPlanSchema, JevBatchResultSchema } from '../jev/batch'
 import { JevObservationSchema } from '../jev/observation-contract'
 import { IntradayAlphaObservationSchema } from '../strategy/intraday-alpha/observation'
+import { RecordedAlphaBaselinePreparationSchema } from '../observe-composition/alpha-baseline-preparation'
 
 export const RetainedSystemDurableObservationSchema = Schema.Struct({
   kind: Schema.Literals(['DECISION', 'RECONCILIATION', 'MUTATION', 'CONTROLLER', 'BATCH']),
@@ -34,6 +35,19 @@ export const RetainedSystemDurableObservationSchema = Schema.Struct({
 export const SystemDurableObservationSchema = Schema.Struct({
   ...RetainedSystemDurableObservationSchema.fields,
   kind: Schema.Literals(['DECISION', 'RECONCILIATION', 'MUTATION', 'CONTROLLER', 'BATCH', 'ALPHA_OBSERVATION']),
+})
+
+export const PreparedAlphaSystemDurableObservationSchema = Schema.Struct({
+  ...SystemDurableObservationSchema.fields,
+  kind: Schema.Literals([
+    'DECISION',
+    'RECONCILIATION',
+    'MUTATION',
+    'CONTROLLER',
+    'BATCH',
+    'ALPHA_OBSERVATION',
+    'ALPHA_BASELINE',
+  ]),
 })
 
 export const AlphaObservationEvidenceSchema = Schema.Struct({
@@ -112,11 +126,23 @@ export const StrategyBoundSystemSourceCutSchema = Schema.Struct({
   durableObservations: Schema.Array(SystemDurableObservationSchema),
 })
 
-export const SystemSourceCutSchema = Schema.Union([RetainedSystemSourceCutSchema, StrategyBoundSystemSourceCutSchema])
+export const PreparedAlphaSystemSourceCutSchema = Schema.Struct({
+  ...StrategyBoundSystemSourceCutSchema.fields,
+  schemaVersion: Schema.Literal('bayn.system-source-cut.v6'),
+  alphaBaselinePreparations: Schema.Array(RecordedAlphaBaselinePreparationSchema),
+  durableObservations: Schema.Array(PreparedAlphaSystemDurableObservationSchema),
+})
+
+export const SystemSourceCutSchema = Schema.Union([
+  RetainedSystemSourceCutSchema,
+  StrategyBoundSystemSourceCutSchema,
+  PreparedAlphaSystemSourceCutSchema,
+])
 
 export type SystemSourceCut = typeof SystemSourceCutSchema.Type
 export type RetainedSystemSourceCut = typeof RetainedSystemSourceCutSchema.Type
 export type StrategyBoundSystemSourceCut = typeof StrategyBoundSystemSourceCutSchema.Type
+export type PreparedAlphaSystemSourceCut = typeof PreparedAlphaSystemSourceCutSchema.Type
 
 export const persistSystemSourceCut = (input: unknown) =>
   Effect.gen(function* () {

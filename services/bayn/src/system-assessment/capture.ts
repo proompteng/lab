@@ -3,10 +3,12 @@ import {
   readSystemFeeSettlementAnchors,
   readSystemBatchEvidence,
   readSystemAlphaObservations,
+  readSystemAlphaBaselinePreparations,
   readSystemMutationEvidence,
   readSystemControllerPasses,
   readSystemDurableObservations,
   readStrategyBoundSystemDurableObservations,
+  readPreparedAlphaSystemDurableObservations,
   readSystemDecisionAdmissions,
   systemDecisionQuery,
 } from './capture-queries'
@@ -37,6 +39,7 @@ import {
   nativeBrokerRecoveryClose,
   registeredMarkIntervalMs,
   isNativeSystemRegistration,
+  isStrategyBoundSystemRegistration,
   type SystemRegistration,
 } from './policy'
 import { measureControllerLatency } from './controller-latency'
@@ -54,6 +57,7 @@ import { captureNativeBrokerStatements } from './broker-statements'
 import { incumbentTigerBeetle, openIncumbentPostgres } from './incumbent-store'
 import { requirePairedIncumbentWitness } from './paired-witness'
 import { forwardPerformanceSnapshot } from '../forward-performance/postgres/snapshot'
+import { derivePreparedAlphaBaselineSources } from './alpha-baseline-witness'
 
 const readSnapshotTime = (sql: PgClient.PgClient) =>
   Effect.gen(function* () {
@@ -354,18 +358,23 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             asOf,
           )
           const durableObservations =
-            registration.schemaVersion === 'bayn.system-registration.v6'
-              ? yield* readStrategyBoundSystemDurableObservations(registrationHash, asOf)
-              : yield* readSystemDurableObservations(registrationHash)
-          const alphaObservations =
-            registration.schemaVersion === 'bayn.system-registration.v6'
-              ? yield* readSystemAlphaObservations(
-                  identity.accountId,
-                  candidate.authorityGenerationHash,
-                  registration.calendar,
-                  asOf,
-                  yield* Effect.fromResult(canonicalHashV1Result(registration.obligations.configuration.protocol)),
-                )
+            registration.schemaVersion === 'bayn.system-registration.v7'
+              ? yield* readPreparedAlphaSystemDurableObservations(registrationHash, asOf)
+              : registration.schemaVersion === 'bayn.system-registration.v6'
+                ? yield* readStrategyBoundSystemDurableObservations(registrationHash, asOf)
+                : yield* readSystemDurableObservations(registrationHash)
+          const alphaObservations = isStrategyBoundSystemRegistration(registration)
+            ? yield* readSystemAlphaObservations(
+                identity.accountId,
+                candidate.authorityGenerationHash,
+                registration.calendar,
+                asOf,
+                yield* Effect.fromResult(canonicalHashV1Result(registration.obligations.configuration.protocol)),
+              )
+            : []
+          const alphaBaselinePreparations =
+            registration.schemaVersion === 'bayn.system-registration.v7'
+              ? yield* readSystemAlphaBaselinePreparations(registration, asOf)
               : []
           const decisionAdmissions = yield* readSystemDecisionAdmissions({
             accountId: identity.accountId,
@@ -405,6 +414,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             decisionAdmissions,
             batches,
             alphaObservations,
+            alphaBaselinePreparations,
             fills,
           }
         }),
@@ -433,6 +443,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         decisionAdmissions,
         batches,
         alphaObservations,
+        alphaBaselinePreparations,
         fills,
       } = captured
       const candidateLedger = yield* makeTigerBeetleRequestClient(config)
@@ -484,15 +495,18 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         controllerPasses,
         durableObservations,
         decisionAdmissions,
-        ...(registration.schemaVersion === 'bayn.system-registration.v6' ? { alphaObservations } : {}),
+        ...(isStrategyBoundSystemRegistration(registration) ? { alphaObservations } : {}),
+        ...(registration.schemaVersion === 'bayn.system-registration.v7' ? { alphaBaselinePreparations } : {}),
       }
       const cut = yield* Schema.decodeUnknownEffect(
         SystemSourceCutSchema,
         strictParseOptions,
       )({
-        ...(registration.schemaVersion === 'bayn.system-registration.v6'
-          ? { schemaVersion: 'bayn.system-source-cut.v5', alphaObservations }
-          : { schemaVersion: 'bayn.system-source-cut.v4' }),
+        ...(registration.schemaVersion === 'bayn.system-registration.v7'
+          ? { schemaVersion: 'bayn.system-source-cut.v6', alphaObservations, alphaBaselinePreparations }
+          : registration.schemaVersion === 'bayn.system-registration.v6'
+            ? { schemaVersion: 'bayn.system-source-cut.v5', alphaObservations }
+            : { schemaVersion: 'bayn.system-source-cut.v4' }),
         decisionAdmissions,
         registrationHash,
         asOf,
@@ -521,6 +535,8 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         sourceMaterial,
         sourceMaterialHash: yield* Effect.fromResult(canonicalHashV1Result(sourceMaterial)),
       })
+      if (cut.schemaVersion === 'bayn.system-source-cut.v6')
+        yield* Effect.fromResult(derivePreparedAlphaBaselineSources(cut))
       const saved = yield* persistSystemSourceCut(cut)
       return {
         sourceCutHash: saved.sourceCutHash,

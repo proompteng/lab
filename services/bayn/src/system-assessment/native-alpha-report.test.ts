@@ -15,6 +15,7 @@ import { MarketSourcesSchema } from '../market-data/streaming/raw-events'
 import { makeOwnedIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { nativeAlphaDecisionFixture } from '../strategy/intraday-alpha/alpha-decision.test-support'
 import { makeAlphaStreamingSnapshot, makeFlatAlphaPortfolio } from '../strategy/intraday-alpha/test-support'
+import { preparedAlphaBaselineFixture } from '../observe-composition/alpha-baseline-preparation.test-support'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { config } from '../testing/runtime-fixtures'
 import { deriveAlphaBaselineSources } from './alpha-observation-witness'
@@ -27,7 +28,7 @@ import { registeredAllocationMicros } from './policy'
 
 /** Self-declared synthetic artifacts exercise strict reproduction; no image or execution attestation is invented. */
 const fixture = () => {
-  const f = alphaLatencyFixture()
+  const f = alphaLatencyFixture({}, preparedAlphaBaselineFixture().payload.acquisition.trailingBaseline)
   const assumptions = {
     instruments: replayTestInstruments,
     latencyMs: 0,

@@ -21,6 +21,8 @@ import { qualificationCalendar } from './calendar'
 import { SystemAssessmentError } from './economics'
 import { measureRegisteredDecisionLatency } from './native-decision-latency'
 import { deriveAlphaBaselineSources } from './alpha-observation-witness'
+import { derivePreparedAlphaBaselineSources } from './alpha-baseline-witness'
+import { verifyRegisteredAlphaBaselinePreparations } from './alpha-baseline-capture'
 import {
   ResearchStrategyEngine,
   researchStrategyPolicyMaterial,
@@ -28,6 +30,7 @@ import {
 } from './strategy-binding'
 import {
   SystemRegistrationSchema,
+  isStrategyBoundSystemRegistration,
   registeredAllocationMicros,
   verifyStoredSystemRegistration,
   type SystemRegistration,
@@ -38,6 +41,8 @@ import {
   systemLatencyStressProtocolHash,
   strategyBoundSystemLatencyStressProtocol,
   strategyBoundSystemLatencyStressProtocolHash,
+  preparedAlphaSystemLatencyStressProtocol,
+  preparedAlphaSystemLatencyStressProtocolHash,
 } from './latency-protocol'
 
 export const SystemLatencyReplaySchema = Schema.Struct({
@@ -95,7 +100,7 @@ export const bindLatencyReplayInput = (
 ) =>
   Result.gen(function* () {
     const fail = (message: string) => Result.fail(new SystemAssessmentError({ message }))
-    if (registration.schemaVersion === 'bayn.system-registration.v6')
+    if (isStrategyBoundSystemRegistration(registration))
       return yield* bindStrategyLatencyReplayInput(input, registration, brokerIdentity)
     if (input.schemaVersion !== 'bayn.backtest.v11')
       return yield* fail('Retained registration requires its original replay input version')
@@ -202,15 +207,21 @@ export const bindLatencyReplayInput = (
 export const prepareSystemLatencyReplay = (input: typeof SystemLatencyReplaySchema.Type) =>
   Result.gen(function* () {
     const { registration } = yield* verifyStoredSystemRegistration(input.registration)
-    const strategyBound = registration.schemaVersion === 'bayn.system-registration.v6'
-    const protocolHash = yield* strategyBound
-      ? strategyBoundSystemLatencyStressProtocolHash()
-      : systemLatencyStressProtocolHash()
+    const preparedAlpha = registration.schemaVersion === 'bayn.system-registration.v7'
+    const strategyBound = isStrategyBoundSystemRegistration(registration)
+    const protocolHash = yield* preparedAlpha
+      ? preparedAlphaSystemLatencyStressProtocolHash()
+      : strategyBound
+        ? strategyBoundSystemLatencyStressProtocolHash()
+        : systemLatencyStressProtocolHash()
+    const expectedSourceCutVersion = preparedAlpha
+      ? 'bayn.system-source-cut.v6'
+      : strategyBound
+        ? 'bayn.system-source-cut.v5'
+        : 'bayn.system-source-cut.v4'
     if (
       registration.latencyStressProtocolHash !== protocolHash ||
-      (strategyBound
-        ? input.sourceCut.schemaVersion !== 'bayn.system-source-cut.v5'
-        : input.sourceCut.schemaVersion !== 'bayn.system-source-cut.v4') ||
+      input.sourceCut.schemaVersion !== expectedSourceCutVersion ||
       (yield* canonicalHashV1Result(input.sourceCut.sourceMaterial)) !== input.sourceCut.sourceMaterialHash
     )
       return yield* Result.fail(
@@ -224,7 +235,11 @@ export const prepareSystemLatencyReplay = (input: typeof SystemLatencyReplaySche
     return {
       registration,
       brokerIdentity: input.brokerIdentity,
-      protocol: strategyBound ? strategyBoundSystemLatencyStressProtocol : systemLatencyStressProtocol,
+      protocol: preparedAlpha
+        ? preparedAlphaSystemLatencyStressProtocol
+        : strategyBound
+          ? strategyBoundSystemLatencyStressProtocol
+          : systemLatencyStressProtocol,
       protocolHash,
       calibration,
       p95FullBatchMs: calibration.p95FullBatchMs,
@@ -233,17 +248,26 @@ export const prepareSystemLatencyReplay = (input: typeof SystemLatencyReplaySche
 
 const bindStrategyLatencyReplayInput = (
   input: BacktestInput,
-  registration: Extract<SystemRegistration, { schemaVersion: 'bayn.system-registration.v6' }>,
+  registration: Extract<
+    SystemRegistration,
+    { schemaVersion: 'bayn.system-registration.v6' | 'bayn.system-registration.v7' }
+  >,
   brokerIdentity: BrokerIdentity,
 ) =>
   Result.gen(function* () {
     const fail = (message: string) => Result.fail(new SystemAssessmentError({ message }))
-    if (input.schemaVersion !== 'bayn.backtest.v12' || input.latencyStress === null)
-      return yield* fail('Engine-bound streaming registration requires its v12 replay input and source cut')
+    const preparedAlpha = registration.schemaVersion === 'bayn.system-registration.v7'
+    if (
+      (input.schemaVersion !== 'bayn.backtest.v12' && input.schemaVersion !== 'bayn.backtest.v13') ||
+      (input.schemaVersion === 'bayn.backtest.v13') !== preparedAlpha ||
+      input.latencyStress === null
+    )
+      return yield* fail('Engine-bound streaming registration requires its exact versioned replay input and source cut')
     if (
       (yield* canonicalHashV1Result(input.latencyStress.registration)) !==
         (yield* canonicalHashV1Result(registration)) ||
-      input.latencyStress.sourceCut.schemaVersion !== 'bayn.system-source-cut.v5' ||
+      input.latencyStress.sourceCut.schemaVersion !==
+        (preparedAlpha ? 'bayn.system-source-cut.v6' : 'bayn.system-source-cut.v5') ||
       input.latencyStress.sourceCut.registrationHash !== (yield* canonicalHashV1Result(registration)) ||
       input.latencyStress.sourceCut.runtimeConfigurationHash !== registration.obligations.runtimeConfigurationHash ||
       (yield* canonicalHashV1Result(input.latencyStress.brokerIdentity)) !==
@@ -338,11 +362,36 @@ const bindStrategyLatencyReplayInput = (
       (yield* canonicalHashV1Result(sessions)) !== (yield* canonicalHashV1Result(registration.calendar.sessions))
     )
       return yield* fail('Streaming replay calendar differs from its complete registered native calendar')
-    const sources =
-      binding.engine === ResearchStrategyEngine.IntradayAlpha
-        ? yield* deriveAlphaBaselineSources(input.latencyStress.sourceCut)
-        : []
-    if ((yield* canonicalHashV1Result(input.alphaBaselineSources)) !== (yield* canonicalHashV1Result(sources)))
-      return yield* fail('Alpha replay baselines differ from independently witnessed registered source evidence')
+    if (input.schemaVersion === 'bayn.backtest.v13') {
+      const cut = input.latencyStress.sourceCut
+      if (cut.schemaVersion !== 'bayn.system-source-cut.v6')
+        return yield* fail('Prepared alpha replay requires its complete preparation source cut')
+      const retained = yield* verifyRegisteredAlphaBaselinePreparations(
+        registration,
+        cut.alphaBaselinePreparations,
+        cut.asOf,
+      )
+      const witnessed = yield* derivePreparedAlphaBaselineSources({ ...cut, alphaBaselinePreparations: retained })
+      // These remain candidate-owned market inputs. Each role keeps its own account, portfolio, authority and build.
+      const sources = binding.engine === ResearchStrategyEngine.IntradayAlpha ? witnessed : []
+      if (
+        (yield* canonicalHashV1Result(input.alphaBaselinePreparations)) !== (yield* canonicalHashV1Result(sources)) ||
+        (binding.engine === ResearchStrategyEngine.IntradayAlpha &&
+          sources.some((source) => {
+            const policyHash = canonicalHashV1Result(source.payload.policy)
+            return Result.isFailure(policyHash) || policyHash.success !== binding.strategy.parameterHash
+          }))
+      )
+        return yield* fail(
+          'Prepared alpha replay differs from the exact candidate-owned policy, build and committed source',
+        )
+    } else {
+      const sources =
+        binding.engine === ResearchStrategyEngine.IntradayAlpha
+          ? yield* deriveAlphaBaselineSources(input.latencyStress.sourceCut)
+          : []
+      if ((yield* canonicalHashV1Result(input.alphaBaselineSources)) !== (yield* canonicalHashV1Result(sources)))
+        return yield* fail('Alpha replay baselines differ from independently witnessed registered source evidence')
+    }
     return sessions.map((session) => ({ date: session.sessionDate, openAt: session.openAt, closeAt: session.closeAt }))
   })
