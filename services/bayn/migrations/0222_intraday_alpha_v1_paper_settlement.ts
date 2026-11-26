@@ -10,7 +10,7 @@ export default Effect.gen(function* () {
     jev_evaluation_requests, jev_evaluation_receipts, jev_inference_handoffs,
     jev_evaluation_resolutions, jev_chart_dispatch_claims, jev_chart_terminal_receipts,
     inference_expense_quotes, jev_staged_dispatch_claims, jev_staged_terminal_receipts,
-    jev_staged_skip_receipts IN ACCESS EXCLUSIVE MODE`
+    jev_staged_skip_receipts, intraday_candidate_observations IN ACCESS EXCLUSIVE MODE`
   // Prove settlement before restricting the exact reviewed bayn.intraday-alpha-policy.v1 PAPER identity;
   // native recovery owns the subsequent clear OBSERVE/PAPER generation for bayn.intraday-alpha-policy.v2.
   yield* sql`DO $cutover$

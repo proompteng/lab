@@ -8,6 +8,7 @@ import { SqlClient } from 'effect/sql'
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* sql`SELECT pg_advisory_xact_lock(1111578958, 1)`
   yield* sql`DO $migration$
     DECLARE
       definition text;

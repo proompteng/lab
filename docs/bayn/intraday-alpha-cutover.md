@@ -40,8 +40,8 @@ All three chronological folds remain positive across `2`, `5`, and `10 bp` RT wi
 ## 3. Cutover & Live Activation Procedure
 
 1. **PR 1 — Settle `v1` & Deploy `bayn.intraday-alpha-policy.v2` in `OBSERVE`:**
-   - Migration `0222_intraday_alpha_v2_admission.ts` admits `bayn.intraday-alpha-policy.v2`, `bayn.intraday-alpha-observation.v2`, `bayn.intraday-alpha-target.v2`, and `bayn.execution-risk-policy.v6` (`$180k` sandbox gross exposure cap).
-   - Migration `0223_intraday_alpha_v1_paper_settlement.ts` proves flat inventory, terminal cycles/intents, settled orders, complete accounting, and fresh exact reconciliation before restricting `bayn.intraday-alpha-policy.v1` to `OBSERVE` (`BLOCKED_STRATEGY_PROTOCOL_CUTOVER`).
+   - Migration `0222_intraday_alpha_v1_paper_settlement.ts` acquires the ordered transaction lock first, proves flat inventory, terminal cycles/intents, settled orders, complete accounting, and fresh exact reconciliation before restricting `bayn.intraday-alpha-policy.v1` to `OBSERVE` (`BLOCKED_STRATEGY_PROTOCOL_CUTOVER`).
+   - Migration `0223_intraday_alpha_v2_admission.ts` runs after settlement while locks are already held, admitting `bayn.intraday-alpha-policy.v2`, `bayn.intraday-alpha-observation.v2`, `bayn.intraday-alpha-target.v2`, and `bayn.execution-risk-policy.v6` (`$180k` sandbox gross exposure cap).
    - Removes the retired `v1` `capital-activation-request` from `argocd/applications/bayn/alpaca-sealedsecret.yaml` and binds `nix/images/bayn.nix` and `argocd/applications/bayn/{deployment,execution-controller,execution-activation}.yaml` to the `bayn.intraday-alpha-policy.v2` (`behavior.v3`) and `bayn.execution-risk-policy.v6` hashes.
    - Merges to `main`, publishes the immutable image cohort via CI, promotes via Kargo `bayn` Stage (`kargo/bayn`), syncs via Argo CD, and verifies clean `OBSERVE / CLEAR` startup and exact reconciliation.
 2. **PR 2 — Seal & Activate `PAPER / CLEAR` Mandate:**
