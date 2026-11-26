@@ -64,6 +64,7 @@ beforeAll(async () => {
     observation: {
       result: 'SUCCESS',
       outcome: 'ACQUIRED',
+      executionBuild: fixture.executionBuild,
       observedAt: at(10),
       executionIssuedAt: at(-10),
       alphaObservationReferences: { hashes: [observationHash], complete: true },

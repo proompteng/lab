@@ -11,7 +11,7 @@ import { IntradayAlphaTargetSchema } from '../strategy/intraday-alpha/decision'
 import { reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { earliestAlphaObservationWitness } from './alpha-observation-witness'
 import { measureControllerLatency, nearestRank95 } from './controller-latency'
-import { sourceFitsRegisteredSession } from './decision-work'
+import { controllerBuildMatchesRegistration, sourceFitsRegisteredSession } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { measureFullBatchLatency } from './full-batch-latency'
 import type { ScheduledEvaluation } from './policy'
@@ -54,6 +54,14 @@ export const measureAlphaDecisionLatency = (
     const passes = controller.samples.flatMap((sample) => {
       const pass = passByReceipt.get(sample.receiptHash)
       if (pass === undefined) return []
+      if (pass.observation.executionBuild === undefined) {
+        missing.push(`MISSING_ALPHA_CONTROLLER_BUILD:${pass.receiptHash}`)
+        return []
+      }
+      if (!controllerBuildMatchesRegistration(pass, registration)) {
+        violations.push(`ALPHA_CONTROLLER_BUILD_MISMATCH:${pass.receiptHash}`)
+        return []
+      }
       if (pass.observation.alphaObservationReferences?.complete !== true)
         missing.push(`INCOMPLETE_ALPHA_REFERENCES:${pass.receiptHash}`)
       return [{ ...sample, observation: pass.observation }]

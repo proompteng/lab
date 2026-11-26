@@ -9,6 +9,41 @@ import { ResearchStrategyEngine } from './strategy-binding'
 import { alphaLatencyFixture } from './native-alpha-latency.test-support'
 
 describe('native alpha command-to-durable-decision latency', () => {
+  test.each(['missing', 'source', 'image'] as const)(
+    '%s physical worker build cannot calibrate the registered alpha engine',
+    (changed) => {
+      const f = alphaLatencyFixture()
+      const cut = {
+        ...f.cut,
+        controllerPasses: f.cut.controllerPasses.map((pass) => {
+          if (pass.receiptHash !== f.pass.receiptHash) return pass
+          const { executionBuild: _build, ...observation } = pass.observation
+          return {
+            ...pass,
+            observation: {
+              ...observation,
+              ...(changed === 'missing'
+                ? {}
+                : {
+                    executionBuild: {
+                      ...f.executionBuild,
+                      ...(changed === 'source' ? { sourceRevision: '9'.repeat(40) } : {}),
+                      ...(changed === 'image' ? { imageDigest: `sha256:${'9'.repeat(64)}` } : {}),
+                    },
+                  }),
+            },
+          }
+        }),
+      }
+      const result = Result.getOrThrow(measureAlphaDecisionLatency(f.registration, cut, f.identity))
+      expect(result.status).not.toBe('MEASURED')
+      expect(result.p95FullBatchMs).toBeNull()
+      expect(
+        [...result.missing, ...result.violations].some((reason) => reason.includes('ALPHA_CONTROLLER_BUILD')),
+      ).toBe(true)
+    },
+  )
+
   test('registered preparation binds the explicit engine and complete alpha calibration', () => {
     const f = alphaLatencyFixture()
     const prepared = Result.getOrThrow(
@@ -71,6 +106,7 @@ describe('native alpha command-to-durable-decision latency', () => {
             observation: {
               result: 'SUCCESS' as const,
               outcome: 'ACQUIRED' as const,
+              executionBuild: f.executionBuild,
               observedAt: f.at(10),
               executionIssuedAt: f.at(-10),
               alphaObservationReferences: { hashes: [f.owned.contentHash], complete: true },
@@ -96,6 +132,7 @@ describe('native alpha command-to-durable-decision latency', () => {
               ...pass,
               observation: {
                 result: 'FAILURE' as const,
+                executionBuild: f.executionBuild,
                 executionIssuedAt: f.at(-10),
                 observedAt: f.at(10),
                 operation: 'build-decision' as const,

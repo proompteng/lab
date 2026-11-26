@@ -64,6 +64,11 @@ export const alphaLatencyFixture = () => {
   const candidate = registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
   if (candidate === undefined || candidate.strategyBinding.engine !== ResearchStrategyEngine.IntradayAlpha)
     throw new Error('Expected explicit alpha candidate')
+  const executionBuild = {
+    sourceRevision: candidate.sourceRevision,
+    imageRepository: candidate.capitalAuthorization?.buildLineage.activation.imageRepository ?? 'registry.example/bayn',
+    imageDigest: `sha256:${candidate.imageDigest}`,
+  }
   const snapshot = makeAlphaStreamingSnapshot({ minutesFromOpen: 60, profiles: {}, snapshotCalendar: calendar })
   const owned = Result.getOrThrow(
     makeOwnedIntradayAlphaObservation({
@@ -112,6 +117,7 @@ export const alphaLatencyFixture = () => {
       recoveryAction: 'WAITING',
       readiness: { reason: 'NO_ELIGIBLE_CANDIDATE', message: 'Verified empty alpha selection' },
       entryAbstention: target,
+      executionBuild,
       executionIssuedAt: at(-10),
       observedAt: at(10),
       alphaObservationReferences: { hashes: [owned.contentHash], complete: true },
@@ -132,6 +138,7 @@ export const alphaLatencyFixture = () => {
           observation: {
             result: 'SUCCESS',
             outcome: 'ACQUIRED',
+            executionBuild,
             observedAt: window.dueAt,
             executionIssuedAt: window.dueAt,
             alphaObservationReferences: { hashes: [], complete: true },
@@ -185,5 +192,5 @@ export const alphaLatencyFixture = () => {
     sourceMaterial: {},
     sourceMaterialHash: testHash({}),
   })
-  return { registration, identity, cut, owned, pass, at }
+  return { registration, identity, cut, owned, pass, at, executionBuild }
 }
