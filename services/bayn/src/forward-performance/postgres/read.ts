@@ -1,7 +1,8 @@
 import { PgClient } from '@effect/sql-pg'
 import { strictParseOptions } from '../../schemas'
 import { Effect, Schema } from 'effect'
-import { readPerformanceDecisionCursor } from './decision-cursor'
+import { readPerformanceAlphaDecisionCursor, readPerformanceDecisionCursor } from './decision-cursor'
+import { alphaDecisionQuery } from './alpha-decisions'
 import { openSnapshotRows } from '../../db/snapshot-rows'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
@@ -803,20 +804,18 @@ export const readForwardPerformancePostgres = (
           ) AS account_open_position
         `.pipe(Effect.flatMap(decodeCount))
 
-        const cycles = cycleRows.map(
-          (row): ForwardPerformanceCycleEvidence => ({
-            cycleId: row.cycle_id,
-            qualificationRunId: row.qualification_run_id,
-            strategyName: row.strategy_name,
-            strategyProtocolHash: row.strategy_protocol_hash,
-            accountId: row.account_id,
-            executionPolicyHash: row.execution_policy_hash,
-            strategyExecutionModelHash: row.strategy_execution_model_hash,
-            state: row.state,
-            submissionOpenAt: row.submission_open_at.toISOString(),
-            terminalAt: row.terminal_at.toISOString(),
-          }),
-        )
+        const cycles = cycleRows.map((row): ForwardPerformanceCycleEvidence => ({
+          cycleId: row.cycle_id,
+          qualificationRunId: row.qualification_run_id,
+          strategyName: row.strategy_name,
+          strategyProtocolHash: row.strategy_protocol_hash,
+          accountId: row.account_id,
+          executionPolicyHash: row.execution_policy_hash,
+          strategyExecutionModelHash: row.strategy_execution_model_hash,
+          state: row.state,
+          submissionOpenAt: row.submission_open_at.toISOString(),
+          terminalAt: row.terminal_at.toISOString(),
+        }))
         const isUnattributedGenerationFee = (row: (typeof brokerFeeRows)[number]) =>
           !row.includes_generation &&
           !row.includes_other_generation &&
@@ -920,22 +919,20 @@ export const readForwardPerformancePostgres = (
               }
         const transactions = transactionRows.map(accountingTransactionFromRow)
         const ledgerTransactions = ledgerTransactionRows.map(accountingTransactionFromRow)
-        const transactionEvidence = transactionRows.map(
-          (row): ForwardPerformanceTransactionEvidence => ({
-            transactionId: row.transaction_id,
-            brokerEventId: row.broker_event_id,
-            ...(row.intent_id === null ? {} : { intentId: row.intent_id }),
-            cycleId: row.cycle_id ?? '',
-            symbol: row.symbol,
-            side: row.side,
-            quantityAtoms: row.quantity_atoms,
-            priceAtoms: row.price_atoms,
-            notionalMicros: row.notional_micros,
-            feeMicros: row.fee_micros,
-            realizedPnlMicros: row.realized_pnl_micros,
-            occurredAt: row.occurred_at.toISOString(),
-          }),
-        )
+        const transactionEvidence = transactionRows.map((row): ForwardPerformanceTransactionEvidence => ({
+          transactionId: row.transaction_id,
+          brokerEventId: row.broker_event_id,
+          ...(row.intent_id === null ? {} : { intentId: row.intent_id }),
+          cycleId: row.cycle_id ?? '',
+          symbol: row.symbol,
+          side: row.side,
+          quantityAtoms: row.quantity_atoms,
+          priceAtoms: row.price_atoms,
+          notionalMicros: row.notional_micros,
+          feeMicros: row.fee_micros,
+          realizedPnlMicros: row.realized_pnl_micros,
+          occurredAt: row.occurred_at.toISOString(),
+        }))
         const executionIndex = indexExecutionEvidence(
           executionIntentRows,
           executionOrderRows,
@@ -951,6 +948,12 @@ export const readForwardPerformancePostgres = (
           executionIndex,
           readForwardPerformanceMarketVolumeBindings(sql, accountId, authorityGenerationHash, scopedCycles),
         )
+        const consumeAlphaDecisionRows = yield* openSnapshotRows(
+          sql,
+          alphaDecisionQuery(sql, accountId, authorityGenerationHash, scopedCycles),
+        )
+        const { alphaDecisions, unverifiedAlphaDecisionHashes } =
+          yield* readPerformanceAlphaDecisionCursor(consumeAlphaDecisionRows)
         const marketVolumeRequests = marketVolumeRequestsFromRows(
           [...executionEvidence, ...executionIntentRows.map((row) => ({ cycleId: row.cycle_id, symbol: row.symbol }))],
           marketVolumeBindingRows,
@@ -998,6 +1001,7 @@ export const readForwardPerformancePostgres = (
           ).length,
           transactionEvidence,
           executionEvidence,
+          ...(reconciliationRow === undefined ? {} : { alphaDecisions, unverifiedAlphaDecisionHashes }),
           ...(unverifiedDecisionHashes.length === 0 ? {} : { unverifiedDecisionHashes }),
           marketVolumeRequests,
           receipts,
