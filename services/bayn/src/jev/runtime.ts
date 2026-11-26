@@ -465,7 +465,7 @@ export const compileJevEntry = (
   Result.gen(function* () {
     const symbols = [...decision.selectedSymbols].sort()
     const planningTargetWeights = jevPlanningTargetWeights(decision)
-    const isIntradayAlpha = decision.schemaVersion === 'bayn.intraday-alpha-target.v1'
+    const isIntradayAlpha = decision.schemaVersion === 'bayn.intraday-alpha-target.v2'
     const quotePrices = isIntradayAlpha
       ? yield* Result.gen(function* () {
           const expectedBarMs = Date.parse(decisionSnapshot.manifest.rangeEndAt) - 60_000

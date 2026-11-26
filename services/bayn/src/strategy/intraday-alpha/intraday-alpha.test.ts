@@ -57,6 +57,12 @@ import {
   featureBarContentHash,
 } from '../../market-data/features/contract'
 import { type IntradayBar, type IntradayQuote, type IntradayTrade } from '../../market-data/intraday/model'
+import {
+  IntradayTrailingBaseline,
+  intradayAlphaTrailingBaselineSchemaVersion,
+  noiseAreaCheckpointMinutes,
+  type IntradayAlphaTrailingBaseline,
+} from '../../market-data/intraday/trailing-baseline'
 import { intradayInstantNanos } from '../../market-data/intraday/time'
 import { KafkaBootstrapTimestampPolicy } from '../../market-data/streaming/bootstrap'
 import {
@@ -114,6 +120,52 @@ const policy = makeIntradayAlphaPolicy(protocol)
 const accountId = 'alpha-test-account'
 const cycleId = '1'.repeat(64)
 const authorityGenerationHash = '2'.repeat(64)
+
+const makeTestTrailingBaseline = (
+  overrides?: Readonly<
+    Record<
+      string,
+      {
+        readonly prevClose?: number
+        readonly atr14Ratio?: number
+        readonly avgSwingByCheckpoint?: Readonly<Record<string, number>>
+      }
+    >
+  >,
+): IntradayAlphaTrailingBaseline => ({
+  schemaVersion: intradayAlphaTrailingBaselineSchemaVersion,
+  sessionDate,
+  lookbackSessions: 14,
+  latestPriorSessionDate: Schema.decodeUnknownSync(IsoDateSchema)('2026-09-03'),
+  symbols: Object.fromEntries(
+    intradayAlphaCandidateSymbols.map((symbol) => {
+      const custom = overrides?.[symbol]
+      const isNoise = policy.noiseAreaSymbols.includes(symbol)
+      return [
+        symbol,
+        {
+          priorSessions: 14,
+          prevClose: custom?.prevClose ?? (symbol === 'QQQ' ? 500 : symbol === 'SMH' ? 250 : 140),
+          atr14Ratio: custom?.atr14Ratio ?? (symbol === 'QQQ' ? 0.014 : symbol === 'SMH' ? 0.024 : 0.04),
+          ...(isNoise
+            ? {
+                avgSwingByCheckpoint:
+                  custom?.avgSwingByCheckpoint ??
+                  Object.fromEntries(
+                    noiseAreaCheckpointMinutes.map((cp) => [String(cp), symbol === 'QQQ' ? 0.004 : 0.006]),
+                  ),
+              }
+            : {}),
+        },
+      ]
+    }),
+  ),
+})
+
+const testTrailingBaseline = makeTestTrailingBaseline()
+const testTrailingBaselineLayer = Layer.succeed(IntradayTrailingBaseline, {
+  load: () => Effect.succeed(testTrailingBaseline),
+})
 
 const makeFlatPortfolio = (observedAt: string, equityMicros = '100000000000', buyingPowerMicros = equityMicros) => {
   const material = {
@@ -559,16 +611,18 @@ test('Phase 2 Morning ORB30 requires Zarattini opening-candle direction, tolerat
       protocol,
       portfolio,
       snapshot,
+      trailingBaseline: testTrailingBaseline,
       equityShortEligibility: eligibility,
     }),
   )
   const target = Result.getOrThrow(
     decideIntradayAlphaEntry(
       {
-        schemaVersion: 'bayn.intraday-alpha-evidence.v1',
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
         observation: owned.payload,
         morningOrbTakenSymbols: [],
         middayReversionCompleted: false,
+        noiseAreaTakenSymbols: [],
         catalystVetos: [],
         decidedAt: observedAt,
       },
@@ -579,7 +633,8 @@ test('Phase 2 Morning ORB30 requires Zarattini opening-candle direction, tolerat
   expect(target.phase).toBe(IntradayAlphaPhase.MorningOrb)
   expect(target.reason).toBe(IntradayAlphaDecisionReason.SelectedMorningOrb)
   expect(target.selectedSymbols).toEqual(['NVDA'])
-  expect(target.targetWeights['NVDA']).toBe(0.2)
+  // ATR14 = 4.0% -> stop = 140bp, target = 280bp, weight = min(0.35, 50/140) = 0.35
+  expect(target.targetWeights['NVDA']).toBe(0.35)
   const nvdaPlan = target.exitPolicy.plans['NVDA']
   expect(nvdaPlan?.schemaVersion).toBe('bayn.intraday-alpha-long-funded-exit-plan.v1')
   expect(nvdaPlan?.levels.maximumHoldingMinutes).toBe(60)
@@ -590,14 +645,15 @@ test('Phase 2 Morning ORB30 requires Zarattini opening-candle direction, tolerat
   ).toBeCloseTo(141.79, 2)
   expect(Result.isSuccess(Schema.decodeUnknownResult(IntradayAlphaTargetSchema, strictParseOptions)(target))).toBe(true)
 
-  // Re-entry blocked when NVDA already taken or maxTradesPerSession (2) reached
+  // Re-entry blocked when NVDA already taken or maxTradesPerSession (1) reached
   const blockedSame = Result.getOrThrow(
     decideIntradayAlphaEntry(
       {
-        schemaVersion: 'bayn.intraday-alpha-evidence.v1',
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
         observation: owned.payload,
         morningOrbTakenSymbols: ['NVDA'],
         middayReversionCompleted: false,
+        noiseAreaTakenSymbols: [],
         catalystVetos: [],
         decidedAt: observedAt,
       },
@@ -626,6 +682,7 @@ test('Phase 2 Morning ORB30 requires Zarattini opening-candle direction, tolerat
     extractIntradayAlphaCandidates({
       snapshot: late.snapshot,
       policy,
+      trailingBaseline: testTrailingBaseline,
       accountId,
       equityShortEligibility: makeShortEligibility(intradayAlphaCandidateSymbols, late.observedAt),
     }),
@@ -658,6 +715,7 @@ test('Phase 2 Morning ORB30 selects Short breakdown with short exit plan when SP
   })
   const portfolio = makeFlatPortfolio(observedAt)
   const eligibility = makeShortEligibility(intradayAlphaCandidateSymbols, observedAt)
+  const muBaseline = makeTestTrailingBaseline({ MU: { atr14Ratio: 0.06 } })
   const owned = Result.getOrThrow(
     makeOwnedIntradayAlphaObservation({
       cycleId,
@@ -665,16 +723,18 @@ test('Phase 2 Morning ORB30 selects Short breakdown with short exit plan when SP
       protocol,
       portfolio,
       snapshot,
+      trailingBaseline: muBaseline,
       equityShortEligibility: eligibility,
     }),
   )
   const target = Result.getOrThrow(
     decideIntradayAlphaEntry(
       {
-        schemaVersion: 'bayn.intraday-alpha-evidence.v1',
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
         observation: owned.payload,
         morningOrbTakenSymbols: [],
         middayReversionCompleted: false,
+        noiseAreaTakenSymbols: [],
         catalystVetos: [],
         decidedAt: observedAt,
       },
@@ -683,7 +743,8 @@ test('Phase 2 Morning ORB30 selects Short breakdown with short exit plan when SP
   )
 
   expect(target.selectedSymbols).toEqual(['MU'])
-  expect(target.targetWeights['MU']).toBe(-0.2)
+  // High-vol MU (ATR14 = 6% -> stop = 210bp) scales down via inverse-ATR: round4(50 / 210) = 0.2381
+  expect(target.targetWeights['MU']).toBe(-0.2381)
   expect(target.exitPolicy.plans['MU']?.schemaVersion).toBe('bayn.intraday-alpha-short-funded-exit-plan.v1')
   expect(target.exitPolicy.plans['MU']?.levels.source.setup).toBe(IntradayAlphaSetup.Orb30Short)
 })
@@ -711,6 +772,7 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
       protocol,
       portfolio,
       snapshot,
+      trailingBaseline: testTrailingBaseline,
       equityShortEligibility: eligibility,
     }),
   )
@@ -722,10 +784,11 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
   const target = Result.getOrThrow(
     decideIntradayAlphaEntry(
       {
-        schemaVersion: 'bayn.intraday-alpha-evidence.v1',
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
         observation: owned.payload,
         morningOrbTakenSymbols: ['NVDA'],
         middayReversionCompleted: false,
+        noiseAreaTakenSymbols: [],
         catalystVetos: [],
         decidedAt: observedAt,
       },
@@ -848,10 +911,11 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
   const withVeto = Result.getOrThrow(
     decideIntradayAlphaEntry(
       {
-        schemaVersion: 'bayn.intraday-alpha-evidence.v1',
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
         observation: owned.payload,
         morningOrbTakenSymbols: [],
         middayReversionCompleted: false,
+        noiseAreaTakenSymbols: [],
         catalystVetos: [
           {
             symbol: 'COHR',
@@ -881,16 +945,18 @@ test('Phase 1 Midday Reversion selects 2L + 2S dollar-neutral portfolio, falls t
       protocol,
       portfolio,
       snapshot,
+      trailingBaseline: testTrailingBaseline,
       equityShortEligibility: longOnlyEligibility,
     }),
   )
   const fallbackTarget = Result.getOrThrow(
     decideIntradayAlphaEntry(
       {
-        schemaVersion: 'bayn.intraday-alpha-evidence.v1',
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
         observation: longOnlyOwned.payload,
         morningOrbTakenSymbols: [],
         middayReversionCompleted: false,
+        noiseAreaTakenSymbols: [],
         catalystVetos: [],
         decidedAt: observedAt,
       },
@@ -932,7 +998,11 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
       }),
     latestJevWindowEnd: () => Effect.succeed(Option.none()),
     readIntradayAlphaSessionState: () =>
-      Effect.sync(() => ({ morningOrbTakenSymbols: [], middayReversionCompleted: middayCompleted })),
+      Effect.sync(() => ({
+        morningOrbTakenSymbols: [],
+        middayReversionCompleted: middayCompleted,
+        noiseAreaTakenSymbols: [],
+      })),
   })
 
   const candidate = {
@@ -1029,7 +1099,7 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
           admissionExpiresAt: Date.parse(observedAt) + 60_000,
         }),
       ),
-      Effect.provide(Layer.mergeAll(countingJevClient, obsStore, TestClock.layer())),
+      Effect.provide(Layer.mergeAll(countingJevClient, obsStore, testTrailingBaselineLayer, TestClock.layer())),
     ),
   )
   expect(recorded.length).toBe(1)
@@ -1049,7 +1119,7 @@ test('catalyst veto fails open to quant signal on JevClient outage instead of st
           admissionExpiresAt: Date.parse(observedAt) + 60_000,
         }),
       ),
-      Effect.provide(Layer.mergeAll(countingJevClient, obsStore, TestClock.layer())),
+      Effect.provide(Layer.mergeAll(countingJevClient, obsStore, testTrailingBaselineLayer, TestClock.layer())),
     ),
   )
   expect(jevCalls).toBe(0)
@@ -1076,16 +1146,18 @@ test('multi-position (2L + 2S) JevPortfolio validates 4 legs, partial early leg 
       protocol,
       portfolio: flatPortfolio,
       snapshot,
+      trailingBaseline: testTrailingBaseline,
       equityShortEligibility: makeShortEligibility(intradayAlphaCandidateSymbols, observedAt),
     }),
   )
   const target = Result.getOrThrow(
     decideIntradayAlphaEntry(
       {
-        schemaVersion: 'bayn.intraday-alpha-evidence.v1',
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
         observation: owned.payload,
         morningOrbTakenSymbols: [],
         middayReversionCompleted: false,
+        noiseAreaTakenSymbols: [],
         catalystVetos: [],
         decidedAt: observedAt,
       },
@@ -1369,7 +1441,7 @@ test('multi-position (2L + 2S) JevPortfolio validates 4 legs, partial early leg 
 
 test('intraday alpha policy identity and native startup preparation bind distinct protocol hash', () => {
   const identity = Result.getOrThrow(intradayAlphaStrategyIdentity(policy))
-  expect(identity.strategy.parameterSchemaVersion).toBe('bayn.intraday-alpha-policy.v1')
+  expect(identity.strategy.parameterSchemaVersion).toBe('bayn.intraday-alpha-policy.v2')
   expect(identity.strategy.parameterHash).toBe(Result.getOrThrow(canonicalHashV1Result(policy)))
   expect(Result.isFailure(decodeIntradayAlphaPolicy({ ...policy, candidateSymbols: ['AAPL'] }))).toBe(true)
 
@@ -1543,8 +1615,13 @@ test('durable execution decision validation reproduces bar-close alpha pricing, 
             record: () => Effect.void,
             latestJevWindowEnd: () => Effect.succeed(Option.none()),
             readIntradayAlphaSessionState: () =>
-              Effect.succeed({ morningOrbTakenSymbols: [], middayReversionCompleted: false }),
+              Effect.succeed({
+                morningOrbTakenSymbols: [],
+                middayReversionCompleted: false,
+                noiseAreaTakenSymbols: [],
+              }),
           }),
+          testTrailingBaselineLayer,
           Layer.succeed(BrokerRead, {
             ...shortEntryBrokerReads(portfolio.brokerState.account, observedAt),
             positions: unused,
@@ -1694,4 +1771,258 @@ test('durable execution decision validation reproduces bar-close alpha pricing, 
     expiresAt: '2026-09-04T17:00:00.000Z',
   })
   expect(rangeEndAt).toBe('2026-09-04T15:31:00.000Z')
+})
+
+test('Engine 3 Noise Area Trend triggers on QQQ & SMH at top-of-hour checkpoints with inverse-ATR sizing, 1.5xATR stop, and concurrent disjoint Midday planning', () => {
+  // 1) Engine 3 at elapsed = 31 (10:00 ET bar completed -> rangeEnd 10:01 ET)
+  const { snapshot: zabSnapshot, observedAt: zabObservedAt } = makeAlphaStreamingSnapshot({
+    minutesFromOpen: 31,
+    spyProfile: { basePrice: 550, endReturnBps: 50 },
+    profiles: {
+      // prevClose=500, open=500, avgSwing[31]=0.004 -> UB=502.00; latestClose=504.5 > UB & > VWAP -> LONG
+      QQQ: { basePrice: 500, endReturnBps: 90, overrideLatestClose: 504.5 },
+      // prevClose=250, open=250, avgSwing[31]=0.006 -> LB=248.50; latestClose=246.0 < LB & < VWAP -> SHORT
+      SMH: { basePrice: 250, endReturnBps: -160, overrideLatestClose: 246.0 },
+    },
+  })
+  const flatPortfolio = makeFlatPortfolio(zabObservedAt, '100000000000', '400000000000')
+  const zabEligibility = makeShortEligibility(intradayAlphaCandidateSymbols, zabObservedAt)
+  const zabOwned = Result.getOrThrow(
+    makeOwnedIntradayAlphaObservation({
+      cycleId,
+      authorityGenerationHash,
+      protocol,
+      portfolio: flatPortfolio,
+      snapshot: zabSnapshot,
+      trailingBaseline: testTrailingBaseline,
+      equityShortEligibility: zabEligibility,
+    }),
+  )
+  const zabTarget = Result.getOrThrow(
+    decideIntradayAlphaEntry(
+      {
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
+        observation: zabOwned.payload,
+        morningOrbTakenSymbols: [],
+        middayReversionCompleted: false,
+        noiseAreaTakenSymbols: [],
+        catalystVetos: [],
+        decidedAt: zabObservedAt,
+      },
+      policy,
+    ),
+  )
+  expect(zabTarget.phase).toBe(IntradayAlphaPhase.NoiseAreaTrend)
+  expect(zabTarget.reason).toBe(IntradayAlphaDecisionReason.SelectedNoiseArea)
+  expect(zabTarget.selectedSymbols).toEqual(['QQQ', 'SMH'])
+  // Inverse-ATR weights (QQQ atr=1.4% vs SMH atr=2.4%) inside 50% sleeve clamped to [0.15, 0.32]
+  expect(zabTarget.targetWeights['QQQ']).toBeCloseTo(0.3158, 3)
+  expect(zabTarget.targetWeights['SMH']).toBeCloseTo(-0.1842, 3)
+  expect(zabTarget.exitPolicy.plans['QQQ']?.schemaVersion).toBe('bayn.intraday-alpha-long-funded-exit-plan.v1')
+  expect(zabTarget.exitPolicy.plans['SMH']?.schemaVersion).toBe('bayn.intraday-alpha-short-funded-exit-plan.v1')
+
+  // 2) Concurrent disjoint entry: while SMH is co-held with a protective exit order, Midday Reversion
+  // enters 2L + 2S on COHR/LITE/MU/SNDK via concurrentDisjointPositions + executionPurpose: 'disjoint-entry'!
+  const { snapshot: mrSnapshot, observedAt: mrObservedAt } = makeAlphaStreamingSnapshot({
+    minutesFromOpen: 121,
+    spyProfile: { basePrice: 550, endReturnBps: 5 },
+    profiles: {
+      COHR: { basePrice: 100, endReturnBps: -380 },
+      LITE: { basePrice: 90, endReturnBps: -290 },
+      SNDK: { basePrice: 60, endReturnBps: 360 },
+      MU: { basePrice: 80, endReturnBps: 270 },
+    },
+  })
+  const smhPosition: Position = {
+    schemaVersion: 'bayn.position.v2',
+    accountId,
+    symbol: 'SMH',
+    quantityAtoms: '-75000000000', // -75 shares short (~$18,450)
+    averageEntryPriceMicros: '246000000',
+    costBasisMicros: '-18450000000',
+    marketPriceMicros: '244000000',
+    marketValueMicros: '-18300000000',
+    unrealizedPnlMicros: '150000000',
+    observedAt: mrObservedAt,
+  }
+  const smhProtectionOrder: Order = {
+    schemaVersion: 'bayn.order.v3',
+    accountId,
+    brokerOrderId: 'smh-prot-1',
+    clientOrderId: 'smh-prot-c1',
+    intentId: 'f'.repeat(64),
+    symbol: 'SMH',
+    side: OrderSide.Buy,
+    orderType: OrderType.StopLimit,
+    timeInForce: TimeInForce.Day,
+    quantityAtoms: '75000000000',
+    filledQuantityAtoms: '0',
+    stopPriceMicros: '254860000',
+    limitPriceMicros: '255110000',
+    status: OrderStatus.New,
+    observedAt: mrObservedAt,
+  }
+  const coHeldMaterial = {
+    account: {
+      schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
+      accountId,
+      status: AccountStatus.Active,
+      currency: 'USD' as const,
+      cashMicros: '100000000000',
+      buyingPowerMicros: '381550000000',
+      equityMicros: '100000000000',
+      cryptoFeeTier: null,
+      observedAt: mrObservedAt,
+    },
+    positions: [smhPosition],
+    positionsObservedAt: mrObservedAt,
+    orders: [smhProtectionOrder],
+    ordersObservedAt: mrObservedAt,
+    accountingHash: 'd'.repeat(64),
+  }
+  const coHeldHash = Result.getOrThrow(reconciledStateHash(coHeldMaterial))
+  const coHeldRecMaterial = {
+    schemaVersion: 'bayn.paper-reconciliation.v1' as const,
+    accountId,
+    expectedHash: coHeldHash,
+    observedHash: coHeldHash,
+    status: ReconciliationStatus.Exact,
+    discrepancies: [] as const,
+    reconciledAt: mrObservedAt,
+  }
+  const coHeldRecId = Result.getOrThrow(canonicalHashV1Result(coHeldRecMaterial))
+  const coHeldRecHash = Result.getOrThrow(
+    canonicalHashV1Result({ ...coHeldRecMaterial, reconciliationId: coHeldRecId }),
+  )
+  const coHeldBrokerState = {
+    ...coHeldMaterial,
+    unknownOrderCount: 0,
+    reconciliation: { ...coHeldRecMaterial, reconciliationId: coHeldRecId, contentHash: coHeldRecHash },
+  }
+
+  // Strictly flat entry rejects co-held SMH, whereas concurrentDisjointPositions: true admits it!
+  expect(Result.isFailure(decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: coHeldBrokerState }))).toBe(true)
+  const disjointEntryPortfolio = Result.getOrThrow(
+    decodeJevPortfolio({
+      purpose: JevPurpose.Entry,
+      concurrentDisjointPositions: true,
+      brokerState: coHeldBrokerState,
+    }),
+  )
+  const mrEligibility = makeShortEligibility(intradayAlphaCandidateSymbols, mrObservedAt)
+  const mrOwned = Result.getOrThrow(
+    makeOwnedIntradayAlphaObservation({
+      cycleId,
+      authorityGenerationHash,
+      protocol,
+      portfolio: disjointEntryPortfolio,
+      snapshot: mrSnapshot,
+      trailingBaseline: testTrailingBaseline,
+      equityShortEligibility: mrEligibility,
+    }),
+  )
+  const mrTarget = Result.getOrThrow(
+    decideIntradayAlphaEntry(
+      {
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
+        observation: mrOwned.payload,
+        morningOrbTakenSymbols: [],
+        middayReversionCompleted: false,
+        noiseAreaTakenSymbols: ['SMH'],
+        catalystVetos: [],
+        decidedAt: mrObservedAt,
+      },
+      policy,
+    ),
+  )
+  expect(mrTarget.selectedSymbols).toEqual(['COHR', 'LITE', 'MU', 'SNDK'])
+
+  const compiledMr = Result.getOrThrow(compileJevEntry(mrTarget, mrSnapshot, mrSnapshot))
+  const refMaterial = {
+    schemaVersion: 'bayn.intraday-snapshot-reference-prices.v1' as const,
+    snapshotId: mrSnapshot.manifest.snapshotId,
+    snapshotContentHash: mrSnapshot.manifest.contentHash,
+    priceReference: 'verified-adverse-quote-boundary' as const,
+    signalDate: sessionDate,
+    observedAt: mrSnapshot.manifest.observedAt,
+    priceMicros: compiledMr.priceMicros,
+    bidPriceMicros: compiledMr.bidPriceMicros ?? compiledMr.priceMicros,
+    askPriceMicros: compiledMr.askPriceMicros ?? compiledMr.priceMicros,
+  }
+  const refHash = Result.getOrThrow(canonicalHashV1Result(refMaterial))
+  const disjointPlan = Result.getOrThrow(
+    planTargets({
+      schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
+      strategyName: 'jev',
+      cycleId,
+      decisionHash: '3'.repeat(64),
+      policyHash: '4'.repeat(64),
+      accountId,
+      signalDate: sessionDate,
+      targetWeights: compiledMr.planningTargetWeights ?? mrTarget.targetWeights,
+      referencePrices: { ...refMaterial, contentHash: refHash },
+      brokerState: coHeldBrokerState,
+      precision: protocol.executionModel.precision,
+      allocationCapitalMicros: coHeldBrokerState.account.equityMicros,
+      maximumInputAgeMs: 60_000,
+      submissionCutoffAt: utcInstantFromEpochMillis(Date.parse(mrObservedAt) + 60_000),
+      observedAt: mrObservedAt,
+      executionTerms: {
+        executionPurpose: 'disjoint-entry',
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.Day,
+        priceReference: 'verified-adverse-quote-boundary',
+        snapshotId: mrSnapshot.manifest.snapshotId,
+        snapshotContentHash: mrSnapshot.manifest.contentHash,
+        maximumBuyQuantityAtoms: compiledMr.maximumBuyQuantityAtoms,
+        maximumSellQuantityAtoms: compiledMr.maximumSellQuantityAtoms,
+        equityShortEntries: Object.fromEntries(
+          ['MU', 'SNDK'].map((symbol) => [symbol, mrEligibility[symbol]]).filter((entry) => entry[1] !== undefined),
+        ),
+      },
+    }),
+  )
+  expect(disjointPlan.status).toBe(TargetPlanStatus.Planned)
+  expect(disjointPlan.intentTargets.map((intent) => intent.symbol).toSorted()).toEqual(['COHR', 'LITE', 'MU', 'SNDK'])
+
+  // Same-symbol collision fails closed when a disjoint-entry target overlaps already-held SMH!
+  const collidingPlan = planTargets({
+    schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
+    strategyName: 'jev',
+    cycleId,
+    decisionHash: '3'.repeat(64),
+    policyHash: '4'.repeat(64),
+    accountId,
+    signalDate: sessionDate,
+    targetWeights: { SMH: 0.2 },
+    referencePrices: {
+      ...refMaterial,
+      priceMicros: { SMH: '244000000' },
+      bidPriceMicros: { SMH: '243900000' },
+      askPriceMicros: { SMH: '244100000' },
+      contentHash: Result.getOrThrow(
+        canonicalHashV1Result({
+          ...refMaterial,
+          priceMicros: { SMH: '244000000' },
+          bidPriceMicros: { SMH: '243900000' },
+          askPriceMicros: { SMH: '244100000' },
+        }),
+      ),
+    },
+    brokerState: coHeldBrokerState,
+    precision: protocol.executionModel.precision,
+    allocationCapitalMicros: coHeldBrokerState.account.equityMicros,
+    maximumInputAgeMs: 60_000,
+    submissionCutoffAt: utcInstantFromEpochMillis(Date.parse(mrObservedAt) + 60_000),
+    observedAt: mrObservedAt,
+    executionTerms: {
+      executionPurpose: 'disjoint-entry',
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      priceReference: 'verified-adverse-quote-boundary',
+      snapshotId: mrSnapshot.manifest.snapshotId,
+      snapshotContentHash: mrSnapshot.manifest.contentHash,
+    },
+  })
+  expect(Result.isFailure(collidingPlan)).toBe(true)
 })

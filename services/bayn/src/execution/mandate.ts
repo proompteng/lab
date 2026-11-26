@@ -29,9 +29,12 @@ export interface ExecutionMandateAllocationFacts {
   readonly maxDailyTradedNotionalMicros: bigint | null
   readonly maxAdverseSlippageBps: bigint
   readonly targetWeights: Readonly<Record<string, number>>
+  readonly signedTargetWeights?: Readonly<Record<string, number>>
+  readonly disjointEntry?: boolean
   readonly positions: readonly {
     readonly quantityAtoms: string
     readonly symbol: string
+    readonly marketValueMicros?: string
   }[]
   readonly referencePriceMicros: Readonly<Record<string, string>>
 }
@@ -60,6 +63,9 @@ const currentReferenceGrossExposureMicros = (
       Result.flatMap(total, (current) => {
         const price = facts.referencePriceMicros[position.symbol]
         if (price === undefined) {
+          if (facts.disjointEntry === true && position.marketValueMicros !== undefined) {
+            return Result.succeed(current + absolute(BigInt(position.marketValueMicros)))
+          }
           return Result.fail({ _tag: 'MissingPositionReferencePrice', symbol: position.symbol })
         }
         return Result.mapError(
@@ -75,6 +81,12 @@ const currentReferenceGrossExposureMicros = (
         )
       }),
     Result.succeed(0n),
+  )
+
+const currentSignedNetExposureMicros = (facts: ExecutionMandateAllocationFacts): bigint =>
+  facts.positions.reduce(
+    (total, position) => total + (position.marketValueMicros === undefined ? 0n : BigInt(position.marketValueMicros)),
+    0n,
   )
 
 /**
@@ -113,11 +125,31 @@ export const executionMandateAllocationCapitalMicros = (
       if (grossTargetWeight === 0n) return Result.succeed(0n)
       const capitalForNotional = (notional: bigint): bigint =>
         (nonNegative(notional) * WEIGHT_SCALE) / grossTargetWeight
+      const grossHeadroom =
+        facts.disjointEntry === true
+          ? nonNegative(facts.maxGrossExposureMicros - currentReferenceGrossExposure)
+          : facts.maxGrossExposureMicros
+      const netCapitalCap = (() => {
+        if (facts.disjointEntry !== true || facts.signedTargetWeights === undefined) {
+          return capitalForNotional(facts.maxNetExposureMicros)
+        }
+        const signedSum = Object.values(facts.signedTargetWeights).reduce((sum, weight) => sum + weight, 0)
+        const netWeightUnits = BigInt(Math.round(signedSum * Number(WEIGHT_SCALE)))
+        const currentNet = currentSignedNetExposureMicros(facts)
+        if (netWeightUnits === 0n) {
+          return absolute(currentNet) <= facts.maxNetExposureMicros ? facts.accountEquityMicros : 0n
+        }
+        const sameDirection = (currentNet >= 0n && netWeightUnits > 0n) || (currentNet <= 0n && netWeightUnits < 0n)
+        const netHeadroom = sameDirection
+          ? nonNegative(facts.maxNetExposureMicros - absolute(currentNet))
+          : facts.maxNetExposureMicros + absolute(currentNet)
+        return (netHeadroom * WEIGHT_SCALE) / absolute(netWeightUnits)
+      })()
       return Result.succeed(
         [
           facts.accountEquityMicros,
-          capitalForNotional(facts.maxGrossExposureMicros),
-          capitalForNotional(facts.maxNetExposureMicros),
+          capitalForNotional(grossHeadroom),
+          netCapitalCap,
           ...(remainingReferenceTurnover === null
             ? []
             : [capitalForNotional(remainingReferenceTurnover - currentReferenceGrossExposure)]),

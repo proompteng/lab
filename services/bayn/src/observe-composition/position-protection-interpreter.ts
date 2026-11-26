@@ -1,4 +1,4 @@
-import { isMiddayAlphaTarget, isProtectedEntryTarget } from '../strategy/runtime-decision'
+import { isBrokerManagedAlphaTarget, isProtectedEntryTarget } from '../strategy/runtime-decision'
 import { Effect, Option, Result } from 'effect'
 
 import { BrokerMutationError, MutationOperation } from '../broker/alpaca-mutations/model'
@@ -156,8 +156,8 @@ export const advancePositionProtection = (request: {
       return { _tag: 'Ready' } as const
     }
 
-    // The midday basket exits early through each leg's native orders. A software exit closes the cycle.
-    const brokerManagedExits = isMiddayAlphaTarget(target)
+    // Midday Reversion and Noise Area sleeves exit early through each leg's native orders.
+    const brokerManagedExits = isBrokerManagedAlphaTarget(target)
     let pendingWait: Effect.Success<ReturnType<typeof evaluateJevPositionManagement>> | undefined
     let liquidationReady: { readonly _tag: 'Ready'; readonly exitTarget?: JevExitTarget } | undefined
 
@@ -482,7 +482,16 @@ export const advancePositionProtection = (request: {
     if (pendingWait !== undefined && pendingWait._tag === 'Wait')
       return { _tag: 'Step', step: { _tag: 'Wait', observedAt, ...pendingWait.details } } as const
 
-    if (state.positions.some((position) => BigInt(position.quantityAtoms) !== 0n))
+    const planSymbols = new Set(planEntries.map(([symbol]) => symbol))
+    const allowedUniverse = new Set(protocol.universe)
+    const isConcurrentAlphaTarget = target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+    if (
+      state.positions.some(
+        (position) =>
+          BigInt(position.quantityAtoms) !== 0n &&
+          (planSymbols.has(position.symbol) || !isConcurrentAlphaTarget || !allowedUniverse.has(position.symbol)),
+      )
+    )
       return yield* mutationRunnerError({
         message: 'Native protection cannot complete with inventory outside its entry plan',
         failure: 'contract',

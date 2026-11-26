@@ -71,6 +71,7 @@ export const isBalancedMiddayBasket = (
 export enum IntradayAlphaDecisionReason {
   SelectedMorningOrb = 'SELECTED_MORNING_ORB',
   SelectedMiddayReversion = 'SELECTED_MIDDAY_REVERSION',
+  SelectedNoiseArea = 'SELECTED_NOISE_AREA',
   OutsideWindow = 'OUTSIDE_PHASE_WINDOW',
   NoSignal = 'NO_ELIGIBLE_ALPHA_SIGNAL',
   AllVetoed = 'ALL_CANDIDATES_VETOED',
@@ -78,10 +79,11 @@ export enum IntradayAlphaDecisionReason {
 }
 
 export const IntradayAlphaDecisionEvidenceSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-alpha-evidence.v1'),
+  schemaVersion: Schema.Literal('bayn.intraday-alpha-evidence.v2'),
   observation: IntradayAlphaObservationSchema,
   morningOrbTakenSymbols: Schema.Array(SymbolSchema).check(Schema.isUnique()),
   middayReversionCompleted: Schema.Boolean,
+  noiseAreaTakenSymbols: Schema.Array(SymbolSchema).check(Schema.isUnique()),
   catalystVetos: Schema.Array(CatalystVetoReceiptSchema),
   decidedAt: UtcInstantSchema,
 })
@@ -89,7 +91,11 @@ export type IntradayAlphaDecisionEvidence = typeof IntradayAlphaDecisionEvidence
 
 export const IntradayAlphaSignalRecordSchema = Schema.Struct({
   symbol: SymbolSchema,
-  phase: Schema.Literals([IntradayAlphaPhase.MorningOrb, IntradayAlphaPhase.MiddayReversion]),
+  phase: Schema.Literals([
+    IntradayAlphaPhase.MorningOrb,
+    IntradayAlphaPhase.MiddayReversion,
+    IntradayAlphaPhase.NoiseAreaTrend,
+  ]),
   setup: Schema.Enum(IntradayAlphaSetup),
   direction: Schema.Literals(['LONG', 'SHORT']),
   scoreBps: Schema.Finite,
@@ -127,19 +133,27 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
     )
       return yield* Result.fail(
         new JevContractError({
-          message: 'Intraday alpha decision differs from its flat source, protocol or original deadline',
+          message: 'Intraday alpha decision differs from its entry source, protocol or original deadline',
         }),
       )
+
+    const occupiedSymbols = observation.portfolio.brokerState.positions
+      .filter((position) => BigInt(position.quantityAtoms) !== 0n)
+      .map((position) => position.symbol)
+      .toSorted()
 
     const extracted = yield* extractIntradayAlphaCandidates({
       snapshot: observation.snapshot,
       policy,
+      trailingBaseline: observation.trailingBaseline,
       accountId: observation.portfolio.brokerState.account.accountId,
       ...(observation.equityShortEligibility === undefined
         ? {}
         : { equityShortEligibility: observation.equityShortEligibility }),
+      occupiedSymbols,
       morningOrbTakenSymbols: evidence.morningOrbTakenSymbols,
       middayReversionCompleted: evidence.middayReversionCompleted,
+      noiseAreaTakenSymbols: evidence.noiseAreaTakenSymbols,
     })
 
     const vetoedSymbols = new Set(
@@ -160,6 +174,7 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
     let maximumHoldingMinutes = protocol.maximumHoldingMinutes
 
     for (const leg of chosenLegs) {
+      if (occupiedSymbols.includes(leg.symbol)) continue
       const funded = yield* makeIntradayAlphaFundedExitPlan({ policy, observation, leg })
       if (funded === null) continue
       plans[leg.symbol] = funded.plan
@@ -202,7 +217,9 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
               ? IntradayAlphaDecisionReason.Unfunded
               : extracted.context.phase === IntradayAlphaPhase.MorningOrb
                 ? IntradayAlphaDecisionReason.SelectedMorningOrb
-                : IntradayAlphaDecisionReason.SelectedMiddayReversion
+                : extracted.context.phase === IntradayAlphaPhase.NoiseAreaTrend
+                  ? IntradayAlphaDecisionReason.SelectedNoiseArea
+                  : IntradayAlphaDecisionReason.SelectedMiddayReversion
 
     const signals = [...extracted.longPool, ...extracted.shortPool]
       .map((candidate) => ({
@@ -217,7 +234,7 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
       .toSorted((a, b) => a.symbol.localeCompare(b.symbol) || a.direction.localeCompare(b.direction))
 
     return {
-      schemaVersion: 'bayn.intraday-alpha-target.v1' as const,
+      schemaVersion: 'bayn.intraday-alpha-target.v2' as const,
       strategy: 'jev' as const,
       policy,
       evidence,
@@ -255,7 +272,7 @@ export const decideIntradayAlphaEntry = (input: unknown, policy: IntradayAlphaPo
   )
 
 export const IntradayAlphaTargetSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-alpha-target.v1'),
+  schemaVersion: Schema.Literal('bayn.intraday-alpha-target.v2'),
   strategy: Schema.Literal('jev'),
   policy: IntradayAlphaPolicySchema,
   evidence: IntradayAlphaDecisionEvidenceSchema,

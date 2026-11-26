@@ -127,7 +127,7 @@ const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) 
     correct:
       completedAt >= sourceAt &&
       (strategy.schemaVersion === 'bayn.repeated-momentum-target.v1' ||
-      strategy.schemaVersion === 'bayn.intraday-alpha-target.v1'
+      strategy.schemaVersion === 'bayn.intraday-alpha-target.v2'
         ? exclusions === undefined || (Array.isArray(exclusions) && exclusions.length === 0)
         : strategy.evidence.batchPlan.candidates.every(
             (c) => c.status !== 'EXCLUDED' || (c.reason !== 'not-ready' && c.reason !== 'freshness'),

@@ -52,7 +52,11 @@ export type AccountProtectionFacts = (
   | Omit<typeof LegacyAccountProtectionInputsSchema.Type, 'portfolio'>
   | Omit<typeof CurrentAccountProtectionInputsSchema.Type, 'portfolio'>
 ) & {
-  readonly portfolio: { readonly purpose: JevPurpose; readonly brokerState: ReconciledBrokerState }
+  readonly portfolio: {
+    readonly purpose: JevPurpose
+    readonly brokerState: ReconciledBrokerState
+    readonly concurrentDisjointPositions?: true
+  }
 }
 
 export const decideAccountProtection = (inputs: AccountProtectionFacts, authorityGenerationHash: string) => {
@@ -98,7 +102,11 @@ export const decideAccountProtection = (inputs: AccountProtectionFacts, authorit
   if (Date.parse(authority.updatedAt) > Date.parse(inputs.authorityObservedAt)) return undefined
   const validUntilMs = Math.min(...timestamps) + policy.maxBrokerStateAgeMs
   if (!Number.isSafeInteger(validUntilMs) || nowMs >= validUntilMs) return undefined
-  const verifiedPortfolio = decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState })
+  const verifiedPortfolio = decodeJevPortfolio({
+    purpose: JevPurpose.Entry,
+    brokerState,
+    ...(portfolio.concurrentDisjointPositions === true ? { concurrentDisjointPositions: true as const } : {}),
+  })
   if (Result.isFailure(verifiedPortfolio)) return undefined
   return {
     reasons,
