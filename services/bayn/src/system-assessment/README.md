@@ -288,7 +288,8 @@ witness only committed source and pending rows. Only an already committed v7 reg
 policy, build, account, generation and calendar can enqueue qualification evidence. Registration must commit before
 the first native open; acquisition begins within that native session. Late registrations cannot backfill evidence.
 The server rounds source time upward to milliseconds, and the observer leaves a source pending until its own clock
-reaches that time. Caller timestamps, rollbacks, savepoints and direct witness inserts cannot establish availability.
+reaches that time. Caller timestamps, rollbacks, releasing a savepoint without committing its outer transaction,
+and direct witness inserts cannot establish availability.
 
 Native decisions require the preparation to have been recorded by the original `EntryObservationContext.observedAt`,
 before refreshed eligibility and snapshot reads. If acquisition finishes later, that pass defers to the next existing
@@ -298,8 +299,9 @@ that command, original admission, deadline, preparation hash, witness hash and b
 reselects the source at the same command cut; a later admission or snapshot clock cannot admit it.
 
 Source-cut v6 retains the complete preparation inventory and independently committed witnesses, alongside alpha
-observations for latency calibration. A registered v13 input must exactly reproduce that inventory. A compatible
-alpha incumbent may reuse the candidate's pure market baseline only under the same full policy; the producer remains
+observations for latency calibration. A registered v13 input must exactly reproduce the independently witnessed
+preparation array derived from that cut; unwitnessed sources remain visible only in the cut. A compatible alpha
+incumbent may reuse the candidate's pure market baseline only under the same full policy; the producer remains
 the candidate, while the incumbent retains its own account, portfolio, eligibility, authority and build. An incompatible
 policy or missing peer-engine source remains unavailable. Replay never fetches a fresh provider baseline as a fallback.
 
