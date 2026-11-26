@@ -19,7 +19,7 @@ import { executionOrderPlans } from './execution-plans'
 import { bindExecutionEvidence } from './execution-evidence'
 import { controllerBuildMatchesRegistration } from './decision-work'
 import { earliestDurableWitnesses } from './obligation-witnesses'
-import { registeredAllocationMicros } from './policy'
+import { registeredAllocationMicros, isNativeSystemRegistration } from './policy'
 import { assessSession } from './session'
 import { costAttributionRule } from './cost-attribution'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
@@ -54,10 +54,9 @@ export const bindSystemSourceCut = (
     const witnessedCut = { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
     const definitionHash = yield* canonicalHashV1Result(candidate)
     const financialAccounts = yield* registeredFinancialAccounts(data.registration, cut.financial)
-    const nativeCalendar =
-      data.registration.schemaVersion === 'bayn.system-registration.v5'
-        ? data.registration.calendar.marketCalendar
-        : null
+    const nativeCalendar = isNativeSystemRegistration(data.registration)
+      ? data.registration.calendar.marketCalendar
+      : null
     if (nativeCalendar !== null && (yield* canonicalHashV1Result(cut.sourceMaterial)) !== cut.sourceMaterialHash)
       return yield* fail('Native cash witnesses differ from the retained source cut')
     const cashAccounts = nativeCalendar === null ? null : yield* registeredNativeCashAccounts(data.registration, cut)

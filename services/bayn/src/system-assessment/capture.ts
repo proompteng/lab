@@ -27,12 +27,16 @@ import { readAssessmentRegistration } from './postgres'
 import { SystemAssessmentError } from './economics'
 import { captureForwardFinancialEvidence } from './forward-evidence'
 import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
-import { loadSharedJevProtocol } from '../strategy'
-import { captureQualificationRuntime, qualificationRuntime } from './configuration'
+import { captureQualificationRuntime, configuredQualificationRuntime } from './configuration'
 import { BrokerEnvironment } from '../broker/identity'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
-import { nativeBrokerRecoveryClose, registeredMarkIntervalMs, type SystemRegistration } from './policy'
+import {
+  nativeBrokerRecoveryClose,
+  registeredMarkIntervalMs,
+  isNativeSystemRegistration,
+  type SystemRegistration,
+} from './policy'
 import { measureControllerLatency } from './controller-latency'
 import { measureFullBatchLatency } from './full-batch-latency'
 import { decisionMarketScopeSupported } from './decision-work'
@@ -69,7 +73,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         return yield* captureOperationalSourceCut(config, registrationHash, registration)
       const { runtimeConfiguration, runtimeConfigurationHash } = yield* Effect.fromResult(
         captureQualificationRuntime(
-          qualificationRuntime(config, yield* Effect.fromResult(loadSharedJevProtocol())),
+          yield* Effect.fromResult(configuredQualificationRuntime(config, registration.obligations.configuration)),
           registration.obligations,
         ),
       )
@@ -111,15 +115,14 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               Effect.provide(alpacaHttpLayer(config.alpaca)),
             )
           : undefined
-      const settlementWindows =
-        registration.schemaVersion === 'bayn.system-registration.v5'
-          ? registration.calendar.sessions.flatMap((session) => {
-              const provider = registration.calendar.marketCalendar.providerSessions.find(
-                (row) => row.date === session.sessionDate,
-              )
-              return provider === undefined ? [] : [{ ...session, recoveryCloseAt: provider.sessionCloseAt }]
-            })
-          : []
+      const settlementWindows = isNativeSystemRegistration(registration)
+        ? registration.calendar.sessions.flatMap((session) => {
+            const provider = registration.calendar.marketCalendar.providerSessions.find(
+              (row) => row.date === session.sessionDate,
+            )
+            return provider === undefined ? [] : [{ ...session, recoveryCloseAt: provider.sessionCloseAt }]
+          })
+        : []
       if (brokerRecoveryClose !== undefined && settlementWindows.length !== registration.calendar.sessions.length)
         return yield* new SystemAssessmentError({ message: 'A native session is missing its settlement window' })
       const captureAccount = (

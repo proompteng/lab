@@ -73,9 +73,13 @@ const bindingFields = {
   strategy: ExecutionStrategyIdentitySchema,
   protocolHash: Sha256Schema,
 }
-export const ResearchStrategyBindingSchema = Schema.Union([
+export const ServingResearchStrategyBindingSchema = Schema.Union([
   Schema.Struct({ ...bindingFields, ...JevMaterialSchema.fields }),
   Schema.Struct({ ...bindingFields, ...AlphaMaterialSchema.fields }),
+])
+export type ServingResearchStrategyBinding = typeof ServingResearchStrategyBindingSchema.Type
+export const ResearchStrategyBindingSchema = Schema.Union([
+  ServingResearchStrategyBindingSchema,
   Schema.Struct({ ...bindingFields, ...AblationMaterialSchema.fields }),
   Schema.Struct({ ...bindingFields, ...MomentumMaterialSchema.fields }),
   Schema.Struct({ ...bindingFields, ...FrozenMaterialSchema.fields }),
