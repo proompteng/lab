@@ -38,7 +38,7 @@ import {
   momentumTradeReplayFixture,
 } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
-import { BacktestIssue, prepareBacktest, runBacktest, type BacktestPass } from './backtest'
+import { BacktestBuildEvidenceSchema, BacktestIssue, prepareBacktest, runBacktest, type BacktestPass } from './backtest'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
@@ -668,7 +668,8 @@ durableTest.each([
           const commandPath = trading ? `${directory}/backtest-command.js` : `${import.meta.dir}/../backtest-command.ts`
           const commandRuntime = trading ? Bun.which('node') : process.execPath
           if (commandRuntime === null) throw new Error('Compiled replay acceptance requires the pinned Node runtime')
-          if (trading) yield* writeCompiledReplayCommand(commandPath)
+          if (trading)
+            yield* writeCompiledReplayCommand(commandPath, undefined, alphaFixture === null ? undefined : build)
           const receipt = JSON.stringify(prepared.sourceReceipt.value)
           yield* fs.writeFileString(
             inputPath,
@@ -720,6 +721,7 @@ durableTest.each([
                     ),
                     profitability: Schema.Literal('UNPROVEN'),
                     completion: Schema.Literals(['COMPLETE', 'INCOMPLETE']),
+                    build: BacktestBuildEvidenceSchema,
                     executableSha256: Schema.String,
                     reconciledExecutionPnlAfterCostsMicros: Schema.String,
                     reconciledNetPnlAfterCostsMicros: Schema.NullOr(Schema.String),
@@ -737,6 +739,10 @@ durableTest.each([
             ),
           )
           expect(cliReport.inference).toEqual({ providerDispatchCount: 0, retainedCallCount: 0 })
+          expect(cliReport.build).toEqual({
+            ...prepared.buildEvidence,
+            sourceAndStrategyVerification: trading ? 'embedded' : 'configured',
+          })
           expect(cliReport.comparisonInput.equityExecutionTape).toEqual(tapeReference)
           expect(cliReport.brokerCheckpoint.state.ledger.openingCashMicros).toBe('100000000000')
           if (trading) {
