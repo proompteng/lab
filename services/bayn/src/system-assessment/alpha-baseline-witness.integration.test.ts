@@ -267,9 +267,15 @@ postgres('committed prospective alpha baseline preparation', () => {
       await runtime.runPromise(readSystemAlphaBaselinePreparations(registration, '2026-09-04T12:01:03.001Z')),
     ).toEqual([record])
     expect(await runtime.runPromise(readWitnesses)).toEqual([])
+    await runtime.runPromise(setClock('2026-09-04T12:01:03.000750Z').pipe(Effect.andThen(witness)))
+    expect(await runtime.runPromise(readWitnesses)).toEqual([])
+    expect(await runtime.runPromise(readPending)).toEqual([
+      { source_hash: record?.contentHash, source_at: '2026-09-04T12:01:03.001Z' },
+    ])
     await runtime.runPromise(setClock('2026-09-04T12:01:03.250500Z').pipe(Effect.andThen(witness)))
     const durableObservations = await runtime.runPromise(readWitnesses)
     expect(durableObservations).toHaveLength(1)
+    expect(await runtime.runPromise(readPending)).toEqual([])
     expect(durableObservations[0]?.witnessedAt).toBe('2026-09-04T12:01:03.251Z')
     expect(
       await runtime.runPromise(
