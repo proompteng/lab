@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: arc-real-workload-${{ github.event.pull_request.number }}
+  group: arc-real-workload-followup-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -20,36 +20,25 @@ jobs:
     timeout-minutes: 38
     strategy:
       fail-fast: false
-      max-parallel: 10
+      max-parallel: 6
       matrix:
         arch: [amd64, arm64]
         image:
           - package: opencode-image
             revision: 9af2ccad3e6579fb0417e9691287532a81fe8596
+            build_from_inputs: true
           - package: bayn-image
             revision: d6316076f3668423dab04d6b65f3e95fd4da60fb
+            build_from_inputs: true
           - package: bayn-research-image
             revision: d6316076f3668423dab04d6b65f3e95fd4da60fb
-          - package: bayn-broker-feed-image
-            revision: d6316076f3668423dab04d6b65f3e95fd4da60fb
-          - package: signal-publisher-image
-            revision: 892f9290e9704b3d754cdede40e0406a5eb11616
+            build_from_inputs: true
           - package: proompteng-image
             revision: 547f3b5a3dfd16ccad7819c85426c4f8f1a0aec6
-          - package: ofz-image
-            revision: 547f3b5a3dfd16ccad7819c85426c4f8f1a0aec6
-          - package: torghut-image
-            revision: 892f9290e9704b3d754cdede40e0406a5eb11616
-          - package: torghut-ws-image
-            revision: 892f9290e9704b3d754cdede40e0406a5eb11616
-          - package: torghut-notebook-image
-            revision: 892f9290e9704b3d754cdede40e0406a5eb11616
-          - package: torghut-ta-image
-            revision: 892f9290e9704b3d754cdede40e0406a5eb11616
-          - package: jangar-image
-            revision: bf140931cde7cbd682922e0f94dcc13a9de454fb
+            build_from_inputs: false
     env:
       PACKAGE: ${{ matrix.image.package }}
+      BUILD_FROM_INPUTS: ${{ matrix.image.build_from_inputs }}
       EXPECTED_SOURCE: ${{ matrix.image.revision }}
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
     steps:
@@ -116,7 +105,7 @@ jobs:
           SAMPLER
           sampler=$!
           registry=
-          phase=build
+          phase=setup
           start="$(date +%s)"
           finish() {
             status=$?
@@ -143,9 +132,26 @@ jobs:
           download-attempts = 3"
           export NIX_REMOTE=local
           as_runner=(setpriv --reuid=1001 --regid=1001 --init-groups)
+          target=".#$PACKAGE"
+          build_flags=()
+          if [[ "$BUILD_FROM_INPUTS" == true ]]; then
+            phase=build-inputs
+            printf '%s\n' "$phase" > "$state/phase"
+            "${as_runner[@]}" nix derivation show "$target" > "$state/derivation.json"
+            jq -er 'to_entries[0].value.inputDrvs | to_entries[] |
+              .key + "^" + (.value | if type == "array" then . else .outputs end | join(","))' \
+              "$state/derivation.json" > "$state/inputs.txt"
+            mapfile -t inputs < "$state/inputs.txt"
+            test "${#inputs[@]}" -gt 0
+            "${as_runner[@]}" bash nix/ci-retry-attic-download.sh nix build --no-link "${inputs[@]}"
+            jq -er 'to_entries[0].value.outputs.out.path' "$state/derivation.json" > "$state/output-path"
+            test ! -e "$(cat "$state/output-path")"
+            build_flags=(--option substitute false)
+          fi
+          phase=build
           printf '%s\n' "$phase" > "$state/phase"
-          "${as_runner[@]}" bash nix/ci-retry-attic-download.sh nix build ".#$PACKAGE" \
-            --print-build-logs --out-link "$RUNNER_TEMP/result"
+          "${as_runner[@]}" bash nix/ci-retry-attic-download.sh nix build "$target" \
+            --print-build-logs --out-link "$RUNNER_TEMP/result" "${build_flags[@]}"
           archive="$(readlink -f "$RUNNER_TEMP/result")"
           phase=inspect
           printf '%s\n' "$phase" > "$state/phase"
@@ -153,7 +159,10 @@ jobs:
           case "$PACKAGE" in
             bayn-image) "${as_runner[@]}" bash nix/verify-bayn-image-command.sh "$archive" trading ;;
             bayn-research-image) "${as_runner[@]}" bash nix/verify-bayn-image-command.sh "$archive" research ;;
-            proompteng-image) "${as_runner[@]}" bash nix/verify-proompteng-cache-archive.sh "$archive" ;;
+            proompteng-image)
+              "${as_runner[@]}" python3 nix/test-verify-proompteng-image-cache.py
+              "${as_runner[@]}" python3 nix/verify-proompteng-image-cache.py "$archive"
+              ;;
           esac
           phase=stage-to-loopback
           printf '%s\n' "$phase" > "$state/phase"
@@ -179,5 +188,6 @@ jobs:
             ${{ runner.temp }}/arc-real-workload/after.txt
             ${{ runner.temp }}/arc-real-workload/result.json
             ${{ runner.temp }}/arc-real-workload/digest.txt
+            ${{ runner.temp }}/arc-real-workload/output-path
           if-no-files-found: warn
           retention-days: 7
