@@ -59,7 +59,12 @@ export const completeLatencyArtifactFixture = (
     ),
   )
   const report = {
-    schemaVersion: input.schemaVersion === 'bayn.backtest.v11' ? 'bayn.backtest-report.v9' : 'bayn.backtest-report.v10',
+    schemaVersion:
+      input.schemaVersion === 'bayn.backtest.v11'
+        ? 'bayn.backtest-report.v9'
+        : input.schemaVersion === 'bayn.backtest.v13'
+          ? 'bayn.backtest-report.v11'
+          : 'bayn.backtest-report.v10',
     ...(input.schemaVersion === 'bayn.backtest.v11'
       ? {}
       : { alphaObservations: [], alphaBaselineGaps: [], decisions: [] }),

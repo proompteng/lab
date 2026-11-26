@@ -4,7 +4,7 @@ import {
   constructObserveShadowDecision as buildObserveShadowDecision,
 } from '../shadow-decision'
 import { buildResearchMutationCycleDecision, type ResearchAlphaBaselineLoader } from './decision-builder'
-import type { ReplayAlphaBaselineUse } from './alpha-baseline-use'
+import type { AnyReplayAlphaBaselineUse } from './alpha-baseline-use'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
@@ -104,8 +104,10 @@ export const reconcileReplayForActivation = <R>(
   )
 
 export interface ReplayExecutionRuntimeInput {
-  readonly loadAlphaBaseline?: ResearchAlphaBaselineLoader
-  readonly recordAlphaBaselineUse?: (use: ReplayAlphaBaselineUse) => Effect.Effect<void, OperationalError>
+  readonly loadAlphaBaseline?: (
+    ...args: [...Parameters<ResearchAlphaBaselineLoader>, commandIssuedAt: string]
+  ) => ReturnType<ResearchAlphaBaselineLoader>
+  readonly recordAlphaBaselineUse?: (use: AnyReplayAlphaBaselineUse) => Effect.Effect<void, OperationalError>
   readonly decisionTrigger?: 'polling' | 'streaming'
   readonly decisionLatencyStress: Parameters<typeof makeReplayDecisionLatency>[1]
   readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
@@ -168,6 +170,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       input.recordAlphaBaselineUse !== undefined,
     )
     const recordAlphaBaselineUse = input.recordAlphaBaselineUse
+    const loadAlphaBaseline = input.loadAlphaBaseline
     const jevBatches = latency.wrapStore(
       yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations)),
     )
@@ -292,7 +295,12 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           buildDecision: (decision) =>
             buildResearchMutationCycleDecision(
               decision,
-              input.loadAlphaBaseline,
+              loadAlphaBaseline === undefined
+                ? undefined
+                : (query, observedAt) =>
+                    latency.currentCommandIssuedAt.pipe(
+                      Effect.flatMap((commandIssuedAt) => loadAlphaBaseline(query, observedAt, commandIssuedAt)),
+                    ),
               recordAlphaBaselineUse === undefined
                 ? undefined
                 : (use) =>

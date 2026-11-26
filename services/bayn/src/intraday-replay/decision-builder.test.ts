@@ -18,7 +18,9 @@ import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { currentUtcInstant } from '../time'
 import { ResearchStrategyEngine } from '../system-assessment/strategy-binding'
 import { selectReplayAlphaBaselineSource } from './alpha-baseline'
-import type { ReplayAlphaBaselineAdmissionUse } from './alpha-baseline-use'
+import { selectReplayAlphaBaselinePreparation } from './alpha-prepared-baseline'
+import { preparedReplayAlphaBaselineFixture } from './alpha-prepared-baseline.test-support'
+import type { AnyReplayAlphaBaselineAdmissionUse } from './alpha-baseline-use'
 import { alphaReplayBaselineFixture } from './alpha-replay.test-support'
 import { observeResearchEntry } from './decision-builder'
 import { operationalError } from '../errors'
@@ -32,6 +34,7 @@ const run = async (
     readonly failRecord?: boolean
     readonly failAfterRecord?: boolean
     readonly failRelease?: boolean
+    readonly preparedBaseline?: 'early' | 'late-before-admission'
   } = {},
 ) => {
   const retained = alphaReplayBaselineFixture()
@@ -47,6 +50,13 @@ const run = async (
     },
   })
   const portfolio = makeFlatAlphaPortfolio(input.observedAt, '100000000000', '100000000000', 'native-replay-clock-test')
+  const commandLeadMs = options.preparedBaseline === undefined ? 0 : 100
+  const preparation =
+    options.preparedBaseline === undefined
+      ? null
+      : preparedReplayAlphaBaselineFixture(
+          options.preparedBaseline === 'early' ? undefined : new Date(Date.parse(input.observedAt) - 50).toISOString(),
+        )
   const calendar = Schema.decodeUnknownSync(MarketCalendarObservationSchema)(
     Result.getOrThrow(
       normalizeMarketCalendarResult(
@@ -59,7 +69,7 @@ const run = async (
   const snapshots: string[] = []
   const baselineCuts: string[] = []
   const recorded: unknown[] = []
-  const uses: ReplayAlphaBaselineAdmissionUse[] = []
+  const uses: AnyReplayAlphaBaselineAdmissionUse[] = []
   const latency = makeReplayDecisionLatency(
     currentUtcInstant,
     options.failRelease
@@ -88,40 +98,50 @@ const run = async (
   ]
   const result = await Effect.runPromise(
     Effect.gen(function* () {
-      yield* TestClock.setTime(Date.parse(input.observedAt))
+      yield* TestClock.setTime(Date.parse(input.observedAt) - commandLeadMs)
       const result = yield* Effect.result(
         latency.runPass(
-          observeResearchEntry(
-            (query, observedAt) =>
-              Effect.gen(function* () {
-                baselineCuts.push(observedAt)
-                return yield* Effect.fromResult(selectReplayAlphaBaselineSource(binding, sources, query, observedAt))
+          Effect.gen(function* () {
+            yield* TestClock.adjust(commandLeadMs)
+            return yield* observeResearchEntry(
+              (query, observedAt) =>
+                Effect.gen(function* () {
+                  if (preparation !== null) {
+                    const commandIssuedAt = yield* latency.currentCommandIssuedAt
+                    baselineCuts.push(commandIssuedAt)
+                    return yield* Effect.fromResult(
+                      selectReplayAlphaBaselinePreparation(binding, [preparation.source], query, commandIssuedAt),
+                    )
+                  }
+                  baselineCuts.push(observedAt)
+                  return yield* Effect.fromResult(selectReplayAlphaBaselineSource(binding, sources, query, observedAt))
+                }),
+              (use) =>
+                Effect.sync(() => {
+                  uses.push(use)
+                }),
+            )({
+              strategy: makeIntradayAlphaRuntime(binding.parameters, {
+                ...fixtureRuntime.provenance,
+                strategy: binding.strategy,
               }),
-            (use) =>
-              Effect.sync(() => {
-                uses.push(use)
-              }),
-          )({
-            strategy: makeIntradayAlphaRuntime(binding.parameters, {
-              ...fixtureRuntime.provenance,
-              strategy: binding.strategy,
-            }),
-            query: input.query,
-            observation: {
-              cycleId: '1'.repeat(64),
-              authorityGenerationHash: '2'.repeat(64),
-              protocol: binding.parameters.sharedProtocol,
-              portfolio,
-            },
-            calendar,
-            sessionDate: input.query.sessionDate,
-            observedAt: input.observedAt,
-            admissionExpiresAt: Date.parse(input.observedAt) + (options.expiryMs ?? 60000),
-            loadSnapshot: (query) =>
-              Effect.sync(() => {
-                snapshots.push(query.observedAt)
-                return Result.getOrThrow(constructStreamingSnapshot(input.cut, query))
-              }),
+              query: input.query,
+              observation: {
+                cycleId: '1'.repeat(64),
+                authorityGenerationHash: '2'.repeat(64),
+                protocol: binding.parameters.sharedProtocol,
+                portfolio,
+              },
+              calendar,
+              sessionDate: input.query.sessionDate,
+              observedAt: input.observedAt,
+              admissionExpiresAt: Date.parse(input.observedAt) + (options.expiryMs ?? 60000),
+              loadSnapshot: (query) =>
+                Effect.sync(() => {
+                  snapshots.push(query.observedAt)
+                  return Result.getOrThrow(constructStreamingSnapshot(input.cut, query))
+                }),
+            })
           }),
         ),
       )
@@ -189,8 +209,34 @@ const run = async (
       ),
     ),
   )
-  return { ...result, input, reads, snapshots, baselineCuts, recorded, uses }
+  return { ...result, input, preparation, reads, snapshots, baselineCuts, recorded, uses }
 }
+
+test('prepared alpha executes four legs from its witnessed source and cannot acquire a baseline during command reconciliation', async () => {
+  const early = await run({ preparedBaseline: 'early' })
+  const decision = Result.getOrThrow(early.result).decision
+  if (decision.schemaVersion !== 'bayn.intraday-alpha-target.v2') throw new Error('Missing native alpha target')
+  expect(decision.selectedSymbols).toEqual(['COHR', 'LITE', 'MU', 'SNDK'])
+  expect(early.uses).toHaveLength(1)
+  expect(early.uses[0]).toMatchObject({
+    schemaVersion: 'bayn.replay-alpha-baseline-use.v2',
+    sourcePreparationHash: early.preparation?.source.preparationHash,
+    sourceWitnessHash: early.preparation?.source.witnessSourceHash,
+    admissionObservedAt: early.input.observedAt,
+  })
+  expect(early.baselineCuts).toEqual([new Date(Date.parse(early.input.observedAt) - 100).toISOString()])
+  const late = await run({ preparedBaseline: 'late-before-admission' })
+  expect(Result.isFailure(late.result) && late.result.failure).toMatchObject({
+    _tag: 'JevAwaitingEvidence',
+    readiness: DecisionReadinessReason.SnapshotUnavailable,
+  })
+  expect(Date.parse(late.preparation?.source.availableAt ?? '')).toBeLessThan(Date.parse(late.input.observedAt))
+  expect(late.recorded).toEqual([])
+  expect(late.uses).toEqual([])
+  const failed = await run({ preparedBaseline: 'early', failRecord: true })
+  expect(Result.isFailure(failed.result)).toBe(true)
+  expect(failed.uses).toEqual([])
+})
 
 test('research alpha observes fresh borrow eligibility before snapshot refresh while preserving the original baseline cut', async () => {
   const f = await run()

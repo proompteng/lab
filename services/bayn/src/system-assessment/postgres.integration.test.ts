@@ -16,6 +16,7 @@ import {
 } from './postgres'
 import { historicalRegistrationFixture } from './historical-registration.test-support'
 import { strategyBoundRegistrationFixture } from './strategy-registration.test-support'
+import { preparedAlphaRegistrationFixture } from './prepared-alpha-registration.test-support'
 import { ResearchStrategyEngine } from './strategy-binding'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
@@ -238,7 +239,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     }
   }
   const registration = (sessionCount = 20) =>
-    strategyBoundRegistrationFixture(nativeRegistrationFixture(retainedRegistration(sessionCount)), {
+    preparedAlphaRegistrationFixture(nativeRegistrationFixture(retainedRegistration(sessionCount)), {
       candidate: ResearchStrategyEngine.Jev,
       incumbent: ResearchStrategyEngine.Jev,
     })
@@ -1235,8 +1236,9 @@ postgres('PostgreSQL prospective system qualification', () => {
     ) => {
       const retained = sourceMaterial(transactions, accountCashSettlements, positionReconciledAt)
       return Schema.decodeUnknownSync(SystemSourceCutSchema)({
-        schemaVersion: 'bayn.system-source-cut.v5',
+        schemaVersion: 'bayn.system-source-cut.v6',
         alphaObservations: [],
+        alphaBaselinePreparations: [],
         protectionIntents: [],
         decisionAdmissions: [],
         orders: [],
@@ -1571,12 +1573,21 @@ postgres('PostgreSQL prospective system qualification', () => {
     ['conditional confidence', 181, JevAcceptanceVersion.RetainedV5, 'bayn.system-registration.v3'],
     ['native calendar', 206, JevAcceptanceVersion.Current, 'bayn.system-registration.v4'],
     ['explicit engine binding', 223, JevAcceptanceVersion.Current, 'bayn.system-registration.v5'],
+    ['prepared baseline', 224, JevAcceptanceVersion.Current, 'bayn.system-registration.v6'],
   ] as const)(
     '%s migration preserves the previous registration, receipt and attempt chain',
     async (_, prior, version, schema) => {
       await restorePriorAdmission(prior)
       const base = retainedRegistration(4, version)
-      const retained = schema === 'bayn.system-registration.v5' ? nativeRegistrationFixture(base) : base
+      const retained =
+        schema === 'bayn.system-registration.v6'
+          ? strategyBoundRegistrationFixture(nativeRegistrationFixture(base), {
+              candidate: ResearchStrategyEngine.Jev,
+              incumbent: ResearchStrategyEngine.Jev,
+            })
+          : schema === 'bayn.system-registration.v5'
+            ? nativeRegistrationFixture(base)
+            : base
       expect(retained.schemaVersion).toBe(schema)
       const hash = testHash(retained)
       await runtime.runPromise(
@@ -1592,6 +1603,9 @@ postgres('PostgreSQL prospective system qualification', () => {
       const cut = await runtime.runPromise(
         persistSystemSourceCut({
           ...emptySourceCutFixture().cut,
+          ...(retained.schemaVersion === 'bayn.system-registration.v6'
+            ? { schemaVersion: 'bayn.system-source-cut.v5' as const, alphaObservations: [] }
+            : {}),
           registrationHash: hash,
           asOf,
           runtimeConfigurationHash: retained.obligations.runtimeConfigurationHash,
@@ -2785,8 +2799,9 @@ postgres('PostgreSQL prospective system qualification', () => {
       await runtime.runPromise(Effect.sleep('10 millis'))
       const asOf = new Date().toISOString()
       const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
-        schemaVersion: 'bayn.system-source-cut.v5',
+        schemaVersion: 'bayn.system-source-cut.v6',
         alphaObservations: [],
+        alphaBaselinePreparations: [],
         protectionIntents: [],
         decisionAdmissions: [],
         orders: [],
@@ -2924,8 +2939,9 @@ postgres('PostgreSQL prospective system qualification', () => {
             if (definition === undefined) throw new Error('Missing selected policy')
             const asOf = yield* databaseNow
             const cut = yield* persistSystemSourceCut({
-              schemaVersion: 'bayn.system-source-cut.v5',
+              schemaVersion: 'bayn.system-source-cut.v6',
               alphaObservations: [],
+              alphaBaselinePreparations: [],
               protectionIntents: [],
               decisionAdmissions: [],
               orders: [],

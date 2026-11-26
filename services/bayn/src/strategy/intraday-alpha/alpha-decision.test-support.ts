@@ -21,7 +21,12 @@ import { JevClient } from '../../jev/client'
 import { EntryInferenceJournal } from '../../jev/entry-inference'
 import { JevEvaluationStore } from '../../jev/evaluation'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../../jev/protocol'
-import { IntradayTrailingBaseline } from '../../market-data/intraday/trailing-baseline'
+import {
+  NativeAlphaBaselinePreparation,
+  reproduceAlphaBaselinePreparation,
+  type RecordedAlphaBaselinePreparation,
+} from '../../observe-composition/alpha-baseline-preparation'
+import { preparedAlphaBaselineFixture } from '../../observe-composition/alpha-baseline-preparation.test-support'
 import { constructStreamingSnapshot } from '../../market-data/streaming/snapshot'
 import { CandidateObservationStore } from '../../observe-composition/candidate-observation'
 import { buildMutationShadowCycleDecision } from '../../observe-composition/decision-builder'
@@ -31,7 +36,7 @@ import { constructExecutionDecision, constructObserveShadowDecision } from '../.
 import { shortEntryBrokerReads } from '../../testing/entry-broker-reads.test-support'
 import { fixtureRuntime } from '../../testing/runtime-fixtures'
 import { intradayAlphaStrategyIdentity, makeIntradayAlphaPolicy } from './policy'
-import { makeAlphaStreamingSnapshot, makeFlatAlphaPortfolio, makeTestTrailingBaseline } from './test-support'
+import { makeAlphaStreamingSnapshot, makeFlatAlphaPortfolio } from './test-support'
 
 /** Real native construction over synthetic market/account inputs, never operational trading evidence. */
 export const nativeAlphaDecisionFixture = async (
@@ -39,6 +44,7 @@ export const nativeAlphaDecisionFixture = async (
     readonly accountId?: string
     readonly authorityGenerationHash?: string
     readonly calendar?: typeof MarketCalendarObservationSchema.Type
+    readonly baselinePreparation?: RecordedAlphaBaselinePreparation
   } = {},
 ) => {
   const accountId = options.accountId ?? 'alpha-test-account'
@@ -46,8 +52,12 @@ export const nativeAlphaDecisionFixture = async (
   const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)('2026-09-04')
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
   const policy = makeIntradayAlphaPolicy(protocol)
-  const testTrailingBaselineLayer = Layer.succeed(IntradayTrailingBaseline, {
-    load: () => Effect.succeed(makeTestTrailingBaseline()),
+  const preparedBaseline = options.baselinePreparation ?? preparedAlphaBaselineFixture()
+  const testTrailingBaselineLayer = Layer.succeed(NativeAlphaBaselinePreparation, {
+    prepare: (request) =>
+      Effect.fromResult(reproduceAlphaBaselinePreparation({ ...preparedBaseline.payload, ...request })).pipe(
+        Effect.map(({ contentHash, payload }) => ({ contentHash, payload, recordedAt: preparedBaseline.recordedAt })),
+      ),
   })
   const extendedCalendar =
     options.calendar ??

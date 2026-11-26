@@ -24,7 +24,12 @@ import { validateOperatingCostWindow } from '../operating-cost-window'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
 import { validateFrozenCostAllocations } from './cost-allocation'
-import { registeredAllocationMicros, type SystemRegistration, verifyStoredSystemRegistration } from './policy'
+import {
+  registeredAllocationMicros,
+  isStrategyBoundSystemRegistration,
+  type SystemRegistration,
+  verifyStoredSystemRegistration,
+} from './policy'
 
 export const ReplaySessionCostsSchema = Schema.Struct({
   policy: Schema.Enum(JevResearchPolicy),
@@ -118,11 +123,10 @@ export const reproduceSessionEconomics = (
     )
       return yield* fail('Replay accounting does not cover the registered evaluation window')
     const interval = { startAt: first.openAt, endAt: last.closeAt }
-    const strategyBinding =
-      registration.schemaVersion === 'bayn.system-registration.v6'
-        ? registration.policies.find((policy) => policy.policy === costs.policy)?.strategyBinding
-        : undefined
-    if (registration.schemaVersion === 'bayn.system-registration.v6' && strategyBinding === undefined)
+    const strategyBinding = isStrategyBoundSystemRegistration(registration)
+      ? registration.policies.find((policy) => policy.policy === costs.policy)?.strategyBinding
+      : undefined
+    if (isStrategyBoundSystemRegistration(registration) && strategyBinding === undefined)
       return yield* fail('Native replay economics requires its registered strategy binding')
     const tariff = yield* strategyBinding !== undefined
       ? registeredStrategyReplayInferenceTariff(definition.inferenceRateCard, interval, strategyBinding)
