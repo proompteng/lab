@@ -11,7 +11,7 @@ inference estimates**, across 65 completed, flat-to-flat episodes. That small po
 persistent profitability. Across the eight observed sessions from 16–25 November, the account lost **$1,286.42
 after canonical broker fees**.
 
-Current deployed source is `d6316076f3668423dab04d6b65f3e95fd4da60fb`. Its
+At the pre-release audit cutoff, deployed source was `d6316076f3668423dab04d6b65f3e95fd4da60fb`. Its
 `bayn.intraday-alpha-policy.v1` authority became active at **2026-11-26T08:20:21.654766Z**.
 At the 08:47 UTC read, it had **zero post-activation cycles**. The following realized results belong to the
 previous v41/v43/v44 strategies, not the newly activated two-phase alpha strategy.
@@ -233,6 +233,9 @@ results and limitations separately.
 
 ## Reproduction and evidence
 
+- [Protective-child stream compatibility and recovery evidence](broker-projection-replay.md).
+- [Corrected alpha replay, execution assumptions and prospective evaluation](../../intraday-alpha-cutover.md).
+- [Implementation and release validation](https://github.com/proompteng/lab/pull/16342).
 - [Lifetime cash bridge SQL](lifetime.sql) and [captured lifetime results](lifetime-results.txt).
 - [Performance SQL](performance.sql) and [captured performance results](performance-results.txt).
 - [Funnel and symbol attribution SQL](funnel.sql) and [captured funnel results](funnel-results.txt).
