@@ -35,10 +35,12 @@ const run = async (options: { readonly lateBaseline?: boolean; readonly expiryMs
     },
   })
   const portfolio = makeFlatAlphaPortfolio(input.observedAt, '100000000000', '100000000000', 'native-replay-clock-test')
-  const calendar = Result.getOrThrow(
-    normalizeMarketCalendarResult(
-      [{ date: '2026-09-04', session_open: '0930', session_close: '1600', open: '09:30', close: '16:00' }],
-      { start: '2026-09-04', end: '2026-09-04' },
+  const calendar = Schema.decodeUnknownSync(MarketCalendarObservationSchema)(
+    Result.getOrThrow(
+      normalizeMarketCalendarResult(
+        [{ date: '2026-09-04', session_open: '0930', session_close: '1600', open: '09:30', close: '16:00' }],
+        { start: '2026-09-04', end: '2026-09-04' },
+      ),
     ),
   )
   const reads: { kind: string; observedAt: string }[] = []
@@ -82,7 +84,7 @@ const run = async (options: { readonly lateBaseline?: boolean; readonly expiryMs
             protocol: binding.parameters.sharedProtocol,
             portfolio,
           },
-          calendar: Schema.decodeUnknownSync(MarketCalendarObservationSchema)(calendar),
+          calendar,
           sessionDate: input.query.sessionDate,
           observedAt: input.observedAt,
           admissionExpiresAt: Date.parse(input.observedAt) + (options.expiryMs ?? 60000),
