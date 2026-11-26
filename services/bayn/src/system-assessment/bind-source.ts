@@ -51,7 +51,10 @@ export const bindSystemSourceCut = (
       candidate.authorityGenerationHash,
       indexDecisionAdmissionMutations(cut.mutations),
     )
-    const witnessedCut = { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
+    const witnessedCut: SystemSourceCut =
+      cut.schemaVersion === 'bayn.system-source-cut.v4'
+        ? { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
+        : { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
     const definitionHash = yield* canonicalHashV1Result(candidate)
     const financialAccounts = yield* registeredFinancialAccounts(data.registration, cut.financial)
     const nativeCalendar = isNativeSystemRegistration(data.registration)

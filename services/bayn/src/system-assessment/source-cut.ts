@@ -21,8 +21,27 @@ import { ProtectionIntentEvidenceSchema } from './execution-plans'
 import { ControllerPassEvidenceSchema } from './decision-work'
 import { JevBatchPlanSchema, JevBatchResultSchema } from '../jev/batch'
 import { JevObservationSchema } from '../jev/observation-contract'
+import { IntradayAlphaObservationSchema } from '../strategy/intraday-alpha/observation'
 
-export const SystemSourceCutSchema = Schema.Struct({
+export const RetainedSystemDurableObservationSchema = Schema.Struct({
+  kind: Schema.Literals(['DECISION', 'RECONCILIATION', 'MUTATION', 'CONTROLLER', 'BATCH']),
+  sourceHash: Sha256Schema,
+  sourceAt: UtcInstantSchema,
+  witnessedAt: UtcInstantSchema,
+  correct: Schema.Boolean,
+})
+
+export const SystemDurableObservationSchema = Schema.Struct({
+  ...RetainedSystemDurableObservationSchema.fields,
+  kind: Schema.Literals(['DECISION', 'RECONCILIATION', 'MUTATION', 'CONTROLLER', 'BATCH', 'ALPHA_OBSERVATION']),
+})
+
+export const AlphaObservationEvidenceSchema = Schema.Struct({
+  contentHash: Sha256Schema,
+  payload: IntradayAlphaObservationSchema,
+})
+
+export const RetainedSystemSourceCutSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.system-source-cut.v4'),
   registrationHash: Sha256Schema,
   asOf: UtcInstantSchema,
@@ -81,18 +100,19 @@ export const SystemSourceCutSchema = Schema.Struct({
   ),
   accountMarks: Schema.Array(AccountMarkSchema),
   controllerPasses: Schema.Array(ControllerPassEvidenceSchema),
-  durableObservations: Schema.Array(
-    Schema.Struct({
-      kind: Schema.Literals(['DECISION', 'RECONCILIATION', 'MUTATION', 'CONTROLLER', 'BATCH']),
-      sourceHash: Sha256Schema,
-      sourceAt: UtcInstantSchema,
-      witnessedAt: UtcInstantSchema,
-      correct: Schema.Boolean,
-    }),
-  ),
+  durableObservations: Schema.Array(RetainedSystemDurableObservationSchema),
   sourceMaterial: Schema.Unknown,
   sourceMaterialHash: Sha256Schema,
 })
+
+export const StrategyBoundSystemSourceCutSchema = Schema.Struct({
+  ...RetainedSystemSourceCutSchema.fields,
+  schemaVersion: Schema.Literal('bayn.system-source-cut.v5'),
+  alphaObservations: Schema.Array(AlphaObservationEvidenceSchema),
+  durableObservations: Schema.Array(SystemDurableObservationSchema),
+})
+
+export const SystemSourceCutSchema = Schema.Union([RetainedSystemSourceCutSchema, StrategyBoundSystemSourceCutSchema])
 
 export type SystemSourceCut = typeof SystemSourceCutSchema.Type
 

@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema } from './source-cut'
 import { CapturedTradingFactsSchema } from './session'
 import type { SystemRegistration } from './policy'
 
@@ -13,7 +13,7 @@ export const emptySourceCutFixture = (
   const candidate = input.registration.policies.find((p) => p.policy === 'JEV')
   const policy = input.policies.find((p) => p.policy === 'JEV')
   if (candidate === undefined || policy === undefined) throw new Error('Missing candidate fixture')
-  const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
+  const cut = Schema.decodeUnknownSync(RetainedSystemSourceCutSchema)({
     schemaVersion: 'bayn.system-source-cut.v4',
     protectionIntents: [],
     decisionAdmissions: [],
@@ -80,7 +80,7 @@ export const capturedAccountsFixture = (
       })),
     )
   })
-  const captured = Schema.decodeUnknownSync(SystemSourceCutSchema)({
+  const captured = Schema.decodeUnknownSync(RetainedSystemSourceCutSchema)({
     ...cut,
     financial,
     accountMarks,

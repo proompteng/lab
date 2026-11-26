@@ -7,7 +7,7 @@ import { generationScope } from '../forward-performance/postgres/scope'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SignedMicrosSchema, UtcInstantSchema } from '../schemas'
 import { FeeSettlementAnchorsSchema } from './cash-settlements'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema } from './source-cut'
 
 export const readSystemCashObservations = (
   accountId: string,
@@ -124,7 +124,7 @@ export const readSystemFeeSettlementAnchors = (
 export const readSystemBatchEvidence = (accountId: string, generationHash: string, openAt: string, closeAt: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.batches)(
+    return yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.batches)(
       yield* sql`
       SELECT plan.payload AS plan, observation.payload AS observation, result.payload AS result
       FROM jev_batch_plans AS plan JOIN autonomous_cycles AS cycle USING (cycle_id)
@@ -140,7 +140,7 @@ export const readSystemBatchEvidence = (accountId: string, generationHash: strin
 export const readSystemMutationEvidence = (accountId: string, generationHash: string, from: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.mutations)(
+    return yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.mutations)(
       yield* sql`
         WITH latest AS MATERIALIZED (
           SELECT DISTINCT ON (event.mutation_id) event.mutation_id, event.event_type, event.occurred_at
@@ -199,7 +199,7 @@ export const readSystemControllerPasses = (
 ) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.controllerPasses)(
+    return yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.controllerPasses)(
       yield* systemControllerPassQuery(sql, controllerKey, planHash, openAt, closeAt, asOf),
     )
   })
@@ -207,7 +207,7 @@ export const readSystemControllerPasses = (
 export const readSystemDurableObservations = (registrationHash: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.durableObservations)(
+    return yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.durableObservations)(
       yield* sql`
     SELECT kind, source_hash AS "sourceHash", correct,
       to_char(source_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "sourceAt",

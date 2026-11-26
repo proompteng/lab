@@ -26,7 +26,7 @@ import { UtcInstantSchema } from '../schemas'
 import { readAssessmentRegistration } from './postgres'
 import { SystemAssessmentError } from './economics'
 import { captureForwardFinancialEvidence } from './forward-evidence'
-import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
+import { RetainedSystemSourceCutSchema, SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
 import { captureQualificationRuntime, configuredQualificationRuntime } from './configuration'
 import { BrokerEnvironment } from '../broker/identity'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
@@ -162,7 +162,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           const forward = yield* readForwardPerformanceInput(accountConfig, undefined, {
             authorityGenerationHash: definition.authorityGenerationHash,
           })
-          const decisions = yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.decisions)(
+          const decisions = yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.decisions)(
             yield* systemDecisionQuery(sql, {
               accountId: accountIdentity.accountId,
               generationHash: definition.authorityGenerationHash,
