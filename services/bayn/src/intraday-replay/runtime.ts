@@ -3,7 +3,7 @@ import {
   constructExecutionDecision as buildExecutionDecision,
   constructObserveShadowDecision as buildObserveShadowDecision,
 } from '../shadow-decision'
-import { buildResearchMutationCycleDecision } from './decision-builder'
+import { buildResearchMutationCycleDecision, type ResearchAlphaBaselineLoader } from './decision-builder'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
@@ -103,6 +103,8 @@ export const reconcileReplayForActivation = <R>(
   )
 
 export interface ReplayExecutionRuntimeInput {
+  readonly loadAlphaBaseline?: ResearchAlphaBaselineLoader
+  readonly decisionTrigger?: 'polling' | 'streaming'
   readonly decisionLatencyStress: Parameters<typeof makeReplayDecisionLatency>[1]
   readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
   readonly config: ExecutionStoreRuntimeConfig
@@ -280,7 +282,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           }),
         )
         const engine = yield* makeTradingEngine({
-          buildDecision: buildResearchMutationCycleDecision,
+          buildDecision: (decision) => buildResearchMutationCycleDecision(decision, input.loadAlphaBaseline),
           authority,
           riskPolicyHash: generation.riskPolicyHash,
           cycle: {
@@ -361,13 +363,17 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       mutations: mutationStore,
       store,
       marketData,
-      // Offline studies retain their registered sampling cadence even when the live owner waits for a stream event.
+      // Retained v11 studies keep their polling cadence; native replay preserves the owner's next wake.
       advance: driver.advance.pipe(
         Effect.provideContext(resources),
-        Effect.map((pass) => ({
-          ...pass,
-          nextDelayMs: Math.min(input.pollIntervalMs, pass.nextDelayMs ?? input.pollIntervalMs),
-        })),
+        Effect.map((pass) =>
+          input.decisionTrigger === 'streaming'
+            ? pass
+            : {
+                ...pass,
+                nextDelayMs: Math.min(input.pollIntervalMs, pass.nextDelayMs ?? input.pollIntervalMs),
+              },
+        ),
       ),
       nextDelayMs: input.pollIntervalMs,
       reconcile,

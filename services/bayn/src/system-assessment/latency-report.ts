@@ -3,6 +3,7 @@ import { Effect, Result, Schema } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   BacktestInputSchema,
+  BacktestInputV11Schema,
   BacktestBuildEvidenceSchema,
   BacktestIssue,
   assessBacktestSession,
@@ -98,7 +99,7 @@ const LatencyReportSchema = Schema.Struct({
   brokerState: Schema.Unknown,
   brokerCheckpoint: ReplayBrokerCheckpointSchema,
   inference: Schema.Struct({
-    definition: BacktestInputSchema.fields.inference,
+    definition: BacktestInputV11Schema.fields.inference,
     calls: Schema.Array(ReplayInferenceCallSchema),
     providerDispatchCount: NonNegativeIntegerSchema,
     retainedCallCount: NonNegativeIntegerSchema,
