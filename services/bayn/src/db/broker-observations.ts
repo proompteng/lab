@@ -918,6 +918,9 @@ export const makeBrokerObservationStore = (
     )
   const readProtectionOrder = (brokerOrderId: string, clientOrderId: string) =>
     run(
+      // Canonical nested protection normalization is the only first writer of this association. Stream updates
+      // can reuse that exact identity, never create one. This proves identity, while the independent session
+      // financial fence and complete-history reconciliation continue to govern readiness and money.
       sql`SELECT jsonb_strip_nulls(jsonb_build_object(
         'schemaVersion', child.schema_version, 'accountId', child.account_id,
         'brokerOrderId', child.broker_order_id, 'parentBrokerOrderId', child.parent_broker_order_id,
@@ -930,16 +933,24 @@ export const makeBrokerObservationStore = (
       )) AS value
       FROM orders AS child JOIN broker_events AS event USING (event_id)
       JOIN intents AS intent ON intent.intent_id = child.intent_id AND intent.account_id = child.account_id
-      JOIN broker_observations AS observation ON observation.account_id = child.account_id
-        AND observation.source_revision = ${sourceRevision}
-        AND observation.financial_reconciliation_fence_at >= event.observed_at
       WHERE child.account_id = ${accountId} AND child.broker_order_id = ${brokerOrderId}
         AND child.client_order_id = ${clientOrderId} AND child.parent_broker_order_id IS NOT NULL
-        AND intent.protection IS NOT NULL
+        AND child.symbol = intent.symbol AND child.quantity_atoms > 0 AND child.quantity_atoms <= intent.quantity_atoms
+        AND child.time_in_force = 'DAY' AND child.notional_micros IS NULL
+        AND intent.protection->>'_tag' IN ('Bracket','EquityShortBracket','Oco','EquityShortOco')
+        AND child.side = CASE WHEN intent.protection->>'_tag' IN ('EquityShortBracket','EquityShortOco') THEN 'BUY' ELSE 'SELL' END
+        AND ((child.order_type = 'STOP_LIMIT' AND child.stop_price_micros = (intent.protection->>'stopPriceMicros')::numeric
+          AND child.limit_price_micros = (intent.protection->>'stopLimitPriceMicros')::numeric)
+          OR (child.order_type = 'LIMIT' AND child.stop_price_micros IS NULL
+            AND child.limit_price_micros = (intent.protection->>'profitLimitPriceMicros')::numeric))
         AND EXISTS (
           SELECT 1 FROM orders AS parent WHERE parent.account_id = child.account_id
             AND parent.broker_order_id = child.parent_broker_order_id AND parent.intent_id = child.intent_id
-            AND parent.client_order_id = intent.client_order_id
+            AND parent.client_order_id = intent.client_order_id AND parent.parent_broker_order_id IS NULL
+            AND parent.symbol = intent.symbol AND parent.side = intent.side
+            AND parent.quantity_atoms = intent.quantity_atoms AND parent.notional_micros IS NULL
+            AND parent.order_type = intent.order_type AND parent.time_in_force = intent.time_in_force
+            AND parent.limit_price_micros = intent.limit_price_micros AND parent.stop_price_micros IS NULL
         )
       ORDER BY event.source_sequence DESC LIMIT 1`.pipe(
         Effect.flatMap(

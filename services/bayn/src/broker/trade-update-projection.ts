@@ -4,7 +4,7 @@ import { sha256 } from '../hash'
 import { quantityFromDecimal } from '../quantity'
 import { Sha256Schema, UtcInstantSchema } from '../schemas'
 import type { IntentBinding } from '../db/intent-bindings'
-import { isBracketProtection, isStopProtection, type Order } from '../execution/contracts'
+import { isBracketProtection, isEquityShortProtection, isStopProtection, type Order } from '../execution/contracts'
 import { fillObservation, orderObservation, type BrokerEventInput, type FillEventInput } from './observations'
 import { fillActivityIdentity } from './activities'
 import { OrderResponseSchema, OrderSide, U128_MAX, responseParseOptions } from './alpaca/model'
@@ -212,6 +212,7 @@ export const projectBrokerTradeUpdate = (
       protectionOrder.symbol !== candidate.symbol ||
       binding.symbol !== candidate.symbol ||
       protectionOrder.side !== candidate.side ||
+      candidate.side !== (isEquityShortProtection(terms) ? 'BUY' : 'SELL') ||
       protectionOrder.orderType !== candidate.orderType ||
       protectionOrder.timeInForce !== candidate.timeInForce ||
       quantity === undefined ||
