@@ -283,6 +283,13 @@ binds the account, authority generation, cycle, session, full policy, calendar a
 excludes the cycle identity so subsequent cycles reuse the first committed source; a new physical build has a new scope.
 Restart and cache reuse preserve the original acquisition and database timestamps.
 
+Preopen acquisition requires every requested daily baseline and noise checkpoint before it can become that immutable
+source. Incomplete preopen reads are not cached or committed; a typed pending-coverage outcome defers the native hook
+to its existing first regular-minute wake. This boundary uses the actual acquisition `startedAt` and the target
+provider session's regular open. Finishing or committing an earlier partial read after the open cannot reclassify it.
+A fresh acquisition beginning at or after the regular open preserves the strategy's existing partial-symbol and
+partial-checkpoint behavior. This preparation condition does not add a whole-universe entry gate.
+
 Migration 225 records the source and pending evidence in one transaction. A later native controller observation can
 witness only committed source and pending rows. Only an already committed v7 registration matching the candidate
 policy, build, account, generation and calendar can enqueue qualification evidence. Registration must commit before
