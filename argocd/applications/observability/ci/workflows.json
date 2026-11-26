@@ -23,7 +23,7 @@
   ],
   "arc-placement-acceptance.yml": [
     {
-      "id": "build",
+      "id": "ceph-build",
       "pattern": "^.* build slot .*(?: \\(.*\\))?$"
     },
     {
@@ -35,6 +35,12 @@
     {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "arc-tmpfs-acceptance.yml": [
+    {
+      "id": "verify",
+      "pattern": "^Verify .*(?: \\(.*\\))?$"
     }
   ],
   "attic-build-push.yaml": [

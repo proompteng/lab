@@ -1137,12 +1137,15 @@ describe('Kargo direct-push GitOps contract', () => {
         expect.arrayContaining(keys),
       )
     }
-    expectYamlUpdate('arc-runner', './out/argocd/applications/arc/application.yaml', [
-      ...[1, 2].map((index) => `spec.sources.${index}.helm.valuesObject.template.spec.containers.0.image`),
-      'spec.sources.1.helm.valuesObject.template.spec.initContainers.0.image',
-      'spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image',
-    ])
-    expect(stagesSource).not.toContain('spec.sources.3.helm.valuesObject.template.spec.initContainers.0.image')
+    expectYamlUpdate(
+      'arc-runner',
+      './out/argocd/applications/arc/application.yaml',
+      [1, 2, 3, 4, 5, 6].flatMap((index) =>
+        ['initContainers', 'containers'].map(
+          (container) => `spec.sources.${index}.helm.valuesObject.template.spec.${container}.0.image`,
+        ),
+      ),
+    )
     expectYamlUpdate('bumba', './out/argocd/applications/bumba/deployment.yaml', [
       'spec.template.spec.containers.0.env.6.value',
     ])

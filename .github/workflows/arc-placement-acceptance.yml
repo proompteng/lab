@@ -8,7 +8,7 @@ name: ARC placement acceptance
 # preparation, slot-check sleeps and gaps between iterations do not count.
 # Inspect arc-native-proof-* for per-command timings/errors
 # and arc-native-qualified-* for commonStart/commonEnd. Match that interval to the
-# API/etcd, system-device and memory observations required by the ARC runbook before
+# API/etcd, system-device and Ceph observations required by the ARC runbook before
 # claiming throughput or storage stability. No image/alias or cache is published.
 on:
   # Run after the existing build wave clears; the readiness check has a five-minute budget.
@@ -29,7 +29,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  ceph-build:
     name: ${{ matrix.architecture }} build slot ${{ matrix.slot }}
     # Native commands stop at the earlier 95-minute work deadline, leaving time
     # for failure receipts, artifact upload and action cleanup before this cap.
@@ -54,7 +54,7 @@ jobs:
             '{jobBudgetStart:$start,workDeadline:($start + 95 * 60)}' > "$RUNNER_TEMP/arc-native/budget.json"
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-buildkit
-      - name: Verify tmpfs scratch, Nix, and BuildKit output bytes
+      - name: Verify Ceph scratch, Nix, and BuildKit output bytes
         shell: bash
         run: |
           set -euo pipefail
@@ -66,17 +66,17 @@ jobs:
           test -d "$buildkit_root"
           scratch_device=''
           for path in /nix /home/runner/.cache /tmp /var/tmp "$CARGO_HOME" "$RUSTUP_HOME" /home/runner/_work "$RUNNER_TEMP" "$buildkit_root"; do
-            fstype="$(stat -f -c %T "$path")"
-            test "$fstype" = tmpfs
-            device="$(stat -c %d "$path")"
+            read -r device fstype < <(df -P -T "$path" | awk 'NR == 2 {print $1, $2}')
+            test "$fstype" = ext4
+            [[ "$device" =~ ^/dev/rbd[0-9]+$ ]]
             if [[ -z "$scratch_device" ]]; then scratch_device="$device"; else test "$device" = "$scratch_device"; fi
           done
           scratch_capacity_bytes="$(df -P -B1 /nix | awk 'NR == 2 {print $2}')"
-          (( scratch_capacity_bytes == 24 * 1024 * 1024 * 1024 ))
+          (( scratch_capacity_bytes >= 60 * 1024 * 1024 * 1024 && scratch_capacity_bytes <= 64 * 1024 * 1024 * 1024 ))
           test "$(nix eval --offline --expr '40 + 2')" = 42
           nix --version
           buildctl debug workers
-          proof_dir="$(mktemp -d "$RUNNER_TEMP/arc-scratch-proof.XXXXXX")"
+          proof_dir="$(mktemp -d "$RUNNER_TEMP/arc-ceph-proof.XXXXXX")"
           trap 'rm -rf "$proof_dir"' EXIT
           dd if=/dev/urandom of="$proof_dir/payload" bs=1M count=16 conv=fsync
           input_bytes="$(wc -c < "$proof_dir/payload")"
@@ -189,7 +189,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   verify-placement:
-    needs: [build]
+    needs: [ceph-build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -208,9 +208,10 @@ jobs:
             all(.[];
               ((.architecture == "amd64" and .node == "turin") or
                (.architecture == "arm64" and .node == "talos-192-168-1-85")) and
-              .scratchFilesystem == "tmpfs" and
-              .scratchCapacityBytes == (24 * 1024 * 1024 * 1024) and
-              (.scratchDevice | test("^[0-9]+$")) and
+              .scratchFilesystem == "ext4" and
+              .scratchCapacityBytes >= (60 * 1024 * 1024 * 1024) and
+              .scratchCapacityBytes <= (64 * 1024 * 1024 * 1024) and
+              (.scratchDevice | test("^/dev/rbd[0-9]+$")) and
               (.runnerTemp | startswith("/home/runner/_work/")) and
               (.buildkitRoot | startswith("/home/runner/_work/")) and
               .inputBytes == 16777216 and .outputBytes == .inputBytes and .inputSha256 == .outputSha256) and
@@ -263,14 +264,14 @@ jobs:
                 .schemaVersion == "arc.native-image-qualification.v1" and
                 .status == "passed" and .exitCode == 0 and
                 .sourceRevision == $source and .packageAttr == "bayn-image" and .role == "build" and
-                .node == "turin" and .scratchFilesystem == "tmpfs" and
-                (.scratchDevice | test("^[0-9]+$")) and
+                .node == "turin" and .scratchFilesystem == "ext4" and
+                (.scratchDevice | test("^/dev/rbd[0-9]+$")) and
                 valid_iterations and
                 .nativeStart == .iterations[0].start and
                 .nativeEnd == .iterations[-1].end and
                 .nativeEnd - .nativeStart >= 2100)
             ) | not then
-              error("Native receipts must describe ten distinct Turin tmpfs builders with successful, ordered, nonoverlapping rebuild/inspection iterations at the dispatch source")
+              error("Native receipts must describe ten distinct Turin RBD builders with successful, ordered, nonoverlapping rebuild/inspection iterations at the dispatch source")
             else
               common_native_work_seconds as $seconds |
               if $seconds < 1800 then
