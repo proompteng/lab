@@ -83,7 +83,8 @@ export const activeEvaluationSessions = (now: number, sessionCount = 20) => {
 export const calendarFixture = (registration: SystemRegistration) => {
   if (
     registration.schemaVersion === 'bayn.system-registration.v5' ||
-    registration.schemaVersion === 'bayn.system-registration.v6'
+    registration.schemaVersion === 'bayn.system-registration.v6' ||
+    registration.schemaVersion === 'bayn.system-registration.v7'
   )
     return registration.calendar.marketCalendar
   const material = withProviderSessions({
@@ -105,7 +106,7 @@ export const calendarFixture = (registration: SystemRegistration) => {
 
 type RetainedRegistration = Exclude<
   SystemRegistration,
-  { schemaVersion: 'bayn.system-registration.v5' | 'bayn.system-registration.v6' }
+  { schemaVersion: 'bayn.system-registration.v5' | 'bayn.system-registration.v6' | 'bayn.system-registration.v7' }
 >
 
 const baseRegistrationFixture = (

@@ -79,7 +79,7 @@ export const earliestAlphaObservationWitness = (
   observationHash: string,
 ): Result.Result<AlphaObservationWitness | null, SystemAssessmentError> =>
   Result.gen(function* () {
-    if (cut.schemaVersion !== 'bayn.system-source-cut.v5') return null
+    if (cut.schemaVersion === 'bayn.system-source-cut.v4') return null
     const sources = cut.alphaObservations.filter((source) => source.contentHash === observationHash)
     if (sources.length > 1) return yield* invalid('Source cut repeats an alpha observation identity')
     const source = sources[0]

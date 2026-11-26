@@ -45,7 +45,11 @@ import {
   StrategyBoundQualificationRuntimeSchema,
   qualificationDeadlines,
 } from './configuration'
-import { systemLatencyStressProtocolHash, strategyBoundSystemLatencyStressProtocolHash } from './latency-protocol'
+import {
+  systemLatencyStressProtocolHash,
+  strategyBoundSystemLatencyStressProtocolHash,
+  preparedAlphaSystemLatencyStressProtocolHash,
+} from './latency-protocol'
 import { costAttributionRule } from './cost-attribution'
 import { CostAllocationPlanSchema, validateCostAllocationPlans } from './cost-allocation'
 import {
@@ -197,7 +201,12 @@ export const StrategyBoundSystemRegistrationSchema = Schema.Struct({
     configuration: StrategyBoundQualificationRuntimeSchema,
   }),
 })
+export const PreparedAlphaSystemRegistrationSchema = Schema.Struct({
+  ...StrategyBoundSystemRegistrationSchema.fields,
+  schemaVersion: Schema.Literal('bayn.system-registration.v7'),
+})
 export const SystemRegistrationSchema = Schema.Union([
+  PreparedAlphaSystemRegistrationSchema,
   StrategyBoundSystemRegistrationSchema,
   NativeSystemRegistrationSchema,
   RetainedConditionalRegistrationSchema,
@@ -207,13 +216,19 @@ export const SystemRegistrationSchema = Schema.Union([
 
 export type SystemRegistration = typeof SystemRegistrationSchema.Type
 
+export const isStrategyBoundSystemRegistration = <Registration extends { readonly schemaVersion: string }>(
+  registration: Registration,
+): registration is Registration & {
+  readonly schemaVersion: 'bayn.system-registration.v6' | 'bayn.system-registration.v7'
+} =>
+  registration.schemaVersion === 'bayn.system-registration.v6' ||
+  registration.schemaVersion === 'bayn.system-registration.v7'
+
 export const isNativeSystemRegistration = <Registration extends { readonly schemaVersion: string }>(
   registration: Registration,
 ): registration is Registration & {
-  readonly schemaVersion: 'bayn.system-registration.v5' | 'bayn.system-registration.v6'
-} =>
-  registration.schemaVersion === 'bayn.system-registration.v5' ||
-  registration.schemaVersion === 'bayn.system-registration.v6'
+  readonly schemaVersion: 'bayn.system-registration.v5' | 'bayn.system-registration.v6' | 'bayn.system-registration.v7'
+} => registration.schemaVersion === 'bayn.system-registration.v5' || isStrategyBoundSystemRegistration(registration)
 
 export type ScheduledEvaluation = Pick<SystemRegistration, 'obligations' | 'policies'> & {
   readonly program: string
@@ -275,6 +290,25 @@ export const strategyBoundSystemQualificationPolicyHash = () =>
     })
   })
 
+export const preparedAlphaSystemQualificationPolicyHash = () =>
+  Result.gen(function* () {
+    return yield* canonicalHashV1Result({
+      ...systemQualificationPolicy,
+      schemaVersion: 'bayn.system-qualification-policy.v8',
+      evaluationWindowRule: 'CANONICAL_NATIVE_EQUITY_WINDOWS_WITH_BROKER_RECOVERY_COVERAGE',
+      equityFeeRule: 'DATED_ACCOUNT_EQUITY_FEES_MATCH_POSTED_SCOPED_RECEIPTS',
+      comparisonRule: 'INDEPENDENT_PAPER_SERVING_ENGINE_WITH_FROZEN_POLICY_AND_IDENTICAL_ACCOUNT_NEUTRAL_RISK',
+      strategyBindingSchema: 'bayn.research-strategy-binding.v1',
+      runtimeConfigurationSchema: 'bayn.qualification-runtime.v3',
+      sourceCutVersion: 'bayn.system-source-cut.v6',
+      alphaBaselinePreparationSchema: 'bayn.intraday-alpha-baseline-preparation.v1',
+      alphaBaselineAvailabilityRule:
+        'EXACT_PRODUCER_PREPARATION_WITH_INDEPENDENT_COMMIT_WITNESS_BEFORE_ORIGINAL_COMMAND',
+      latencyStressProtocolHash: yield* preparedAlphaSystemLatencyStressProtocolHash(),
+      acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(JevAcceptanceVersion.Current),
+    })
+  })
+
 export const validateSystemRegistration = (input: unknown, version = JevAcceptanceVersion.Current) =>
   Result.gen(function* () {
     const registration = yield* Schema.decodeUnknownResult(
@@ -286,7 +320,8 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     const candidatePolicy = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
     const legacy = usesLegacyAcceptance(version)
     const native = isNativeSystemRegistration(registration)
-    const strategyBound = registration.schemaVersion === 'bayn.system-registration.v6'
+    const strategyBound = isStrategyBoundSystemRegistration(registration)
+    const preparedAlpha = registration.schemaVersion === 'bayn.system-registration.v7'
     const conditional = 'statisticalPlan' in registration
     const invalid = (message: string) => Result.fail(new SystemAssessmentError({ message }))
     if (
@@ -296,12 +331,18 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       return yield* invalid('New registration requires the current execution protocol')
     if (
       registration.policyHash !==
-        (yield* strategyBound
-          ? strategyBoundSystemQualificationPolicyHash()
-          : systemQualificationPolicyHash(version, registration.calendar.operatingHours)) ||
+        (yield* preparedAlpha
+          ? preparedAlphaSystemQualificationPolicyHash()
+          : strategyBound
+            ? strategyBoundSystemQualificationPolicyHash()
+            : systemQualificationPolicyHash(version, registration.calendar.operatingHours)) ||
       registration.acceptanceProtocolHash !== (yield* jevAcceptanceProtocolHash(version)) ||
       registration.latencyStressProtocolHash !==
-        (yield* strategyBound ? strategyBoundSystemLatencyStressProtocolHash() : systemLatencyStressProtocolHash())
+        (yield* preparedAlpha
+          ? preparedAlphaSystemLatencyStressProtocolHash()
+          : strategyBound
+            ? strategyBoundSystemLatencyStressProtocolHash()
+            : systemLatencyStressProtocolHash())
     )
       return yield* invalid('Registration must bind the current system and acceptance policies')
     if (strategyBound && version !== JevAcceptanceVersion.Current)
@@ -622,9 +663,11 @@ export const verifyStoredSystemRegistration = (input: unknown) =>
           return {
             version,
             hash: yield* jevAcceptanceProtocolHash(version),
-            policyHash: yield* decoded.schemaVersion === 'bayn.system-registration.v6'
-              ? strategyBoundSystemQualificationPolicyHash()
-              : systemQualificationPolicyHash(version, decoded.calendar.operatingHours),
+            policyHash: yield* decoded.schemaVersion === 'bayn.system-registration.v7'
+              ? preparedAlphaSystemQualificationPolicyHash()
+              : decoded.schemaVersion === 'bayn.system-registration.v6'
+                ? strategyBoundSystemQualificationPolicyHash()
+                : systemQualificationPolicyHash(version, decoded.calendar.operatingHours),
           }
         }),
       ),
@@ -643,10 +686,10 @@ export const verifyStoredSystemRegistration = (input: unknown) =>
 export const validateProspectiveSystemRegistration = (input: unknown) =>
   Result.gen(function* () {
     const verified = yield* validateSystemRegistration(input)
-    if (verified.registration.schemaVersion !== 'bayn.system-registration.v6')
+    if (verified.registration.schemaVersion !== 'bayn.system-registration.v7')
       return yield* Result.fail(
         new SystemAssessmentError({
-          message: 'New economic registration requires explicit native engine policies and equity hours',
+          message: 'New economic registration requires explicit native engines and prospective baseline preparation',
         }),
       )
     return { ...verified, registration: verified.registration }

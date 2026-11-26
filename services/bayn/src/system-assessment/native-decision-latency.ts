@@ -14,7 +14,7 @@ import { measureControllerLatency, nearestRank95 } from './controller-latency'
 import { controllerBuildMatchesRegistration, sourceFitsRegisteredSession } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { measureFullBatchLatency } from './full-batch-latency'
-import type { ScheduledEvaluation } from './policy'
+import { isStrategyBoundSystemRegistration, type ScheduledEvaluation } from './policy'
 import type { SystemSourceCut } from './source-cut'
 import { ResearchStrategyEngine, validateResearchStrategyBinding } from './strategy-binding'
 
@@ -35,13 +35,17 @@ export const measureAlphaDecisionLatency = (
     const controller = yield* measureControllerLatency(registration, cut, identity)
     const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
     if (
-      registration.schemaVersion !== 'bayn.system-registration.v6' ||
-      cut.schemaVersion !== 'bayn.system-source-cut.v5' ||
+      !isStrategyBoundSystemRegistration(registration) ||
+      cut.schemaVersion === 'bayn.system-source-cut.v4' ||
+      (registration.schemaVersion === 'bayn.system-registration.v7') !==
+        (cut.schemaVersion === 'bayn.system-source-cut.v6') ||
       candidate === undefined ||
       !('strategyBinding' in candidate)
     )
       return yield* Result.fail(
-        new SystemAssessmentError({ message: 'Alpha calibration requires its explicit v6 engine and v5 source cut' }),
+        new SystemAssessmentError({
+          message: 'Alpha calibration requires its matching registered engine and source cut',
+        }),
       )
     const binding = yield* validateResearchStrategyBinding(candidate.strategyBinding)
     if (binding.engine !== ResearchStrategyEngine.IntradayAlpha)
@@ -84,7 +88,9 @@ export const measureAlphaDecisionLatency = (
     }
     const mutationsByIntent = Map.groupBy(cut.mutations, (mutation) => mutation.event.intentId)
     const alphaWitnesses = Map.groupBy(
-      cut.durableObservations.filter((witness) => witness.kind === 'ALPHA_OBSERVATION'),
+      cut.durableObservations.flatMap((witness) =>
+        witness.kind === 'ALPHA_OBSERVATION' ? [{ ...witness, kind: 'ALPHA_OBSERVATION' as const }] : [],
+      ),
       (witness) => witness.sourceHash,
     )
     const durable = new Map<string, string>()
@@ -331,7 +337,7 @@ export const measureRegisteredDecisionLatency = (
   identity: BrokerIdentity,
 ) =>
   Result.gen(function* () {
-    if (registration.schemaVersion === 'bayn.system-registration.v6') {
+    if (isStrategyBoundSystemRegistration(registration)) {
       const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
       if (candidate === undefined || !('strategyBinding' in candidate))
         return yield* Result.fail(

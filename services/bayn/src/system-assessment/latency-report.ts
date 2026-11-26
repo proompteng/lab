@@ -16,6 +16,8 @@ import {
   ReplayAlphaObservationSchema,
   ReplayAlphaBaselineGapSchema,
   verifyReplayAlphaEvidence,
+  PreparedReplayAlphaObservationSchema,
+  verifyPreparedReplayAlphaEvidence,
 } from '../intraday-replay/alpha-report'
 import { reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { replayDecisionReleaseAt } from '../intraday-replay/decision-latency'
@@ -152,7 +154,16 @@ const StrategyBoundLatencyReportSchema = Schema.Struct({
   alphaBaselineGaps: Schema.Array(ReplayAlphaBaselineGapSchema),
   decisions: Schema.Array(Schema.Unknown),
 })
-const LatencyReportSchema = Schema.Union([RetainedLatencyReportSchema, StrategyBoundLatencyReportSchema])
+const PreparedAlphaLatencyReportSchema = Schema.Struct({
+  ...StrategyBoundLatencyReportSchema.fields,
+  schemaVersion: Schema.Literal('bayn.backtest-report.v11'),
+  alphaObservations: Schema.Array(PreparedReplayAlphaObservationSchema),
+})
+const LatencyReportSchema = Schema.Union([
+  RetainedLatencyReportSchema,
+  StrategyBoundLatencyReportSchema,
+  PreparedAlphaLatencyReportSchema,
+])
 
 export const bindLatencyStressSources = (
   descriptors: typeof LatencyStressSourcesSchema.Type,
@@ -269,7 +280,13 @@ export const bindLatencyStressSources = (
       if (reportHash !== (yield* canonicalHashV1Result(material)))
         return yield* fail('Latency report hash differs from its complete contents')
       const report = yield* Schema.decodeUnknownResult(LatencyReportSchema)(raw)
-      if ((input.schemaVersion === 'bayn.backtest.v12') !== (report.schemaVersion === 'bayn.backtest-report.v10'))
+      const expectedReportVersion =
+        input.schemaVersion === 'bayn.backtest.v13'
+          ? 'bayn.backtest-report.v11'
+          : input.schemaVersion === 'bayn.backtest.v12'
+            ? 'bayn.backtest-report.v10'
+            : 'bayn.backtest-report.v9'
+      if (report.schemaVersion !== expectedReportVersion)
         return yield* fail('Latency report version differs from its bound replay input')
       const image = images.get(descriptor.reportFileHash)?.receipt ?? null
       const execution =
@@ -445,18 +462,29 @@ export const bindLatencyStressSources = (
           return yield* fail('Latency release does not reproduce its original command, result and registered floor')
       }
       const alpha = prepared.strategyBinding?.engine === ResearchStrategyEngine.IntradayAlpha
-      if (report.schemaVersion === 'bayn.backtest-report.v10') {
+      if (report.schemaVersion !== 'bayn.backtest-report.v9') {
         if (prepared.strategyBinding === null)
           return yield* fail('Native alpha report requires its independently verified strategy binding')
-        yield* verifyReplayAlphaEvidence({
-          binding: prepared.strategyBinding,
-          sources: prepared.alphaBaselineSources,
-          observations: report.alphaObservations,
-          baselineGaps: report.alphaBaselineGaps,
-          decisions: report.decisions,
-          runId: prepared.runId,
-          observationReleases: report.latencyStress.observationReceipts,
-        })
+        if (report.schemaVersion === 'bayn.backtest-report.v11')
+          yield* verifyPreparedReplayAlphaEvidence({
+            binding: prepared.strategyBinding,
+            preparations: prepared.alphaBaselinePreparations,
+            observations: report.alphaObservations,
+            baselineGaps: report.alphaBaselineGaps,
+            decisions: report.decisions,
+            runId: prepared.runId,
+            observationReleases: report.latencyStress.observationReceipts,
+          })
+        else
+          yield* verifyReplayAlphaEvidence({
+            binding: prepared.strategyBinding,
+            sources: prepared.alphaBaselineSources,
+            observations: report.alphaObservations,
+            baselineGaps: report.alphaBaselineGaps,
+            decisions: report.decisions,
+            runId: prepared.runId,
+            observationReleases: report.latencyStress.observationReceipts,
+          })
         if (
           (alpha && report.momentumObservations.length !== 0) ||
           report.alphaBaselineGaps.length > 0 !== report.issues.includes(BacktestIssue.MissingCausalAlphaBaseline) ||
@@ -475,7 +503,7 @@ export const bindLatencyStressSources = (
           return yield* fail('Native alpha report hides, invents or moves a missing causal baseline')
       }
       const observationRows =
-        alpha && report.schemaVersion === 'bayn.backtest-report.v10'
+        alpha && report.schemaVersion !== 'bayn.backtest-report.v9'
           ? report.alphaObservations
           : report.momentumObservations
       const observations = new Map(observationRows.map((o) => [o.contentHash, o.payload]))

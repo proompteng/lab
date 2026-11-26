@@ -72,6 +72,7 @@ const files = [
   'src/cycle/store/entry-allocation-query.integration.test.ts',
   'src/system-assessment/postgres.integration.test.ts',
   'src/system-assessment/alpha-observation-witness.integration.test.ts',
+  'src/system-assessment/alpha-baseline-witness.integration.test.ts',
   'src/system-assessment/operational-source-cut.integration.test.ts',
   'src/db/risk-clock-rejection.integration.test.ts',
 ]

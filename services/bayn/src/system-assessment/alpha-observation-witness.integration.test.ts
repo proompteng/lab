@@ -24,12 +24,12 @@ import {
   type PostgresTestDatabase,
   type PostgresTestTemplate,
 } from '../testing/postgres-template.test-support'
-import { deriveAlphaBaselineSources } from './alpha-observation-witness'
+import { deriveAlphaBaselineSources, earliestAlphaObservationWitness } from './alpha-observation-witness'
 import { readStrategyBoundSystemDurableObservations, readSystemAlphaObservations } from './capture-queries'
 import { nativeRegistrationFixture, registrationFixture, testHash } from './fixtures.test-support'
 import { initializeQualificationHistory, registerSystemQualification } from './postgres'
-import { persistSystemSourceCut, StrategyBoundSystemSourceCutSchema } from './source-cut'
-import { strategyBoundRegistrationFixture } from './strategy-registration.test-support'
+import { persistSystemSourceCut, PreparedAlphaSystemSourceCutSchema } from './source-cut'
+import { preparedAlphaRegistrationFixture } from './prepared-alpha-registration.test-support'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const makeRuntime = (url: string) =>
@@ -52,7 +52,7 @@ const calendar = Result.getOrThrow(
     { start: '2026-09-04', end: '2026-09-04' },
   ),
 )
-const registration = strategyBoundRegistrationFixture(
+const registration = preparedAlphaRegistrationFixture(
   nativeRegistrationFixture(
     {
       ...registrationFixture('2026-09-03T11:00:00.000Z', 1),
@@ -301,7 +301,7 @@ postgres('committed alpha observation witnesses', () => {
     ).toBe(true)
   })
 
-  test('persisted v5 cuts retain unwitnessed sources and authenticate the exact later witness', async () => {
+  test('persisted v6 cuts retain alpha observations for latency without substituting preparation availability', async () => {
     await runtime.runPromise(atClock(at(100), insertObservation))
     const capture = (asOf: string, account = accountId, generation = candidate.authorityGenerationHash) =>
       readSystemAlphaObservations(account, generation, registration.calendar, asOf, testHash(protocol))
@@ -310,12 +310,13 @@ postgres('committed alpha observation witnesses', () => {
     expect(await runtime.runPromise(capture(at(-1)))).toEqual([])
     expect(await runtime.runPromise(capture(at(5000), 'another-account'))).toEqual([])
     expect(await runtime.runPromise(capture(at(5000), accountId, sha256('another generation')))).toEqual([])
-    const cut = Schema.decodeUnknownSync(StrategyBoundSystemSourceCutSchema)({
-      schemaVersion: 'bayn.system-source-cut.v5',
+    const cut = Schema.decodeUnknownSync(PreparedAlphaSystemSourceCutSchema)({
+      schemaVersion: 'bayn.system-source-cut.v6',
       registrationHash,
       asOf: at(5000),
       runtimeConfigurationHash: registration.obligations.runtimeConfigurationHash,
       alphaObservations,
+      alphaBaselinePreparations: [],
       financial: [],
       inference: [],
       inferenceLedgerEvidenceHash: sha256('alpha witness inference'),
@@ -336,6 +337,7 @@ postgres('committed alpha observation witnesses', () => {
     })
     await runtime.runPromise(persistSystemSourceCut(cut))
     expect(Result.getOrThrow(deriveAlphaBaselineSources(cut))).toEqual([])
+    expect(Result.getOrThrow(earliestAlphaObservationWitness(cut, observed.contentHash))).toBeNull()
     // A witness between milliseconds becomes available only at the next representable replay instant.
     await runtime.runPromise(atClock(at(1000).replace('.000Z', '.000500Z'), witness))
     expect(await runtime.runPromise(readStrategyBoundSystemDurableObservations(registrationHash, at(1000)))).toEqual([])
@@ -359,7 +361,10 @@ postgres('committed alpha observation witnesses', () => {
       durableObservations,
     }
     await runtime.runPromise(persistSystemSourceCut(witnessed))
-    expect(Result.getOrThrow(deriveAlphaBaselineSources(witnessed))[0]?.availableAt).toBe(at(1001))
+    expect(Result.getOrThrow(earliestAlphaObservationWitness(witnessed, observed.contentHash))?.witnessedAt).toBe(
+      at(1001),
+    )
+    expect(Result.getOrThrow(deriveAlphaBaselineSources(witnessed))).toEqual([])
     for (const forged of [
       {
         ...witnessed,
@@ -373,7 +378,7 @@ postgres('committed alpha observation witnesses', () => {
       },
     ])
       expect(Exit.isFailure(await runtime.runPromiseExit(persistSystemSourceCut(forged)))).toBe(true)
-    const { alphaObservations: _alpha, ...oldCut } = cut
+    const { alphaObservations: _alpha, alphaBaselinePreparations: _prepared, ...oldCut } = cut
     expect(
       Exit.isFailure(
         await runtime.runPromiseExit(persistSystemSourceCut({ ...oldCut, schemaVersion: 'bayn.system-source-cut.v4' })),
@@ -381,7 +386,7 @@ postgres('committed alpha observation witnesses', () => {
     ).toBe(true)
   })
 
-  test('v6 SQL admission rejects incomplete material, role substitution and candidate runtime drift', async () => {
+  test('v7 SQL admission rejects incomplete material, role substitution and candidate runtime drift', async () => {
     const bad = [
       { ...registration, policies: registration.policies.map(({ strategyBinding: _binding, ...policy }) => policy) },
       {

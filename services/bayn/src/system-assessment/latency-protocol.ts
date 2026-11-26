@@ -49,3 +49,15 @@ export const strategyBoundSystemLatencyStressProtocol = {
 
 export const strategyBoundSystemLatencyStressProtocolHash = () =>
   canonicalHashV1Result(strategyBoundSystemLatencyStressProtocol)
+
+/** Preparation availability is established before the original command by an independent committed witness. */
+export const preparedAlphaSystemLatencyStressProtocol = {
+  ...strategyBoundSystemLatencyStressProtocol,
+  schemaVersion: 'bayn.system-latency-stress-protocol.v5',
+  alphaBaseline: 'STANDALONE_SESSION_PREPARATION_WITH_INDEPENDENT_COMMITTED_WITNESS',
+  alphaBaselineAdmission: 'WITNESSED_BEFORE_ORIGINAL_COMMAND_WITHOUT_PROVIDER_FALLBACK',
+  alphaBaselineScope: 'EXACT_POLICY_PROVIDER_SESSION_AND_PHYSICAL_PRODUCER',
+} as const
+
+export const preparedAlphaSystemLatencyStressProtocolHash = () =>
+  canonicalHashV1Result(preparedAlphaSystemLatencyStressProtocol)

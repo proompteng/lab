@@ -9,6 +9,7 @@ import { Sha256Schema, SignedMicrosSchema, UtcInstantSchema, strictParseOptions 
 import { FeeSettlementAnchorsSchema } from './cash-settlements'
 import {
   AlphaObservationEvidenceSchema,
+  PreparedAlphaSystemDurableObservationSchema,
   RetainedSystemSourceCutSchema,
   SystemDurableObservationSchema,
 } from './source-cut'
@@ -16,6 +17,13 @@ import { SystemAssessmentError } from './economics'
 import { reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { resolveAlphaRegularSession } from '../strategy/intraday-alpha/signals'
 import { registeredAlphaObservationSessions } from './calendar'
+import {
+  registeredAlphaBaselineCaptureScope,
+  verifyRegisteredAlphaBaselinePreparations,
+} from './alpha-baseline-capture'
+import { RecordedAlphaBaselinePreparationSchema } from '../observe-composition/alpha-baseline-preparation'
+import type { SystemRegistration } from './policy'
+import { ResearchStrategyEngine } from './strategy-binding'
 
 export const readSystemCashObservations = (
   accountId: string,
@@ -208,6 +216,39 @@ export const readSystemAlphaObservations = (
     return retained
   }).pipe(Effect.mapError((cause) => new SystemAssessmentError({ message: 'Alpha observation capture failed', cause })))
 
+/** A physical build owns its own preparation; older immutable producer rows are never rewritten or aliased. */
+export const readSystemAlphaBaselinePreparations = (registration: SystemRegistration, asOf: string) =>
+  Effect.gen(function* () {
+    const scope = yield* Effect.fromResult(registeredAlphaBaselineCaptureScope(registration))
+    if (scope.binding.engine !== ResearchStrategyEngine.IntradayAlpha) return []
+    const sql = yield* PgClient.PgClient
+    const rows = yield* Schema.decodeUnknownEffect(
+      Schema.Array(RecordedAlphaBaselinePreparationSchema),
+      strictParseOptions,
+    )(
+      yield* sql`
+      SELECT source.content_hash AS "contentHash", source.payload,
+        to_char(source.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "recordedAt"
+      FROM intraday_alpha_baseline_preparations source
+      WHERE source.account_id = ${scope.candidate.riskPolicy.accountId}
+        AND source.authority_generation_hash = ${scope.candidate.authorityGenerationHash}
+        AND source.recorded_at <= ${asOf}::timestamptz
+        AND source.payload #>> '{executionBuild,sourceRevision}' = ${scope.candidate.sourceRevision}
+        AND source.payload #>> '{executionBuild,imageDigest}' = ${`sha256:${scope.candidate.imageDigest}`}
+        AND (${scope.imageRepository}::text IS NULL OR
+          source.payload #>> '{executionBuild,imageRepository}' = ${scope.imageRepository})
+        AND EXISTS (
+          SELECT 1 FROM jsonb_to_recordset(${JSON.stringify(scope.sessions)}::jsonb)
+            AS calendar("sessionDate" date, "openAt" timestamptz, "closeAt" timestamptz)
+          WHERE source.session_date = calendar."sessionDate"
+            AND source.recorded_at >= calendar."openAt" AND source.recorded_at < calendar."closeAt"
+        )
+      ORDER BY source.recorded_at, source.content_hash
+    `,
+    )
+    return yield* Effect.fromResult(verifyRegisteredAlphaBaselinePreparations(registration, rows, asOf))
+  }).pipe(Effect.mapError((cause) => new SystemAssessmentError({ message: 'Alpha preparation capture failed', cause })))
+
 export const readSystemMutationEvidence = (accountId: string, generationHash: string, from: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -295,6 +336,25 @@ export const readStrategyBoundSystemDurableObservations = (registrationHash: str
     const sql = yield* PgClient.PgClient
     return yield* Schema.decodeUnknownEffect(
       Schema.Array(SystemDurableObservationSchema),
+      strictParseOptions,
+    )(
+      yield* sql`
+      SELECT kind, source_hash AS "sourceHash", correct,
+        to_char(source_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "sourceAt",
+        to_char((date_trunc('milliseconds', witnessed_at) +
+          CASE WHEN witnessed_at > date_trunc('milliseconds', witnessed_at) THEN interval '1 millisecond'
+            ELSE interval '0' END) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "witnessedAt"
+      FROM system_durable_observations
+      WHERE registration_hash = ${registrationHash} AND witnessed_at <= ${asOf}::timestamptz
+      ORDER BY witnessed_at, kind, source_hash`,
+    )
+  })
+
+export const readPreparedAlphaSystemDurableObservations = (registrationHash: string, asOf: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    return yield* Schema.decodeUnknownEffect(
+      Schema.Array(PreparedAlphaSystemDurableObservationSchema),
       strictParseOptions,
     )(
       yield* sql`

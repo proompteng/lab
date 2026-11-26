@@ -19,7 +19,7 @@ import {
   type RecordedExecutionDecisionDocument as ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { isNativeSystemRegistration, type ScheduledEvaluation } from './policy'
+import { isNativeSystemRegistration, isStrategyBoundSystemRegistration, type ScheduledEvaluation } from './policy'
 import { ResearchStrategyEngine, validateResearchStrategyBinding } from './strategy-binding'
 import type { RecordedProtectedEntryTarget as ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { JevProtocolSchema, usesJevOnlyInference, type JevProtocolMaterial } from '../jev/protocol'
@@ -144,7 +144,7 @@ const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) 
 }
 
 const entryMatchesRegisteredEngine = (target: ProtectedEntryTarget, registration: ScheduledEvaluation): boolean => {
-  if (registration.schemaVersion !== 'bayn.system-registration.v6') return true
+  if (!isStrategyBoundSystemRegistration(registration)) return true
   const definition = registration.policies.find(
     (policy) => policy.authorityGenerationHash === target.evidence.observation.authorityGenerationHash,
   )
