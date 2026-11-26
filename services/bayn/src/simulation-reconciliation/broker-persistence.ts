@@ -92,6 +92,7 @@ const makeReconciliationDecision = (
 const makePassResult = (
   decision: ReconciliationWriteDecision,
   persisted: ReconciliationWriteResult,
+  protectionGroups: NormalizedBrokerSnapshot['protectionGroups'],
 ): ReconciliationPassResult => {
   const report: ReconciliationReport = {
     reconciliation: persisted.reconciliation,
@@ -110,6 +111,7 @@ const makePassResult = (
       unknownOrderCount: decision.unknownOrderCount,
     },
     riskContext: persisted.riskContext,
+    protectionGroups,
   }
 }
 
@@ -163,7 +165,7 @@ const writeReconciliation = (
       orderCount: normalized.orderEvents.length,
       fillCount: normalized.fillEvents.length,
     }
-    const result = makePassResult(decision, persisted)
+    const result = makePassResult(decision, persisted, normalized.protectionGroups)
     yield* logCompletedPass(result, decision)
     return result
   })

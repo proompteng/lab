@@ -14,6 +14,7 @@ import {
 import { JevResearchPolicy } from '../jev/acceptance'
 import { NonNegativeIntegerSchema, UnsignedMicrosSchema } from '../schemas'
 import type { ReplayInferenceCall } from './inference-timing'
+import { researchStrategyInferenceModels, type ResearchStrategyBinding } from '../system-assessment/strategy-binding'
 
 /** Retain the registered provider schedule, including adjacent periods and no-call intervals. */
 export const registeredReplayInferenceTariff = (
@@ -23,7 +24,6 @@ export const registeredReplayInferenceTariff = (
   protocol: Pick<JevProtocolMaterial, 'entrySignalPolicy' | 'model'>,
 ) =>
   Result.gen(function* () {
-    const { rates } = yield* prepareInferenceRateCard(rateCard)
     const jevOnly = protocol.entrySignalPolicy === 'jev-only'
     const requiredModels =
       policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Incumbent
@@ -34,6 +34,16 @@ export const registeredReplayInferenceTariff = (
         : policy === JevResearchPolicy.Ablation
           ? [jevOnly ? { provider: 'typesafe', model: protocol.model } : { provider: 'openai', model: decisionsModel }]
           : []
+    return yield* replayInferenceTariff(rateCard, interval, requiredModels)
+  })
+
+const replayInferenceTariff = (
+  rateCard: unknown,
+  interval: { readonly startAt: string; readonly endAt: string },
+  requiredModels: readonly { readonly provider: string; readonly model: string }[],
+) =>
+  Result.gen(function* () {
+    const { rates } = yield* prepareInferenceRateCard(rateCard)
     if (
       interval.startAt >= interval.endAt ||
       requiredModels.some(
@@ -57,6 +67,12 @@ export const registeredReplayInferenceTariff = (
         .map(({ rate }) => rate),
     }
   })
+
+export const registeredStrategyReplayInferenceTariff = (
+  rateCard: unknown,
+  interval: { readonly startAt: string; readonly endAt: string },
+  binding: ResearchStrategyBinding,
+) => replayInferenceTariff(rateCard, interval, researchStrategyInferenceModels(binding))
 export const ReplayInferenceCostSummarySchema = Schema.Struct({
   callCount: NonNegativeIntegerSchema,
   chartCallCount: NonNegativeIntegerSchema,

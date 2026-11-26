@@ -10,6 +10,7 @@ import { JevDecisionEvidenceSchema, prepareJevDecisionEvidence } from '../jev/de
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevAwaitingEvidence, evaluateJevObservationFromSnapshot } from '../jev/runtime'
 import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
+import type { IntradayAlphaTrailingBaseline } from '../market-data/intraday/trailing-baseline'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { isIntradayAlphaRuntime, isRepeatedMomentumRuntime, type StrategyRuntime } from '../strategy'
 import { evaluateIntradayAlphaFromSnapshot, makeIntradayAlphaEntryQuery } from '../strategy/intraday-alpha/runtime'
@@ -99,7 +100,13 @@ export const observeChartEntry = (
     return { snapshot: evaluated.snapshot, decision }
   })
 
-export const observeNativeEntry: EntryObservation = (context) => {
+/** Live and research alpha share fresh broker eligibility and the subsequent source observation cut. */
+export const observeNativeAlphaEntry = (
+  context: EntryObservationContext,
+  loadTrailingBaseline?: (
+    query: IntradaySnapshotQuery,
+  ) => Effect.Effect<IntradayAlphaTrailingBaseline, OperationalError | JevAwaitingEvidence>,
+): ReturnType<EntryObservation> => {
   if (isIntradayAlphaRuntime(context.strategy)) {
     const policy = context.strategy.definition.parameters
     return Effect.fromResult(
@@ -133,10 +140,22 @@ export const observeNativeEntry: EntryObservation = (context) => {
             : {}),
           policy,
           admissionExpiresAt: context.admissionExpiresAt,
+          ...(loadTrailingBaseline === undefined ? {} : { loadTrailingBaseline: loadTrailingBaseline(query) }),
         }),
       ),
     )
   }
+  return Effect.fail(
+    operationalError({
+      component: 'strategy',
+      operation: 'current-decision',
+      message: 'Native alpha observation requires its explicit alpha runtime',
+    }),
+  )
+}
+
+export const observeNativeEntry: EntryObservation = (context) => {
+  if (isIntradayAlphaRuntime(context.strategy)) return observeNativeAlphaEntry(context)
   return context.strategy.definition.parameters.schemaVersion === defaultJevProtocolDocument.schemaVersion
     ? observeChartEntry(
         {

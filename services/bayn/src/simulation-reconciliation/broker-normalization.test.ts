@@ -24,7 +24,13 @@ test('normalizes protection history identically to explicit child bindings, pres
     history: { ...snapshot.history, orders: { ...snapshot.history.orders, rows } },
   }
   const actual = Result.getOrThrow(normalizeSnapshot(snapshot, bindings))
-  expect(actual).toEqual(Result.getOrThrow(normalizeSnapshot(explicit, expandedBindings)))
+  const { protectionGroups, ...events } = actual
+  const { protectionGroups: explicitGroups, ...explicitEvents } = Result.getOrThrow(
+    normalizeSnapshot(explicit, expandedBindings),
+  )
+  expect(events).toEqual(explicitEvents)
+  expect(protectionGroups).toHaveLength(100)
+  expect(explicitGroups).toEqual([])
   expect(actual.orderEvents.map((event) => event.order.brokerOrderId)).toEqual(
     rows.map((row) => row.value.brokerOrderId),
   )
