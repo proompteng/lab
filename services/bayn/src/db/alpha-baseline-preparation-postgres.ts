@@ -57,6 +57,7 @@ export const recordNativeAlphaBaselinePreparation = (sql: PgClient.PgClient, pay
       WHERE EXISTS (
         SELECT 1 FROM autonomous_cycles cycle JOIN authority_generations generation ON generation.generation_hash=${payload.authorityGenerationHash}
         WHERE cycle.cycle_id=${payload.cycleId} AND cycle.account_id=${payload.accountId}
+          AND cycle.qualification_run_id=COALESCE(generation.qualification_run_id,generation.research_plan_hash,generation.generation_hash)
           AND cycle.strategy_name='jev' AND cycle.strategy_protocol_hash=${identity.protocolHash}
           AND cycle.execution_session_date=${payload.sessionDate}::date
           AND cycle.execution_open_at=${source.nativeSession.openAt}::timestamptz
