@@ -266,10 +266,18 @@ when known, and withholds complete results. A later successful decision does not
 source cut also cannot invent an alpha incumbent's missing baseline inventory. These cases require additional retained
 source evidence before economic qualification; changing timestamps or treating the gap as no-signal is invalid.
 
+The current production path has no independent baseline-only producer before the first regular-minute evaluation.
+Consequently a replay of that earliest native cut cannot establish complete alpha economics merely by collecting
+more later observations or adding an earlier evaluation day. Complete prospective bootstrap requires a separately
+versioned baseline artifact, actual source/query receipts, and a committed witness before the original decision cut.
+Synthetic execution fixtures with an earlier supplied witness prove the replay mechanism, not that production
+bootstrap or profitability has been established.
+
 `measureRegisteredDecisionLatency` selects the engine's calibration. Jev retains its full-batch measurement; alpha
 uses reproduced observations and decisions or verified abstentions, separately bounded pass references, independent
 durable witnesses, and complete submission/recovery histories. Resolved failures remain timing samples. Missing
-sources, references, original commands, routing or unresolved submissions withhold the complete percentile. All
+sources, references, original commands, routing or unresolved submissions withhold the complete percentile. Alpha
+controller samples must also match the registered physical source and image digest. All
 registered controller windows remain in the reliability denominator. The shared `p95FullBatchMs` intervention field
 retains the command-through-durable-completion bound; alpha's report identifies observation counts explicitly and
 does not invent inference batches. The same floor applies to each control's own actual completion, preserving expiry
