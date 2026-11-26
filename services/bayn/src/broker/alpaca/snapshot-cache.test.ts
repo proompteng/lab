@@ -22,12 +22,16 @@ import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker
 import { currentUtcInstant } from '../../time'
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../alpaca-test-support'
 import { decodeFeeActivityWitness } from './activity-fees'
-import { BrokerReadError, BrokerReadErrorKind } from './failures'
+import { BrokerPollFailureReason, BrokerReadError, BrokerReadErrorKind } from './failures'
 import {
   AccountStatus,
+  OrderClass,
   OrderCollection,
+  OrderSide,
   OrderStatus,
+  OrderType,
   SortDirection,
+  TimeInForce,
   accountConfigurationObservationSchemaVersion,
   accountConfigurationObservationSource,
   type Account,
@@ -768,6 +772,221 @@ describe('durable broker observations', () => {
       ),
     )
     expect(Result.isFailure(result)).toBe(true)
+  })
+})
+
+describe('complete open broker order capture', () => {
+  const at = '2026-11-13T18:00:00.000Z'
+  const protectionFixture = () => {
+    const template = observedBrokerSnapshotFixture(accountId, at, '2026-11-13T17:59:00.000Z')
+    const original = template.snapshot.history.orders.rows[0]?.value
+    if (original === undefined) throw new Error('Missing parent order fixture')
+    const { filledAt: _filledAt, filledAveragePriceMicros: _filledPrice, ...base } = original
+    const profit: Order = {
+      ...base,
+      brokerOrderId: 'profit',
+      parentBrokerOrderId: original.brokerOrderId,
+      clientOrderId: 'broker-profit',
+      filledQuantityAtoms: '0',
+      orderClass: OrderClass.Simple,
+      side: OrderSide.Sell,
+      timeInForce: TimeInForce.Day,
+      status: OrderStatus.New,
+      limitPriceMicros: '202000000',
+    }
+    const stop: Order = {
+      ...profit,
+      brokerOrderId: 'stop',
+      clientOrderId: 'broker-stop',
+      orderType: OrderType.StopLimit,
+      stopPriceMicros: '198000000',
+      limitPriceMicros: '197900000',
+    }
+    const parent: Order = {
+      ...original,
+      orderClass: OrderClass.Bracket,
+      timeInForce: TimeInForce.Day,
+      legs: [profit, stop],
+    }
+    const pending: Order = {
+      ...base,
+      brokerOrderId: 'unrelated',
+      clientOrderId: 'unrelated-client',
+      symbol: 'MSFT',
+      filledQuantityAtoms: '0',
+      status: OrderStatus.Accepted,
+      limitPriceMicros: '300000000',
+    }
+    const source = fixture({
+      orders: [parent, pending],
+      fills: template.snapshot.history.fills.map(({ value }) => value),
+    })
+    const standalone = ({ parentBrokerOrderId: _parent, ...order }: Order): Order => order
+    let openRows: readonly Order[] = [standalone(profit), standalone(stop), pending]
+    let openFailure: BrokerReadError | undefined
+    const read: BrokerReadShape = {
+      ...source.read,
+      orders: (query) =>
+        source.read
+          .orders(query)
+          .pipe(
+            Effect.flatMap((result) =>
+              query?.status !== OrderCollection.Open
+                ? Effect.succeed(result)
+                : openFailure !== undefined
+                  ? Effect.fail(openFailure)
+                  : Effect.succeed({
+                      value: openRows,
+                      evidence: { ...result.evidence, contentHash: Result.getOrThrow(canonicalHashV1Result(openRows)) },
+                    }),
+            ),
+          ),
+    }
+    return {
+      source,
+      read,
+      parent,
+      profit,
+      stop,
+      pending,
+      standalone,
+      setOpen: (rows: readonly Order[]) => {
+        openRows = rows
+      },
+      failOpen: (error: BrokerReadError | undefined) => {
+        openFailure = error
+      },
+    }
+  }
+
+  test('retains both protective children and every unrelated open order without another broker request', async () => {
+    const f = protectionFixture()
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(at))
+        const capture = yield* makeBrokerObservationCapture
+        const value = yield* capture(f.read, { generation: 1, startedAt: at }, 15_000)
+        expect(value.openOrders.value).toEqual([f.profit, f.stop, f.pending])
+        expect(value.snapshot.history.orders.rows.map(({ value }) => value)).toEqual([f.parent, f.pending])
+        expect(f.source.calls.filter((call) => call.startsWith('orders:') && call.includes('"status":"open"'))).toEqual(
+          ['orders:{"status":"open","limit":500}'],
+        )
+        const requests = f.source.calls.length
+        const projected = yield* makeProjectedBrokerRead(f.read).pipe(
+          Effect.provideService(BrokerObservations, {
+            read: Effect.succeed(value),
+            readState: Effect.succeed(value),
+            readForSubmit: () => Effect.succeed(value),
+            readForReconciliation: forReconciliation(Effect.succeed(value)),
+            invalidate: Effect.void,
+          }),
+        )
+        const projection = projected.projection
+        if (projection === undefined) throw new Error('Missing broker projection')
+        expect((yield* projection.submissionSnapshot('candidate')).openOrders).toEqual(value.openOrders)
+        expect((yield* projected.orders({ status: OrderCollection.Open, limit: 1 })).value).toEqual([f.profit])
+        expect((yield* projected.orders({ status: OrderCollection.Open, limit: 10 })).value).toEqual([
+          f.profit,
+          f.stop,
+          f.pending,
+        ])
+        expect(f.source.calls.length).toBe(requests)
+      }),
+    )
+  })
+
+  test('preserves nested lineage and collapses only an identical standalone child alias', async () => {
+    const f = protectionFixture()
+    f.setOpen([f.parent, f.standalone(f.profit), f.pending])
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(at))
+        const capture = yield* makeBrokerObservationCapture
+        const value = yield* capture(f.read, { generation: 1, startedAt: at }, 15_000)
+        expect(value.openOrders.value).toEqual([f.profit, f.stop, f.pending])
+        expect(value.openOrders.value.every((order) => order.legs === undefined)).toBe(true)
+        expect(value.snapshot.history.orders.rows[0]?.value).toEqual(f.parent)
+      }),
+    )
+  })
+
+  test.each([
+    'missing-child',
+    'changed-price',
+    'wrong-parent',
+    'duplicate-root',
+    'duplicate-nested',
+    'duplicate-client',
+    'full-page',
+    'nested-overflow',
+  ] as const)('rejects an unproven open-order cut: %s', async (changed) => {
+    const f = protectionFixture()
+    const rows: readonly Order[] =
+      changed === 'missing-child'
+        ? [f.profit, f.pending]
+        : changed === 'changed-price'
+          ? [f.profit, { ...f.stop, stopPriceMicros: '197000000' }, f.pending]
+          : changed === 'wrong-parent'
+            ? [{ ...f.profit, parentBrokerOrderId: 'different-parent' }, f.stop, f.pending]
+            : changed === 'duplicate-root'
+              ? [f.profit, f.profit, f.stop, f.pending]
+              : changed === 'duplicate-nested'
+                ? [{ ...f.parent, legs: [f.profit, f.profit] }, f.pending]
+                : changed === 'duplicate-client'
+                  ? [f.profit, f.stop, { ...f.pending, clientOrderId: f.profit.clientOrderId }]
+                  : changed === 'full-page'
+                    ? Array.from({ length: 500 }, (_, i) => ({
+                        ...f.pending,
+                        brokerOrderId: `open-${i}`,
+                        clientOrderId: `open-client-${i}`,
+                      }))
+                    : [
+                        f.parent,
+                        ...Array.from({ length: 497 }, (_, i) => ({
+                          ...f.pending,
+                          brokerOrderId: `open-${i}`,
+                          clientOrderId: `open-client-${i}`,
+                        })),
+                      ]
+    f.setOpen(rows)
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(at))
+        const capture = yield* makeBrokerObservationCapture
+        const failure = yield* capture(f.read, { generation: 1, startedAt: at }, 15_000).pipe(Effect.flip)
+        expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
+        expect(failure.pollFailureReason).toBe(BrokerPollFailureReason.SnapshotRejected)
+        expect(f.source.calls.filter((call) => call.includes('"status":"open"'))).toHaveLength(1)
+      }),
+    )
+  })
+
+  test('a failed open-order read stays unavailable and prevents reuse of the prior complete history', async () => {
+    const f = protectionFixture()
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(at))
+        const capture = yield* makeBrokerObservationCapture
+        yield* capture(f.read, { generation: 1, startedAt: at }, 15_000)
+        const failed = new BrokerReadError({
+          operation: 'orders',
+          kind: BrokerReadErrorKind.Timeout,
+          retryable: true,
+          message: 'open orders failed',
+        })
+        f.failOpen(failed)
+        yield* TestClock.adjust(1)
+        expect(
+          yield* capture(f.read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000).pipe(Effect.flip),
+        ).toBe(failed)
+        f.failOpen(undefined)
+        f.source.calls.length = 0
+        yield* TestClock.adjust(1)
+        const refreshed = yield* capture(f.read, { generation: 3, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(refreshed.openOrders.value).toEqual([f.profit, f.stop, f.pending])
+        expect(f.source.calls.filter((call) => call.includes('"status":"all"'))).toHaveLength(2)
+      }),
+    )
   })
 })
 
