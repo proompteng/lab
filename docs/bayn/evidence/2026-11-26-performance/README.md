@@ -16,6 +16,75 @@ Current deployed source is `d6316076f3668423dab04d6b65f3e95fd4da60fb`. Its
 At the 08:47 UTC read, it had **zero post-activation cycles**. The following realized results belong to the
 previous v41/v43/v44 strategies, not the newly activated two-phase alpha strategy.
 
+
+## Retained lifetime account bridge
+
+The recent November 16–25 cohort was selected to diagnose recent v41/v43/v44 behavior; it is not the beginning
+of retained history. The full account has **3,041 canonical fills across 42 New York execution dates**, from
+**2026-09-10T19:50:37.128231Z** through **2026-11-25T20:59:51.988404Z**. All 3,041 match one accounting
+transaction and one retained posting receipt, with no quantity or price mismatch. All also retain an intent and
+cycle association.
+
+The **$100,000 starting cash/equity is observed**, both in the earliest account snapshot on
+2026-07-30T06:49:48.171Z and immediately before the first fill on 2026-09-10T19:50:35.355Z.
+The fixed closing snapshot at 2026-11-26T09:04:09.135Z has **$93,038.64 cash/equity**. Thus the retained account
+lost **$6,961.36, or 6.96136% of its observed initial capital**, before separately billed inference, data,
+infrastructure and research costs.
+
+| Retained lifetime component | USD |
+| --- | ---: |
+| Observed initial cash/equity | 100,000.000000 |
+| Realized gross trading P&L | -2,423.533819 |
+| Cash-denominated broker fees | -2,363.920000 |
+| Cost basis of coin-denominated broker fees | -2,173.980374 |
+| Posted cash-settlement rounding credit | +0.074193 |
+| **Calculated and observed ending cash/equity** | **93,038.640000** |
+| **Unexplained difference** | **0.000000** |
+
+Execution fees total **$4,537.900374**, comprising $2,167.99 of crypto cash fees, $195.93 of other broker
+cash fees, and $2,173.980374 of coin fee expense. The gross-trading less execution-fee subtotal is
+**-$6,961.434193**; the observed cash decline differs by the separately posted $0.074193 rounding credit.
+All 340 retained settlement rows were posted. Transaction-level `fee_micros` is zero throughout, so summing
+that field alone would incorrectly report zero fees.
+
+The independent cash-flow expression also closes exactly:
+**$100,000 - $4,597.514193 fill cash flow - $2,363.92 cash fee flow + $0.074193 rounding = $93,038.64**.
+The $2,173.980374 coin cost is already embedded in the difference between fill cash flow and gross P&L;
+subtracting it again from the cash-flow expression would double count it. The canonical
+`broker_cash_fee_deltas` and `broker_inventory_debits` views reconcile provisional fee accruals with later
+broker activities. In particular, the $2,167.97 raw cash accrual must not be added again to the settled
+$2,363.92 cash-fee total.
+
+### Historical assets and inventory
+
+| Historical asset cohort | Fills | Realized gross USD | Cash fees USD | Coin fee basis USD | Net before rounding USD |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Crypto, October 14–23 UTC | 348 | -1,032.453819 | 2,167.990000 | 2,173.980374 | -5,374.424193 |
+| Equities, September 10–November 25 UTC | 2,693 | -1,391.080000 | 195.930000 | 0.000000 | -1,587.010000 |
+| **Total historical account** | **3,041** | **-2,423.533819** | **2,363.920000** | **2,173.980374** | **-6,961.434193** |
+
+This separates the large historical crypto fee burden from the equity strategy now under investigation.
+The lifetime numbers span many historical policies and cannot be assigned to today's two-phase alpha authority.
+
+Fills alone leave apparent BTC/USD, ETH/USD and SOL/USD quantity and cost-basis residuals. These exactly equal
+posted coin-fee inventory deductions; after those deductions, **all 15 symbols have zero quantity and
+zero cost-basis residual**. The first and last selected position snapshots both have zero positions, and the
+2026-11-26T09:04:14.174Z reconciliation is `EXACT` with zero discrepancies. This establishes a retained
+account-level flat-to-flat bridge including fee adjustments; it does not manufacture fill-only closed crypto
+episodes or supply per-episode fee allocation.
+
+The execution-unit cutover archive contains 412 historical fill copies from September 10–October 13.
+Every copy matches an existing canonical fill by event ID and source timestamp, and all 412 also match by
+provider fill ID. Adding those archived rows would double count executions. The source selectors retain
+all symbol gross totals and all 42 execution-date gross aggregates; fee economic dates are shown separately
+because delayed broker fee postings do not justify synthetic daily net returns or drawdown estimates.
+
+The [lifetime selector](lifetime.sql) and [captured lifetime results](lifetime-results.txt) reproduce both
+cash bridges, fee classes, inventory adjustments, boundaries, receipt coverage and archive overlap.
+They ran at 09:09:08 UTC against the verified standby, with a fixed 09:04:15 UTC economic/account cutoff
+and approximately six seconds of replica lag. This is an audit of retained canonical records; individual
+TigerBeetle transfers and independently billed operating expenses were not re-audited.
+
 ## Reconciled session economics
 
 Execution dates use America/New_York. Fees below are posted broker economic-date debits. Inference estimates use
@@ -164,6 +233,7 @@ results and limitations separately.
 
 ## Reproduction and evidence
 
+- [Lifetime cash bridge SQL](lifetime.sql) and [captured lifetime results](lifetime-results.txt).
 - [Performance SQL](performance.sql) and [captured performance results](performance-results.txt).
 - [Funnel and symbol attribution SQL](funnel.sql) and [captured funnel results](funnel-results.txt).
 - [Original plan economics SQL](plan-economics.sql) and [captured plan results](plan-results.txt).
