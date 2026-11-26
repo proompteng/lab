@@ -15,6 +15,7 @@ import {
 import { SystemAssessmentError } from './economics'
 import { reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { resolveAlphaRegularSession } from '../strategy/intraday-alpha/signals'
+import { registeredAlphaObservationSessions } from './calendar'
 
 export const readSystemCashObservations = (
   accountId: string,
@@ -148,11 +149,12 @@ export const readSystemBatchEvidence = (accountId: string, generationHash: strin
 export const readSystemAlphaObservations = (
   accountId: string,
   generationHash: string,
-  sessions: readonly { readonly sessionDate: string; readonly openAt: string; readonly closeAt: string }[],
+  registeredCalendar: Parameters<typeof registeredAlphaObservationSessions>[0],
   asOf: string,
   sharedProtocolHash: string,
 ) =>
   Effect.gen(function* () {
+    const sessions = yield* Effect.fromResult(registeredAlphaObservationSessions(registeredCalendar))
     const sql = yield* PgClient.PgClient
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.Array(Schema.Struct({ ...AlphaObservationEvidenceSchema.fields, observedAt: UtcInstantSchema })),
@@ -191,8 +193,8 @@ export const readSystemAlphaObservations = (
         observation.portfolio.brokerState.account.accountId !== accountId ||
         (yield* Effect.fromResult(canonicalHashV1Result(observation.protocol))) !== sharedProtocolHash ||
         session === undefined ||
-        calendar.openAt !== session.openAt ||
-        calendar.closeAt !== session.closeAt ||
+        calendar.openAt !== session.regularOpenAt ||
+        calendar.closeAt !== session.regularCloseAt ||
         observation.observedAt < session.openAt ||
         observation.observedAt >= session.closeAt ||
         observation.observedAt > asOf

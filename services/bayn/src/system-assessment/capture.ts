@@ -362,7 +362,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               ? yield* readSystemAlphaObservations(
                   identity.accountId,
                   candidate.authorityGenerationHash,
-                  registration.calendar.sessions,
+                  registration.calendar,
                   asOf,
                   yield* Effect.fromResult(canonicalHashV1Result(registration.obligations.configuration.protocol)),
                 )
