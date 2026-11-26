@@ -493,7 +493,11 @@ describe('event-driven Restate broker observation owner', () => {
         },
       },
     })
-    await expect(h.projectorHandlers.project(h.context, receipt)).rejects.toThrow('database unavailable')
+    const failure = await h.projectorHandlers.project(h.context, receipt).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    )
+    expect(failure).toMatchObject({ message: 'database unavailable' })
     expect(h.deliveries.map((delivery) => delivery.method)).toEqual(['reconcile'])
     expect(h.runOptions.get('resolve broker protection binding 1')).toEqual({
       initialRetryInterval: 50,
