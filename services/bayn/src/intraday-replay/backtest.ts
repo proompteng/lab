@@ -409,7 +409,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       )
     const sessions: { readonly date: typeof IsoDateSchema.Type; readonly openAt: string; readonly closeAt: string }[] =
       []
-    for (let start = openMs; start < closeMs;) {
+    for (let start = openMs; start < closeMs; ) {
       const date = yield* Schema.decodeUnknownResult(IsoDateSchema)(new Date(start).toISOString().slice(0, 10))
       const end = Math.min(Date.parse(date + 'T00:00:00.000Z') + 86_400_000, closeMs)
       sessions.push({ date, openAt: new Date(start).toISOString(), closeAt: new Date(end).toISOString() })
@@ -515,27 +515,29 @@ export type PreparedBacktest = Result.Result.Success<ReturnType<typeof prepareBa
 
 export const backtestBrokerEvidenceConfig = (prepared: PreparedBacktest) =>
   canonicalHashV1Result(prepared.input.source).pipe(
-    Result.map((sourceManifestHash): ReplayBrokerEvidenceConfig => ({
-      runId: prepared.runId,
-      sourceManifestHash,
-      openingCashMicros: prepared.input.openingCashMicros,
-      protocol: {
-        feed: equityMarketProfile.feed,
-        delayClass: equityMarketProfile.delayClass,
-        maximumQuoteAgeMs: prepared.protocol.maximumQuoteAgeMs,
-        executionModel: prepared.protocol.executionModel,
-      },
-      assumptions: prepared.input.assumptions,
-      fractionalTrading: prepared.input.fractionalTrading,
-      ...(prepared.input.equityShortAccount === undefined
-        ? {}
-        : {
-            shortingEnabled:
-              prepared.input.equityShortAccount.shortingEnabled && !prepared.input.equityShortAccount.noShorting,
-          }),
-      assets: prepared.assets,
-      calendar: prepared.input.calendar,
-    })),
+    Result.map(
+      (sourceManifestHash): ReplayBrokerEvidenceConfig => ({
+        runId: prepared.runId,
+        sourceManifestHash,
+        openingCashMicros: prepared.input.openingCashMicros,
+        protocol: {
+          feed: equityMarketProfile.feed,
+          delayClass: equityMarketProfile.delayClass,
+          maximumQuoteAgeMs: prepared.protocol.maximumQuoteAgeMs,
+          executionModel: prepared.protocol.executionModel,
+        },
+        assumptions: prepared.input.assumptions,
+        fractionalTrading: prepared.input.fractionalTrading,
+        ...(prepared.input.equityShortAccount === undefined
+          ? {}
+          : {
+              shortingEnabled:
+                prepared.input.equityShortAccount.shortingEnabled && !prepared.input.equityShortAccount.noShorting,
+            }),
+        assets: prepared.assets,
+        calendar: prepared.input.calendar,
+      }),
+    ),
   )
 export type ReplayDatabaseConfig = Pick<RuntimeConfig, 'postgres' | 'tigerBeetle' | 'operationTimeoutMs'>
 
