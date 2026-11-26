@@ -38,7 +38,7 @@ describePostgres('Native alpha diagnostic decision selection', () => {
               ) ON COMMIT DROP`
               yield* sql`CREATE TEMP TABLE authority_generations (
                 generation_hash text, account_id text, qualification_run_id text, research_plan_hash text,
-                protocol_hash text, strategy_protocol_hash text, strategy_parameter_schema_version text,
+                protocol_hash text, strategy_protocol_hash text, strategy_parameter_schema_version text, risk_policy_hash text,
                 maximum text, activated_at timestamptz,
                 previous_generation_hash text, qualification_source_revision text,
                 qualification_image_repository text, qualification_image_digest text,
@@ -70,9 +70,9 @@ describePostgres('Native alpha diagnostic decision selection', () => {
                 [hash(105), 'foreign-account'],
               ])
                 yield* sql`INSERT INTO authority_generations (
-                  generation_hash,account_id,research_plan_hash,strategy_protocol_hash,strategy_parameter_schema_version,maximum,activated_at,
+                  generation_hash,account_id,research_plan_hash,strategy_protocol_hash,strategy_parameter_schema_version,risk_policy_hash,maximum,activated_at,
                   activation_source_revision,activation_image_repository,activation_image_digest
-                ) VALUES (${id},${account},${qualification},${protocol},'bayn.intraday-alpha-policy.v2','PAPER',${activatedAt},
+                ) VALUES (${id},${account},${qualification},${protocol},'bayn.intraday-alpha-policy.v2',${hash(114)},'PAPER',${activatedAt},
                   ${'a'.repeat(40)},'registry.example/bayn',${`sha256:${hash(106)}`})`
               yield* sql`INSERT INTO reconciliations VALUES (${accountId},${hash(107)},${cutoff})`
               const add = (
@@ -163,6 +163,7 @@ describePostgres('Native alpha diagnostic decision selection', () => {
               ])
               expect(rows.every((row) => row.reconciled_at.toISOString() === cutoff)).toBe(true)
               expect(rows.every((row) => row.qualification_build === null)).toBe(true)
+              expect(rows.every((row) => row.risk_policy_hash === hash(114))).toBe(true)
               expect(rows[0]?.activation_build).toEqual({
                 sourceRevision: 'a'.repeat(40),
                 imageRepository: 'registry.example/bayn',

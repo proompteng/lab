@@ -154,6 +154,7 @@ test('native alpha worker jobs preserve rejected decision denominators without a
     authority_generation_hash: 'b'.repeat(64),
     qualification_run_id: 'c'.repeat(64),
     strategy_protocol_hash: 'd'.repeat(64),
+    risk_policy_hash: 'e'.repeat(64),
     session_date: Schema.decodeUnknownSync(IsoDateSchema)('2026-11-15'),
     cycle_state: CycleState.Active,
     terminal_at: null,

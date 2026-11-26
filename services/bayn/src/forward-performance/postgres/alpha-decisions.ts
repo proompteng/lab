@@ -17,6 +17,7 @@ export const AlphaDecisionJsonRow = Schema.Struct({
   authority_generation_hash: Sha256Schema,
   qualification_run_id: Sha256Schema,
   strategy_protocol_hash: Sha256Schema,
+  risk_policy_hash: Sha256Schema,
   session_date: IsoDateSchema,
   cycle_state: Schema.Enum(CycleState),
   terminal_at: Schema.NullOr(Schema.Date),
@@ -49,7 +50,7 @@ export const alphaDecisionQuery = (
   )
   SELECT cycle.cycle_id, decision.decision_hash, decision.document::text AS document_json,
     decision.created_at, cycle.account_id, generation.generation_hash AS authority_generation_hash,
-    cycle.qualification_run_id, cycle.strategy_protocol_hash,
+    cycle.qualification_run_id, cycle.strategy_protocol_hash, generation.risk_policy_hash,
     cycle.execution_session_date::text AS session_date, cycle.state AS cycle_state, cycle.terminal_at,
     generation.activated_at AS generation_activated_at, latest_reconciliation.reconciled_at,
     (cycle.state = 'COMPLETED' AND cycle.terminal_at <= latest_reconciliation.reconciled_at
@@ -106,6 +107,7 @@ export const verifyAlphaDecisionJson = (row: typeof AlphaDecisionJsonRow.Type): 
     document.bindings.authorityGenerationHash !== row.authority_generation_hash ||
     document.bindings.qualificationRunId !== row.qualification_run_id ||
     document.bindings.strategyProtocolHash !== row.strategy_protocol_hash ||
+    document.bindings.policyHash !== row.risk_policy_hash ||
     target.sessionDate !== row.session_date ||
     document.createdAt !== row.created_at.toISOString() ||
     row.created_at < row.generation_activated_at ||
