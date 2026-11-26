@@ -175,6 +175,93 @@ test('retains a session with no current benchmark as unavailable even when its p
   }
 })
 
+test('an opening-only or stale benchmark cannot become an evaluated zero-profit day', () => {
+  const date = '2026-11-27'
+  for (const coverage of ['opening-only', 'missing-checkpoint'] as const) {
+    const lines = rows(date, 210, (symbol, minute) => {
+      if (symbol === 'SPY' && (coverage === 'opening-only' ? minute > 0 : minute === 30)) return null
+      return middayPrice(symbol, minute)
+    })
+    const report = withRows(lines, (path) => runIntradayAlphaReplayVerification([path], calendar([date])))
+    for (const scenario of report.results) {
+      const day = scenario.sessionDetails[0]
+      expect(day?.baselineAvailable).toBe(true)
+      expect(day?.benchmarkMinutes).toBe(coverage === 'opening-only' ? 1 : 209)
+      expect(day?.benchmarkAvailable).toBe(false)
+      expect(day?.requiredBenchmarkCheckpoints).toBe(1)
+      expect(day?.unavailableBenchmarkCheckpoints).toEqual([
+        {
+          phase: IntradayAlphaPhase.NoiseAreaTrend,
+          observedAt: '2026-11-27T15:01:02.000Z',
+          expectedBarAt: '2026-11-27T15:00:00.000Z',
+        },
+      ])
+      expect(day?.attempts).toEqual([])
+      expect(scenario.completeOutcomes).toBe(false)
+      expect(scenario.evaluatedSessions).toBe(0)
+      expect(scenario.unavailableSessions).toBe(1)
+      expect(scenario.totalNet).toBeNull()
+      expect(scenario.sharpe).toBeNull()
+      expect(scenario.maxDd).toBeNull()
+      expect(scenario.chronologicalSlices).toBeNull()
+      expect(scenario.orbNet).toBeNull()
+      expect(scenario.mrNet).toBeNull()
+      expect(scenario.noiseNet).toBeNull()
+      expect(scenario.recentDays[0]?.modeledNet).toBeNull()
+    }
+  }
+})
+
+test('a later unavailable benchmark halts new entries but preserves an existing trade and its later exit', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, (symbol, minute) => {
+    if (symbol === 'SPY') return minute === 90 ? null : 100 + minute * 0.001
+    if (symbol === 'AAPL' && minute >= 30) return 101
+    return 100 + Math.min(minute, 29) * 0.001
+  })
+  const report = withRows(lines, (path) => runIntradayAlphaReplayVerification([path], calendar([date])))
+  for (const scenario of report.results) {
+    const day = scenario.sessionDetails[0]
+    expect(day?.unavailableBenchmarkCheckpoints).toEqual([
+      {
+        phase: IntradayAlphaPhase.NoiseAreaTrend,
+        observedAt: '2026-11-27T16:01:02.000Z',
+        expectedBarAt: '2026-11-27T16:00:00.000Z',
+      },
+    ])
+    expect(day?.attempts).toHaveLength(1)
+    expect(day?.trades).toHaveLength(1)
+    expect(day?.trades[0]?.phase).toBe(IntradayAlphaPhase.MorningOrb)
+    expect(day?.trades[0]?.exitAt).toBe('2026-11-27T16:03:00.000Z')
+    expect(scenario.modeledFilledLegs).toBe(1)
+    expect(scenario.modeledClosedNet).toBe(day?.trades[0]?.netPnlUsd)
+    expect(scenario.orbModeledClosedNet).toBe(scenario.modeledClosedNet)
+    expect(scenario.orbNet).toBeNull()
+    expect(scenario.totalNet).toBeNull()
+    expect(scenario.recentDays[0]?.modeledNet).toBeNull()
+  }
+})
+
+test('a current finite zero benchmark signal can support a known zero-trade result', () => {
+  const date = '2026-11-27'
+  const report = withRows(
+    rows(date, 210, () => 100),
+    (path) => runIntradayAlphaReplayVerification([path], calendar([date])),
+  )
+  for (const scenario of report.results) {
+    const day = scenario.sessionDetails[0]
+    expect(day?.benchmarkAvailable).toBe(true)
+    expect(day?.requiredBenchmarkCheckpoints).toBeGreaterThan(0)
+    expect(day?.unavailableBenchmarkCheckpoints).toEqual([])
+    expect(day?.attempts).toEqual([])
+    expect(scenario.completeOutcomes).toBe(true)
+    expect(scenario.evaluatedSessions).toBe(1)
+    expect(scenario.unavailableSessions).toBe(0)
+    expect(scenario.totalNet).toBe(0)
+    expect(scenario.recentDays[0]?.modeledNet).toBe(0)
+  }
+})
+
 test('reports partially filled midday baskets instead of implying planned dollar neutrality was realized', () => {
   const date = '2026-11-27'
   const lines = rows(date, 210, (symbol, minute) =>
@@ -297,6 +384,67 @@ test('concurrent sleeves wait for entry resolution and retain only filled disjoi
     expect(qqq?.entryAt).toBe('2026-11-27T15:02:00.000Z')
     expect(qqq?.exitAt).toBe('2026-11-27T17:59:00.000Z')
     expect(day?.trades.some((trade) => trade.symbol === 'SMH')).toBe(false)
+  }
+})
+
+test('a missing required co-held mark halts planning and retains already supported noise exits', () => {
+  const date = '2026-11-27'
+  const equities = rows(date, 210, (symbol, minute) => {
+    if (symbol === 'SPY') return 100 + minute * 0.001
+    if (symbol === 'AAPL' && minute >= 30) return 101
+    return 100 + Math.min(minute, 29) * 0.001
+  })
+  const etfs = rows(
+    date,
+    210,
+    (symbol, minute) => (symbol === 'QQQ' && minute === 31 ? null : 100 + Math.min(minute, 30) * 0.01),
+    ['QQQ', 'SMH'],
+  )
+  const report = withRows([...equities, ...etfs], (path) =>
+    runIntradayAlphaReplayVerification([path], calendar([date])),
+  )
+  for (const scenario of report.results) {
+    const day = scenario.sessionDetails[0]
+    expect(day?.benchmarkAvailable).toBe(true)
+    expect(day?.missingConcurrentMarkWindows).toBe(1)
+    expect(day?.attempts).toHaveLength(1)
+    expect(day?.trades).toHaveLength(2)
+    expect(day?.trades.every((trade) => trade.phase === IntradayAlphaPhase.NoiseAreaTrend)).toBe(true)
+    expect(day?.trades.every((trade) => trade.exitAt === '2026-11-27T17:59:00.000Z')).toBe(true)
+    expect(scenario.modeledFilledLegs).toBe(2)
+    expect(scenario.modeledClosedNet).toBe(day?.trades.reduce((sum, trade) => sum + trade.netPnlUsd, 0))
+    expect(scenario.completeOutcomes).toBe(false)
+    expect(scenario.unavailableSessions).toBe(1)
+    expect(scenario.totalNet).toBeNull()
+    expect(scenario.sharpe).toBeNull()
+    expect(scenario.maxDd).toBeNull()
+    expect(scenario.chronologicalSlices).toBeNull()
+    expect(scenario.recentDays[0]?.modeledNet).toBeNull()
+  }
+})
+
+test('missing benchmark bars outside an available decision window do not fabricate missing observations', () => {
+  const date = '2026-11-27'
+  const equities = rows(date, 210, (symbol, minute) => {
+    if (symbol === 'SPY') return minute === 90 ? null : 100 + minute * 0.001
+    if (symbol === 'AAPL' && minute >= 30) return 101
+    return 100 + Math.min(minute, 29) * 0.001
+  })
+  const etfs = rows(date, 210, (_symbol, minute) => 100 + Math.min(minute, 30) * 0.01, ['QQQ', 'SMH'])
+  const report = withRows([...equities, ...etfs], (path) =>
+    runIntradayAlphaReplayVerification([path], calendar([date])),
+  )
+  for (const scenario of report.results) {
+    const day = scenario.sessionDetails[0]
+    expect(day?.attempts.some((attempt) => attempt.phase === IntradayAlphaPhase.MorningOrb)).toBe(true)
+    expect(
+      day?.attempts.find((attempt) => attempt.phase === IntradayAlphaPhase.NoiseAreaTrend)?.selectedSymbols,
+    ).toEqual(['QQQ', 'SMH'])
+    expect(day?.benchmarkMinutes).toBe(209)
+    expect(day?.benchmarkAvailable).toBe(true)
+    expect(day?.unavailableBenchmarkCheckpoints).toEqual([])
+    expect(scenario.unavailableSessions).toBe(0)
+    expect(scenario.completeOutcomes).toBe(true)
   }
 })
 

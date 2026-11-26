@@ -95,6 +95,12 @@ interface UnresolvedExit {
   readonly reason: 'POST_DEADLINE_PRICE_UNAVAILABLE'
 }
 
+interface UnavailableBenchmarkCheckpoint {
+  readonly phase: ActiveAlphaPhase
+  readonly observedAt: string
+  readonly expectedBarAt: string
+}
+
 interface ActiveSimulatedPosition {
   readonly phase: ActiveAlphaPhase
   readonly symbol: string
@@ -519,6 +525,8 @@ const simulateSession = (input: {
   readonly unresolvedExits: readonly UnresolvedExit[]
   readonly expectedRegularMinutes: number
   readonly benchmarkMinutes: number
+  readonly requiredBenchmarkCheckpoints: number
+  readonly unavailableBenchmarkCheckpoints: readonly UnavailableBenchmarkCheckpoint[]
   readonly ambiguousExitBars: number
   readonly stopLimitGapBars: number
   readonly concurrentOverlaps: number
@@ -545,6 +553,8 @@ const simulateSession = (input: {
   const trades: TradeOutcome[] = []
   const attempts: EntryAttempt[] = []
   const unresolvedExits: UnresolvedExit[] = []
+  let requiredBenchmarkCheckpoints = 0
+  const unavailableBenchmarkCheckpoints: UnavailableBenchmarkCheckpoint[] = []
   let ambiguousExitBars = 0
   let stopLimitGapBars = 0
   let plannerBlocks = 0
@@ -592,6 +602,18 @@ const simulateSession = (input: {
         middayReversionCompleted: middayCompleted,
       }),
     )
+    if (extracted.context.phase === IntradayAlphaPhase.OutsideWindow) return
+    requiredBenchmarkCheckpoints++
+    // Use the production extractor's readiness result, not a daily bar-count threshold.
+    // A finite zero deviation is valid; null means the exact completed benchmark/VWAP is unavailable.
+    if (extracted.spyVwapDevBps === null) {
+      unavailableBenchmarkCheckpoints.push({
+        phase: extracted.context.phase,
+        observedAt,
+        expectedBarAt: utcInstantFromEpochMillis(rangeEndMs - 60_000),
+      })
+      return
+    }
     const legs = selectIntradayAlphaLegs({
       context: extracted.context,
       policy,
@@ -903,7 +925,10 @@ const simulateSession = (input: {
     ),
   )
   for (let minute = policy.morningOrb.entryStartMinuteFromOpen; minute <= lastMinute; minute++) {
-    if (unresolvedExits.length > 0) break
+    // An unobserved eligible decision could change quotas, occupancy and headroom. Retain already
+    // modeled positions/exits, but do not invent a later entry path after the first unavailable observation.
+    if (unresolvedExits.length > 0 || unavailableBenchmarkCheckpoints.length > 0 || missingConcurrentMarkWindows > 0)
+      break
     const noiseCheckpoint = policy.noiseArea.checkpointMinutesFromOpen.includes(minute + 1)
     const morningCheckpoint =
       minute <= policy.morningOrb.entryEndMinuteFromOpen &&
@@ -922,6 +947,8 @@ const simulateSession = (input: {
     unresolvedExits,
     expectedRegularMinutes,
     benchmarkMinutes: spyBars.length,
+    requiredBenchmarkCheckpoints,
+    unavailableBenchmarkCheckpoints,
     ambiguousExitBars,
     stopLimitGapBars,
     concurrentOverlaps,
@@ -997,6 +1024,8 @@ export const runIntradayAlphaReplayVerification = (
       readonly unresolvedExits: number
       readonly baselineAvailable: boolean
       readonly benchmarkAvailable: boolean
+      readonly unavailableBenchmarkCheckpoints: number
+      readonly missingConcurrentMarkWindows: number
     }[] = []
     const sessionDetails = []
     let totalPlannerBlocks = 0
@@ -1017,6 +1046,8 @@ export const runIntradayAlphaReplayVerification = (
               unresolvedExits: [],
               expectedRegularMinutes: (regular.closeMs - regular.openMs) / 60_000,
               benchmarkMinutes: symMap.get(intradayAlphaBenchmarkSymbol)?.length ?? 0,
+              requiredBenchmarkCheckpoints: 0,
+              unavailableBenchmarkCheckpoints: [],
               ambiguousExitBars: 0,
               stopLimitGapBars: 0,
               concurrentOverlaps: 0,
@@ -1036,7 +1067,7 @@ export const runIntradayAlphaReplayVerification = (
       sessionDetails.push({
         date,
         baselineAvailable: baseline !== undefined,
-        benchmarkAvailable: outcome.benchmarkMinutes > 0,
+        benchmarkAvailable: outcome.benchmarkMinutes > 0 && outcome.unavailableBenchmarkCheckpoints.length === 0,
         baselineHash: baseline === undefined ? null : Result.getOrThrow(canonicalHashV1Result(baseline)),
         baselineMissingSymbols: policy.candidateSymbols.filter((symbol) => baseline?.symbols[symbol] === undefined),
         ...outcome,
@@ -1050,12 +1081,16 @@ export const runIntradayAlphaReplayVerification = (
         modeledFilledLegs: outcome.attempts.reduce((sum, attempt) => sum + attempt.filledSymbols.length, 0),
         unresolvedExits: outcome.unresolvedExits.length,
         baselineAvailable: baseline !== undefined,
-        benchmarkAvailable: outcome.benchmarkMinutes > 0,
+        benchmarkAvailable: outcome.benchmarkMinutes > 0 && outcome.unavailableBenchmarkCheckpoints.length === 0,
+        unavailableBenchmarkCheckpoints: outcome.unavailableBenchmarkCheckpoints.length,
+        missingConcurrentMarkWindows: outcome.missingConcurrentMarkWindows,
       })
     }
 
     const activeSessions = dailyPnl.filter((d) => d.modeledFilledLegs > 0).length
-    const unavailableSessions = dailyPnl.filter((d) => !d.baselineAvailable || !d.benchmarkAvailable).length
+    const unavailableSessions = dailyPnl.filter(
+      (d) => !d.baselineAvailable || !d.benchmarkAvailable || d.missingConcurrentMarkWindows > 0,
+    ).length
     const modeledClosedNet = dailyPnl.reduce((sum, d) => sum + d.modeledClosedNet, 0)
     const unresolvedExits = dailyPnl.reduce((sum, d) => sum + d.unresolvedExits, 0)
     const completeOutcomes = unresolvedExits === 0 && unavailableSessions === 0
@@ -1081,6 +1116,9 @@ export const runIntradayAlphaReplayVerification = (
     const orbTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.MorningOrb)
     const mrTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.MiddayReversion)
     const noiseTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.NoiseAreaTrend)
+    const orbModeledClosedNet = orbTrades.reduce((sum, trade) => sum + trade.netPnlUsd, 0)
+    const mrModeledClosedNet = mrTrades.reduce((sum, trade) => sum + trade.netPnlUsd, 0)
+    const noiseModeledClosedNet = noiseTrades.reduce((sum, trade) => sum + trade.netPnlUsd, 0)
     const middayBaskets = sessionDetails.flatMap((day) =>
       day.attempts
         .filter((attempt) => attempt.phase === IntradayAlphaPhase.MiddayReversion)
@@ -1133,20 +1171,30 @@ export const runIntradayAlphaReplayVerification = (
 
     results.push({
       slippageBps,
+      completeOutcomes,
       totalSessions: sessions.length,
       activeSessions,
       evaluatedSessions: sessions.length - unavailableSessions,
       unavailableSessions,
+      unavailableBenchmarkCheckpoints: sessionDetails.reduce(
+        (sum, day) => sum + day.unavailableBenchmarkCheckpoints.length,
+        0,
+      ),
       activeRate: activeSessions / Math.max(1, sessions.length),
       totalTrades: allTrades.length,
       orbTrades: orbTrades.length,
-      orbNet: orbTrades.reduce((s, t) => s + t.netPnlUsd, 0),
+      orbModeledClosedNet,
+      orbNet: completeOutcomes ? orbModeledClosedNet : null,
       mrTrades: mrTrades.length,
-      mrNet: mrTrades.reduce((s, t) => s + t.netPnlUsd, 0),
+      mrModeledClosedNet,
+      mrNet: completeOutcomes ? mrModeledClosedNet : null,
       noiseTrades: noiseTrades.length,
-      noiseNet: noiseTrades.reduce((sum, trade) => sum + trade.netPnlUsd, 0),
-      longNet,
-      shortNet,
+      noiseModeledClosedNet,
+      noiseNet: completeOutcomes ? noiseModeledClosedNet : null,
+      longModeledClosedNet: longNet,
+      shortModeledClosedNet: shortNet,
+      longNet: completeOutcomes ? longNet : null,
+      shortNet: completeOutcomes ? shortNet : null,
       modeledClosedNet,
       totalNet: completeOutcomes ? modeledClosedNet : null,
       chronologicalSlices: completeOutcomes ? folds : null,
@@ -1186,7 +1234,12 @@ export const runIntradayAlphaReplayVerification = (
       recentDays: dailyPnl.slice(-5).map((day) => ({
         ...day,
         modeledNet:
-          day.baselineAvailable && day.benchmarkAvailable && day.unresolvedExits === 0 ? day.modeledClosedNet : null,
+          day.baselineAvailable &&
+          day.benchmarkAvailable &&
+          day.missingConcurrentMarkWindows === 0 &&
+          day.unresolvedExits === 0
+            ? day.modeledClosedNet
+            : null,
       })),
       middayBasketAttribution: {
         complete: summarizeBaskets(middayBaskets.filter((basket) => basket.complete)),
@@ -1233,6 +1286,8 @@ export const runIntradayAlphaReplayVerification = (
         'Fixed $100000 equity and hypothetical 4x buying power less occupied entry notional; no broker account, collateral, margin-interest or final account-risk proof',
       baseline:
         'Strictly prior supplied IEX regular-session summaries; historical adjusted-daily supplements are not supplied; insufficient baselines remain unavailable outcomes',
+      completeness:
+        'Every visited active decision requires the production extractor completed-SPY/VWAP result and any co-held current marks needed for planning; first missing observation stops later entries and suppresses whole-window metrics; closed-trade subtotals and basket attribution cover only the supported committed path',
       concurrency:
         'Disjoint symbol sleeves share synthetic account headroom; exact current co-held marks required for new decisions; no pending-order, reservation or broker-protection lifecycle simulation',
       arrival:
