@@ -2020,7 +2020,12 @@ while the immutable per-generation receipt and its hash retain their existing sc
 `nativeAlpha` retains verified intraday-alpha engine and basket identities through actual execution and completed
 position attribution. It separates committed decision coverage, filled quantities, supported episode gross P&L and
 unallocated account costs. Blocked and unfinished decisions retain their evidence gaps; planned neutrality does not
-establish filled neutrality. See [native alpha performance evidence](../../docs/bayn/native-alpha-performance.md)
+establish filled neutrality. Observed intent/order counts record positive evidence; zero observed rows in an unknown
+scope do not prove no submission. `knownCompleted*` fields are supported closed-episode subtotals; `complete*` fields
+require complete terminal entry-fill ownership and closure, with no omitted unverified decision for an engine total.
+`financialConservation.status: RECONCILED` describes an arithmetic bridge to the scoped receipt totals, not final fee coverage
+or fully costed engine profit; the receipt's evidence status and unknown costs remain unchanged.
+See [native alpha performance evidence](../../docs/bayn/native-alpha-performance.md)
 for scope, ownership and cost limits. This analytical section does not change the stored v4 receipt or its persistence gate.
 
 `costDiagnostics` separates the generation receipt's operating-charge evidence, metered inference estimates, and
