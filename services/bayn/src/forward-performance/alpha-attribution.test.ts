@@ -319,7 +319,13 @@ describe('native alpha basket attribution', () => {
   })
 
   test('keeps native child exit fills out of entry notional while attributing the completed episode to its entry', () => {
-    const input = longRoundTrip()
+    const input = fixture(
+      [decision('a', [{ symbol: 'NVDA', side: OrderSide.Buy }])],
+      [
+        { symbol: 'NVDA', side: OrderSide.Buy, intent: intentId('a', 'NVDA') },
+        { symbol: 'NVDA', side: OrderSide.Sell, intent: intentId('a', 'NVDA'), price: 110 },
+      ],
+    )
     const entry = input.executionEvidence[0]
     const closing = input.accountTransactions[1]
     assert(entry && closing && closing.intentId)
