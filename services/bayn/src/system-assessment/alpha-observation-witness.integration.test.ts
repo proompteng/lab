@@ -174,8 +174,11 @@ postgres('committed alpha observation witnesses', () => {
           broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment,activated_at)
           VALUES (${candidate.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${accountId},
             'bayn.broker-identity.v2',${identity.identityHash},'alpaca','sandbox',${market.observedAt})`
-            yield* sql`INSERT INTO simulated_execution_clocks(account_id,source_manifest_hash,observed_at)
-          VALUES (${accountId},${sha256('alpha witness replay clock')},${market.observedAt})`
+            expect(
+              yield* sql`SELECT
+              to_char(execution_account_now(${accountId}) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at,
+              to_char(execution_account_commit_now(${accountId}) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS committed_at`,
+            ).toEqual([{ observed_at: market.observedAt, committed_at: market.observedAt }])
             yield* (yield* makeCycleStore({ now: sql`${market.observedAt}::timestamptz` })).acquire(
               draft,
               market.observedAt,
