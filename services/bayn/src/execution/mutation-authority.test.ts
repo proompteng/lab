@@ -1651,3 +1651,185 @@ test.each(['Bracket', 'Oco'] as const)('final capital limits reserve every order
   if (Result.isSuccess(result)) throw new Error('Native group exceeded the order limit')
   expect(result.failure).toEqual({ _tag: 'OpenOrderLimitExceeded', limit: 5, observed: 6 })
 })
+
+test('multi-leg openingShort allows co-held positions on other symbols while still rejecting increasing an existing short', () => {
+  const shortLimits: ExecutionCapitalLimits = {
+    ...defaultLimits,
+    maxGrossNotionalMicros: '1000000000',
+    maxOpenOrders: 10,
+  }
+  const authority = mutationAuthority(
+    BrokerEnvironment.Sandbox,
+    grantedCapitalAuthority(persistedGrantRecord(shortLimits, BrokerEnvironment.Sandbox)),
+  )
+  const coHeldPosition = position({
+    symbol: 'SMH',
+    side: PositionSide.Long,
+    quantityAtoms: '1000000000',
+    marketValueMicros: '100000000',
+  })
+  const coHeldOrder = order({
+    brokerOrderId: 'smh-prot',
+    clientOrderId: 'smh-prot-c',
+    symbol: 'SMH',
+    side: BrokerOrderSide.Sell,
+    orderType: BrokerOrderType.Limit,
+    orderClass: OrderClass.OneCancelsOther,
+    quantityAtoms: '1000000000',
+    limitPriceMicros: '110000000',
+  })
+  const shortIntent = intent({
+    symbol: 'MU',
+    side: OrderSide.Sell,
+    limitPriceMicros: '100000000',
+    notionalLimitMicros: '100000000',
+    protection: {
+      _tag: 'EquityShortBracket',
+      stopPriceMicros: '105000000',
+      stopLimitPriceMicros: '105100000',
+      profitLimitPriceMicros: '92000000',
+    },
+  })
+  const marginAccount = account({ buyingPowerMicros: '4000000000' })
+  const baseInput = {
+    closeOnly: false,
+    maxBrokerStateAgeMs: 300000,
+    maxNetExposureMicros: '1000000000',
+    currentDailyTradedNotionalMicros: '0',
+    maxDailyTradedNotionalMicros: null,
+    peakEquityMicros: '1000000000',
+    maxDrawdownMicros: '1000000000',
+  } as const
+
+  // Opening short on flat MU succeeds alongside co-held SMH position and open order!
+  const allowed = validateExecutionCapitalLimits(
+    authority,
+    shortLimits,
+    shortIntent,
+    { account: marginAccount, positions: [coHeldPosition], openOrders: [coHeldOrder] },
+    100_000_000n,
+    100_000_000n,
+    new Map([['smh-prot', -110_000_000n]]),
+    baseInput,
+  )
+  expect(Result.isSuccess(allowed)).toBe(true)
+
+  // Increasing an existing short on the same symbol MU is still rejected!
+  const existingShortMu = position({
+    symbol: 'MU',
+    side: PositionSide.Short,
+    quantityAtoms: '-1000000000',
+    marketValueMicros: '-100000000',
+  })
+  const blocked = validateExecutionCapitalLimits(
+    authority,
+    shortLimits,
+    shortIntent,
+    { account: marginAccount, positions: [coHeldPosition, existingShortMu], openOrders: [] },
+    100_000_000n,
+    100_000_000n,
+    new Map(),
+    baseInput,
+  )
+  expect(Result.isFailure(blocked)).toBe(true)
+  if (Result.isSuccess(blocked)) throw new Error('expected increasing short to fail')
+  expect(blocked.failure._tag).toBe('IncreasingSellUnsupported')
+})
+
+test('OCO child legs sharing parentBrokerOrderId are grouped instead of double-counted in sell coverage and gross exposure', () => {
+  const ocoLimits: ExecutionCapitalLimits = {
+    ...defaultLimits,
+    maxGrossNotionalMicros: '250000000',
+    maxOpenOrders: 10,
+  }
+  const authority = mutationAuthority(
+    BrokerEnvironment.Sandbox,
+    grantedCapitalAuthority(persistedGrantRecord(ocoLimits, BrokerEnvironment.Sandbox)),
+  )
+  const heldLong = position({
+    symbol: 'COHR',
+    side: PositionSide.Long,
+    quantityAtoms: '1000000000',
+    marketValueMicros: '100000000',
+  })
+  const ocoTakeProfit = order({
+    brokerOrderId: 'oco-tp',
+    clientOrderId: 'oco-tp-c',
+    parentBrokerOrderId: 'oco-parent',
+    symbol: 'COHR',
+    side: BrokerOrderSide.Sell,
+    orderType: BrokerOrderType.Limit,
+    orderClass: OrderClass.OneCancelsOther,
+    quantityAtoms: '1000000000',
+    limitPriceMicros: '108000000',
+  })
+  const ocoStopLoss = order({
+    brokerOrderId: 'oco-sl',
+    clientOrderId: 'oco-sl-c',
+    parentBrokerOrderId: 'oco-parent',
+    symbol: 'COHR',
+    side: BrokerOrderSide.Sell,
+    orderType: BrokerOrderType.StopLimit,
+    orderClass: OrderClass.OneCancelsOther,
+    quantityAtoms: '1000000000',
+    stopPriceMicros: '95000000',
+    limitPriceMicros: '94900000',
+  })
+  const newBuy = intent({
+    symbol: 'LITE',
+    side: OrderSide.Buy,
+    limitPriceMicros: '100000000',
+    notionalLimitMicros: '100000000',
+  })
+  const result = validateExecutionCapitalLimits(
+    authority,
+    { ...defaultLimits, maxGrossNotionalMicros: '250000000', maxOpenOrders: 10 },
+    newBuy,
+    {
+      account: account({ buyingPowerMicros: '4000000000' }),
+      positions: [heldLong],
+      openOrders: [ocoTakeProfit, ocoStopLoss],
+    },
+    100_000_000n,
+    100_000_000n,
+    new Map([
+      ['oco-tp', -108_000_000n],
+      ['oco-sl', -94_900_000n],
+    ]),
+    {
+      closeOnly: false,
+      maxBrokerStateAgeMs: 300000,
+      maxNetExposureMicros: '1000000000',
+      currentDailyTradedNotionalMicros: '0',
+      maxDailyTradedNotionalMicros: null,
+      peakEquityMicros: '1000000000',
+      maxDrawdownMicros: '1000000000',
+    },
+  )
+  // Without OCO grouping, 2x 1 share sells would fail PendingSellUncovered against 1 share long!
+  expect(Result.isSuccess(result)).toBe(true)
+})
+
+test('marginable equities use margin buyingPowerMicros when cash is deployed, while non-marginable assets remain cash-capped', async () => {
+  const lowCashMarginAccount = account({
+    cashMicros: '50000000', // $50 cash left
+    buyingPowerMicros: '300000000', // $300 margin BP available
+    nonMarginableBuyingPowerMicros: '50000000',
+    shortingEnabled: true,
+  })
+  const marginableOk = await runLiveSubmit({
+    environment: BrokerEnvironment.Sandbox,
+    brokerAccount: lowCashMarginAccount,
+    assetOverrides: { equityShort: { marginable: true, shortable: true, easyToBorrow: true } },
+  })
+  expect(Exit.isSuccess(marginableOk.exit)).toBe(true)
+  expect(marginableOk.submits).toBe(1)
+
+  const nonMarginableBlocked = await runLiveSubmit({
+    environment: BrokerEnvironment.Sandbox,
+    brokerAccount: lowCashMarginAccount,
+    assetOverrides: { equityShort: { marginable: false, shortable: false, easyToBorrow: false } },
+  })
+  expect(failureTag(nonMarginableBlocked.exit)).toBe('BuyingPowerExceeded')
+  expect(nonMarginableBlocked.submits).toBe(0)
+})

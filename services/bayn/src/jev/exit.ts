@@ -161,7 +161,9 @@ export const validateJevPositionEvidence = (evidence: Omit<JevExitEvidenceMateri
     const state = portfolio.brokerState
     const position =
       evidence.symbol === undefined
-        ? state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
+        ? (state.positions.find(
+            (entry) => BigInt(entry.quantityAtoms) !== 0n && entry.symbol in portfolio.exitPolicy.plans,
+          ) ?? state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n))
         : state.positions.find((entry) => entry.symbol === evidence.symbol && BigInt(entry.quantityAtoms) !== 0n)
     const entryPlan = yield* jevManagedExitPlan(portfolio, evidence.symbol ?? position?.symbol)
     const alphaPlan = isIntradayAlphaExitPlan(entryPlan)

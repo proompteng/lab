@@ -51,7 +51,7 @@ export const prepareObserveStartup = (
   const parameterSchemaVersion = definition.parameters.schemaVersion
   const ablation = parameterSchemaVersion === 'bayn.entry-ablation-policy.v1'
   const momentum = parameterSchemaVersion === 'bayn.repeated-momentum-policy.v1'
-  const alpha = parameterSchemaVersion === 'bayn.intraday-alpha-policy.v1'
+  const alpha = parameterSchemaVersion === 'bayn.intraday-alpha-policy.v2'
   if (
     definition.name !== input.strategy.provenance.strategy.name ||
     input.strategy.provenance.strategy.behaviorHash !==
