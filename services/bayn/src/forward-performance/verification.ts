@@ -116,11 +116,14 @@ export const makeReportVerification = (
     ),
 ) =>
   Effect.gen(function* () {
-    const slots = Array.from({ length: reportVerificationConcurrency }, (): Slot => ({
-      worker: undefined,
-      unhealthy: false,
-      decisionIndex: undefined,
-    }))
+    const slots = Array.from(
+      { length: reportVerificationConcurrency },
+      (): Slot => ({
+        worker: undefined,
+        unhealthy: false,
+        decisionIndex: undefined,
+      }),
+    )
     const available = yield* Queue.bounded<Slot>(slots.length)
     yield* Queue.offerAll(available, slots)
     let closed = false
@@ -282,12 +285,13 @@ export const makeReportVerification = (
         ),
       coverage: (input: ReportExpenseCoverageInput) =>
         run({ task: ReportVerificationTask.Coverage, input }).pipe(
-          Effect.flatMap((reply): Effect.Effect<ReportExpenseCoverage, InferenceCostError | ReportVerificationError> =>
-            reply.outcome === 'COVERAGE'
-              ? Effect.succeed(reply.value)
-              : reply.outcome === 'INVALID_INFERENCE'
-                ? Effect.fail(new InferenceCostError({ message: reply.message, cause: reply.cause }))
-                : Effect.fail(failed('Report verification omitted its expense coverage')),
+          Effect.flatMap(
+            (reply): Effect.Effect<ReportExpenseCoverage, InferenceCostError | ReportVerificationError> =>
+              reply.outcome === 'COVERAGE'
+                ? Effect.succeed(reply.value)
+                : reply.outcome === 'INVALID_INFERENCE'
+                  ? Effect.fail(new InferenceCostError({ message: reply.message, cause: reply.cause }))
+                  : Effect.fail(failed('Report verification omitted its expense coverage')),
           ),
         ),
     }
