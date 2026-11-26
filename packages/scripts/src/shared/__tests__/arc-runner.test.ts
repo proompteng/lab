@@ -246,7 +246,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(pod.initContainers).toEqual(amd.template.spec.initContainers)
     expect(runner.volumeMounts).toEqual(amd.template.spec.containers[0].volumeMounts)
     expect(runner.resources).toEqual({
-      requests: { cpu: '4', memory: '16Gi', 'ephemeral-storage': '10Gi' },
+      requests: { cpu: '4', memory: '8Gi', 'ephemeral-storage': '10Gi' },
       limits: { cpu: '20', memory: '28Gi', 'ephemeral-storage': '100Gi' },
     })
     expect(runner.resources).toEqual(amd.template.spec.containers[0].resources)
@@ -287,7 +287,7 @@ describe('ARC Nix runner toolchain', () => {
       'kubernetes.io/arch': 'amd64',
       'kubernetes.io/hostname': 'turin',
     })
-    expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('16Gi')
+    expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('8Gi')
     const config = YAML.parseDocument(
       readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
     )

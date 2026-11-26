@@ -196,7 +196,7 @@ spec:
                   resources:
                     requests:
                       cpu: "4"
-                      memory: "16Gi"
+                      memory: "8Gi"
                       ephemeral-storage: "10Gi"
                     limits:
                       cpu: "20"
@@ -310,7 +310,7 @@ spec:
                   resources:
                     requests:
                       cpu: "4"
-                      memory: "16Gi"
+                      memory: "8Gi"
                       ephemeral-storage: "10Gi"
                     limits:
                       cpu: "20"

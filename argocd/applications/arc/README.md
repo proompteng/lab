@@ -23,7 +23,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
 - Lab has two execution queues: `arc-arm64` on Altra (`talos-192-168-1-85`) and `arc-amd64` on Turin.
-  Both have `minRunners: 5` and `maxRunners: 10`. Each worker requests four CPUs and 16Gi memory, with limits
+  Both have `minRunners: 5` and `maxRunners: 10`. Each worker requests four CPUs and 8Gi memory, with limits
   of 20 CPUs and 28Gi memory. Required hostname selectors keep workers off Ryzen.
 - Publication jobs use the normal `arc-amd64` queue. They retain their existing manifest/index validation,
   signatures, receipts and discovery gates, but no longer have reserved workers or a separate scheduling label.
@@ -37,7 +37,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   ephemeral-storage limit applies to image layers, runtime metadata and logs on node storage.
 - The init seeds and verifies the image's Nix tree and cache, creates private Rust cache directories and requires
   20Gi free after the copy. The init container requests 2Gi and has an 8Gi memory limit. Its request fits within the
-  regular runner's 16Gi scheduling reservation. Kubernetes discards the volume when the Pod exits.
+  regular runner's 8Gi scheduling reservation. Kubernetes discards the volume when the Pod exits.
 - Let active runners on the previous Ceph claims finish normally. Kubernetes deletes their ephemeral claims with
   their Pods.
 - Tailscale connectivity comes from the Omni-owned node configuration in
@@ -49,7 +49,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 
 ## Runner capacity and delivery
 
-Each lab queue keeps five idle runners and grows to ten. At maximum, each host reserves 40 CPUs and 160Gi memory
+Each lab queue keeps five idle runners and grows to ten. At maximum, each host reserves 40 CPUs and 80Gi memory
 for ten workers, with aggregate limits of 200 CPUs and 280Gi memory. Altra and Turin retain their existing node roles,
 networking and application workloads. Ryzen hosts the ARC controller, listeners and CI telemetry, not lab job workers.
 Do not add duplicate ARC scale sets with the same label; Update labels through the documented runner-set change procedure.
