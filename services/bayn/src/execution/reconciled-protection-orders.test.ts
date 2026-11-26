@@ -4,6 +4,7 @@ import { Effect, Exit, Result } from 'effect'
 import {
   AssetClass,
   AssetExchange,
+  OrderClass,
   OrderSide as BrokerOrderSide,
   OrderStatus as BrokerOrderStatus,
   PositionSide,
@@ -125,6 +126,26 @@ describe('reconciled protection order reuse', () => {
       Exit.isFailure(await Effect.runPromiseExit(cache.take(result.report.reconciliation.reconciledAt, 1000))),
     ).toBe(true)
   })
+
+  test.each([false, true])('retains provider bracket-class children after the parent fills (short=%s)', (short) => {
+    // Alpaca's Create Order bracket example labels both nested children order_class=bracket.
+    const result = changeParent(fixture([short]), (parent) => ({
+      ...parent,
+      legs: (parent.legs ?? []).map((child) => ({ ...child, orderClass: OrderClass.Bracket })),
+    }))
+    expect(reconciledOpenProtectionOrders(result)).toEqual(result.protectionGroups?.[0]?.parent.value.legs ?? [])
+  })
+
+  test.each([OrderClass.OneCancelsOther, OrderClass.OneTriggersOther, OrderClass.MultiLeg])(
+    'an unrelated %s child class cannot impersonate a bracket child',
+    (orderClass) => {
+      const result = changeParent(fixture(), (parent) => ({
+        ...parent,
+        legs: (parent.legs ?? []).map((child) => ({ ...child, orderClass })),
+      }))
+      expect(reconciledOpenProtectionOrders(result)).toBeNull()
+    },
+  )
 
   test('missing original proof, a duplicate group, or an unbound active order cannot use the cache', () => {
     const result = fixture()

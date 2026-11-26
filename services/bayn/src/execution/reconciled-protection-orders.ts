@@ -45,7 +45,9 @@ export const reconciledOpenProtectionOrders = (result: ReconciliationPassResult)
       children.length !== 2 ||
       children.some(
         (child) =>
-          !activeIds.has(child.brokerOrderId) || child.orderClass !== OrderClass.Simple || child.legs !== undefined,
+          !activeIds.has(child.brokerOrderId) ||
+          (child.orderClass !== OrderClass.Simple && child.orderClass !== OrderClass.Bracket) ||
+          child.legs !== undefined,
       )
     )
       return null
