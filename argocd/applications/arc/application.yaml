@@ -643,7 +643,7 @@ spec:
                         fail "scratch volume capacity cannot be read after copy"
                       post_copy_available_bytes=$((post_copy_available_kib * 1024))
                       (( post_copy_available_bytes >= reserve_bytes )) ||
-                        fail "scratch free space ${post_copy_available_bytes} is below 20GiB after copy"
+                        fail "scratch free space ${post_copy_available_bytes} is below required ${reserve_bytes} after copy"
 
                       # Install only after all validation and copies have succeeded. A failed init leaves
                       # no runnable main container and the next retry rebuilds from the image again.
