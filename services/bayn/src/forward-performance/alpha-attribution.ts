@@ -222,7 +222,9 @@ interface AttributionIndexes {
   readonly execution: ReadonlyMap<string, readonly ForwardPerformanceExecutionEvidence[]>
   readonly historyByEvent: ReadonlyMap<string, readonly AccountingTransaction[]>
   readonly historyById: ReadonlyMap<string, readonly AccountingTransaction[]>
+  readonly historyByIntent: ReadonlyMap<string, readonly AccountingTransaction[]>
   readonly selected: ReadonlyMap<string, readonly ForwardPerformanceTransactionEvidence[]>
+  readonly selectedByIntent: ReadonlyMap<string, readonly ForwardPerformanceTransactionEvidence[]>
   readonly fillEvents: ReadonlyMap<string, readonly unknown[]>
   readonly fillIds: ReadonlyMap<string, readonly unknown[]>
   readonly intentOwners: ReadonlyMap<string, readonly NativeAlphaDecisionEvidence[]>
@@ -372,6 +374,18 @@ const measureLeg = (
     notional += BigInt(trade.notionalMicros)
     entryTransactions.push(trade)
   }
+  // Both directions are required: an omitted canonical entry fill cannot become a terminal zero.
+  // Opposite-side native protection fills close inventory and are deliberately outside the entry basket.
+  const canonicalEntries = (indexes.historyByIntent.get(leg.intentId) ?? []).filter((trade) => trade.side === leg.side)
+  const selectedEntries = (indexes.selectedByIntent.get(leg.intentId) ?? []).filter((trade) => trade.side === leg.side)
+  const entryIds = new Set(entryTransactions.map((trade) => trade.transactionId))
+  if (
+    canonicalEntries.length !== entryTransactions.length ||
+    selectedEntries.length !== entryTransactions.length ||
+    canonicalEntries.some((trade) => !entryIds.has(trade.transactionId)) ||
+    selectedEntries.some((trade) => !entryIds.has(trade.transactionId))
+  )
+    reasons.add(NativeAlphaAttributionReason.FillBinding)
   if (quantity !== reported || quantity > planned || (order.status === 'FILLED' && quantity !== planned))
     reasons.add(NativeAlphaAttributionReason.FillQuantity)
   if (reasons.size > 0) return unavailable()
@@ -499,15 +513,22 @@ const sumNullable = (values: readonly (string | null)[]): string | null =>
     ? null
     : values.reduce<bigint>((sum, value) => sum + BigInt(value ?? '0'), 0n).toString()
 
-const summarizeEngine = (baskets: readonly NativeAlphaBasketAttribution[]): NativeAlphaEngineAttribution | null => {
+const summarizeEngine = (
+  baskets: readonly NativeAlphaBasketAttribution[],
+  decisionCohortComplete: boolean,
+): NativeAlphaEngineAttribution | null => {
   const first = baskets[0]
   if (first === undefined) return null
   const selected = baskets.filter((basket) => basket.selectedLegCount > 0)
   const economics = selected.map((basket) => basket.economics)
   const completeGross =
-    selected.length === 0 ? null : sumNullable(economics.map((value) => value.completeGrossPnlMicros))
+    !decisionCohortComplete || selected.length === 0
+      ? null
+      : sumNullable(economics.map((value) => value.completeGrossPnlMicros))
   const completeNet =
-    selected.length === 0 ? null : sumNullable(economics.map((value) => value.completeNetAfterDirectFillFeesMicros))
+    !decisionCohortComplete || selected.length === 0
+      ? null
+      : sumNullable(economics.map((value) => value.completeNetAfterDirectFillFeesMicros))
   const completedCount = economics.reduce((sum, value) => sum + value.completedEpisodeCount, 0)
   return {
     phase: first.decision.phase,
@@ -632,7 +653,9 @@ export const measureNativeAlphaAttribution = (
       execution: indexBy(execution, (item) => item.intentId),
       historyByEvent: indexBy(history, (item) => item.brokerEventId),
       historyById: indexBy(history, (item) => item.transactionId),
+      historyByIntent: indexBy(history, (item) => item.intentId ?? ''),
       selected: indexBy(input.transactions, (item) => item.transactionId),
+      selectedByIntent: indexBy(input.transactions, (item) => item.intentId ?? ''),
       fillEvents: indexBy(allFills, (item) => item.brokerEventId),
       fillIds: indexBy(allFills, (item) => JSON.stringify([item.accountId, item.fillId])),
       intentOwners: indexBy(
@@ -752,7 +775,7 @@ export const measureNativeAlphaAttribution = (
     const engines = [...indexBy(baskets, (basket) => engineKey(basket.decision)).entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .flatMap(([, values]) => {
-        const engine = summarizeEngine(values)
+        const engine = summarizeEngine(values, unverified.length === 0)
         return engine === null ? [] : [engine]
       })
     const attributedGross = measuredEpisodes
@@ -798,13 +821,9 @@ export const measureNativeAlphaAttribution = (
       input.missingLedgerAccountCount === 0 &&
       input.reconciliation?.performanceExact === true
     if (!scopeExact) reasons.add(NativeAlphaAttributionReason.FinancialScope)
-    const costsConserve =
-      scopeExact &&
-      scopedFees !== null &&
-      directFees !== null &&
-      scopedFees >= directFees &&
-      attributedFees !== null &&
-      directFees >= attributedFees
+    const directCostsConserve =
+      scopeExact && directFees !== null && attributedFees !== null && directFees >= attributedFees
+    const costsConserve = directCostsConserve && scopedFees !== null && directFees !== null && scopedFees >= directFees
     if (
       scopedFees !== null &&
       directFees !== null &&
@@ -841,7 +860,7 @@ export const measureNativeAlphaAttribution = (
         scopedDirectFillFeesMicros: scopeExact ? (directFees?.toString() ?? null) : null,
         attributedCompletedDirectFillFeesMicros: attributedFees?.toString() ?? null,
         unattributedDirectFillFeesMicros:
-          costsConserve && directFees !== null && attributedFees !== null
+          directCostsConserve && directFees !== null && attributedFees !== null
             ? (directFees - attributedFees).toString()
             : null,
         scopedBrokerExecutionFeesMicros: receipt.totals.brokerExecutionFeesMicros,

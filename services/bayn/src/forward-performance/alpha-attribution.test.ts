@@ -5,7 +5,7 @@ import { Result } from 'effect'
 
 import { AccountingInventorySide, prepareAccounting } from '../accounting/domain'
 import type { AccountingTransaction } from '../accounting/schema'
-import { OrderSide } from '../execution/contracts'
+import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import { IntradayAlphaPhase, IntradayAlphaSetup } from '../strategy/intraday-alpha/constants'
 import { IntradayAlphaDecisionReason } from '../strategy/intraday-alpha/decision'
@@ -98,6 +98,7 @@ interface Trade {
   readonly intent: string
   readonly shares?: number
   readonly price?: number
+  readonly priceAtoms?: string
   readonly short?: boolean
   readonly feeMicros?: string
 }
@@ -123,7 +124,7 @@ const fixture = (
       symbol: trade.symbol,
       side: trade.side,
       quantityAtoms: (BigInt(trade.shares ?? 1) * 1_000_000_000n).toString(),
-      priceAtoms: (BigInt(trade.price ?? 100) * 1_000_000_000n).toString(),
+      priceAtoms: trade.priceAtoms ?? (BigInt(trade.price ?? 100) * 1_000_000_000n).toString(),
       feeMicros: trade.feeMicros ?? '1000',
       occurredAt,
     }
@@ -280,6 +281,112 @@ const longRoundTrip = () =>
   )
 
 describe('native alpha basket attribution', () => {
+  test.each([false, true])('rejects a false terminal zero when a canonical entry fill is omitted (open=%s)', (open) => {
+    const item = decision('a', [{ symbol: 'NVDA', side: OrderSide.Buy }])
+    const input = open
+      ? fixture([item], [{ symbol: 'NVDA', side: OrderSide.Buy, intent: intentId('a', 'NVDA') }])
+      : longRoundTrip()
+    const execution = input.executionEvidence[0]
+    assert(execution?.intent && execution.terminalOrder)
+    const result = measure({
+      ...input,
+      executionEvidence: [
+        {
+          ...execution,
+          intent: { ...execution.intent, terminalOutcome: 'EXPIRED' },
+          terminalOrder: { ...execution.terminalOrder, status: 'EXPIRED', filledQuantityAtoms: '0' },
+          fills: [],
+        },
+      ],
+    })
+    expect(result.baskets[0]?.executionStatus).toBe('UNKNOWN')
+    expect(result.baskets[0]?.economics.completeGrossPnlMicros).toBeNull()
+    expect(result.reasonCodes).toContain(NativeAlphaAttributionReason.FillBinding)
+  })
+
+  test('uses canonical rounded transaction notional for entry imbalance', () => {
+    const input = fixture(
+      [decision('a', [{ symbol: 'NVDA', side: OrderSide.Buy }])],
+      [
+        { symbol: 'NVDA', side: OrderSide.Buy, intent: intentId('a', 'NVDA'), priceAtoms: '100000000333' },
+        { symbol: 'NVDA', side: OrderSide.Sell, intent: hash('exit'), price: 110 },
+      ],
+    )
+    const first = input.accountTransactions[0]
+    assert(first)
+    expect(measure(input).baskets[0]?.entryFillGrossNotionalMicros).toBe(first.notionalMicros)
+    expect(measure(input).baskets[0]?.entryFillSignedNotionalMicros).toBe(first.notionalMicros)
+  })
+
+  test('keeps native child exit fills out of entry notional while attributing the completed episode to its entry', () => {
+    const input = longRoundTrip()
+    const entry = input.executionEvidence[0]
+    const closing = input.accountTransactions[1]
+    assert(entry && closing && closing.intentId)
+    const childFill: ForwardPerformanceExecutionFillEvidence = {
+      brokerEventId: closing.brokerEventId,
+      fillId: 'native-child-fill',
+      brokerOrderId: 'native-child-order',
+      clientOrderId: 'native-child-client',
+      intentId: closing.intentId,
+      accountId,
+      symbol: closing.symbol,
+      side: closing.side,
+      quantityAtoms: closing.quantityAtoms,
+      priceAtoms: closing.priceAtoms,
+      feeMicros: closing.feeMicros,
+      sourceTimestamp: closing.occurredAt,
+      occurredAt: closing.occurredAt,
+      observedAt: closing.occurredAt,
+    }
+    const result = measure({
+      ...input,
+      executionEvidence: [
+        {
+          ...entry,
+          nativeProtection: {
+            schemaVersion: 'bayn.forward-performance-native-protection.v1',
+            target: {
+              symbol: entry.symbol,
+              side: OrderSide.Buy,
+              orderType: OrderType.Limit,
+              timeInForce: TimeInForce.Day,
+              quantityAtoms: '1000000000',
+            },
+            limitPriceMicros: '100000000',
+            protection: {
+              _tag: 'Bracket',
+              stopPriceMicros: '99000000',
+              stopLimitPriceMicros: '98000000',
+              profitLimitPriceMicros: '110000000',
+            },
+            authorityGenerationHash: hash('generation'),
+            orders: [],
+            fills: [childFill],
+          },
+        },
+      ],
+    })
+    expect(result.baskets[0]).toMatchObject({
+      executionStatus: 'FULL',
+      entryFillGrossNotionalMicros: '100000000',
+      economics: { completedEpisodeCount: 1, completeGrossPnlMicros: '10000000' },
+    })
+    expect(result.episodes.attributedCount).toBe(1)
+  })
+
+  test('withholds complete engine totals when an omitted unverified decision has unknown engine ownership', () => {
+    const input = longRoundTrip()
+    const result = measure({ ...input, unverifiedAlphaDecisionHashes: [hash('unverified-omitted-decision')] })
+    expect(result.baskets[0]?.economics.completeGrossPnlMicros).toBe('10000000')
+    expect(result.engines[0]?.economics).toMatchObject({
+      status: 'PARTIAL_COMPLETED_EPISODES',
+      knownCompletedGrossPnlMicros: '10000000',
+      completeGrossPnlMicros: null,
+      completeNetAfterDirectFillFeesMicros: null,
+    })
+  })
+
   test('conserves long/short completed gross and direct fees while leaving pooled account fees unallocated', () => {
     const input = fixture(
       [
