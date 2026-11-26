@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { Result, Schema } from 'effect'
 
+import { MarketCalendarQueryBase, MarketCalendarResponseSchema } from '../src/broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../src/broker/alpaca/normalizers'
 import { AccountStatus, OrderSide, OrderType, ReconciliationStatus, TimeInForce } from '../src/execution/contracts'
 import type { EquityShortEligibility } from '../src/execution/equity-short'
-import { canonicalHashV1Result } from '../src/hash'
+import { canonicalHashV1Result, sha256 } from '../src/hash'
 import { decodeJevPortfolio, JevPurpose } from '../src/jev/portfolio'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../src/jev/protocol'
 import {
@@ -14,7 +15,7 @@ import {
   type IntradayQuote,
 } from '../src/market-data/intraday/model'
 import type { StrategyMarketSnapshot } from '../src/market-data/streaming/snapshot'
-import { IsoDateSchema } from '../src/schemas'
+import { IsoDateSchema, strictParseOptions } from '../src/schemas'
 import { reconciledStateHash } from '../src/simulation-reconciliation/broker-model'
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
 import { isBalancedMiddayBasket } from '../src/strategy/intraday-alpha/decision'
@@ -26,7 +27,11 @@ import {
   intradayAlphaEquityMarketProfile,
   makeIntradayAlphaPolicy,
 } from '../src/strategy/intraday-alpha/policy'
-import { extractIntradayAlphaCandidates, selectIntradayAlphaLegs } from '../src/strategy/intraday-alpha/signals'
+import {
+  extractIntradayAlphaCandidates,
+  resolveAlphaRegularSession,
+  selectIntradayAlphaLegs,
+} from '../src/strategy/intraday-alpha/signals'
 import { TargetPlanStatus, planTargets, quoteBoundTargetPlannerInputSchemaVersion } from '../src/target-planner/index'
 import { utcInstantFromEpochMillis } from '../src/time'
 
@@ -50,10 +55,34 @@ interface TradeOutcome {
   readonly shares: number
   readonly entryPrice: number
   readonly exitPrice: number
+  readonly entryAt: string
+  readonly exitAt: string
   readonly exitReason: 'STOP' | 'TARGET' | 'MAX_HOLD' | 'EOD'
   readonly grossPnlUsd: number
   readonly netPnlUsd: number
   readonly spyExcessUsd: number
+}
+
+const ReplayCalendarSchema = Schema.Struct({
+  query: MarketCalendarQueryBase,
+  response: MarketCalendarResponseSchema,
+})
+type ReplayCalendar = Result.Result.Success<ReturnType<typeof normalizeMarketCalendarResult>>
+
+interface EntryAttempt {
+  readonly phase: IntradayAlphaPhase.MorningOrb | IntradayAlphaPhase.MiddayReversion
+  readonly observedAt: string
+  readonly selectedSymbols: readonly string[]
+  readonly filledSymbols: string[]
+  longEntryNotionalUsd: number
+  shortEntryNotionalUsd: number
+}
+
+interface UnresolvedExit {
+  readonly symbol: string
+  readonly entryAt: string
+  readonly exitDueAt: string
+  readonly reason: 'POST_DEADLINE_PRICE_UNAVAILABLE'
 }
 
 const allowedSymbols = new Set<string>([...intradayAlphaCandidateSymbols, intradayAlphaBenchmarkSymbol])
@@ -66,22 +95,30 @@ const observationHash = 'b'.repeat(64)
 const snapshotId = 'c'.repeat(64)
 const snapshotContentHash = 'd'.repeat(64)
 
-// Observed live Alpaca equity fee rate (~0.206 bps on sell legs)
-const LIVE_SELL_FEE_BPS = 0.21
+// Hypothetical sell-side cost scenario; this is not an actual fee reconciliation.
+const MODELED_SELL_FEE_BPS = 0.21
 
-const parseBarsFiles = (paths: readonly string[]): Map<string, Map<string, RawBar[]>> => {
+const parseBarsFiles = (paths: readonly string[], calendar: ReplayCalendar) => {
   const dedup = new Map<string, RawBar>()
+  const sources: { readonly path: string; readonly sha256: string; readonly bytes: number }[] = []
+  let identicalDuplicates = 0
+  let ignoredSymbols = 0
   for (const filePath of paths) {
     const content = readFileSync(filePath, 'utf8')
-    for (const line of content.split('\n')) {
+    sources.push({ path: filePath, sha256: sha256(content), bytes: Buffer.byteLength(content) })
+    for (const [index, line] of content.split('\n').entries()) {
       if (line.length === 0) continue
       const cols = line.split('\t')
-      if (cols.length < 8) continue
       const symbol = cols[0] ?? ''
-      if (!allowedSymbols.has(symbol)) continue
+      if (!allowedSymbols.has(symbol)) {
+        ignoredSymbols++
+        continue
+      }
+      if (cols.length < 8) throw new Error(`Incomplete bar in ${filePath}:${index + 1}`)
       const rawAt = cols[1] ?? ''
       const eventMs = Date.parse(rawAt)
-      if (!Number.isFinite(eventMs)) continue
+      if (!Number.isFinite(eventMs) || eventMs % 60_000 !== 0)
+        throw new Error(`Invalid minute timestamp in ${filePath}:${index + 1}`)
       const open = Number(cols[2])
       const high = Number(cols[3])
       const low = Number(cols[4])
@@ -94,12 +131,16 @@ const parseBarsFiles = (paths: readonly string[]): Map<string, Map<string, RawBa
         !Number.isFinite(low) ||
         !Number.isFinite(close) ||
         !Number.isFinite(volume) ||
+        !Number.isFinite(vwap) ||
         volume <= 0 ||
-        close <= 0
+        Math.min(open, high, low, close, vwap) <= 0 ||
+        low > Math.min(open, close) ||
+        high < Math.max(open, close) ||
+        high < low
       )
-        continue
+        throw new Error(`Invalid OHLCV bar in ${filePath}:${index + 1}`)
       const eventAt = utcInstantFromEpochMillis(eventMs)
-      dedup.set(`${symbol}|${eventMs}`, {
+      const bar = {
         symbol,
         eventAt,
         eventMs,
@@ -108,30 +149,32 @@ const parseBarsFiles = (paths: readonly string[]): Map<string, Map<string, RawBa
         low,
         close,
         volume,
-        vwap: Number.isFinite(vwap) && vwap > 0 ? vwap : (high + low + close) / 3,
-      })
+        vwap,
+      }
+      const key = `${symbol}|${eventMs}`
+      const prior = dedup.get(key)
+      if (prior !== undefined) {
+        if (JSON.stringify(prior) !== JSON.stringify(bar))
+          throw new Error(`Conflicting revisions for ${symbol} ${eventAt}; supply an explicit source selection`)
+        identicalDuplicates++
+      } else dedup.set(key, bar)
     }
   }
 
-  // Group by YYYY-MM-DD session date using canonical regular exchange calendar hours (handles EDT & EST)
+  // Use the supplied provider calendar, including early closes; never infer a full session from a bar date.
   const byDate = new Map<string, Map<string, RawBar[]>>()
   const calendarBounds = new Map<string, { readonly openMs: number; readonly closeMs: number }>()
+  for (const session of calendar.providerSessions) {
+    calendarBounds.set(session.date, {
+      openMs: Date.parse(session.regularOpenAt),
+      closeMs: Date.parse(session.regularCloseAt),
+    })
+    byDate.set(session.date, new Map())
+  }
   for (const bar of dedup.values()) {
     const dateKey = bar.eventAt.slice(0, 10)
-    let bounds = calendarBounds.get(dateKey)
-    if (bounds === undefined) {
-      const isoDate = Schema.decodeUnknownSync(IsoDateSchema)(dateKey)
-      const cal = Result.getOrThrow(
-        normalizeMarketCalendarResult(
-          [{ session_open: '0930', session_close: '1600', date: isoDate, open: '09:30', close: '16:00' }],
-          { start: isoDate, end: isoDate },
-        ),
-      )
-      const session = cal.sessions[0]
-      if (session === undefined) continue
-      bounds = { openMs: Date.parse(session.openAt), closeMs: Date.parse(session.closeAt) }
-      calendarBounds.set(dateKey, bounds)
-    }
+    const bounds = calendarBounds.get(dateKey)
+    if (bounds === undefined) throw new Error(`Bar date ${dateKey} is absent from the supplied provider calendar`)
     if (bar.eventMs < bounds.openMs || bar.eventMs >= bounds.closeMs) continue
     let symMap = byDate.get(dateKey)
     if (symMap === undefined) {
@@ -150,7 +193,7 @@ const parseBarsFiles = (paths: readonly string[]): Map<string, Map<string, RawBa
       arr.sort((a, b) => a.eventMs - b.eventMs)
     }
   }
-  return byDate
+  return { byDate, sources, identicalDuplicates, ignoredSymbols, uniqueBars: dedup.size }
 }
 
 const makeShortEligibility = (observedAt: string): Readonly<Record<string, EquityShortEligibility>> =>
@@ -259,7 +302,7 @@ const buildReplaySnapshot = (input: {
         final: true,
         symbol,
         eventAt: bar.eventAt,
-        ingestedAt: utcInstantFromEpochMillis(bar.eventMs + 59_000),
+        ingestedAt: utcInstantFromEpochMillis(bar.eventMs + 60_000),
         feed: market.feed,
         delayClass: market.delayClass,
         sourceTopic: market.sourceTopics.bars,
@@ -348,26 +391,29 @@ const buildReplaySnapshot = (input: {
 
 const simulateSession = (input: {
   readonly sessionDate: string
+  readonly calendar: ReplayCalendar
   readonly symMap: Map<string, RawBar[]>
   readonly slippageRtBps: number
   readonly startingCapitalUsd: number
 }): {
   readonly trades: readonly TradeOutcome[]
   readonly plannerBlocks: number
+  readonly attempts: readonly EntryAttempt[]
+  readonly unresolvedExits: readonly UnresolvedExit[]
+  readonly expectedRegularMinutes: number
+  readonly benchmarkMinutes: number
+  readonly ambiguousExitBars: number
+  readonly stopLimitGapBars: number
 } => {
-  const isoDate = Schema.decodeUnknownSync(IsoDateSchema)(input.sessionDate)
-  const cal = Result.getOrThrow(
-    normalizeMarketCalendarResult(
-      [{ session_open: '0930', session_close: '1600', date: isoDate, open: '09:30', close: '16:00' }],
-      { start: isoDate, end: isoDate },
-    ),
+  const regular = Result.getOrThrow(resolveAlphaRegularSession(input.calendar, input.sessionDate))
+  const sessionOpenMs = regular.openMs
+  const expectedRegularMinutes = (regular.closeMs - sessionOpenMs) / 60_000
+  // Match closeWindowForCycle: alpha's fixed flatten time is also capped by the actual regular close.
+  const flattenMs = Math.min(
+    sessionOpenMs + policy.middayReversion.flattenMinuteFromOpen * 60_000,
+    regular.closeMs - protocol.flattenBeforeCloseMinutes * 60_000,
   )
-  const session = cal.sessions[0]
-  if (session === undefined) return { trades: [], plannerBlocks: 0 }
-  const sessionOpenMs = Date.parse(session.openAt)
-  const flattenMs = sessionOpenMs + policy.middayReversion.flattenMinuteFromOpen * 60_000
   const spyBars = input.symMap.get(intradayAlphaBenchmarkSymbol) ?? []
-  if (spyBars.length < 300) return { trades: [], plannerBlocks: 0 }
 
   // Index bars per symbol by minuteFromOpen for O(1) execution fill simulation
   const barByMinute = new Map<string, Map<number, RawBar>>()
@@ -381,6 +427,10 @@ const simulateSession = (input: {
   }
 
   const trades: TradeOutcome[] = []
+  const attempts: EntryAttempt[] = []
+  const unresolvedExits: UnresolvedExit[] = []
+  let ambiguousExitBars = 0
+  let stopLimitGapBars = 0
   let plannerBlocks = 0
   const morningOrbTakenSymbols: string[] = []
   let middayCompleted = false
@@ -390,7 +440,7 @@ const simulateSession = (input: {
     const rangeEndMs = sessionOpenMs + (completedMinute + 1) * 60_000
     const snapshot = buildReplaySnapshot({
       sessionDate: input.sessionDate,
-      calendar: cal,
+      calendar: input.calendar,
       sessionOpenMs,
       rangeEndMs,
       symMap: input.symMap,
@@ -511,8 +561,25 @@ const simulateSession = (input: {
       return
     }
 
+    const phase =
+      extracted.context.phase === IntradayAlphaPhase.MorningOrb
+        ? IntradayAlphaPhase.MorningOrb
+        : IntradayAlphaPhase.MiddayReversion
+    const attempt: EntryAttempt = {
+      phase,
+      observedAt,
+      selectedSymbols,
+      filledSymbols: [],
+      longEntryNotionalUsd: 0,
+      shortEntryNotionalUsd: 0,
+    }
+    attempts.push(attempt)
+    // Production session history counts committed decisions with intents, including unfilled/expired orders.
+    if (phase === IntradayAlphaPhase.MorningOrb) morningOrbTakenSymbols.push(...selectedSymbols)
+    else middayCompleted = true
+
     const entryMinute = Math.ceil((Date.parse(observedAt) - sessionOpenMs) / 60_000)
-    let latestExitMinute = entryMinute
+    let latestExitMinute = Math.ceil((orderExpiresAtMs - sessionOpenMs) / 60_000) - 1
     const spyByMin = barByMinute.get(intradayAlphaBenchmarkSymbol)
     const perSideSlipMult = input.slippageRtBps / 2 / 10_000
     for (const intent of planned.intentTargets) {
@@ -537,34 +604,41 @@ const simulateSession = (input: {
         }
       }
       if (fill === undefined) continue
-      const { minute: fillMinute, bar: entryBar, price: entryPrice } = fill
+      const { minute: fillMinute, price: entryPrice } = fill
       const shares = Number(BigInt(intent.quantityAtoms) / 1_000_000_000n)
       if (shares <= 0) continue
+      attempt.filledSymbols.push(intent.symbol)
+      if (isLong) attempt.longEntryNotionalUsd += entryPrice * shares
+      else attempt.shortEntryNotionalUsd += entryPrice * shares
 
       const stopPrice = Number(BigInt(funded.plan.levels.stopPriceMicros)) / 1_000_000
       const stopLimitPrice = Number(BigInt(levels.stopLimitPriceMicros)) / 1_000_000
       const targetPrice = Number(BigInt(levels.profitLimitPriceMicros)) / 1_000_000
-      const maxHoldMinute = Math.min(
-        extracted.context.phase === IntradayAlphaPhase.MorningOrb
-          ? policy.morningOrb.hardExitMinuteFromOpen
-          : policy.middayReversion.flattenMinuteFromOpen,
-        fillMinute + funded.plan.levels.maximumHoldingMinutes,
-      )
+      // Production measures the entry-bound duration from the actual first fill. The plan does not
+      // carry a second absolute morning deadline, so do not invent one in replay for a delayed fill.
+      const phaseHoldMinute = fillMinute + funded.plan.levels.maximumHoldingMinutes
+      const exitDueMs = Math.min(sessionOpenMs + phaseHoldMinute * 60_000, flattenMs)
 
-      let exitPrice = entryBar.close
-      let exitMinute = maxHoldMinute
-      let exitReason: TradeOutcome['exitReason'] =
-        maxHoldMinute >= policy.middayReversion.flattenMinuteFromOpen ? 'EOD' : 'MAX_HOLD'
+      let exitPrice: number | undefined
+      let exitMinute = expectedRegularMinutes
+      let exitReason: TradeOutcome['exitReason'] = exitDueMs === flattenMs ? 'EOD' : 'MAX_HOLD'
 
       let stopTriggered = false
       const clearsStopLimit = (price: number) => (isLong ? price >= stopLimitPrice : price <= stopLimitPrice)
-      for (let m = fillMinute; m <= maxHoldMinute; m++) {
+      for (let m = fillMinute; m < expectedRegularMinutes; m++) {
         const bar = symBars?.get(m)
         if (bar === undefined) continue
-        exitPrice = bar.close
-        exitMinute = m
+        // A bar close before the deadline cannot prove an exit. Use a subsequent open, strictly after
+        // the close/hold decision, so the price proxy cannot precede the order it purports to fill.
+        if (bar.eventMs > exitDueMs) {
+          exitPrice = bar.open
+          exitMinute = m
+          break
+        }
         const openedThroughStop = isLong ? bar.open <= stopPrice : bar.open >= stopPrice
         const touchedStop = isLong ? bar.low <= stopPrice : bar.high >= stopPrice
+        const touchedTarget = isLong ? bar.high >= targetPrice : bar.low <= targetPrice
+        if (!stopTriggered && touchedStop && touchedTarget) ambiguousExitBars++
         if (stopTriggered || touchedStop) {
           // After activation, a gap through the limit leaves a working order. Use the open only
           // when activation is already known, otherwise require an executable price after the trigger.
@@ -578,20 +652,29 @@ const simulateSession = (input: {
           ) {
             exitPrice = stopLimitPrice
           } else {
+            stopLimitGapBars++
             continue
           }
           exitReason = 'STOP'
+          exitMinute = m
           break
         }
-        if (isLong ? bar.high >= targetPrice : bar.low <= targetPrice) {
+        if (touchedTarget) {
           exitPrice = isLong ? Math.max(bar.open, targetPrice) : Math.min(bar.open, targetPrice)
           exitReason = 'TARGET'
+          exitMinute = m
           break
         }
-        if (bar.eventMs >= flattenMs) {
-          exitReason = 'EOD'
-          break
-        }
+      }
+      if (exitPrice === undefined) {
+        unresolvedExits.push({
+          symbol: intent.symbol,
+          entryAt: utcInstantFromEpochMillis(sessionOpenMs + fillMinute * 60_000),
+          exitDueAt: utcInstantFromEpochMillis(exitDueMs),
+          reason: 'POST_DEADLINE_PRICE_UNAVAILABLE',
+        })
+        latestExitMinute = expectedRegularMinutes
+        continue
       }
       const exitSlipMult = exitReason === 'TARGET' ? 0 : perSideSlipMult
       const slippedExit = isLong ? exitPrice * (1 - exitSlipMult) : exitPrice * (1 + exitSlipMult)
@@ -603,7 +686,7 @@ const simulateSession = (input: {
           : slippedExit
       const grossPnlUsd = isLong ? (realizedExit - entryPrice) * shares : (entryPrice - realizedExit) * shares
       const sellNotional = isLong ? realizedExit * shares : entryPrice * shares
-      const feeUsd = (sellNotional * LIVE_SELL_FEE_BPS) / 10_000
+      const feeUsd = (sellNotional * MODELED_SELL_FEE_BPS) / 10_000
       const netPnlUsd = grossPnlUsd - feeUsd
       const spyEntry = spyByMin?.get(fillMinute)?.open ?? spyByMin?.get(completedMinute)?.close
       const spyExit = spyByMin?.get(exitMinute)?.close ?? spyEntry
@@ -612,29 +695,26 @@ const simulateSession = (input: {
       const spyLegPnl = (isLong ? 1 : -1) * (entryPrice * shares) * spyRet
       trades.push({
         sessionDate: input.sessionDate,
-        phase:
-          extracted.context.phase === IntradayAlphaPhase.MorningOrb
-            ? IntradayAlphaPhase.MorningOrb
-            : IntradayAlphaPhase.MiddayReversion,
+        phase,
         symbol: intent.symbol,
         direction: isLong ? 'LONG' : 'SHORT',
         shares,
         entryPrice,
         exitPrice: realizedExit,
+        entryAt: utcInstantFromEpochMillis(sessionOpenMs + fillMinute * 60_000),
+        exitAt: utcInstantFromEpochMillis(sessionOpenMs + exitMinute * 60_000),
         exitReason,
         grossPnlUsd,
         netPnlUsd,
         spyExcessUsd: netPnlUsd - spyLegPnl,
       })
       if (exitMinute > latestExitMinute) latestExitMinute = exitMinute
-      if (extracted.context.phase === IntradayAlphaPhase.MorningOrb) morningOrbTakenSymbols.push(intent.symbol)
     }
 
-    if (extracted.context.phase === IntradayAlphaPhase.MiddayReversion) middayCompleted = true
     busyUntilMinute = latestExitMinute
   }
 
-  // Morning ORB30 scan (completedMinute 30..75 = 10:00..10:45 ET)
+  // Scan the policy's morning completed-bar window; do not duplicate its thresholds here.
   for (let m = policy.morningOrb.entryStartMinuteFromOpen; m <= policy.morningOrb.entryEndMinuteFromOpen; m++) {
     if (m <= busyUntilMinute) continue
     if (morningOrbTakenSymbols.length >= policy.morningOrb.maxTradesPerSession) break
@@ -652,58 +732,82 @@ const simulateSession = (input: {
     runEntryAtMinute(m)
   }
 
-  return { trades, plannerBlocks }
+  return {
+    trades,
+    plannerBlocks,
+    attempts,
+    unresolvedExits,
+    expectedRegularMinutes,
+    benchmarkMinutes: spyBars.length,
+    ambiguousExitBars,
+    stopLimitGapBars,
+  }
 }
 
-export const runIntradayAlphaReplayVerification = (paths: readonly string[]) => {
-  const byDate = parseBarsFiles(paths)
-  const sessions = [...byDate.keys()].sort().filter((date) => {
-    const spy = byDate.get(date)?.get(intradayAlphaBenchmarkSymbol)
-    return spy !== undefined && spy.length >= 300
-  })
+export const runIntradayAlphaReplayVerification = (paths: readonly string[], calendarInput: unknown) => {
+  if (paths.length === 0) throw new Error('At least one bar file is required')
+  const calendarSource = Schema.decodeUnknownSync(ReplayCalendarSchema, strictParseOptions)(calendarInput)
+  const calendar = Result.getOrThrow(normalizeMarketCalendarResult(calendarSource.response, calendarSource.query))
+  if (calendar.sessions.length === 0) throw new Error('The supplied calendar contains no sessions')
+  const { byDate, sources, identicalDuplicates, ignoredSymbols, uniqueBars } = parseBarsFiles(paths, calendar)
+  const sessions = [...byDate.keys()].sort()
 
   const startingCapitalUsd = 100_000
   const results = []
   for (const slippageBps of [2, 5, 10]) {
     const allTrades: TradeOutcome[] = []
-    const dailyPnl: { readonly date: string; readonly pnl: number; readonly trades: number }[] = []
+    const dailyPnl: {
+      readonly date: string
+      readonly modeledClosedNet: number
+      readonly trades: number
+      readonly modeledFilledLegs: number
+      readonly unresolvedExits: number
+    }[] = []
+    const sessionDetails = []
     let totalPlannerBlocks = 0
 
     for (const date of sessions) {
       const symMap = byDate.get(date)
       if (symMap === undefined) continue
-      const { trades, plannerBlocks } = simulateSession({
+      const outcome = simulateSession({
         sessionDate: date,
+        calendar,
         symMap,
         slippageRtBps: slippageBps,
         startingCapitalUsd,
       })
+      const { trades, plannerBlocks } = outcome
+      sessionDetails.push({ date, ...outcome })
       totalPlannerBlocks += plannerBlocks
       allTrades.push(...trades)
       dailyPnl.push({
         date,
-        pnl: trades.reduce((sum, t) => sum + t.netPnlUsd, 0),
+        modeledClosedNet: trades.reduce((sum, t) => sum + t.netPnlUsd, 0),
         trades: trades.length,
+        modeledFilledLegs: outcome.attempts.reduce((sum, attempt) => sum + attempt.filledSymbols.length, 0),
+        unresolvedExits: outcome.unresolvedExits.length,
       })
     }
 
-    const activeSessions = dailyPnl.filter((d) => d.trades > 0).length
-    const totalNet = dailyPnl.reduce((sum, d) => sum + d.pnl, 0)
-    const meanDaily = totalNet / Math.max(1, dailyPnl.length)
-    const variance = dailyPnl.reduce((sum, d) => sum + (d.pnl - meanDaily) ** 2, 0) / Math.max(1, dailyPnl.length - 1)
+    const activeSessions = dailyPnl.filter((d) => d.modeledFilledLegs > 0).length
+    const modeledClosedNet = dailyPnl.reduce((sum, d) => sum + d.modeledClosedNet, 0)
+    const unresolvedExits = dailyPnl.reduce((sum, d) => sum + d.unresolvedExits, 0)
+    const meanDaily = modeledClosedNet / Math.max(1, dailyPnl.length)
+    const variance =
+      dailyPnl.reduce((sum, d) => sum + (d.modeledClosedNet - meanDaily) ** 2, 0) / Math.max(1, dailyPnl.length - 1)
     const sharpe = variance > 0 ? (meanDaily / Math.sqrt(variance)) * Math.sqrt(252) : 0
     let equity = 0
     let peak = 0
     let maxDd = 0
     for (const d of dailyPnl) {
-      equity += d.pnl
+      equity += d.modeledClosedNet
       if (equity > peak) peak = equity
       if (peak - equity > maxDd) maxDd = peak - equity
     }
 
     const foldSize = Math.ceil(dailyPnl.length / 3)
     const folds = [0, 1, 2].map((i) =>
-      dailyPnl.slice(i * foldSize, (i + 1) * foldSize).reduce((sum, d) => sum + d.pnl, 0),
+      dailyPnl.slice(i * foldSize, (i + 1) * foldSize).reduce((sum, d) => sum + d.modeledClosedNet, 0),
     )
     const longNet = allTrades.filter((t) => t.direction === 'LONG').reduce((s, t) => s + t.netPnlUsd, 0)
     const shortNet = allTrades.filter((t) => t.direction === 'SHORT').reduce((s, t) => s + t.netPnlUsd, 0)
@@ -711,6 +815,63 @@ export const runIntradayAlphaReplayVerification = (paths: readonly string[]) => 
     const shortExcess = allTrades.filter((t) => t.direction === 'SHORT').reduce((s, t) => s + t.spyExcessUsd, 0)
     const orbTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.MorningOrb)
     const mrTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.MiddayReversion)
+    const middayBaskets = sessionDetails.flatMap((day) =>
+      day.attempts
+        .filter((attempt) => attempt.phase === IntradayAlphaPhase.MiddayReversion)
+        .map((attempt) => {
+          const observedTrades = day.trades.filter((trade) => trade.phase === IntradayAlphaPhase.MiddayReversion)
+          const unresolved = day.unresolvedExits.filter((exit) => attempt.filledSymbols.includes(exit.symbol)).length
+          const closedNet = observedTrades.reduce((sum, trade) => sum + trade.netPnlUsd, 0)
+          return {
+            date: day.date,
+            selectedLegs: attempt.selectedSymbols.length,
+            filledLegs: attempt.filledSymbols.length,
+            complete: attempt.filledSymbols.length === attempt.selectedSymbols.length,
+            bothSidesFilled: attempt.longEntryNotionalUsd > 0 && attempt.shortEntryNotionalUsd > 0,
+            longEntryNotionalUsd: attempt.longEntryNotionalUsd,
+            shortEntryNotionalUsd: attempt.shortEntryNotionalUsd,
+            signedEntryNotionalUsd: attempt.longEntryNotionalUsd - attempt.shortEntryNotionalUsd,
+            grossEntryNotionalUsd: attempt.longEntryNotionalUsd + attempt.shortEntryNotionalUsd,
+            unresolvedExits: unresolved,
+            modeledClosedNet: closedNet,
+            modeledNet: unresolved === 0 ? closedNet : null,
+            longNet: observedTrades
+              .filter((trade) => trade.direction === 'LONG')
+              .reduce((sum, trade) => sum + trade.netPnlUsd, 0),
+            shortNet: observedTrades
+              .filter((trade) => trade.direction === 'SHORT')
+              .reduce((sum, trade) => sum + trade.netPnlUsd, 0),
+            longSpyExcess: observedTrades
+              .filter((trade) => trade.direction === 'LONG')
+              .reduce((sum, trade) => sum + trade.spyExcessUsd, 0),
+            shortSpyExcess: observedTrades
+              .filter((trade) => trade.direction === 'SHORT')
+              .reduce((sum, trade) => sum + trade.spyExcessUsd, 0),
+          }
+        }),
+    )
+    const summarizeBaskets = (baskets: typeof middayBaskets) => {
+      const unresolved = baskets.reduce((sum, basket) => sum + basket.unresolvedExits, 0)
+      const closedNet = baskets.reduce((sum, basket) => sum + basket.modeledClosedNet, 0)
+      return {
+        baskets: baskets.length,
+        unresolvedExits: unresolved,
+        modeledClosedNet: closedNet,
+        modeledNet: unresolved === 0 ? closedNet : null,
+        longNet: baskets.reduce((sum, basket) => sum + basket.longNet, 0),
+        shortNet: baskets.reduce((sum, basket) => sum + basket.shortNet, 0),
+        longSpyExcess: baskets.reduce((sum, basket) => sum + basket.longSpyExcess, 0),
+        shortSpyExcess: baskets.reduce((sum, basket) => sum + basket.shortSpyExcess, 0),
+        meanAbsoluteSignedEntryNotionalUsd:
+          baskets.reduce((sum, basket) => sum + Math.abs(basket.signedEntryNotionalUsd), 0) /
+          Math.max(1, baskets.length),
+        maximumAbsoluteSignedEntryNotionalUsd: Math.max(
+          0,
+          ...baskets.map((basket) => Math.abs(basket.signedEntryNotionalUsd)),
+        ),
+        grossEntryNotionalUsd: baskets.reduce((sum, basket) => sum + basket.grossEntryNotionalUsd, 0),
+      }
+    }
 
     results.push({
       slippageBps,
@@ -726,53 +887,93 @@ export const runIntradayAlphaReplayVerification = (paths: readonly string[]) => 
       shortNet,
       longExcess,
       shortExcess,
-      totalNet,
-      folds,
-      maxDd,
-      sharpe,
+      modeledClosedNet,
+      totalNet: unresolvedExits === 0 ? modeledClosedNet : null,
+      chronologicalSlices: unresolvedExits === 0 ? folds : null,
+      maxDd: unresolvedExits === 0 ? maxDd : null,
+      sharpe: unresolvedExits === 0 ? sharpe : null,
       totalPlannerBlocks,
-      recentDays: dailyPnl.slice(-5),
+      unresolvedExits,
+      modeledFilledLegs: sessionDetails.reduce(
+        (sum, day) => sum + day.attempts.reduce((count, attempt) => count + attempt.filledSymbols.length, 0),
+        0,
+      ),
+      ambiguousExitBars: sessionDetails.reduce((sum, day) => sum + day.ambiguousExitBars, 0),
+      stopLimitGapBars: sessionDetails.reduce((sum, day) => sum + day.stopLimitGapBars, 0),
+      entryAttempts: sessionDetails.reduce((sum, day) => sum + day.attempts.length, 0),
+      unfilledAttempts: sessionDetails.reduce(
+        (sum, day) => sum + day.attempts.filter((attempt) => attempt.filledSymbols.length === 0).length,
+        0,
+      ),
+      partiallyFilledBaskets: sessionDetails.reduce(
+        (sum, day) =>
+          sum +
+          day.attempts.filter(
+            (attempt) =>
+              attempt.phase === IntradayAlphaPhase.MiddayReversion &&
+              attempt.filledSymbols.length > 0 &&
+              attempt.filledSymbols.length < attempt.selectedSymbols.length,
+          ).length,
+        0,
+      ),
+      recentDays: dailyPnl.slice(-5).map((day) => ({
+        ...day,
+        modeledNet: day.unresolvedExits === 0 ? day.modeledClosedNet : null,
+      })),
+      middayBasketAttribution: {
+        complete: summarizeBaskets(middayBaskets.filter((basket) => basket.complete)),
+        partial: summarizeBaskets(middayBaskets.filter((basket) => basket.filledLegs > 0 && !basket.complete)),
+        unfilled: summarizeBaskets(middayBaskets.filter((basket) => basket.filledLegs === 0)),
+        bothSidesFilled: summarizeBaskets(middayBaskets.filter((basket) => basket.bothSidesFilled)),
+        oneSideFilled: summarizeBaskets(
+          middayBaskets.filter((basket) => basket.filledLegs > 0 && !basket.bothSidesFilled),
+        ),
+      },
+      middayBaskets,
+      sessionDetails,
     })
   }
-  return { sessions, results }
+  return {
+    schemaVersion: 'bayn.intraday-alpha-bar-scenario.v1',
+    qualification: 'UNQUALIFIED',
+    evidenceClass: 'RETROSPECTIVE_EVENT_TIME_BAR_SCENARIO',
+    policyHash,
+    calendarHash: calendar.normalizedResponseHash,
+    sources,
+    inputRows: { uniqueBars, identicalDuplicates, ignoredSymbols },
+    assumptions: {
+      startingCapitalUsd,
+      modeledSellFeeBps: MODELED_SELL_FEE_BPS,
+      arrival: 'Completed bars assumed available at minute close; original arrival receipts are unavailable',
+      source:
+        'Eight-column bars do not independently prove feed, universe or revision selection; retain the export receipt',
+      quotes: 'Synthetic quotes around completed closes; historical executable quotes are unavailable',
+      borrow: 'Every candidate assumed borrow-eligible; historical eligibility is unavailable',
+      entry: 'First full minute open after decision, within original limit and modeled one-minute working window',
+      exit: 'OHLC stop/target proxies with stop-first both-touch convention and resting gapped stop limits; first full minute open after time deadline; missing exit prices remain unresolved',
+      liquidity:
+        'Whole intended quantity assumed filled at the price proxy; capacity and queue priority are unmeasured',
+      basket: 'Legs fill independently; planned dollar neutrality does not prove realized neutrality',
+      costs:
+        'Sell fee and fixed slippage scenarios; operating expense, borrow, impact and real settlement are unmeasured',
+      selection:
+        'Current candidate universe applied retrospectively; chronological slices are descriptive, not holdout validation',
+      runtime:
+        'Exercises signal, funding and planner functions; omits ingestion, authority, final risk and broker recovery',
+    },
+    sessions,
+    results,
+  }
 }
 
 if (import.meta.main) {
   const args = process.argv.slice(2)
-  if (args.length === 0) {
-    console.error('Usage: bun run tools/verify-intraday-alpha-replay.ts <bars_tsv_1> [bars_tsv_2 ...]')
+  if (args[0] !== '--calendar' || args[1] === undefined || args.length < 3) {
+    console.error(
+      'Usage: bun run tools/verify-intraday-alpha-replay.ts --calendar <calendar_json> <bars_tsv_1> [bars_tsv_2 ...]',
+    )
     process.exit(1)
   }
-  const { sessions, results } = runIntradayAlphaReplayVerification(args)
-  console.log(
-    `\n=== Production TypeScript Intraday Alpha Replay (${sessions.length} sessions: ${sessions[0]} .. ${sessions.at(-1)}) ===\n`,
-  )
-  let allGatesPassed = true
-  for (const r of results) {
-    console.log(
-      `[Slip ${r.slippageBps.toFixed(1)} bp RT] Active=${r.activeSessions}/${r.totalSessions} (${(r.activeRate * 100).toFixed(1)}%) | ` +
-        `Trades=${r.totalTrades} (ORB30=${r.orbTrades} $${r.orbNet.toFixed(0)}, MR=${r.mrTrades} $${r.mrNet.toFixed(0)}) | ` +
-        `Net=$${r.totalNet.toFixed(0)} (L/S=$${r.longNet.toFixed(0)}/$${r.shortNet.toFixed(0)}, SPY-Excess L/S=$${r.longExcess.toFixed(0)}/$${r.shortExcess.toFixed(0)}) | ` +
-        `Folds=[${r.folds.map((f) => `$${f.toFixed(0)}`).join(', ')}] | MaxDD=$${r.maxDd.toFixed(0)} | Sharpe=${r.sharpe.toFixed(2)} | ` +
-        `PlannerBlocks=${r.totalPlannerBlocks}`,
-    )
-    if (r.slippageBps === 2) {
-      console.log('  Recent 5 sessions @ 2bp RT:')
-      for (const d of r.recentDays) {
-        console.log(`    ${d.date}: trades=${d.trades}, net=$${d.pnl.toFixed(2)}`)
-      }
-    }
-    const passed =
-      r.activeRate >= 0.95 &&
-      r.totalPlannerBlocks === 0 &&
-      r.totalNet > 0 &&
-      r.orbNet > 0 &&
-      r.mrNet > 0 &&
-      r.longExcess > 0 &&
-      r.shortExcess > 0 &&
-      (r.slippageBps > 5 || r.folds.every((f) => f > 0))
-    if (!passed) allGatesPassed = false
-  }
-  console.log(`\nAnti-Starvation & Multi-Fold Gate: ${allGatesPassed ? 'PASSED' : 'FAILED'}`)
-  if (!allGatesPassed) process.exit(1)
+  const calendarInput: unknown = JSON.parse(readFileSync(args[1], 'utf8'))
+  console.log(JSON.stringify(runIntradayAlphaReplayVerification(args.slice(2), calendarInput), null, 2))
 }

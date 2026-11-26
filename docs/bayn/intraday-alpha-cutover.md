@@ -2,38 +2,72 @@
 
 ## 1. Overview & Motivation
 
-`bayn.intraday-alpha-policy.v1` (`behavior = bayn.intraday-alpha.behavior.v2`) replaces the negative-expectancy 30-minute visual chasing protocol (`v40–v44`) with a peer-reviewed, strictly causal two-phase intraday equity alpha architecture operating on 20 liquid real-time equities from `torghut-core-equity-v3` (all 21 non-benchmark names excluding thin `CRDO`, benchmarked against `SPY` `CompletedBars`):
+`bayn.intraday-alpha-policy.v1` (`behavior = bayn.intraday-alpha.behavior.v2`) replaces the active Jev `v44` entry policy with two deterministic intraday signals operating on 20 equities from `torghut-core-equity-v3` (all 21 non-benchmark names excluding `CRDO`, benchmarked against `SPY` `CompletedBars`). Historical Jev evidence remains retained. The new policy's prospective economics require its own observed sessions.
 
-1. **Phase 2 — Morning Zarattini-Barbon-Aziz Opening-Candle-Direction `30m` ORB (`10:00–10:50 ET`):**
+The opening-range signal is an adaptation motivated by [Zarattini, Barbon and Aziz's working paper](https://www.industry.sfi.ch/en/publications/n-24-98-a-profitable-day-trading-strategy-for-the-u.s.-equity-market). Their principal result uses five-minute opening ranges and a daily selection of Stocks in Play from a much larger universe. Bayn's fixed universe, thirty-minute range, risk levels and exits differ. The midday relative-VWAP rule is a Bayn research hypothesis; the general intraday-return findings in [Bogousslavsky's research](https://bogousslavsky.github.io/) do not validate this exact trading recipe.
+
+1. **Morning opening-candle-direction `30m` ORB (`10:00–10:50 ET` signal-bar starts):**
    - Anchored strictly to regular US equity trading hours (`09:30–16:00 America/New_York` from `providerSessions[].regularOpenAt/regularCloseAt`), eliminating pre-market `08:00 ET` session-envelope clock drift.
    - `1` concurrent leg at `20%` equity weight (`maxTradesPerSession = 2`, one entry per symbol per morning, `minimumOpeningRangeBars = 27`, `minimumRecent15MinBars = 13`).
-   - Enforces the Zarattini, Aziz & Barbon (2024) opening-candle direction rule: Long breakouts require a bullish 30m opening range (`orClose > orOpen`) with `close > orHigh`, `close > VWAP`, and `SPY > SPY_VWAP`; Short breakdowns require a bearish 30m opening range (`orClose < orOpen`) with `close < orLow`, `close < VWAP`, and `SPY < SPY_VWAP`.
-   - `100 bp` protective stop / `200 bp` profit target (`1:2` native Alpaca `BRACKET`/`OCO`/`STOP_LIMIT` with single-sided IEX stop guard), `60m` hold capped before `11:28 ET` (`hardExitMinuteFromOpen = 118`) so inventory is flat before Phase 1.
+   - Long breakouts require a bullish 30m opening range (`orClose > orOpen`) with `close > orHigh`, `close > VWAP`, and `SPY > SPY_VWAP`; Short breakdowns require a bearish 30m opening range (`orClose < orOpen`) with `close < orLow`, `close < VWAP`, and `SPY < SPY_VWAP`.
+   - `100 bp` protective stop / `200 bp` profit target, using native Alpaca `BRACKET`/`OCO`/`STOP_LIMIT` protection. The maximum holding duration is at most `60m` and is shortened at decision time toward `11:28 ET` (`hardExitMinuteFromOpen = 118`). Runtime starts that duration at the actual first fill, so delayed fills can extend beyond the intended morning boundary. A stop-limit order can remain unfilled after a price gap.
+   - The durable session quota counts committed decisions containing intents, including attempts whose orders expire without fills. The offline scenario follows the same quota.
 
-2. **Phase 1 — Midday-to-Close Bogousslavsky Dollar-Neutral Relative-VWAP Reversion (`11:30–12:00 ET -> 15:55 EOD`):**
+2. **Midday relative-VWAP reversion (`11:30–12:00 ET` signal-bar starts):**
    - Computes gap-resilient session VWAP directly from full-session RTH 1m bars (`09:30 ET` through completed window end, avoiding Flink's single-minute `GAP` resets).
    - Requires `minimumSessionBars >= 90` and `minimumRecent15MinBars >= 13` (strictly causal recent-tape liquidity filter).
-   - Ranks cross-sectional `rel_VWAP_vs_SPY = (close/vwap - 1) - (spyClose/spyVwap - 1)` and selects `2` Long laggards + `2` Short leaders at `18%` weight per leg (`36%` Long + `54%` Short `150%`-collateral = `90%` max buying power — fits both `1×` cash-only and `2×` margin accounts with `0` `InsufficientBuyingPower` blocks). Falls back to a single `20%` extreme Long if borrow eligibility blocks all shorts.
-   - `500 bp` catastrophe protective stop / `800 bp` profit target held until `15:55 ET` EOD flatten (`flattenMinuteFromOpen = 385`), anchored strictly to the NYSE regular-session close (`16:00 ET`) even when the data calendar spans extended hours (`08:00–17:00 ET`).
-   - Runs purely deterministically (`catalystVeto.enabled = false`) with zero live un-journaled Jev API calls; enabling live catalyst vetos in a future policy requires durable inference expense journaling first.
+   - Ranks cross-sectional `rel_VWAP_vs_SPY = (close/vwap - 1) - (spyClose/spyVwap - 1)` and selects `2` Long laggards + `2` Short leaders at `18%` weight per leg. The modeled buying-power requirement is `36%` Long plus `54%` Short collateral, or `90%` of equity. Actual account, reservation, risk and eligibility checks still apply. The signal can fall back to a single `20%` extreme leg when a pair is unavailable.
+   - Planned allocations are dollar-neutral within whole-share rounding; independent limit orders can fill a subset and create residual directional exposure. Research reports complete, partial, both-sided and one-sided baskets separately.
+   - `500 bp` catastrophe protective stop / `800 bp` profit target. Forced flattening begins at the earlier of minute `385` from regular open and five minutes before the provider's regular close. A 13:00 ET early close therefore starts flattening at 12:55 ET, including when the data calendar spans extended hours.
+   - Runs deterministically (`catalystVeto.enabled = false`). Enabling live catalyst vetos in a future policy requires durable inference expense journaling first.
 
 3. **Completed-Bar-Close Execution Pricing (`±10 bps` Limit):**
-   - Single-exchange free IEX quotes exhibit `50–400+ bps` spreads and thin top-of-book `bidSize` on high-dispersion equities (`COHR`, `LITE`, `MRVL`, `SNDK`, `WDC`, `AMD`, `MU`), whereas IEX 1m bar closes track consolidated SIP within `0.5–3.6 bps` and Alpaca executes marketable limits against consolidated NBBO.
+   - The policy uses completed-bar reference prices while retaining fresh IEX quotes for liveness and crossing guards. [Alpaca PAPER matches against NBBO](https://docs.alpaca.markets/us/docs/paper-trading), while paper-only market-data entitlement is IEX. A completed IEX close is a historical reference, not proof that a new order can fill at that price or quantity.
    - Entry pricing, funded exit plans, and risk sizing anchor to each selected symbol's completed 1m `latestBar.close ± 10 bps` (matching `maxAdverseSlippageBps = 10`) while retaining live quote freshness verification and two-sided stop/target crossing guards.
 
-## 2. Production TypeScript 66-Session Offline Replay Verification (`2026-08-25` – `2026-11-25`)
+## 2. Retrospective 66-Session Bar Scenario (`2026-08-25` – `2026-11-25`)
 
-The verifier (`services/bayn/tools/verify-intraday-alpha-replay.ts`) exercises the production signal, bar-close exit sizing, and `planTargets` on $100,000 of strict `1×` cash buying power with whole-share quantities and 0.21 bp sell-side fees. A simulated fill requires a post-decision bar open within the funded `±10 bp` limit after slippage.
+The tool (`services/bayn/tools/verify-intraday-alpha-replay.ts`) exercises the production signal, funded-plan and target-planner functions on a fixed $100,000 allocation with `1×` buying power, whole shares and a hypothetical 0.21 bp sell-side fee. It reports `UNQUALIFIED` research results. It does not exercise source ingestion, actual quote arrival, authority, final risk, submission or recovery. Short eligibility and quotes are synthetic. Price proxies assume full leg quantity and omit capacity, queue priority, impact, borrow and operating costs.
 
-| Round-trip slippage | Active sessions | Morning ORB30 trades & net P&L | Midday MR trades & net P&L | Combined net P&L | SPY-Excess (Long / Short) | Three chronological folds   | Max drawdown | Sharpe |
-| ------------------- | --------------- | ------------------------------ | -------------------------- | ---------------- | ------------------------- | --------------------------- | ------------ | ------ |
-| 2 bp                | 66/66           | 73, +$2,390                    | 209, +$9,620               | +$12,010         | +$5,783 / +$4,912         | +$922 / +$3,449 / +$7,640   | $1,259       | 4.48   |
-| 5 bp                | 66/66           | 74, +$2,272                    | 200, +$7,021               | +$9,293          | +$4,782 / +$3,546         | +$675 / +$3,096 / +$5,523   | $1,575       | 3.68   |
-| 10 bp               | 66/66           | 73, +$781                      | 180, +$5,886               | +$6,667          | +$2,899 / +$2,836         | −$142 / +$2,221 / +$4,589   | $2,102       | 2.68   |
+The November 26 rerun used an explicitly filtered Alpaca IEX final-bar export. Its 420,137 symbol-minute rows include CRDO; the current policy accepts 399,233 rows for its 20 candidates plus SPY before the regular-hours filter. The export resolves 1,062 conflicting symbol-instants using the receipt's deterministic latest-ingest ordering. Consequently, this is an event-time study with revised archival bars, not proof of what an original consumer knew at a decision. The input SHA256 is `6c2753fc2dddae60554a501ef508ffa1568fb51af859b687b29b2dbb7efe4180`. See the [source receipt](evidence/2026-11-26-alpha-replay/source-receipt.json), [calendar](evidence/2026-11-26-alpha-replay/calendar.json) and [results](evidence/2026-11-26-alpha-replay/results.json).
 
-Both Phase 2 (Morning) and Phase 1 (Midday), as well as Long and Short SPY-excess alpha, remain positive across all three slippage tiers (`2`, `5`, and `10 bp` RT) with `0` planner blocks.
+The original tool at `d6316076f3668423dab04d6b65f3e95fd4da60fb` reproduces the previously reported $12,010 / $9,293 / $6,667 modeled results on this exact export. The corrected tool counts unfilled committed morning attempts against the production quota, starts duration at the modeled first fill, caps midday by the actual regular close, and uses a post-deadline price for timed exits. Missing exit prices retain unresolved positions and withhold whole-sample P&L, drawdown and Sharpe.
 
-## 3. Cutover & Live Activation Procedure
+| Round-trip slippage | Trades (morning / midday) | Morning modeled net | Midday modeled net | Combined modeled net | Original tool | Descriptive Sharpe | Max drawdown |
+| ------------------- | ------------------------- | ------------------- | ------------------ | -------------------- | ------------- | ------------------ | ------------ |
+| 2 bp                | 65 / 208                  | +$2,284             | +$8,614            | +$10,898             | +$12,010      | 4.09               | $1,258       |
+| 5 bp                | 65 / 199                  | +$1,959             | +$6,030            | +$7,989              | +$9,293       | 3.12               | $1,911       |
+| 10 bp               | 59 / 179                  | −$396               | +$4,903            | +$4,507              | +$6,667       | 1.83               | $2,999       |
+
+All 66 calendar sessions remain in the denominator. The corrected corpus has zero unresolved exits and zero planner blocks under the synthetic portfolio assumptions. Each slippage scenario encounters 77 bars where a triggered stop-limit lacks an executable price proxy; those orders remain working until a later eligible price or timed flatten. The sample contains zero bars touching both target and stop; regression tests cover the conservative stop-first convention for that ambiguity. Chronological slices are descriptive reuse of the same research cohort, not independent holdout validation.
+
+The morning signal loses money in the 10 bp scenario. The midday result also depends materially on incomplete baskets:
+
+| Round-trip slippage | Complete midday baskets / modeled net | Partial baskets / modeled net | One-sided baskets / modeled net | Mean absolute residual exposure in partial baskets |
+| ------------------- | ------------------------------------- | ----------------------------- | ------------------------------- | -------------------------------------------------- |
+| 2 bp                | 27 / +$5,504                          | 39 / +$3,110                  | 12 / +$2,257                    | $21,114                                            |
+| 5 bp                | 19 / +$2,793                          | 47 / +$3,238                  | 13 / +$2,075                    | $20,929                                            |
+| 10 bp               | 9 / +$367                             | 56 / +$4,536                  | 17 / +$1,780                    | $20,688                                            |
+
+One-sided baskets are a subset of partial baskets, not an additional contribution. One midday attempt is entirely unfilled at 10 bp and retains a true zero outcome. Partial baskets reach about $36,000 absolute net exposure on $100,000 equity. These scenarios support investigating entry completion and realized exposure; they do not establish a dollar-neutral economic edge or justify choosing a policy from this same sample.
+
+Reproduce with a provider-calendar envelope containing `query: { start, end }` and the native calendar `response` array, plus the eight TSV columns `symbol,eventAt,open,high,low,close,volume,vwap`:
+
+```sh
+bun services/bayn/tools/verify-intraday-alpha-replay.ts \
+  --calendar docs/bayn/evidence/2026-11-26-alpha-replay/calendar.json \
+  /path/to/bars.tsv > /path/to/scenario.json
+```
+
+The report hashes the inputs and calendar, rejects conflicting duplicate bar revisions, retains sessions with missing benchmark data, exposes unfilled and partial attempts, and emits explicit unresolved exits. Friday's 210-minute session is covered by deterministic regression fixtures; this historical corpus ends November 25 and contains no November 27 observations.
+
+## 3. Prospective Evaluation
+
+Before using these results to expand capital or claim an executable edge, evaluate new PAPER sessions under the unchanged policy identity. Report morning and midday realized net P&L separately; reconcile actual broker fees and any recorded funding or borrow charges, and identify unmeasured operating costs. Require canonical accounting coverage, settled inventory and valid reconciliation before treating a session as economically complete. Missing or unresolved outcomes must remain visible rather than becoming zero returns or disappearing from the denominator.
+
+Record committed entry attempts, filled legs, complete and partial baskets, one-sided exposure, and signed/gross notional through the holding period. Compare the intended dollar-neutral basket with the exposure actually obtained. Retain contemporaneous IEX arrival receipts, decision inputs, eligibility and broker order/fill events so the next study can test execution and data availability. Freeze evaluation rules before observing that new cohort; do not adjust thresholds on these same 66 sessions and call the resulting slices a holdout. Neither the combined positive bar scenario nor its high activity rate establishes a profitable dollar-neutral strategy.
+
+## 4. Cutover & Live Activation Procedure
 
 1. **PR 1 — Settle `v44` & Deploy `bayn.intraday-alpha-policy.v1` in `OBSERVE`:**
    - Migration `0221_v44_paper_settlement.ts` proves flat inventory, terminal cycles/intents, settled orders, complete accounting, and fresh exact reconciliation before restricting `bayn.jev.protocol.v44` to `OBSERVE` (`BLOCKED_STRATEGY_PROTOCOL_CUTOVER`).
