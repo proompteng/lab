@@ -3,6 +3,7 @@ import { Result, Schema } from 'effect'
 
 import { MarketCalendarQueryBase, MarketCalendarResponseSchema } from '../src/broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../src/broker/alpaca/normalizers'
+import { quantizeInstrumentPriceMicros } from '../src/broker/alpaca-price'
 import { AccountStatus, OrderSide, OrderType, ReconciliationStatus, TimeInForce } from '../src/execution/contracts'
 import type { EquityShortEligibility } from '../src/execution/equity-short'
 import { canonicalHashV1Result, sha256 } from '../src/hash'
@@ -60,7 +61,6 @@ interface TradeOutcome {
   readonly exitReason: 'STOP' | 'TARGET' | 'MAX_HOLD' | 'EOD'
   readonly grossPnlUsd: number
   readonly netPnlUsd: number
-  readonly spyExcessUsd: number
 }
 
 const ReplayCalendarSchema = Schema.Struct({
@@ -473,9 +473,9 @@ const simulateSession = (input: {
       string,
       NonNullable<Result.Result.Success<ReturnType<typeof makeIntradayAlphaFundedExitPlan>>>
     > = {}
-    const targetWeights: Record<string, number> = Object.fromEntries(intradayAlphaCandidateSymbols.map((s) => [s, 0]))
-    const maxBuy: Record<string, string> = Object.fromEntries(intradayAlphaCandidateSymbols.map((s) => [s, '0']))
-    const maxSell: Record<string, string> = Object.fromEntries(intradayAlphaCandidateSymbols.map((s) => [s, '0']))
+    const targetWeights: Record<string, number> = {}
+    const maxBuy: Record<string, string> = {}
+    const maxSell: Record<string, string> = {}
 
     for (const leg of legs) {
       const funded = Result.getOrThrow(
@@ -488,6 +488,8 @@ const simulateSession = (input: {
       if (funded === null) continue
       fundedPlans[leg.symbol] = funded
       targetWeights[leg.symbol] = funded.signedWeight
+      maxBuy[leg.symbol] = '0'
+      maxSell[leg.symbol] = '0'
       if (leg.direction === 'LONG') maxBuy[leg.symbol] = funded.plan.maximumQuantityAtoms
       else maxSell[leg.symbol] = funded.plan.maximumQuantityAtoms
     }
@@ -498,11 +500,22 @@ const simulateSession = (input: {
     const priceMicros: Record<string, string> = {}
     const bidPriceMicros: Record<string, string> = {}
     const askPriceMicros: Record<string, string> = {}
-    for (const symbol of intradayAlphaCandidateSymbols) {
+    // compileJevEntry plans only nonzero targets and requires their exact completed bar.
+    // Missing-current-minute candidates are excluded by production signal/funding checks;
+    // do not fabricate references from the first (possibly future) bar or a constant.
+    for (const symbol of selectedSymbols) {
       const completedBar = barByMinute.get(symbol)?.get(completedMinute)
-      const fallbackClose = completedBar?.close ?? input.symMap.get(symbol)?.[0]?.close ?? 100
-      bidPriceMicros[symbol] = Result.getOrThrow(priceNumberToMicros(fallbackClose, 'b', 'DOWN')).toString()
-      askPriceMicros[symbol] = Result.getOrThrow(priceNumberToMicros(fallbackClose, 'a', 'UP')).toString()
+      if (completedBar === undefined) throw new Error(`Selected alpha target ${symbol} lacks completed bar close`)
+      bidPriceMicros[symbol] = quantizeInstrumentPriceMicros(
+        symbol,
+        Result.getOrThrow(priceNumberToMicros(completedBar.close, 'bar close', 'DOWN')),
+        'DOWN',
+      ).toString()
+      askPriceMicros[symbol] = quantizeInstrumentPriceMicros(
+        symbol,
+        Result.getOrThrow(priceNumberToMicros(completedBar.close, 'bar close', 'UP')),
+        'UP',
+      ).toString()
       priceMicros[symbol] = askPriceMicros[symbol]
     }
     const refMaterial = {
@@ -580,7 +593,6 @@ const simulateSession = (input: {
 
     const entryMinute = Math.ceil((Date.parse(observedAt) - sessionOpenMs) / 60_000)
     let latestExitMinute = Math.ceil((orderExpiresAtMs - sessionOpenMs) / 60_000) - 1
-    const spyByMin = barByMinute.get(intradayAlphaBenchmarkSymbol)
     const perSideSlipMult = input.slippageRtBps / 2 / 10_000
     for (const intent of planned.intentTargets) {
       const funded = fundedPlans[intent.symbol]
@@ -688,11 +700,6 @@ const simulateSession = (input: {
       const sellNotional = isLong ? realizedExit * shares : entryPrice * shares
       const feeUsd = (sellNotional * MODELED_SELL_FEE_BPS) / 10_000
       const netPnlUsd = grossPnlUsd - feeUsd
-      const spyEntry = spyByMin?.get(fillMinute)?.open ?? spyByMin?.get(completedMinute)?.close
-      const spyExit = spyByMin?.get(exitMinute)?.close ?? spyEntry
-      const spyRet =
-        spyEntry !== undefined && spyExit !== undefined && spyEntry > 0 ? (spyExit - spyEntry) / spyEntry : 0
-      const spyLegPnl = (isLong ? 1 : -1) * (entryPrice * shares) * spyRet
       trades.push({
         sessionDate: input.sessionDate,
         phase,
@@ -706,7 +713,6 @@ const simulateSession = (input: {
         exitReason,
         grossPnlUsd,
         netPnlUsd,
-        spyExcessUsd: netPnlUsd - spyLegPnl,
       })
       if (exitMinute > latestExitMinute) latestExitMinute = exitMinute
     }
@@ -811,8 +817,6 @@ export const runIntradayAlphaReplayVerification = (paths: readonly string[], cal
     )
     const longNet = allTrades.filter((t) => t.direction === 'LONG').reduce((s, t) => s + t.netPnlUsd, 0)
     const shortNet = allTrades.filter((t) => t.direction === 'SHORT').reduce((s, t) => s + t.netPnlUsd, 0)
-    const longExcess = allTrades.filter((t) => t.direction === 'LONG').reduce((s, t) => s + t.spyExcessUsd, 0)
-    const shortExcess = allTrades.filter((t) => t.direction === 'SHORT').reduce((s, t) => s + t.spyExcessUsd, 0)
     const orbTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.MorningOrb)
     const mrTrades = allTrades.filter((t) => t.phase === IntradayAlphaPhase.MiddayReversion)
     const middayBaskets = sessionDetails.flatMap((day) =>
@@ -841,12 +845,6 @@ export const runIntradayAlphaReplayVerification = (paths: readonly string[], cal
             shortNet: observedTrades
               .filter((trade) => trade.direction === 'SHORT')
               .reduce((sum, trade) => sum + trade.netPnlUsd, 0),
-            longSpyExcess: observedTrades
-              .filter((trade) => trade.direction === 'LONG')
-              .reduce((sum, trade) => sum + trade.spyExcessUsd, 0),
-            shortSpyExcess: observedTrades
-              .filter((trade) => trade.direction === 'SHORT')
-              .reduce((sum, trade) => sum + trade.spyExcessUsd, 0),
           }
         }),
     )
@@ -860,8 +858,6 @@ export const runIntradayAlphaReplayVerification = (paths: readonly string[], cal
         modeledNet: unresolved === 0 ? closedNet : null,
         longNet: baskets.reduce((sum, basket) => sum + basket.longNet, 0),
         shortNet: baskets.reduce((sum, basket) => sum + basket.shortNet, 0),
-        longSpyExcess: baskets.reduce((sum, basket) => sum + basket.longSpyExcess, 0),
-        shortSpyExcess: baskets.reduce((sum, basket) => sum + basket.shortSpyExcess, 0),
         meanAbsoluteSignedEntryNotionalUsd:
           baskets.reduce((sum, basket) => sum + Math.abs(basket.signedEntryNotionalUsd), 0) /
           Math.max(1, baskets.length),
@@ -885,8 +881,6 @@ export const runIntradayAlphaReplayVerification = (paths: readonly string[], cal
       mrNet: mrTrades.reduce((s, t) => s + t.netPnlUsd, 0),
       longNet,
       shortNet,
-      longExcess,
-      shortExcess,
       modeledClosedNet,
       totalNet: unresolvedExits === 0 ? modeledClosedNet : null,
       chronologicalSlices: unresolvedExits === 0 ? folds : null,
@@ -944,11 +938,13 @@ export const runIntradayAlphaReplayVerification = (paths: readonly string[], cal
     assumptions: {
       startingCapitalUsd,
       modeledSellFeeBps: MODELED_SELL_FEE_BPS,
-      arrival: 'Completed bars assumed available at minute close; original arrival receipts are unavailable',
+      arrival:
+        'Completed bars assumed available at minute close; original arrival receipts are not supplied to this scenario',
       source:
         'Eight-column bars do not independently prove feed, universe or revision selection; retain the export receipt',
-      quotes: 'Synthetic quotes around completed closes; historical executable quotes are unavailable',
-      borrow: 'Every candidate assumed borrow-eligible; historical eligibility is unavailable',
+      quotes:
+        'Synthetic quotes around completed closes; historical executable quotes are not supplied to this scenario',
+      borrow: 'Every candidate assumed borrow-eligible; historical eligibility is not supplied to this scenario',
       entry: 'First full minute open after decision, within original limit and modeled one-minute working window',
       exit: 'OHLC stop/target proxies with stop-first both-touch convention and resting gapped stop limits; first full minute open after time deadline; missing exit prices remain unresolved',
       liquidity:

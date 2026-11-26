@@ -19,10 +19,10 @@
   "assumptions": {
     "startingCapitalUsd": 100000,
     "modeledSellFeeBps": 0.21,
-    "arrival": "Completed bars assumed available at minute close; original arrival receipts are unavailable",
+    "arrival": "Completed bars assumed available at minute close; original arrival receipts are not supplied to this scenario",
     "source": "Eight-column bars do not independently prove feed, universe or revision selection; retain the export receipt",
-    "quotes": "Synthetic quotes around completed closes; historical executable quotes are unavailable",
-    "borrow": "Every candidate assumed borrow-eligible; historical eligibility is unavailable",
+    "quotes": "Synthetic quotes around completed closes; historical executable quotes are not supplied to this scenario",
+    "borrow": "Every candidate assumed borrow-eligible; historical eligibility is not supplied to this scenario",
     "entry": "First full minute open after decision, within original limit and modeled one-minute working window",
     "exit": "OHLC stop/target proxies with stop-first both-touch convention and resting gapped stop limits; first full minute open after time deadline; missing exit prices remain unresolved",
     "liquidity": "Whole intended quantity assumed filled at the price proxy; capacity and queue priority are unmeasured",
@@ -112,8 +112,6 @@
       "mrNet": 8613.68184595575,
       "longNet": 4949.926094966993,
       "shortNet": 5948.12589162752,
-      "longExcess": 6123.042364969375,
-      "shortExcess": 3777.089061478199,
       "modeledClosedNet": 10898.051986594513,
       "totalNet": 10898.051986594513,
       "chronologicalSlices": [976.359411783048, 3381.9590384664434, 6539.73353634502],
@@ -177,8 +175,6 @@
           "modeledNet": 5503.997935703029,
           "longNet": 1713.6353511181799,
           "shortNet": 3790.3625845848483,
-          "longSpyExcess": 2352.9182496254657,
-          "shortSpyExcess": 3279.5972902199737,
           "meanAbsoluteSignedEntryNotionalUsd": 423.83825537036995,
           "maximumAbsoluteSignedEntryNotionalUsd": 1282.7862290000048,
           "grossEntryNotionalUsd": 1916304.3494870001
@@ -190,8 +186,6 @@
           "modeledNet": 3109.683910252721,
           "longNet": 1449.0346727854794,
           "shortNet": 1660.6492374672412,
-          "longSpyExcess": 1938.5171859129514,
-          "shortSpyExcess": 611.6111379785282,
           "meanAbsoluteSignedEntryNotionalUsd": 21113.673108589745,
           "maximumAbsoluteSignedEntryNotionalUsd": 36040.555584,
           "grossEntryNotionalUsd": 1774859.6013779996
@@ -203,8 +197,6 @@
           "modeledNet": 0,
           "longNet": 0,
           "shortNet": 0,
-          "longSpyExcess": 0,
-          "shortSpyExcess": 0,
           "meanAbsoluteSignedEntryNotionalUsd": 0,
           "maximumAbsoluteSignedEntryNotionalUsd": 0,
           "grossEntryNotionalUsd": 0
@@ -216,8 +208,6 @@
           "modeledNet": 6356.702891956412,
           "longNet": 3965.8840571818228,
           "shortNet": 2390.8188347745872,
-          "longSpyExcess": 4797.255902824927,
-          "shortSpyExcess": 1748.0452566368706,
           "meanAbsoluteSignedEntryNotionalUsd": 8181.454653370371,
           "maximumAbsoluteSignedEntryNotionalUsd": 18675.9264515,
           "grossEntryNotionalUsd": 3298085.6180169997
@@ -229,8 +219,6 @@
           "modeledNet": 2256.9789539993394,
           "longNet": -803.2140332781642,
           "shortNet": 3060.192987277503,
-          "longSpyExcess": -505.82046728650926,
-          "shortSpyExcess": 2143.163171561631,
           "meanAbsoluteSignedEntryNotionalUsd": 32756.527737333334,
           "maximumAbsoluteSignedEntryNotionalUsd": 36040.555584,
           "grossEntryNotionalUsd": 393078.332848
@@ -977,8 +965,6 @@
       "mrNet": 6030.471160551606,
       "longNet": 3715.0914288595413,
       "shortNet": 4274.3249917432795,
-      "longExcess": 5017.174850373397,
-      "shortExcess": 2433.3562901929176,
       "modeledClosedNet": 7989.416420602825,
       "totalNet": 7989.416420602825,
       "chronologicalSlices": [740.6193401312647, 3043.2859413819174, 4205.511139089642],
@@ -1042,8 +1028,6 @@
           "modeledNet": 2792.5583352779445,
           "longNet": 1531.989863386885,
           "shortNet": 1260.5684718910597,
-          "longSpyExcess": 1759.7145844842898,
-          "shortSpyExcess": 1163.7146789077062,
           "meanAbsoluteSignedEntryNotionalUsd": 404.93819875000116,
           "maximumAbsoluteSignedEntryNotionalUsd": 1293.250572500001,
           "grossEntryNotionalUsd": 1347823.6178712503
@@ -1055,8 +1039,6 @@
           "modeledNet": 3237.9128252736623,
           "longNet": 667.6691433605852,
           "shortNet": 2570.243681913076,
-          "longSpyExcess": 1722.234475485628,
-          "shortSpyExcess": 1533.3492360314362,
           "meanAbsoluteSignedEntryNotionalUsd": 20929.47742422873,
           "maximumAbsoluteSignedEntryNotionalUsd": 36035.148960000006,
           "grossEntryNotionalUsd": 2185365.8678462496
@@ -1068,8 +1050,6 @@
           "modeledNet": 0,
           "longNet": 0,
           "shortNet": 0,
-          "longSpyExcess": 0,
-          "shortSpyExcess": 0,
           "meanAbsoluteSignedEntryNotionalUsd": 0,
           "maximumAbsoluteSignedEntryNotionalUsd": 0,
           "grossEntryNotionalUsd": 0
@@ -1081,8 +1061,6 @@
           "modeledNet": 3955.646437304713,
           "longNet": 3126.310914194303,
           "shortNet": 829.3355231104088,
-          "longSpyExcess": 3978.8544046460984,
-          "shortSpyExcess": 612.4795317321049,
           "meanAbsoluteSignedEntryNotionalUsd": 10613.25122872642,
           "maximumAbsoluteSignedEntryNotionalUsd": 18683.833628750002,
           "grossEntryNotionalUsd": 3104312.5361249996
@@ -1094,8 +1072,6 @@
           "modeledNet": 2074.824723246895,
           "longNet": -926.651907446834,
           "shortNet": 3001.476630693729,
-          "longSpyExcess": -496.90534467618005,
-          "shortSpyExcess": 2084.584383207037,
           "meanAbsoluteSignedEntryNotionalUsd": 32990.53458403847,
           "maximumAbsoluteSignedEntryNotionalUsd": 36035.148960000006,
           "grossEntryNotionalUsd": 428876.94959250005
@@ -1842,8 +1818,6 @@
       "mrNet": 4902.995690297413,
       "longNet": 1765.941011796561,
       "shortNet": 2741.498865670453,
-      "longExcess": 3084.0029499662883,
-      "shortExcess": 1200.335409548961,
       "modeledClosedNet": 4507.439877467013,
       "totalNet": 4507.439877467013,
       "chronologicalSlices": [-52.41454502772183, 1611.437600193116, 2948.416822301618],
@@ -1907,8 +1881,6 @@
           "modeledNet": 366.66129959325804,
           "longNet": -1469.6545838893817,
           "shortNet": 1836.3158834826402,
-          "longSpyExcess": -1210.4689957149199,
-          "shortSpyExcess": 1701.9281478036935,
           "meanAbsoluteSignedEntryNotionalUsd": 360.68598444444393,
           "maximumAbsoluteSignedEntryNotionalUsd": 727.4937524999987,
           "grossEntryNotionalUsd": 640046.182055
@@ -1920,8 +1892,6 @@
           "modeledNet": 4536.3343907041535,
           "longNet": 2967.6384851527155,
           "shortNet": 1568.6959055514385,
-          "longSpyExcess": 4008.9555665406056,
-          "shortSpyExcess": 563.7542761192194,
           "meanAbsoluteSignedEntryNotionalUsd": 20688.03841611608,
           "maximumAbsoluteSignedEntryNotionalUsd": 36026.13792,
           "grossEntryNotionalUsd": 2538504.6972874994
@@ -1933,8 +1903,6 @@
           "modeledNet": 0,
           "longNet": 0,
           "shortNet": 0,
-          "longSpyExcess": 0,
-          "shortSpyExcess": 0,
           "meanAbsoluteSignedEntryNotionalUsd": 0,
           "maximumAbsoluteSignedEntryNotionalUsd": 0,
           "grossEntryNotionalUsd": 0
@@ -1946,8 +1914,6 @@
           "modeledNet": 3122.8792433090402,
           "longNet": 2571.8809522506785,
           "shortNet": 550.9982910583622,
-          "longSpyExcess": 3489.1035419508016,
-          "shortSpyExcess": 477.49948210905274,
           "meanAbsoluteSignedEntryNotionalUsd": 12340.96107651042,
           "maximumAbsoluteSignedEntryNotionalUsd": 18565.637962500008,
           "grossEntryNotionalUsd": 2609140.6858525
@@ -1959,8 +1925,6 @@
           "modeledNet": 1780.116446988371,
           "longNet": -1073.8970509873448,
           "shortNet": 2854.013497975716,
-          "longSpyExcess": -690.6169711251156,
-          "shortSpyExcess": 1788.1829418138605,
           "meanAbsoluteSignedEntryNotionalUsd": 33494.717264117644,
           "maximumAbsoluteSignedEntryNotionalUsd": 36026.13792,
           "grossEntryNotionalUsd": 569410.19349
@@ -2696,6 +2660,6 @@
       ]
     }
   ],
-  "replaySourceSha256": "40c054e846568a3df68b22c254c7c343dfac2476927340d0fbdb12d2912be969",
+  "replaySourceSha256": "b8380d0218e5e816e486e19887c915cc0a9f77932f16fdb93b9e6ac3a8670791",
   "baselineSourceRevision": "d6316076f3668423dab04d6b65f3e95fd4da60fb"
 }

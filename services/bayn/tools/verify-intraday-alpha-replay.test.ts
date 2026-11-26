@@ -203,6 +203,31 @@ test('morning holding duration starts at the modeled first fill and observes the
   }
 })
 
+test('missing current bars cannot be replaced by earlier or future references for selected targets', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, (symbol, minute) => {
+    if (symbol === 'SPY') return 100 + minute * 0.001
+    if (symbol === 'AAPL') {
+      if (minute === 30) return null
+      if (minute > 30) return 101
+    }
+    if (symbol === 'AMZN' && minute < 40) return null
+    return 100 + Math.min(minute, 29) * 0.001
+  })
+  const report = withRows(lines, (path) => runIntradayAlphaReplayVerification([path], calendar([date])))
+  for (const scenario of report.results) {
+    const morning = scenario.sessionDetails[0]?.attempts.filter(
+      (attempt) => attempt.phase === IntradayAlphaPhase.MorningOrb,
+    )
+    expect(morning).toHaveLength(1)
+    expect(morning?.[0]?.selectedSymbols).toEqual(['AAPL'])
+    expect(morning?.[0]?.observedAt).toBe('2026-11-27T15:02:02.000Z')
+    const trade = scenario.sessionDetails[0]?.trades.find((entry) => entry.phase === IntradayAlphaPhase.MorningOrb)
+    expect(trade?.entryAt).toBe('2026-11-27T15:03:00.000Z')
+    expect(scenario.totalPlannerBlocks).toBe(0)
+  }
+})
+
 test('rejects conflicting bar revisions and dates outside the supplied calendar', () => {
   const date = '2026-11-27'
   const original = rows(date, 1, () => 100)

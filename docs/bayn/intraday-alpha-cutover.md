@@ -41,6 +41,8 @@ The original tool at `d6316076f3668423dab04d6b65f3e95fd4da60fb` reproduces the p
 
 All 66 calendar sessions remain in the denominator. The corrected corpus has zero unresolved exits and zero planner blocks under the synthetic portfolio assumptions. Each slippage scenario encounters 77 bars where a triggered stop-limit lacks an executable price proxy; those orders remain working until a later eligible price or timed flatten. The sample contains zero bars touching both target and stop; regression tests cover the conservative stop-first convention for that ambiguity. Chronological slices are descriptive reuse of the same research cohort, not independent holdout validation.
 
+Results are concentrated in a few days. At 2 / 5 / 10 bp, the five strongest sessions contribute 73.31% / 98.76% / 158.72% of aggregate modeled net; the remaining 61 sessions contribute +$2,908.65 / +$98.98 / −$2,646.91. At 10 bp, the three chronological slices contribute −$52.41 / +$1,611.44 / +$2,948.42. These are descriptive sensitivity calculations on all retained outcomes, not selective session exclusions or new acceptance gates. The report omits SPY-excess metrics because this bar scenario does not establish a benchmark valuation aligned to each modeled execution time.
+
 The morning signal loses money in the 10 bp scenario. The midday result also depends materially on incomplete baskets:
 
 | Round-trip slippage | Complete midday baskets / modeled net | Partial baskets / modeled net | One-sided baskets / modeled net | Mean absolute residual exposure in partial baskets |
