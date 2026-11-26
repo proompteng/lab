@@ -5,6 +5,7 @@ import { preparedAlphaBaselineFixture } from '../observe-composition/alpha-basel
 import { strictParseOptions } from '../schemas'
 import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
 import { bindSystemSourceCut } from './bind-source'
+import { SystemAssessmentError } from './economics'
 import { preparedAlphaRegistrationFixture } from './prepared-alpha-registration.test-support'
 import { strategyBoundRegistrationFixture } from './strategy-registration.test-support'
 import { emptySourceCutFixture } from './source-cut.test-support'
@@ -43,6 +44,7 @@ describe('prospective preparation source cut version boundary', () => {
           continue
         const result = bindSystemSourceCut({ ...input, sourceCutHash: testHash(candidate) }, candidate, verifiedSources)
         if (Result.isSuccess(result)) throw new Error('Mismatched source version was accepted')
+        if (!(result.failure instanceof SystemAssessmentError)) throw new Error('Expected typed source-version failure')
         expect(result.failure.message).toBe('Source cut version differs from the registered native engine contract')
       }
     }
