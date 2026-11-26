@@ -10,7 +10,7 @@ import { TestClock } from 'effect/testing'
 
 import { sha256 } from '../hash'
 import { nativeReplayPolicyManifest } from '../intraday-replay/native-policy'
-import { loadActiveStrategyProtocol } from '../strategy'
+import { loadSharedJevProtocol } from '../strategy'
 import { nativeRegistrationFixture, registrationFixture, testHash } from './fixtures.test-support'
 import {
   bindReplayImagePolicy,
@@ -85,7 +85,7 @@ test('manifest identity preserves exact bytes and only permits crane newline fra
 test.each([JevResearchPolicy.Ablation, JevResearchPolicy.Momentum])(
   'image policy membership binds %s independently while retaining the candidate OCI root',
   (policy) => {
-    const policies = Result.getOrThrow(Result.flatMap(loadActiveStrategyProtocol(), nativeReplayPolicyManifest))
+    const policies = Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayPolicyManifest))
     const root = policies.find((p) => p.policy === JevResearchPolicy.Candidate)
     const ablation = registrationFixture().policies.find((p) => p.policy === policy)
     if (root === undefined || ablation === undefined) throw new Error('Missing compiled policy')
@@ -126,7 +126,7 @@ test.each([JevResearchPolicy.Ablation, JevResearchPolicy.Momentum])(
 )
 
 test('the registered incumbent image binds the compiled Jev root', () => {
-  const compiled = Result.getOrThrow(Result.flatMap(loadActiveStrategyProtocol(), nativeReplayPolicyManifest))
+  const compiled = Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayPolicyManifest))
   const root = compiled.find((p) => p.policy === JevResearchPolicy.Candidate)
   const registered = nativeRegistrationFixture(registrationFixture()).policies.find(
     (p) => p.policy === JevResearchPolicy.Incumbent,
@@ -179,9 +179,7 @@ nativeTest(
           files: { 'node_modules/example/index.js': testHash('dependency') },
           controlFiles: {},
           compilerFiles: {},
-          nativeReplayPolicies: Result.getOrThrow(
-            Result.flatMap(loadActiveStrategyProtocol(), nativeReplayPolicyManifest),
-          ),
+          nativeReplayPolicies: Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayPolicyManifest)),
         }
         yield* fs.writeFileString(`${directory}/executable`, executable)
         yield* fs.writeFileString(`${directory}/dependencies`, JSON.stringify(dependencies))

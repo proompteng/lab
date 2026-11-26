@@ -1,4 +1,5 @@
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
+import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { jevProfitTargetCrossed } from './profit-target'
 import { maximumFundedBuyQuantities, maximumFundedSellQuantities } from './entry-sizing'
 import { isShortExitPlan } from '../strategy/funded-exit-plan'
@@ -464,7 +465,47 @@ export const compileJevEntry = (
   Result.gen(function* () {
     const symbols = [...decision.selectedSymbols].sort()
     const planningTargetWeights = jevPlanningTargetWeights(decision)
-    const quotePrices = yield* adverseQuotePrices(pricingSnapshot, symbols)
+    const isIntradayAlpha = decision.schemaVersion === 'bayn.intraday-alpha-target.v1'
+    const quotePrices = isIntradayAlpha
+      ? yield* Result.gen(function* () {
+          const expectedBarMs = Date.parse(decisionSnapshot.manifest.rangeEndAt) - 60_000
+          const bidPriceMicros: Record<string, string> = {}
+          const askPriceMicros: Record<string, string> = {}
+          for (const symbol of symbols) {
+            const bar = decisionSnapshot.bars.find(
+              (entry) => entry.symbol === symbol && Date.parse(entry.eventAt) === expectedBarMs,
+            )
+            if (bar === undefined || !Number.isFinite(bar.close) || bar.close <= 0) {
+              return yield* Result.fail(
+                new JevContractError({ message: `Intraday alpha target ${symbol} lacks completed bar close` }),
+              )
+            }
+            const down = quantizeInstrumentPriceMicros(
+              symbol,
+              yield* priceNumberToMicros(bar.close, `bar close for ${symbol}`, 'DOWN'),
+              'DOWN',
+            )
+            const up = quantizeInstrumentPriceMicros(
+              symbol,
+              yield* priceNumberToMicros(bar.close, `bar close for ${symbol}`, 'UP'),
+              'UP',
+            )
+            if (down <= 0n || up <= 0n) {
+              return yield* Result.fail(
+                new JevContractError({
+                  message: `Intraday alpha bar close for ${symbol} is outside exact price domain`,
+                }),
+              )
+            }
+            bidPriceMicros[symbol] = down.toString()
+            askPriceMicros[symbol] = up.toString()
+          }
+          return {
+            bidPriceMicros: Object.freeze(bidPriceMicros),
+            askPriceMicros: Object.freeze(askPriceMicros),
+          }
+        })
+      : yield* adverseQuotePrices(pricingSnapshot, symbols)
     const maximumBuyQuantityAtoms = {
       ...(yield* maximumFundedBuyQuantities({
         plans: decision.exitPolicy.plans,
@@ -485,6 +526,7 @@ export const compileJevEntry = (
       capitalMicros: decision.evidence.observation.portfolio.brokerState.account.equityMicros,
       precision: decision.evidence.observation.protocol.executionModel.precision,
       plans: decision.exitPolicy.plans,
+      ...(isIntradayAlpha ? { ignoreDisplayedBidSize: true } : {}),
     })
     const entryQuotes: Record<string, EntryQuoteFreshness> = {}
     for (const symbol of symbols) {
@@ -493,30 +535,45 @@ export const compileJevEntry = (
       const originalQuote = decisionSnapshot.latestQuotes[symbol]
       if (plan === undefined || quote === undefined || originalQuote === undefined)
         return yield* Result.fail(new JevContractError({ message: `Jev target ${symbol} lacks execution pricing` }))
-      const spreadCap =
-        decision.schemaVersion === 'bayn.intraday-alpha-target.v1' ? decision.policy.maximumEntrySpreadBps : undefined
-      const exclusion = yield* jevEntryQuoteExclusion(quote, spreadCap)
-      const originalAsk = yield* priceNumberToMicros(originalQuote.askPrice, 'ask', 'UP')
-      const withinCostBound =
-        BigInt(quotePrices.askPriceMicros[symbol] ?? '0') <=
-        jevMaximumEntryAskMicros(decision.evidence.observation.protocol, symbol, originalAsk)
+      const short = isShortExitPlan(plan)
       const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
       const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
-      const short = isShortExitPlan(plan)
-      const requiresMarketableLimit = jevMarketForSymbol(symbol).market === MarketKind.Crypto
-      const ineligibleReason =
-        exclusion ??
-        (requiresMarketableLimit && !withinCostBound
-          ? 'entry cost price ceiling'
-          : (short ? ask >= BigInt(plan.levels.stopPriceMicros) : bid <= BigInt(plan.levels.stopPriceMicros))
-            ? 'protective stop crossed'
-            : (
-                  short
-                    ? ask <= BigInt(plan.levels.profitLimitPriceMicros)
-                    : bid >= BigInt(plan.levels.profitLimitPriceMicros)
-                )
-              ? 'profit target already reached'
-              : null)
+      let ineligibleReason: string | null = null
+      if (isIntradayAlpha) {
+        // Bar-close-anchored limits execute against consolidated NBBO; ignore wide single-exchange IEX
+        // spreads and only reject when both positive sides of the live quote cross the stop or target.
+        const stopMicros = BigInt(plan.levels.stopPriceMicros)
+        const targetMicros = BigInt(plan.levels.profitLimitPriceMicros)
+        const twoSided = bid > 0n && ask > 0n
+        if (twoSided && (short ? bid >= stopMicros && ask >= stopMicros : bid <= stopMicros && ask <= stopMicros)) {
+          ineligibleReason = 'protective stop crossed'
+        } else if (
+          twoSided &&
+          (short ? bid <= targetMicros && ask <= targetMicros : bid >= targetMicros && ask >= targetMicros)
+        ) {
+          ineligibleReason = 'profit target already reached'
+        }
+      } else {
+        const exclusion = yield* jevEntryQuoteExclusion(quote)
+        const originalAsk = yield* priceNumberToMicros(originalQuote.askPrice, 'ask', 'UP')
+        const withinCostBound =
+          BigInt(quotePrices.askPriceMicros[symbol] ?? '0') <=
+          jevMaximumEntryAskMicros(decision.evidence.observation.protocol, symbol, originalAsk)
+        const requiresMarketableLimit = jevMarketForSymbol(symbol).market === MarketKind.Crypto
+        ineligibleReason =
+          exclusion ??
+          (requiresMarketableLimit && !withinCostBound
+            ? 'entry cost price ceiling'
+            : (short ? ask >= BigInt(plan.levels.stopPriceMicros) : bid <= BigInt(plan.levels.stopPriceMicros))
+              ? 'protective stop crossed'
+              : (
+                    short
+                      ? ask <= BigInt(plan.levels.profitLimitPriceMicros)
+                      : bid >= BigInt(plan.levels.profitLimitPriceMicros)
+                  )
+                ? 'profit target already reached'
+                : null)
+      }
       if (ineligibleReason !== null)
         return yield* Result.fail(
           new JevAwaitingEvidence({

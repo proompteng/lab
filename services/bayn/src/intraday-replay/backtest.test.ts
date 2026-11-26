@@ -45,7 +45,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { MarketSourcesSchema } from '../market-data/streaming/raw-events'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { nativeReplayPolicyIdentity } from './native-policy'
-import { loadActiveStrategyProtocol } from '../strategy'
+import { loadSharedJevProtocol } from '../strategy'
 const fixture = () => {
   const source = currentJevReplayFixture()
   const { verification: _verification, ...build } = config.build
@@ -164,7 +164,7 @@ test('preparation retains the configured Webull topic only with its independentl
 test('momentum selects its own source-defined policy without an inference batch identity', () => {
   const input = fixture()
   const identity = Result.getOrThrow(
-    nativeReplayPolicyIdentity(JevResearchPolicy.Momentum, Result.getOrThrow(loadActiveStrategyProtocol())),
+    nativeReplayPolicyIdentity(JevResearchPolicy.Momentum, Result.getOrThrow(loadSharedJevProtocol())),
   )
   const declared = {
     ...input,
@@ -188,7 +188,7 @@ test('ablation replay has its own identity and cannot be selected with candidate
   const input = fixture()
   const candidate = Result.getOrThrow(prepareBacktest(input))
   const ablation = Result.getOrThrow(
-    nativeReplayPolicyIdentity(JevResearchPolicy.Ablation, Result.getOrThrow(loadActiveStrategyProtocol())),
+    nativeReplayPolicyIdentity(JevResearchPolicy.Ablation, Result.getOrThrow(loadSharedJevProtocol())),
   )
   const declared = {
     ...input,

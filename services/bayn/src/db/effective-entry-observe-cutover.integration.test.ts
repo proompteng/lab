@@ -9,6 +9,7 @@ import v40ObserveCutover from '../../migrations/0199_equity_short_observe_cutove
 import v41ObserveCutover from '../../migrations/0212_risk_symmetry_observe_cutover'
 import v42ObserveCutover from '../../migrations/0216_stop_floor_reward_risk_observe_cutover'
 import v43ObserveCutover from '../../migrations/0218_v43_paper_settlement'
+import v44ObserveCutover from '../../migrations/0221_v44_paper_settlement'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -80,6 +81,15 @@ for (const {
     protocolHash: 'f9eaf3c7258e7f9bb5c4f070cfbde7d119cd6cd43f1272653f713bea680da17e',
     rejectionMessage:
       'v43 PAPER settlement requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
+  },
+  {
+    schemaVersion: 'bayn.jev.protocol.v44',
+    migrationId: 221,
+    effectiveEntryObserveCutover: v44ObserveCutover,
+    parameterHash: 'ba1bf25a3c184102bb0243ee2311cd76406a952f48533d7e4bfe1dd04c80e2b3',
+    protocolHash: 'a6b1d3f53ffefeb407e82c2821c7843f4ff0c952ff66ebf714d30aa24f6257f1',
+    rejectionMessage:
+      'v44 PAPER settlement requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
   },
 ]) {
   const behaviorHash = '76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'

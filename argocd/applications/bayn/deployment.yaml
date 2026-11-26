@@ -68,7 +68,7 @@ spec:
                 name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
-              value: 678d560ebfc845541dc0953af94e383a15d8a26c
+              value: 9af2ccad3e6579fb0417e9691287532a81fe8596
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
             - name: RESTATE_INGRESS_ORIGIN
@@ -90,16 +90,16 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:7d3cfe14a6a6a35a8c679c2f7c9fdd53300a3b5840eb25ccaa2466f3a745d2f5
+              value: sha256:861e74725d00677457e27683c03c771a165283893d434d1c4f607e3fdeb5609c
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
+              value: "e5a5943391910843c5c9e78a07f5acfe51fb2f18486abf3ddd09f71b441cda59"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "ba1bf25a3c184102bb0243ee2311cd76406a952f48533d7e4bfe1dd04c80e2b3"
+              value: "fd17d5baaa8ab23cb7bc10dfa357aeef4d2e990b58e2a7fb20e0f00b5d8e634b"
             # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: jev
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "a6b1d3f53ffefeb407e82c2821c7843f4ff0c952ff66ebf714d30aa24f6257f1"
+              value: "1e5cec4058a836a1124b381a1ddc8ec849237fc0011a9425c21254a18beaa9e1"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
               value: "817efba3d61cf0c3845999988cf4507e015a60ccf3d13c7f840dac366173007e"
             - name: BAYN_BROKER_ACCESS
@@ -113,7 +113,7 @@ spec:
                   key: capital-activation-request
                   optional: true
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:7d3cfe14a6a6a35a8c679c2f7c9fdd53300a3b5840eb25ccaa2466f3a745d2f5\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"678d560ebfc845541dc0953af94e383a15d8a26c\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:26dcb9bb2826d4caeec8f5b6ef652e7334ab51de96889b0b672667b271e3ddfa\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"7da517d4bf0b16a4a6a22e8137877aa798aef594\"\n  },\n  \"requestHash\": \"68078cee54eb59d11b6def34037bad0766061731effc3a7e8e4fdc933f42db84\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
+              value: '{}'
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
