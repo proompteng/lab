@@ -17,6 +17,10 @@ import {
 import { JevProtocolSchema, type JevProtocol } from '../../jev/protocol'
 import { IntradayBenchmarkEvidencePolicy, IntradayCandidateEvidencePolicy } from '../../market-data/intraday/model'
 import { intradayAgeNanos } from '../../market-data/intraday/time'
+import {
+  IntradayAlphaTrailingBaselineSchema,
+  type IntradayAlphaTrailingBaseline,
+} from '../../market-data/intraday/trailing-baseline'
 import { persistIntradayRecordRows } from '../../market-data/intraday/verification'
 import { reproduceStrategySnapshot } from '../../market-data/streaming/replay'
 import {
@@ -29,12 +33,13 @@ import { intradayAlphaBenchmarkSymbol, intradayAlphaCandidateSymbols, intradayAl
 import { resolveAlphaRegularSession } from './signals'
 
 export const IntradayAlphaObservationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-alpha-observation.v1'),
+  schemaVersion: Schema.Literal('bayn.intraday-alpha-observation.v2'),
   cycleId: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
   observedAt: UtcInstantSchema,
   protocol: JevProtocolSchema,
   portfolio: JevPortfolioSchema,
+  trailingBaseline: IntradayAlphaTrailingBaselineSchema,
   equityShortEligibility: Schema.optionalKey(Schema.Record(SymbolSchema, EquityShortEligibilitySchema)),
   manifest: JevObservationSchema.fields.manifest,
   rows: JevObservationSchema.fields.rows,
@@ -46,13 +51,18 @@ const fail = (message: string, cause?: unknown) =>
 
 const verifyAlphaObservation = (observation: IntradayAlphaObservation, snapshot: StrategyMarketSnapshot) =>
   Result.gen(function* () {
-    const { protocol, portfolio } = observation
+    const { protocol, portfolio, trailingBaseline } = observation
     const manifest = snapshot.manifest
     const market = intradayAlphaEquityMarketProfile
     if (portfolio.purpose !== JevPurpose.Entry)
-      return yield* fail('Intraday alpha observation requires flat ENTRY state')
+      return yield* fail('Intraday alpha observation requires ENTRY portfolio state')
     if (manifest.observedAt !== observation.observedAt)
       return yield* fail('Intraday alpha observation timestamp differs from snapshot manifest')
+    if (
+      trailingBaseline.sessionDate !== manifest.sessionDate ||
+      trailingBaseline.latestPriorSessionDate >= manifest.sessionDate
+    )
+      return yield* fail('Intraday alpha trailing baseline must strictly precede and bind this session date')
     if (
       [...snapshot.bars, ...snapshot.quotes, ...snapshot.trades].some(
         (record) =>
@@ -141,6 +151,7 @@ export const makeOwnedIntradayAlphaObservation = (input: {
   readonly authorityGenerationHash: string
   readonly protocol: JevProtocol
   readonly portfolio: JevPortfolio
+  readonly trailingBaseline: IntradayAlphaTrailingBaseline
   readonly snapshot: VerifiedStrategyMarketSnapshot
   readonly equityShortEligibility?: Readonly<Record<string, typeof EquityShortEligibilitySchema.Type>>
 }) =>
@@ -163,12 +174,13 @@ export const makeOwnedIntradayAlphaObservation = (input: {
       ),
     )
     const payload: IntradayAlphaObservation = freezeEvidence({
-      schemaVersion: 'bayn.intraday-alpha-observation.v1',
+      schemaVersion: 'bayn.intraday-alpha-observation.v2',
       cycleId: input.cycleId,
       authorityGenerationHash: input.authorityGenerationHash,
       observedAt: input.snapshot.manifest.observedAt,
       protocol: input.protocol,
       portfolio,
+      trailingBaseline: input.trailingBaseline,
       ...(input.equityShortEligibility === undefined ? {} : { equityShortEligibility: input.equityShortEligibility }),
       manifest,
       rows,

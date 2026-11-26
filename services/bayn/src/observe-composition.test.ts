@@ -10071,7 +10071,7 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent', 'midday-native', 'm
           // Exercise the interpreter with the same sealed protection facts and the midday target discriminator.
           strategyDecision: {
             ...decision,
-            schemaVersion: 'bayn.intraday-alpha-target.v1',
+            schemaVersion: 'bayn.intraday-alpha-target.v2',
             phase: IntradayAlphaPhase.MiddayReversion,
             exitPolicy: {
               ...decision.exitPolicy,
