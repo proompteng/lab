@@ -2043,7 +2043,18 @@ test('concurrent ORB position management scopes to owned TSLA even when co-held 
       signedTargetWeights: { COHR: 0.18, LITE: 0.18, MU: -0.18, SNDK: -0.18 },
       disjointEntry: true,
       positions: [{ symbol: 'QQQ', quantityAtoms: '140000000000', marketValueMicros: '70000000000' }],
-      openOrders: [],
+      openOrders: [
+        // Canceled (OrderStatus.Canceled === 'CANCELED') orders must NOT consume fictitious net headroom!
+        {
+          symbol: 'QQQ',
+          side: OrderSide.Buy,
+          status: OrderStatus.Canceled,
+          quantityAtoms: '100000000000',
+          filledQuantityAtoms: '0',
+          limitPriceMicros: '500000000',
+          brokerOrderId: 'canceled-order-1',
+        },
+      ],
       referencePriceMicros: { COHR: '100000000', LITE: '90000000', MU: '80000000', SNDK: '60000000' },
     }),
   )

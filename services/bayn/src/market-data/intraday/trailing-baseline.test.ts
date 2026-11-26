@@ -106,9 +106,10 @@ test('makeClickhouseTrailingBaseline binds provider/feed/source_topic/finality a
         )
       }
       if (text.includes('FROM signal.intraday_bars_1m_v2')) {
-        // Return 5 sessions for QQQ and 0 for sparse NVDA to exercise adjusted_daily_bars_v2 supplement.
-        return Effect.succeed(
-          ['2026-08-26', '2026-08-27', '2026-08-28', '2026-08-31', '2026-09-01'].map((d) => ({
+        // Return 5 sessions for QQQ and 1 raw pre-split session for sparse NVDA so the coherent
+        // adjusted_daily_bars_v2 series replaces (rather than mixes with) raw NVDA rows.
+        return Effect.succeed([
+          ...['2026-08-26', '2026-08-27', '2026-08-28', '2026-08-31', '2026-09-01'].map((d) => ({
             symbol: 'QQQ',
             session_date: d,
             open: 500,
@@ -116,7 +117,8 @@ test('makeClickhouseTrailingBaseline binds provider/feed/source_topic/finality a
             low: 495,
             close: 500,
           })),
-        )
+          { symbol: 'NVDA', session_date: '2026-08-25', open: 1000, high: 1020, low: 980, close: 1000 },
+        ])
       }
       if (text.includes('FROM signal.snapshot_manifests_v2')) {
         return Effect.succeed([{ snapshot_id: 'snap-2026-09-01' }])

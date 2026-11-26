@@ -412,12 +412,10 @@ export const makeClickhouseTrailingBaseline = (
             ORDER BY symbol, session_date
           `
           const decodedFallback = yield* Schema.decodeUnknownEffect(Schema.Array(DailyRowSchema))(fallbackRaw)
-          const existingKeys = new Set(dailyRows.map((row) => `${row.symbol}|${row.sessionDate}`))
+          const fallbackBySymbol = new Map<string, PriorSessionDailySummary[]>()
           for (const row of decodedFallback) {
-            const key = `${row.symbol}|${row.session_date}`
-            if (existingKeys.has(key)) continue
-            existingKeys.add(key)
-            dailyRows.push({
+            const list = fallbackBySymbol.get(row.symbol) ?? []
+            list.push({
               symbol: row.symbol,
               sessionDate: row.session_date,
               open: toFiniteNumber(row.open),
@@ -425,6 +423,22 @@ export const makeClickhouseTrailingBaseline = (
               low: toFiniteNumber(row.low),
               close: toFiniteNumber(row.close),
             })
+            fallbackBySymbol.set(row.symbol, list)
+          }
+          // Replace sparse symbols with a single coherent adjustment='all' daily series rather than
+          // splicing raw intraday bars and adjusted daily bars across a split/dividend boundary.
+          const replacedSymbols = new Set<string>()
+          for (const [symbol, rows] of fallbackBySymbol) {
+            if (rows.length >= query.minimumSessions) replacedSymbols.add(symbol)
+          }
+          if (replacedSymbols.size > 0) {
+            const filtered = dailyRows.filter((row) => !replacedSymbols.has(row.symbol))
+            dailyRows.length = 0
+            dailyRows.push(...filtered)
+            for (const symbol of replacedSymbols) {
+              const rows = fallbackBySymbol.get(symbol)
+              if (rows !== undefined) dailyRows.push(...rows)
+            }
           }
         }
       }

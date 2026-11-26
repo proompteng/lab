@@ -4,6 +4,7 @@ import { notionalMicros, scaledNumber } from '../strategy/execution-model/fixed-
 import { WEIGHT_SCALE } from '../strategy/execution-model/model'
 import { Sha256Schema } from '../schemas'
 import { reconciliationIncompleteRestrictionReason } from './authority'
+import { OrderStatus } from './contracts'
 import { legacyAuthorityGenerationV2SchemaVersion, legacyAuthorityGenerationV3SchemaVersion } from './legacy-wire'
 
 export const QualificationBindingSchema = Schema.Struct({
@@ -100,7 +101,11 @@ const currentSignedNetExposureMicros = (facts: ExecutionMandateAllocationFacts):
     0n,
   )
 
-const TERMINAL_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'REJECTED', 'EXPIRED'])
+const isTerminalOrderStatus = (status: string): boolean =>
+  status === OrderStatus.Filled ||
+  status === OrderStatus.Canceled ||
+  status === OrderStatus.Rejected ||
+  status === OrderStatus.Expired
 const QUANTITY_SCALE = 1_000_000_000n
 
 /**
@@ -115,7 +120,7 @@ const existingOpenOrderNetEnvelopeMicros = (
   const groupedBuys = new Map<string, bigint>()
   const groupedSells = new Map<string, bigint>()
   for (const order of orders) {
-    if (TERMINAL_ORDER_STATUSES.has(order.status) || order.quantityAtoms === undefined) continue
+    if (isTerminalOrderStatus(order.status) || order.quantityAtoms === undefined) continue
     const remaining = BigInt(order.quantityAtoms) - BigInt(order.filledQuantityAtoms)
     if (remaining <= 0n) continue
     const limit = order.limitPriceMicros === undefined ? 0n : BigInt(order.limitPriceMicros)
