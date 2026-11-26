@@ -38,6 +38,10 @@ import { buildMutationShadowCycleDecision } from '../../observe-composition/deci
 import { closeWindowForCycle } from '../../observe-composition/execution-cycle'
 import { constructExecutionDecision, constructObserveShadowDecision } from '../../shadow-decision'
 import { decodeExecutionDecisionDocument } from '../../shadow-decision-contract'
+import { verifyReportJob } from '../../forward-performance-verification-worker'
+import { ReportVerificationTask } from '../../forward-performance/verification'
+import { AlphaDecisionJsonRow, verifyAlphaDecisionJson } from '../../forward-performance/postgres/alpha-decisions'
+import { readPerformanceAlphaDecisionCursor } from '../../forward-performance/postgres/decision-cursor'
 import { shortEntryBrokerReads } from '../../testing/entry-broker-reads.test-support'
 import { JevClient, JevError, type JevInference } from '../../jev/client'
 import { JevFailure } from '../../jev/contract'
@@ -1689,6 +1693,92 @@ test('durable execution decision validation reproduces bar-close alpha pricing, 
     expect(BigInt(shortIntent?.quantityAtoms ?? '0')).toBeGreaterThan(100_000_000_000n)
   }
   expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+
+  // A real strictly decoded native decision remains visible before any execution evidence exists.
+  // The projection must not mistake bound intent identities for persisted/submitted orders.
+  const alphaRow = Schema.decodeUnknownSync(
+    AlphaDecisionJsonRow,
+    strictParseOptions,
+  )({
+    cycle_id: document.bindings.cycleId,
+    decision_hash: document.contentHash,
+    document_json: JSON.stringify(document),
+    created_at: new Date(document.createdAt),
+    account_id: document.bindings.accountId,
+    authority_generation_hash: document.bindings.authorityGenerationHash,
+    qualification_run_id: document.bindings.qualificationRunId,
+    strategy_protocol_hash: document.bindings.strategyProtocolHash,
+    risk_policy_hash: document.bindings.policyHash,
+    session_date: sessionDate,
+    cycle_state: CycleState.Active,
+    terminal_at: null,
+    generation_activated_at: new Date(Date.parse(document.createdAt) - 1_000),
+    reconciled_at: new Date(Date.parse(document.createdAt) + 2_000),
+    execution_evidence_in_scope: false,
+    qualification_build: null,
+    activation_build: null,
+  })
+  const alphaProjection = verifyAlphaDecisionJson(alphaRow)
+  expect(alphaProjection.unverifiedAlphaDecisionHashes).toEqual([])
+  expect(alphaProjection.alphaDecisions).toHaveLength(1)
+  const alphaEvidence = alphaProjection.alphaDecisions[0]!
+  expect(alphaEvidence.selectedSymbols.toSorted()).toEqual(['COHR', 'LITE', 'MU', 'SNDK'])
+  expect(alphaEvidence.targetPlan.legs.map((leg) => leg.intentId)).toEqual([...document.orderedIntentIds])
+  expect(alphaEvidence.targetPlan.legs.map((leg) => leg.quantityAtoms)).toEqual(
+    document.targetPlan.intentTargets.map((leg) => leg.quantityAtoms),
+  )
+  expect(alphaEvidence.cycleState).toBe(CycleState.Active)
+  expect(alphaEvidence.executionEvidenceInScope).toBe(false)
+  expect(alphaEvidence.executingBuild).toBeNull()
+  expect(alphaEvidence.strategyProtocolHash).toBe(document.bindings.strategyProtocolHash)
+  expect(alphaEvidence.riskPolicyHash).toBe(document.bindings.policyHash)
+  for (const state of [CycleState.Pending, CycleState.Blocked, CycleState.NoTrade]) {
+    const projected = verifyAlphaDecisionJson({ ...alphaRow, cycle_state: state })
+    expect(projected.alphaDecisions[0]?.cycleState).toBe(state)
+    expect(projected.alphaDecisions[0]?.targetPlan).toEqual(alphaEvidence.targetPlan)
+    expect(projected.alphaDecisions[0]?.executionEvidenceInScope).toBe(false)
+  }
+  const completedProjection = verifyAlphaDecisionJson({
+    ...alphaRow,
+    cycle_state: CycleState.Completed,
+    terminal_at: new Date(Date.parse(document.createdAt) + 1_000),
+    execution_evidence_in_scope: true,
+  })
+  expect(completedProjection.alphaDecisions[0]?.executionEvidenceInScope).toBe(true)
+  expect(completedProjection.alphaDecisions[0]?.targetPlan).toEqual(alphaEvidence.targetPlan)
+  expect(verifyReportJob({ id: 1, input: { task: ReportVerificationTask.AlphaDecision, row: alphaRow } })).toEqual({
+    id: 1,
+    outcome: 'ALPHA_DECISION',
+    value: alphaProjection,
+  })
+  expect(
+    await Effect.runPromise(
+      readPerformanceAlphaDecisionCursor((consume) => consume(alphaRow).pipe(Effect.as(undefined))),
+    ),
+  ).toEqual({
+    alphaDecisions: [...alphaProjection.alphaDecisions],
+    unverifiedAlphaDecisionHashes: [...alphaProjection.unverifiedAlphaDecisionHashes],
+  })
+  for (const invalid of [
+    { ...alphaRow, decision_hash: 'f'.repeat(64) },
+    { ...alphaRow, cycle_id: 'f'.repeat(64) },
+    { ...alphaRow, account_id: 'foreign-account' },
+    { ...alphaRow, authority_generation_hash: 'f'.repeat(64) },
+    { ...alphaRow, qualification_run_id: 'f'.repeat(64) },
+    { ...alphaRow, strategy_protocol_hash: 'f'.repeat(64) },
+    { ...alphaRow, risk_policy_hash: 'f'.repeat(64) },
+    { ...alphaRow, session_date: Schema.decodeUnknownSync(IsoDateSchema)('2026-09-05') },
+    { ...alphaRow, created_at: new Date(Date.parse(document.createdAt) + 1) },
+    { ...alphaRow, generation_activated_at: new Date(Date.parse(document.createdAt) + 1) },
+    { ...alphaRow, reconciled_at: new Date(Date.parse(document.createdAt) - 1) },
+    { ...alphaRow, execution_evidence_in_scope: true },
+    { ...alphaRow, cycle_state: CycleState.Completed, execution_evidence_in_scope: true },
+    { ...alphaRow, document_json: JSON.stringify({ ...document, dispatchable: !document.dispatchable }) },
+  ])
+    expect(verifyAlphaDecisionJson(invalid)).toEqual({
+      alphaDecisions: [],
+      unverifiedAlphaDecisionHashes: [invalid.decision_hash],
+    })
 
   // Tampering slippage above policy (11bp) or reference price away from bar close fails durable validation.
   const { contentHash: _ignored, ...docMaterial } = document

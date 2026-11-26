@@ -1413,7 +1413,7 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v8`. Its hashed `scope` records the requested
+The forward-performance command emits `bayn.forward-performance-report.v9`. Its hashed `scope` records the requested
 `AUTHORITY_GENERATION` and `authorityGenerationHash`, including when no eligible financial cycle exists. Programmatic
 account-history reports declare `ACCOUNT` scope. Requested scope does not supply missing financial source or strategy
 bindings; those remain null until eligible evidence exists. Its `inferenceExpenses` section joins
@@ -1993,7 +1993,7 @@ The command always requires `--authority-generation`; omitting `--persist-receip
 read-only. Programmatic account-history reports may span retired strategies and mandates and declare `ACCOUNT` scope.
 Account history that includes legacy daily SIP evidence requires the historical settings described above; native-only
 history does not. A scope without completed executions remains unqualified.
-The command emits `bayn.forward-performance-report.v8`. Its `receipt` contains the unchanged v4 financial receipt with explicit broker cash settlement rounding;
+The command emits `bayn.forward-performance-report.v9`. Its `receipt` contains the unchanged v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation. Each session retains the exact current
 `matchedQuoteHashes` and `requestsWithCoverageIssues`, including the provider stage, receipt/resolution identities,
@@ -2016,6 +2016,17 @@ the generation is terminal or whether a receipt was previously saved. An active 
 `NO_PERSISTED_RECEIPT` in status. Only a successful `--persist-receipt` transaction changes the output marker to
 `PERSISTED_TERMINAL`; failed admission emits no successful report. `reportHash` binds that marker and all diagnostics,
 while the immutable per-generation receipt and its hash retain their existing schema and meaning.
+
+`nativeAlpha` retains verified intraday-alpha engine and basket identities through actual execution and completed
+position attribution. It separates committed decision coverage, filled quantities, supported episode gross P&L and
+unallocated account costs. Blocked and unfinished decisions retain their evidence gaps; planned neutrality does not
+establish filled neutrality. Observed intent/order counts record positive evidence; zero observed rows in an unknown
+scope do not prove no submission. `knownCompleted*` fields are supported closed-episode subtotals; `complete*` fields
+require complete terminal entry-fill ownership and closure, with no omitted unverified decision for an engine total.
+`financialConservation.status: RECONCILED` describes an arithmetic bridge to the scoped receipt totals, not final fee coverage
+or fully costed engine profit; the receipt's evidence status and unknown costs remain unchanged.
+See [native alpha performance evidence](../../docs/bayn/native-alpha-performance.md)
+for scope, ownership and cost limits. This analytical section does not change the stored v4 receipt or its persistence gate.
 
 `costDiagnostics` separates the generation receipt's operating-charge evidence, metered inference estimates, and
 the attached assessment's registered cost scope. `receiptOperatingCharges` follows the report's declared account or
