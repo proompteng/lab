@@ -1,4 +1,7 @@
 import { Result, Schema } from 'effect'
+import { AccountStatus, ReconciliationStatus } from '../../execution/contracts'
+import { decodeJevPortfolio, JevPurpose } from '../../jev/portfolio'
+import { reconciledStateHash } from '../../simulation-reconciliation/broker-model'
 import { normalizeMarketCalendarResult } from '../../broker/alpaca/normalizers'
 import { canonicalHashV1Result } from '../../hash'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../../jev/protocol'
@@ -45,6 +48,58 @@ const calendar = Result.getOrThrow(
 const sessionOpenMs = Date.parse('2026-09-04T13:30:00.000Z') // 09:30 EDT
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 const policy = makeIntradayAlphaPolicy(protocol)
+
+export const makeFlatAlphaPortfolio = (
+  observedAt: string,
+  equityMicros = '100000000000',
+  buyingPowerMicros = equityMicros,
+  accountId = 'alpha-test-account',
+) => {
+  const material = {
+    account: {
+      schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
+      accountId,
+      status: AccountStatus.Active,
+      currency: 'USD' as const,
+      cashMicros: equityMicros,
+      buyingPowerMicros,
+      equityMicros,
+      cryptoFeeTier: null,
+      observedAt,
+    },
+    positions: [] as const,
+    positionsObservedAt: observedAt,
+    orders: [] as const,
+    ordersObservedAt: observedAt,
+    accountingHash: 'd'.repeat(64),
+  }
+  const stateHash = Result.getOrThrow(reconciledStateHash(material))
+  const reconciliationMaterial = {
+    schemaVersion: 'bayn.paper-reconciliation.v1' as const,
+    accountId,
+    expectedHash: stateHash,
+    observedHash: stateHash,
+    status: ReconciliationStatus.Exact,
+    discrepancies: [] as const,
+    reconciledAt: observedAt,
+  }
+  const reconciliationId = Result.getOrThrow(canonicalHashV1Result(reconciliationMaterial))
+  const contentHash = Result.getOrThrow(canonicalHashV1Result({ ...reconciliationMaterial, reconciliationId }))
+  return Result.getOrThrow(
+    decodeJevPortfolio({
+      purpose: JevPurpose.Entry,
+      brokerState: {
+        ...material,
+        unknownOrderCount: 0,
+        reconciliation: {
+          ...reconciliationMaterial,
+          reconciliationId,
+          contentHash,
+        },
+      },
+    }),
+  )
+}
 
 export const makeTestTrailingBaseline = (
   overrides?: Readonly<

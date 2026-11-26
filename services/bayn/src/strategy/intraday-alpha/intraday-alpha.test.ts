@@ -1,5 +1,9 @@
 import { expect, test } from 'bun:test'
-import { makeAlphaStreamingSnapshot, makeTestTrailingBaseline } from './test-support'
+import {
+  makeAlphaStreamingSnapshot,
+  makeTestTrailingBaseline,
+  makeFlatAlphaPortfolio as makeFlatPortfolio,
+} from './test-support'
 import { Effect, Fiber, Layer, Option, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
@@ -102,53 +106,6 @@ const testTrailingBaseline = makeTestTrailingBaseline()
 const testTrailingBaselineLayer = Layer.succeed(IntradayTrailingBaseline, {
   load: () => Effect.succeed(testTrailingBaseline),
 })
-
-const makeFlatPortfolio = (observedAt: string, equityMicros = '100000000000', buyingPowerMicros = equityMicros) => {
-  const material = {
-    account: {
-      schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
-      accountId,
-      status: AccountStatus.Active,
-      currency: 'USD' as const,
-      cashMicros: equityMicros,
-      buyingPowerMicros,
-      equityMicros,
-      cryptoFeeTier: null,
-      observedAt,
-    },
-    positions: [] as const,
-    positionsObservedAt: observedAt,
-    orders: [] as const,
-    ordersObservedAt: observedAt,
-    accountingHash: 'd'.repeat(64),
-  }
-  const stateHash = Result.getOrThrow(reconciledStateHash(material))
-  const reconciliationMaterial = {
-    schemaVersion: 'bayn.paper-reconciliation.v1' as const,
-    accountId,
-    expectedHash: stateHash,
-    observedHash: stateHash,
-    status: ReconciliationStatus.Exact,
-    discrepancies: [] as const,
-    reconciledAt: observedAt,
-  }
-  const reconciliationId = Result.getOrThrow(canonicalHashV1Result(reconciliationMaterial))
-  const contentHash = Result.getOrThrow(canonicalHashV1Result({ ...reconciliationMaterial, reconciliationId }))
-  return Result.getOrThrow(
-    decodeJevPortfolio({
-      purpose: JevPurpose.Entry,
-      brokerState: {
-        ...material,
-        unknownOrderCount: 0,
-        reconciliation: {
-          ...reconciliationMaterial,
-          reconciliationId,
-          contentHash,
-        },
-      },
-    }),
-  )
-}
 
 const makeShortEligibility = (
   symbols: readonly string[],
