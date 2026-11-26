@@ -17,7 +17,7 @@ import {
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { protectionReleaseReadCount, type ProtectionReadAllowance } from '../broker/alpaca/poll-budget'
-import { IntentState } from '../execution/contracts'
+import { IntentState, OrderSchema } from '../execution/contracts'
 import type { NativeProtectionCancelCommand } from '../execution/intents/domain'
 import { currentUtcInstant } from '../time'
 import { canonicalHashV1Result, sha256 } from '../hash'
@@ -916,6 +916,41 @@ export const makeBrokerObservationStore = (
         )
       }),
     )
+  const readProtectionOrder = (brokerOrderId: string, clientOrderId: string) =>
+    run(
+      sql`SELECT jsonb_strip_nulls(jsonb_build_object(
+        'schemaVersion', child.schema_version, 'accountId', child.account_id,
+        'brokerOrderId', child.broker_order_id, 'parentBrokerOrderId', child.parent_broker_order_id,
+        'clientOrderId', child.client_order_id, 'intentId', child.intent_id, 'symbol', child.symbol,
+        'side', child.side, 'orderType', child.order_type, 'timeInForce', child.time_in_force,
+        'quantityAtoms', child.quantity_atoms::text, 'notionalMicros', child.notional_micros::text,
+        'filledQuantityAtoms', child.filled_quantity_atoms::text, 'limitPriceMicros', child.limit_price_micros::text,
+        'stopPriceMicros', child.stop_price_micros::text, 'status', child.status,
+        'observedAt', to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      )) AS value
+      FROM orders AS child JOIN broker_events AS event USING (event_id)
+      JOIN intents AS intent ON intent.intent_id = child.intent_id AND intent.account_id = child.account_id
+      JOIN broker_observations AS observation ON observation.account_id = child.account_id
+        AND observation.source_revision = ${sourceRevision}
+        AND observation.financial_reconciliation_fence_at >= event.observed_at
+      WHERE child.account_id = ${accountId} AND child.broker_order_id = ${brokerOrderId}
+        AND child.client_order_id = ${clientOrderId} AND child.parent_broker_order_id IS NOT NULL
+        AND intent.protection IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM orders AS parent WHERE parent.account_id = child.account_id
+            AND parent.broker_order_id = child.parent_broker_order_id AND parent.intent_id = child.intent_id
+            AND parent.client_order_id = intent.client_order_id
+        )
+      ORDER BY event.source_sequence DESC LIMIT 1`.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Array(Schema.Struct({ value: OrderSchema })).check(Schema.isMaxLength(1)),
+            strictParseOptions,
+          ),
+        ),
+        Effect.map((rows) => rows[0]?.value),
+      ),
+    )
   const readSourceProjection = (eventId: string) =>
     run(
       sql`SELECT CASE
@@ -1420,6 +1455,7 @@ export const makeBrokerObservationStore = (
     isNotificationCovered,
     isSessionBoundaryCovered,
     readNotification,
+    readProtectionOrder,
     readSourceProjection,
     readProjectionBacklog,
     recordProjection,

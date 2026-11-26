@@ -64,6 +64,21 @@ const notification = (data: Record<string, unknown>): BrokerNotification => ({
 const binding = { intentId, clientOrderId }
 
 describe('broker trade-update projection', () => {
+  test.each(['held', 'accepted'])('projects a valid %s lifecycle observation without inventing a fill', (event) => {
+    const result = projectBrokerTradeUpdate(
+      notification({
+        event,
+        timestamp: '2026-11-11T17:37:18.784802123Z',
+        order: { ...order, status: event, filled_at: null, filled_qty: '0', filled_avg_price: null },
+      }),
+      [binding],
+    )
+    expect(result._tag).toBe('Project')
+    if (result._tag !== 'Project') throw new Error('expected projected lifecycle')
+    expect(result.order.order).toMatchObject({ intentId, status: 'PENDING', filledQuantityAtoms: '0' })
+    expect(result.fill).toBeUndefined()
+  })
+
   test('normalizes a streamed fill to the same immutable order and execution identities used by reconciliation', () => {
     const result = projectBrokerTradeUpdate(
       notification({
