@@ -567,6 +567,7 @@ export const prepareFreshReplayDatabase = (timeoutMs = 30_000) =>
   )
 
 export type BacktestPass = Parameters<RecordAutonomousCyclePass>[0] & {
+  readonly executionIssuedAt: string
   readonly cycleResult: CycleRunResult | null
   readonly brokerState: ReplayBrokerState
   readonly valuation: ReplayValuationEvidence | null
@@ -814,28 +815,34 @@ export const runBacktest = (
           const schedule = yield* driveSession(
             {
               ...runtime,
-              advance: run(runtime.advance).pipe(
-                Effect.tap((pass) =>
-                  Effect.gen(function* () {
-                    const valued = yield* Effect.result(
-                      Effect.all({ account: broker.read.account, valuation: broker.valuation }),
-                    )
-                    const usableValuation =
-                      Result.isSuccess(valued) && qualifiesReplayValuation(valued.success.valuation)
-                    if (usableValuation) observeEquity(equityAfterKnownCosts(valued.success.account.value.equityMicros))
-                    else valuationFailureCount++
-                    yield* recordPass({
-                      ...pass.observation,
-                      cycleResult: pass.result ?? null,
-                      brokerState: yield* broker.snapshot,
-                      valuation: Result.isSuccess(valued) ? valued.success.valuation : null,
-                      valuationFailure: Result.isFailure(valued)
-                        ? causeSummary(valued.failure)
-                        : usableValuation
-                          ? null
-                          : { reason: 'unexecutable-held-position-mark' },
-                    })
-                  }),
+              advance: Clock.currentTimeMillis.pipe(
+                Effect.flatMap((issuedAtMs) =>
+                  run(runtime.advance).pipe(
+                    Effect.tap((pass) =>
+                      Effect.gen(function* () {
+                        const valued = yield* Effect.result(
+                          Effect.all({ account: broker.read.account, valuation: broker.valuation }),
+                        )
+                        const usableValuation =
+                          Result.isSuccess(valued) && qualifiesReplayValuation(valued.success.valuation)
+                        if (usableValuation)
+                          observeEquity(equityAfterKnownCosts(valued.success.account.value.equityMicros))
+                        else valuationFailureCount++
+                        yield* recordPass({
+                          ...pass.observation,
+                          executionIssuedAt: utcInstantFromEpochMillis(issuedAtMs),
+                          cycleResult: pass.result ?? null,
+                          brokerState: yield* broker.snapshot,
+                          valuation: Result.isSuccess(valued) ? valued.success.valuation : null,
+                          valuationFailure: Result.isFailure(valued)
+                            ? causeSummary(valued.failure)
+                            : usableValuation
+                              ? null
+                              : { reason: 'unexecutable-held-position-mark' },
+                        })
+                      }),
+                    ),
+                  ),
                 ),
               ),
             },

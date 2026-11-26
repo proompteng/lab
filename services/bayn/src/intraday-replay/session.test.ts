@@ -562,6 +562,39 @@ test('streaming reporting cuts preserve native deadlines and continue consuming 
   expect(passes).toEqual([0, 9, 10])
 })
 
+test('streaming commands admitted before the reporting cut retain measured completion without a post-cut command', async () => {
+  const issuedAt: number[] = []
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      const f = streamingFixture([8, 9, 12])
+      return yield* f.drive(
+        {
+          nextDelayMs: 1,
+          advance: Effect.gen(function* () {
+            const at = yield* Clock.currentTimeMillis
+            issuedAt.push(at)
+            if (at === 8) yield* f.advanceTo(13)
+            return {
+              observation: {
+                result: 'SUCCESS' as const,
+                outcome: 'ACQUIRED' as const,
+                observedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+              },
+            }
+          }),
+        },
+        f.advanceTo,
+        0,
+        10,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(issuedAt).toEqual([0, 8])
+  expect(result).toMatchObject({ lastPollAtMs: 10, completedAtMs: 13, passCount: 2 })
+})
+
 test('streaming source frontier failures withhold a completed replay', async () => {
   const result = await Effect.runPromise(
     Effect.gen(function* () {
@@ -571,6 +604,7 @@ test('streaming source frontier failures withhold a completed replay', async () 
         sourceRevision: Effect.succeed(0),
         brokerStateHash: Effect.succeed('unchanged'),
       })
+
       return yield* Effect.result(
         drive(
           {

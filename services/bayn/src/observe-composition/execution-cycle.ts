@@ -1175,6 +1175,7 @@ const executePreparedMutationCycleStep = (
         mutationOperation: executed.operation,
         mutationAdvanced: executed.mutationAdvanced,
         settlement: executed.settlement.outcome,
+        ...(executed.denialReason === undefined ? {} : { denialReason: executed.denialReason }),
       }),
     )
     const staleScopedClose =

@@ -482,9 +482,75 @@ durableTest.each([
             ),
           }),
         )
+        if (alphaFixture !== null) {
+          const denials = yield* Schema.decodeUnknownEffect(
+            Schema.Array(
+              Schema.Struct({
+                symbol: Schema.String,
+                side: Schema.String,
+                event_type: Schema.String,
+                denial_reason: Schema.NullOr(Schema.String),
+              }),
+            ),
+          )(
+            yield* sql`SELECT intent.symbol, intent.side, event.event_type, event.denial_reason
+            FROM mutation_events AS event JOIN intents AS intent USING (intent_id)
+            WHERE event.event_type IN ('SUBMIT_DENIED', 'SUBMIT_REJECTED')
+            ORDER BY event.occurred_at, event.event_id LIMIT 16`,
+          )
+          const documents = report.decisions.map((row) => Result.getOrThrow(decodeExecutionDecisionDocument(row)))
+          yield* Effect.logInfo('Native alpha replay integration evidence').pipe(
+            Effect.annotateLogs({
+              targets: JSON.stringify(
+                documents.map((document) => ({
+                  selectedSymbols:
+                    document.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+                      ? document.strategyDecision.selectedSymbols
+                      : null,
+                  phase:
+                    document.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+                      ? document.strategyDecision.phase
+                      : null,
+                  plannedLegs: document.targetPlan.intentTargets.length,
+                })),
+              ),
+              shortEligibility: JSON.stringify(
+                report.alphaObservations?.map(({ payload }) => ({
+                  observedAt: payload.observedAt,
+                  eligibility: Object.fromEntries(
+                    ['MU', 'SNDK'].map((symbol) => [symbol, payload.equityShortEligibility?.[symbol] ?? null]),
+                  ),
+                })),
+              ),
+              denials: JSON.stringify(denials),
+              orderSymbols: JSON.stringify(report.brokerState.orders.map(({ order }) => order.symbol)),
+              fillSymbols: JSON.stringify(report.brokerState.fills.map((fill) => fill.symbol)),
+              firstIssuedAt: passes[0]?.executionIssuedAt ?? null,
+              lastIssuedAt: passes.at(-1)?.executionIssuedAt ?? null,
+              lastObservedAt: passes.at(-1)?.observedAt ?? null,
+            }),
+          )
+        }
         expect(Date.parse(passes[0]?.observedAt ?? '')).toBeGreaterThanOrEqual(openMs)
         if (alphaFixture === null) expect(Date.parse(passes.at(-1)?.observedAt ?? '')).toBeGreaterThanOrEqual(closeMs)
-        else expect(Date.parse(passes.at(-1)?.observedAt ?? '')).toBeLessThanOrEqual(closeMs)
+        else {
+          expect(passes.length).toBeGreaterThan(0)
+          expect(
+            passes.every(
+              (pass) => Date.parse(pass.executionIssuedAt) >= openMs && Date.parse(pass.executionIssuedAt) <= closeMs,
+            ),
+          ).toBe(true)
+          expect(
+            passes.every(
+              (pass, index) =>
+                index === 0 ||
+                Date.parse(pass.executionIssuedAt) >= Date.parse(passes[index - 1]?.executionIssuedAt ?? ''),
+            ),
+          ).toBe(true)
+          expect(Date.parse(passes.at(-1)?.observedAt ?? '')).toBeLessThanOrEqual(
+            report.sessions.at(-1)?.schedule.completedAtMs ?? Number.NaN,
+          )
+        }
         expect(report.initialization.startedAt).toBe(new Date(openMs - 60_000).toISOString())
         expect(Date.parse(report.initialization.completedAt)).toBeLessThan(openMs)
         expect(report.initialization.elapsedMs).toBeGreaterThanOrEqual(25)
