@@ -1,6 +1,9 @@
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
-import { nativeReplayPolicyIdentity } from './native-policy'
+import { nativeReplayPolicyIdentity, nativeReplayStrategyIdentity } from './native-policy'
+import { alphaTradeReplayFixture } from './alpha-replay.test-support'
+import { IntradayAlphaPhase, intradayAlphaEquityMarketProfile } from '../strategy/intraday-alpha/policy'
+import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
 import { loadSharedJevProtocol } from '../strategy'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
@@ -244,8 +247,9 @@ durableTest.each([
   'momentum-measured',
   'momentum-trading',
   'momentum-trading-sip',
+  'alpha-trading',
 ] as const)(
-  'native backtest retains %s polling through measured bootstrap and cleanup latency',
+  'native backtest retains %s execution through measured bootstrap and cleanup latency',
   async (boundary) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing isolated replay databases')
@@ -256,8 +260,10 @@ durableTest.each([
       !/^127\.0\.0\.1:\d+$/.test(baynTestTigerBeetleAddress)
     )
       throw new Error('Backtest acceptance requires isolated local test databases')
-    const trading = boundary === 'momentum-trading' || boundary === 'momentum-trading-sip'
-    const retained = trading ? momentumTradeReplayFixture() : retainedReplayFixture()
+    const alphaFixture = boundary === 'alpha-trading' ? alphaTradeReplayFixture() : null
+    const trading = alphaFixture !== null || boundary === 'momentum-trading' || boundary === 'momentum-trading-sip'
+    const retained = alphaFixture ?? (trading ? momentumTradeReplayFixture() : retainedReplayFixture())
+    const market = alphaFixture === null ? equityMarketProfile : intradayAlphaEquityMarketProfile
     const openMs = Date.parse(
       trading
         ? retained.input.query.observedAt
@@ -265,7 +271,7 @@ durableTest.each([
           ? '2026-09-04T13:30:00Z'
           : '2026-09-04T23:59:30Z',
     )
-    const closeMs = openMs + (trading ? 40_000 : 60_000)
+    const closeMs = openMs + (alphaFixture !== null ? 55_000 : trading ? 40_000 : 60_000)
     const tapeRange = { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() }
     const fixtureQuotes = new Map(retained.input.snapshot.quotes.map((quote) => [quote.symbol, quote]))
     const tapeText =
@@ -308,7 +314,11 @@ durableTest.each([
     }
     const { verification: _verification, ...rootBuild } = config.build
     const policy = boundary.startsWith('momentum-') ? JevResearchPolicy.Momentum : JevResearchPolicy.Candidate
-    const identity = Result.getOrThrow(nativeReplayPolicyIdentity(policy, Result.getOrThrow(loadSharedJevProtocol())))
+    const protocol = Result.getOrThrow(loadSharedJevProtocol())
+    const identity =
+      alphaFixture === null
+        ? Result.getOrThrow(nativeReplayPolicyIdentity(policy, protocol))
+        : Result.getOrThrow(nativeReplayStrategyIdentity(policy, alphaFixture.binding, protocol))
     const build = {
       ...rootBuild,
       strategyBehaviorHash: identity.strategy.behaviorHash,
@@ -326,7 +336,20 @@ durableTest.each([
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v11',
+          ...(alphaFixture === null
+            ? { schemaVersion: 'bayn.backtest.v11' }
+            : {
+                schemaVersion: 'bayn.backtest.v12',
+                strategyBinding: alphaFixture.binding,
+                alphaBaselineSources: alphaFixture.alphaBaselineSources,
+                equityShortAccount: {
+                  shortingEnabled: true,
+                  noShorting: false,
+                  observedAt: '2026-09-04T13:29:00.000Z',
+                  sourceHash: Result.getOrThrow(canonicalHashV1Result({ fixture: 'native-alpha-short-account' })),
+                  policy: 'retained-as-of-session',
+                },
+              }),
           policy,
           latencyStress: null,
           jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -368,7 +391,7 @@ durableTest.each([
             },
             { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
           ],
-          assets: equityMarketProfile.universe.map((symbol, index) => ({
+          assets: market.universe.map((symbol, index) => ({
             id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
             symbol,
             class: 'us_equity',
@@ -376,6 +399,7 @@ durableTest.each([
             status: 'active',
             tradable: true,
             fractionable: true,
+            ...(alphaFixture === null ? {} : { marginable: true, shortable: true, easy_to_borrow: true }),
           })),
           assetObservationAt: '2026-09-04T13:29:00.000Z',
           assetObservationPolicy: 'retained-as-of-session',
@@ -435,7 +459,7 @@ durableTest.each([
               passes.push(pass)
             }),
           () => Effect.die('A quiet opening fixture must not call the provider'),
-          boundary === 'retained-responses' || policy === JevResearchPolicy.Momentum
+          boundary === 'retained-responses' || !prepared.requiresInference
             ? null
             : {
                 jev: entryProviderFixture(
@@ -459,7 +483,8 @@ durableTest.each([
           }),
         )
         expect(Date.parse(passes[0]?.observedAt ?? '')).toBeGreaterThanOrEqual(openMs)
-        expect(Date.parse(passes.at(-1)?.observedAt ?? '')).toBeGreaterThanOrEqual(closeMs)
+        if (alphaFixture === null) expect(Date.parse(passes.at(-1)?.observedAt ?? '')).toBeGreaterThanOrEqual(closeMs)
+        else expect(Date.parse(passes.at(-1)?.observedAt ?? '')).toBeLessThanOrEqual(closeMs)
         expect(report.initialization.startedAt).toBe(new Date(openMs - 60_000).toISOString())
         expect(Date.parse(report.initialization.completedAt)).toBeLessThan(openMs)
         expect(report.initialization.elapsedMs).toBeGreaterThanOrEqual(25)
@@ -521,16 +546,40 @@ durableTest.each([
             expect(new Set(report.brokerState.ledger.fills.map((fill) => fill.quoteSource.topic))).toEqual(
               new Set(['bayn.research.alpaca-sip.quotes.v1']),
             )
-          expect(report.momentumObservations.length).toBeGreaterThan(0)
+          if (alphaFixture === null) expect(report.momentumObservations.length).toBeGreaterThan(0)
+          else {
+            expect(report.schemaVersion).toBe('bayn.backtest-report.v10')
+            expect(report.momentumObservations).toEqual([])
+            expect(report.alphaObservations?.length).toBeGreaterThan(0)
+            expect(report.alphaBaselineGaps).toEqual([])
+            const documents = report.decisions.map((row) => Result.getOrThrow(decodeExecutionDecisionDocument(row)))
+            const selected = documents.find(
+              (document) =>
+                document.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2' &&
+                document.strategyDecision.selectedSymbols.length === 4,
+            )
+            if (selected?.strategyDecision?.schemaVersion !== 'bayn.intraday-alpha-target.v2')
+              throw new Error('Native alpha replay did not persist its genuine four-leg target')
+            expect(selected.strategyDecision.phase).toBe(IntradayAlphaPhase.MiddayReversion)
+            expect(new Set(selected.strategyDecision.selectedSymbols)).toEqual(new Set(['COHR', 'LITE', 'MU', 'SNDK']))
+            expect(selected.targetPlan.intentTargets).toHaveLength(4)
+            expect(report.brokerState.fills.length).toBeGreaterThanOrEqual(8)
+            expect(new Set(report.brokerState.fills.map((fill) => fill.symbol))).toEqual(
+              new Set(['COHR', 'LITE', 'MU', 'SNDK']),
+            )
+            expect(
+              report.brokerState.orders.filter(({ order }) => order.parentBrokerOrderId !== undefined).length,
+            ).toBeGreaterThanOrEqual(8)
+          }
           const executionProfit = report.reconciledExecutionPnlAfterCostsMicros
           const netProfit = report.reconciledNetPnlAfterCostsMicros
           if (executionProfit === null || netProfit === null)
             throw new Error('Completed trade lacks reconciled economics')
           expect(BigInt(executionProfit)).toBeGreaterThan(0n)
           expect(netProfit).toBe((BigInt(executionProfit) - 1_000_000_000n).toString())
-          expect(BigInt(netProfit)).toBeLessThan(0n)
+          if (alphaFixture === null) expect(BigInt(netProfit)).toBeLessThan(0n)
         }
-        if (boundary === 'retained-responses' || policy === JevResearchPolicy.Momentum) {
+        if (boundary === 'retained-responses' || !prepared.requiresInference) {
           yield* sql`DROP SCHEMA public CASCADE`
           yield* sql`CREATE SCHEMA public`
           const inputPath = `${directory}/input.json`
@@ -587,7 +636,9 @@ durableTest.each([
               Schema.decodeUnknownEffect(
                 Schema.fromJsonString(
                   Schema.Struct({
-                    schemaVersion: Schema.Literal('bayn.backtest-report.v9'),
+                    schemaVersion: Schema.Literal(
+                      alphaFixture === null ? 'bayn.backtest-report.v9' : 'bayn.backtest-report.v10',
+                    ),
                     profitability: Schema.Literal('UNPROVEN'),
                     completion: Schema.Literals(['COMPLETE', 'INCOMPLETE']),
                     executableSha256: Schema.String,
@@ -624,7 +675,7 @@ durableTest.each([
               (BigInt(cliReport.reconciledExecutionPnlAfterCostsMicros) - 1_000_000_000n).toString(),
             )
             if (cliReport.reconciledNetPnlAfterCostsMicros === null) throw new Error('CLI lacks reconciled economics')
-            expect(BigInt(cliReport.reconciledNetPnlAfterCostsMicros)).toBeLessThan(0n)
+            if (alphaFixture === null) expect(BigInt(cliReport.reconciledNetPnlAfterCostsMicros)).toBeLessThan(0n)
           }
         }
       }).pipe(Effect.scoped, Effect.provide(stores), Effect.provide(NodeServices.layer)),
