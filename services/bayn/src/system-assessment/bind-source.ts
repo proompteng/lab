@@ -36,6 +36,11 @@ export const bindSystemSourceCut = (
   Result.gen(function* () {
     const data = yield* Schema.decodeUnknownResult(SystemAssessmentInputSchema)(input)
     const fail = (message: string) => Result.fail(new SystemAssessmentError({ message }))
+    if (
+      (data.registration.schemaVersion === 'bayn.system-registration.v6') !==
+      (cut.schemaVersion === 'bayn.system-source-cut.v5')
+    )
+      return yield* fail('Source cut version differs from the registered native engine contract')
     const cutHash = yield* canonicalHashV1Result(cut)
     if (
       data.sourceCutHash !== cutHash ||

@@ -2,11 +2,35 @@ import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
 import { strictParseOptions } from '../schemas'
-import { testHash } from './fixtures.test-support'
+import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
 import { emptySourceCutFixture } from './source-cut.test-support'
 import { RetainedSystemSourceCutSchema, StrategyBoundSystemSourceCutSchema, SystemSourceCutSchema } from './source-cut'
+import { bindSystemSourceCut } from './bind-source'
+import { strategyBoundRegistrationFixture } from './strategy-registration.test-support'
 
 describe('versioned system source cuts', () => {
+  test('binds the source version to its admitted engine contract before accepting financial claims', () => {
+    const retained = emptySourceCutFixture()
+    const registration = strategyBoundRegistrationFixture()
+    const current = emptySourceCutFixture(
+      supportedAssessmentFixture(registration.calendar.sessions.length, registration),
+    )
+    const cases = [
+      { ...current, cut: current.cut },
+      {
+        ...retained,
+        cut: { ...retained.cut, schemaVersion: 'bayn.system-source-cut.v5' as const, alphaObservations: [] },
+      },
+    ]
+    for (const { input, cut, verifiedSources } of cases) {
+      const result = bindSystemSourceCut({ ...input, sourceCutHash: testHash(cut) }, cut, verifiedSources)
+      if (Result.isSuccess(result)) throw new Error('Mismatched source version was accepted')
+      expect(result.failure).toMatchObject({
+        message: 'Source cut version differs from the registered native engine contract',
+      })
+    }
+  })
+
   test('retains the exact v4 payload and hash without alpha fields', () => {
     const { cut } = emptySourceCutFixture()
     const decoded = Schema.decodeUnknownSync(SystemSourceCutSchema, strictParseOptions)(cut)

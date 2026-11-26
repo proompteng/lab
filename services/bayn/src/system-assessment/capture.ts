@@ -2,9 +2,11 @@ import {
   readSystemCashObservations,
   readSystemFeeSettlementAnchors,
   readSystemBatchEvidence,
+  readSystemAlphaObservations,
   readSystemMutationEvidence,
   readSystemControllerPasses,
   readSystemDurableObservations,
+  readStrategyBoundSystemDurableObservations,
   readSystemDecisionAdmissions,
   systemDecisionQuery,
 } from './capture-queries'
@@ -22,7 +24,7 @@ import { readInferenceExpenseLedger } from '../inference-expense-journal'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { instrumentMarket } from '../instruments'
-import { UtcInstantSchema } from '../schemas'
+import { UtcInstantSchema, strictParseOptions } from '../schemas'
 import { readAssessmentRegistration } from './postgres'
 import { SystemAssessmentError } from './economics'
 import { captureForwardFinancialEvidence } from './forward-evidence'
@@ -38,7 +40,7 @@ import {
   type SystemRegistration,
 } from './policy'
 import { measureControllerLatency } from './controller-latency'
-import { measureFullBatchLatency } from './full-batch-latency'
+import { measureRegisteredDecisionLatency } from './native-decision-latency'
 import { decisionMarketScopeSupported } from './decision-work'
 import { prepareValuationInventory, requiredValuationTimes } from './valuation'
 import { executableValuationQuote, readValuationQuotes } from './valuation-quotes'
@@ -351,7 +353,20 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             last.closeAt,
             asOf,
           )
-          const durableObservations = yield* readSystemDurableObservations(registrationHash)
+          const durableObservations =
+            registration.schemaVersion === 'bayn.system-registration.v6'
+              ? yield* readStrategyBoundSystemDurableObservations(registrationHash, asOf)
+              : yield* readSystemDurableObservations(registrationHash)
+          const alphaObservations =
+            registration.schemaVersion === 'bayn.system-registration.v6'
+              ? yield* readSystemAlphaObservations(
+                  identity.accountId,
+                  candidate.authorityGenerationHash,
+                  registration.calendar.sessions,
+                  asOf,
+                  yield* Effect.fromResult(canonicalHashV1Result(registration.obligations.configuration.protocol)),
+                )
+              : []
           const decisionAdmissions = yield* readSystemDecisionAdmissions({
             accountId: identity.accountId,
             generationHash: candidate.authorityGenerationHash,
@@ -389,6 +404,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             durableObservations,
             decisionAdmissions,
             batches,
+            alphaObservations,
             fills,
           }
         }),
@@ -416,6 +432,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         durableObservations,
         decisionAdmissions,
         batches,
+        alphaObservations,
         fills,
       } = captured
       const candidateLedger = yield* makeTigerBeetleRequestClient(config)
@@ -467,9 +484,15 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         controllerPasses,
         durableObservations,
         decisionAdmissions,
+        ...(registration.schemaVersion === 'bayn.system-registration.v6' ? { alphaObservations } : {}),
       }
-      const cut = yield* Schema.decodeUnknownEffect(SystemSourceCutSchema)({
-        schemaVersion: 'bayn.system-source-cut.v4',
+      const cut = yield* Schema.decodeUnknownEffect(
+        SystemSourceCutSchema,
+        strictParseOptions,
+      )({
+        ...(registration.schemaVersion === 'bayn.system-registration.v6'
+          ? { schemaVersion: 'bayn.system-source-cut.v5', alphaObservations }
+          : { schemaVersion: 'bayn.system-source-cut.v4' }),
         decisionAdmissions,
         registrationHash,
         asOf,
@@ -502,7 +525,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
       return {
         sourceCutHash: saved.sourceCutHash,
         controllerLatency: yield* Effect.fromResult(measureControllerLatency(registration, cut, identity)),
-        fullBatchLatency: yield* Effect.fromResult(measureFullBatchLatency(registration, cut, identity)),
+        fullBatchLatency: yield* Effect.fromResult(measureRegisteredDecisionLatency(registration, cut, identity)),
       }
     }),
   ).pipe(Effect.mapError((cause) => new SystemAssessmentError({ message: 'System source capture failed', cause })))
