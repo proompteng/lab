@@ -27,7 +27,7 @@ describe('versioned system source cuts', () => {
 
   test('requires an explicit alpha inventory for v5 and never relabels a retained cut', () => {
     const { cut } = emptySourceCutFixture()
-    const current = { ...cut, schemaVersion: 'bayn.system-source-cut.v5', alphaObservations: [] }
+    const current = { ...cut, schemaVersion: 'bayn.system-source-cut.v5' as const, alphaObservations: [] }
     expect(Schema.decodeUnknownSync(StrategyBoundSystemSourceCutSchema, strictParseOptions)(current)).toEqual(current)
     expect(Schema.decodeUnknownSync(SystemSourceCutSchema, strictParseOptions)(current)).toEqual(current)
     expect(
@@ -61,7 +61,7 @@ describe('versioned system source cuts', () => {
     const { cut } = emptySourceCutFixture()
     const durableObservations = [
       {
-        kind: 'ALPHA_OBSERVATION',
+        kind: 'ALPHA_OBSERVATION' as const,
         sourceHash: testHash('alpha observation'),
         sourceAt: cut.asOf,
         witnessedAt: cut.asOf,

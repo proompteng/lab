@@ -115,6 +115,8 @@ export const StrategyBoundSystemSourceCutSchema = Schema.Struct({
 export const SystemSourceCutSchema = Schema.Union([RetainedSystemSourceCutSchema, StrategyBoundSystemSourceCutSchema])
 
 export type SystemSourceCut = typeof SystemSourceCutSchema.Type
+export type RetainedSystemSourceCut = typeof RetainedSystemSourceCutSchema.Type
+export type StrategyBoundSystemSourceCut = typeof StrategyBoundSystemSourceCutSchema.Type
 
 export const persistSystemSourceCut = (input: unknown) =>
   Effect.gen(function* () {
