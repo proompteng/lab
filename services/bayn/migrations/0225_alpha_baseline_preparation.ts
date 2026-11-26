@@ -118,6 +118,24 @@ export default Effect.gen(function* () {
         WHERE session=scope->'providerSession' AND (session->>'date')::date=NEW.session_date) THEN
         RAISE EXCEPTION 'prepared baseline differs from its native cycle, authority or calendar' USING ERRCODE='23514';
       END IF;
+      IF (source #>> '{acquisition,startedAt}')::timestamptz < (scope #>> '{providerSession,regularOpenAt}')::timestamptz
+        AND (EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(source #> '{acquisition,query,symbols}') requested(symbol)
+          WHERE NOT coalesce(
+            (source #>> ARRAY['acquisition','trailingBaseline','symbols',requested.symbol,'priorSessions'])::numeric
+              >= (source #>> '{acquisition,query,minimumSessions}')::numeric
+            AND (source #>> ARRAY['acquisition','trailingBaseline','symbols',requested.symbol,'prevClose'])::numeric > 0
+            AND (source #>> ARRAY['acquisition','trailingBaseline','symbols',requested.symbol,'atr14Ratio'])::numeric > 0
+            AND (source #>> ARRAY['acquisition','trailingBaseline','symbols',requested.symbol,'atr14Ratio'])::numeric <= 0.5, false)
+        ) OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(source #> '{acquisition,query,noiseAreaSymbols}') requested(symbol)
+            CROSS JOIN jsonb_array_elements_text(source #> '{policy,noiseArea,checkpointMinutesFromOpen}') checkpoint(minute)
+          WHERE NOT coalesce(
+            (source #>> ARRAY['acquisition','trailingBaseline','symbols',requested.symbol,'avgSwingByCheckpoint',checkpoint.minute])::numeric > 0
+            AND (source #>> ARRAY['acquisition','trailingBaseline','symbols',requested.symbol,'avgSwingByCheckpoint',checkpoint.minute])::numeric <= 0.5, false)
+        )) THEN
+        RAISE EXCEPTION 'preopen baseline preparation requires complete symbol and noise-checkpoint coverage' USING ERRCODE='23514';
+      END IF;
       RETURN NEW;
     END $function$`
   yield* sql`CREATE TRIGGER alpha_baseline_preparation_scope BEFORE INSERT ON intraday_alpha_baseline_preparations

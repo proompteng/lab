@@ -5,7 +5,7 @@ import type { AutonomousCycle } from '../cycle/model'
 import { operationalError, type OperationalError } from '../errors'
 import type { ExecutionSessionBinding } from '../execution-session'
 import { JevBatchPlanVersion } from '../jev/batch'
-import { jevSignalDueAtMs, jevSignalIntervalMs } from '../jev/observation-query'
+import { jevFirstSignalDueMs, jevSignalDueAtMs, jevSignalIntervalMs } from '../jev/observation-query'
 import type { JevContractError } from '../jev/contract'
 import { JevDecisionEvidenceSchema, prepareJevDecisionEvidence } from '../jev/decision'
 import { defaultJevProtocolDocument } from '../jev/protocol'
@@ -168,14 +168,28 @@ export const observeNativeEntry: EntryObservation = (context) => {
           message: 'Native alpha requires its durable prospective baseline preparation',
         })
       // Preparation commits on the existing preopen wake even when the subsequent entry query is still warming up.
-      const recorded = yield* preparation.value.prepare({
-        cycleId: context.observation.cycleId,
-        authorityGenerationHash: context.observation.authorityGenerationHash,
-        accountId: context.observation.portfolio.brokerState.account.accountId,
-        sessionDate: context.sessionDate,
-        calendar: context.calendar,
-        policy,
-      })
+      const recorded = yield* preparation.value
+        .prepare({
+          cycleId: context.observation.cycleId,
+          authorityGenerationHash: context.observation.authorityGenerationHash,
+          accountId: context.observation.portfolio.brokerState.account.accountId,
+          sessionDate: context.sessionDate,
+          calendar: context.calendar,
+          policy,
+        })
+        .pipe(
+          Effect.catchTag('TrailingBaselinePendingCoverage', (pending) =>
+            Effect.fail(
+              new JevAwaitingEvidence({
+                message: pending.message,
+                readiness: DecisionReadinessReason.LookbackWarmup,
+                availableAt: utcInstantFromEpochMillis(
+                  jevFirstSignalDueMs(Date.parse(pending.regularOpenAt), policy.sharedProtocol),
+                ),
+              }),
+            ),
+          ),
+        )
       const query = yield* Effect.fromResult(
         makeIntradayAlphaEntryQuery({
           policy,

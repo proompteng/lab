@@ -6,6 +6,8 @@ import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import {
   IntradayTrailingBaseline,
+  trailingBaselineCoversQuery,
+  TrailingBaselinePendingCoverage,
   type IntradayTrailingBaselineService,
 } from '../market-data/intraday/trailing-baseline'
 import {
@@ -104,7 +106,17 @@ export const makeNativeAlphaBaselinePreparation = (
           operation: 'alpha-baseline-preparation',
           message: 'Native preparation requires the source-retaining acquisition capability',
         })
-      const acquisition = yield* baseline.acquire(identity.query)
+      const acquisition = yield* baseline.acquire(identity.query, {
+        regularOpenAt: identity.providerSession.regularOpenAt,
+      })
+      if (
+        acquisition.startedAt < identity.providerSession.regularOpenAt &&
+        !trailingBaselineCoversQuery(identity.query, acquisition.trailingBaseline)
+      )
+        return yield* new TrailingBaselinePendingCoverage({
+          message: 'Preopen baseline preparation awaits complete symbol and noise-checkpoint coverage',
+          regularOpenAt: identity.providerSession.regularOpenAt,
+        })
       const payload = {
         schemaVersion: 'bayn.intraday-alpha-baseline-preparation.v1' as const,
         ...request,
@@ -121,7 +133,7 @@ export const makeNativeAlphaBaselinePreparation = (
       return yield* recordNativeAlphaBaselinePreparation(sql, reproduced.payload)
     }).pipe(
       Effect.mapError((cause) =>
-        cause instanceof OperationalError
+        cause instanceof OperationalError || cause instanceof TrailingBaselinePendingCoverage
           ? cause
           : operationalError({
               component: 'database',

@@ -6,6 +6,10 @@ import { canonicalHashV1Result } from '../hash'
 import { marketHoursAreCanonical, type MarketHours } from '../market-hours'
 import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema'
 import {
+  trailingBaselineCoversQuery,
+  type TrailingBaselinePendingCoverage,
+} from '../market-data/intraday/trailing-baseline'
+import {
   reproduceTrailingBaselineAcquisition,
   TrailingBaselineAcquisitionSchema,
   TrailingBaselineQuerySchema,
@@ -58,7 +62,7 @@ export class NativeAlphaBaselinePreparation extends Context.Service<
   {
     readonly prepare: (
       request: NativeAlphaBaselinePreparationRequest,
-    ) => Effect.Effect<RecordedAlphaBaselinePreparation, OperationalError>
+    ) => Effect.Effect<RecordedAlphaBaselinePreparation, OperationalError | TrailingBaselinePendingCoverage>
   }
 >()('@proompteng/bayn/observe-composition/NativeAlphaBaselinePreparation') {}
 
@@ -135,6 +139,11 @@ export const reproduceAlphaBaselinePreparation = (raw: unknown) =>
       acquisition.completedAt >= identity.nativeSession.closeAt
     )
       return yield* invalid('Baseline preparation source differs from its session, policy, query or acquisition window')
+    if (
+      acquisition.startedAt < identity.providerSession.regularOpenAt &&
+      !trailingBaselineCoversQuery(identity.query, acquisition.trailingBaseline)
+    )
+      return yield* invalid('Preopen baseline preparation does not cover all requested symbols and noise checkpoints')
     return { payload, contentHash: yield* canonicalHashV1Result(payload), ...identity }
   }).pipe(
     Result.mapError((cause) =>

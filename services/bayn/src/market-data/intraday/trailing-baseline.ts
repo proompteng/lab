@@ -1,8 +1,15 @@
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Context, Effect, Layer, Result, Schema } from 'effect'
+import { Context, Data, Effect, Layer, Result, Schema } from 'effect'
 
 import { OperationalError, operationalError, retryableOperationalError } from '../../errors'
-import { IsoDateSchema, PositiveIntegerSchema, SymbolSchema, strictParseOptions, type IsoDate } from '../../schemas'
+import {
+  IsoDateSchema,
+  PositiveIntegerSchema,
+  SymbolSchema,
+  UtcInstantSchema,
+  strictParseOptions,
+  type IsoDate,
+} from '../../schemas'
 import { currentUtcInstant } from '../../time'
 import type { TrailingBaselineAcquisition } from './baseline-acquisition'
 
@@ -75,10 +82,48 @@ export interface TrailingBaselineQuery {
   readonly sourceContract: TrailingBaselineSourceContract
 }
 
+export interface TrailingBaselinePreparationWindow {
+  readonly regularOpenAt: string
+}
+
+export class TrailingBaselinePendingCoverage extends Data.TaggedError('TrailingBaselinePendingCoverage')<{
+  readonly message: string
+  readonly regularOpenAt: string
+}> {}
+
+class TrailingBaselineInsufficientCoverage extends Data.TaggedError('TrailingBaselineInsufficientCoverage')<{
+  readonly sessionDate: IsoDate
+  readonly minimumSessions: number
+}> {}
+
+/** Preparation readiness only; regular-session signals retain their existing per-symbol exclusions. */
+export const trailingBaselineCoversQuery = (query: TrailingBaselineQuery, baseline: IntradayAlphaTrailingBaseline) =>
+  query.symbols.every((symbol) => {
+    const value = baseline.symbols[symbol]
+    return (
+      value !== undefined &&
+      value.priorSessions >= query.minimumSessions &&
+      Number.isFinite(value.prevClose) &&
+      value.prevClose > 0 &&
+      Number.isFinite(value.atr14Ratio) &&
+      value.atr14Ratio > 0 &&
+      value.atr14Ratio <= 0.5
+    )
+  }) &&
+  query.noiseAreaSymbols.every((symbol) =>
+    noiseAreaCheckpointMinutes.every((minute) => {
+      const swing = baseline.symbols[symbol]?.avgSwingByCheckpoint?.[String(minute)]
+      return swing !== undefined && Number.isFinite(swing) && swing > 0 && swing <= 0.5
+    }),
+  )
+
 export interface IntradayTrailingBaselineService {
   readonly load: (query: TrailingBaselineQuery) => Effect.Effect<IntradayAlphaTrailingBaseline, OperationalError>
   /** Native acquisition retains actual read clocks and builder inputs; replay intentionally provides only load. */
-  readonly acquire?: (query: TrailingBaselineQuery) => Effect.Effect<TrailingBaselineAcquisition, OperationalError>
+  readonly acquire?: (
+    query: TrailingBaselineQuery,
+    preparationWindow?: TrailingBaselinePreparationWindow,
+  ) => Effect.Effect<TrailingBaselineAcquisition, OperationalError | TrailingBaselinePendingCoverage>
 }
 
 export class IntradayTrailingBaseline extends Context.Service<
@@ -215,6 +260,7 @@ export const buildTrailingBaseline = (input: {
         component: 'market-data',
         operation: 'trailing-baseline',
         message: 'No symbol met the minimum trailing session count before this session',
+        cause: new TrailingBaselineInsufficientCoverage({ sessionDate, minimumSessions }),
       }),
     )
   }
@@ -273,14 +319,35 @@ export const makeClickhouseTrailingBaseline = (
 ): IntradayTrailingBaselineService => {
   const cache = new Map<string, TrailingBaselineAcquisition>()
 
-  const acquire = (query: TrailingBaselineQuery): Effect.Effect<TrailingBaselineAcquisition, OperationalError> =>
-    Effect.gen(function* () {
+  function acquire(query: TrailingBaselineQuery): Effect.Effect<TrailingBaselineAcquisition, OperationalError>
+  function acquire(
+    query: TrailingBaselineQuery,
+    preparationWindow?: TrailingBaselinePreparationWindow,
+  ): Effect.Effect<TrailingBaselineAcquisition, OperationalError | TrailingBaselinePendingCoverage>
+  function acquire(
+    query: TrailingBaselineQuery,
+    preparationWindow?: TrailingBaselinePreparationWindow,
+  ): Effect.Effect<TrailingBaselineAcquisition, OperationalError | TrailingBaselinePendingCoverage> {
+    return Effect.gen(function* () {
+      const regularOpenAt =
+        preparationWindow === undefined
+          ? undefined
+          : yield* Schema.decodeUnknownEffect(UtcInstantSchema, strictParseOptions)(preparationWindow.regularOpenAt)
       const sortedSymbols = [...new Set(query.symbols)].sort()
       const sortedNoise = [...new Set(query.noiseAreaSymbols)].sort()
       const { provider, feed, sourceTopic, universeId } = query.sourceContract
       const cacheKey = `${query.sessionDate}|${query.lookbackSessions}|${query.minimumSessions}|${provider}|${feed}|${sourceTopic}|${universeId ?? ''}|${sortedSymbols.join(',')}|${sortedNoise.join(',')}`
       const cached = cache.get(cacheKey)
-      if (cached !== undefined) return cached
+      if (cached !== undefined) {
+        if (
+          regularOpenAt === undefined ||
+          cached.startedAt >= regularOpenAt ||
+          trailingBaselineCoversQuery(query, cached.trailingBaseline)
+        )
+          return cached
+        // An earlier legacy load may have cached partial coverage. Its original query time never becomes regular.
+        cache.delete(cacheKey)
+      }
       if (provider !== 'alpaca' || feed !== 'iex' || universeId === undefined)
         return yield* operationalError({
           component: 'market-data',
@@ -482,17 +549,27 @@ export const makeClickhouseTrailingBaseline = (
         }
       }
 
-      const baseline = yield* Effect.fromResult(
-        buildTrailingBaseline({
-          sessionDate: query.sessionDate,
-          symbols: sortedSymbols,
-          noiseAreaSymbols: sortedNoise,
-          lookbackSessions: query.lookbackSessions,
-          minimumSessions: query.minimumSessions,
-          dailyRows,
-          checkpointRows,
-        }),
+      const built = buildTrailingBaseline({
+        sessionDate: query.sessionDate,
+        symbols: sortedSymbols,
+        noiseAreaSymbols: sortedNoise,
+        lookbackSessions: query.lookbackSessions,
+        minimumSessions: query.minimumSessions,
+        dailyRows,
+        checkpointRows,
+      })
+      if (
+        regularOpenAt !== undefined &&
+        startedAt < regularOpenAt &&
+        (Result.isSuccess(built)
+          ? !trailingBaselineCoversQuery(query, built.success)
+          : built.failure.cause instanceof TrailingBaselineInsufficientCoverage)
       )
+        return yield* new TrailingBaselinePendingCoverage({
+          message: 'Preopen baseline preparation awaits complete symbol and noise-checkpoint coverage',
+          regularOpenAt,
+        })
+      const baseline = yield* Effect.fromResult(built)
       if (cache.size >= 8) {
         const oldest = cache.keys().next()
         if (oldest.done !== true) cache.delete(oldest.value)
@@ -520,7 +597,7 @@ export const makeClickhouseTrailingBaseline = (
       return acquisition
     }).pipe(
       Effect.mapError((cause) =>
-        cause instanceof OperationalError
+        cause instanceof OperationalError || cause instanceof TrailingBaselinePendingCoverage
           ? cause
           : retryableOperationalError({
               component: 'market-data',
@@ -530,6 +607,7 @@ export const makeClickhouseTrailingBaseline = (
             }),
       ),
     )
+  }
 
   return { load: (query) => acquire(query).pipe(Effect.map((source) => source.trailingBaseline)), acquire }
 }
