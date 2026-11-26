@@ -217,10 +217,10 @@ def architecture(job):
 
 
 def pool(job):
-    if (job.get("runner_name") or "").startswith(("arc-amd64-", "arc-arm64-")) or {
-        "arc-amd64",
-        "arc-arm64",
-    } & set((job.get("labels") or [])):
+    if (job.get("runner_name") or "").startswith(("arc-amd64-", "arc-arm64-")) or any(
+        re.fullmatch(r"arc-(amd64|arm64)(-tmpfs(-large)?)?", label)
+        for label in (job.get("labels") or [])
+    ):
         return "arc"
     if any(
         x.startswith(("ubuntu-", "macos-", "windows-"))

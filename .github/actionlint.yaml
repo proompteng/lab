@@ -2,7 +2,11 @@ self-hosted-runner:
   # Labels of self-hosted runner in array of strings.
   labels:
     - arc-amd64
+    - arc-amd64-tmpfs
+    - arc-amd64-tmpfs-large
     - arc-arm64
+    - arc-arm64-tmpfs
+    - arc-arm64-tmpfs-large
 
 # Configuration variables in array of strings defined in your repository or
 # organization. `null` means disabling configuration variables check.

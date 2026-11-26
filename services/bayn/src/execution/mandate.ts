@@ -4,7 +4,7 @@ import { notionalMicros, scaledNumber } from '../strategy/execution-model/fixed-
 import { WEIGHT_SCALE } from '../strategy/execution-model/model'
 import { Sha256Schema } from '../schemas'
 import { reconciliationIncompleteRestrictionReason } from './authority'
-import { OrderStatus } from './order-status'
+import type { OrderStatus } from './contracts'
 import { legacyAuthorityGenerationV2SchemaVersion, legacyAuthorityGenerationV3SchemaVersion } from './legacy-wire'
 
 export const QualificationBindingSchema = Schema.Struct({
@@ -101,11 +101,14 @@ const currentSignedNetExposureMicros = (facts: ExecutionMandateAllocationFacts):
     0n,
   )
 
-const isTerminalOrderStatus = (status: string): boolean =>
-  status === OrderStatus.Filled ||
-  status === OrderStatus.Canceled ||
-  status === OrderStatus.Rejected ||
-  status === OrderStatus.Expired
+// Keep a type-only import of OrderStatus so mandate.ts and contracts.ts never form a runtime ESM cycle.
+const TERMINAL_ORDER_STATUSES = new Set<string>([
+  'FILLED',
+  'CANCELED',
+  'REJECTED',
+  'EXPIRED',
+] satisfies readonly `${OrderStatus}`[])
+const isTerminalOrderStatus = (status: string): boolean => TERMINAL_ORDER_STATUSES.has(status)
 const QUANTITY_SCALE = 1_000_000_000n
 
 /**

@@ -5,7 +5,6 @@ import { CryptoFeeTierSchema } from '../broker/crypto-fees'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import { ResearchCapitalGrantSchema } from './mandate'
-import { OrderStatus } from './order-status'
 import {
   ImageDigestSchema as ImageDigest,
   Sha256Schema as Sha256,
@@ -147,7 +146,15 @@ export enum TimeInForce {
   FillOrKill = 'FOK',
 }
 
-export { OrderStatus }
+export enum OrderStatus {
+  New = 'NEW',
+  PartiallyFilled = 'PARTIALLY_FILLED',
+  Filled = 'FILLED',
+  Canceled = 'CANCELED',
+  Expired = 'EXPIRED',
+  Rejected = 'REJECTED',
+  Pending = 'PENDING',
+}
 
 export enum MutationOutcome {
   Known = 'KNOWN',

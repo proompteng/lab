@@ -37,6 +37,12 @@
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "arc-tmpfs-acceptance.yml": [
+    {
+      "id": "verify",
+      "pattern": "^Verify .*(?: \\(.*\\))?$"
+    }
+  ],
   "attic-build-push.yaml": [
     {
       "id": "validate",
