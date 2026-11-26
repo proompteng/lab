@@ -652,7 +652,9 @@ export const evaluateJevPositionManagement = (input: {
         )
       const position =
         input.symbol === undefined
-          ? portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
+          ? (portfolio.brokerState.positions.find(
+              (entry) => BigInt(entry.quantityAtoms) !== 0n && entry.symbol in portfolio.exitPolicy.plans,
+            ) ?? portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n))
           : portfolio.brokerState.positions.find(
               (entry) => entry.symbol === input.symbol && BigInt(entry.quantityAtoms) !== 0n,
             )

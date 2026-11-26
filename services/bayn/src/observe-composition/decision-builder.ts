@@ -1436,7 +1436,13 @@ export function buildStrategyCycleDecision<R>(
                     : BigInt(input.policy.maxDailyTradedNotionalMicros),
                 maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
                 targetWeights: allocationTargetWeights,
-                ...(disjointEntry ? { disjointEntry: true, signedTargetWeights: planningTargetWeights } : {}),
+                ...(disjointEntry
+                  ? {
+                      disjointEntry: true,
+                      signedTargetWeights: planningTargetWeights,
+                      openOrders: facts.reconciliation.brokerState.orders,
+                    }
+                  : {}),
                 positions: facts.reconciliation.brokerState.positions,
                 referencePriceMicros: compiled.priceMicros,
               }),

@@ -199,6 +199,7 @@ export const advancePositionProtection = (request: {
           calendar: document.executionSession.calendar,
           brokerState: state,
           marketData: input.intradayMarketData,
+          symbol,
         })
       }
       let protection: ProtectionOrderState = { _tag: 'Absent' }

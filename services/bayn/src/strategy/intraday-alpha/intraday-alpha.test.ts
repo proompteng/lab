@@ -14,6 +14,7 @@ import {
   type Order,
   type Position,
 } from '../../execution/contracts'
+import { executionMandateAllocationCapitalMicros } from '../../execution/mandate'
 import type { EquityShortEligibility } from '../../execution/equity-short'
 import { canonicalHashV1Result } from '../../hash'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
@@ -2025,4 +2026,198 @@ test('Engine 3 Noise Area Trend triggers on QQQ & SMH at top-of-hour checkpoints
     },
   })
   expect(Result.isFailure(collidingPlan)).toBe(true)
+})
+
+test('concurrent ORB position management scopes to owned TSLA even when co-held QQQ sorts alphabetically first, and disjoint mandate bounds independent net exposure', () => {
+  // 1) Disjoint mandate allocation bounds longs & shorts independently against worst-case net exposure
+  // ($70k co-held long + $100k net cap + 2L/2S basket (+0.36 / -0.36) -> $30k long headroom -> $83,333.33 cap).
+  const allocation = Result.getOrThrow(
+    executionMandateAllocationCapitalMicros({
+      accountEquityMicros: 100_000_000_000n,
+      dailyTradedNotionalMicros: 0n,
+      maxGrossExposureMicros: 180_000_000_000n,
+      maxNetExposureMicros: 100_000_000_000n,
+      maxDailyTradedNotionalMicros: null,
+      maxAdverseSlippageBps: 10n,
+      targetWeights: { COHR: 0.18, LITE: 0.18, MU: 0.18, SNDK: 0.18 },
+      signedTargetWeights: { COHR: 0.18, LITE: 0.18, MU: -0.18, SNDK: -0.18 },
+      disjointEntry: true,
+      positions: [{ symbol: 'QQQ', quantityAtoms: '140000000000', marketValueMicros: '70000000000' }],
+      openOrders: [],
+      referencePriceMicros: { COHR: '100000000', LITE: '90000000', MU: '80000000', SNDK: '60000000' },
+    }),
+  )
+  // 30_000_000_000 / 0.36 = 83_333_333_333 micros -> worst-case 70k + 30k = 100k <= maxNetExposure!
+  expect(allocation).toBe(83_333_333_333n)
+
+  // 2) ORB TSLA Manage portfolio with co-held QQQ sorting alphabetically BEFORE TSLA:
+  // both implicit (omitted symbol) and explicit symbol='TSLA' exit evaluation target TSLA, never QQQ!
+  const { snapshot, observedAt } = makeAlphaStreamingSnapshot({
+    minutesFromOpen: 36,
+    spyProfile: { basePrice: 550, endReturnBps: 60 },
+    profiles: {
+      TSLA: {
+        basePrice: 250,
+        endReturnBps: 80,
+        openingRangeHigh: 251.0,
+        openingRangeLow: 249.0,
+        overridePrevClose: 250.9,
+        overrideLatestClose: 252.5,
+      },
+    },
+  })
+  const flat = makeFlatPortfolio(observedAt)
+  const owned = Result.getOrThrow(
+    makeOwnedIntradayAlphaObservation({
+      cycleId,
+      authorityGenerationHash,
+      protocol,
+      portfolio: flat,
+      snapshot,
+      trailingBaseline: testTrailingBaseline,
+      equityShortEligibility: makeShortEligibility(intradayAlphaCandidateSymbols, observedAt),
+    }),
+  )
+  const orbTarget = Result.getOrThrow(
+    decideIntradayAlphaEntry(
+      {
+        schemaVersion: 'bayn.intraday-alpha-evidence.v2',
+        observation: owned.payload,
+        morningOrbTakenSymbols: [],
+        middayReversionCompleted: false,
+        noiseAreaTakenSymbols: ['QQQ'],
+        catalystVetos: [],
+        decidedAt: observedAt,
+      },
+      policy,
+    ),
+  )
+  expect(orbTarget.selectedSymbols).toEqual(['TSLA'])
+
+  const tslaEntryIntentId = 'a'.repeat(64)
+  const checkTime = utcInstantFromEpochMillis(
+    Date.parse(observedAt) + orbTarget.exitPolicy.maximumHoldingMinutes * 60_000 + 1_000,
+  )
+  const qqqCoHeld: Position = {
+    schemaVersion: 'bayn.position.v2',
+    accountId,
+    symbol: 'QQQ', // sorts BEFORE TSLA!
+    quantityAtoms: '50000000000',
+    averageEntryPriceMicros: '500000000',
+    costBasisMicros: '25000000000',
+    marketPriceMicros: '504000000',
+    marketValueMicros: '25200000000',
+    unrealizedPnlMicros: '200000000',
+    observedAt: checkTime,
+  }
+  const tslaOwned: Position = {
+    schemaVersion: 'bayn.position.v2',
+    accountId,
+    symbol: 'TSLA',
+    quantityAtoms: '100000000000',
+    averageEntryPriceMicros: '252500000',
+    costBasisMicros: '25250000000',
+    marketPriceMicros: '253000000',
+    marketValueMicros: '25300000000',
+    unrealizedPnlMicros: '50000000',
+    observedAt: checkTime,
+  }
+  const tslaFill: Fill = {
+    schemaVersion: 'bayn.fill.v2',
+    accountId,
+    fillId: 'tsla-f1',
+    brokerOrderId: 'tsla-o1',
+    clientOrderId: 'tsla-c1',
+    intentId: tslaEntryIntentId,
+    symbol: 'TSLA',
+    side: OrderSide.Buy,
+    quantityAtoms: '100000000000',
+    priceAtoms: '252500000000',
+    feeMicros: '0',
+    occurredAt: observedAt,
+  }
+  const tslaOrder: Order = {
+    schemaVersion: 'bayn.order.v3',
+    accountId,
+    brokerOrderId: 'tsla-o1',
+    clientOrderId: 'tsla-c1',
+    intentId: tslaEntryIntentId,
+    symbol: 'TSLA',
+    side: OrderSide.Buy,
+    orderType: OrderType.Limit,
+    timeInForce: TimeInForce.Day,
+    quantityAtoms: '100000000000',
+    filledQuantityAtoms: '100000000000',
+    limitPriceMicros: '252500000',
+    status: OrderStatus.Filled,
+    observedAt: checkTime,
+  }
+  const brokerMaterial = {
+    account: { ...flat.brokerState.account, observedAt: checkTime },
+    positions: [qqqCoHeld, tslaOwned], // QQQ explicitly precedes TSLA!
+    positionsObservedAt: checkTime,
+    orders: [tslaOrder],
+    ordersObservedAt: checkTime,
+    accountingHash: 'd'.repeat(64),
+  }
+  const stateHash = Result.getOrThrow(reconciledStateHash(brokerMaterial))
+  const recMaterial = {
+    schemaVersion: 'bayn.paper-reconciliation.v1' as const,
+    accountId,
+    expectedHash: stateHash,
+    observedHash: stateHash,
+    status: ReconciliationStatus.Exact,
+    discrepancies: [] as const,
+    reconciledAt: checkTime,
+  }
+  const recId = Result.getOrThrow(canonicalHashV1Result(recMaterial))
+  const recHash = Result.getOrThrow(canonicalHashV1Result({ ...recMaterial, reconciliationId: recId }))
+  const managePortfolio = Result.getOrThrow(
+    Schema.decodeUnknownResult(
+      JevPortfolioSchema,
+      strictParseOptions,
+    )({
+      purpose: JevPurpose.Manage,
+      protectionEvidenceVersion: currentProtectionEvidenceVersion,
+      brokerState: {
+        ...brokerMaterial,
+        unknownOrderCount: 0,
+        reconciliation: { ...recMaterial, reconciliationId: recId, contentHash: recHash },
+      },
+      entryDecisionHash: '9'.repeat(64),
+      exitPolicy: orbTarget.exitPolicy,
+      entryIntentIds: [tslaEntryIntentId],
+      protectionIntentIds: [],
+      exitRequestedAt: null,
+      profitExitRequested: false,
+      protectionDisposals: { quantityAtoms: '0', costBasisMicros: '0' },
+      entryInventoryDebit: { quantityAtoms: '0', costBasisMicros: '0' },
+      entryFills: [tslaFill],
+    }),
+  )
+
+  // Both omitted symbol and explicit symbol='TSLA' cleanly exit TSLA without tripping on co-held QQQ!
+  const implicitExit = Result.getOrThrow(
+    decideJevExit({
+      cycleId,
+      sessionDate,
+      protocol,
+      portfolio: managePortfolio,
+      observedAt: checkTime,
+      trigger: { reason: JevExitReason.MaximumHold },
+    }),
+  )
+  expect(implicitExit.symbols).toEqual(['TSLA'])
+  const explicitExit = Result.getOrThrow(
+    decideJevExit({
+      cycleId,
+      sessionDate,
+      protocol,
+      portfolio: managePortfolio,
+      observedAt: checkTime,
+      symbol: 'TSLA',
+      trigger: { reason: JevExitReason.MaximumHold },
+    }),
+  )
+  expect(explicitExit.symbols).toEqual(['TSLA'])
 })

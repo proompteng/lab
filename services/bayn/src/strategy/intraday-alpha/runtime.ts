@@ -138,6 +138,12 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never, 
         noiseAreaSymbols: input.policy.noiseAreaSymbols,
         lookbackSessions: input.policy.trailingBaseline.lookbackSessions,
         minimumSessions: input.policy.trailingBaseline.minimumSessions,
+        sourceContract: {
+          provider: 'alpaca',
+          feed: snapshot.manifest.feed,
+          sourceTopic: snapshot.manifest.sourceTopics.bars,
+          universeId: snapshot.manifest.universeId,
+        },
       })
     }
 

@@ -1,10 +1,12 @@
 import { expect, test } from 'bun:test'
-import { Result, Schema } from 'effect'
+import type { ClickhouseClient } from '@effect/sql-clickhouse'
+import { Effect, Exit, Result, Schema } from 'effect'
 
 import { IsoDateSchema } from '../../schemas'
 import {
   buildTrailingBaseline,
   intradayAlphaTrailingBaselineSchemaVersion,
+  makeClickhouseTrailingBaseline,
   noiseAreaCheckpointMinutes,
   type PriorSessionCheckpointSummary,
   type PriorSessionDailySummary,
@@ -82,4 +84,98 @@ test('buildTrailingBaseline computes causal ATR14 True Range ratios and noise-ar
   expect(baseline.symbols['QQQ']?.avgSwingByCheckpoint?.['91']).toBeCloseTo(0.008, 5)
   expect(baseline.symbols['NVDA']?.atr14Ratio).toBeCloseTo(0.04, 5)
   expect(baseline.symbols['NVDA']?.avgSwingByCheckpoint).toBeUndefined()
+})
+
+test('makeClickhouseTrailingBaseline binds provider/feed/source_topic/finality and uses published adjusted_daily_bars_v2 columns fail-closed', async () => {
+  const executed: { readonly sql: string; readonly params: unknown[] }[] = []
+  let failFallback = false
+  const fakeSql = Object.assign(
+    (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const text = strings.join('?')
+      executed.push({ sql: text, params: values })
+      if (text.includes('FROM signal.intraday_bars_1m_v2') && text.includes('ARRAY JOIN')) {
+        return Effect.succeed(
+          ['2026-08-26', '2026-08-27', '2026-08-28', '2026-08-31', '2026-09-01'].flatMap((d) =>
+            noiseAreaCheckpointMinutes.map((cp) => ({
+              symbol: 'QQQ',
+              session_date: d,
+              minute_from_open: cp,
+              close: 502.5,
+            })),
+          ),
+        )
+      }
+      if (text.includes('FROM signal.intraday_bars_1m_v2')) {
+        // Return 5 sessions for QQQ and 0 for sparse NVDA to exercise adjusted_daily_bars_v2 supplement.
+        return Effect.succeed(
+          ['2026-08-26', '2026-08-27', '2026-08-28', '2026-08-31', '2026-09-01'].map((d) => ({
+            symbol: 'QQQ',
+            session_date: d,
+            open: 500,
+            high: 505,
+            low: 495,
+            close: 500,
+          })),
+        )
+      }
+      if (text.includes('FROM signal.snapshot_manifests_v2')) {
+        return Effect.succeed([{ snapshot_id: 'snap-2026-09-01' }])
+      }
+      if (text.includes('FROM signal.adjusted_daily_bars_v2')) {
+        if (failFallback) return Effect.fail(new Error('clickhouse adjusted_daily unavailable'))
+        return Effect.succeed(
+          ['2026-08-26', '2026-08-27', '2026-08-28', '2026-08-31', '2026-09-01'].map((d) => ({
+            symbol: 'NVDA',
+            session_date: d,
+            open: 100,
+            high: 103,
+            low: 97,
+            close: 100,
+          })),
+        )
+      }
+      return Effect.succeed([])
+    },
+    { param: (type: string, value: unknown) => ({ type, value }) },
+  ) as unknown as ClickhouseClient.ClickhouseClient
+
+  const service = makeClickhouseTrailingBaseline(fakeSql)
+  const query = {
+    sessionDate: iso('2026-09-02'),
+    symbols: ['NVDA', 'QQQ'],
+    noiseAreaSymbols: ['QQQ'],
+    lookbackSessions: 14,
+    minimumSessions: 5,
+    sourceContract: {
+      provider: 'alpaca',
+      feed: 'iex',
+      sourceTopic: 'torghut.bars.1m.v1',
+      universeId: 'torghut-core-equity-v3',
+    },
+  } as const
+  const result = await Effect.runPromise(service.load(query))
+  expect(result.symbols['QQQ']?.priorSessions).toBe(5)
+  expect(result.symbols['NVDA']?.priorSessions).toBe(5)
+  expect(result.symbols['NVDA']?.atr14Ratio).toBeCloseTo(0.06, 5)
+
+  // Both intraday queries must bind provider, feed, source_topic, and is_final = 1 before deduplication.
+  const intradayQueries = executed.filter((entry) => entry.sql.includes('FROM signal.intraday_bars_1m_v2'))
+  expect(intradayQueries).toHaveLength(2)
+  for (const entry of intradayQueries) {
+    expect(entry.sql).toContain('provider =')
+    expect(entry.sql).toContain('feed =')
+    expect(entry.sql).toContain('source_topic =')
+    expect(entry.sql).toContain('is_final = 1')
+  }
+  const fallbackQuery = executed.find((entry) => entry.sql.includes('FROM signal.adjusted_daily_bars_v2'))
+  expect(fallbackQuery?.sql).toContain('adjusted_open')
+  expect(fallbackQuery?.sql).toContain('adjusted_high')
+  expect(fallbackQuery?.sql).toContain('adjusted_low')
+  expect(fallbackQuery?.sql).toContain('adjusted_close')
+  expect(fallbackQuery?.sql).toContain('snapshot_id =')
+
+  // Fallback ClickHouse errors must propagate fail-closed rather than being silently suppressed.
+  failFallback = true
+  const failed = await Effect.runPromiseExit(service.load({ ...query, sessionDate: iso('2026-09-03') }))
+  expect(Exit.isFailure(failed)).toBe(true)
 })

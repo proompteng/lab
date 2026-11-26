@@ -57,12 +57,20 @@ export interface PriorSessionCheckpointSummary {
   readonly close: number
 }
 
+export interface TrailingBaselineSourceContract {
+  readonly provider: string
+  readonly feed: string
+  readonly sourceTopic: string
+  readonly universeId?: string
+}
+
 export interface TrailingBaselineQuery {
   readonly sessionDate: IsoDate
   readonly symbols: readonly string[]
   readonly noiseAreaSymbols: readonly string[]
   readonly lookbackSessions: number
   readonly minimumSessions: number
+  readonly sourceContract: TrailingBaselineSourceContract
 }
 
 export interface IntradayTrailingBaselineService {
@@ -244,12 +252,17 @@ const CheckpointRowSchema = Schema.Struct({
   close: Schema.Union([Schema.Finite, Schema.String]),
 })
 
+const SnapshotIdRowSchema = Schema.Struct({
+  snapshot_id: Schema.NonEmptyString,
+})
+
 const toFiniteNumber = (value: number | string): number => (typeof value === 'number' ? value : Number(value))
 
 /**
  * Read-only ClickHouse loader for strictly causal trailing regular-session baselines (< sessionDate).
- * Queries signal.intraday_bars_1m_v2 (deduplicated per minute) and falls back to
- * signal.adjusted_daily_bars_v2 for symbols with sparse intraday history. Caches per sessionDate.
+ * Queries signal.intraday_bars_1m_v2 constrained to the strategy's exact provider/feed/source_topic/final
+ * contract (deduplicated per minute, prioritizing the requested universe_id on overlap dates) and
+ * supplements sparse symbols from the single latest published snapshot in signal.adjusted_daily_bars_v2.
  */
 export const makeClickhouseTrailingBaseline = (
   sql: ClickhouseClient.ClickhouseClient,
@@ -260,24 +273,30 @@ export const makeClickhouseTrailingBaseline = (
     Effect.gen(function* () {
       const sortedSymbols = [...new Set(query.symbols)].sort()
       const sortedNoise = [...new Set(query.noiseAreaSymbols)].sort()
-      const cacheKey = `${query.sessionDate}|${query.lookbackSessions}|${sortedSymbols.join(',')}|${sortedNoise.join(',')}`
+      const { provider, feed, sourceTopic, universeId } = query.sourceContract
+      const cacheKey = `${query.sessionDate}|${query.lookbackSessions}|${provider}|${feed}|${sourceTopic}|${universeId ?? ''}|${sortedSymbols.join(',')}|${sortedNoise.join(',')}`
       const cached = cache.get(cacheKey)
       if (cached !== undefined) return cached
 
       const lookbackCalendarDays = Math.max(35, query.lookbackSessions * 3)
       const checkpointMins = [...noiseAreaCheckpointMinutes]
+      const preferredUniverse = universeId ?? ''
 
       const intradayDailyRaw = yield* sql`
         WITH dedup AS (
           SELECT
             symbol,
             toTimeZone(coalesce(event_ts_exact, event_ts), 'America/New_York') AS ny_ts,
-            argMax(toFloat64(open), tuple(coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS open,
-            argMax(toFloat64(high), tuple(coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS high,
-            argMax(toFloat64(low), tuple(coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS low,
-            argMax(toFloat64(close), tuple(coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS close
+            argMax(toFloat64(open), tuple(universe_id = ${sql.param('String', preferredUniverse)}, coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS open,
+            argMax(toFloat64(high), tuple(universe_id = ${sql.param('String', preferredUniverse)}, coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS high,
+            argMax(toFloat64(low), tuple(universe_id = ${sql.param('String', preferredUniverse)}, coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS low,
+            argMax(toFloat64(close), tuple(universe_id = ${sql.param('String', preferredUniverse)}, coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS close
           FROM signal.intraday_bars_1m_v2
-          WHERE has(${sql.param('Array(String)', sortedSymbols)}, symbol)
+          WHERE provider = ${sql.param('String', provider)}
+            AND feed = ${sql.param('String', feed)}
+            AND source_topic = ${sql.param('String', sourceTopic)}
+            AND is_final = 1
+            AND has(${sql.param('Array(String)', sortedSymbols)}, symbol)
             AND event_ts >= parseDateTime64BestEffort(${sql.param('String', `${query.sessionDate}T00:00:00Z`)}, 3, 'UTC') - toIntervalDay(${sql.param('UInt32', lookbackCalendarDays)})
             AND event_ts < parseDateTime64BestEffort(${sql.param('String', `${query.sessionDate}T00:00:00Z`)}, 3, 'UTC')
           GROUP BY symbol, coalesce(event_ts_exact, event_ts)
@@ -306,9 +325,13 @@ export const makeClickhouseTrailingBaseline = (
                 SELECT
                   symbol,
                   toTimeZone(coalesce(event_ts_exact, event_ts), 'America/New_York') AS ny_ts,
-                  argMax(toFloat64(close), tuple(coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS close
+                  argMax(toFloat64(close), tuple(universe_id = ${sql.param('String', preferredUniverse)}, coalesce(ingest_ts_exact, ingest_ts), source_partition, source_offset)) AS close
                 FROM signal.intraday_bars_1m_v2
-                WHERE has(${sql.param('Array(String)', sortedNoise)}, symbol)
+                WHERE provider = ${sql.param('String', provider)}
+                  AND feed = ${sql.param('String', feed)}
+                  AND source_topic = ${sql.param('String', sourceTopic)}
+                  AND is_final = 1
+                  AND has(${sql.param('Array(String)', sortedNoise)}, symbol)
                   AND event_ts >= parseDateTime64BestEffort(${sql.param('String', `${query.sessionDate}T00:00:00Z`)}, 3, 'UTC') - toIntervalDay(${sql.param('UInt32', lookbackCalendarDays)})
                   AND event_ts < parseDateTime64BestEffort(${sql.param('String', `${query.sessionDate}T00:00:00Z`)}, 3, 'UTC')
                 GROUP BY symbol, coalesce(event_ts_exact, event_ts)
@@ -354,40 +377,55 @@ export const makeClickhouseTrailingBaseline = (
         close: toFiniteNumber(row.close),
       }))
 
-      // Supplement any symbol lacking enough intraday sessions from adjusted_daily_bars_v2.
+      // Supplement any symbol lacking enough intraday sessions from the single latest coherent published
+      // snapshot in signal.adjusted_daily_bars_v2 (< sessionDate) using the authoritative adjusted_* columns.
       const counts = new Map<string, number>()
       for (const row of dailyRows) counts.set(row.symbol, (counts.get(row.symbol) ?? 0) + 1)
       const sparseSymbols = sortedSymbols.filter((symbol) => (counts.get(symbol) ?? 0) < query.minimumSessions)
       if (sparseSymbols.length > 0) {
-        const fallbackRaw = yield* sql`
-          SELECT
-            symbol,
-            formatDateTime(session_date, '%Y-%m-%d') AS session_date,
-            argMax(toFloat64(open), observed_at) AS open,
-            argMax(toFloat64(high), observed_at) AS high,
-            argMax(toFloat64(low), observed_at) AS low,
-            argMax(toFloat64(close), observed_at) AS close
-          FROM signal.adjusted_daily_bars_v2
-          WHERE has(${sql.param('Array(String)', sparseSymbols)}, symbol)
-            AND session_date >= toDate(${sql.param('String', query.sessionDate)}) - toIntervalDay(${sql.param('UInt32', lookbackCalendarDays)})
-            AND session_date < toDate(${sql.param('String', query.sessionDate)})
-          GROUP BY symbol, session_date
-          ORDER BY symbol, session_date
-        `.pipe(Effect.orElseSucceed(() => []))
-        const decodedFallback = yield* Schema.decodeUnknownEffect(Schema.Array(DailyRowSchema))(fallbackRaw)
-        const existingKeys = new Set(dailyRows.map((row) => `${row.symbol}|${row.sessionDate}`))
-        for (const row of decodedFallback) {
-          const key = `${row.symbol}|${row.session_date}`
-          if (existingKeys.has(key)) continue
-          existingKeys.add(key)
-          dailyRows.push({
-            symbol: row.symbol,
-            sessionDate: row.session_date,
-            open: toFiniteNumber(row.open),
-            high: toFiniteNumber(row.high),
-            low: toFiniteNumber(row.low),
-            close: toFiniteNumber(row.close),
-          })
+        const manifestRaw = yield* sql`
+          SELECT snapshot_id
+          FROM signal.snapshot_manifests_v2
+          WHERE provider = ${sql.param('String', provider)}
+            AND adjustment = 'all'
+            AND publication_asof < toDate(${sql.param('String', query.sessionDate)})
+          ORDER BY publication_asof DESC, finalized_at DESC
+          LIMIT 1
+        `
+        const manifests = yield* Schema.decodeUnknownEffect(Schema.Array(SnapshotIdRowSchema))(manifestRaw)
+        const latestSnapshotId = manifests[0]?.snapshot_id
+        if (latestSnapshotId !== undefined) {
+          const fallbackRaw = yield* sql`
+            SELECT
+              symbol,
+              formatDateTime(session_date, '%Y-%m-%d') AS session_date,
+              toFloat64(adjusted_open) AS open,
+              toFloat64(adjusted_high) AS high,
+              toFloat64(adjusted_low) AS low,
+              toFloat64(adjusted_close) AS close
+            FROM signal.adjusted_daily_bars_v2
+            WHERE snapshot_id = ${sql.param('String', latestSnapshotId)}
+              AND provider = ${sql.param('String', provider)}
+              AND has(${sql.param('Array(String)', sparseSymbols)}, symbol)
+              AND session_date >= toDate(${sql.param('String', query.sessionDate)}) - toIntervalDay(${sql.param('UInt32', lookbackCalendarDays)})
+              AND session_date < toDate(${sql.param('String', query.sessionDate)})
+            ORDER BY symbol, session_date
+          `
+          const decodedFallback = yield* Schema.decodeUnknownEffect(Schema.Array(DailyRowSchema))(fallbackRaw)
+          const existingKeys = new Set(dailyRows.map((row) => `${row.symbol}|${row.sessionDate}`))
+          for (const row of decodedFallback) {
+            const key = `${row.symbol}|${row.session_date}`
+            if (existingKeys.has(key)) continue
+            existingKeys.add(key)
+            dailyRows.push({
+              symbol: row.symbol,
+              sessionDate: row.session_date,
+              open: toFiniteNumber(row.open),
+              high: toFiniteNumber(row.high),
+              low: toFiniteNumber(row.low),
+              close: toFiniteNumber(row.close),
+            })
+          }
         }
       }
 
