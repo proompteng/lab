@@ -37,22 +37,31 @@ type ProtectionIdentityConflict =
   | 'child symbol'
   | 'child duration'
 
-const seedProtectionIdentity = (observedAt: string, conflict?: ProtectionIdentityConflict) =>
-  Effect.gen(function* () {
-    // Reuse the real native fixture: its cycle, immutable pre-entry plan and protected intent must pass every
-    // production admission guard. Only the append-only broker observations below are varied by each adversary.
-    const { portfolio } = yield* seedManagedPosition({ nativeProtection: 'strategy' })
-    const intentId = portfolio.entryIntentIds[0]
-    if (intentId === undefined) throw new Error('Expected a native protected entry intent')
-    const sql = yield* PgClient.PgClient
-    const [intent] = yield* sql<{
-      client_order_id: string
-      quantity_atoms: string
-      limit_price_micros: string
-      protection: { stopPriceMicros: string; stopLimitPriceMicros: string; profitLimitPriceMicros: string }
-    }>`SELECT client_order_id,quantity_atoms::text,limit_price_micros::text,protection
+const seedProtectionIntent = Effect.gen(function* () {
+  // Reuse the real native fixture: its cycle, immutable pre-entry plan and protected intent must pass every
+  // production admission guard. Only the append-only broker observations below are varied by each adversary.
+  const { portfolio } = yield* seedManagedPosition({ nativeProtection: 'strategy' })
+  const intentId = portfolio.entryIntentIds[0]
+  if (intentId === undefined) throw new Error('Expected a native protected entry intent')
+  const sql = yield* PgClient.PgClient
+  const [intent] = yield* sql<{
+    client_order_id: string
+    quantity_atoms: string
+    limit_price_micros: string
+    protection: { stopPriceMicros: string; stopLimitPriceMicros: string; profitLimitPriceMicros: string }
+  }>`SELECT client_order_id,quantity_atoms::text,limit_price_micros::text,protection
       FROM intents WHERE intent_id = ${intentId} AND account_id = ${replayAccountId}`
-    if (intent === undefined) throw new Error('Expected retained immutable protection terms')
+  if (intent === undefined) throw new Error('Expected retained immutable protection terms')
+  return { intentId, intent }
+})
+
+const retainProtectionIdentity = (
+  { intentId, intent }: Effect.Success<typeof seedProtectionIntent>,
+  observedAt: string,
+  conflict?: ProtectionIdentityConflict,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
     const foreignIntentId = sha256('unrelated-protection-binding-intent')
     if (conflict === 'parent intent' || conflict === 'child intent')
       yield* sql`INSERT INTO intents (
@@ -99,13 +108,18 @@ const seedProtectionIdentity = (observedAt: string, conflict?: ProtectionIdentit
             : intent.protection.stopPriceMicros,
       },
     ]
+    const [sequenceStart] = yield* sql<{ nextSequence: string }>`
+      SELECT (COALESCE(MAX(source_sequence), -1) + 1)::text AS "nextSequence"
+      FROM broker_events WHERE broker = 'ALPACA' AND account_id = ${replayAccountId}`
+    if (sequenceStart === undefined) throw new Error('Expected an account source sequence')
     for (const [sequence, row] of rows.entries()) {
       const eventId = sha256(row.id)
       yield* sql`INSERT INTO broker_events (
         event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,occurred_at,observed_at
       ) VALUES (
         ${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${replayAccountId},
-        ${`order:${row.id}:${observedAt}`},${sequence},${observedAt}::timestamptz,${observedAt}::timestamptz
+        ${`order:${row.id}:${observedAt}`},${(BigInt(sequenceStart.nextSequence) + BigInt(sequence)).toString()},
+        ${observedAt}::timestamptz,${observedAt}::timestamptz
       )`
       yield* sql`INSERT INTO orders (
         event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,symbol,side,order_type,time_in_force,
@@ -118,12 +132,16 @@ const seedProtectionIdentity = (observedAt: string, conflict?: ProtectionIdentit
     return { intentId, protection: intent.protection }
   })
 
+const seedProtectionIdentity = (observedAt: string, conflict?: ProtectionIdentityConflict) =>
+  Effect.flatMap(seedProtectionIntent, (binding) => retainProtectionIdentity(binding, observedAt, conflict))
+
 describeNativeJevPostgres((postgres) => {
   test('a child discovered after the latest capture claim proves identity without advancing the financial boundary', async () =>
     postgres.runtime.runPromise(
       atObservation(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
+          const binding = yield* seedProtectionIntent
           const store = makeBrokerObservationStore(sql, replayAccountId, revision, 60000, valkeyFixture().cache)
           yield* store.activate(0)
           const boundary: BrokerNotification = {
@@ -148,11 +166,13 @@ describeNativeJevPostgres((postgres) => {
           if (claim.status !== BrokerObservationClaimStatus.Reserved) throw new Error('Expected a new capture')
           const ticket = claim.ticket
           const observedAt = utcInstantFromEpochMillis(Date.parse(ticket.startedAt) + 10)
-          const { intentId, protection } = yield* seedProtectionIdentity(observedAt)
           yield* TestClock.setTime(Date.parse(observedAt))
           expect(
             yield* store.publish(ticket, observedBrokerSnapshotFixture(replayAccountId, ticket.startedAt), 0),
           ).toBe(true)
+          // Canonical ingestion follows publication. A later provider order observation proves immutable identity,
+          // while the capture's notification cutoff still precedes it and financial completion remains separate.
+          const { intentId, protection } = yield* retainProtectionIdentity(binding, observedAt)
           const [{ notificationFence }] = yield* sql`SELECT notification_fence_at::text AS "notificationFence"
         FROM broker_observations WHERE account_id = ${replayAccountId}`
           expect(Date.parse(String(notificationFence))).toBeLessThan(Date.parse(observedAt))
