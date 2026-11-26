@@ -3,6 +3,8 @@ import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { MutationEventSchema, MutationEventType } from '../execution/mutations/model'
+import { reproduceAlphaBaselinePreparation } from '../observe-composition/alpha-baseline-preparation'
+import { preparedAlphaBaselineFixture } from '../observe-composition/alpha-baseline-preparation.test-support'
 import { nativeAlphaDecisionFixture } from '../strategy/intraday-alpha/alpha-decision.test-support'
 import { ControllerPassEvidenceSchema } from './decision-work'
 import { testHash } from './fixtures.test-support'
@@ -46,11 +48,35 @@ const withMutations = (mutations: Cut['mutations']): Cut => ({
 })
 
 beforeAll(async () => {
-  fixture = alphaLatencyFixture()
+  const retained = preparedAlphaBaselineFixture()
+  fixture = alphaLatencyFixture({}, retained.payload.acquisition.trailingBaseline)
+  const calendar = fixture.registration.calendar.marketCalendar
+  const session = calendar.sessions.find((entry) => entry.date === retained.payload.sessionDate)
+  if (session === undefined) throw new Error('Missing registered baseline preparation session')
+  const preparationAt = (offset: number) => new Date(Date.parse(session.openAt) + offset).toISOString()
+  const preparation = Result.getOrThrow(
+    reproduceAlphaBaselinePreparation({
+      ...retained.payload,
+      accountId: fixture.identity.accountId,
+      authorityGenerationHash: fixture.owned.payload.authorityGenerationHash,
+      executionBuild: fixture.executionBuild,
+      calendar,
+      acquisition: {
+        ...retained.payload.acquisition,
+        startedAt: preparationAt(0),
+        completedAt: preparationAt(1000),
+      },
+    }),
+  )
   const { document } = await nativeAlphaDecisionFixture({
     accountId: fixture.identity.accountId,
     authorityGenerationHash: fixture.owned.payload.authorityGenerationHash,
-    calendar: fixture.registration.calendar.marketCalendar,
+    calendar,
+    baselinePreparation: {
+      contentHash: preparation.contentHash,
+      payload: preparation.payload,
+      recordedAt: preparationAt(1001),
+    },
   })
   const target = document.strategyDecision
   if (target?.schemaVersion !== 'bayn.intraday-alpha-target.v2' || !document.dispatchable)
