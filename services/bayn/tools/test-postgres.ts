@@ -28,6 +28,7 @@ const files = [
   'src/db/postgres-backend-tracing.integration.test.ts',
   'src/db/snapshot-rows.integration.test.ts',
   'src/db/broker-observations.integration.test.ts',
+  'src/db/broker-protection-binding.integration.test.ts',
   'src/cycle/store/observability.integration.test.ts',
   'src/db/execution-store.integration.test.ts',
   'src/db/execution-store/configured-account.integration.test.ts',
