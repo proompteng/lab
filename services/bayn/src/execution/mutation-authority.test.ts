@@ -1123,6 +1123,20 @@ describe('final broker mutation authority', () => {
   })
 
   test.each([
+    ['parent identity', { parentBrokerOrderId: 'another-parent' }],
+    ['group class', { orderClass: OrderClass.OneCancelsOther }],
+    ['client identity', { clientOrderId: 'another-client' }],
+    ['duration', { timeInForce: BrokerTimeInForce.GoodUntilCanceled }],
+    ['extended hours', { extendedHours: true }],
+  ] as const)('rejects a reshaped open-order %s before risk grouping or transmission', async (_name, change) => {
+    const before = order({ parentBrokerOrderId: 'verified-parent' })
+    const observed = await runLiveSubmit({ orderSnapshots: [[before], [{ ...before, ...change }]] })
+    expect(failureTag(observed.exit)).toBe('BrokerOpenOrderSnapshotChanged')
+    expect(observed.grantReads).toBe(0)
+    expect(observed.submits).toBe(0)
+  })
+
+  test.each([
     ['account', { brokerAccount: account({ observedAt: '2026-07-28T07:54:59.999Z' }) }],
     ['position', { positions: [position({ observedAt: '2026-07-28T07:54:59.999Z' })] }],
     ['open order', { openOrders: [order({ observedAt: '2026-07-28T07:54:59.999Z' })] }],
