@@ -5,9 +5,17 @@ import { databaseUtcInstant } from '../db/clock'
 import { executionDecisionRows } from '../db/execution-decision-query'
 import { generationScope } from '../forward-performance/postgres/scope'
 import { canonicalHashV1Result } from '../hash'
-import { Sha256Schema, SignedMicrosSchema, UtcInstantSchema } from '../schemas'
+import { Sha256Schema, SignedMicrosSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { FeeSettlementAnchorsSchema } from './cash-settlements'
-import { SystemSourceCutSchema } from './source-cut'
+import {
+  AlphaObservationEvidenceSchema,
+  RetainedSystemSourceCutSchema,
+  SystemDurableObservationSchema,
+} from './source-cut'
+import { SystemAssessmentError } from './economics'
+import { reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
+import { resolveAlphaRegularSession } from '../strategy/intraday-alpha/signals'
+import { registeredAlphaObservationSessions } from './calendar'
 
 export const readSystemCashObservations = (
   accountId: string,
@@ -124,7 +132,7 @@ export const readSystemFeeSettlementAnchors = (
 export const readSystemBatchEvidence = (accountId: string, generationHash: string, openAt: string, closeAt: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.batches)(
+    return yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.batches)(
       yield* sql`
       SELECT plan.payload AS plan, observation.payload AS observation, result.payload AS result
       FROM jev_batch_plans AS plan JOIN autonomous_cycles AS cycle USING (cycle_id)
@@ -137,10 +145,73 @@ export const readSystemBatchEvidence = (accountId: string, generationHash: strin
     )
   })
 
+/** Standalone observations include abstentions and blocked plans; availability is witnessed separately. */
+export const readSystemAlphaObservations = (
+  accountId: string,
+  generationHash: string,
+  registeredCalendar: Parameters<typeof registeredAlphaObservationSessions>[0],
+  asOf: string,
+  sharedProtocolHash: string,
+) =>
+  Effect.gen(function* () {
+    const sessions = yield* Effect.fromResult(registeredAlphaObservationSessions(registeredCalendar))
+    const sql = yield* PgClient.PgClient
+    const rows = yield* Schema.decodeUnknownEffect(
+      Schema.Array(Schema.Struct({ ...AlphaObservationEvidenceSchema.fields, observedAt: UtcInstantSchema })),
+      strictParseOptions,
+    )(
+      yield* sql`
+      SELECT observation.content_hash AS "contentHash", observation.payload,
+        to_char(observation.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
+      FROM intraday_candidate_observations AS observation
+      WHERE observation.payload->>'schemaVersion' = 'bayn.intraday-alpha-observation.v2'
+        AND observation.payload->>'authorityGenerationHash' = ${generationHash}
+        AND observation.payload #>> '{portfolio,brokerState,account,accountId}' = ${accountId}
+        AND observation.observed_at <= ${asOf}::timestamptz
+        AND EXISTS (
+          SELECT 1 FROM jsonb_to_recordset(${JSON.stringify(sessions)}::jsonb)
+            AS calendar("sessionDate" date, "openAt" timestamptz, "closeAt" timestamptz)
+          WHERE observation.observed_at >= calendar."openAt"
+            AND observation.observed_at < calendar."closeAt"
+        )
+      ORDER BY observation.observed_at, observation.content_hash
+    `,
+    )
+    const seen = new Set<string>()
+    const retained = []
+    for (const row of rows) {
+      const observation = yield* Effect.fromResult(reproduceIntradayAlphaObservation(row.payload))
+      const session = sessions.find((session) => session.sessionDate === observation.snapshot.manifest.sessionDate)
+      const calendar = yield* Effect.fromResult(
+        resolveAlphaRegularSession(observation.snapshot.manifest.calendar, observation.snapshot.manifest.sessionDate),
+      )
+      if (
+        seen.has(row.contentHash) ||
+        observation.contentHash !== row.contentHash ||
+        observation.observedAt !== row.observedAt ||
+        observation.authorityGenerationHash !== generationHash ||
+        observation.portfolio.brokerState.account.accountId !== accountId ||
+        (yield* Effect.fromResult(canonicalHashV1Result(observation.protocol))) !== sharedProtocolHash ||
+        session === undefined ||
+        calendar.openAt !== session.regularOpenAt ||
+        calendar.closeAt !== session.regularCloseAt ||
+        observation.observedAt < session.openAt ||
+        observation.observedAt >= session.closeAt ||
+        observation.observedAt > asOf
+      )
+        return yield* new SystemAssessmentError({
+          message: 'Retained alpha observation differs from its registered identity, calendar or source cut',
+        })
+      seen.add(row.contentHash)
+      retained.push({ contentHash: row.contentHash, payload: row.payload })
+    }
+    return retained
+  }).pipe(Effect.mapError((cause) => new SystemAssessmentError({ message: 'Alpha observation capture failed', cause })))
+
 export const readSystemMutationEvidence = (accountId: string, generationHash: string, from: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.mutations)(
+    return yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.mutations)(
       yield* sql`
         WITH latest AS MATERIALIZED (
           SELECT DISTINCT ON (event.mutation_id) event.mutation_id, event.event_type, event.occurred_at
@@ -199,7 +270,7 @@ export const readSystemControllerPasses = (
 ) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.controllerPasses)(
+    return yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.controllerPasses)(
       yield* systemControllerPassQuery(sql, controllerKey, planHash, openAt, closeAt, asOf),
     )
   })
@@ -207,7 +278,7 @@ export const readSystemControllerPasses = (
 export const readSystemDurableObservations = (registrationHash: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.durableObservations)(
+    return yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.durableObservations)(
       yield* sql`
     SELECT kind, source_hash AS "sourceHash", correct,
       to_char(source_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "sourceAt",
@@ -216,6 +287,25 @@ export const readSystemDurableObservations = (registrationHash: string) =>
           ELSE interval '0' END) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "witnessedAt"
     FROM system_durable_observations WHERE registration_hash = ${registrationHash}
     ORDER BY witnessed_at, kind, source_hash`,
+    )
+  })
+
+export const readStrategyBoundSystemDurableObservations = (registrationHash: string, asOf: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    return yield* Schema.decodeUnknownEffect(
+      Schema.Array(SystemDurableObservationSchema),
+      strictParseOptions,
+    )(
+      yield* sql`
+      SELECT kind, source_hash AS "sourceHash", correct,
+        to_char(source_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "sourceAt",
+        to_char((date_trunc('milliseconds', witnessed_at) +
+          CASE WHEN witnessed_at > date_trunc('milliseconds', witnessed_at) THEN interval '1 millisecond'
+            ELSE interval '0' END) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "witnessedAt"
+      FROM system_durable_observations
+      WHERE registration_hash = ${registrationHash} AND witnessed_at <= ${asOf}::timestamptz
+      ORDER BY witnessed_at, kind, source_hash`,
     )
   })
 

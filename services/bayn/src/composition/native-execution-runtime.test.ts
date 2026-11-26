@@ -883,11 +883,13 @@ describe('native execution runtime', () => {
       ...windowClosedObservation,
       executionBuild,
       jevObservationReferences: { hashes: [recoveredHash, firstHash], complete: true },
+      alphaObservationReferences: { hashes: [], complete: true },
     })
     expect(results[1]?.observation).toEqual({
       ...windowClosedObservation,
       executionBuild,
       jevObservationReferences: { hashes: [], complete: true },
+      alphaObservationReferences: { hashes: [], complete: true },
     })
     expect(retainedPolicies).toEqual([momentum, undefined])
   })
@@ -1004,7 +1006,66 @@ describe('native execution runtime', () => {
               : [],
           complete: false,
         },
+        alphaObservationReferences: { hashes: [], complete: true },
       })
+    },
+  )
+
+  test.each(['complete', 'failure', 'overflow', 'malformed', 'instrumentation-failure'] as const)(
+    'retains independent alpha references with %s source evidence and no Jev batch store',
+    async (mode) => {
+      const failure = operationalError({ component: 'database', operation: 'fixture', message: 'record failed' })
+      let writes = 0
+      const context = Context.make(CandidateObservationStore, {
+        record: () =>
+          Effect.suspend(() => {
+            writes++
+            return mode === 'failure' && writes > 1 ? Effect.fail(failure) : Effect.void
+          }),
+        latestJevWindowEnd: () => Effect.succeed(Option.none()),
+      }) as Context.Context<RecoveryFirstRuntime>
+      const results = await Effect.runPromise(
+        Effect.gen(function* () {
+          let pass = 0
+          const bound = yield* bindRecoveryFirstCycleDriver(
+            {
+              ...driver,
+              advance: Effect.gen(function* () {
+                if (pass++ === 0) {
+                  const store = yield* CandidateObservationStore
+                  for (let index = 0; index < (mode === 'overflow' ? 20 : 2); index++) {
+                    const candidate = {
+                      payload: { schemaVersion: 'bayn.intraday-alpha-observation.v2' },
+                      get contentHash() {
+                        if (mode === 'instrumentation-failure') throw new Error('reference unavailable')
+                        return mode === 'malformed' ? 'invalid' : index.toString(16).padStart(64, '0')
+                      },
+                    } as CandidateObservation
+                    yield* store.record(candidate).pipe(Effect.ignore)
+                    // A duplicate successful reference must not consume the bounded inventory.
+                    if (mode === 'complete') yield* store.record(candidate).pipe(Effect.orDie)
+                  }
+                }
+                return { observation: windowClosedObservation, nextDelayMs: 1000 }
+              }),
+            },
+            executionBuild,
+          ).pipe(Effect.provideContext(context))
+          return [yield* bound.advance, yield* bound.advance]
+        }),
+      )
+      const expectedCount = mode === 'overflow' ? 16 : mode === 'complete' ? 2 : mode === 'failure' ? 1 : 0
+      expect(results[0]?.observation).toMatchObject({
+        ...windowClosedObservation,
+        alphaObservationReferences: {
+          hashes: Array.from({ length: expectedCount }, (_, index) => index.toString(16).padStart(64, '0')),
+          complete: mode === 'complete',
+        },
+        jevObservationReferences: { hashes: [], complete: false },
+      })
+      expect(results[0]?.nextDelayMs).toBe(1000)
+      expect(results[1]?.observation.alphaObservationReferences).toEqual({ hashes: [], complete: true })
+      expect(writes).toBe(mode === 'overflow' ? 20 : mode === 'complete' ? 4 : 2)
     },
   )
 

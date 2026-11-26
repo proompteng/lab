@@ -7,7 +7,10 @@ import { measureControllerLatency, nearestRank95 } from './controller-latency'
 import { registrationFixture, testHash, withRegistrationCommitments } from './fixtures.test-support'
 import { ObligationClass } from './reliability'
 import { registeredSchedule } from './schedule'
-import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
+import {
+  RetainedSystemSourceCutSchema as SystemSourceCutSchema,
+  type RetainedSystemSourceCut as SystemSourceCut,
+} from './source-cut'
 
 const fixture = () => {
   const identity = Result.getOrThrow(

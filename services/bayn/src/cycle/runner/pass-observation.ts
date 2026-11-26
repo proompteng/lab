@@ -49,6 +49,16 @@ export const ClosedEntryWindowSchema = Schema.Struct({
 export type ClosedEntryWindow = typeof ClosedEntryWindowSchema.Type
 
 export const maximumRetainedJevObservationReferences = 16
+export const maximumRetainedAlphaObservationReferences = 16
+export const AlphaObservationReferencesSchema = Schema.Struct({
+  hashes: Schema.Array(Sha256Schema).check(
+    Schema.isMaxLength(maximumRetainedAlphaObservationReferences),
+    Schema.makeFilter((hashes) => hashes.every((hash, index) => hash > (hashes[index - 1] ?? '')), {
+      expected: 'unique alpha observation hashes in canonical order',
+    }),
+  ),
+  complete: Schema.Boolean,
+})
 export const JevObservationReferencesSchema = Schema.Struct({
   hashes: Schema.Array(Sha256Schema).check(
     Schema.isMaxLength(maximumRetainedJevObservationReferences),
@@ -69,6 +79,7 @@ export const cyclePassObservationSchemaForHold = <Hold extends { readonly eviden
       executionBuild: Schema.optionalKey(ExecutionBuildSchema),
       observedAt: UtcInstantSchema,
       jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
+      alphaObservationReferences: Schema.optionalKey(AlphaObservationReferencesSchema),
       outcome: Schema.Literals([
         'WAITING',
         'ADMISSION_WAITING',
@@ -159,6 +170,7 @@ export const cyclePassObservationSchemaForHold = <Hold extends { readonly eviden
       executionBuild: Schema.optionalKey(ExecutionBuildSchema),
       observedAt: UtcInstantSchema,
       jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
+      alphaObservationReferences: Schema.optionalKey(AlphaObservationReferencesSchema),
       operation: Schema.Literals([
         'acquire-cycle',
         'build-decision',
