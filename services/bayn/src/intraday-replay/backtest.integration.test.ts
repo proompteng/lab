@@ -618,6 +618,19 @@ durableTest.each([
             expect(report.momentumObservations).toEqual([])
             expect(report.alphaObservations?.length).toBeGreaterThan(0)
             expect(report.alphaBaselineGaps).toEqual([])
+            for (const observation of report.alphaObservations ?? []) {
+              const use = observation.baselineUse
+              expect(use.observationHash).toBe(observation.contentHash)
+              expect(use.cycleId).toBe(observation.payload.cycleId)
+              expect(use.authorityGenerationHash).toBe(observation.payload.authorityGenerationHash)
+              expect(Date.parse(use.commandIssuedAt)).toBeLessThanOrEqual(Date.parse(use.admissionObservedAt))
+              expect(Date.parse(use.admissionObservedAt)).toBeLessThanOrEqual(
+                Date.parse(observation.payload.observedAt),
+              )
+              expect(Date.parse(observation.payload.observedAt)).toBeLessThan(Date.parse(use.admissionExpiresAt))
+              expect(use.sourceObservationHash).toBe(alphaFixture.alphaBaselineSources[0]?.observationHash)
+              expect(use.sourceWitnessHash).toBe(alphaFixture.alphaBaselineSources[0]?.witnessSourceHash)
+            }
             const documents = report.decisions.map((row) => Result.getOrThrow(decodeExecutionDecisionDocument(row)))
             const selected = documents.find(
               (document) =>

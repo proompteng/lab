@@ -1,7 +1,8 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { IsoDateSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
+import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { jevSignalWindowEndMs } from '../jev/observation-query'
 import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
 import {
   IntradayAlphaObservationSchema,
@@ -9,12 +10,15 @@ import {
 } from '../strategy/intraday-alpha/observation'
 import { ResearchStrategyEngine, type ResearchStrategyBinding } from '../system-assessment/strategy-binding'
 import type { AlphaBaselineSource } from '../system-assessment/alpha-observation-witness'
-import { selectReplayAlphaBaseline } from './alpha-baseline'
+import { prepareReplayAlphaBaselineSources, selectReplayAlphaBaselineSource } from './alpha-baseline'
+import { ReplayAlphaBaselineUseSchema } from './alpha-baseline-use'
+import type { ReplayObservationLatencyReceipt } from './decision-latency'
 import { ReplayBrokerFailure } from './broker'
 
 export const ReplayAlphaObservationSchema = Schema.Struct({
   contentHash: Sha256Schema,
   payload: IntradayAlphaObservationSchema,
+  baselineUse: ReplayAlphaBaselineUseSchema,
 })
 export const ReplayAlphaBaselineGapSchema = Schema.Struct({
   reason: Schema.Literal('MISSING_CAUSAL_ALPHA_BASELINE'),
@@ -32,6 +36,7 @@ export const verifyReplayAlphaEvidence = (input: {
   readonly baselineGaps: readonly ReplayAlphaBaselineGap[]
   readonly decisions: readonly unknown[]
   readonly runId: string
+  readonly observationReleases?: readonly ReplayObservationLatencyReceipt[]
 }) =>
   Result.gen(function* () {
     const fail = (message: string) => Result.fail(new ReplayBrokerFailure({ message }))
@@ -42,11 +47,17 @@ export const verifyReplayAlphaEvidence = (input: {
       return []
     }
     const accountId = `replay-${input.runId}`
+    const sources = yield* prepareReplayAlphaBaselineSources(binding, input.sources)
+    const releases = new Map(input.observationReleases?.map((receipt) => [receipt.observationHash, receipt]) ?? [])
+    if (releases.size !== (input.observationReleases?.length ?? 0))
+      return yield* fail('Alpha observation release inventory duplicates its command identity')
     const observations = []
     const seen = new Set<string>()
     for (const row of input.observations) {
       const observed = yield* reproduceIntradayAlphaObservation(row.payload)
       const manifest = observed.snapshot.manifest
+      const use = yield* Schema.decodeUnknownResult(ReplayAlphaBaselineUseSchema, strictParseOptions)(row.baselineUse)
+      const release = releases.get(row.contentHash)
       if (
         seen.has(row.contentHash) ||
         observed.contentHash !== row.contentHash ||
@@ -55,9 +66,25 @@ export const verifyReplayAlphaEvidence = (input: {
           (yield* canonicalHashV1Result(binding.parameters.sharedProtocol))
       )
         return yield* fail('Alpha replay observation is duplicated or differs from its engine, account or content')
-      const baseline = yield* selectReplayAlphaBaseline(
+      if (
+        use.observationHash !== row.contentHash ||
+        use.cycleId !== observed.cycleId ||
+        use.authorityGenerationHash !== observed.authorityGenerationHash ||
+        use.sessionDate !== manifest.sessionDate ||
+        use.windowEndAt !== manifest.rangeEndAt ||
+        use.commandIssuedAt > use.admissionObservedAt ||
+        use.admissionObservedAt > observed.observedAt ||
+        use.admissionObservedAt >= use.admissionExpiresAt ||
+        observed.observedAt >= use.admissionExpiresAt ||
+        jevSignalWindowEndMs(Date.parse(use.admissionObservedAt), binding.parameters.sharedProtocol) !==
+          Date.parse(use.windowEndAt) ||
+        (release !== undefined &&
+          (release.commandIssuedAt !== use.commandIssuedAt || release.observedAt !== observed.observedAt))
+      )
+        return yield* fail('Alpha baseline-use receipt changed its original command, admission, owner or window')
+      const source = yield* selectReplayAlphaBaselineSource(
         binding,
-        input.sources,
+        sources,
         {
           sessionDate: manifest.sessionDate,
           symbols: binding.parameters.candidateSymbols,
@@ -71,26 +98,42 @@ export const verifyReplayAlphaEvidence = (input: {
             universeId: manifest.universeId,
           },
         },
-        observed.observedAt,
+        use.admissionObservedAt,
       )
-      if ((yield* canonicalHashV1Result(baseline)) !== (yield* canonicalHashV1Result(observed.trailingBaseline)))
+      const baselineHash = yield* canonicalHashV1Result(source.payload.trailingBaseline)
+      if (
+        source.observationHash !== use.sourceObservationHash ||
+        source.witnessSourceHash !== use.sourceWitnessHash ||
+        baselineHash !== use.baselineHash ||
+        baselineHash !== (yield* canonicalHashV1Result(observed.trailingBaseline))
+      )
         return yield* fail('Alpha replay observation changed its causally available retained baseline')
       seen.add(row.contentHash)
       observations.push(observed)
     }
+    if ([...releases.keys()].some((hash) => !seen.has(hash)))
+      return yield* fail('Alpha command receipt has no retained observation')
     const decisions = new Set<string>()
     for (const raw of input.decisions) {
       const document = yield* decodeExecutionDecisionDocument(raw)
       const target = document.strategyDecision
+      const observationHash =
+        target?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+          ? yield* canonicalHashV1Result(target.evidence.observation)
+          : null
       if (
         target?.schemaVersion !== 'bayn.intraday-alpha-target.v2' ||
         decisions.has(document.contentHash) ||
         document.bindings.accountId !== accountId ||
         document.bindings.strategyProtocolHash !== binding.protocolHash ||
         (yield* canonicalHashV1Result(target.policy)) !== (yield* canonicalHashV1Result(binding.parameters)) ||
-        !seen.has(yield* canonicalHashV1Result(target.evidence.observation))
+        observationHash === null ||
+        !seen.has(observationHash)
       )
         return yield* fail('Alpha replay decision does not bind its complete native policy and retained observation')
+      const admitted = input.observations.find((row) => row.contentHash === observationHash)
+      if (admitted === undefined || target.evidence.decidedAt >= admitted.baselineUse.admissionExpiresAt)
+        return yield* fail('Alpha replay decision completed outside its original admission deadline')
       decisions.add(document.contentHash)
     }
     const gapKeys = new Set<string>()

@@ -51,7 +51,8 @@ import {
   validateResearchStrategyBinding,
   makeResearchStrategyBinding,
 } from '../system-assessment/strategy-binding'
-import { prepareReplayAlphaBaselineSources, makeReplayAlphaTrailingBaseline } from './alpha-baseline'
+import { prepareReplayAlphaBaselineSources, selectReplayAlphaBaselineSource } from './alpha-baseline'
+import { ReplayAlphaBaselineUseSchema, type ReplayAlphaBaselineUse } from './alpha-baseline-use'
 import { AlphaBaselineSourceSchema } from '../system-assessment/alpha-observation-witness'
 import { verifyReplayAlphaEvidence, type ReplayAlphaBaselineGap } from './alpha-report'
 import {
@@ -89,7 +90,7 @@ import { makeReplayTimeline, driveReplaySession, makeStreamingReplaySession } fr
 import { EquityExecutionTapeReferenceSchema, type EquityExecutionTape } from './equity-execution-tape'
 import type { RuntimeConfig } from '../config/model'
 import type { RecordAutonomousCyclePass } from '../app'
-import type { OperationalError } from '../errors'
+import { operationalError, type OperationalError } from '../errors'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { ReconciliationStatus } from '../execution/contracts'
 import type { ReconciliationMetrics } from '../simulation-reconciliation/broker-model'
@@ -701,36 +702,58 @@ export const runBacktest = (
     )
     const strategyBinding = prepared.strategyBinding
     const baselineGaps = new Map<string, ReplayAlphaBaselineGap>()
+    const baselineUses = new Map<string, ReplayAlphaBaselineUse>()
     const runtime = yield* makeReplayExecutionRuntime({
       decisionTrigger: prepared.input.schemaVersion === 'bayn.backtest.v12' ? 'streaming' : 'polling',
       ...(strategyBinding === null
         ? {}
         : {
             loadAlphaBaseline: (query, observedAt) =>
-              makeReplayAlphaTrailingBaseline(
-                strategyBinding,
-                prepared.alphaBaselineSources,
-                Effect.succeed(observedAt),
-              )
-                .load(query)
-                .pipe(
-                  Effect.tapError((cause) =>
-                    !cause.retryable
-                      ? Effect.void
-                      : Effect.sync(() => {
-                          baselineGaps.set(`${query.sessionDate}:${observedAt}`, {
-                            reason: 'MISSING_CAUSAL_ALPHA_BASELINE',
-                            sessionDate: query.sessionDate,
-                            observedAt,
-                            firstAvailableAt:
-                              prepared.alphaBaselineSources
-                                .filter((source) => source.payload.trailingBaseline.sessionDate === query.sessionDate)
-                                .toSorted((a, b) => Date.parse(a.availableAt) - Date.parse(b.availableAt))[0]
-                                ?.availableAt ?? null,
-                          })
-                        }),
-                  ),
+              Effect.fromResult(
+                selectReplayAlphaBaselineSource(strategyBinding, prepared.alphaBaselineSources, query, observedAt),
+              ).pipe(
+                Effect.tapError((cause) =>
+                  !cause.retryable
+                    ? Effect.void
+                    : Effect.sync(() => {
+                        baselineGaps.set(`${query.sessionDate}:${observedAt}`, {
+                          reason: 'MISSING_CAUSAL_ALPHA_BASELINE',
+                          sessionDate: query.sessionDate,
+                          observedAt,
+                          firstAvailableAt:
+                            prepared.alphaBaselineSources
+                              .filter((source) => source.payload.trailingBaseline.sessionDate === query.sessionDate)
+                              .toSorted((a, b) => Date.parse(a.availableAt) - Date.parse(b.availableAt))[0]
+                              ?.availableAt ?? null,
+                        })
+                      }),
                 ),
+              ),
+            recordAlphaBaselineUse: (raw) =>
+              Effect.gen(function* () {
+                const use = yield* Schema.decodeUnknownEffect(ReplayAlphaBaselineUseSchema, strictParseOptions)(raw)
+                const previous = baselineUses.get(use.observationHash)
+                if (
+                  previous !== undefined &&
+                  (yield* Effect.fromResult(canonicalHashV1Result(previous))) !==
+                    (yield* Effect.fromResult(canonicalHashV1Result(use)))
+                )
+                  return yield* operationalError({
+                    component: 'strategy',
+                    operation: 'replay-alpha-baseline',
+                    message: 'A retained alpha observation changed its original baseline-use receipt',
+                  })
+                baselineUses.set(use.observationHash, use)
+              }).pipe(
+                Effect.mapError((cause) =>
+                  operationalError({
+                    component: 'strategy',
+                    operation: 'replay-alpha-baseline',
+                    message: 'Alpha baseline-use receipt could not be retained',
+                    cause,
+                  }),
+                ),
+              ),
           }),
       decisionLatencyStress:
         prepared.latencyStress === null
@@ -1010,9 +1033,16 @@ export const runBacktest = (
                   return yield* new ReplayBrokerFailure({
                     message: 'Persisted alpha observation hash does not reproduce',
                   })
-                return { contentHash: row.content_hash, payload }
+                const baselineUse = baselineUses.get(row.content_hash)
+                if (baselineUse === undefined)
+                  return yield* new ReplayBrokerFailure({
+                    message: 'Persisted alpha observation has no original baseline-use receipt',
+                  })
+                return { contentHash: row.content_hash, payload, baselineUse }
               }),
             )
+      if (baselineUses.size !== alphaObservations.length)
+        return yield* new ReplayBrokerFailure({ message: 'Alpha baseline-use receipt has no retained observation' })
       if (prepared.strategyBinding !== null)
         yield* Effect.fromResult(
           verifyReplayAlphaEvidence({
@@ -1022,6 +1052,7 @@ export const runBacktest = (
             baselineGaps: alphaBaselineGaps,
             decisions,
             runId: prepared.runId,
+            observationReleases: decisionLatencyEvidence.observationReceipts,
           }),
         )
       const report = {

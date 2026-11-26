@@ -17,11 +17,23 @@ import { shortEntryBrokerReads } from '../testing/entry-broker-reads.test-suppor
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { currentUtcInstant } from '../time'
 import { ResearchStrategyEngine } from '../system-assessment/strategy-binding'
-import { selectReplayAlphaBaseline } from './alpha-baseline'
+import { selectReplayAlphaBaselineSource } from './alpha-baseline'
+import type { ReplayAlphaBaselineAdmissionUse } from './alpha-baseline-use'
 import { alphaReplayBaselineFixture } from './alpha-replay.test-support'
 import { observeResearchEntry } from './decision-builder'
+import { operationalError } from '../errors'
+import { makeReplayDecisionLatency } from './decision-latency'
+import { ReplayBrokerFailure } from './broker'
 
-const run = async (options: { readonly lateBaseline?: boolean; readonly expiryMs?: number } = {}) => {
+const run = async (
+  options: {
+    readonly lateBaseline?: boolean
+    readonly expiryMs?: number
+    readonly failRecord?: boolean
+    readonly failAfterRecord?: boolean
+    readonly failRelease?: boolean
+  } = {},
+) => {
   const retained = alphaReplayBaselineFixture()
   const binding = retained.binding
   if (binding.engine !== ResearchStrategyEngine.IntradayAlpha) throw new Error('Missing alpha policy')
@@ -47,6 +59,17 @@ const run = async (options: { readonly lateBaseline?: boolean; readonly expiryMs
   const snapshots: string[] = []
   const baselineCuts: string[] = []
   const recorded: unknown[] = []
+  const uses: ReplayAlphaBaselineAdmissionUse[] = []
+  const latency = makeReplayDecisionLatency(
+    currentUtcInstant,
+    options.failRelease
+      ? {
+          p95FullBatchMs: 1000,
+          advanceTo: () => Effect.fail(new ReplayBrokerFailure({ message: 'test-only release failure' })),
+        }
+      : null,
+    true,
+  )
   const unused = Effect.die('Unexpected capability in native alpha replay')
   const read = <A, E>(kind: string, select: (value: ReturnType<typeof shortEntryBrokerReads>) => Effect.Effect<A, E>) =>
     Effect.gen(function* () {
@@ -67,52 +90,78 @@ const run = async (options: { readonly lateBaseline?: boolean; readonly expiryMs
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(input.observedAt))
       const result = yield* Effect.result(
-        observeResearchEntry((query, observedAt) =>
-          Effect.gen(function* () {
-            baselineCuts.push(observedAt)
-            return yield* Effect.fromResult(selectReplayAlphaBaseline(binding, sources, query, observedAt))
-          }),
-        )({
-          strategy: makeIntradayAlphaRuntime(binding.parameters, {
-            ...fixtureRuntime.provenance,
-            strategy: binding.strategy,
-          }),
-          query: input.query,
-          observation: {
-            cycleId: '1'.repeat(64),
-            authorityGenerationHash: '2'.repeat(64),
-            protocol: binding.parameters.sharedProtocol,
-            portfolio,
-          },
-          calendar,
-          sessionDate: input.query.sessionDate,
-          observedAt: input.observedAt,
-          admissionExpiresAt: Date.parse(input.observedAt) + (options.expiryMs ?? 60000),
-          loadSnapshot: (query) =>
-            Effect.sync(() => {
-              snapshots.push(query.observedAt)
-              return Result.getOrThrow(constructStreamingSnapshot(input.cut, query))
+        latency.runPass(
+          observeResearchEntry(
+            (query, observedAt) =>
+              Effect.gen(function* () {
+                baselineCuts.push(observedAt)
+                return yield* Effect.fromResult(selectReplayAlphaBaselineSource(binding, sources, query, observedAt))
+              }),
+            (use) =>
+              Effect.sync(() => {
+                uses.push(use)
+              }),
+          )({
+            strategy: makeIntradayAlphaRuntime(binding.parameters, {
+              ...fixtureRuntime.provenance,
+              strategy: binding.strategy,
             }),
-        }),
+            query: input.query,
+            observation: {
+              cycleId: '1'.repeat(64),
+              authorityGenerationHash: '2'.repeat(64),
+              protocol: binding.parameters.sharedProtocol,
+              portfolio,
+            },
+            calendar,
+            sessionDate: input.query.sessionDate,
+            observedAt: input.observedAt,
+            admissionExpiresAt: Date.parse(input.observedAt) + (options.expiryMs ?? 60000),
+            loadSnapshot: (query) =>
+              Effect.sync(() => {
+                snapshots.push(query.observedAt)
+                return Result.getOrThrow(constructStreamingSnapshot(input.cut, query))
+              }),
+          }),
+        ),
       )
-      return { result, completedAt: yield* Clock.currentTimeMillis }
+      return { result, completedAt: yield* Clock.currentTimeMillis, latencyEvidence: yield* latency.evidence }
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           TestClock.layer(),
-          Layer.succeed(CandidateObservationStore, {
-            latestJevWindowEnd: () => Effect.succeed(Option.none()),
-            readIntradayAlphaSessionState: () =>
-              Effect.succeed({
-                morningOrbTakenSymbols: [],
-                middayReversionCompleted: false,
-                noiseAreaTakenSymbols: [],
-              }),
-            record: (observation) =>
-              Effect.sync(() => {
-                recorded.push(observation)
-              }),
-          }),
+          Layer.succeed(
+            CandidateObservationStore,
+            latency.wrapObservations({
+              latestJevWindowEnd: () => Effect.succeed(Option.none()),
+              readIntradayAlphaSessionState: () =>
+                options.failAfterRecord
+                  ? Effect.fail(
+                      operationalError({
+                        component: 'strategy',
+                        operation: 'test',
+                        message: 'test-only later decision failure',
+                      }),
+                    )
+                  : Effect.succeed({
+                      morningOrbTakenSymbols: [],
+                      middayReversionCompleted: false,
+                      noiseAreaTakenSymbols: [],
+                    }),
+              record: (observation) =>
+                options.failRecord
+                  ? Effect.fail(
+                      operationalError({
+                        component: 'database',
+                        operation: 'test',
+                        message: 'test-only durable record failure',
+                      }),
+                    )
+                  : Effect.sync(() => {
+                      recorded.push(observation)
+                    }),
+            }),
+          ),
           Layer.succeed(BrokerRead, {
             account: read('account', (broker) => broker.account),
             accountConfiguration: read('configuration', (broker) => broker.accountConfiguration),
@@ -140,7 +189,7 @@ const run = async (options: { readonly lateBaseline?: boolean; readonly expiryMs
       ),
     ),
   )
-  return { ...result, input, reads, snapshots, baselineCuts, recorded }
+  return { ...result, input, reads, snapshots, baselineCuts, recorded, uses }
 }
 
 test('research alpha observes fresh borrow eligibility before snapshot refresh while preserving the original baseline cut', async () => {
@@ -155,6 +204,12 @@ test('research alpha observes fresh borrow eligibility before snapshot refresh w
   expect(f.reads.every((read) => Date.parse(read.observedAt) <= Date.parse(f.snapshots[0] ?? ''))).toBe(true)
   expect(f.baselineCuts).toEqual([f.input.observedAt])
   expect(f.recorded).toHaveLength(1)
+  expect(f.uses).toHaveLength(1)
+  expect(f.uses[0]).toMatchObject({
+    admissionObservedAt: f.input.observedAt,
+    cycleId: '1'.repeat(64),
+    authorityGenerationHash: '2'.repeat(64),
+  })
 })
 
 test('delayed eligibility cannot admit a newly available baseline or extend the original entry deadline', async () => {
@@ -174,6 +229,24 @@ test('delayed eligibility cannot admit a newly available baseline or extend the 
     }
     expect(f.baselineCuts).toEqual([f.input.observedAt])
     expect(f.recorded).toEqual([])
+    expect(f.uses).toEqual([])
     expect(f.completedAt).toBeGreaterThan(Date.parse(f.input.observedAt) + 5)
   }
+})
+
+test('baseline-use evidence follows durable observation success even if the later decision fails', async () => {
+  const before = await run({ failRecord: true })
+  expect(Result.isFailure(before.result)).toBe(true)
+  expect(before.recorded).toEqual([])
+  expect(before.uses).toEqual([])
+  const after = await run({ failAfterRecord: true })
+  expect(Result.isFailure(after.result)).toBe(true)
+  expect(after.recorded).toHaveLength(1)
+  expect(after.uses).toHaveLength(1)
+  expect(after.uses[0]?.admissionObservedAt).toBe(after.input.observedAt)
+  const unreleased = await run({ failRelease: true })
+  expect(Result.isFailure(unreleased.result)).toBe(true)
+  expect(unreleased.recorded).toHaveLength(1)
+  expect(unreleased.uses).toHaveLength(1)
+  expect(unreleased.latencyEvidence.unreleasedObservationHashes).toEqual([unreleased.uses[0]?.observationHash])
 })

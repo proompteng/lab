@@ -1,7 +1,7 @@
 import { Effect, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { operationalError, retryableOperationalError } from '../errors'
+import { operationalError, retryableOperationalError, type OperationalError } from '../errors'
 import type { IntradayTrailingBaselineService, TrailingBaselineQuery } from '../market-data/intraday/trailing-baseline'
 import { strictParseOptions } from '../schemas'
 import { reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
@@ -55,12 +55,12 @@ const queryMatches = (
   [...query.symbols].sort().join('|') === [...binding.parameters.candidateSymbols].sort().join('|') &&
   [...query.noiseAreaSymbols].sort().join('|') === [...binding.parameters.noiseAreaSymbols].sort().join('|')
 
-export const selectReplayAlphaBaseline = (
+export const selectReplayAlphaBaselineSource = (
   binding: ResearchStrategyBinding,
   sources: readonly AlphaBaselineSource[],
   query: TrailingBaselineQuery,
   observedAt: string,
-) => {
+): Result.Result<AlphaBaselineSource, OperationalError> => {
   const fail = (message: string) =>
     Result.fail(operationalError({ component: 'market-data', operation: 'replay-alpha-baseline', message }))
   if (binding.engine !== ResearchStrategyEngine.IntradayAlpha || !queryMatches(query, binding))
@@ -88,8 +88,18 @@ export const selectReplayAlphaBaseline = (
           message: 'No retained alpha baseline was independently available at this replay checkpoint',
         }),
       )
-    : Result.succeed(source.payload.trailingBaseline)
+    : Result.succeed(source)
 }
+
+export const selectReplayAlphaBaseline = (
+  binding: ResearchStrategyBinding,
+  sources: readonly AlphaBaselineSource[],
+  query: TrailingBaselineQuery,
+  observedAt: string,
+) =>
+  selectReplayAlphaBaselineSource(binding, sources, query, observedAt).pipe(
+    Result.map((source) => source.payload.trailingBaseline),
+  )
 
 export const makeReplayAlphaTrailingBaseline = (
   binding: ResearchStrategyBinding,

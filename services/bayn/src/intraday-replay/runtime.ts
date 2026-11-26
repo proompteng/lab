@@ -4,6 +4,7 @@ import {
   constructObserveShadowDecision as buildObserveShadowDecision,
 } from '../shadow-decision'
 import { buildResearchMutationCycleDecision, type ResearchAlphaBaselineLoader } from './decision-builder'
+import type { ReplayAlphaBaselineUse } from './alpha-baseline-use'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
@@ -104,6 +105,7 @@ export const reconcileReplayForActivation = <R>(
 
 export interface ReplayExecutionRuntimeInput {
   readonly loadAlphaBaseline?: ResearchAlphaBaselineLoader
+  readonly recordAlphaBaselineUse?: (use: ReplayAlphaBaselineUse) => Effect.Effect<void, OperationalError>
   readonly decisionTrigger?: 'polling' | 'streaming'
   readonly decisionLatencyStress: Parameters<typeof makeReplayDecisionLatency>[1]
   readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
@@ -160,7 +162,12 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const jevClient = yield* JevClient
     const entryInferenceJournal = yield* makeEntryInferenceJournal
     const jevEvaluations = yield* makeJevEvaluationStore
-    const latency = makeReplayDecisionLatency(input.currentUtcInstant, input.decisionLatencyStress)
+    const latency = makeReplayDecisionLatency(
+      input.currentUtcInstant,
+      input.decisionLatencyStress,
+      input.recordAlphaBaselineUse !== undefined,
+    )
+    const recordAlphaBaselineUse = input.recordAlphaBaselineUse
     const jevBatches = latency.wrapStore(
       yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations)),
     )
@@ -282,7 +289,17 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           }),
         )
         const engine = yield* makeTradingEngine({
-          buildDecision: (decision) => buildResearchMutationCycleDecision(decision, input.loadAlphaBaseline),
+          buildDecision: (decision) =>
+            buildResearchMutationCycleDecision(
+              decision,
+              input.loadAlphaBaseline,
+              recordAlphaBaselineUse === undefined
+                ? undefined
+                : (use) =>
+                    latency.currentCommandIssuedAt.pipe(
+                      Effect.flatMap((commandIssuedAt) => recordAlphaBaselineUse({ ...use, commandIssuedAt })),
+                    ),
+            ),
           authority,
           riskPolicyHash: generation.riskPolicyHash,
           cycle: {

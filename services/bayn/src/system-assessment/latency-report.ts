@@ -455,6 +455,7 @@ export const bindLatencyStressSources = (
           baselineGaps: report.alphaBaselineGaps,
           decisions: report.decisions,
           runId: prepared.runId,
+          observationReleases: report.latencyStress.observationReceipts,
         })
         if (
           (alpha && report.momentumObservations.length !== 0) ||

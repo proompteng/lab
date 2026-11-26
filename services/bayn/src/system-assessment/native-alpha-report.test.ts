@@ -4,6 +4,7 @@ import { Result, Schema } from 'effect'
 import { sha256 } from '../hash'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { BacktestInputV12Schema, BacktestIssue, prepareBacktest } from '../intraday-replay/backtest'
+import { replayAlphaObservationFixture } from '../intraday-replay/alpha-baseline-use.test-support'
 import { gapFixture, gapSourceFixture } from '../intraday-replay/gap-recovery.test-support'
 import { registeredStrategyReplayInferenceTariff } from '../intraday-replay/inference-costs'
 import { validateBacktestSourceReceipt } from '../intraday-replay/source'
@@ -163,9 +164,17 @@ const fixture = () => {
     }),
   )
   const at = (delta: number) => new Date(Date.parse(current.observedAt) + delta).toISOString()
+  const baselineSource = input.alphaBaselineSources[0]
+  if (baselineSource === undefined) throw new Error('Missing synthetic baseline source')
   const report = {
     ...artifact.report,
-    alphaObservations: [{ contentHash: observation.contentHash, payload: observation.payload }],
+    alphaObservations: [
+      replayAlphaObservationFixture(
+        { contentHash: observation.contentHash, payload: observation.payload },
+        baselineSource,
+        { commandIssuedAt: at(-10) },
+      ),
+    ],
     alphaBaselineGaps: [],
     decisions: [],
     latencyStress: {
@@ -215,7 +224,15 @@ test('v10 native alpha report binds full registered evidence and cannot borrow a
   const at = (delta: number) => new Date(Date.parse(observation.observedAt) + delta).toISOString()
   const nativeReport = {
     ...f.report,
-    alphaObservations: [{ contentHash: observationHash, payload: observation }],
+    alphaObservations: [
+      replayAlphaObservationFixture(
+        { contentHash: observationHash, payload: observation },
+        f.input.alphaBaselineSources[0] ??
+          (() => {
+            throw new Error('Missing synthetic baseline source')
+          })(),
+      ),
+    ],
     decisions: [native.document],
     latencyStress: {
       ...f.report.latencyStress,
@@ -241,6 +258,20 @@ test('v10 native alpha report binds full registered evidence and cannot borrow a
     {
       ...f.report,
       alphaObservations: [{ ...f.report.alphaObservations[0], contentHash: testHash('different alpha source') }],
+    },
+    {
+      ...f.report,
+      alphaObservations: f.report.alphaObservations.map((row) => ({
+        ...row,
+        baselineUse: {
+          ...row.baselineUse,
+          commandIssuedAt: f.at(-11),
+        },
+      })),
+    },
+    {
+      ...f.report,
+      alphaObservations: f.report.alphaObservations.map(({ baselineUse: _unbound, ...row }) => row),
     },
     { ...f.report, inference: { ...f.report.inference, providerDispatchCount: 1 } },
     { ...f.report, decisions: [{}] },
