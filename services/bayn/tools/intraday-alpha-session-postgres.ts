@@ -1,18 +1,22 @@
 import type { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
+import { decodeExecutionCycleClosureResult } from '../src/db/execution-cycle-closure'
 import { OrderSide, OrderStatus, OrderType } from '../src/execution/contracts'
 import { legacyExecutionAuthorityToken } from '../src/execution/legacy-wire'
 import { CycleDecisionJsonRow } from '../src/forward-performance/postgres/model'
 import { verifyPerformanceDecisionJson } from '../src/forward-performance/postgres/projection'
 import { decodeIntradayBarRows } from '../src/market-data/intraday/rows'
 import { normalizeBar } from '../src/market-data/intraday/verification'
+import { isContinuousMarket } from '../src/market-hours'
 import {
   NonNegativeIntegerSchema,
   PositiveMicrosSchema,
   SignedMicrosSchema,
   StrictNonEmptyStringSchema,
   SymbolSchema,
+  UnsignedMicrosSchema,
+  UtcOrderTimestampSchema,
   strictParseOptions,
 } from '../src/schemas'
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
@@ -24,7 +28,7 @@ const nullableId = Schema.NullOr(Id)
 
 const FillRow = Schema.Struct({
   fillId: Id,
-  sourceAt: Schema.String,
+  sourceAt: UtcOrderTimestampSchema,
   orderId: Id,
   intentId: nullableId,
   symbol: SymbolSchema,
@@ -46,6 +50,11 @@ const OrderRow = Schema.Struct({
   status: Schema.Enum(OrderStatus),
   orderType: Schema.Enum(OrderType),
   protectionTag: nullableId,
+  quantityAtoms: Schema.NullOr(PositiveMicrosSchema),
+  filledQuantityAtoms: UnsignedMicrosSchema,
+  limitPriceMicros: Schema.NullOr(PositiveMicrosSchema),
+  stopPriceMicros: Schema.NullOr(PositiveMicrosSchema),
+  updatedAt: UtcOrderTimestampSchema,
 })
 
 const InventoryRow = Schema.Struct({
@@ -54,6 +63,19 @@ const InventoryRow = Schema.Struct({
   openingBasisMicros: SignedMicrosSchema,
   closingAtoms: SignedMicrosSchema,
   closingBasisMicros: SignedMicrosSchema,
+  atRegularCloseAtoms: SignedMicrosSchema,
+})
+
+const PositionRow = Schema.Struct({
+  symbol: SymbolSchema,
+  observedAt: UtcOrderTimestampSchema,
+  quantityAtoms: SignedMicrosSchema,
+  markPriceMicros: UnsignedMicrosSchema,
+  unrealizedPnlMicros: SignedMicrosSchema,
+})
+const TickCountRow = Schema.Struct({
+  observedTicks: NonNegativeIntegerSchema,
+  closeMarketDataUnavailableTicks: NonNegativeIntegerSchema,
 })
 
 const CancelRow = Schema.Struct({ cycleId: Id, acknowledged: Schema.Boolean, released: Schema.Boolean })
@@ -97,6 +119,20 @@ interface Entry {
   }[]
 }
 
+interface CalendarClose {
+  readonly cycleId: string
+  readonly executionCloseAt: string
+  readonly regularCloseAt: string
+}
+
+interface CloseReference {
+  readonly cycleId: string
+  readonly intentId: string
+  readonly symbol: string
+  readonly side: OrderSide
+  readonly referencePriceMicros: string
+}
+
 export interface AlphaSessionRows {
   readonly cut: { readonly queriedAt: Date }
   readonly entries: readonly Entry[]
@@ -109,6 +145,19 @@ export interface AlphaSessionRows {
   readonly cancellations: readonly (typeof CancelRow.Type)[]
   readonly fees: readonly (typeof FeeRow.Type)[]
   readonly reconciliation: typeof ReconciliationRow.Type | null
+  readonly calendarCloses: readonly CalendarClose[]
+  readonly closeReferences: readonly CloseReference[]
+  readonly stopPositionMarks: readonly (typeof PositionRow.Type)[]
+  readonly postClosePositions: readonly (typeof PositionRow.Type)[]
+  readonly controllerTicks: typeof TickCountRow.Type
+}
+
+export const alphaSessionRegularClose = (closeAt: Date, calendarCloses: readonly CalendarClose[]) => {
+  const closes = new Set(calendarCloses.map((calendar) => calendar.regularCloseAt))
+  const first = calendarCloses[0]
+  return first !== undefined && closes.size === 1
+    ? { at: new Date(first.regularCloseAt), source: 'VERIFIED_DECISION_CALENDAR' as const }
+    : { at: closeAt, source: closes.size === 0 ? ('CLI' as const) : ('CLI_CALENDAR_CONFLICT' as const) }
 }
 
 const decode = <S extends Schema.Constraint>(schema: S) =>
@@ -118,7 +167,7 @@ const projectDecision = (
   row: typeof DecisionRow.Type,
   accountId: string,
   date: string,
-): Entry | 'UNVERIFIED' | null => {
+): { entry: Entry | null; calendar: CalendarClose | null } | 'UNVERIFIED' => {
   const document = verifyPerformanceDecisionJson({
     cycle_id: row.cycle_id,
     decision_hash: row.decision_hash,
@@ -141,7 +190,20 @@ const projectDecision = (
     target.sessionDate !== date
   )
     return 'UNVERIFIED'
-  if (!document.dispatchable || document.targetPlan.intentTargets.length === 0) return null
+  const binding = document.executionSession
+  const provider =
+    binding === undefined || isContinuousMarket(binding.calendar)
+      ? undefined
+      : binding.calendar.providerSessions.find((session) => session.date === date)
+  const calendar =
+    binding === undefined || provider === undefined || binding.executionSession.date !== date
+      ? null
+      : {
+          cycleId: row.cycle_id,
+          executionCloseAt: binding.executionSession.closeAt,
+          regularCloseAt: provider.regularCloseAt,
+        }
+  if (!document.dispatchable || document.targetPlan.intentTargets.length === 0) return { entry: null, calendar }
   if (target.phase === IntradayAlphaPhase.OutsideWindow) return 'UNVERIFIED'
 
   const observation = target.evidence.observation
@@ -173,8 +235,27 @@ const projectDecision = (
       signalBarCloseMicros: closes.get(intent.symbol) ?? null,
     })
   }
-  return { cycleId: row.cycle_id, phase: target.phase, legs }
+  return { entry: { cycleId: row.cycle_id, phase: target.phase, legs }, calendar }
 }
+
+const projectCloseReferences = (
+  documents: readonly { readonly cycleId: string; readonly document: unknown }[],
+  accountId: string,
+): CloseReference[] =>
+  documents.flatMap(({ cycleId, document }) => {
+    const decoded = decodeExecutionCycleClosureResult(document)
+    if (Result.isFailure(decoded)) return []
+    const closure = decoded.success
+    if (closure.cycleId !== cycleId || closure.document.bindings.accountId !== accountId) return []
+    const { targetPlan, orderedIntentIds } = closure.document
+    return targetPlan.intentTargets.flatMap(({ symbol, side }, index) => {
+      const intentId = orderedIntentIds[index]
+      const target = targetPlan.targets.find((candidate) => candidate.symbol === symbol)
+      return intentId === undefined || target === undefined
+        ? []
+        : [{ cycleId, intentId, symbol, side, referencePriceMicros: target.referencePriceMicros }]
+    })
+  })
 
 /** Caller must own the read-only repeatable-read snapshot. */
 export const readAlphaSession = (
@@ -225,12 +306,18 @@ export const readAlphaSession = (
     ORDER BY d.created_at,c.cycle_id COLLATE "C"
   `.pipe(decode(DecisionRow))
     const entries: Entry[] = []
+    const calendarCloses: CalendarClose[] = []
     let unverifiedDecisions = 0
     for (const row of decisions) {
       const projection = projectDecision(row, accountId, sessionDate)
       if (projection === 'UNVERIFIED') unverifiedDecisions++
-      else if (projection !== null) entries.push(projection)
+      else {
+        if (projection.entry !== null) entries.push(projection.entry)
+        if (projection.calendar !== null) calendarCloses.push(projection.calendar)
+      }
     }
+    const regularCloseAt = alphaSessionRegularClose(closeAt, calendarCloses).at
+    const cycleIds = entries.map((entry) => entry.cycleId)
     const fills = yield* sql`
     SELECT f.fill_id AS "fillId", f.source_timestamp AS "sourceAt", f.broker_order_id AS "orderId",
       coalesce(t.intent_id,f.intent_id) AS "intentId", f.symbol, f.side, f.quantity_atoms::text AS "quantityAtoms",
@@ -254,14 +341,72 @@ export const readAlphaSession = (
     )
     SELECT o.broker_order_id AS "orderId", o.parent_broker_order_id AS "parentOrderId",
       coalesce(o.intent_id,parent.intent_id) AS "intentId", i.cycle_id AS "cycleId", o.symbol, o.side, o.status,
-      o.order_type AS "orderType", i.protection->>'_tag' AS "protectionTag"
+      o.order_type AS "orderType", i.protection->>'_tag' AS "protectionTag",
+      o.quantity_atoms::text AS "quantityAtoms", o.filled_quantity_atoms::text AS "filledQuantityAtoms",
+      o.limit_price_micros::text AS "limitPriceMicros", o.stop_price_micros::text AS "stopPriceMicros",
+      o.broker_updated_at AS "updatedAt"
     FROM latest o LEFT JOIN latest parent ON parent.broker_order_id=o.parent_broker_order_id
     LEFT JOIN intents i ON i.intent_id=coalesce(o.intent_id,parent.intent_id) AND i.account_id=o.account_id
     WHERE o.status IN ('NEW','PENDING','PARTIALLY_FILLED')
-      OR i.cycle_id = ANY(${entries.map((entry) => entry.cycleId)}::text[])
+      OR i.cycle_id = ANY(${cycleIds}::text[])
       OR o.broker_order_id = ANY(${fills.map((fill) => fill.orderId)}::text[])
     ORDER BY o.broker_order_id COLLATE "C"
   `.pipe(decode(OrderRow))
+    const closeDocuments = yield* sql`
+      SELECT c.cycle_id AS "cycleId", c.document FROM autonomous_cycle_paper_closures c
+      WHERE c.cycle_id = ANY(${cycleIds}::text[])
+      UNION ALL
+      SELECT r.cycle_id AS "cycleId", r.document FROM autonomous_cycle_paper_close_replans r
+      WHERE r.cycle_id = ANY(${cycleIds}::text[])
+    `.pipe(decode(Schema.Struct({ cycleId: Id, document: Schema.Unknown })))
+    const stopSymbols = [
+      ...new Set(
+        orders
+          .filter(
+            (order) =>
+              order.orderType === OrderType.StopLimit &&
+              order.parentOrderId !== null &&
+              order.filledQuantityAtoms === '0' &&
+              (order.status === OrderStatus.Expired || order.status === OrderStatus.Canceled),
+          )
+          .map((order) => order.symbol),
+      ),
+    ]
+    const stopPositionMarks = yield* sql`
+      SELECT p.symbol, to_char(s.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"000Z"') AS "observedAt",
+        p.quantity_atoms::text AS "quantityAtoms", p.market_price_micros::text AS "markPriceMicros",
+        p.unrealized_pnl_micros::text AS "unrealizedPnlMicros"
+      FROM position_snapshots s JOIN positions p USING (snapshot_id, account_id)
+      WHERE s.account_id=${accountId} AND s.observed_at >= ${startAt} AND s.observed_at < ${endAt}
+        AND p.symbol = ANY(${stopSymbols}::text[]) AND p.quantity_atoms <> 0 AND p.market_price_micros > 0
+      ORDER BY s.observed_at,s.snapshot_id COLLATE "C",p.symbol COLLATE "C"
+    `.pipe(decode(PositionRow))
+    const postClosePositions = yield* sql`
+      SELECT DISTINCT ON (p.symbol) p.symbol,
+        to_char(s.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"000Z"') AS "observedAt",
+        p.quantity_atoms::text AS "quantityAtoms", p.market_price_micros::text AS "markPriceMicros",
+        p.unrealized_pnl_micros::text AS "unrealizedPnlMicros"
+      FROM position_snapshots s JOIN positions p USING (snapshot_id, account_id)
+      WHERE s.account_id=${accountId} AND s.observed_at > ${regularCloseAt} AND s.observed_at < ${endAt}
+        AND p.quantity_atoms <> 0
+      ORDER BY p.symbol,s.observed_at,s.snapshot_id COLLATE "C"
+    `.pipe(decode(PositionRow))
+    const [controllerTicks] = yield* sql`
+      SELECT count(*)::integer AS "observedTicks",
+        count(*) FILTER (WHERE wait_reason='CLOSE_MARKET_DATA_UNAVAILABLE')::integer AS "closeMarketDataUnavailableTicks"
+      FROM (
+        SELECT DISTINCT ON (o.controller_key,o.status->>'epoch',o.status->>'last_sequence')
+          o.status #>> '{last_pass,waitReason}' AS wait_reason
+        FROM execution_controller_observations o
+        WHERE o.recorded_at >= ${startAt}
+          AND o.controller_key IN (SELECT g.broker_identity_hash FROM authority_generations g
+            WHERE g.account_id=${accountId} AND g.maximum='PAPER')
+          AND (o.status->>'completed_at')::timestamptz >= ${startAt}
+          AND (o.status->>'completed_at')::timestamptz < ${endAt}
+        ORDER BY o.controller_key,o.status->>'epoch',o.status->>'last_sequence',o.recorded_at DESC,o.observation_id DESC
+      ) completed
+    `.pipe(decode(TickCountRow))
+    if (controllerTicks === undefined) return yield* Effect.die(new Error('Missing one-row controller tick counts'))
     const inventory = yield* sql`
     WITH inventory_legs AS (
       SELECT symbol, quantity_delta_atoms AS quantity, cost_basis_delta_micros AS basis, occurred_at AS effective_at
@@ -273,11 +418,13 @@ export const readAlphaSession = (
     SELECT symbol,
       coalesce(sum(quantity) FILTER (WHERE effective_at < ${startAt}),0)::text AS "openingAtoms",
       coalesce(sum(basis) FILTER (WHERE effective_at < ${startAt}),0)::text AS "openingBasisMicros",
-      sum(quantity)::text AS "closingAtoms",sum(basis)::text AS "closingBasisMicros"
+      sum(quantity)::text AS "closingAtoms",sum(basis)::text AS "closingBasisMicros",
+      coalesce(sum(quantity) FILTER (WHERE effective_at <= ${regularCloseAt}),0)::text AS "atRegularCloseAtoms"
     FROM inventory_legs GROUP BY symbol
     HAVING sum(quantity) <> 0 OR sum(basis) <> 0
       OR coalesce(sum(quantity) FILTER (WHERE effective_at < ${startAt}),0) <> 0
       OR coalesce(sum(basis) FILTER (WHERE effective_at < ${startAt}),0) <> 0
+      OR coalesce(sum(quantity) FILTER (WHERE effective_at <= ${regularCloseAt}),0) <> 0
     ORDER BY symbol COLLATE "C"
   `.pipe(decode(InventoryRow))
     const reconciliation = yield* sql`
@@ -324,6 +471,11 @@ export const readAlphaSession = (
       cancellations,
       fees,
       reconciliation: reconciliation[0] ?? null,
+      calendarCloses,
+      closeReferences: projectCloseReferences(closeDocuments, accountId),
+      stopPositionMarks,
+      postClosePositions,
+      controllerTicks,
     }
     return { closeAt, rows }
   })
