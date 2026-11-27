@@ -143,7 +143,11 @@ Holdout. The study uses today's live symbol list retrospectively, not an ex ante
 ### Development-only sleeve, sizing, pair, and bracket comparisons
 
 All rows use the 25/50 bp execution anchor and the primary clock/cost. The full 116-design matrix, including
-the other sleeve combinations and cases, is in [freeze.json](freeze.json).
+the other sleeve combinations and cases, is in the original [freeze.json](freeze.json). Review found that the
+three-pair implementation could pick the alphabetically first remaining legs instead of the third-ranked pair.
+The fix and [development-only correction receipt](development-correction.json) supersede the 16 three-pair rows.
+The other 100 designs reproduced exactly; the nominee and its failed development gate did not change. The
+one-time holdout score ran only two-pair designs, so it was not regenerated.
 
 | Variant                                     | Train net | Train Ex-5 | Validation net | Validation Ex-5 |
 | ------------------------------------------- | --------- | ---------- | -------------- | --------------- |
@@ -155,7 +159,7 @@ the other sleeve combinations and cases, is in [freeze.json](freeze.json).
 | Midday + Noise, dispersion                  | $5,965    | −$7,043    | −$1,926        | −$8,614         |
 | Midday + Noise, volatility                  | −$1,983   | −$12,716   | $441           | −$7,013         |
 | Midday + Noise, both                        | $10,089   | −$128      | −$252          | −$8,137         |
-| Midday + Noise, 3L+3S                       | $5,232    | −$7,989    | −$2,635        | −$8,407         |
+| Midday + Noise, 3L+3S                       | $6,769    | −$6,168    | −$4,104        | −$9,986         |
 | Midday + Noise, symmetric 300 bp            | −$1,823   | −$13,745   | −$3,965        | −$10,924        |
 | Midday + Noise, symmetric 500 bp            | $254      | −$12,512   | $590           | −$6,479         |
 | Midday + Noise, symmetric 800 bp            | $4,799    | −$9,702    | $2,227         | −$5,054         |
