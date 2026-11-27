@@ -339,10 +339,12 @@ const score = (dataset: Dataset, dev: Development, freeze: ReturnType<typeof fre
   }
 }
 
-// Keep the development loader out of the one-time holdout read. Compare exact
-// bytes so source, registry, data and frozen winner are bound before scoring.
+// Keep the development loader out of the one-time holdout read. Verify the frozen JSON
+// so source, registry, data and frozen winner are bound before scoring.
 export const verifyFreeze = (actual: string, expected: string) => {
-  if (actual !== expected) throw new Error('Frozen selection does not match current source and development data')
+  if (JSON.stringify(JSON.parse(actual)) !== JSON.stringify(JSON.parse(expected))) {
+    throw new Error('Frozen selection does not match current source and development data')
+  }
 }
 
 if (import.meta.main) {

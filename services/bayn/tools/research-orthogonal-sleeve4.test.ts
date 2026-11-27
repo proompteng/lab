@@ -213,8 +213,8 @@ test('ex-top-five checks concentration; signed correlation rejects constant seri
 })
 
 test('frozen selection checks the receipt and requires adjacent viable variants', () => {
-  expect(() => verifyFreeze('one', 'two')).toThrow('Frozen selection does not match')
-  expect(() => verifyFreeze('same', 'same')).not.toThrow()
+  expect(() => verifyFreeze('{"id":"one"}', '{"id":"two"}')).toThrow('Frozen selection does not match')
+  expect(() => verifyFreeze('{ "id": "same" }', '{"id":"same"}')).not.toThrow()
   const spec = rule('A.core.gap-fade.stocks', 5, 0.5, 45)
   const rows = Array.from(
     { length: 40 },
