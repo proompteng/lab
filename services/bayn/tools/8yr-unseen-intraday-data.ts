@@ -16,37 +16,51 @@ const decodeBlindSource = Schema.decodeUnknownSync(
     manifest: Schema.String.check(Schema.isPattern(researchKey)),
     manifestSha256: digest,
     bars: Schema.String.check(Schema.isPattern(researchKey)),
+    calendar: Schema.String.check(Schema.isPattern(researchKey)),
     rows: Schema.Int.check(Schema.isGreaterThan(0)),
   }),
 )
-type BlindSource = Pick<ReturnType<typeof decodeBlindSource>, 'manifest' | 'manifestSha256' | 'bars' | 'rows'>
+type BlindSource = Omit<ReturnType<typeof decodeBlindSource>, 'schema'>
 
 export const replacementBlindSource = (input: unknown): BlindSource => {
-  const { manifest, manifestSha256, bars, rows } = decodeBlindSource(input, { onExcessProperty: 'error' })
+  const { manifest, manifestSha256, bars, calendar, rows } = decodeBlindSource(input, { onExcessProperty: 'error' })
   if (
     !manifest.startsWith('bayn-research-datasets/') ||
     !bars.startsWith('bayn-research-datasets/') ||
+    !calendar.startsWith('bayn-research-datasets/') ||
     manifest === blind.manifest ||
     bars === blind.bars ||
     manifestSha256 === blind.manifestSha256 ||
-    manifest === bars
+    new Set([manifest, bars, calendar]).size !== 3
   ) {
     throw new Error('A corrected blind archive must use a distinct manifest and tape in bayn-research-datasets/')
   }
-  return { manifest, manifestSha256, bars, rows }
+  return { manifest, manifestSha256, bars, calendar, rows }
 }
 
-const decodeBlindManifest = Schema.decodeUnknownSync(
+const blindManifestFields = {
+  dateRange: Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema }),
+  calendarSessions: count,
+  symbolCount: count,
+  symbols: Schema.Array(Schema.String),
+  symbolRowCounts: Schema.Record(Schema.String, count),
+  totalRows: count,
+  files: Schema.Struct({ bars_5m: object, calendar: object }),
+}
+const decodeRejectedManifest = Schema.decodeUnknownSync(
   Schema.Struct({
+    ...blindManifestFields,
     dataset: Schema.Literal('alpaca-sip-8yr-5m-unseen-2016-2023'),
     source: Schema.Literal('Alpaca Data API v2 (feed=sip, adjustment=split, timeframe=5Min)'),
-    dateRange: Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema }),
-    calendarSessions: count,
-    symbolCount: count,
-    symbols: Schema.Array(Schema.String),
-    symbolRowCounts: Schema.Record(Schema.String, count),
-    totalRows: count,
-    files: Schema.Struct({ bars_5m: object, calendar: object }),
+  }),
+)
+const decodeCorrectedManifest = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...blindManifestFields,
+    schemaVersion: Schema.Literal('bayn.sip-8yr-unseen-manifest.v2'),
+    dataset: Schema.Literal('alpaca-sip-8yr-5m-exact62-unseen-2016-2023'),
+    source: Schema.Literal('Alpaca Market Data API v2 (feed=sip, adjustment=split, timeframe=5Min)'),
+    matchesWave3BUniverse: Schema.Literal(true),
   }),
 )
 const decodeBlindCalendar = Schema.decodeUnknownSync(
@@ -114,7 +128,7 @@ const checkCalendar = (input: unknown, window: Window) => {
 }
 
 const checkBlindManifest = (input: unknown, binding: BlindSource) => {
-  const manifest = decodeBlindManifest(input)
+  const manifest = binding.manifest === blind.manifest ? decodeRejectedManifest(input) : decodeCorrectedManifest(input)
   const { symbols, symbolRowCounts, files } = manifest
   if (
     manifest.dateRange.start !== blind.first ||
@@ -126,7 +140,7 @@ const checkBlindManifest = (input: unknown, binding: BlindSource) => {
     Object.keys(symbolRowCounts).some((symbol) => !symbols.includes(symbol)) ||
     files.bars_5m.key !== binding.bars ||
     files.bars_5m.bytes <= 0 ||
-    files.calendar.key !== blind.calendar ||
+    files.calendar.key !== binding.calendar ||
     files.calendar.sha256 !== blind.calendarSha256
   ) {
     throw new Error('Blind manifest does not match the registered archive receipt')
@@ -144,7 +158,7 @@ export const readArchiveMetadata = async (
   const blindCalendar = checkCalendar(
     {
       query: { start: blind.first, end: blind.last },
-      response: decodeBlindCalendar(await read(blind.calendar, blind.calendarSha256)),
+      response: decodeBlindCalendar(await read(binding.calendar, blind.calendarSha256)),
     },
     blind,
   )

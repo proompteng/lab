@@ -19,11 +19,13 @@ describe('Wave 4E metadata admission', () => {
     manifest: 'bayn-research-datasets/corrected/MANIFEST.json',
     manifestSha256: 'a'.repeat(64),
     bars: 'bayn-research-datasets/corrected/bars.tsv.gz',
+    calendar: 'bayn-research-datasets/corrected/calendar.json',
     rows: universe.filter((symbol) => (listingDates[symbol] ?? blind.first) <= blind.last).length,
   }
 
   test('a corrected receipt cannot alter strategy fields or rebind the rejected object in place', () => {
     expect(() => replacementBlindSource({ ...correctedReceipt, calendar: 'other.json' })).toThrow()
+    expect(() => replacementBlindSource({ ...correctedReceipt, calendarSha256: 'a'.repeat(64) })).toThrow()
     expect(() => replacementBlindSource({ ...correctedReceipt, bars: blind.bars })).toThrow(
       'distinct manifest and tape',
     )
@@ -39,8 +41,10 @@ describe('Wave 4E metadata admission', () => {
       universe.filter((symbol) => (listingDates[symbol] ?? blind.first) <= blind.last).map((symbol) => [symbol, 1]),
     )
     const manifest = {
-      dataset: 'alpaca-sip-8yr-5m-unseen-2016-2023',
-      source: 'Alpaca Data API v2 (feed=sip, adjustment=split, timeframe=5Min)',
+      schemaVersion: 'bayn.sip-8yr-unseen-manifest.v2',
+      dataset: 'alpaca-sip-8yr-5m-exact62-unseen-2016-2023',
+      source: 'Alpaca Market Data API v2 (feed=sip, adjustment=split, timeframe=5Min)',
+      matchesWave3BUniverse: true,
       dateRange: { start: blind.first, end: blind.last },
       calendarSessions: blind.sessions,
       symbolCount: universe.length,
@@ -49,7 +53,7 @@ describe('Wave 4E metadata admission', () => {
       totalRows: binding.rows,
       files: {
         bars_5m: { key: binding.bars, bytes: 1, sha256: 'b'.repeat(64) },
-        calendar: { key: blind.calendar, bytes: 1, sha256: blind.calendarSha256 },
+        calendar: { key: binding.calendar, bytes: 1, sha256: blind.calendarSha256 },
       },
     }
     const reads: Array<[string, string]> = []
@@ -63,10 +67,21 @@ describe('Wave 4E metadata admission', () => {
     )
     expect(reads).toEqual([
       [binding.manifest, binding.manifestSha256],
-      [blind.calendar, blind.calendarSha256],
+      [binding.calendar, blind.calendarSha256],
     ])
     await rejects(
       readArchiveMetadata(() => Promise.resolve({ ...manifest, totalRows: binding.rows + 1 }), binding),
+      /does not match the registered archive receipt/,
+    )
+    await rejects(
+      readArchiveMetadata(
+        () =>
+          Promise.resolve({
+            ...manifest,
+            files: { ...manifest.files, calendar: { ...manifest.files.calendar, sha256: 'c'.repeat(64) } },
+          }),
+        binding,
+      ),
       /does not match the registered archive receipt/,
     )
   })
