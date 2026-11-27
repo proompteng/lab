@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: codex-spark-smoke-agent-system-prompt
+  name: codex-smoke-agent-system-prompt
 data:
   system-prompt.md: |-
     Execute a deterministic Codex app-server runtime smoke validation.

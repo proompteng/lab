@@ -88,6 +88,12 @@ private const val MESSAGE_PACK_TIMESTAMP_32_UNSIGNED_MASK = 0xffffffffL
 private const val MESSAGE_PACK_TIMESTAMP_64_NANO_SHIFT = 34
 private const val MESSAGE_PACK_TIMESTAMP_64_SECONDS_MASK = 0x00000003ffffffffL
 
+private class SipAdmissionRejected(
+  val code: Int,
+  val phase: String,
+  val errorClass: ReadinessErrorClass,
+) : RuntimeException()
+
 internal data class KafkaDeliveryObservation(
   val channel: String?,
   val symbol: String,
@@ -398,31 +404,38 @@ class ForwarderApp(
                       }
                     },
                   )
-                if (feed.config.core && config.enableBarsBackfill) {
-                  launch {
-                    while (isActive) {
-                      try {
-                        val completed =
-                          withTimeoutOrNull(60_000) {
-                            val symbols =
-                              normalizeSymbols(
-                                feed.config.desiredSymbolsByChannel(symbolsTracker.refresh().symbols)["bars"].orEmpty(),
-                                feed.config.symbolAllowlist,
-                              )
-                            reconcileBars(producer, feed.sequence, symbols)
-                            true
-                          }
-                        if (completed == null) logger.warn { "bar recovery timed out; unacknowledged bars remain pending" }
-                      } catch (error: CancellationException) {
-                        throw error
-                      } catch (error: Exception) {
-                        logger.warn(error) { "bar recovery failed; unacknowledged bars remain pending" }
+                val barBackfill =
+                  if (feed.config.core && config.enableBarsBackfill) {
+                    launch {
+                      while (isActive) {
+                        try {
+                          val completed =
+                            withTimeoutOrNull(60_000) {
+                              val symbols =
+                                normalizeSymbols(
+                                  feed.config.desiredSymbolsByChannel(symbolsTracker.refresh().symbols)["bars"].orEmpty(),
+                                  feed.config.symbolAllowlist,
+                                )
+                              reconcileBars(producer, feed.sequence, symbols)
+                              true
+                            }
+                          if (completed == null) logger.warn { "bar recovery timed out; unacknowledged bars remain pending" }
+                        } catch (error: CancellationException) {
+                          throw error
+                        } catch (error: Exception) {
+                          logger.warn(error) { "bar recovery failed; unacknowledged bars remain pending" }
+                        }
+                        delay(60_000)
                       }
-                      delay(60_000)
                     }
+                  } else {
+                    null
                   }
+                try {
+                  streamMarketDataLoop(producer, feed, symbolsTracker)
+                } finally {
+                  barBackfill?.cancel()
                 }
-                streamMarketDataLoop(producer, feed, symbolsTracker)
               }
             }.toMutableList()
 
@@ -548,6 +561,21 @@ class ForwarderApp(
         streamMarketDataSession(producer, feed, symbolsTracker) {
           attempt = 0
         }
+      } catch (e: SipAdmissionRejected) {
+        recordMarketDataWsDisconnected(feed, e.errorClass)
+        metrics.recordWsConnectError(e.errorClass)
+        metrics.recordMarketDataWsConnectError(feed.config.feed, e.errorClass)
+        recordFeedError(feed, e.errorClass)
+        val requested =
+          feed.config
+            .desiredSymbolsByChannel(symbolsTracker.current())
+            .values
+            .sumOf { it.size }
+        logger.error {
+          "alpaca ws admission rejected feed=${feed.config.feed} code=${e.code} phase=${e.phase} " +
+            "error_class=${e.errorClass.id} requested_symbol_channels=$requested reconnect=false"
+        }
+        return
       } catch (e: Exception) {
         currentCoroutineContext().ensureActive()
         ReadinessClassifier.classifyAlpacaHandshakeFailure(e)?.let { errorClass ->
@@ -652,9 +680,10 @@ class ForwarderApp(
         header("Content-Type", "application/msgpack")
       }
     }) {
+      val consolidatedSip = feed.config.sipUniverse != null
       var authOk = false
       var subscribedOk = false
-      var admittedCryptoSymbolsByChannel = emptyMap<String, Set<String>>()
+      var admittedSymbolsByChannel = emptyMap<String, Set<String>>()
       val subscribedSince = AtomicReference<Instant?>(null)
       var lastProviderMarketDataAt: Instant? = null
       val lastOptionsMarketDataEventAt = AtomicReference<Instant?>(null)
@@ -712,20 +741,44 @@ class ForwarderApp(
           val elements = decodeMarketDataFrame(frame) ?: return emptyList()
           val messages: List<JsonElement> =
             if (elements is JsonArray) elements.toList() else listOf(elements)
-          return messages.mapNotNull { el ->
-            try {
-              if (feed.config.marketType == AlpacaMarketType.CRYPTO && el is JsonObject &&
-                (el["T"] as? JsonPrimitive)?.content in setOf("t", "q", "b", "u", "o")
-              ) {
-                decodeAlpacaCryptoMessage(el)
-              } else {
-                json.decodeFromJsonElement(AlpacaMessageSerializer, el)
+          val decoded =
+            messages.mapNotNull { el ->
+              try {
+                if (feed.config.marketType == AlpacaMarketType.CRYPTO && el is JsonObject &&
+                  (el["T"] as? JsonPrimitive)?.content in setOf("t", "q", "b", "u", "o")
+                ) {
+                  decodeAlpacaCryptoMessage(el)
+                } else {
+                  json.decodeFromJsonElement(AlpacaMessageSerializer, el)
+                }
+              } catch (e: SerializationException) {
+                logger.warn(e) { "failed to decode alpaca message; dropping" }
+                null
               }
-            } catch (e: SerializationException) {
-              logger.warn(e) { "failed to decode alpaca message; dropping" }
-              null
+            }
+          if (consolidatedSip) {
+            // Check admission errors before processing any market events in the same frame.
+            for (message in decoded) {
+              val code = (message as? AlpacaError)?.code ?: continue
+              val rejection =
+                when (code) {
+                  405 -> ReadinessErrorClass.Alpaca405SymbolLimit
+                  406 -> ReadinessErrorClass.Alpaca406SecondConnection
+                  409 -> ReadinessErrorClass.Alpaca409InsufficientSubscription
+                  else -> continue
+                }
+              val phase =
+                if (!authOk) {
+                  "auth"
+                } else if (!subscribedOk) {
+                  "subscribe"
+                } else {
+                  "stream"
+                }
+              throw SipAdmissionRejected(code, phase, rejection)
             }
           }
+          return decoded
         }
       }
 
@@ -957,6 +1010,13 @@ class ForwarderApp(
               is AlpacaSubscription -> {
                 val actualSubscribedByChannel = msg.subscribedSymbolsByChannel(feed.config.channels)
                 val desiredSymbolsByChannel = feed.config.desiredSymbolsByChannel(symbolsTracker.current())
+                if (consolidatedSip) {
+                  check(
+                    actualSubscribedByChannel.all { (channel, symbols) ->
+                      desiredSymbolsByChannel.getValue(channel).containsAll(symbols)
+                    },
+                  ) { "consolidated SIP acknowledgement contains unrequested symbols" }
+                }
                 val actualSubscribed = actualSubscribedByChannel.values.flatten().toSet()
                 val missingByChannel =
                   missingDesiredSymbolsByChannel(desiredSymbolsByChannel, actualSubscribedByChannel)
@@ -969,7 +1029,9 @@ class ForwarderApp(
                     nowMs = nowMs(),
                   )
                 feed.websocketStatus.set(wsStatus)
-                if (feed.config.marketType == AlpacaMarketType.CRYPTO) admittedCryptoSymbolsByChannel = actualSubscribedByChannel
+                if (consolidatedSip || feed.config.marketType == AlpacaMarketType.CRYPTO) {
+                  admittedSymbolsByChannel = actualSubscribedByChannel
+                }
                 subscribedLock.withLock {
                   subscribedSymbols.clear()
                   subscribedSymbols.addAll(actualSubscribed)
@@ -1045,10 +1107,11 @@ class ForwarderApp(
               }
               else -> {
                 val observed = observedMarketDataMessage(msg)
-                if (observed != null && feed.config.marketType == AlpacaMarketType.CRYPTO &&
+                if (consolidatedSip && observed == null) return@forEach
+                if (observed != null && (consolidatedSip || feed.config.marketType == AlpacaMarketType.CRYPTO) &&
                   (
                     !authOk || !subscribedOk ||
-                      observed.symbol !in admittedCryptoSymbolsByChannel[canonicalMarketDataChannel(observed.channel)].orEmpty()
+                      observed.symbol !in admittedSymbolsByChannel[canonicalMarketDataChannel(observed.channel)].orEmpty()
                   )
                 ) {
                   return@forEach
@@ -1394,6 +1457,9 @@ class ForwarderApp(
           else -> emptyList()
         }
       val remaining = maxRecords - trades.size
+      if (coreMarketDataFeed.config.sipUniverse != null) {
+        require(pageTrades.all { it.symbol in symbols }) { "consolidated SIP trade recovery returned an unrequested symbol" }
+      }
       trades += pageTrades.take(remaining)
       pageToken = response.nextPageToken
     } while (pageToken != null && trades.size < maxRecords)
@@ -1630,7 +1696,8 @@ class ForwarderApp(
       } else {
         null
       }
-    val payload = json.encodeToString(env)
+    val sipUniverse = feed?.config?.sipUniverse
+    val payload = sipUniverse?.encodeSipKafkaEnvelope(json, env) ?: json.encodeToString(env)
     val record = ProducerRecord(topic, env.symbol, payload)
     val start = System.nanoTime()
     try {
