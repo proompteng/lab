@@ -24,16 +24,28 @@ export enum SipMarketSession {
   Post = 'post',
 }
 
-const sipFeed = 'sip'
-const EquityCutFeedSchema = Schema.Literals(['iex', sipFeed])
-type EquityCutFeed = typeof EquityCutFeedSchema.Type
+export enum EquityCutFeed {
+  Iex = 'iex',
+  Sip = 'sip',
+}
+
+export enum SipDelayClass {
+  RealTimeConsolidated = 'real_time_consolidated',
+}
+
+export enum SipBarChannel {
+  Bars = 'bars',
+  UpdatedBars = 'updatedBars',
+}
+
+const EquityCutFeedSchema = Schema.Enum(EquityCutFeed)
 const isEquityCutFeed = Schema.is(EquityCutFeedSchema)
 
 // This boundary reads normalized raw records. The caller must supply source coordinates from trusted transport metadata.
 const identity = {
   provider: Schema.Literal('alpaca'),
-  feed: Schema.Literal(sipFeed),
-  delay_class: Schema.Literal('real_time_consolidated'),
+  feed: Schema.Literal(EquityCutFeed.Sip),
+  delay_class: Schema.Enum(SipDelayClass),
   universe_id: Schema.Literal(sipUniverse.id),
   universe_symbol_hash: Schema.Literal(sipUniverse.symbolHash),
   symbol: SipSymbolSchema,
@@ -48,7 +60,7 @@ const identity = {
 const SipBarSchema = Schema.Struct({
   ...identity,
   source_topic: Schema.Literal(sipTopics.bars),
-  channel: Schema.Literals(['bars', 'updatedBars']),
+  channel: Schema.Enum(SipBarChannel),
   is_final: Schema.Literals([0, 1]),
   open: PositiveFiniteSchema,
   high: PositiveFiniteSchema,

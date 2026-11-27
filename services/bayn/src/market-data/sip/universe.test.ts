@@ -12,7 +12,7 @@ import {
   isSipIntradayEquityCandidate,
   sipUniverse,
   verifySipUniverse,
-} from './index'
+} from './universe'
 
 const expectedEquity = (
   'AAPL,ALAB,AMAT,AMD,AMZN,ANET,APP,ARM,ASML,AVGO,CEG,COHR,COIN,CRDO,CRWD,GEV,GOOGL,HOOD,INTC,KLAC,LITE,LRCX,' +

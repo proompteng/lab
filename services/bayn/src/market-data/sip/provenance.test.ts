@@ -5,15 +5,18 @@ import fc from 'fast-check'
 import { currentEquityUniverse, intradaySourceTopics } from '../../strategy/intraday-market'
 import { checkProperty } from '../../testing/property-test-support'
 import {
+  EquityCutFeed,
+  SipBarChannel,
+  SipDelayClass,
   SipMarketSession,
   assertHomogeneousFeedCut,
   decodeSipBar,
   decodeSipQuote,
   decodeSipTrade,
   sipTopics,
-  sipUniverse,
   validateSipNbboQuote,
-} from './index'
+} from './provenance'
+import { sipUniverse } from './universe'
 
 // 13:00 New York early close.
 const cut = {
@@ -24,8 +27,8 @@ const cut = {
 }
 const identity = {
   provider: 'alpaca',
-  feed: 'sip',
-  delay_class: 'real_time_consolidated',
+  feed: EquityCutFeed.Sip,
+  delay_class: SipDelayClass.RealTimeConsolidated,
   universe_id: sipUniverse.id,
   universe_symbol_hash: sipUniverse.symbolHash,
   symbol: 'AAPL',
@@ -39,7 +42,7 @@ const identity = {
 const bar = {
   ...identity,
   source_topic: sipTopics.bars,
-  channel: 'bars',
+  channel: SipBarChannel.Bars,
   is_final: 1,
   open: 100,
   high: 103,
@@ -72,14 +75,24 @@ test('admission preserves the three SIP topic bindings, collected symbols, and r
   expect(Result.getOrThrow(decodeSipTrade({ ...trade, symbol: 'SPY' }))).toEqual({ ...trade, symbol: 'SPY' })
 })
 
+test('raw bar admission preserves SIP wire values and accepts only the two bar channels', () => {
+  const wireBar = { ...bar, feed: 'sip', delay_class: 'real_time_consolidated' }
+  expect(Result.getOrThrow(decodeSipBar({ ...wireBar, channel: 'bars' }))).toEqual(bar)
+  expect(Result.getOrThrow(decodeSipBar({ ...wireBar, channel: 'updatedBars' }))).toEqual({
+    ...bar,
+    channel: SipBarChannel.UpdatedBars,
+  })
+  expectSchemaFailure(decodeSipBar({ ...wireBar, channel: 'trades' }))
+})
+
 test.each([
   ['bar', bar, decodeSipBar, intradaySourceTopics.bars, sipTopics.quotes],
   ['quote', quote, decodeSipQuote, intradaySourceTopics.quotes, sipTopics.trades],
   ['trade', trade, decodeSipTrade, intradaySourceTopics.trades, sipTopics.bars],
 ] as const)('raw SIP %s rejects invalid provenance', (_kind, event, decode, liveTopic, wrongSipTopic) => {
   for (const change of [
-    { feed: 'iex', delay_class: 'real_time_exchange_only' },
-    { feed: 'iex' },
+    { feed: EquityCutFeed.Iex, delay_class: 'real_time_exchange_only' },
+    { feed: EquityCutFeed.Iex },
     { feed: 'delayed_sip', delay_class: 'delayed_15m_consolidated' },
     { feed: 'delayed_sip' },
     { delay_class: 'delayed_15m' },
@@ -187,30 +200,37 @@ test('property: the caller’s RTH age threshold is inclusive to the nanosecond'
 
 test('an RVOL baseline or projection cannot fall back to IEX or an unknown feed', () => {
   const sipBar = Result.getOrThrow(decodeSipBar(bar))
-  const iexBaselineBar = { ...sipBar, feed: 'iex', delay_class: 'real_time_exchange_only' }
-  for (const feed of ['iex', 'sip'] as const) {
+  const iexBaselineBar = { ...sipBar, feed: EquityCutFeed.Iex, delay_class: 'real_time_exchange_only' }
+  for (const feed of Object.values(EquityCutFeed)) {
     expect(assertHomogeneousFeedCut([iexBaselineBar, sipBar], feed)).toMatchObject({
       _tag: 'Failure',
       failure: { reason: 'feed' },
     })
-    expect(Result.isSuccess(assertHomogeneousFeedCut([iexBaselineBar, iexBaselineBar], feed))).toBe(feed === 'iex')
-    expect(Result.isSuccess(assertHomogeneousFeedCut([sipBar, sipBar], feed))).toBe(feed === 'sip')
+    expect(Result.isSuccess(assertHomogeneousFeedCut([iexBaselineBar, iexBaselineBar], feed))).toBe(
+      feed === EquityCutFeed.Iex,
+    )
+    expect(Result.isSuccess(assertHomogeneousFeedCut([sipBar, sipBar], feed))).toBe(feed === EquityCutFeed.Sip)
     for (const foreign of ['delayed_sip', 'us', undefined])
       expect(Result.isFailure(assertHomogeneousFeedCut([{ feed: foreign }], feed))).toBe(true)
   }
-  expect(Result.isSuccess(assertHomogeneousFeedCut([sipBar, Result.getOrThrow(decodeSipTrade(trade))], 'sip'))).toBe(
-    true,
-  )
+  expect(
+    Result.isSuccess(assertHomogeneousFeedCut([sipBar, Result.getOrThrow(decodeSipTrade(trade))], EquityCutFeed.Sip)),
+  ).toBe(true)
 })
 
 test('property: one wrong-feed observation invalidates a homogeneous baseline at any position', () => {
   checkProperty(
     'sip-feed-cut',
-    fc.property(fc.constantFrom('iex' as const, 'sip' as const), fc.nat(100), fc.nat(100), (feed, before, after) => {
-      const baseline = Array.from({ length: before + after + 1 }, () => ({ feed }))
-      expect(Result.isSuccess(assertHomogeneousFeedCut(baseline, feed))).toBe(true)
-      baseline[before] = { feed: feed === 'sip' ? 'iex' : 'sip' }
-      expect(Result.isFailure(assertHomogeneousFeedCut(baseline, feed))).toBe(true)
-    }),
+    fc.property(
+      fc.constantFrom(EquityCutFeed.Iex, EquityCutFeed.Sip),
+      fc.nat(100),
+      fc.nat(100),
+      (feed, before, after) => {
+        const baseline = Array.from({ length: before + after + 1 }, () => ({ feed }))
+        expect(Result.isSuccess(assertHomogeneousFeedCut(baseline, feed))).toBe(true)
+        baseline[before] = { feed: feed === EquityCutFeed.Sip ? EquityCutFeed.Iex : EquityCutFeed.Sip }
+        expect(Result.isFailure(assertHomogeneousFeedCut(baseline, feed))).toBe(true)
+      },
+    ),
   )
 })
