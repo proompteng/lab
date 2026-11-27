@@ -1,0 +1,1583 @@
+{
+  "schema": "bayn.clean-sp100-factors.freeze.v1",
+  "protocolCommit": "8462d3bc3b2f9f0fc8be9f6e729bc5d96e6c9a8f",
+  "bunVersion": "1.4.2",
+  "manifestSha256": "ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e",
+  "gzipSha256": "fdda4017ee662fae548d8111a970ea90d83b3e8ee6f61abd6153be0fe83547d2",
+  "sourceHashes": {
+    "services/bayn/tools/clean-factors-data.ts": "d9a2b8fc47f01a588a2f167ae8f3217bb8aef6bc404a5380480b6461116316ac",
+    "services/bayn/tools/clean-factors-grid.ts": "6b558e0250a90457dbce3af1b33c2dbd5c66cd68404af40bd2af4bc01afbe330",
+    "services/bayn/tools/clean-factors-signals.ts": "10652430c363531380ffcd5cd100f2b31b4714ab5d34022f3dd581f854d80f6a",
+    "services/bayn/tools/clean-factors-replay.ts": "cd1e854a7a4b22de0740ea7b3a6bb903351e6b8cc2d56d8525ba0d99813b9c78",
+    "services/bayn/tools/clean-factors-metrics.ts": "e9a8f6a02f66d1b950e4a654c0cbabe6c87ae9735368ea8a9b041a91bddf5cae",
+    "services/bayn/tools/clean-factors-study.ts": "0fc147503395c7713416d37e8350e5abb1913d330f1d7ede4dd36586b2080953",
+    "services/bayn/tools/research-10yr-sp100-clean-factors.ts": "e2b46b8f8536d8258b4ceb1172629aa13b72edcb20a7e4f5e99830546a6052b1",
+    "services/bayn/tools/midday-research-statistics.ts": "d643c4ad1f05086b924c11285d6254a794b4a25e68004eb35a639a22a077e1e1",
+    "docs/bayn/evidence/2026-11-27-10yr-sp100-clean-factors/protocol.md": "cf05b4838ced9adfff039243e4ac3a1111dd932dfa3c9114e53b06321230a0d3"
+  },
+  "development": {
+    "through": "2023-12-29",
+    "sourceRows": 330646,
+    "excludedMmcRows": 2012,
+    "sessions": 2012,
+    "ledgerSha256": "aa8a7211a0217a277f51f9652cc56c93574efb96ba4c25578055e401ee97de6d"
+  },
+  "trials": {
+    "wave3A": 360,
+    "wave4I": 85,
+    "cumulative": 445
+  },
+  "grid": [
+    {
+      "id": "high-long-10-21",
+      "family": "high",
+      "equity": {
+        "id": "high-long-10-21",
+        "factor": "high",
+        "family": "high",
+        "book": "long",
+        "k": 10,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-regime-hedged-10-21",
+      "family": "high",
+      "equity": {
+        "id": "high-regime-hedged-10-21",
+        "factor": "high",
+        "family": "high",
+        "book": "regime-hedged",
+        "k": 10,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-dollar-neutral-10-21",
+      "family": "high",
+      "equity": {
+        "id": "high-dollar-neutral-10-21",
+        "factor": "high",
+        "family": "high",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-sector-neutral-10-21",
+      "family": "high",
+      "equity": {
+        "id": "high-sector-neutral-10-21",
+        "factor": "high",
+        "family": "high",
+        "book": "sector-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-long-15-21",
+      "family": "high",
+      "equity": {
+        "id": "high-long-15-21",
+        "factor": "high",
+        "family": "high",
+        "book": "long",
+        "k": 15,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-regime-hedged-15-21",
+      "family": "high",
+      "equity": {
+        "id": "high-regime-hedged-15-21",
+        "factor": "high",
+        "family": "high",
+        "book": "regime-hedged",
+        "k": 15,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-dollar-neutral-15-21",
+      "family": "high",
+      "equity": {
+        "id": "high-dollar-neutral-15-21",
+        "factor": "high",
+        "family": "high",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-sector-neutral-15-21",
+      "family": "high",
+      "equity": {
+        "id": "high-sector-neutral-15-21",
+        "factor": "high",
+        "family": "high",
+        "book": "sector-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-long-20-21",
+      "family": "high",
+      "equity": {
+        "id": "high-long-20-21",
+        "factor": "high",
+        "family": "high",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-regime-hedged-20-21",
+      "family": "high",
+      "equity": {
+        "id": "high-regime-hedged-20-21",
+        "factor": "high",
+        "family": "high",
+        "book": "regime-hedged",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-dollar-neutral-20-21",
+      "family": "high",
+      "equity": {
+        "id": "high-dollar-neutral-20-21",
+        "factor": "high",
+        "family": "high",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "high-sector-neutral-20-21",
+      "family": "high",
+      "equity": {
+        "id": "high-sector-neutral-20-21",
+        "factor": "high",
+        "family": "high",
+        "book": "sector-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "quality-long-10-21",
+      "family": "quality",
+      "equity": {
+        "id": "quality-long-10-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 10,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "quality-beta-hedged-10-21",
+      "family": "quality",
+      "equity": {
+        "id": "quality-beta-hedged-10-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "beta-hedged",
+        "k": 10,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "quality-sector-neutral-10-21",
+      "family": "quality",
+      "equity": {
+        "id": "quality-sector-neutral-10-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "sector-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "quality-long-15-21",
+      "family": "quality",
+      "equity": {
+        "id": "quality-long-15-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 15,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "quality-beta-hedged-15-21",
+      "family": "quality",
+      "equity": {
+        "id": "quality-beta-hedged-15-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "beta-hedged",
+        "k": 15,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "quality-sector-neutral-15-21",
+      "family": "quality",
+      "equity": {
+        "id": "quality-sector-neutral-15-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "sector-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "quality-long-20-21",
+      "family": "quality",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "quality-beta-hedged-20-21",
+      "family": "quality",
+      "equity": {
+        "id": "quality-beta-hedged-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "beta-hedged",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "quality-sector-neutral-20-21",
+      "family": "quality",
+      "equity": {
+        "id": "quality-sector-neutral-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "sector-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-10-10-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-10-10-50-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-10-10-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-10-10-50-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-10-10-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-10-10-100-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-10-10-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-10-10-100-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-10-21-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-10-21-50-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-10-21-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-10-21-50-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-10-21-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-10-21-100-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-10-21-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-10-21-100-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-15-10-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-15-10-50-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-15-10-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-15-10-50-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-15-10-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-15-10-100-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-15-10-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-15-10-100-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-15-21-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-15-21-50-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-15-21-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-15-21-50-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-15-21-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-15-21-100-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-15-21-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-15-21-100-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-20-10-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-20-10-50-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-20-10-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-20-10-50-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-20-10-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-20-10-100-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-20-10-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-20-10-100-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-20-21-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-20-21-50-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-20-21-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-20-21-50-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-20-21-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-20-21-100-0.08",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "momentum-dollar-neutral-20-21-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "momentum-dollar-neutral-20-21-100-0.12",
+        "factor": "momentum",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-10-10-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-10-10-50-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-10-10-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-10-10-50-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-10-10-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-10-10-100-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-10-10-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-10-10-100-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-10-21-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-10-21-50-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-10-21-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-10-21-50-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-10-21-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-10-21-100-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-10-21-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-10-21-100-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 10,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-15-10-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-15-10-50-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-15-10-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-15-10-50-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-15-10-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-15-10-100-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-15-10-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-15-10-100-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-15-21-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-15-21-50-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-15-21-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-15-21-50-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-15-21-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-15-21-100-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-15-21-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-15-21-100-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 15,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-20-10-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-20-10-50-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-20-10-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-20-10-50-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 10,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-20-10-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-20-10-100-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-20-10-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-20-10-100-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 10,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-20-21-50-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-20-21-50-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-20-21-50-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-20-21-50-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 50,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-20-21-100-0.08",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-20-21-100-0.08",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.08
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "bab-dollar-neutral-20-21-100-0.12",
+      "family": "managed",
+      "equity": {
+        "id": "bab-dollar-neutral-20-21-100-0.12",
+        "factor": "bab",
+        "family": "managed",
+        "book": "dollar-neutral",
+        "k": 20,
+        "cycle": 21,
+        "sma": 100,
+        "targetVol": 0.12
+      },
+      "overlayShare": 0
+    },
+    {
+      "id": "etf-126-10",
+      "family": "overlay",
+      "overlay": {
+        "id": "etf-126-10",
+        "horizon": 126,
+        "cycle": 10
+      },
+      "overlayShare": 1
+    },
+    {
+      "id": "etf-126-21",
+      "family": "overlay",
+      "overlay": {
+        "id": "etf-126-21",
+        "horizon": 126,
+        "cycle": 21
+      },
+      "overlayShare": 1
+    },
+    {
+      "id": "etf-252-10",
+      "family": "overlay",
+      "overlay": {
+        "id": "etf-252-10",
+        "horizon": 252,
+        "cycle": 10
+      },
+      "overlayShare": 1
+    },
+    {
+      "id": "etf-252-21",
+      "family": "overlay",
+      "overlay": {
+        "id": "etf-252-21",
+        "horizon": 252,
+        "cycle": 21
+      },
+      "overlayShare": 1
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-126-10-0.25",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-126-10",
+        "horizon": 126,
+        "cycle": 10
+      },
+      "overlayShare": 0.25
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-126-10-0.5",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-126-10",
+        "horizon": 126,
+        "cycle": 10
+      },
+      "overlayShare": 0.5
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-126-10-0.75",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-126-10",
+        "horizon": 126,
+        "cycle": 10
+      },
+      "overlayShare": 0.75
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-126-21-0.25",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-126-21",
+        "horizon": 126,
+        "cycle": 21
+      },
+      "overlayShare": 0.25
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-126-21-0.5",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-126-21",
+        "horizon": 126,
+        "cycle": 21
+      },
+      "overlayShare": 0.5
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-126-21-0.75",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-126-21",
+        "horizon": 126,
+        "cycle": 21
+      },
+      "overlayShare": 0.75
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-252-10-0.25",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-252-10",
+        "horizon": 252,
+        "cycle": 10
+      },
+      "overlayShare": 0.25
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-252-10-0.5",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-252-10",
+        "horizon": 252,
+        "cycle": 10
+      },
+      "overlayShare": 0.5
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-252-10-0.75",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-252-10",
+        "horizon": 252,
+        "cycle": 10
+      },
+      "overlayShare": 0.75
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-252-21-0.25",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-252-21",
+        "horizon": 252,
+        "cycle": 21
+      },
+      "overlayShare": 0.25
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-252-21-0.5",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-252-21",
+        "horizon": 252,
+        "cycle": 21
+      },
+      "overlayShare": 0.5
+    },
+    {
+      "id": "mix-quality-long-20-21-etf-252-21-0.75",
+      "family": "combined",
+      "equity": {
+        "id": "quality-long-20-21",
+        "factor": "quality",
+        "family": "quality",
+        "book": "long",
+        "k": 20,
+        "cycle": 21,
+        "sma": 0,
+        "targetVol": 0
+      },
+      "overlay": {
+        "id": "etf-252-21",
+        "horizon": 252,
+        "cycle": 21
+      },
+      "overlayShare": 0.75
+    }
+  ],
+  "candidates": [
+    {
+      "slot": "high/long",
+      "center": "high-long-20-21",
+      "probes": [
+        "high-long-10-21",
+        "high-long-15-21"
+      ],
+      "developmentVetoes": [
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2022/net"
+      ]
+    },
+    {
+      "slot": "high/regime-hedged",
+      "center": "high-regime-hedged-20-21",
+      "probes": [
+        "high-regime-hedged-10-21",
+        "high-regime-hedged-15-21"
+      ],
+      "developmentVetoes": [
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2022/net"
+      ]
+    },
+    {
+      "slot": "high/dollar-neutral",
+      "center": "high-dollar-neutral-10-21",
+      "probes": [
+        "high-dollar-neutral-15-21",
+        "high-dollar-neutral-20-21"
+      ],
+      "developmentVetoes": [
+        "train/net-or-ex-winners/10/zeroCash",
+        "train/net-or-ex-winners/10/shyExcess",
+        "train/net-or-ex-winners/20/zeroCash",
+        "train/net-or-ex-winners/20/shyExcess",
+        "train/plateau",
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2023/net"
+      ]
+    },
+    {
+      "slot": "high/sector-neutral",
+      "center": "high-sector-neutral-15-21",
+      "probes": [
+        "high-sector-neutral-10-21",
+        "high-sector-neutral-20-21"
+      ],
+      "developmentVetoes": [
+        "train/net-or-ex-winners/10/zeroCash",
+        "train/net-or-ex-winners/10/shyExcess",
+        "train/net-or-ex-winners/20/zeroCash",
+        "train/net-or-ex-winners/20/shyExcess",
+        "train/plateau",
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2022/net",
+        "validation/2023/net"
+      ]
+    },
+    {
+      "slot": "quality/long",
+      "center": "quality-long-20-21",
+      "probes": [
+        "quality-long-10-21",
+        "quality-long-15-21"
+      ],
+      "developmentVetoes": [
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2023/net"
+      ]
+    },
+    {
+      "slot": "quality/beta-hedged",
+      "center": "quality-beta-hedged-10-21",
+      "probes": [
+        "quality-beta-hedged-15-21",
+        "quality-beta-hedged-20-21"
+      ],
+      "developmentVetoes": [
+        "train/net-or-ex-winners/10/zeroCash",
+        "train/net-or-ex-winners/10/shyExcess",
+        "train/net-or-ex-winners/20/zeroCash",
+        "train/net-or-ex-winners/20/shyExcess",
+        "train/plateau",
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2023/net"
+      ]
+    },
+    {
+      "slot": "quality/sector-neutral",
+      "center": "quality-sector-neutral-15-21",
+      "probes": [
+        "quality-sector-neutral-10-21",
+        "quality-sector-neutral-20-21"
+      ],
+      "developmentVetoes": [
+        "train/net-or-ex-winners/10/zeroCash",
+        "train/net-or-ex-winners/10/shyExcess",
+        "train/net-or-ex-winners/20/zeroCash",
+        "train/net-or-ex-winners/20/shyExcess",
+        "train/plateau",
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2022/net",
+        "validation/2023/net"
+      ]
+    },
+    {
+      "slot": "momentum/dollar-neutral",
+      "center": "momentum-dollar-neutral-20-21-50-0.12",
+      "probes": [
+        "momentum-dollar-neutral-10-21-50-0.12",
+        "momentum-dollar-neutral-15-21-50-0.12",
+        "momentum-dollar-neutral-20-10-50-0.12",
+        "momentum-dollar-neutral-20-21-50-0.08",
+        "momentum-dollar-neutral-20-21-100-0.12"
+      ],
+      "developmentVetoes": [
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2022/net",
+        "validation/2023/net"
+      ]
+    },
+    {
+      "slot": "bab/dollar-neutral",
+      "center": "bab-dollar-neutral-20-21-50-0.12",
+      "probes": [
+        "bab-dollar-neutral-10-21-50-0.12",
+        "bab-dollar-neutral-15-21-50-0.12",
+        "bab-dollar-neutral-20-10-50-0.12",
+        "bab-dollar-neutral-20-21-50-0.08",
+        "bab-dollar-neutral-20-21-100-0.12"
+      ],
+      "developmentVetoes": [
+        "train/net-or-ex-winners/10/zeroCash",
+        "train/net-or-ex-winners/10/shyExcess",
+        "train/net-or-ex-winners/20/zeroCash",
+        "train/net-or-ex-winners/20/shyExcess",
+        "train/plateau",
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2023/net"
+      ]
+    },
+    {
+      "slot": "overlay",
+      "center": "etf-126-21",
+      "probes": [
+        "etf-126-10",
+        "etf-252-21"
+      ],
+      "developmentVetoes": [
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2022/net"
+      ]
+    },
+    {
+      "slot": "combined",
+      "center": "mix-quality-long-20-21-etf-126-21-0.25",
+      "probes": [
+        "mix-quality-long-20-21-etf-126-10-0.25",
+        "mix-quality-long-20-21-etf-126-21-0.5",
+        "mix-quality-long-20-21-etf-252-21-0.25"
+      ],
+      "developmentVetoes": [
+        "validation/net-or-ex-winners/10/zeroCash",
+        "validation/net-or-ex-winners/10/shyExcess",
+        "validation/net-or-ex-winners/20/zeroCash",
+        "validation/net-or-ex-winners/20/shyExcess",
+        "validation/plateau",
+        "validation/2022/net",
+        "validation/2023/net"
+      ]
+    }
+  ],
+  "benchmarks": {
+    "2": {
+      "zeroCash": 0.09040031443144116,
+      "shyCash": 0.08753878817428559,
+      "shyExcess": 0.09017399981196199
+    },
+    "5": {
+      "zeroCash": 0.09090094759308025,
+      "shyCash": 0.08802929816114212,
+      "shyExcess": 0.09069138375029087
+    },
+    "10": {
+      "zeroCash": 0.0917413608524151,
+      "shyCash": 0.08885321377601439,
+      "shyExcess": 0.09155916459936411
+    },
+    "20": {
+      "zeroCash": 0.0934430225143307,
+      "shyCash": 0.09052324541354194,
+      "shyExcess": 0.0933134126766953
+    }
+  }
+}
