@@ -14,7 +14,7 @@ are enrolled. All three calendar years are represented through the requested Nov
 - Train: 2024-01-02 through 2025-06-30. Validation: 2025-07-01 through 2026-03-31. Frozen Holdout:
   2026-04-01 through 2026-11-25. Publish calendar half-years 2024H1 through 2026H2 separately (2026H1 contains both
   Validation and Holdout; 2026H2 is partial). Score no Holdout OHLCV until the development receipt is committed.
-  Receipt reproduction re-scores only development rows and verifies the archived source and artifact fingerprints.
+  Score requires a Git-committed receipt, recomputes it using only development rows, and verifies the source and artifact fingerprints.
 - All 46 stock identities and 16 ETF identities are fixed throughout. For ALAB use the March 20, 2024 IPO; for GEV,
   the April 2, 2024 regular listing; for SNDK use regular-way Nasdaq trading starting February 24, 2025, not the
   when-issued rows in the archive. WDC resets its prior-session history at that distribution boundary; split
@@ -96,5 +96,6 @@ not a survivorship-free historical market screen.
 Sources: [Zarattini, Barbon & Aziz ORB paper](https://alexandria.unisg.ch/server/api/core/bitstreams/3c2989c4-688d-4d78-8a71-f02690990d51/content),
 [Zarattini, Aziz & Barbon Noise Area paper](https://concretumgroup.com/wp-content/uploads/2026/02/Beat-the-Market.pdf),
 [Alpaca bar timestamps and SIP](https://docs.alpaca.markets/us/docs/market-data-faq),
+[Astera Labs IPO notice](https://ir.asteralabs.com/news-releases/news-release-details/astera-labs-announces-pricing-initial-public-offering),
 [Nasdaq distribution notice](https://www.nasdaqtrader.com/TraderNews.aspx?id=ECA2025-38), and
 [GE Vernova regular listing](https://www.gevernova.com/news/press-releases/ge-vernova-completes-spin-off-begins-trading-new-york-stock-exchange).

@@ -211,7 +211,7 @@ export const loadTape = (holdout: boolean) =>
         if (response.body === null) throw new Error('SIP tape has no response body')
         const stream = response.body
           .pipeThrough(
-            new TransformStream<Uint8Array, Uint8Array>({
+            new TransformStream<Uint8Array<ArrayBuffer>, BufferSource>({
               transform(bytes, controller) {
                 compressed.update(bytes)
                 gzipBytes += bytes.length

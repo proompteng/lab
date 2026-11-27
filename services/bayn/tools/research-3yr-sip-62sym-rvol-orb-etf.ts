@@ -1,4 +1,7 @@
+import { execFile } from 'node:child_process'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem } from 'effect'
@@ -42,6 +45,26 @@ const freeze = Effect.gen(function* () {
   }
 })
 
+const git = promisify(execFile)
+const repo = fileURLToPath(new URL('../../../', import.meta.url))
+
+const checkCommittedFreeze = (path: string, stored: string) =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const name = relative(repo, resolve(path))
+      if (name.length === 0 || isAbsolute(name) || name === '..' || name.startsWith(`..${sep}`)) {
+        throw new Error('Freeze receipt must be committed in this repository')
+      }
+      const { stdout } = await git('git', ['show', `HEAD:${name}`], { cwd: repo, signal })
+      if (stdout !== stored) throw new Error('Working freeze receipt differs from the committed bytes')
+      const { stdout: revision } = await git('git', ['log', '-1', '--format=%H', '--', name], { cwd: repo, signal })
+      const commit = revision.trim()
+      if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('No Git revision for freeze receipt')
+      return commit
+    },
+    catch: (cause) => new SipResearchError({ message: 'Score requires a matching, committed freeze receipt', cause }),
+  })
+
 const run = (args: readonly string[]) =>
   Effect.gen(function* () {
     const [mode, freezePath, reportPath] = args
@@ -65,6 +88,7 @@ const run = (args: readonly string[]) =>
       )
     if (mode === '--freeze') return yield* write(receipt, false)
     const stored = yield* fs.readFileString(freezePath)
+    const freezeCommit = yield* checkCommittedFreeze(freezePath, stored)
     yield* Effect.try({
       try: () => requireFreezeMatch(JSON.parse(stored), receipt),
       catch: (cause) => new SipResearchError({ message: 'Invalid freeze receipt', cause }),
@@ -76,6 +100,7 @@ const run = (args: readonly string[]) =>
         schemaVersion: 'bayn.sip-momentum-wave2d.results.v1',
         purpose: 'Retrospective bar-model research, not broker or capital authority',
         freezeSha256: sha256(canonical(receipt)),
+        freezeCommit,
         provenance,
         coverage,
         ...results,
