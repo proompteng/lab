@@ -10,6 +10,8 @@ The hypotheses draw on [Lou, Polk and Skouras (2019)](https://personal.lse.ac.uk
 
 The research assumes completed bars are immediately usable and models execution at the next minute's **open**, not the signal close. A missing entry print is a no-fill; a missing regular-session exit makes the period's economics unavailable, not zero. The price proxy applies 2, 5 or 10 bp round-trip adverse slippage plus 0.21 bp on the sale. These are **modeled consolidated NBBO stresses**, not historical NBBO quotes; the single-venue IEX spread export is not used to price fills. See [Wave 1A](../2026-11-27-midday-beta-neutral/README.md) for the separate spread and protection experiment. Returns omit live borrow, fill capacity, order routing and timing, funding, and operating costs. The contemporary universe is retrospective. Results do not authorize trading.
 
+During PR review the standalone I/O path moved into the Bayn Effect runtime. Comparing regenerated artifacts to the pre-review evidence changed only the two I/O source digests; the locked registry, selection, benchmark, scores, and decision are identical. No hypotheses were retuned.
+
 ## What the frozen data support
 
 | Input           | Verified coverage and limitation                                                                                                                                                                                                                                                                                                                                                                                      |
