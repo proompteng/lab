@@ -4,6 +4,7 @@ import { rejects } from 'node:assert/strict'
 import {
   admitUniverse,
   compareUniverse,
+  gunzipArchive,
   loadTapes,
   readArchiveMetadata,
   replacementBlindSource,
@@ -112,6 +113,21 @@ describe('Wave 4E metadata admission', () => {
 
   test('rejects duplicate members independently of a set match', () => {
     expect(() => admitUniverse('blind', [...universe, 'SPY'])).toThrow('duplicates=[SPY]')
+  })
+
+  test('reads only a bound gzip member but authenticates every byte of the object', async () => {
+    const payload = 'example tape\n'
+    const member = Bun.gzipSync(new TextEncoder().encode(payload))
+    const bytes = new Uint8Array(member.length + 8)
+    bytes.set(member)
+    bytes.fill(0xff, member.length)
+    const receipt = { key: 'fixture', bytes: bytes.length, sha256: Bun.CryptoHasher.hash('sha256', bytes, 'hex') }
+    const read = (boundary?: number) =>
+      new Response(gunzipArchive(new Blob([bytes]).stream(), receipt, boundary)).text()
+    await expect(read(member.length)).resolves.toBe(payload)
+    await expect(read()).rejects.toThrow()
+    bytes[bytes.length - 1] = 0xfe
+    await expect(read(member.length)).rejects.toThrow('Byte receipt mismatch: fixture')
   })
 
   test('rejects the mismatch without even requesting the calendar or any bar object', async () => {

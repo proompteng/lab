@@ -17,13 +17,15 @@ const decodeBlindSource = Schema.decodeUnknownSync(
     manifestSha256: digest,
     bars: Schema.String.check(Schema.isPattern(researchKey)),
     calendar: Schema.String.check(Schema.isPattern(researchKey)),
+    gzipMemberBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
     rows: Schema.Int.check(Schema.isGreaterThan(0)),
   }),
 )
 type BlindSource = Omit<ReturnType<typeof decodeBlindSource>, 'schema'>
 
 export const replacementBlindSource = (input: unknown): BlindSource => {
-  const { manifest, manifestSha256, bars, calendar, rows } = decodeBlindSource(input, { onExcessProperty: 'error' })
+  const { schema: _schema, ...source } = decodeBlindSource(input, { onExcessProperty: 'error' })
+  const { manifest, manifestSha256, bars, calendar } = source
   if (
     !manifest.startsWith('bayn-research-datasets/') ||
     !bars.startsWith('bayn-research-datasets/') ||
@@ -35,7 +37,7 @@ export const replacementBlindSource = (input: unknown): BlindSource => {
   ) {
     throw new Error('A corrected blind archive must use a distinct manifest and tape in bayn-research-datasets/')
   }
-  return { manifest, manifestSha256, bars, calendar, rows }
+  return source
 }
 
 const blindManifestFields = {
@@ -140,6 +142,7 @@ const checkBlindManifest = (input: unknown, binding: BlindSource) => {
     Object.keys(symbolRowCounts).some((symbol) => !symbols.includes(symbol)) ||
     files.bars_5m.key !== binding.bars ||
     files.bars_5m.bytes <= 0 ||
+    (binding.gzipMemberBytes !== undefined && binding.gzipMemberBytes >= files.bars_5m.bytes) ||
     files.calendar.key !== binding.calendar ||
     files.calendar.sha256 !== blind.calendarSha256
   ) {
@@ -247,6 +250,33 @@ async function* lines(stream: ReadableStream<Uint8Array>) {
   }
 }
 
+export const gunzipArchive = (
+  body: ReadableStream<Uint8Array<ArrayBuffer>>,
+  receipt: { key: string; bytes: number; sha256: string },
+  gzipMemberBytes = receipt.bytes,
+) => {
+  const compressed = new Bun.CryptoHasher('sha256')
+  let bytes = 0
+  return body
+    .pipeThrough(
+      new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
+        transform(chunk, controller) {
+          // A bound gzip member may end before the object does. Authenticate even the non-tape suffix.
+          compressed.update(chunk)
+          const remaining = gzipMemberBytes - bytes
+          if (remaining > 0) controller.enqueue(chunk.subarray(0, remaining))
+          bytes += chunk.length
+        },
+        flush() {
+          if (bytes !== receipt.bytes || compressed.digest('hex') !== receipt.sha256) {
+            throw new Error(`Byte receipt mismatch: ${receipt.key}`)
+          }
+        },
+      }),
+    )
+    .pipeThrough(new DecompressionStream('gzip'))
+}
+
 export const loadTapes = async (
   read: (key: string, digest: string) => Promise<unknown>,
   open: (key: string) => Promise<Response>,
@@ -256,32 +286,21 @@ export const loadTapes = async (
   const metadata = await readArchiveMetadata(read, binding)
   const load = async (kind: 'blind' | 'prior') => {
     const { calendar, receipt } = metadata[kind]
-    const compressed = new Bun.CryptoHasher('sha256')
     const raw = new Bun.CryptoHasher('sha256')
-    let gzipBytes = 0
     let rawBytes = 0
     const body = (await open(receipt.key)).body
     if (body === null) throw new Error(`Missing S3 body: ${receipt.key}`)
-    const stream = body
-      .pipeThrough(
-        new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
-          transform(chunk, controller) {
-            gzipBytes += chunk.length
-            compressed.update(chunk)
-            controller.enqueue(chunk)
-          },
-        }),
-      )
-      .pipeThrough(new DecompressionStream('gzip'))
-      .pipeThrough(
-        new TransformStream<Uint8Array, Uint8Array>({
-          transform(chunk, controller) {
-            rawBytes += chunk.length
-            raw.update(chunk)
-            controller.enqueue(chunk)
-          },
-        }),
-      )
+    const stored =
+      'gzipBytes' in receipt ? { key: receipt.key, bytes: receipt.gzipBytes, sha256: receipt.gzipSha256 } : receipt
+    const stream = gunzipArchive(body, stored, kind === 'blind' ? binding.gzipMemberBytes : undefined).pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          rawBytes += chunk.length
+          raw.update(chunk)
+          controller.enqueue(chunk)
+        },
+      }),
+    )
     const tape = await readTape(
       calendar,
       lines(stream),
@@ -289,11 +308,7 @@ export const loadTapes = async (
       kind === 'blind' ? binding.rows : prior.rows,
       kind === 'blind' ? metadata.blind.rowsBySymbol : undefined,
     )
-    if (
-      gzipBytes !== ('gzipBytes' in receipt ? receipt.gzipBytes : receipt.bytes) ||
-      compressed.digest('hex') !== ('gzipSha256' in receipt ? receipt.gzipSha256 : receipt.sha256) ||
-      ('rawSha256' in receipt && (rawBytes !== receipt.rawBytes || raw.digest('hex') !== receipt.rawSha256))
-    ) {
+    if ('rawSha256' in receipt && (rawBytes !== receipt.rawBytes || raw.digest('hex') !== receipt.rawSha256)) {
       throw new Error(`Byte receipt mismatch: ${receipt.key}`)
     }
     const missing = universe.filter(
