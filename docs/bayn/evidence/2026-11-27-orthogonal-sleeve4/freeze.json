@@ -2,11 +2,11 @@
   "schemaVersion": "bayn.sleeve4.freeze.v1",
   "manifestSha256": "3954d5f0ff79bdd280f893cfa133e12e4fccad409ff3f8c907a80410ee19e5ca",
   "sourceSha256": {
-    "research-orthogonal-sleeve4.ts": "af6a8d38e6a910cf7521630b1ea9674b73e34e55748a617c9c3d3fb1157413e8",
+    "research-orthogonal-sleeve4.ts": "99f1cab650a85d706aed4099d052867bbf91fce76a1773881d80be9a97244c69",
     "sleeve4-data.ts": "0e987d31655d5f98554e0515b3c695b2bd8587e3f09cc967b170467b1a0d5af5",
     "sleeve4-evaluation.ts": "d4c75110528871df05d23dfd5bccbfc559322374431cd24dfe18de95135acf20",
     "sleeve4-signals.ts": "789f017451e486f8684cb2bac8372acf252bdbe8d47dac02041c0f89be776d7d",
-    "midday-research-data.ts": "7dbd93553b51c89226ff71d46517a8d0a5718105f53aa970a9958f9a6939a967",
+    "midday-research-data.ts": "6f2a2b54b3a856154a3655384cc277be3bf640875683742d30635c12253849b2",
     "midday-research-statistics.ts": "4c06e30777a5617469bee16497161c804390314c97d1841c94a630eab31f2936",
     "verify-intraday-alpha-replay.ts": "bf54605f799011694b7803d64d6bb03bbe44f4a36659030cb00de5825dfb9caa"
   },
