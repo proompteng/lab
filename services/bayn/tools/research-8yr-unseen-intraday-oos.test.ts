@@ -13,6 +13,43 @@ import { baselineNames, blind, listingDates, noiseNames, stocks, universe } from
 import { createPreparation, exitPath, netAt, replayDay } from './8yr-unseen-intraday-replay'
 import { stationaryP, stationaryPlan } from './8yr-unseen-intraday-statistics'
 import { Field, makeSeries, price, readTape } from './8yr-unseen-intraday-tape'
+import { verifyScorePublication } from './research-8yr-unseen-intraday-oos'
+
+describe('Wave 5A score publication', () => {
+  const freeze = '0ade8141ccba92cd20346579676ee2ca04e62a97'
+  const binding = 'a'.repeat(64)
+  const refs = 'study\trefs/heads/codex/bayn-w4e-8yr-unseen-intraday-oos\nmain\trefs/heads/main\n'
+  const reader =
+    (ancestors: readonly (readonly string[])[], bindingSha256 = binding) =>
+    (command: string, ...args: string[]) => {
+      if (command === 'ls-remote') return refs
+      if (command === 'merge-base' && ancestors.some(([from, to]) => args[1] === from && args[2] === to)) {
+        return ''
+      }
+      if (command === 'show' && args[0].startsWith('squashed:') && args[0].endsWith('/results.json')) {
+        return JSON.stringify({
+          schema: 'bayn.research.wave-4e.results.v1',
+          freezeSha256: '0fe346561ed3610336a82e812e4f1e4fe873cd60967c1d6af03a0e301f649d33',
+          inputs: { blind: { bindingSha256 } },
+        })
+      }
+      throw new Error(`Unpublished evidence: ${command} ${args.join(' ')}`)
+    }
+
+  test('requires the original preregistration for the exact study branch tip', () => {
+    expect(() => verifyScorePublication('study', binding, reader([[freeze, 'study']]))).not.toThrow()
+    expect(() => verifyScorePublication('study', binding, reader([]))).toThrow('Unpublished evidence')
+  })
+
+  test('allows a published squash without study ancestry only for the published archive binding', () => {
+    const onMain = [['squashed', 'main']]
+    expect(() => verifyScorePublication('squashed', binding, reader(onMain))).not.toThrow()
+    expect(() => verifyScorePublication('squashed', binding, reader(onMain, 'b'.repeat(64)))).toThrow(
+      'archive binding does not match',
+    )
+    expect(() => verifyScorePublication('squashed', binding, reader([]))).toThrow('Unpublished evidence: merge-base')
+  })
+})
 
 describe('Wave 4E metadata admission', () => {
   const correctedReceipt = {
@@ -124,10 +161,10 @@ describe('Wave 4E metadata admission', () => {
     const receipt = { key: 'fixture', bytes: bytes.length, sha256: Bun.CryptoHasher.hash('sha256', bytes, 'hex') }
     const read = (boundary?: number) =>
       new Response(gunzipArchive(new Blob([bytes]).stream(), receipt, boundary)).text()
-    await expect(read(member.length)).resolves.toBe(payload)
-    await expect(read()).rejects.toThrow()
+    expect(await read(member.length)).toBe(payload)
+    await rejects(read())
     bytes[bytes.length - 1] = 0xfe
-    await expect(read(member.length)).rejects.toThrow('Byte receipt mismatch: fixture')
+    await rejects(read(member.length), /Byte receipt mismatch: fixture/)
   })
 
   test('rejects the mismatch without even requesting the calendar or any bar object', async () => {

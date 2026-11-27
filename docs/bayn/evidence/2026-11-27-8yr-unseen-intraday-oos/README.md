@@ -160,3 +160,7 @@ bun services/bayn/tools/research-8yr-unseen-intraday-oos.ts --audit
 [results.json](results.json) pins the published scoring revision, both tape receipts and the frozen protocol
 digest. It records all 11 candidate variants × 3 costs × 11 windows, active-roster counts by year, first eligible
 stock dates, per-symbol attribution, and all 33 session-aligned equity series (with explicit nulls).
+
+For later reproduction, check out the reviewed squash commit with current `origin/main` history available locally
+and run `--score --output <new-file.json>`. The scorer checks the frozen digest and confirms that the published
+scorecard binds the same archive before opening either tape. Such a reproduction is not a new blind test.

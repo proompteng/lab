@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 
 import { NodeRuntime } from '@effect/platform-node'
-import { Effect } from 'effect'
+import { Effect, Schema } from 'effect'
 
 import {
   ArchiveError,
@@ -47,8 +47,19 @@ export const freezeReceipt = () => ({
 
 const git = (...args: string[]) => execFileSync('git', args, { encoding: 'utf8', timeout: 15_000 })
 const freezeCommit = '0ade8141ccba92cd20346579676ee2ca04e62a97'
+const frozenDigest = '0fe346561ed3610336a82e812e4f1e4fe873cd60967c1d6af03a0e301f649d33'
 const sourcePath = `${evidence}/blind-archive.json`
 const freezePath = `${evidence}/freeze.json`
+const studyHead = 'refs/heads/codex/bayn-w4e-8yr-unseen-intraday-oos'
+const mainHead = 'refs/heads/main'
+const resultsSchema = 'bayn.research.wave-4e.results.v1'
+const decodeScoreReceipt = Schema.decodeUnknownSync(
+  Schema.Struct({
+    schema: Schema.Literal(resultsSchema),
+    freezeSha256: Schema.Literal(frozenDigest),
+    inputs: Schema.Struct({ blind: Schema.Struct({ bindingSha256: Schema.String }) }),
+  }),
+)
 
 const committedBlindSource = (revision: string) => {
   if (git('ls-tree', '--name-only', '--full-tree', revision, '--', sourcePath).trim() === '') return undefined
@@ -56,22 +67,47 @@ const committedBlindSource = (revision: string) => {
   return { binding: replacementBlindSource(JSON.parse(bytes) as unknown), bindingSha256: sha256(bytes) }
 }
 
+export const verifyScorePublication = (revision: string, bindingSha256: string | undefined, readGit: typeof git) => {
+  const refs = new Map(
+    readGit('ls-remote', '--refs', 'origin', studyHead, mainHead)
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const [sha, ref] = line.split('\t')
+        return [ref, sha]
+      }),
+  )
+  if (refs.get(studyHead) === revision) {
+    // The original blind run must still be the exact published descendant of the preregistration.
+    readGit('merge-base', '--is-ancestor', freezeCommit, revision)
+    return
+  }
+  const main = refs.get(mainHead)
+  if (main === undefined || bindingSha256 === undefined) {
+    throw new Error('Push the exact scoring revision or reproduce the published scorecard from origin/main')
+  }
+  // Squash merges cannot retain the preregistration commit as an ancestor.
+  readGit('merge-base', '--is-ancestor', revision, main)
+  const published = decodeScoreReceipt(JSON.parse(readGit('show', `${revision}:${evidence}/results.json`)) as unknown)
+  if (published.inputs.blind.bindingSha256 !== bindingSha256) {
+    throw new Error('The archive binding does not match the published scorecard')
+  }
+}
+
 const publishedRevision = () => {
   const revision = git('rev-parse', 'HEAD').trim()
-  git('merge-base', '--is-ancestor', freezeCommit, revision)
   const committedFreeze = git('show', `${revision}:${freezePath}`)
-  if (committedFreeze !== git('show', `${freezeCommit}:${freezePath}`)) {
+  const freezeSha256 = sha256(committedFreeze)
+  if (freezeSha256 !== frozenDigest) {
     throw new Error('The original published strategy freeze must remain byte-identical')
   }
   const receipt = JSON.parse(committedFreeze) as unknown
   if (JSON.stringify(receipt) !== JSON.stringify(freezeReceipt()))
     throw new Error('Committed strategy freeze does not match')
   git('diff', '--quiet', 'HEAD', '--')
-  const head = 'refs/heads/codex/bayn-w4e-8yr-unseen-intraday-oos'
-  if (git('ls-remote', '--refs', 'origin', head).trim() !== `${revision}\t${head}`) {
-    throw new Error('Push the frozen protocol and exact scoring revision before opening either bar archive')
-  }
-  return { revision, freezeSha256: sha256(committedFreeze) }
+  const source = committedBlindSource(revision)
+  verifyScorePublication(revision, source?.bindingSha256, git)
+  return { publication: { revision, freezeSha256 }, source }
 }
 
 const provenance = <A>(read: () => A) =>
@@ -93,15 +129,12 @@ if (import.meta.main) {
           `Validated metadata for ${metadata.blind.calendar.length} blind and ${metadata.prior.calendar.length} prior sessions`,
         )
       } else if (command === '--score' && remaining.length === 2 && remaining[0] === '--output') {
-        const { publication, source } = yield* provenance(() => {
-          const publication = publishedRevision()
-          return { publication, source: committedBlindSource(publication.revision) }
-        })
+        const { publication, source } = yield* provenance(publishedRevision)
         yield* withArchive(async (read, open, signal) => {
           const { blind: blindTape, prior } = await loadTapes(read, open, source?.binding)
           const study = evaluate([...blindTape.days, ...prior.days], signal)
           const result = {
-            schema: 'bayn.research.wave-4e.results.v1',
+            schema: resultsSchema,
             ...publication,
             inputs: {
               blind: {
