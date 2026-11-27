@@ -45,6 +45,7 @@ data:
     import os
     import ssl
     import sys
+    import time
     import urllib.error
     import urllib.request
 
@@ -55,6 +56,8 @@ data:
     WORKER_SECRET = os.environ.get("WORKER_SECRET", "codex-auth")
     MIN_REMAINING_DAYS = float(os.environ.get("MIN_REMAINING_DAYS", "8.0"))
     FORCE_REFRESH = os.environ.get("FORCE_REFRESH", "false").lower() in ("1", "true", "yes")
+    PATCH_MAX_ATTEMPTS = int(os.environ.get("PATCH_MAX_ATTEMPTS", "5"))
+    PATCH_RETRY_BASE_SECONDS = float(os.environ.get("PATCH_RETRY_BASE_SECONDS", "1.0"))
     SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 
 
@@ -107,6 +110,27 @@ data:
           body={"data": {"auth.json": encoded}},
           content_type="application/strategic-merge-patch+json",
       )
+
+
+    def persist_secret_auth(secret_name: str, payload: dict) -> None:
+      last_err: Exception | None = None
+      for attempt in range(1, max(1, PATCH_MAX_ATTEMPTS) + 1):
+        try:
+          patch_secret_auth(secret_name, payload)
+          return
+        except Exception as err:
+          last_err = err
+          # Reconcile uncertain write outcome via readback before retrying.
+          try:
+            if read_secret_auth(secret_name) == payload:
+              return
+          except Exception:
+            pass
+          if attempt < PATCH_MAX_ATTEMPTS:
+            time.sleep(PATCH_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+      raise RuntimeError(
+          f"Failed to persist Secret {NAMESPACE}/{secret_name} after {PATCH_MAX_ATTEMPTS} attempts: {type(last_err).__name__}"
+      ) from None
 
 
     def extract_oauth_config(tokens: dict) -> tuple[str, str]:
@@ -209,8 +233,8 @@ data:
         if isinstance(oauth.get("refresh_token"), str) and oauth["refresh_token"]:
           updated_tokens["refresh_token"] = oauth["refresh_token"]
 
-        # Persist master FIRST so a rotated single-use refresh_token is never lost.
-        patch_secret_auth(MASTER_SECRET, updated_master)
+        # Persist master FIRST with retry/readback so a rotated single-use refresh_token is never lost.
+        persist_secret_auth(MASTER_SECRET, updated_master)
         master = updated_master
         refreshed = True
 
@@ -221,7 +245,7 @@ data:
       except Exception:
         current_worker = None
       if current_worker != worker_target:
-        patch_secret_auth(WORKER_SECRET, worker_target)
+        persist_secret_auth(WORKER_SECRET, worker_target)
         worker_synced = True
 
       final_claims = decode_jwt_payload(master["tokens"].get("access_token") or "")
