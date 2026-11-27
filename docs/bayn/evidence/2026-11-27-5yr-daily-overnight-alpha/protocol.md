@@ -24,7 +24,7 @@ the same holdout again.
   Close WDC positions at the 2025-02-21 close, disallow WDC entries across the distribution, and reset WDC return
   and volume windows on 2025-02-24. No synthetic dividend or split payout is credited.
 - No point-in-time universe or locate tape is supplied. The universe was chosen retrospectively. Returns use
-  split-adjusted prices, without dividends, short distribution liabilities, hard-to-borrow rates, taxes, auction
+  split-adjusted prices, without dividends, short distribution liabilities, hard-to-borrow rates, long margin interest, taxes, auction
   imbalance, or quote/size checks. A 10 bp pass would be a research result, not proof of realizable fills.
 
 Issuer and filing sources: [COIN](https://www.sec.gov/Archives/edgar/data/1679788/000167978824000022/coin-20231231.htm),
@@ -42,18 +42,18 @@ Issuer and filing sources: [COIN](https://www.sec.gov/Archives/edgar/data/167978
 
 ## Registry (Cartesian products within each row)
 
-| Family | Registered signals and parameters | Execution |
-| --- | --- | --- |
-| 1. Residual overnight momentum | Overnight log-return beta/residual vol over 40/60 sessions, 3/5/10 residuals, K=3/5/8 per side, inverse-residual-vol weights; 0.5x gross budget | Close to next Open; repeat with signal lagged one Close for pre-submittable MOC |
-| 2. Residual multi-day momentum | Close-to-close log-return beta/vol over 60 sessions, 5/10/20/60 residuals, skip=0/1, K=4/6/8, rebalance every 3/5/10 sessions, equal initial dollars per side, 10% annual risk target | Same-Close to Close; previous-Close signal at next Open to Open |
-| 3. Residual reversal | 40-session Close beta/vol, reverse 1/2 residuals, K=5, rebalance every 1/2/3 sessions; unfiltered and 2.5x prior-20-session average volume veto. Intraday variants use the same preceding-Close residuals plus a confirming opposite-signed trade/price-gap direction (prior observable overnight gap or current gap with a hypothetical Open fill), rebalance daily | Close to Close; previous-Close signal at next Open to Close; realized-current-gap Open fill diagnostic only |
-| 4. ETF trend and rotation | 10/20/60 Close log-return sum, divided by 20-session volatility; signed time-series trend (all ETFs, inverse vol) or equal-dollar 3+3 relative strength, 5-session rebalance, 10% annual risk target | Same-Close to Close; previous-Close signal at next Open to Open |
-| 5. Risk-parity ensemble | For each expanded/live and mixed/stock-only cohort, select the Train leader from each family among pre-submittable variants; combine with inverse trailing standalone daily net-return vol over 15/20/30 sessions. Register a Train-leader diagnostic and a survivors-only ensemble (family incumbents can be vetoed, never replaced). At least two families are required. | Each sleeve retains its execution event; actual costs applied to net orders. |
+| Family                         | Registered signals and parameters                                                                                                                                                                                                                                                                                                                                          | Execution                                                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 1. Residual overnight momentum | Overnight log-return beta/residual vol over 40/60 sessions, 3/5/10 residuals, K=3/5/8 per side, inverse-residual-vol weights; 0.5x gross budget                                                                                                                                                                                                                            | Close to next Open; repeat with signal lagged one Close for pre-submittable MOC                             |
+| 2. Residual multi-day momentum | Close-to-close log-return beta/vol over 60 sessions, 5/10/20/60 residuals, skip=0/1, K=4/6/8, rebalance every 3/5/10 sessions, equal initial dollars per side, 10% annual risk target                                                                                                                                                                                      | Same-Close to Close; previous-Close signal at next Open to Open                                             |
+| 3. Residual reversal           | 40-session Close beta/vol, reverse 1/2 residuals, K=5, rebalance every 1/2/3 sessions; unfiltered and 2.5x prior-20-session average volume veto. Intraday variants use the same preceding-Close residuals plus a confirming opposite-signed trade/price-gap direction (prior observable overnight gap or current gap with a hypothetical Open fill), rebalance daily       | Close to Close; previous-Close signal at next Open to Close; realized-current-gap Open fill diagnostic only |
+| 4. ETF trend and rotation      | 10/20/60 Close log-return sum, divided by 20-session volatility; signed time-series trend (all ETFs, inverse vol) or equal-dollar 3+3 relative strength, 5-session rebalance, 10% annual risk target                                                                                                                                                                       | Same-Close to Close; previous-Close signal at next Open to Open                                             |
+| 5. Risk-parity ensemble        | For each expanded/live and mixed/stock-only cohort, select the Train leader from each family among pre-submittable variants; combine with inverse trailing standalone daily net-return vol over 15/20/30 sessions. Register a Train-leader diagnostic and a survivors-only ensemble (family incumbents can be vetoed, never replaced). At least two families are required. | Each sleeve retains its execution event; actual costs applied to net orders.                                |
 
 Motivation, not replications: [Lou–Polk–Skouras](https://personal.lse.ac.uk/polk/research/TugOfWar.pdf),
-[Blitz–Huij–Martens](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2319861),
+[Blitz–Huij–Martens](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2319883),
 [Moskowitz–Grinblatt](https://doi.org/10.1111/0022-1082.00146),
-[Avellaneda–Lee](https://math.nyu.edu/faculty/avellane/AvellanedaLeeStatArb20090616.pdf),
+[Avellaneda–Lee](https://math.nyu.edu/inmemoriam/avellaneda/AvellanedaLeeStatArb20090616.pdf),
 [Lehmann](https://www.nber.org/papers/w2533),
 [Moskowitz–Ooi–Pedersen](https://doi.org/10.1016/j.jfineco.2011.11.003) and
 [Moreira–Muir](https://www.nber.org/papers/w22208).
@@ -109,7 +109,9 @@ positive ex-top-five, and at least 50% of the center's Sharpe on the given split
    survivors-only ensemble instead. Family incumbents are Train-ranked the same way in each cohort (ETF
    sleeves use the corresponding ETF cohort); Validation only vetoes incumbents and never supplies replacements.
    The ensemble is unviable if fewer than two components survive. Diagnostic Train ensembles are never promoted.
-3. Validation applies the same economic checks (DSR reported but not a Validation gate); no re-ranking,
+3. Rank standalones against the Train-only standalone Sharpe dispersion with the full registered count.
+   Use the final Train dispersion including measured ensemble slots for the final gates, without re-ranking.
+   Validation applies the same economic checks (DSR reported but not a Validation gate); no re-ranking,
    substitution, parameter changes, or membership additions. Freeze at most two IDs, including rejected
    incumbents for diagnostic Holdout only. Commit the development-only receipt and ledger before scoring.
 4. Holdout scores only frozen finalists, their registered cohort counterparts, and fixed one-step plateau and

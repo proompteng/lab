@@ -47,9 +47,12 @@ function git(args: string[]) {
   return completed.stdout.toString()
 }
 
-function committedFreeze() {
+function committedFreeze(requestedCommit: string | undefined) {
   const path = `${evidence}/freeze.json`
-  const commits = git(['log', '--format=%H', '--diff-filter=A', '--', path]).trim().split('\n')
+  const commits =
+    requestedCommit === undefined
+      ? git(['log', '--format=%H', '--diff-filter=A', '--', path]).trim().split('\n')
+      : [requestedCommit]
   const [commit] = commits
   if (commits.length !== 1 || !/^[0-9a-f]{40}$/.test(commit)) {
     throw new Error('Commit exactly one development-only freeze.json and results.json before opening Holdout')
@@ -57,7 +60,7 @@ function committedFreeze() {
   const frozen = git(['show', `${commit}:${path}`])
   if (frozen !== readFileSync(join(root, path), 'utf8'))
     throw new Error('Working freeze.json differs from the committed freeze')
-  return { frozen, ledger: git(['show', `${commit}:${evidence}/results.json`]) }
+  return { commit, frozen, ledger: git(['show', `${commit}:${evidence}/results.json`]) }
 }
 
 export function verifyReproducedFreeze(
@@ -87,19 +90,24 @@ async function loadTape(path: string | undefined) {
 
 async function main() {
   const {
-    values: { freeze, score, input },
+    values: { freeze, score, input, 'freeze-commit': freezeCommit },
   } = parseArgs({
-    options: { freeze: { type: 'boolean' }, score: { type: 'boolean' }, input: { type: 'string' } },
+    options: {
+      freeze: { type: 'boolean' },
+      score: { type: 'boolean' },
+      input: { type: 'string' },
+      'freeze-commit': { type: 'string' },
+    },
   })
-  if (Boolean(freeze) === Boolean(score)) {
+  if (Boolean(freeze) === Boolean(score) || (freeze === true && freezeCommit !== undefined)) {
     throw new Error(
-      'Usage: bun services/bayn/tools/research-5yr-daily-overnight-alpha.ts (--freeze | --score) [--input pinned.tsv.gz]',
+      'Usage: bun services/bayn/tools/research-5yr-daily-overnight-alpha.ts (--freeze | --score) [--input pinned.tsv.gz] [--freeze-commit SHA]',
     )
   }
   const frozenPath = join(root, evidence, 'freeze.json')
   if (freeze === true && (await Bun.file(frozenPath).exists()))
     throw new Error('Refusing to overwrite an existing freeze receipt')
-  const committed = score === true ? committedFreeze() : undefined
+  const committed = score === true ? committedFreeze(freezeCommit) : undefined
   const bytes = await loadTape(input)
   const developmentTape = readTape(bytes, 'freeze')
   const development = develop(developmentTape)
@@ -117,7 +125,7 @@ async function main() {
   verifyReproducedFreeze(committed, { frozen, ledger })
   const tape = readTape(bytes, 'score')
   const scored = makeLedger(tape, development, scoreHoldout(tape, development))
-  writeFileSync(ledgerPath, encodeLedger(scored))
+  writeFileSync(ledgerPath, encodeLedger({ ...scored, freezeCommit: committed.commit }))
   console.log(
     `Scored ${development.selection.holdoutIds.length} frozen evaluations; ${scored.accepted.length} passed every gate`,
   )

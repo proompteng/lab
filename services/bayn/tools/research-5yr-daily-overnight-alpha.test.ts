@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 
 import { parseTape, readTape, seriesFor, universes } from './daily-alpha-data'
-import { economics } from './daily-alpha-metrics'
+import { economics, gates, measure } from './daily-alpha-metrics'
 import { capital, netAt, replay } from './daily-alpha-replay'
 import {
   flat,
@@ -174,4 +174,20 @@ test('ex-top-five retains the small gains and all losses; the freeze requires ex
   const frozen = { frozen: 'receipt', ledger: 'development' }
   expect(() => verifyReproducedFreeze(frozen, { ...frozen })).not.toThrow()
   expect(() => verifyReproducedFreeze(frozen, { ...frozen, ledger: 'changed' })).toThrow('refusing to open Holdout')
+})
+
+test('rejects realized gross drift beyond the registered cap rather than resizing from future auction prices', () => {
+  const input = [row('SPY', friday, 100, 100), row('SPY', monday, 100, 110), row('SPY', tuesday, 200, 205)].join('\n')
+  const tape = parseTape(input, tuesday, ['SPY'])
+  const bounds = { start: 0, end: 3 }
+  const run = replay(tape, bounds, [
+    {
+      end: 'open',
+      plan: (i, phase) => (i === 1 && phase === 'open' ? new Map([['SPY', 0.01]]) : undefined),
+    },
+  ])
+  const metrics = measure(tape, bounds, run)
+  expect(metrics?.peakTradeGross).toBe(1)
+  expect(metrics?.peakMarkedGross).toBe(2)
+  expect(gates({ metrics, error: null, loso: { SPY: 1 } }, 0, true, false)).toContain('realized gross')
 })

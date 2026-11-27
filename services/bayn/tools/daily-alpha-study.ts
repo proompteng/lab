@@ -304,7 +304,10 @@ export function makeLedger(tape: Tape, development: Development, holdout?: Map<s
           )
           .map(({ id }) => id)
   return {
+    schemaVersion: 'bayn.daily-overnight-results.v1',
     stage: holdout === undefined ? 'development' : 'scored',
+    rowsRead: tape.rowsRead,
+    preListingRowsExcluded: tape.excluded,
     splits,
     sessionCounts: Object.fromEntries(
       splitNames.map((split) => {
@@ -336,7 +339,7 @@ export function makeLedger(tape: Tape, development: Development, holdout?: Map<s
 export type Ledger = ReturnType<typeof makeLedger>
 
 // One line per trial keeps the development-to-frozen diff local to rows actually opened on Holdout.
-export function encodeLedger(ledger: Ledger) {
+export function encodeLedger(ledger: Ledger & { freezeCommit?: string }) {
   const { trials, ...header } = ledger
   return `${JSON.stringify(header, null, 2).slice(0, -2)},\n  "trials": [\n${trials.map((trial) => `    ${JSON.stringify(trial)}`).join(',\n')}\n  ]\n}\n`
 }

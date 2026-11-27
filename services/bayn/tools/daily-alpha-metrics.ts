@@ -113,7 +113,7 @@ export function gates(
   if (!plateau) failures.push('plateau')
   if (metrics.active < 60) failures.push('exposure')
   if (metrics.turnover > 0.5 + 1e-12) failures.push('turnover')
-  if (metrics.peakTradeGross > 1.8 + 1e-12) failures.push('realized trade gross')
+  if (metrics.peakMarkedGross > 1.8 + 1e-12) failures.push('realized gross')
   return failures
 }
 
