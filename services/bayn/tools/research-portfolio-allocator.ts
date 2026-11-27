@@ -174,12 +174,7 @@ const simulate = (
 const inFolds = (days: readonly PortfolioDay[], folds: readonly Fold[]) =>
   days.filter(({ date }) => folds.some(({ start, end }) => date >= start && date <= end))
 
-const scoreCohort = (
-  run: ReturnType<typeof simulate>,
-  folds: readonly Fold[],
-  includeDaily: boolean,
-  bootstrap: boolean,
-) =>
+const scoreCohort = (run: ReturnType<typeof simulate>, folds: readonly Fold[]) =>
   costs.map((cost) => {
     const paths = run.arms.map((arm) => inFolds(arm.costs[cost], folds))
     const support = commonSessions(paths)
@@ -187,12 +182,13 @@ const scoreCohort = (
     return {
       costBps: cost,
       dsrBenchmarkDailySharpe: benchmark,
+      matchedExcludedDates: paths[0]?.flatMap(({ date }) => (support.has(date) ? [] : [date])) ?? [],
       arms: run.arms.map(({ trial }, index) => {
         const days = paths[index] ?? []
         return {
           name: trial.name,
-          ...score(days, support, folds, benchmark, bootstrap, trial.grossCap ?? accountGrossCap),
-          ...(includeDaily ? { dailyNetUsd: days.map(({ date, net }) => [date, net] as const) } : {}),
+          ...score(days, support, folds, benchmark, trial.grossCap ?? accountGrossCap),
+          dailyNetUsd: days.map(({ net }) => net),
         }
       }),
     }
@@ -219,7 +215,7 @@ const leaveOneOut = (run: ReturnType<typeof simulate>, folds: readonly Fold[]) =
     const support = commonSessions(paths)
     return {
       costBps: cost,
-      arms: run.arms.map(({ trial, costs: legs }, index) => {
+      arms: run.arms.map(({ trial }, index) => {
         const days = paths[index] ?? []
         const stats = economics(dailyNet(days, support))
         return {
@@ -227,15 +223,14 @@ const leaveOneOut = (run: ReturnType<typeof simulate>, folds: readonly Fold[]) =
           ...stats,
           completeSessions: days.filter(({ net }) => net !== null).length,
           fillCount: days.reduce((total, day) => total + day.filled, 0),
-          calibration: trial.name === adaptiveTrial.name ? run.choices : undefined,
-          totalPathSessions: inFolds(legs[cost], folds).length,
+          totalPathSessions: days.length,
         }
       }),
     }
   })
 
 const promotion = (live: ScoredCohort, long: ScoredCohort, loso: readonly ReturnType<typeof leaveOneOut>[]) =>
-  trialGrid
+  [...trialGrid, adaptiveTrial]
     .filter(({ name }) => name !== staticTrial.name)
     .map(({ name }) => ({
       name,
@@ -282,22 +277,17 @@ export const runPortfolioAllocatorResearch = (directory: string) => {
   if (allLive === undefined) throw new Error('Missing full-universe live paths')
   const liveFolds = foldsFromLive(allLive)
   const liveRun = simulate(allLive, liveFolds, sleeveBudgetWeights, false)
-  const live = scoreCohort(liveRun, liveFolds, true, true)
-  const loso = [...liveSessions].flatMap(([symbol, sessions]) =>
-    symbol === ''
-      ? []
-      : [
-          {
-            omittedSymbol: symbol,
-            costs: leaveOneOut(simulate(sessions, liveFolds, sleeveBudgetWeights, false), liveFolds),
-          },
-        ],
-  )
+  const live = scoreCohort(liveRun, liveFolds)
+  const loso = [...liveSessions].flatMap(([symbol, sessions]) => {
+    if (symbol === '') return []
+    const run = simulate(sessions, liveFolds, sleeveBudgetWeights, false)
+    return [{ omittedSymbol: symbol, choices: run.choices, costs: leaveOneOut(run, liveFolds) }]
+  })
 
   const allLong = preparePortfolioSessions(dataset, 'long').get('')
   if (allLong === undefined) throw new Error('Missing long-universe paths')
   const longRun = simulate(allLong, longFolds, longBudgets, true)
-  const long = scoreCohort(longRun, longFolds, true, true)
+  const long = scoreCohort(longRun, longFolds)
   const gates = promotion(
     live,
     long,
@@ -314,8 +304,19 @@ export const runPortfolioAllocatorResearch = (directory: string) => {
     assumptions: { startingEquity, accountGrossCap, buyingPowerMultiple: 4, hypotheticalSellFeeBps: 0.21, costs },
     sleeves,
     trialGrid,
-    live: { choices: liveRun.choices, costs: live, loso },
-    multiYear: { symbols: dataset.longSymbols, spliceAt: longHoldoutSplice, choices: longRun.choices, costs: long },
+    live: {
+      dates: inFolds(liveRun.arms[0]?.costs[5] ?? [], liveFolds).map(({ date }) => date),
+      choices: liveRun.choices,
+      costs: live,
+      loso,
+    },
+    multiYear: {
+      symbols: dataset.longSymbols,
+      dates: allLong.map(({ date }) => date),
+      spliceAt: longHoldoutSplice,
+      choices: longRun.choices,
+      costs: long,
+    },
     gates,
   }
 }

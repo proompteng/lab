@@ -168,7 +168,7 @@ test('dispersion sizes only Midday and concurrent admission reserves room for bo
     ([minute, decision]) =>
       [
         minute,
-        !decision.noise
+        decision.noise === undefined
           ? decision
           : {
               ...decision,

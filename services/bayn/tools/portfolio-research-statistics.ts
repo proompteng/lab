@@ -6,6 +6,7 @@ import {
   quantile,
   sum,
 } from './midday-research-statistics'
+import { sleeves } from './portfolio-research-data'
 import { type PortfolioDay, startingEquity } from './portfolio-research-replay'
 
 const tradingDays = 252
@@ -89,15 +90,23 @@ export const score = (
   support: ReadonlySet<string>,
   folds: readonly { readonly name: string; readonly start: string; readonly end: string }[],
   sharpeBenchmark: number | null,
-  bootstrap: boolean,
   grossCap: number,
 ) => {
   const daily = dailyNet(days, support)
-  const supported = days.filter(({ date }) => support.has(date))
   const summarize = (subset: readonly PortfolioDay[]) => ({
     requestedSessions: subset.length,
     ...economics(dailyNet(subset, support)),
   })
+  const partitioned = folds.map((fold) => ({
+    ...fold,
+    days: days.filter(({ date }) => date >= fold.start && date <= fold.end),
+  }))
+  const regimes = {
+    spyUp: days.filter(({ spyReturn }) => spyReturn !== null && spyReturn > 0),
+    spyDown: days.filter(({ spyReturn }) => spyReturn !== null && spyReturn <= 0),
+    highVol: days.filter(({ highVol }) => highVol === true),
+    lowVol: days.filter(({ highVol }) => highVol === false),
+  }
   const execution = {
     attemptedLegs: sum(days.map(({ orderLegs }) => orderLegs)),
     filledLegs: sum(days.map(({ filled }) => filled)),
@@ -128,26 +137,29 @@ export const score = (
     completeSessions: days.filter(({ net }) => net !== null).length,
     fullWindowNetUsd: days.every(({ net }) => net !== null) ? sum(days.map(({ net }) => net ?? 0)) : null,
     observedClosedNetUsd: sum(days.map(({ closedNet }) => closedNet)),
-    excludedDates: days.flatMap(({ date }) => (support.has(date) ? [] : [date])),
-    folds: folds.map((fold) => ({
-      ...fold,
-      ...summarize(days.filter(({ date }) => date >= fold.start && date <= fold.end)),
-    })),
+    folds: partitioned.map(({ days: subset, ...fold }) => ({ ...fold, ...summarize(subset) })),
     regimes: {
-      spyUp: summarize(days.filter(({ spyReturn }) => spyReturn !== null && spyReturn > 0)),
-      spyDown: summarize(days.filter(({ spyReturn }) => spyReturn !== null && spyReturn <= 0)),
-      highVol: summarize(days.filter(({ highVol }) => highVol === true)),
-      lowVol: summarize(days.filter(({ highVol }) => highVol === false)),
+      spyUp: summarize(regimes.spyUp),
+      spyDown: summarize(regimes.spyDown),
+      highVol: summarize(regimes.highVol),
+      lowVol: summarize(regimes.lowVol),
     },
-    sleeves: [0, 1, 2].map((i) =>
-      economics(
-        supported.flatMap(({ sleeveNet }) => {
-          const net = sleeveNet[i]
-          return net == null ? [] : [net]
-        }),
-      ),
-    ),
-    bootstrap: bootstrap ? bootstrapPortfolio(daily) : null,
+    sleeves: sleeves.map((phase, i) => {
+      const sleeveEconomics = (subset: readonly PortfolioDay[]) =>
+        economics(
+          subset.flatMap(({ date, sleeveNet }) => {
+            const net = sleeveNet[i]
+            return support.has(date) && net != null ? [net] : []
+          }),
+        )
+      return {
+        phase,
+        ...sleeveEconomics(days),
+        foldNetUsd: partitioned.map(({ days: subset }) => sleeveEconomics(subset).netUsd),
+        regimeNetUsd: Object.values(regimes).map((subset) => sleeveEconomics(subset).netUsd),
+      }
+    }),
+    bootstrap: bootstrapPortfolio(daily),
     dsr: deflatedSharpe(daily, sharpeBenchmark),
     execution,
   }
