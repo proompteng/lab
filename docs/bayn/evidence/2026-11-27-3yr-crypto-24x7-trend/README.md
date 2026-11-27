@@ -80,11 +80,20 @@ observed bars; there is no pre-2022 history for warming up the first daily split
 is not evidence of executable liquidity or maker fill rates; adding real spread/slippage could worsen results.
 Alpaca's schedule identifies the requested 20 bp maker scenario as Tier 3, not Tier 4.
 
-Reproduce from a PR revision containing the correction receipt, using the existing read-only S3 credentials:
+Reproduce from the PR revision or a checkout containing its squash merge, using the existing read-only S3
+credentials. On the original branch the scorecard matches byte for byte. A squash changes the two
+checkout-history IDs that identify where the receipt files first appeared. Compare everything else, including both receipt hashes and both frozen
+source registration IDs:
 
 ```sh
-bun services/bayn/tools/research-3yr-crypto-24x7-trend.ts --score --output /tmp/wave2e-results.json
-cmp /tmp/wave2e-results.json docs/bayn/evidence/2026-11-27-3yr-crypto-24x7-trend/results.json
+set -eu
+expected=docs/bayn/evidence/2026-11-27-3yr-crypto-24x7-trend/results.json
+scratch=$(mktemp -d)
+trap 'find "$scratch" -maxdepth 1 -type f -delete; rmdir "$scratch"' EXIT
+bun services/bayn/tools/research-3yr-crypto-24x7-trend.ts --score --output "$scratch/results.json"
+jq -cS 'del(.freezeCommit, .correction.commit)' "$expected" > "$scratch/reference.json"
+jq -cS 'del(.freezeCommit, .correction.commit)' "$scratch/results.json" > "$scratch/replay.json"
+cmp "$scratch/reference.json" "$scratch/replay.json"
 ```
 
 `results.json` carries the original and corrected source registrations, receipt commits and digests, all nine selection
