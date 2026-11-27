@@ -1,0 +1,5850 @@
+{
+  "schema": "bayn.sp100-alpha.results.v1",
+  "freezeCommit": "1bd2d4d797c819e13cbdfe1926a9779b92fc057c",
+  "freezeSha256": "9b4627469c9c47d60868a95952788021647975f0645b30b9c0a609f9a8a848c9",
+  "rows": 450712,
+  "sessions": 2741,
+  "holdoutScores": [
+    {
+      "id": "momentum-120-120-21-10-sector-2",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 155152.44366067077,
+      "meanDailyTurnover": 0.0623280509314534,
+      "borrowUsd": 3267.771718092042,
+      "sellFeeUsd": 95.56039853921413,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "momentum-60-120-21-10-sector-2",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 154560.83807010806,
+      "meanDailyTurnover": 0.07213410267576947,
+      "borrowUsd": 3284.309843331278,
+      "sellFeeUsd": 110.40034184104867,
+      "costs": {
+        "5": {
+          "netUsd": -8857.897778834049,
+          "exTop5Usd": -15997.488442040118,
+          "exTop10Usd": -20793.375391753914,
+          "sharpe": -0.5286203027777318,
+          "maxDrawdown": 0.11486765211314033,
+          "calmar": -0.26656672259918684,
+          "spyBeta": -0.029014205107533542,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": -1525.123500945285
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -7293.862618558614
+          },
+          "bootstrapPValue": 0.8077192280771923,
+          "deflatedSharpe": 0.013840234989538635
+        },
+        "10": {
+          "netUsd": -11487.185821365845,
+          "exTop5Usd": -18593.181185761423,
+          "exTop10Usd": -23369.880956799767,
+          "sharpe": -0.6858134961353898,
+          "maxDrawdown": 0.1268749094043238,
+          "calmar": -0.3129759121014756,
+          "spyBeta": -0.0290264829715463,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": -2959.029347601272
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -8451.89180250524
+          },
+          "bootstrapPValue": 0.8746125387461254,
+          "deflatedSharpe": 0.0059998482079915575
+        },
+        "20": {
+          "netUsd": -16745.761906429434,
+          "exTop5Usd": -23784.566673204034,
+          "exTop10Usd": -28522.892086891476,
+          "sharpe": -1.00046752967914,
+          "maxDrawdown": 0.17789807302845534,
+          "calmar": -0.32539185715994284,
+          "spyBeta": -0.029051038699571714,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": -5826.841040913262
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -10767.950170398486
+          },
+          "bootstrapPValue": 0.9523047695230477,
+          "deflatedSharpe": 0.0003123102441050295
+        }
+      }
+    },
+    {
+      "id": "momentum-120-60-21-10-sector-2",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 154269.98428753304,
+      "meanDailyTurnover": 0.0723738405559899,
+      "borrowUsd": 3238.0952232399686,
+      "sellFeeUsd": 110.78310510262035,
+      "costs": {
+        "5": {
+          "netUsd": -7320.943344657677,
+          "exTop5Usd": -13366.718403364557,
+          "exTop10Usd": -17949.454932840625,
+          "sharpe": -0.44189113770856586,
+          "maxDrawdown": 0.1211807186242457,
+          "calmar": -0.20883656191766456,
+          "spyBeta": -0.0012055065013580515,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 4917.3882261518875
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -12199.499275851747
+          },
+          "bootstrapPValue": 0.7697230276972302,
+          "deflatedSharpe": 0.019650526765143513
+        },
+        "10": {
+          "netUsd": -9958.969832923507,
+          "exTop5Usd": -15970.053721339533,
+          "exTop10Usd": -20536.2706010693,
+          "sharpe": -0.601195212515184,
+          "maxDrawdown": 0.1341122789390087,
+          "calmar": -0.2566958732683255,
+          "spyBeta": -0.0011801043348916302,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 3489.262291484072
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -13372.038314968908
+          },
+          "bootstrapPValue": 0.83991600839916,
+          "deflatedSharpe": 0.00870852081446847
+        },
+        "20": {
+          "netUsd": -15235.022809455173,
+          "exTop5Usd": -21176.72435728949,
+          "exTop10Usd": -25709.901937526658,
+          "sharpe": -0.9198013572548447,
+          "maxDrawdown": 0.17306865559141002,
+          "calmar": -0.3042970213086781,
+          "spyBeta": -0.0011293000019588148,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 633.0104221484335
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -15717.116393203212
+          },
+          "bootstrapPValue": 0.9373062693730627,
+          "deflatedSharpe": 0.0004812132450261985
+        }
+      }
+    },
+    {
+      "id": "momentum-120-120-10-10-sector-2",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 154600.38338008273,
+      "meanDailyTurnover": 0.06166448694920561,
+      "borrowUsd": 3240.5740966754624,
+      "sellFeeUsd": 94.53382849149041,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "momentum-120-120-21-5-sector-2",
+      "sessions": 729,
+      "errors": 1,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 154857.86070914887,
+      "meanDailyTurnover": 0.08621177882369352,
+      "borrowUsd": 3263.923213036658,
+      "sellFeeUsd": 132.0786930727224,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "momentum-120-120-21-10-sector-1",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 156040.68386674707,
+      "meanDailyTurnover": 0.07439561547560063,
+      "borrowUsd": 3256.299171314892,
+      "sellFeeUsd": 114.02880332535253,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "momentum-120-120-21-21-sector-2",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 155407.41973448978,
+      "meanDailyTurnover": 0.044963840886675016,
+      "borrowUsd": 3272.0570569330425,
+      "sellFeeUsd": 69.00266416417814,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "momentum-120-180-21-10-sector-2",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 154779.4179262223,
+      "meanDailyTurnover": 0.06017201840178703,
+      "borrowUsd": 3344.0845322615414,
+      "sellFeeUsd": 92.21795760169812,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "momentum-252-120-21-10-sector-2",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 155350.10326531957,
+      "meanDailyTurnover": 0.058109938703877505,
+      "borrowUsd": 3282.5403551862646,
+      "sellFeeUsd": 89.00733614590789,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "trend-vol-long-only-0",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 146312.2130663315,
+      "meanDailyTurnover": 0.02498345178278038,
+      "borrowUsd": 0,
+      "sellFeeUsd": 38.57191470772989,
+      "costs": {
+        "5": {
+          "netUsd": 29979.197788900132,
+          "exTop5Usd": 22297.58033649119,
+          "exTop10Usd": 16068.978881389536,
+          "sharpe": 1.1581687951166535,
+          "maxDrawdown": 0.06913316514958481,
+          "calmar": 1.4990170723645795,
+          "spyBeta": 0.381740939616351,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 140169.58215149815
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -110156.7424317835
+          },
+          "bootstrapPValue": 0.0197980201979802,
+          "deflatedSharpe": 0.7370351050140116
+        },
+        "10": {
+          "netUsd": 29068.550971417713,
+          "exTop5Usd": 21393.04362177114,
+          "exTop10Usd": 15169.513782044816,
+          "sharpe": 1.122874958560387,
+          "maxDrawdown": 0.07092799693207436,
+          "calmar": 1.4167026315070967,
+          "spyBeta": 0.38178848612641636,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 139686.41722776316
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -110550.58239471623
+          },
+          "bootstrapPValue": 0.022497750224977502,
+          "deflatedSharpe": 0.7018224387073912
+        },
+        "20": {
+          "netUsd": 27247.257336453054,
+          "exTop5Usd": 19583.970192331217,
+          "exTop10Usd": 13370.583583355563,
+          "sharpe": 1.0522883408874066,
+          "maxDrawdown": 0.07454011231247777,
+          "calmar": 1.263588786358318,
+          "spyBeta": 0.381883579146548,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 138720.0873802929
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -111338.2623205816
+          },
+          "bootstrapPValue": 0.0326967303269673,
+          "deflatedSharpe": 0.5139199996936894
+        }
+      }
+    },
+    {
+      "id": "trend-atr-long-only-0",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 146863.49958648792,
+      "meanDailyTurnover": 0.024430387177632212,
+      "borrowUsd": 0,
+      "sellFeeUsd": 37.72947247959871,
+      "costs": {
+        "5": {
+          "netUsd": 30404.42571123511,
+          "exTop5Usd": 22688.215750569274,
+          "exTop10Usd": 16409.17516663419,
+          "sharpe": 1.165181627720664,
+          "maxDrawdown": 0.0655831865696918,
+          "calmar": 1.6025710857505706,
+          "spyBeta": 0.3862512283693355,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 142171.43436537636
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -111733.28352349636
+          },
+          "bootstrapPValue": 0.018598140185981403,
+          "deflatedSharpe": 0.7406890312668849
+        },
+        "10": {
+          "netUsd": 29513.938098610426,
+          "exTop5Usd": 21803.670535162975,
+          "exTop10Usd": 15529.597370916505,
+          "sharpe": 1.1309496266937802,
+          "maxDrawdown": 0.06730648240354994,
+          "calmar": 1.515804809288482,
+          "spyBeta": 0.38629847644627174,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 141700.24540696395
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -112118.85704706325
+          },
+          "bootstrapPValue": 0.0216978302169783,
+          "deflatedSharpe": 0.7063282735503895
+        },
+        "20": {
+          "netUsd": 27732.96287336107,
+          "exTop5Usd": 20034.580104350393,
+          "exTop10Usd": 13770.441779481138,
+          "sharpe": 1.0624845556105813,
+          "maxDrawdown": 0.07077421674608876,
+          "calmar": 1.3545474123544623,
+          "spyBeta": 0.386392972600145,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 140757.8674901392
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -112890.00409419773
+          },
+          "bootstrapPValue": 0.030396960303969604,
+          "deflatedSharpe": 0.5206219094255295
+        }
+      }
+    },
+    {
+      "id": "trend-vol-long-short-0",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 150240.06926220062,
+      "meanDailyTurnover": 0.03839502875821025,
+      "borrowUsd": 720.0480832204375,
+      "sellFeeUsd": 58.96891961623536,
+      "costs": {
+        "5": {
+          "netUsd": 15913.873750478406,
+          "exTop5Usd": 7266.3754975098345,
+          "exTop10Usd": 880.2825809575606,
+          "sharpe": 0.5855956833284677,
+          "maxDrawdown": 0.14096042331741707,
+          "calmar": 0.3902579200029606,
+          "spyBeta": 0.15745339075274367,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 100695.88454010584
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -84746.48926152517
+          },
+          "bootstrapPValue": 0.1367863213678632,
+          "deflatedSharpe": 0.3774955426641421
+        },
+        "10": {
+          "netUsd": 14514.37495224165,
+          "exTop5Usd": 5910.413122791191,
+          "exTop10Usd": -467.24088456030586,
+          "sharpe": 0.534110235453428,
+          "maxDrawdown": 0.14479185196439318,
+          "calmar": 0.3465191397330562,
+          "spyBeta": 0.157576408886596,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 99969.26805033087
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -85384.00820012849
+          },
+          "bootstrapPValue": 0.15958404159584041,
+          "deflatedSharpe": 0.32777459403658604
+        },
+        "20": {
+          "netUsd": 11715.377355768102,
+          "exTop5Usd": 3198.4883733538736,
+          "exTop10Usd": -3162.287815596066,
+          "sharpe": 0.4311170264811638,
+          "maxDrawdown": 0.15251955269857806,
+          "calmar": 0.26552399360902434,
+          "spyBeta": 0.15782244515430044,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 98516.03507078084
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -86659.04607733504
+          },
+          "bootstrapPValue": 0.21097890210978903,
+          "deflatedSharpe": 0.1576143145235743
+        }
+      }
+    },
+    {
+      "id": "trend-vol-long-only-0.25",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 146312.2130663315,
+      "meanDailyTurnover": 0.025006364985271933,
+      "borrowUsd": 0,
+      "sellFeeUsd": 38.60677881047508,
+      "costs": {
+        "5": {
+          "netUsd": 29957.973552936703,
+          "exTop5Usd": 22278.461703094785,
+          "exTop10Usd": 16063.97052206282,
+          "sharpe": 1.1581442330547091,
+          "maxDrawdown": 0.06852362430612445,
+          "calmar": 1.5112806443793945,
+          "spyBeta": 0.3814613229417172,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 140025.9017923025
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -110034.28630855115
+          },
+          "bootstrapPValue": 0.019998000199980003,
+          "deflatedSharpe": 0.7370141560885388
+        },
+        "10": {
+          "netUsd": 29046.49154922349,
+          "exTop5Usd": 21373.199794713022,
+          "exTop10Usd": 15163.779953139221,
+          "sharpe": 1.122790169631201,
+          "maxDrawdown": 0.07031766433744682,
+          "calmar": 1.427914679113652,
+          "spyBeta": 0.38151104294537364,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 139542.44056449257
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -110428.66515363993
+          },
+          "bootstrapPValue": 0.022397760223977603,
+          "deflatedSharpe": 0.7017677060957207
+        },
+        "20": {
+          "netUsd": 27223.52754179717,
+          "exTop5Usd": 19562.67597794961,
+          "exTop10Usd": 13363.398815292136,
+          "sharpe": 1.052083853765521,
+          "maxDrawdown": 0.07392822449858809,
+          "calmar": 1.2729376604186624,
+          "spyBeta": 0.38161048295268724,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 138575.51810887287
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -111217.42284381746
+          },
+          "bootstrapPValue": 0.0324967503249675,
+          "deflatedSharpe": 0.5137849419841847
+        }
+      }
+    },
+    {
+      "id": "reversal-5-5",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 162376.4284916499,
+      "meanDailyTurnover": 0.2956798644903465,
+      "borrowUsd": 3247.118189407143,
+      "sellFeeUsd": 452.8343177395368,
+      "costs": {
+        "5": {
+          "netUsd": 2476.1536955144516,
+          "exTop5Usd": -5364.194951526159,
+          "exTop10Usd": -11629.552760487913,
+          "sharpe": 0.12353962576702252,
+          "maxDrawdown": 0.09292177406985976,
+          "calmar": 0.09211558565789128,
+          "spyBeta": -0.01842297826212776,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": -7032.847011981908
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": 9546.514123302364
+          },
+          "bootstrapPValue": 0.40045995400459955,
+          "deflatedSharpe": 0.13455528844037545
+        },
+        "10": {
+          "netUsd": -8301.377365158694,
+          "exTop5Usd": -16064.704123845007,
+          "exTop10Usd": -22255.10909393397,
+          "sharpe": -0.414290821453284,
+          "maxDrawdown": 0.11814510972502461,
+          "calmar": -0.24288876072616766,
+          "spyBeta": -0.01847819371144801,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": -13103.515888361151
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": 4875.6471439253555
+          },
+          "bootstrapPValue": 0.7824217578242175,
+          "deflatedSharpe": 0.019755064066039635
+        },
+        "20": {
+          "netUsd": -29856.43948650501,
+          "exTop5Usd": -37465.72246848272,
+          "exTop10Usd": -43506.2217608261,
+          "sharpe": -1.4907762525653432,
+          "maxDrawdown": 0.3232163497986371,
+          "calmar": -0.3193138131868446,
+          "spyBeta": -0.01858862461008842,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": -25244.853641119676
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -4466.086814828656
+          },
+          "bootstrapPValue": 0.9978002199780022,
+          "deflatedSharpe": 0.000012391364239574648
+        }
+      }
+    },
+    {
+      "id": "reversal-3-5",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 163036.38956017405,
+      "meanDailyTurnover": 0.30788382395214037,
+      "borrowUsd": 3119.8523399834194,
+      "sellFeeUsd": 471.49109694535406,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "reversal-5-3",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 163370.6263870449,
+      "meanDailyTurnover": 0.4010139788656066,
+      "borrowUsd": 3273.5096828866813,
+      "sellFeeUsd": 614.0011252706294,
+      "costs": {
+        "5": {
+          "netUsd": -10044.944121377941,
+          "exTop5Usd": -18649.55916041193,
+          "exTop10Usd": -25408.725825237638,
+          "sharpe": -0.46144486104765065,
+          "maxDrawdown": 0.14543533078715404,
+          "calmar": -0.23875397705302043,
+          "spyBeta": -0.007265306916899002,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": -15809.84712690709
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": 5803.83314154392
+          },
+          "bootstrapPValue": 0.8043195680431957,
+          "deflatedSharpe": 0.01841741036944656
+        },
+        "10": {
+          "netUsd": -24661.90365102933,
+          "exTop5Usd": -33176.736425102674,
+          "exTop10Usd": -39819.67429131772,
+          "sharpe": -1.1334906013579933,
+          "maxDrawdown": 0.2847762847650733,
+          "calmar": -0.2993613918267426,
+          "spyBeta": -0.00733543869813243,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": -24049.635446899207
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -535.9879040994572
+          },
+          "bootstrapPValue": 0.9831016898310169,
+          "deflatedSharpe": 0.0005897375029592039
+        },
+        "20": {
+          "netUsd": -53895.822710332126,
+          "exTop5Usd": -62231.090954484185,
+          "exTop10Usd": -68641.5712234779,
+          "sharpe": -2.4792015020491016,
+          "maxDrawdown": 0.5649483842080628,
+          "calmar": -0.32977622885286473,
+          "spyBeta": -0.007475702260599331,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": -40529.21208688344
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -13215.629995386209
+          },
+          "bootstrapPValue": 1,
+          "deflatedSharpe": 4.272731219277209e-9
+        }
+      }
+    },
+    {
+      "id": "defensive-beta-15",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 164529.68757955963,
+      "meanDailyTurnover": 0.02024849262388764,
+      "borrowUsd": 1522.9889305554664,
+      "sellFeeUsd": 31.094948264141248,
+      "costs": {
+        "5": {
+          "netUsd": 6901.278206153097,
+          "exTop5Usd": -3157.376382017311,
+          "exTop10Usd": -10818.000544391194,
+          "sharpe": 0.2332225944488795,
+          "maxDrawdown": 0.1836644151398157,
+          "calmar": 0.12989054152976165,
+          "spyBeta": 0.1698319861387174,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 17988.16547359912
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -11048.679580360633
+          },
+          "bootstrapPValue": 0.35596440355964404,
+          "deflatedSharpe": 0.18106205699155564
+        },
+        "10": {
+          "netUsd": 6163.220650012392,
+          "exTop5Usd": -3884.771043424347,
+          "exTop10Usd": -11540.199221327895,
+          "sharpe": 0.20830256559291027,
+          "maxDrawdown": 0.1868208060215422,
+          "calmar": 0.11403954797835052,
+          "spyBeta": 0.1699219233424766,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 17611.823407719818
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -11373.093916561063
+          },
+          "bootstrapPValue": 0.37336266373362664,
+          "deflatedSharpe": 0.1581041610652328
+        },
+        "20": {
+          "netUsd": 4687.10553773098,
+          "exTop5Usd": -5339.560366238422,
+          "exTop10Usd": -12984.596575201294,
+          "sharpe": 0.15844241269275344,
+          "maxDrawdown": 0.1931837586822239,
+          "calmar": 0.08387009467540174,
+          "spyBeta": 0.17010179774999423,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 16859.139275961224
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -12021.92258896192
+          },
+          "bootstrapPValue": 0.403959604039596,
+          "deflatedSharpe": 0.06990952706268783
+        }
+      }
+    },
+    {
+      "id": "defensive-vol-15",
+      "sessions": 729,
+      "errors": 1,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 164757.28105585795,
+      "meanDailyTurnover": 0.02338582985510022,
+      "borrowUsd": 1813.3125252062364,
+      "sellFeeUsd": 35.745964391932674,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "defensive-beta-10",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 164905.93688887742,
+      "meanDailyTurnover": 0.021304480040739315,
+      "borrowUsd": 1442.3632449324723,
+      "sellFeeUsd": 32.655275201126074,
+      "costs": {
+        "5": {
+          "netUsd": 1581.4528736388759,
+          "exTop5Usd": -9419.667323011834,
+          "exTop10Usd": -18027.28100076046,
+          "sharpe": 0.04977110506352634,
+          "maxDrawdown": 0.22548878115745502,
+          "calmar": 0.02424400294438545,
+          "spyBeta": 0.1864197467730703,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 17541.42544550735
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -15921.798922694972
+          },
+          "bootstrapPValue": 0.47755224477552244,
+          "deflatedSharpe": 0.10973278061393951
+        },
+        "10": {
+          "netUsd": 804.9045761539309,
+          "exTop5Usd": -10184.710484145495,
+          "exTop10Usd": -18788.62088623739,
+          "sharpe": 0.025334104209858536,
+          "maxDrawdown": 0.22901854130156774,
+          "calmar": 0.012149174356631164,
+          "spyBeta": 0.18650539319617132,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 17141.74696851874
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -16261.36640192946
+          },
+          "bootstrapPValue": 0.4938506149385061,
+          "deflatedSharpe": 0.09364773988153982
+        },
+        "20": {
+          "netUsd": -748.1920188159767,
+          "exTop5Usd": -11714.796806412829,
+          "exTop10Usd": -20311.300657191267,
+          "sharpe": -0.023552891971782834,
+          "maxDrawdown": 0.23613788313586945,
+          "calmar": -0.010952680471028573,
+          "spyBeta": 0.186676686042374,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 16342.390014541515
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -16940.501360398448
+          },
+          "bootstrapPValue": 0.5254474552544746,
+          "deflatedSharpe": 0.036433908453295985
+        }
+      }
+    },
+    {
+      "id": "ensemble",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 135785.31079464173,
+      "meanDailyTurnover": 0.09694691792429701,
+      "borrowUsd": 1527.506977588786,
+      "sellFeeUsd": 148.59932554926135,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:momentum-60-120-21-10-sector-2",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 136852.08966013035,
+      "meanDailyTurnover": 0.09856589789740927,
+      "borrowUsd": 1520.889074325139,
+      "sellFeeUsd": 151.03023506708567,
+      "costs": {
+        "5": {
+          "netUsd": 7659.3514209599825,
+          "exTop5Usd": 4588.214801822614,
+          "exTop10Usd": 1899.2332473881652,
+          "sharpe": 0.688761555927319,
+          "maxDrawdown": 0.04979165180196829,
+          "calmar": 0.5317511949465504,
+          "spyBeta": 0.11073307156393461,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 34326.34184427551
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -26633.75404299871
+          },
+          "bootstrapPValue": 0.12618738126187382,
+          "deflatedSharpe": 0.4436914558891818
+        },
+        "10": {
+          "netUsd": 4066.624442599409,
+          "exTop5Usd": 1020.368989343463,
+          "exTop10Usd": -1639.2375193394628,
+          "sharpe": 0.365803883504207,
+          "maxDrawdown": 0.054478891778266064,
+          "calmar": 0.2580351169073107,
+          "spyBeta": 0.11072524281272407,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 32319.84725657321
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -28187.601522315752
+          },
+          "bootstrapPValue": 0.27517248275172485,
+          "deflatedSharpe": 0.23081596166472512
+        },
+        "20": {
+          "netUsd": -3118.829514121742,
+          "exTop5Usd": -6115.322635614844,
+          "exTop10Usd": -8716.179052794723,
+          "sharpe": -0.280696326556765,
+          "maxDrawdown": 0.06598273889572724,
+          "calmar": -0.16339332439956833,
+          "spyBeta": 0.11070958531030324,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 28306.85808116869
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -31295.296480949855
+          },
+          "bootstrapPValue": 0.688931106889311,
+          "deflatedSharpe": 0.012551550322646002
+        }
+      }
+    },
+    {
+      "id": "ensemble:momentum-120-60-21-10-sector-2",
+      "sessions": 729,
+      "errors": 0,
+      "firstError": null,
+      "activeSessions": 729,
+      "peakGross": 138941.9128118272,
+      "meanDailyTurnover": 0.09869673972434492,
+      "borrowUsd": 1555.3853148921137,
+      "sellFeeUsd": 151.23424330990943,
+      "costs": {
+        "5": {
+          "netUsd": 7972.500079794589,
+          "exTop5Usd": 4621.97540551278,
+          "exTop10Usd": 1663.7655854522236,
+          "sharpe": 0.6786218875340202,
+          "maxDrawdown": 0.05746392499128342,
+          "calmar": 0.47959236232597763,
+          "spyBeta": 0.11831245503616565,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 36060.026719632806
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -28052.25660519954
+          },
+          "bootstrapPValue": 0.13068693130686931,
+          "deflatedSharpe": 0.436992182497596
+        },
+        "10": {
+          "netUsd": 4375.00391684222,
+          "exTop5Usd": 1054.0852446871304,
+          "exTop10Usd": -1878.9345952591048,
+          "sharpe": 0.37246823949976526,
+          "maxDrawdown": 0.06231801342559363,
+          "calmar": 0.24268216360718967,
+          "spyBeta": 0.11828764723935248,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 34053.48006225721
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -29608.847943276865
+          },
+          "bootstrapPValue": 0.27477252274772523,
+          "deflatedSharpe": 0.23434084385901122
+        },
+        "20": {
+          "netUsd": -2819.988409062527,
+          "exTop5Usd": -6081.695076964177,
+          "exTop10Usd": -8964.334956681769,
+          "sharpe": -0.24014311945967332,
+          "maxDrawdown": 0.07741662981010775,
+          "calmar": -0.12591749478917805,
+          "spyBeta": 0.11823803164572576,
+          "upSpy": {
+            "sessions": 410,
+            "netUsd": 30040.386747505945
+          },
+          "downSpy": {
+            "sessions": 318,
+            "netUsd": -32722.030619431516
+          },
+          "bootstrapPValue": 0.6635336466353364,
+          "deflatedSharpe": 0.015019486739768979
+        }
+      }
+    },
+    {
+      "id": "ensemble:momentum-120-120-10-10-sector-2",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 135855.9098171332,
+      "meanDailyTurnover": 0.09661090912485666,
+      "borrowUsd": 1537.6229156341983,
+      "sellFeeUsd": 148.0826583379602,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:momentum-120-120-21-5-sector-2",
+      "sessions": 729,
+      "errors": 1,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 135531.5390099948,
+      "meanDailyTurnover": 0.10148391539441472,
+      "borrowUsd": 1539.531546311416,
+      "sellFeeUsd": 155.53302043894618,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:momentum-120-120-21-10-sector-1",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 141824.10259683177,
+      "meanDailyTurnover": 0.10032084252724052,
+      "borrowUsd": 1591.1496847088556,
+      "sellFeeUsd": 153.76546418790502,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:momentum-120-120-21-21-sector-2",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 135073.2442776687,
+      "meanDailyTurnover": 0.0934948056351293,
+      "borrowUsd": 1507.9287318618026,
+      "sellFeeUsd": 143.32153349633148,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:momentum-120-180-21-10-sector-2",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 136389.78400724428,
+      "meanDailyTurnover": 0.0965617600458376,
+      "borrowUsd": 1522.1159424272655,
+      "sellFeeUsd": 147.9976684610849,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:momentum-252-120-21-10-sector-2",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 136201.88796146683,
+      "meanDailyTurnover": 0.09633757562731086,
+      "borrowUsd": 1531.3378780583937,
+      "sellFeeUsd": 147.64046011357968,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:trend-atr-long-only-0",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 135721.11627387,
+      "meanDailyTurnover": 0.09694446003704045,
+      "borrowUsd": 1529.854021724817,
+      "sellFeeUsd": 148.59653650111466,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:trend-vol-long-short-0",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 138037.5096719501,
+      "meanDailyTurnover": 0.10094610137462504,
+      "borrowUsd": 1710.6418032940405,
+      "sellFeeUsd": 154.69055061122495,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:trend-vol-long-only-0.25",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 135784.6893219933,
+      "meanDailyTurnover": 0.0969415489014704,
+      "borrowUsd": 1527.2755922746205,
+      "sellFeeUsd": 148.59100859604797,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:reversal-3-5",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 135147.58285517388,
+      "meanDailyTurnover": 0.10127372513036952,
+      "borrowUsd": 1485.0703892393806,
+      "sellFeeUsd": 155.21594672934208,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:reversal-5-3",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 138640.9041294827,
+      "meanDailyTurnover": 0.1235179614393236,
+      "borrowUsd": 1558.1494392771492,
+      "sellFeeUsd": 189.2519936489482,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:defensive-vol-15",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 135494.32307334137,
+      "meanDailyTurnover": 0.0970628854127288,
+      "borrowUsd": 1568.9872493319506,
+      "sellFeeUsd": 148.74432162916742,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    },
+    {
+      "id": "ensemble:defensive-beta-10",
+      "sessions": 729,
+      "errors": 219,
+      "firstError": "2026-01-14 MMC: missing execution price or prior close",
+      "activeSessions": 729,
+      "peakGross": 137094.27339468908,
+      "meanDailyTurnover": 0.0985961475974939,
+      "borrowUsd": 1545.2568808652331,
+      "sellFeeUsd": 151.1117205343085,
+      "costs": {
+        "5": null,
+        "10": null,
+        "20": null
+      }
+    }
+  ],
+  "results": [
+    {
+      "spec": {
+        "id": "momentum-120-120-21-10-sector-2",
+        "sleeves": [
+          {
+            "family": "momentum",
+            "config": {
+              "regression": 120,
+              "lookback": 120,
+              "skip": 21,
+              "cycle": 10,
+              "book": "sector-2"
+            },
+            "id": "momentum-120-120-21-10-sector-2"
+          }
+        ]
+      },
+      "holdout": {
+        "sessions": 729,
+        "errors": 219,
+        "firstError": "2026-01-14 MMC: missing execution price or prior close",
+        "activeSessions": 729,
+        "peakGross": 155152.44366067077,
+        "meanDailyTurnover": 0.0623280509314534,
+        "borrowUsd": 3267.771718092042,
+        "sellFeeUsd": 95.56039853921413,
+        "costs": {
+          "5": null,
+          "10": null,
+          "20": null
+        }
+      },
+      "loso": {
+        "XLK": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLF": {
+          "5": 10858.516788102399,
+          "10": 8696.98257639354,
+          "20": 4373.914152975825
+        },
+        "XLV": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLY": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLC": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLI": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLP": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLE": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLU": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLRE": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLB": {
+          "5": null,
+          "10": null,
+          "20": null
+        }
+      },
+      "plateau": {
+        "10": {
+          "required": 6,
+          "pass": false,
+          "points": [
+            {
+              "id": "momentum-60-120-21-10-sector-2",
+              "netUsd": -11487.185821365845,
+              "sharpe": -0.6858134961353898,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-60-21-10-sector-2",
+              "netUsd": -9958.969832923507,
+              "sharpe": -0.601195212515184,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-120-10-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-120-21-5-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-120-21-10-sector-1",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-120-21-21-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-180-21-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-252-120-21-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            }
+          ]
+        },
+        "20": {
+          "required": 6,
+          "pass": false,
+          "points": [
+            {
+              "id": "momentum-60-120-21-10-sector-2",
+              "netUsd": -16745.761906429434,
+              "sharpe": -1.00046752967914,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-60-21-10-sector-2",
+              "netUsd": -15235.022809455173,
+              "sharpe": -0.9198013572548447,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-120-10-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-120-21-5-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-120-21-10-sector-1",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-120-21-21-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-120-180-21-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "momentum-252-120-21-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            }
+          ]
+        }
+      },
+      "gates": {
+        "10": {
+          "netPositive": false,
+          "exTop5Positive": false,
+          "bootstrap": false,
+          "allSectorsPositive": false,
+          "neighboringPlateau": false
+        },
+        "20": {
+          "netPositive": false,
+          "exTop5Positive": false,
+          "bootstrap": false,
+          "allSectorsPositive": false,
+          "neighboringPlateau": false
+        }
+      },
+      "developmentPass": false,
+      "pass": false,
+      "years": {
+        "2016": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 0,
+          "peakGross": 0,
+          "meanDailyTurnover": 0,
+          "borrowUsd": 0,
+          "sellFeeUsd": 0,
+          "costs": {
+            "5": {
+              "netUsd": 0,
+              "exTop5Usd": 0,
+              "exTop10Usd": 0,
+              "sharpe": null,
+              "maxDrawdown": 0,
+              "calmar": null,
+              "spyBeta": 0,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 0
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": 0
+              },
+              "bootstrapPValue": null,
+              "deflatedSharpe": null
+            },
+            "10": {
+              "netUsd": 0,
+              "exTop5Usd": 0,
+              "exTop10Usd": 0,
+              "sharpe": null,
+              "maxDrawdown": 0,
+              "calmar": null,
+              "spyBeta": 0,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 0
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": 0
+              },
+              "bootstrapPValue": null,
+              "deflatedSharpe": null
+            },
+            "20": {
+              "netUsd": 0,
+              "exTop5Usd": 0,
+              "exTop10Usd": 0,
+              "sharpe": null,
+              "maxDrawdown": 0,
+              "calmar": null,
+              "spyBeta": 0,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 0
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": 0
+              },
+              "bootstrapPValue": null,
+              "deflatedSharpe": null
+            }
+          }
+        },
+        "2017": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 241,
+          "peakGross": 151706.56786377323,
+          "meanDailyTurnover": 0.053168518075758946,
+          "borrowUsd": 1019.5700700006696,
+          "sellFeeUsd": 28.083038848068405,
+          "costs": {
+            "5": {
+              "netUsd": 982.8033855642003,
+              "exTop5Usd": -1628.0172988948411,
+              "exTop10Usd": -3566.924818503408,
+              "sharpe": 0.2647847867277032,
+              "maxDrawdown": 0.04317735859982304,
+              "calmar": 0.22852693376781819,
+              "spyBeta": 0.0651163080843888,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 2404.1400606233096
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -1421.3366750591078
+              },
+              "bootstrapPValue": 0.39706029397060294,
+              "deflatedSharpe": 0.3072282747331178
+            },
+            "10": {
+              "netUsd": 315.5384837134261,
+              "exTop5Usd": -2280.600276179623,
+              "exTop10Usd": -4206.468213980193,
+              "sharpe": 0.08500745052227862,
+              "maxDrawdown": 0.047807993978185796,
+              "calmar": 0.0662641501526078,
+              "spyBeta": 0.06510500624704935,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 1980.4009234257192
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -1664.862439712293
+              },
+              "bootstrapPValue": 0.46435356464353567,
+              "deflatedSharpe": 0.23804566035629215
+            },
+            "20": {
+              "netUsd": -1018.9913199881221,
+              "exTop5Usd": -3585.7662307491883,
+              "exTop10Usd": -5485.555004933765,
+              "sharpe": -0.27447961271879884,
+              "maxDrawdown": 0.05707553740774497,
+              "calmar": -0.1792451009359663,
+              "spyBeta": 0.06508240257237033,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 1132.9226490305373
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -2151.9139690186616
+              },
+              "bootstrapPValue": 0.5984401559844016,
+              "deflatedSharpe": 0.09559554674559333
+            }
+          }
+        },
+        "2018": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 156398.6147184854,
+          "meanDailyTurnover": 0.05878686244565302,
+          "borrowUsd": 1091.0628964184712,
+          "sellFeeUsd": 30.79197977419407,
+          "costs": {
+            "5": {
+              "netUsd": 1167.791203395227,
+              "exTop5Usd": -2565.617328172042,
+              "exTop10Usd": -5349.100792577129,
+              "sharpe": 0.25571858835221334,
+              "maxDrawdown": 0.04108384198908439,
+              "calmar": 0.28537831449695844,
+              "spyBeta": 0.02242035692114464,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 4203.016149205912
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -3035.2249458106844
+              },
+              "bootstrapPValue": 0.4026597340265973,
+              "deflatedSharpe": 0.30322468049949935
+            },
+            "10": {
+              "netUsd": 430.01607970228304,
+              "exTop5Usd": -3284.315540111404,
+              "exTop10Usd": -6053.493831190585,
+              "sharpe": 0.09420371782407695,
+              "maxDrawdown": 0.04226601764047416,
+              "calmar": 0.10214572256312462,
+              "spyBeta": 0.022119259192921698,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 3797.8884553265007
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -3367.872375624217
+              },
+              "bootstrapPValue": 0.4644535546445355,
+              "deflatedSharpe": 0.24055483386230586
+            },
+            "20": {
+              "netUsd": -1045.5341676836053,
+              "exTop5Usd": -4721.7119639901275,
+              "exTop10Usd": -7462.279908417494,
+              "sharpe": -0.22921168607435966,
+              "maxDrawdown": 0.044638139738241586,
+              "calmar": -0.2351575689781654,
+              "spyBeta": 0.02151706373647579,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 2987.6330675676777
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -4033.167235251282
+              },
+              "bootstrapPValue": 0.5895410458954105,
+              "deflatedSharpe": 0.10463349694084705
+            }
+          }
+        },
+        "2019": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 153602.99669945898,
+          "meanDailyTurnover": 0.05647171638630609,
+          "borrowUsd": 1036.5510387905238,
+          "sellFeeUsd": 30.259697525136964,
+          "costs": {
+            "5": {
+              "netUsd": 2275.592577178107,
+              "exTop5Usd": -1634.4816745023904,
+              "exTop10Usd": -4074.9183999830034,
+              "sharpe": 0.5255865432296085,
+              "maxDrawdown": 0.019765103931568447,
+              "calmar": 1.1513182956470946,
+              "spyBeta": -0.008266286245913423,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 3201.162559552117
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -925.5699823740079
+              },
+              "bootstrapPValue": 0.2960703929607039,
+              "deflatedSharpe": 0.40222482006899324
+            },
+            "10": {
+              "netUsd": 1564.0489507106547,
+              "exTop5Usd": -2332.2255459858798,
+              "exTop10Usd": -4757.434322287474,
+              "sharpe": 0.36116499791381185,
+              "maxDrawdown": 0.02155011109175335,
+              "calmar": 0.7257730338611453,
+              "spyBeta": -0.008457884555957395,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 2784.0285002019946
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -1219.9795494913408
+              },
+              "bootstrapPValue": 0.35926407359264073,
+              "deflatedSharpe": 0.32984186283601397
+            },
+            "20": {
+              "netUsd": 140.96169777573738,
+              "exTop5Usd": -3727.7132889528725,
+              "exTop10Usd": -6122.466166896428,
+              "sharpe": 0.0325320108560396,
+              "maxDrawdown": 0.02512012541212258,
+              "calmar": 0.05611504539213465,
+              "spyBeta": -0.008841081176045297,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 1949.7603815017471
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -1808.7986837260066
+              },
+              "bootstrapPValue": 0.4928507149285071,
+              "deflatedSharpe": 0.1594234751338822
+            }
+          }
+        },
+        "2020": {
+          "sessions": 253,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 253,
+          "peakGross": 157162.89577726347,
+          "meanDailyTurnover": 0.0651933852508408,
+          "borrowUsd": 863.5512912430861,
+          "sellFeeUsd": 34.72271011299495,
+          "costs": {
+            "5": {
+              "netUsd": 6024.593207235126,
+              "exTop5Usd": -513.7737867359565,
+              "exTop10Usd": -5439.924429360082,
+              "sharpe": 0.7101539337905495,
+              "maxDrawdown": 0.0749310135742811,
+              "calmar": 0.80084070662062,
+              "spyBeta": 0.009073287945248313,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 4003.372877556282
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": 2021.2203296788468
+              },
+              "bootstrapPValue": 0.22647735226477353,
+              "deflatedSharpe": 0.47529738718469317
+            },
+            "10": {
+              "netUsd": 5199.896883811992,
+              "exTop5Usd": -1327.6775090686333,
+              "exTop10Usd": -6224.682731381586,
+              "sharpe": 0.6130955858109404,
+              "maxDrawdown": 0.0789372370271969,
+              "calmar": 0.65613443372962,
+              "spyBeta": 0.00923811202322896,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 3543.6603179253484
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": 1656.2365658866438
+              },
+              "bootstrapPValue": 0.25997400259974,
+              "deflatedSharpe": 0.4262118065707278
+            },
+            "20": {
+              "netUsd": 3550.504236965718,
+              "exTop5Usd": -2955.4849537339946,
+              "exTop10Usd": -7794.199335424608,
+              "sharpe": 0.4187510658228217,
+              "maxDrawdown": 0.08697491548267823,
+              "calmar": 0.4066081126672886,
+              "spyBeta": 0.00956776017919026,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 2624.2351986634826
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": 926.2690383022364
+              },
+              "bootstrapPValue": 0.33566643335666435,
+              "deflatedSharpe": 0.2719410431462498
+            }
+          }
+        },
+        "2021": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 154001.07410004482,
+          "meanDailyTurnover": 0.06041420937029191,
+          "borrowUsd": 1107.878086681136,
+          "sellFeeUsd": 31.875801603210824,
+          "costs": {
+            "5": {
+              "netUsd": 2312.307012183511,
+              "exTop5Usd": -4247.532942885431,
+              "exTop10Usd": -9239.667172290734,
+              "sharpe": 0.3120027042840685,
+              "maxDrawdown": 0.07253955367155225,
+              "calmar": 0.3187649902911279,
+              "spyBeta": 0.07194241254680982,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 3524.969237124275
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -1212.662224940768
+              },
+              "bootstrapPValue": 0.36636336366363365,
+              "deflatedSharpe": 0.32233481424886495
+            },
+            "10": {
+              "netUsd": 1551.087974117827,
+              "exTop5Usd": -4994.906544620691,
+              "exTop10Usd": -9973.869175758968,
+              "sharpe": 0.2092365523276203,
+              "maxDrawdown": 0.07661376015281506,
+              "calmar": 0.20245553423092685,
+              "spyBeta": 0.07205323897882238,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 3078.8123281773355
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -1527.7243540595055
+              },
+              "bootstrapPValue": 0.40705929407059294,
+              "deflatedSharpe": 0.27689524207903715
+            },
+            "20": {
+              "netUsd": 28.649897986474684,
+              "exTop5Usd": -6489.653748091197,
+              "exTop10Usd": -11443.299809825188,
+              "sharpe": 0.0038625129802516544,
+              "maxDrawdown": 0.08478877368414535,
+              "calmar": 0.003378973034001072,
+              "spyBeta": 0.07227489184284751,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 2186.498510283455
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -2157.848612296981
+              },
+              "bootstrapPValue": 0.49235076492350766,
+              "deflatedSharpe": 0.1526135261465025
+            }
+          }
+        },
+        "2022": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 156412.9810941673,
+          "meanDailyTurnover": 0.08007138227123307,
+          "borrowUsd": 880.6038847548906,
+          "sellFeeUsd": 42.21649631259007,
+          "costs": {
+            "5": {
+              "netUsd": -11421.463122149538,
+              "exTop5Usd": -15115.850107365837,
+              "exTop10Usd": -18048.431241096096,
+              "sharpe": -2.0260455253462757,
+              "maxDrawdown": 0.14541092410366166,
+              "calmar": -0.7885904742008871,
+              "spyBeta": 0.015194464310579116,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": -3494.4777715514847
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -7887.797737742717
+              },
+              "bootstrapPValue": 0.9659034096590341,
+              "deflatedSharpe": 0.0018780898600658255
+            },
+            "10": {
+              "netUsd": -12426.358969653504,
+              "exTop5Usd": -16104.156264681937,
+              "exTop10Usd": -19013.83216070599,
+              "sharpe": -2.2035227635577423,
+              "maxDrawdown": 0.15157501781002342,
+              "calmar": -0.823081966682909,
+              "spyBeta": 0.01506806023897193,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": -3928.147526642378
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -8421.476956045422
+              },
+              "bootstrapPValue": 0.9768023197680232,
+              "deflatedSharpe": 0.0009022364994991622
+            },
+            "20": {
+              "netUsd": -14436.150664661465,
+              "exTop5Usd": -18080.783246880223,
+              "exTop10Usd": -20959.86483887415,
+              "sharpe": -2.5561743254222438,
+              "maxDrawdown": 0.1639032052227472,
+              "calmar": -0.8842819876185491,
+              "spyBeta": 0.014815252095757656,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": -4795.4870368241645
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -9488.835392650819
+              },
+              "bootstrapPValue": 0.9897010298970103,
+              "deflatedSharpe": 0.0000896002635111314
+            }
+          }
+        },
+        "2023": {
+          "sessions": 250,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 154625.7470333781,
+          "meanDailyTurnover": 0.06343948668996703,
+          "borrowUsd": 1145.559226315294,
+          "sellFeeUsd": 33.15420965649097,
+          "costs": {
+            "5": {
+              "netUsd": -5873.2113944562425,
+              "exTop5Usd": -10877.563028501841,
+              "exTop10Usd": -13968.17180389752,
+              "sharpe": -1.1039096152195216,
+              "maxDrawdown": 0.07350236904094597,
+              "calmar": -0.8054430303210945,
+              "spyBeta": -0.02549969759599879,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": -5563.190224052935
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -310.0211704033046
+              },
+              "bootstrapPValue": 0.8964103589641036,
+              "deflatedSharpe": 0.03308423460975488
+            },
+            "10": {
+              "netUsd": -6666.204978080824,
+              "exTop5Usd": -11653.55860996964,
+              "exTop10Usd": -14725.430107574257,
+              "sharpe": -1.25284348746653,
+              "maxDrawdown": 0.07748811549564878,
+              "calmar": -0.8671697040151654,
+              "spyBeta": -0.02543595724232971,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": -5955.896689317502
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -710.3082887633217
+              },
+              "bootstrapPValue": 0.9245075492450755,
+              "deflatedSharpe": 0.022431777159543354
+            },
+            "20": {
+              "netUsd": -8252.192145330007,
+              "exTop5Usd": -13205.549772905255,
+              "exTop10Usd": -16239.946714927757,
+              "sharpe": -1.5504238929138152,
+              "maxDrawdown": 0.08674821673007758,
+              "calmar": -0.9588911445148514,
+              "spyBeta": -0.025308476534991565,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": -6741.309619846649
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -1510.882525483356
+              },
+              "bootstrapPValue": 0.9626037396260374,
+              "deflatedSharpe": 0.006083229562216275
+            }
+          }
+        },
+        "2024": {
+          "sessions": 252,
+          "errors": 219,
+          "firstError": "2026-01-14 MMC: missing execution price or prior close",
+          "activeSessions": 252,
+          "peakGross": 155152.44366067077,
+          "meanDailyTurnover": 0.05929545797211566,
+          "borrowUsd": 1098.7644753249451,
+          "sellFeeUsd": 31.229552970443113,
+          "costs": {
+            "5": null,
+            "10": null,
+            "20": null
+          }
+        },
+        "2025": {
+          "sessions": 250,
+          "errors": 219,
+          "firstError": "2026-01-14 MMC: missing execution price or prior close",
+          "activeSessions": 250,
+          "peakGross": 153813.65211083344,
+          "meanDailyTurnover": 0.06353173112138799,
+          "borrowUsd": 1151.29273154898,
+          "sellFeeUsd": 33.789903927293736,
+          "costs": {
+            "5": null,
+            "10": null,
+            "20": null
+          }
+        },
+        "2026": {
+          "sessions": 227,
+          "errors": 219,
+          "firstError": "2026-01-14 MMC: missing execution price or prior close",
+          "activeSessions": 227,
+          "peakGross": 154085.2081262425,
+          "meanDailyTurnover": 0.06436899092382982,
+          "borrowUsd": 1017.7145112181158,
+          "sellFeeUsd": 30.540941641477282,
+          "costs": {
+            "5": null,
+            "10": null,
+            "20": null
+          }
+        }
+      }
+    },
+    {
+      "spec": {
+        "id": "trend-vol-long-only-0",
+        "sleeves": [
+          {
+            "family": "trend",
+            "config": {
+              "weighting": "vol",
+              "mode": "long-only",
+              "deadband": 0
+            },
+            "id": "trend-vol-long-only-0"
+          }
+        ]
+      },
+      "holdout": {
+        "sessions": 729,
+        "errors": 0,
+        "firstError": null,
+        "activeSessions": 729,
+        "peakGross": 146312.2130663315,
+        "meanDailyTurnover": 0.02498345178278038,
+        "borrowUsd": 0,
+        "sellFeeUsd": 38.57191470772989,
+        "costs": {
+          "5": {
+            "netUsd": 29979.197788900132,
+            "exTop5Usd": 22297.58033649119,
+            "exTop10Usd": 16068.978881389536,
+            "sharpe": 1.1581687951166535,
+            "maxDrawdown": 0.06913316514958481,
+            "calmar": 1.4990170723645795,
+            "spyBeta": 0.381740939616351,
+            "upSpy": {
+              "sessions": 410,
+              "netUsd": 140169.58215149815
+            },
+            "downSpy": {
+              "sessions": 318,
+              "netUsd": -110156.7424317835
+            },
+            "bootstrapPValue": 0.0197980201979802,
+            "deflatedSharpe": 0.7370351050140116
+          },
+          "10": {
+            "netUsd": 29068.550971417713,
+            "exTop5Usd": 21393.04362177114,
+            "exTop10Usd": 15169.513782044816,
+            "sharpe": 1.122874958560387,
+            "maxDrawdown": 0.07092799693207436,
+            "calmar": 1.4167026315070967,
+            "spyBeta": 0.38178848612641636,
+            "upSpy": {
+              "sessions": 410,
+              "netUsd": 139686.41722776316
+            },
+            "downSpy": {
+              "sessions": 318,
+              "netUsd": -110550.58239471623
+            },
+            "bootstrapPValue": 0.022497750224977502,
+            "deflatedSharpe": 0.7018224387073912
+          },
+          "20": {
+            "netUsd": 27247.257336453054,
+            "exTop5Usd": 19583.970192331217,
+            "exTop10Usd": 13370.583583355563,
+            "sharpe": 1.0522883408874066,
+            "maxDrawdown": 0.07454011231247777,
+            "calmar": 1.263588786358318,
+            "spyBeta": 0.381883579146548,
+            "upSpy": {
+              "sessions": 410,
+              "netUsd": 138720.0873802929
+            },
+            "downSpy": {
+              "sessions": 318,
+              "netUsd": -111338.2623205816
+            },
+            "bootstrapPValue": 0.0326967303269673,
+            "deflatedSharpe": 0.5139199996936894
+          }
+        }
+      },
+      "loso": {
+        "XLK": {
+          "5": 29336.86398373496,
+          "10": 28436.765729331975,
+          "20": 26636.56922052592
+        },
+        "XLF": {
+          "5": 29484.265434486206,
+          "10": 28588.86841390558,
+          "20": 26798.074372744395
+        },
+        "XLV": {
+          "5": 29306.00449048559,
+          "10": 28409.074135059887,
+          "20": 26615.21342420852
+        },
+        "XLY": {
+          "5": 30116.83529588419,
+          "10": 29221.5313771169,
+          "20": 27430.923539582232
+        },
+        "XLC": {
+          "5": 29238.71796414146,
+          "10": 28338.060733937727,
+          "20": 26536.746273530385
+        },
+        "XLI": {
+          "5": 29466.34452879772,
+          "10": 28567.516154860168,
+          "20": 26769.85940698514
+        },
+        "XLP": {
+          "5": 29764.410545425333,
+          "10": 28876.297652494977,
+          "20": 27100.07186663435
+        },
+        "XLE": {
+          "5": 30241.263499698576,
+          "10": 29346.501848373904,
+          "20": 27556.97854572462
+        },
+        "XLU": {
+          "5": 29336.402091278454,
+          "10": 28437.449845366402,
+          "20": 26639.545353542435
+        },
+        "XLRE": {
+          "5": 30142.309672365085,
+          "10": 29320.40310970571,
+          "20": 27676.589984387127
+        },
+        "XLB": {
+          "5": 29934.825588805463,
+          "10": 29039.643661183283,
+          "20": 27249.27980593895
+        }
+      },
+      "plateau": {
+        "10": {
+          "required": 2,
+          "pass": true,
+          "points": [
+            {
+              "id": "trend-atr-long-only-0",
+              "netUsd": 29513.938098610426,
+              "sharpe": 1.1309496266937802,
+              "pass": true
+            },
+            {
+              "id": "trend-vol-long-short-0",
+              "netUsd": 14514.37495224165,
+              "sharpe": 0.534110235453428,
+              "pass": false
+            },
+            {
+              "id": "trend-vol-long-only-0.25",
+              "netUsd": 29046.49154922349,
+              "sharpe": 1.122790169631201,
+              "pass": true
+            }
+          ]
+        },
+        "20": {
+          "required": 2,
+          "pass": true,
+          "points": [
+            {
+              "id": "trend-atr-long-only-0",
+              "netUsd": 27732.96287336107,
+              "sharpe": 1.0624845556105813,
+              "pass": true
+            },
+            {
+              "id": "trend-vol-long-short-0",
+              "netUsd": 11715.377355768102,
+              "sharpe": 0.4311170264811638,
+              "pass": false
+            },
+            {
+              "id": "trend-vol-long-only-0.25",
+              "netUsd": 27223.52754179717,
+              "sharpe": 1.052083853765521,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "gates": {
+        "10": {
+          "netPositive": true,
+          "exTop5Positive": true,
+          "bootstrap": true,
+          "allSectorsPositive": true,
+          "neighboringPlateau": true
+        },
+        "20": {
+          "netPositive": true,
+          "exTop5Positive": true,
+          "bootstrap": true,
+          "allSectorsPositive": true,
+          "neighboringPlateau": true
+        }
+      },
+      "developmentPass": false,
+      "pass": false,
+      "years": {
+        "2016": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 0,
+          "peakGross": 0,
+          "meanDailyTurnover": 0,
+          "borrowUsd": 0,
+          "sellFeeUsd": 0,
+          "costs": {
+            "5": {
+              "netUsd": 0,
+              "exTop5Usd": 0,
+              "exTop10Usd": 0,
+              "sharpe": null,
+              "maxDrawdown": 0,
+              "calmar": null,
+              "spyBeta": 0,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 0
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": 0
+              },
+              "bootstrapPValue": null,
+              "deflatedSharpe": null
+            },
+            "10": {
+              "netUsd": 0,
+              "exTop5Usd": 0,
+              "exTop10Usd": 0,
+              "sharpe": null,
+              "maxDrawdown": 0,
+              "calmar": null,
+              "spyBeta": 0,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 0
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": 0
+              },
+              "bootstrapPValue": null,
+              "deflatedSharpe": null
+            },
+            "20": {
+              "netUsd": 0,
+              "exTop5Usd": 0,
+              "exTop10Usd": 0,
+              "sharpe": null,
+              "maxDrawdown": 0,
+              "calmar": null,
+              "spyBeta": 0,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 0
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": 0
+              },
+              "bootstrapPValue": null,
+              "deflatedSharpe": null
+            }
+          }
+        },
+        "2017": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 143431.9318562875,
+          "meanDailyTurnover": 0.02235790995222546,
+          "borrowUsd": 0,
+          "sellFeeUsd": 10.663305958882647,
+          "costs": {
+            "5": {
+              "netUsd": 11584.437432142038,
+              "exTop5Usd": 7198.003439669176,
+              "exTop10Usd": 3835.494176994056,
+              "sharpe": 2.0897584270177463,
+              "maxDrawdown": 0.022791434026735218,
+              "calmar": 5.1030534347592,
+              "spyBeta": 0.704798527177679,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 32287.717548824752
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -20703.28011668271
+              },
+              "bootstrapPValue": 0.0071992800719928,
+              "deflatedSharpe": 0.8964426444418822
+            },
+            "10": {
+              "netUsd": 11303.845662241607,
+              "exTop5Usd": 6922.233236407908,
+              "exTop10Usd": 3566.591406007894,
+              "sharpe": 2.0393493295548817,
+              "maxDrawdown": 0.022987122571207604,
+              "calmar": 4.937060247000564,
+              "spyBeta": 0.704695471482218,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 32098.63102441431
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -20794.78536217273
+              },
+              "bootstrapPValue": 0.008799120087991202,
+              "deflatedSharpe": 0.8824231556019975
+            },
+            "20": {
+              "netUsd": 10742.662122440744,
+              "exTop5Usd": 6370.6928298853745,
+              "exTop10Usd": 3028.7858640355753,
+              "sharpe": 1.9384673462268829,
+              "maxDrawdown": 0.02337919254711822,
+              "calmar": 4.613273769567035,
+              "spyBeta": 0.7044893600912956,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 31720.45797559347
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -20977.795853152744
+              },
+              "bootstrapPValue": 0.012198780121987801,
+              "deflatedSharpe": 0.8084255678261925
+            }
+          }
+        },
+        "2018": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 132512.97642952114,
+          "meanDailyTurnover": 0.021986722056785365,
+          "borrowUsd": 0,
+          "sellFeeUsd": 12.461661904649224,
+          "costs": {
+            "5": {
+              "netUsd": -3987.056005995974,
+              "exTop5Usd": -10397.195734492743,
+              "exTop10Usd": -13842.773304896196,
+              "sharpe": -0.5605975298298173,
+              "maxDrawdown": 0.07776481636144014,
+              "calmar": -0.514749584525952,
+              "spyBeta": 0.3131473317377442,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 31727.980010119354
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -35715.036016115344
+              },
+              "bootstrapPValue": 0.7146285371462854,
+              "deflatedSharpe": 0.08847362478758132
+            },
+            "10": {
+              "netUsd": -4262.989367808627,
+              "exTop5Usd": -10668.173700601306,
+              "exTop10Usd": -14109.538370374386,
+              "sharpe": -0.5993220893162111,
+              "maxDrawdown": 0.08026089837469445,
+              "calmar": -0.5332575981411837,
+              "spyBeta": 0.31318924476221627,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 31581.879541368795
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -35844.868909177414
+              },
+              "bootstrapPValue": 0.7250274972502749,
+              "deflatedSharpe": 0.07783714548442451
+            },
+            "20": {
+              "netUsd": -4814.856091433942,
+              "exTop5Usd": -11210.129632818436,
+              "exTop10Usd": -14643.068501330774,
+              "sharpe": -0.6767394222154024,
+              "maxDrawdown": 0.08525545022176227,
+              "calmar": -0.5670064227508328,
+              "spyBeta": 0.3132730708111604,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 31289.67860386764
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -36104.5346953016
+              },
+              "bootstrapPValue": 0.7488251174882512,
+              "deflatedSharpe": 0.04142322691786972
+            }
+          }
+        },
+        "2019": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 142080.6211986824,
+          "meanDailyTurnover": 0.01892680079480014,
+          "borrowUsd": 0,
+          "sellFeeUsd": 9.045568071807914,
+          "costs": {
+            "5": {
+              "netUsd": 14486.50989954227,
+              "exTop5Usd": 9419.337323343067,
+              "exTop10Usd": 5346.585735837136,
+              "sharpe": 2.3661879822155996,
+              "maxDrawdown": 0.026631353032716784,
+              "calmar": 5.439644723174787,
+              "spyBeta": 0.36177249779109116,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 37947.16722318211
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -23460.657323639807
+              },
+              "bootstrapPValue": 0.0051994800519948,
+              "deflatedSharpe": 0.9430571731909423
+            },
+            "10": {
+              "netUsd": 14248.032209527782,
+              "exTop5Usd": 9185.101622223823,
+              "exTop10Usd": 5115.858797633924,
+              "sharpe": 2.3270723216909923,
+              "maxDrawdown": 0.0267627502778381,
+              "calmar": 5.323829599578336,
+              "spyBeta": 0.36180786187259567,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 37804.184537095156
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -23556.152327567353
+              },
+              "bootstrapPValue": 0.006199380061993801,
+              "deflatedSharpe": 0.9350063400417441
+            },
+            "20": {
+              "netUsd": 13771.076829498825,
+              "exTop5Usd": 8716.630219985353,
+              "exTop10Usd": 4654.404921227515,
+              "sharpe": 2.248843382688222,
+              "maxDrawdown": 0.027026116631942616,
+              "calmar": 5.095470065877892,
+              "spyBeta": 0.3618785900356052,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 37518.21916492127
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -23747.142335422464
+              },
+              "bootstrapPValue": 0.007999200079992,
+              "deflatedSharpe": 0.8866942873447345
+            }
+          }
+        },
+        "2020": {
+          "sessions": 253,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 253,
+          "peakGross": 149405.98834812746,
+          "meanDailyTurnover": 0.023102558983055986,
+          "borrowUsd": 0,
+          "sellFeeUsd": 12.51186636755185,
+          "costs": {
+            "5": {
+              "netUsd": 2906.7105492416895,
+              "exTop5Usd": -6764.981599293124,
+              "exTop10Usd": -12988.634123784595,
+              "sharpe": 0.22239219253134448,
+              "maxDrawdown": 0.14429540065157617,
+              "calmar": 0.2006454510445363,
+              "spyBeta": 0.3288901615397907,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 64303.258908264805
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": -61396.5483590231
+              },
+              "bootstrapPValue": 0.42245775422457754,
+              "deflatedSharpe": 0.29235604351580985
+            },
+            "10": {
+              "netUsd": 2614.463178106025,
+              "exTop5Usd": -7043.970067312925,
+              "exTop10Usd": -13261.474480865048,
+              "sharpe": 0.2000177647155171,
+              "maxDrawdown": 0.14514863251319418,
+              "calmar": 0.1794112205167023,
+              "spyBeta": 0.3289251270106609,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 64134.305558224936
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": -61519.842380118884
+              },
+              "bootstrapPValue": 0.42985701429857015,
+              "deflatedSharpe": 0.2750924043107793
+            },
+            "20": {
+              "netUsd": 2029.9684358347056,
+              "exTop5Usd": -7601.947003352512,
+              "exTop10Usd": -13807.15519502594,
+              "sharpe": 0.15527811909086883,
+              "maxDrawdown": 0.14685611752724323,
+              "calmar": 0.13768203049519828,
+              "spyBeta": 0.328995057952402,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 63796.39885814515
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": -61766.430422310455
+              },
+              "bootstrapPValue": 0.44865513448655137,
+              "deflatedSharpe": 0.1918136557289433
+            }
+          }
+        },
+        "2021": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 137772.59233630745,
+          "meanDailyTurnover": 0.024869198996374225,
+          "borrowUsd": 0,
+          "sellFeeUsd": 14.59725683451093,
+          "costs": {
+            "5": {
+              "netUsd": 16822.938105316058,
+              "exTop5Usd": 9799.263828518255,
+              "exTop10Usd": 3948.2229296086243,
+              "sharpe": 1.7167230440420955,
+              "maxDrawdown": 0.04037257349564713,
+              "calmar": 4.166922405164453,
+              "spyBeta": 0.7107621213532384,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 62722.77146679874
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -45899.83336148265
+              },
+              "bootstrapPValue": 0.028697130286971302,
+              "deflatedSharpe": 0.8180303119140178
+            },
+            "10": {
+              "netUsd": 16509.586197961744,
+              "exTop5Usd": 9492.605094854518,
+              "exTop10Usd": 3646.9672648239757,
+              "sharpe": 1.6845525242097519,
+              "maxDrawdown": 0.04065924760613142,
+              "calmar": 4.060475087461308,
+              "spyBeta": 0.710892568829957,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 62559.20188290477
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -46049.61568494302
+              },
+              "bootstrapPValue": 0.031796820317968204,
+              "deflatedSharpe": 0.8023726590155302
+            },
+            "20": {
+              "netUsd": 15882.882383253105,
+              "exTop5Usd": 8879.287627527032,
+              "exTop10Usd": 3044.455935254671,
+              "sharpe": 1.6201982886771733,
+              "maxDrawdown": 0.041236048109461715,
+              "calmar": 3.8516984801966845,
+              "spyBeta": 0.7111534637833967,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 62232.06271511678
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -46349.180331863696
+              },
+              "bootstrapPValue": 0.0370962903709629,
+              "deflatedSharpe": 0.7149794477881544
+            }
+          }
+        },
+        "2022": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 99682.74033595208,
+          "meanDailyTurnover": 0.014912053237890572,
+          "borrowUsd": 0,
+          "sellFeeUsd": 7.434050676428473,
+          "costs": {
+            "5": {
+              "netUsd": -9271.430213137739,
+              "exTop5Usd": -14127.068602606092,
+              "exTop10Usd": -16756.542533040294,
+              "sharpe": -1.645336542639687,
+              "maxDrawdown": 0.09788401982306306,
+              "calmar": -0.9509589204591679,
+              "spyBeta": 0.09961677910032302,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 13361.447639334796
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -22608.034302786404
+              },
+              "bootstrapPValue": 0.9502049795020497,
+              "deflatedSharpe": 0.0062849056438941875
+            },
+            "10": {
+              "netUsd": -9458.576481273265,
+              "exTop5Usd": -14311.370726117591,
+              "exTop10Usd": -16935.654468123463,
+              "sharpe": -1.6781344397037574,
+              "maxDrawdown": 0.09940949683016073,
+              "calmar": -0.9552668865366039,
+              "spyBeta": 0.09964048214593309,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 13283.764274122412
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -22692.65365602342
+              },
+              "bootstrapPValue": 0.9528047195280472,
+              "deflatedSharpe": 0.005225580139640071
+            },
+            "20": {
+              "netUsd": -9832.86901754432,
+              "exTop5Usd": -14679.974973140586,
+              "exTop10Usd": -17293.878338289804,
+              "sharpe": -1.743567258673908,
+              "maxDrawdown": 0.1024627785096209,
+              "calmar": -0.9634760971838859,
+              "spyBeta": 0.09968788823715327,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 13128.39754369763
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -22861.89236249746
+              },
+              "bootstrapPValue": 0.9592040795920408,
+              "deflatedSharpe": 0.0020623375267260716
+            }
+          }
+        },
+        "2023": {
+          "sessions": 250,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 135780.49186220884,
+          "meanDailyTurnover": 0.032593502262010396,
+          "borrowUsd": 0,
+          "sellFeeUsd": 17.486459538882222,
+          "costs": {
+            "5": {
+              "netUsd": 3773.6842815693494,
+              "exTop5Usd": -3532.0972742386925,
+              "exTop10Usd": -7501.358229981004,
+              "sharpe": 0.5295358708399797,
+              "maxDrawdown": 0.07939215919565783,
+              "calmar": 0.4791246131053642,
+              "spyBeta": 0.36542224775364507,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": 35248.08989093052
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -31474.405609361187
+              },
+              "bootstrapPValue": 0.29817018298170184,
+              "deflatedSharpe": 0.40276432044958776
+            },
+            "10": {
+              "netUsd": 3366.2655032942184,
+              "exTop5Usd": -3931.4424881308505,
+              "exTop10Usd": -7893.878243528774,
+              "sharpe": 0.47220820884644793,
+              "maxDrawdown": 0.08065983592659783,
+              "calmar": 0.4206797085985214,
+              "spyBeta": 0.36543557268300586,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": 35053.89457935518
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -31687.629076060974
+              },
+              "bootstrapPValue": 0.3193680631936806,
+              "deflatedSharpe": 0.36978650149590075
+            },
+            "20": {
+              "netUsd": 2551.4279467439546,
+              "exTop5Usd": -4730.132915915167,
+              "exTop10Usd": -8678.91827062432,
+              "sharpe": 0.35764222525090067,
+              "maxDrawdown": 0.08321154463414539,
+              "calmar": 0.3090724227780488,
+              "spyBeta": 0.3654622225417278,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": 34665.50395620453
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -32114.076009460532
+              },
+              "bootstrapPValue": 0.36036396360363965,
+              "deflatedSharpe": 0.24910310859882603
+            }
+          }
+        },
+        "2024": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 146312.2130663315,
+          "meanDailyTurnover": 0.024857140117374638,
+          "borrowUsd": 0,
+          "sellFeeUsd": 12.727151916199507,
+          "costs": {
+            "5": {
+              "netUsd": 8158.148830510753,
+              "exTop5Usd": 1003.1692067937238,
+              "exTop10Usd": -4210.704407572252,
+              "sharpe": 0.8134712220355129,
+              "maxDrawdown": 0.05117192187520582,
+              "calmar": 1.5942627385397454,
+              "spyBeta": 0.6843884628805859,
+              "upSpy": {
+                "sessions": 147,
+                "netUsd": 58046.49544355753
+              },
+              "downSpy": {
+                "sessions": 104,
+                "netUsd": -49854.70468223218
+              },
+              "bootstrapPValue": 0.20767923207679231,
+              "deflatedSharpe": 0.5156935804217566
+            },
+            "10": {
+              "netUsd": 7844.948865031838,
+              "exTop5Usd": 696.5765240894216,
+              "exTop10Usd": -4511.504584726754,
+              "sharpe": 0.7821300301196599,
+              "maxDrawdown": 0.051362306510805734,
+              "calmar": 1.5273747224302314,
+              "spyBeta": 0.6844040576353195,
+              "upSpy": {
+                "sessions": 147,
+                "netUsd": 57886.56158747315
+              },
+              "downSpy": {
+                "sessions": 104,
+                "netUsd": -49974.328860812166
+              },
+              "bootstrapPValue": 0.21737826217378262,
+              "deflatedSharpe": 0.49242554226765195
+            },
+            "20": {
+              "netUsd": 7218.548934073998,
+              "exTop5Usd": 83.39115868080899,
+              "exTop10Usd": -5113.104939035763,
+              "sharpe": 0.7194487763731151,
+              "maxDrawdown": 0.05174502177928709,
+              "calmar": 1.395022880628779,
+              "spyBeta": 0.6844352471447861,
+              "upSpy": {
+                "sessions": 147,
+                "netUsd": 57566.69387530442
+              },
+              "downSpy": {
+                "sessions": 104,
+                "netUsd": -50213.577217972095
+              },
+              "bootstrapPValue": 0.23557644235576441,
+              "deflatedSharpe": 0.3803688048427625
+            }
+          }
+        },
+        "2025": {
+          "sessions": 250,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 144582.4457410429,
+          "meanDailyTurnover": 0.024968232832831894,
+          "borrowUsd": 0,
+          "sellFeeUsd": 12.546540799147598,
+          "costs": {
+            "5": {
+              "netUsd": 12110.232133573156,
+              "exTop5Usd": 5548.062871102529,
+              "exTop10Usd": 822.0067687521041,
+              "sharpe": 1.477228494536173,
+              "maxDrawdown": 0.0659267413716548,
+              "calmar": 1.8516179833347852,
+              "spyBeta": 0.2670593854572391,
+              "upSpy": {
+                "sessions": 142,
+                "netUsd": 45462.88687517606
+              },
+              "downSpy": {
+                "sessions": 108,
+                "netUsd": -33352.6547416029
+              },
+              "bootstrapPValue": 0.05499450054994501,
+              "deflatedSharpe": 0.7505152068646012
+            },
+            "10": {
+              "netUsd": 11798.129223162752,
+              "exTop5Usd": 5240.510752507702,
+              "exTop10Usd": 520.1257654848359,
+              "sharpe": 1.438929828141804,
+              "maxDrawdown": 0.06647767618850171,
+              "calmar": 1.7889485521765334,
+              "spyBeta": 0.2670998049183982,
+              "upSpy": {
+                "sessions": 142,
+                "netUsd": 45288.37588036914
+              },
+              "downSpy": {
+                "sessions": 108,
+                "netUsd": -33490.246657206386
+              },
+              "bootstrapPValue": 0.06059394060593941,
+              "deflatedSharpe": 0.7299018535291475
+            },
+            "20": {
+              "netUsd": 11173.923402341952,
+              "exTop5Usd": 4625.4065153180545,
+              "exTop10Usd": -83.63624104969495,
+              "sharpe": 1.3623623705669459,
+              "maxDrawdown": 0.0675812058103628,
+              "calmar": 1.666634185422242,
+              "spyBeta": 0.2671806438407168,
+              "upSpy": {
+                "sessions": 142,
+                "netUsd": 44939.35389075533
+              },
+              "downSpy": {
+                "sessions": 108,
+                "netUsd": -33765.43048841336
+              },
+              "bootstrapPValue": 0.0715928407159284,
+              "deflatedSharpe": 0.6250981890377245
+            }
+          }
+        },
+        "2026": {
+          "sessions": 227,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 227,
+          "peakGross": 145073.8512230663,
+          "meanDailyTurnover": 0.025140435382645415,
+          "borrowUsd": 0,
+          "sellFeeUsd": 13.298221992382809,
+          "costs": {
+            "5": {
+              "netUsd": 9710.816824816167,
+              "exTop5Usd": 4055.737793914497,
+              "exTop10Usd": -872.2948835846255,
+              "sharpe": 1.2799888679085432,
+              "maxDrawdown": 0.05070733017359403,
+              "calmar": 2.12598257618819,
+              "spyBeta": 0.37980388491943434,
+              "upSpy": {
+                "sessions": 121,
+                "netUsd": 36660.19983276458
+              },
+              "downSpy": {
+                "sessions": 106,
+                "netUsd": -26949.38300794838
+              },
+              "bootstrapPValue": 0.11748825117488251,
+              "deflatedSharpe": 0.6793652344414192
+            },
+            "10": {
+              "netUsd": 9425.47288322316,
+              "exTop5Usd": 3777.1678356262883,
+              "exTop10Usd": -1145.6299441129922,
+              "sharpe": 1.2424078944408379,
+              "maxDrawdown": 0.051532542883508614,
+              "calmar": 2.030468510207259,
+              "spyBeta": 0.3798923249386526,
+              "upSpy": {
+                "sessions": 121,
+                "netUsd": 36511.479759920796
+              },
+              "downSpy": {
+                "sessions": 106,
+                "netUsd": -27086.00687669766
+              },
+              "bootstrapPValue": 0.1252874712528747,
+              "deflatedSharpe": 0.6574572743764165
+            },
+            "20": {
+              "netUsd": 8854.785000037109,
+              "exTop5Usd": 3220.0279190498386,
+              "exTop10Usd": -1692.3000651697566,
+              "sharpe": 1.1672298516429818,
+              "maxDrawdown": 0.05319121687807783,
+              "calmar": 1.8480460051282634,
+              "spyBeta": 0.38006920497708907,
+              "upSpy": {
+                "sessions": 121,
+                "netUsd": 36214.039614233305
+              },
+              "downSpy": {
+                "sessions": 106,
+                "netUsd": -27359.25461419619
+              },
+              "bootstrapPValue": 0.13978602139786023,
+              "deflatedSharpe": 0.5499005953352305
+            }
+          }
+        }
+      }
+    },
+    {
+      "spec": {
+        "id": "reversal-5-5",
+        "sleeves": [
+          {
+            "family": "reversal",
+            "config": {
+              "lookback": 5,
+              "cycle": 5
+            },
+            "id": "reversal-5-5"
+          }
+        ]
+      },
+      "holdout": {
+        "sessions": 729,
+        "errors": 0,
+        "firstError": null,
+        "activeSessions": 729,
+        "peakGross": 162376.4284916499,
+        "meanDailyTurnover": 0.2956798644903465,
+        "borrowUsd": 3247.118189407143,
+        "sellFeeUsd": 452.8343177395368,
+        "costs": {
+          "5": {
+            "netUsd": 2476.1536955144516,
+            "exTop5Usd": -5364.194951526159,
+            "exTop10Usd": -11629.552760487913,
+            "sharpe": 0.12353962576702252,
+            "maxDrawdown": 0.09292177406985976,
+            "calmar": 0.09211558565789128,
+            "spyBeta": -0.01842297826212776,
+            "upSpy": {
+              "sessions": 410,
+              "netUsd": -7032.847011981908
+            },
+            "downSpy": {
+              "sessions": 318,
+              "netUsd": 9546.514123302364
+            },
+            "bootstrapPValue": 0.40045995400459955,
+            "deflatedSharpe": 0.13455528844037545
+          },
+          "10": {
+            "netUsd": -8301.377365158694,
+            "exTop5Usd": -16064.704123845007,
+            "exTop10Usd": -22255.10909393397,
+            "sharpe": -0.414290821453284,
+            "maxDrawdown": 0.11814510972502461,
+            "calmar": -0.24288876072616766,
+            "spyBeta": -0.01847819371144801,
+            "upSpy": {
+              "sessions": 410,
+              "netUsd": -13103.515888361151
+            },
+            "downSpy": {
+              "sessions": 318,
+              "netUsd": 4875.6471439253555
+            },
+            "bootstrapPValue": 0.7824217578242175,
+            "deflatedSharpe": 0.019755064066039635
+          },
+          "20": {
+            "netUsd": -29856.43948650501,
+            "exTop5Usd": -37465.72246848272,
+            "exTop10Usd": -43506.2217608261,
+            "sharpe": -1.4907762525653432,
+            "maxDrawdown": 0.3232163497986371,
+            "calmar": -0.3193138131868446,
+            "spyBeta": -0.01858862461008842,
+            "upSpy": {
+              "sessions": 410,
+              "netUsd": -25244.853641119676
+            },
+            "downSpy": {
+              "sessions": 318,
+              "netUsd": -4466.086814828656
+            },
+            "bootstrapPValue": 0.9978002199780022,
+            "deflatedSharpe": 0.000012391364239574648
+          }
+        }
+      },
+      "loso": {
+        "XLK": {
+          "5": 2419.6998821935704,
+          "10": -8150.218251188798,
+          "20": -29290.054517953522
+        },
+        "XLF": {
+          "5": 4043.1379478454946,
+          "10": -6572.508343583788,
+          "20": -27803.80092644238
+        },
+        "XLV": {
+          "5": -1573.9078359174252,
+          "10": -12201.866523037992,
+          "20": -33457.78389727916
+        },
+        "XLY": {
+          "5": 32.582813809312654,
+          "10": -10607.38504326085,
+          "20": -31887.320757401183
+        },
+        "XLC": {
+          "5": 3562.417102496055,
+          "10": -7087.102412270421,
+          "20": -28386.141441803346
+        },
+        "XLI": {
+          "5": 2458.0767622411686,
+          "10": -8170.903903854523,
+          "20": -29428.86523604592
+        },
+        "XLP": {
+          "5": -2391.3477046004036,
+          "10": -13052.486726755229,
+          "20": -34374.764771064925
+        },
+        "XLE": {
+          "5": 1430.590741594593,
+          "10": -9264.31074023241,
+          "20": -30654.113703886407
+        },
+        "XLU": {
+          "5": 2378.0816377330184,
+          "10": -8312.074459936479,
+          "20": -29692.38665527548
+        },
+        "XLRE": {
+          "5": 106.96429791766909,
+          "10": -10606.42213197987,
+          "20": -32033.194991774926
+        },
+        "XLB": {
+          "5": 5411.766031162717,
+          "10": -5336.319762108014,
+          "20": -26832.491348649466
+        }
+      },
+      "plateau": {
+        "10": {
+          "required": 2,
+          "pass": false,
+          "points": [
+            {
+              "id": "reversal-3-5",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "reversal-5-3",
+              "netUsd": -24661.90365102933,
+              "sharpe": -1.1334906013579933,
+              "pass": false
+            }
+          ]
+        },
+        "20": {
+          "required": 2,
+          "pass": false,
+          "points": [
+            {
+              "id": "reversal-3-5",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "reversal-5-3",
+              "netUsd": -53895.822710332126,
+              "sharpe": -2.4792015020491016,
+              "pass": false
+            }
+          ]
+        }
+      },
+      "gates": {
+        "10": {
+          "netPositive": false,
+          "exTop5Positive": false,
+          "bootstrap": false,
+          "allSectorsPositive": false,
+          "neighboringPlateau": false
+        },
+        "20": {
+          "netPositive": false,
+          "exTop5Positive": false,
+          "bootstrap": false,
+          "allSectorsPositive": false,
+          "neighboringPlateau": false
+        }
+      },
+      "developmentPass": false,
+      "pass": false,
+      "years": {
+        "2016": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 186,
+          "peakGross": 153300.3716257909,
+          "meanDailyTurnover": 0.20421947601044924,
+          "borrowUsd": 768.3364827396889,
+          "sellFeeUsd": 107.98995123117975,
+          "costs": {
+            "5": {
+              "netUsd": -4749.401795252773,
+              "exTop5Usd": -7762.56599990053,
+              "exTop10Usd": -10173.34139636999,
+              "sharpe": -1.2852363791841548,
+              "maxDrawdown": 0.06081420260513747,
+              "calmar": -0.7809691801913969,
+              "spyBeta": -0.00889570540578873,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": -743.8785329882726
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": -4005.523262264501
+              },
+              "bootstrapPValue": 0.8917108289171083,
+              "deflatedSharpe": 0.01988496333858453
+            },
+            "10": {
+              "netUsd": -7322.567192984434,
+              "exTop5Usd": -10267.706117123827,
+              "exTop10Usd": -12612.863910980452,
+              "sharpe": -1.9787039332099943,
+              "maxDrawdown": 0.0791465941102785,
+              "calmar": -0.9251904362153061,
+              "spyBeta": -0.009083341212499024,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": -2173.8370495315758
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": -5148.730143452858
+              },
+              "bootstrapPValue": 0.9688031196880312,
+              "deflatedSharpe": 0.002714540091262481
+            },
+            "20": {
+              "netUsd": -12468.897988447758,
+              "exTop5Usd": -15277.986351570424,
+              "exTop10Usd": -17491.90894020138,
+              "sharpe": -3.3523032955880887,
+              "maxDrawdown": 0.1294223873152462,
+              "calmar": -0.9634266719308847,
+              "spyBeta": -0.009458612825919605,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": -5033.754082618185
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": -7435.143905829573
+              },
+              "bootstrapPValue": 0.9992000799920008,
+              "deflatedSharpe": 0.000005452009699116101
+            }
+          }
+        },
+        "2017": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 152189.92749769767,
+          "meanDailyTurnover": 0.28628333480187196,
+          "borrowUsd": 1117.9365936382192,
+          "sellFeeUsd": 150.762330647407,
+          "costs": {
+            "5": {
+              "netUsd": -7204.297373090114,
+              "exTop5Usd": -9640.73230269473,
+              "exTop10Usd": -11681.093596522738,
+              "sharpe": -1.908880621877581,
+              "maxDrawdown": 0.0777691599528093,
+              "calmar": -0.9300601623383361,
+              "spyBeta": 0.013351799638397643,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": -5151.917106677412
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -2052.380266412701
+              },
+              "bootstrapPValue": 0.958904109589041,
+              "deflatedSharpe": 0.0033395292469724424
+            },
+            "10": {
+              "netUsd": -10797.153224853611,
+              "exTop5Usd": -13159.833457716779,
+              "exTop10Usd": -15125.730783438914,
+              "sharpe": -2.862133630878764,
+              "maxDrawdown": 0.11254389006896423,
+              "calmar": -0.9631948713451771,
+              "spyBeta": 0.013260535872957504,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": -7497.077268597606
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -3300.0759562559983
+              },
+              "bootstrapPValue": 0.9959004099590041,
+              "deflatedSharpe": 0.00009937612155748483
+            },
+            "20": {
+              "netUsd": -17982.8649283806,
+              "exTop5Usd": -20198.035767760866,
+              "exTop10Usd": -22015.00515727126,
+              "sharpe": -4.770692521850767,
+              "maxDrawdown": 0.1824161189113577,
+              "calmar": -0.9897431167991608,
+              "spyBeta": 0.01307800834207735,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": -12187.397592438
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -5795.467335942593
+              },
+              "bootstrapPValue": 1,
+              "deflatedSharpe": 1.8576337908914822e-9
+            }
+          }
+        },
+        "2018": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 157040.1943121498,
+          "meanDailyTurnover": 0.2863104771499015,
+          "borrowUsd": 1103.1195172345545,
+          "sellFeeUsd": 150.99229643404118,
+          "costs": {
+            "5": {
+              "netUsd": -1648.3280500751603,
+              "exTop5Usd": -6629.878662714531,
+              "exTop10Usd": -9823.209529587408,
+              "sharpe": -0.3123766740816239,
+              "maxDrawdown": 0.03839805776122498,
+              "calmar": -0.430984062889375,
+              "spyBeta": 0.03468596996962892,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": -59.553252714968494
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -1588.7747973601909
+              },
+              "bootstrapPValue": 0.625037496250375,
+              "deflatedSharpe": 0.14008878549307383
+            },
+            "10": {
+              "netUsd": -5241.524538306424,
+              "exTop5Usd": -10157.244701552983,
+              "exTop10Usd": -13271.475600326405,
+              "sharpe": -0.9933660117715903,
+              "maxDrawdown": 0.054128904653283044,
+              "calmar": -0.972199075502435,
+              "spyBeta": 0.03459865766871725,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": -1943.4180018898467
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -3298.106536416579
+              },
+              "bootstrapPValue": 0.8444155584441556,
+              "deflatedSharpe": 0.037643481453049514
+            },
+            "20": {
+              "netUsd": -12427.917514768955,
+              "exTop5Usd": -17211.97677922989,
+              "exTop10Usd": -20168.007741804406,
+              "sharpe": -2.355381715403927,
+              "maxDrawdown": 0.12427917514769142,
+              "calmar": -1.0039840637450048,
+              "spyBeta": 0.03442403306689391,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": -5711.147500239595
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -6716.770014529357
+              },
+              "bootstrapPValue": 0.993000699930007,
+              "deflatedSharpe": 0.0004683231682878685
+            }
+          }
+        },
+        "2019": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 153309.2340406556,
+          "meanDailyTurnover": 0.2897563904860559,
+          "borrowUsd": 1104.25454432151,
+          "sellFeeUsd": 153.73645097907308,
+          "costs": {
+            "5": {
+              "netUsd": -704.2959550108236,
+              "exTop5Usd": -4903.207141722151,
+              "exTop10Usd": -8052.05250727574,
+              "sharpe": -0.14156789772406794,
+              "maxDrawdown": 0.04970343179689914,
+              "calmar": -0.1416996632926185,
+              "spyBeta": 0.009015467111856067,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 2122.163396095351
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -2826.4593511061753
+              },
+              "bootstrapPValue": 0.5596440355964404,
+              "deflatedSharpe": 0.18069413117865907
+            },
+            "10": {
+              "netUsd": -4355.226475135124,
+              "exTop5Usd": -8476.810235112305,
+              "exTop10Usd": -11555.511127150527,
+              "sharpe": -0.8759659879686379,
+              "maxDrawdown": 0.06025292037409464,
+              "calmar": -0.7228241300329777,
+              "spyBeta": 0.008749842010473729,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": -82.0486806911738
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -4273.177794443952
+              },
+              "bootstrapPValue": 0.8075192480751925,
+              "deflatedSharpe": 0.047303529783854346
+            },
+            "20": {
+              "netUsd": -11657.087515383733,
+              "exTop5Usd": -15624.016421892624,
+              "exTop10Usd": -18562.428366900105,
+              "sharpe": -2.347343742150259,
+              "maxDrawdown": 0.12429149151417002,
+              "calmar": -0.937882985663162,
+              "spyBeta": 0.008218591807709034,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": -4490.472834264224
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -7166.614681119507
+              },
+              "bootstrapPValue": 0.9892010798920108,
+              "deflatedSharpe": 0.00041603761944327994
+            }
+          }
+        },
+        "2020": {
+          "sessions": 253,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 253,
+          "peakGross": 168321.680539983,
+          "meanDailyTurnover": 0.2959083653561719,
+          "borrowUsd": 1120.2890470846328,
+          "sellFeeUsd": 157.1603453124558,
+          "costs": {
+            "5": {
+              "netUsd": 14505.38140240619,
+              "exTop5Usd": -973.8349188412103,
+              "exTop10Usd": -7561.750879398216,
+              "sharpe": 1.2817090074909143,
+              "maxDrawdown": 0.08045326702148944,
+              "calmar": 1.7958310972278326,
+              "spyBeta": 0.02026090633789909,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 5136.776475687544
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": 9368.604926718634
+              },
+              "bootstrapPValue": 0.14028597140285973,
+              "deflatedSharpe": 0.7046695034365688
+            },
+            "10": {
+              "netUsd": 10762.140580650626,
+              "exTop5Usd": -4638.852244342706,
+              "exTop10Usd": -11152.09013760641,
+              "sharpe": 0.9512140942750361,
+              "maxDrawdown": 0.088339476071283,
+              "calmar": 1.2134555186787495,
+              "spyBeta": 0.02008870636789547,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 2891.51758757464
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": 7870.622993075977
+              },
+              "bootstrapPValue": 0.20137986201379862,
+              "deflatedSharpe": 0.5620189709229914
+            },
+            "20": {
+              "netUsd": 3275.6589371394634,
+              "exTop5Usd": -11968.886895345735,
+              "exTop10Usd": -18332.768654022842,
+              "sharpe": 0.2896755099679328,
+              "maxDrawdown": 0.10411189417087037,
+              "calmar": 0.3133851030755811,
+              "spyBeta": 0.01974430642788806,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": -1599.0001886512027
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": 4874.659125790662
+              },
+              "bootstrapPValue": 0.384961503849615,
+              "deflatedSharpe": 0.22617728889253938
+            }
+          }
+        },
+        "2021": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 153484.25919042912,
+          "meanDailyTurnover": 0.29294716620527816,
+          "borrowUsd": 1133.2386665795943,
+          "sellFeeUsd": 155.06863570590298,
+          "costs": {
+            "5": {
+              "netUsd": -5406.598773027631,
+              "exTop5Usd": -9762.265991270167,
+              "exTop10Usd": -12861.885591000242,
+              "sharpe": -0.975222320741047,
+              "maxDrawdown": 0.1201312304845126,
+              "calmar": -0.45005772031317476,
+              "spyBeta": 0.08584727804399798,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 71.94019715504308
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -5478.5389701826725
+              },
+              "bootstrapPValue": 0.8439156084391561,
+              "deflatedSharpe": 0.040681022242182736
+            },
+            "10": {
+              "netUsd": -9097.733067214145,
+              "exTop5Usd": -13379.13835576722,
+              "exTop10Usd": -16403.069337326917,
+              "sharpe": -1.641330919261868,
+              "maxDrawdown": 0.1435197260465741,
+              "calmar": -0.6339012286200858,
+              "spyBeta": 0.0859263231880661,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": -2148.7584744205174
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -6948.974592793619
+              },
+              "bootstrapPValue": 0.9554044595540446,
+              "deflatedSharpe": 0.007542287367889944
+            },
+            "20": {
+              "netUsd": -16480.00165558715,
+              "exTop5Usd": -20612.8830847613,
+              "exTop10Usd": -23485.436829980245,
+              "sharpe": -2.9740285415998375,
+              "maxDrawdown": 0.19352870475855838,
+              "calmar": -0.8515533484372353,
+              "spyBeta": 0.0860844134762024,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": -6590.155817571638
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -9889.845838015506
+              },
+              "bootstrapPValue": 0.9993000699930007,
+              "deflatedSharpe": 0.000038027030234954596
+            }
+          }
+        },
+        "2022": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 158397.1371967419,
+          "meanDailyTurnover": 0.2890128469509783,
+          "borrowUsd": 1068.2097562656704,
+          "sellFeeUsd": 152.3829978202222,
+          "costs": {
+            "5": {
+              "netUsd": -5491.800202071346,
+              "exTop5Usd": -10730.914286488143,
+              "exTop10Usd": -14326.821074547723,
+              "sharpe": -0.807556348484682,
+              "maxDrawdown": 0.08006162843306476,
+              "calmar": -0.6886794575707393,
+              "spyBeta": 0.06545301337064392,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 6151.0836096605535
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -11604.150266461227
+              },
+              "bootstrapPValue": 0.8164183581641836,
+              "deflatedSharpe": 0.05701571683655729
+            },
+            "10": {
+              "netUsd": -9118.911431306118,
+              "exTop5Usd": -14286.747423441,
+              "exTop10Usd": -17805.70470410116,
+              "sharpe": -1.3414498960015413,
+              "maxDrawdown": 0.11080013007607326,
+              "calmar": -0.8262843869811178,
+              "spyBeta": 0.06524565582855439,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 4394.837738512576
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -13437.77135145342
+              },
+              "bootstrapPValue": 0.9299070092990701,
+              "deflatedSharpe": 0.01596835198411694
+            },
+            "20": {
+              "netUsd": -16373.133889775661,
+              "exTop5Usd": -21398.41369734671,
+              "exTop10Usd": -24763.47196320803,
+              "sharpe": -2.4103594432120024,
+              "maxDrawdown": 0.1722771333620955,
+              "calmar": -0.9541815084853886,
+              "spyBeta": 0.06483094074437526,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 882.3459962166353
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -17105.013521437824
+              },
+              "bootstrapPValue": 0.9963003699630038,
+              "deflatedSharpe": 0.00028848892556989725
+            }
+          }
+        },
+        "2023": {
+          "sessions": 250,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 153778.49592640426,
+          "meanDailyTurnover": 0.29105548324703717,
+          "borrowUsd": 1100.511580346592,
+          "sellFeeUsd": 152.78327182115652,
+          "costs": {
+            "5": {
+              "netUsd": -2012.219905083952,
+              "exTop5Usd": -7254.714974643187,
+              "exTop10Usd": -10735.38758325831,
+              "sharpe": -0.3400707575519598,
+              "maxDrawdown": 0.049834277090712,
+              "calmar": -0.40701255897271904,
+              "spyBeta": 0.07300661728345943,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": 2208.915820913017
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -4221.135725996972
+              },
+              "bootstrapPValue": 0.6305369463053695,
+              "deflatedSharpe": 0.13377591079932832
+            },
+            "10": {
+              "netUsd": -5650.4134456719175,
+              "exTop5Usd": -10817.837201912738,
+              "exTop10Usd": -14227.166634118807,
+              "sharpe": -0.9555907800267673,
+              "maxDrawdown": 0.061524174950267387,
+              "calmar": -0.9257526424111014,
+              "spyBeta": 0.07296490127216336,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": 332.905095057881
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -5983.318540729798
+              },
+              "bootstrapPValue": 0.8273172682731726,
+              "deflatedSharpe": 0.03970373718397741
+            },
+            "20": {
+              "netUsd": -12926.800526847845,
+              "exTop5Usd": -17944.081656451835,
+              "exTop10Usd": -21210.724735839794,
+              "sharpe": -2.1889830800698125,
+              "maxDrawdown": 0.12987940503093093,
+              "calmar": -1.003254898492911,
+              "spyBeta": 0.07288146924957083,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": -3419.116356652389
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -9507.684170195458
+              },
+              "bootstrapPValue": 0.9812018798120188,
+              "deflatedSharpe": 0.0006602872497143929
+            }
+          }
+        },
+        "2024": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 154652.52221633084,
+          "meanDailyTurnover": 0.2939144549849341,
+          "borrowUsd": 1128.3204056453224,
+          "sellFeeUsd": 155.6319491904576,
+          "costs": {
+            "5": {
+              "netUsd": -2320.8322635822647,
+              "exTop5Usd": -7368.474937467441,
+              "exTop10Usd": -11092.727474753961,
+              "sharpe": -0.40177694612438686,
+              "maxDrawdown": 0.07008424983303899,
+              "calmar": -0.3311489056544317,
+              "spyBeta": -0.0831150587489835,
+              "upSpy": {
+                "sessions": 147,
+                "netUsd": -5997.062848193874
+              },
+              "downSpy": {
+                "sessions": 104,
+                "netUsd": 3713.744000417609
+              },
+              "bootstrapPValue": 0.6651334866513349,
+              "deflatedSharpe": 0.1206900449372126
+            },
+            "10": {
+              "netUsd": -6024.154396392438,
+              "exTop5Usd": -10997.560189365173,
+              "exTop10Usd": -14648.435594716277,
+              "sharpe": -1.0432885963987284,
+              "maxDrawdown": 0.08130141867163079,
+              "calmar": -0.740965470814656,
+              "spyBeta": -0.08327813266541187,
+              "upSpy": {
+                "sessions": 147,
+                "netUsd": -8155.069385375515
+              },
+              "downSpy": {
+                "sessions": 104,
+                "netUsd": 2204.423609705966
+              },
+              "bootstrapPValue": 0.8753124687531247,
+              "deflatedSharpe": 0.03327376694120548
+            },
+            "20": {
+              "netUsd": -13430.798662012787,
+              "exTop5Usd": -18255.730693160636,
+              "exTop10Usd": -21761.633181096313,
+              "sharpe": -2.327544665918679,
+              "maxDrawdown": 0.13909844173519412,
+              "calmar": -0.9655606845388967,
+              "spyBeta": -0.08360428049826839,
+              "upSpy": {
+                "sessions": 147,
+                "netUsd": -12471.082459738804
+              },
+              "downSpy": {
+                "sessions": 104,
+                "netUsd": -814.2171717173163
+              },
+              "bootstrapPValue": 0.9939006099390061,
+              "deflatedSharpe": 0.0004740591051265131
+            }
+          }
+        },
+        "2025": {
+          "sessions": 250,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 162376.4284916499,
+          "meanDailyTurnover": 0.2962969724372119,
+          "borrowUsd": 1115.1125122891858,
+          "sellFeeUsd": 155.82133007614073,
+          "costs": {
+            "5": {
+              "netUsd": 3748.2124591624297,
+              "exTop5Usd": -2830.44866372089,
+              "exTop10Usd": -6904.551791325645,
+              "sharpe": 0.6240965360942546,
+              "maxDrawdown": 0.04243691275916384,
+              "calmar": 0.8903093823713327,
+              "spyBeta": -0.005814313691868864,
+              "upSpy": {
+                "sessions": 142,
+                "netUsd": -1777.1599736933404
+              },
+              "downSpy": {
+                "sessions": 108,
+                "netUsd": 5525.372432855775
+              },
+              "bootstrapPValue": 0.24287571242875713,
+              "deflatedSharpe": 0.44018824464454975
+            },
+            "10": {
+              "netUsd": 44.500303697284295,
+              "exTop5Usd": -6458.370780415611,
+              "exTop10Usd": -10457.767084733072,
+              "sharpe": 0.007409288447423909,
+              "maxDrawdown": 0.060357871919153414,
+              "calmar": 0.007431724264060456,
+              "spyBeta": -0.005984459527581955,
+              "upSpy": {
+                "sessions": 142,
+                "netUsd": -3908.487369866783
+              },
+              "downSpy": {
+                "sessions": 108,
+                "netUsd": 3952.9876735640682
+              },
+              "bootstrapPValue": 0.48225177482251774,
+              "deflatedSharpe": 0.2148777219208876
+            },
+            "20": {
+              "netUsd": -7362.924007233018,
+              "exTop5Usd": -13714.21501380506,
+              "exTop10Usd": -17564.197671547932,
+              "sharpe": -1.2257557053546253,
+              "maxDrawdown": 0.09950518540055599,
+              "calmar": -0.7458734305568575,
+              "spyBeta": -0.006324751199008136,
+              "upSpy": {
+                "sessions": 142,
+                "netUsd": -8171.142162213669
+              },
+              "downSpy": {
+                "sessions": 108,
+                "netUsd": 808.2181549806544
+              },
+              "bootstrapPValue": 0.9122087791220878,
+              "deflatedSharpe": 0.015163974043240675
+            }
+          }
+        },
+        "2026": {
+          "sessions": 227,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 227,
+          "peakGross": 153643.7251058743,
+          "meanDailyTurnover": 0.29696006805267156,
+          "borrowUsd": 1003.6852714726364,
+          "sellFeeUsd": 141.38103847293846,
+          "costs": {
+            "5": {
+              "netUsd": 1048.7734999342806,
+              "exTop5Usd": -6016.252918445416,
+              "exTop10Usd": -11230.358020834561,
+              "sharpe": 0.13258131272571363,
+              "maxDrawdown": 0.0941488057034561,
+              "calmar": 0.12366351125276316,
+              "spyBeta": 0.012246205666778975,
+              "upSpy": {
+                "sessions": 121,
+                "netUsd": 741.3758099053056
+              },
+              "downSpy": {
+                "sessions": 106,
+                "netUsd": 307.39769002897947
+              },
+              "bootstrapPValue": 0.44085591440855915,
+              "deflatedSharpe": 0.27199811116077066
+            },
+            "10": {
+              "netUsd": -2321.723272463539,
+              "exTop5Usd": -9307.228942107926,
+              "exTop10Usd": -14447.261353530823,
+              "sharpe": -0.2936224962265604,
+              "maxDrawdown": 0.10418367254921901,
+              "calmar": -0.2473918998096045,
+              "spyBeta": 0.01256404873366155,
+              "upSpy": {
+                "sessions": 121,
+                "netUsd": -1039.9591331188642
+              },
+              "downSpy": {
+                "sessions": 106,
+                "netUsd": -1281.7641393446816
+              },
+              "bootstrapPValue": 0.6223377662233777,
+              "deflatedSharpe": 0.15005957241311285
+            },
+            "20": {
+              "netUsd": -9062.716817259183,
+              "exTop5Usd": -15889.180989432949,
+              "exTop10Usd": -20881.429550672212,
+              "sharpe": -1.1470056026973272,
+              "maxDrawdown": 0.12863744059293922,
+              "calmar": -0.7821061532834052,
+              "spyBeta": 0.013199734867426628,
+              "upSpy": {
+                "sessions": 121,
+                "netUsd": -4602.629019167189
+              },
+              "downSpy": {
+                "sessions": 106,
+                "netUsd": -4460.087798091994
+              },
+              "bootstrapPValue": 0.8852114788521148,
+              "deflatedSharpe": 0.020058341926117707
+            }
+          }
+        }
+      }
+    },
+    {
+      "spec": {
+        "id": "defensive-beta-15",
+        "sleeves": [
+          {
+            "family": "defensive",
+            "config": {
+              "metric": "beta",
+              "depth": 15
+            },
+            "id": "defensive-beta-15"
+          }
+        ]
+      },
+      "holdout": {
+        "sessions": 729,
+        "errors": 0,
+        "firstError": null,
+        "activeSessions": 729,
+        "peakGross": 164529.68757955963,
+        "meanDailyTurnover": 0.02024849262388764,
+        "borrowUsd": 1522.9889305554664,
+        "sellFeeUsd": 31.094948264141248,
+        "costs": {
+          "5": {
+            "netUsd": 6901.278206153097,
+            "exTop5Usd": -3157.376382017311,
+            "exTop10Usd": -10818.000544391194,
+            "sharpe": 0.2332225944488795,
+            "maxDrawdown": 0.1836644151398157,
+            "calmar": 0.12989054152976165,
+            "spyBeta": 0.1698319861387174,
+            "upSpy": {
+              "sessions": 410,
+              "netUsd": 17988.16547359912
+            },
+            "downSpy": {
+              "sessions": 318,
+              "netUsd": -11048.679580360633
+            },
+            "bootstrapPValue": 0.35596440355964404,
+            "deflatedSharpe": 0.18106205699155564
+          },
+          "10": {
+            "netUsd": 6163.220650012392,
+            "exTop5Usd": -3884.771043424347,
+            "exTop10Usd": -11540.199221327895,
+            "sharpe": 0.20830256559291027,
+            "maxDrawdown": 0.1868208060215422,
+            "calmar": 0.11403954797835052,
+            "spyBeta": 0.1699219233424766,
+            "upSpy": {
+              "sessions": 410,
+              "netUsd": 17611.823407719818
+            },
+            "downSpy": {
+              "sessions": 318,
+              "netUsd": -11373.093916561063
+            },
+            "bootstrapPValue": 0.37336266373362664,
+            "deflatedSharpe": 0.1581041610652328
+          },
+          "20": {
+            "netUsd": 4687.10553773098,
+            "exTop5Usd": -5339.560366238422,
+            "exTop10Usd": -12984.596575201294,
+            "sharpe": 0.15844241269275344,
+            "maxDrawdown": 0.1931837586822239,
+            "calmar": 0.08387009467540174,
+            "spyBeta": 0.17010179774999423,
+            "upSpy": {
+              "sessions": 410,
+              "netUsd": 16859.139275961224
+            },
+            "downSpy": {
+              "sessions": 318,
+              "netUsd": -12021.92258896192
+            },
+            "bootstrapPValue": 0.403959604039596,
+            "deflatedSharpe": 0.06990952706268783
+          }
+        }
+      },
+      "loso": {
+        "XLK": {
+          "5": 17156.028839925642,
+          "10": 16369.674774414852,
+          "20": 14796.966643393196
+        },
+        "XLF": {
+          "5": 5252.549789533796,
+          "10": 4518.825337194284,
+          "20": 3051.376432515261
+        },
+        "XLV": {
+          "5": 8599.850771443875,
+          "10": 7882.693421464957,
+          "20": 6448.378721507181
+        },
+        "XLY": {
+          "5": 7193.453988107156,
+          "10": 6454.392062384897,
+          "20": 4976.268210940343
+        },
+        "XLC": {
+          "5": 7222.802156624341,
+          "10": 6489.153679168313,
+          "20": 5021.856724256255
+        },
+        "XLI": {
+          "5": 8136.287155359481,
+          "10": 7401.4159836556355,
+          "20": 5931.673640247978
+        },
+        "XLP": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLE": {
+          "5": 5653.270057950841,
+          "10": 4905.832270255703,
+          "20": 3410.956694865409
+        },
+        "XLU": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLRE": {
+          "5": 7628.282376808337,
+          "10": 6892.788907157457,
+          "20": 5421.801967855768
+        },
+        "XLB": {
+          "5": 7430.916097094533,
+          "10": 6702.176206489502,
+          "20": 5244.69642527945
+        }
+      },
+      "plateau": {
+        "10": {
+          "required": 2,
+          "pass": false,
+          "points": [
+            {
+              "id": "defensive-vol-15",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "defensive-beta-10",
+              "netUsd": 804.9045761539309,
+              "sharpe": 0.025334104209858536,
+              "pass": false
+            }
+          ]
+        },
+        "20": {
+          "required": 2,
+          "pass": false,
+          "points": [
+            {
+              "id": "defensive-vol-15",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "defensive-beta-10",
+              "netUsd": -748.1920188159767,
+              "sharpe": -0.023552891971782834,
+              "pass": false
+            }
+          ]
+        }
+      },
+      "gates": {
+        "10": {
+          "netPositive": true,
+          "exTop5Positive": false,
+          "bootstrap": false,
+          "allSectorsPositive": false,
+          "neighboringPlateau": false
+        },
+        "20": {
+          "netPositive": true,
+          "exTop5Positive": false,
+          "bootstrap": false,
+          "allSectorsPositive": false,
+          "neighboringPlateau": false
+        }
+      },
+      "developmentPass": false,
+      "pass": false,
+      "years": {
+        "2016": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 191,
+          "peakGross": 154592.2656216218,
+          "meanDailyTurnover": 0.01959770682512808,
+          "borrowUsd": 464.62257841659124,
+          "sellFeeUsd": 9.712634738350962,
+          "costs": {
+            "5": {
+              "netUsd": -5694.961975943518,
+              "exTop5Usd": -11128.114831244398,
+              "exTop10Usd": -14682.735182741144,
+              "sharpe": -0.8666506533822618,
+              "maxDrawdown": 0.099165328820508,
+              "calmar": -0.574289627602764,
+              "spyBeta": 0.11353452891778613,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 5378.756589584512
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": -11073.718565528032
+              },
+              "bootstrapPValue": 0.7751224877512248,
+              "deflatedSharpe": 0.05020385740676158
+            },
+            "10": {
+              "netUsd": -5941.893081940135,
+              "exTop5Usd": -11367.441373694015,
+              "exTop10Usd": -14913.269516336764,
+              "sharpe": -0.9042969464642578,
+              "maxDrawdown": 0.10018226703900882,
+              "calmar": -0.5931082673170581,
+              "spyBeta": 0.1135046301836182,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 5244.8219474603375
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": -11186.715029400466
+              },
+              "bootstrapPValue": 0.785921407859214,
+              "deflatedSharpe": 0.04367765314081692
+            },
+            "20": {
+              "netUsd": -6435.755293933365,
+              "exTop5Usd": -11846.094458593245,
+              "exTop10Usd": -15377.120165225653,
+              "sharpe": -0.979591494499098,
+              "maxDrawdown": 0.10222194833593701,
+              "calmar": -0.6295864438802542,
+              "spyBeta": 0.1134448327152825,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 4976.952663211992
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": -11412.70795714535
+              },
+              "bootstrapPValue": 0.8057194280571943,
+              "deflatedSharpe": 0.021909445723189824
+            }
+          }
+        },
+        "2017": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 152311.96039783597,
+          "meanDailyTurnover": 0.020086624707444063,
+          "borrowUsd": 571.8760933887198,
+          "sellFeeUsd": 10.554223893305618,
+          "costs": {
+            "5": {
+              "netUsd": 9249.213826198054,
+              "exTop5Usd": 4117.789678176198,
+              "exTop10Usd": 222.92893680352972,
+              "sharpe": 1.671974305116672,
+              "maxDrawdown": 0.03826877138503246,
+              "calmar": 2.426538126934715,
+              "spyBeta": 0.12886384499676692,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 11427.361890414331
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -2178.1480642162796
+              },
+              "bootstrapPValue": 0.050994900509949,
+              "deflatedSharpe": 0.8169362450420585
+            },
+            "10": {
+              "netUsd": 8997.126686119635,
+              "exTop5Usd": 3872.7500737519103,
+              "exTop10Usd": -15.962952615627728,
+              "sharpe": 1.6265679592248854,
+              "maxDrawdown": 0.03850010230009144,
+              "calmar": 2.3462202105207655,
+              "spyBeta": 0.12889686325918176,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 11266.25990243363
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -2269.133216314001
+              },
+              "bootstrapPValue": 0.05649435056494351,
+              "deflatedSharpe": 0.7965158526466898
+            },
+            "20": {
+              "netUsd": 8492.952405962777,
+              "exTop5Usd": 3382.670864903317,
+              "exTop10Usd": -493.746731453959,
+              "sharpe": 1.5357176624610611,
+              "maxDrawdown": 0.03896425670531899,
+              "calmar": 2.1883617424601263,
+              "spyBeta": 0.1289628997840117,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 10944.055926472221
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -2451.103520509444
+              },
+              "bootstrapPValue": 0.0668933106689331,
+              "deflatedSharpe": 0.6939052362486693
+            }
+          }
+        },
+        "2018": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 156917.2268760972,
+          "meanDailyTurnover": 0.022256703516359954,
+          "borrowUsd": 640.5006110121877,
+          "sellFeeUsd": 11.759571882827203,
+          "costs": {
+            "5": {
+              "netUsd": -4389.392258518183,
+              "exTop5Usd": -11791.834751243126,
+              "exTop10Usd": -17022.216550409572,
+              "sharpe": -0.47287422817413244,
+              "maxDrawdown": 0.08939467447597489,
+              "calmar": -0.4929689495387535,
+              "spyBeta": 0.08040471637504437,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 2759.5499741562794
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -7148.942232674468
+              },
+              "bootstrapPValue": 0.6991300869913009,
+              "deflatedSharpe": 0.10557088095576041
+            },
+            "10": {
+              "netUsd": -4668.713887648507,
+              "exTop5Usd": -12064.680326784013,
+              "exTop10Usd": -17289.91381773993,
+              "sharpe": -0.5027865913008102,
+              "maxDrawdown": 0.08978363487534399,
+              "calmar": -0.5220677852809198,
+              "spyBeta": 0.08060549457554211,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 2622.6680855442455
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -7291.3819731927515
+              },
+              "bootstrapPValue": 0.71002899710029,
+              "deflatedSharpe": 0.09514302416098958
+            },
+            "20": {
+              "netUsd": -5227.357145909142,
+              "exTop5Usd": -12610.371477865772,
+              "exTop10Usd": -17825.30835240063,
+              "sharpe": -0.5625450263232535,
+              "maxDrawdown": 0.09056742636373555,
+              "calmar": -0.5794780177277814,
+              "spyBeta": 0.08100705097653757,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 2348.904308320171
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -7576.261454229312
+              },
+              "bootstrapPValue": 0.7322267773222678,
+              "deflatedSharpe": 0.05459569057359623
+            }
+          }
+        },
+        "2019": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 155773.49112041763,
+          "meanDailyTurnover": 0.017436631295919443,
+          "borrowUsd": 636.3612972127912,
+          "sellFeeUsd": 9.141480840920725,
+          "costs": {
+            "5": {
+              "netUsd": 3957.6819423312772,
+              "exTop5Usd": -1084.345679716439,
+              "exTop10Usd": -5253.918201927698,
+              "sharpe": 0.5687968186292928,
+              "maxDrawdown": 0.05906228314679092,
+              "calmar": 0.6700861753845547,
+              "spyBeta": 0.025677533003985974,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 7780.810867095692
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -3823.1289247644117
+              },
+              "bootstrapPValue": 0.27687231276872315,
+              "deflatedSharpe": 0.41966937724688763
+            },
+            "10": {
+              "netUsd": 3737.9803880026902,
+              "exTop5Usd": -1296.5934931222328,
+              "exTop10Usd": -5461.935143963392,
+              "sharpe": 0.5372407898142605,
+              "maxDrawdown": 0.059845851391467884,
+              "calmar": 0.624601422001928,
+              "spyBeta": 0.02570899658951466,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 7653.666681631704
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -3915.68629362901
+              },
+              "bootstrapPValue": 0.28847115288471153,
+              "deflatedSharpe": 0.39648633324503924
+            },
+            "20": {
+              "netUsd": 3298.5772793455244,
+              "exTop5Usd": -1721.0891199338103,
+              "exTop10Usd": -5877.969028034769,
+              "sharpe": 0.4741207069008327,
+              "maxDrawdown": 0.061417720221434255,
+              "calmar": 0.5370725691954858,
+              "spyBeta": 0.025771923760572128,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 7399.378310703727
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -4100.8010313582035
+              },
+              "bootstrapPValue": 0.30956904309569044,
+              "deflatedSharpe": 0.29000692405390893
+            }
+          }
+        },
+        "2020": {
+          "sessions": 253,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 253,
+          "peakGross": 166803.75275875808,
+          "meanDailyTurnover": 0.029552457296800286,
+          "borrowUsd": 676.6602434250375,
+          "sellFeeUsd": 15.942313148200148,
+          "costs": {
+            "5": {
+              "netUsd": 5959.292959384405,
+              "exTop5Usd": -8003.944576697092,
+              "exTop10Usd": -19492.369180840888,
+              "sharpe": 0.32620091991475364,
+              "maxDrawdown": 0.14931607205580655,
+              "calmar": 0.3975284348184508,
+              "spyBeta": 0.11882210684831677,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 22027.00123733626
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": -16067.708277951859
+              },
+              "bootstrapPValue": 0.3735626437356264,
+              "deflatedSharpe": 0.32832735288699305
+            },
+            "10": {
+              "netUsd": 5585.454374579876,
+              "exTop5Usd": -8364.61345332797,
+              "exTop10Usd": -19843.94044760472,
+              "sharpe": 0.30571543825664005,
+              "maxDrawdown": 0.15079603219778367,
+              "calmar": 0.36893394333623974,
+              "spyBeta": 0.118863736087245,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 21809.216048198643
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": -16223.761673618757
+              },
+              "bootstrapPValue": 0.38146185381461856,
+              "deflatedSharpe": 0.3108468960028497
+            },
+            "20": {
+              "netUsd": 4837.777204970835,
+              "exTop5Usd": -9085.951206589705,
+              "exTop10Usd": -20547.08298113237,
+              "sharpe": 0.26475293155188007,
+              "maxDrawdown": 0.15375872787722225,
+              "calmar": 0.313390701293202,
+              "spyBeta": 0.11894699456510165,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 21373.645669923404
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": -16535.86846495257
+              },
+              "bootstrapPValue": 0.395960403959604,
+              "deflatedSharpe": 0.22269143202922073
+            }
+          }
+        },
+        "2021": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 153619.4268886636,
+          "meanDailyTurnover": 0.02864893677571027,
+          "borrowUsd": 643.3026056591259,
+          "sellFeeUsd": 15.799519604907024,
+          "costs": {
+            "5": {
+              "netUsd": -2162.241942446876,
+              "exTop5Usd": -8778.051584600515,
+              "exTop10Usd": -14429.931273909062,
+              "sharpe": -0.2077040898205839,
+              "maxDrawdown": 0.10346943613959231,
+              "calmar": -0.20897397561244654,
+              "spyBeta": 0.1662960951659822,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 10087.103309247463
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -12249.345251694342
+              },
+              "bootstrapPValue": 0.5869413058694131,
+              "deflatedSharpe": 0.16318005226992524
+            },
+            "10": {
+              "netUsd": -2523.21854582083,
+              "exTop5Usd": -9130.650375315772,
+              "exTop10Usd": -14775.058846097272,
+              "sharpe": -0.24236984639303055,
+              "maxDrawdown": 0.10413095021424902,
+              "calmar": -0.24231206386087115,
+              "spyBeta": 0.16644769068542808,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 9895.11207545173
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -12418.330621272558
+              },
+              "bootstrapPValue": 0.6004399560043996,
+              "deflatedSharpe": 0.1479721808327452
+            },
+            "20": {
+              "netUsd": -3245.1717525687322,
+              "exTop5Usd": -9835.847956746287,
+              "exTop10Usd": -15465.313990473696,
+              "sharpe": -0.3116811694865531,
+              "maxDrawdown": 0.1054540188934779,
+              "calmar": -0.307733340712863,
+              "spyBeta": 0.16675088172432032,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 9511.129607860259
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -12756.301360428988
+              },
+              "bootstrapPValue": 0.6287371262873712,
+              "deflatedSharpe": 0.08922259064245491
+            }
+          }
+        },
+        "2022": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 158455.4913939056,
+          "meanDailyTurnover": 0.023799086415871428,
+          "borrowUsd": 642.5612679611812,
+          "sellFeeUsd": 11.923489360081895,
+          "costs": {
+            "5": {
+              "netUsd": -1523.0449854742592,
+              "exTop5Usd": -8698.642876406013,
+              "exTop10Usd": -14088.619156072222,
+              "sharpe": -0.14345680580397913,
+              "maxDrawdown": 0.1048919494989934,
+              "calmar": -0.1457798144744746,
+              "spyBeta": 0.1002406027702062,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 5667.398969258382
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -7152.045875327941
+              },
+              "bootstrapPValue": 0.5591440855914409,
+              "deflatedSharpe": 0.1799697344137889
+            },
+            "10": {
+              "netUsd": -1821.7235199934448,
+              "exTop5Usd": -8991.139630284597,
+              "exTop10Usd": -14374.63469256687,
+              "sharpe": -0.171576302424927,
+              "maxDrawdown": 0.10651260192550555,
+              "calmar": -0.17171502240665218,
+              "spyBeta": 0.10023453406919244,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 5542.142675369408
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -7287.919157687304
+              },
+              "bootstrapPValue": 0.5689431056894311,
+              "deflatedSharpe": 0.16537700220429016
+            },
+            "20": {
+              "netUsd": -2419.0805890318206,
+              "exTop5Usd": -9576.133138041772,
+              "exTop10Usd": -14946.665765556163,
+              "sharpe": -0.227794007788805,
+              "maxDrawdown": 0.10976396126655683,
+              "calmar": -0.22126737521843173,
+              "spyBeta": 0.10022239666716498,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 5291.630087591458
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -7559.665722406027
+              },
+              "bootstrapPValue": 0.5935406459354065,
+              "deflatedSharpe": 0.10391130232184242
+            }
+          }
+        },
+        "2023": {
+          "sessions": 250,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 154749.42605232712,
+          "meanDailyTurnover": 0.02426680972349792,
+          "borrowUsd": 642.1547574447474,
+          "sellFeeUsd": 13.193405337515879,
+          "costs": {
+            "5": {
+              "netUsd": -16358.216547306909,
+              "exTop5Usd": -23108.029176377346,
+              "exTop10Usd": -27921.57257762605,
+              "sharpe": -1.9088105798889066,
+              "maxDrawdown": 0.17863202508733725,
+              "calmar": -0.9230753708145825,
+              "spyBeta": 0.10955303638304048,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": -3349.362171414481
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -13008.854375892426
+              },
+              "bootstrapPValue": 0.9649035096490352,
+              "deflatedSharpe": 0.003878292215596571
+            },
+            "10": {
+              "netUsd": -16661.55166885063,
+              "exTop5Usd": -23404.530278381488,
+              "exTop10Usd": -28211.1168950134,
+              "sharpe": -1.944565572556193,
+              "maxDrawdown": 0.18066151015594747,
+              "calmar": -0.9296304491036349,
+              "spyBeta": 0.10958335109625596,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": -3485.3582807226944
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -13176.193388127931
+              },
+              "bootstrapPValue": 0.968003199680032,
+              "deflatedSharpe": 0.003205396908772506
+            },
+            "20": {
+              "netUsd": -17268.2219119381,
+              "exTop5Usd": -23997.532482389804,
+              "exTop10Usd": -28790.20552978813,
+              "sharpe": -2.016004918969383,
+              "maxDrawdown": 0.18472048029316807,
+              "calmar": -0.9423084900823195,
+              "spyBeta": 0.10964398052268694,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": -3757.350499339129
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -13510.871412598957
+              },
+              "bootstrapPValue": 0.9738026197380262,
+              "deflatedSharpe": 0.0012471149801670976
+            }
+          }
+        },
+        "2024": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 154726.99696316727,
+          "meanDailyTurnover": 0.021012236847639244,
+          "borrowUsd": 540.523391856619,
+          "sellFeeUsd": 10.483245769131011,
+          "costs": {
+            "5": {
+              "netUsd": 10938.76874230346,
+              "exTop5Usd": 4539.839206856897,
+              "exTop10Usd": -653.8078792224878,
+              "sharpe": 1.378616359594055,
+              "maxDrawdown": 0.033902101735156294,
+              "calmar": 3.226575398704564,
+              "spyBeta": 0.16020982854554286,
+              "upSpy": {
+                "sessions": 147,
+                "netUsd": 11837.604693395817
+              },
+              "downSpy": {
+                "sessions": 104,
+                "netUsd": -860.628264006954
+              },
+              "bootstrapPValue": 0.09069093090690931,
+              "deflatedSharpe": 0.724568159882433
+            },
+            "10": {
+              "netUsd": 10674.014558023198,
+              "exTop5Usd": 4283.396292498957,
+              "exTop10Usd": -902.8311826468162,
+              "sharpe": 1.3452144335146643,
+              "maxDrawdown": 0.03407454884511676,
+              "calmar": 3.132547581639631,
+              "spyBeta": 0.16024112013106442,
+              "upSpy": {
+                "sessions": 147,
+                "netUsd": 11703.218804318924
+              },
+              "downSpy": {
+                "sessions": 104,
+                "netUsd": -953.6954051493464
+              },
+              "bootstrapPValue": 0.0968903109689031,
+              "deflatedSharpe": 0.7039054419828745
+            },
+            "20": {
+              "netUsd": 10144.506189462689,
+              "exTop5Usd": 3770.5104637830927,
+              "exTop10Usd": -1400.87778949546,
+              "sharpe": 1.2783309146252986,
+              "maxDrawdown": 0.03442145282483999,
+              "calmar": 2.9471464325125694,
+              "spyBeta": 0.16030370330210764,
+              "upSpy": {
+                "sessions": 147,
+                "netUsd": 11434.447026165135
+              },
+              "downSpy": {
+                "sessions": 104,
+                "netUsd": -1139.8296874341245
+              },
+              "bootstrapPValue": 0.10828917108289171,
+              "deflatedSharpe": 0.596283078763093
+            }
+          }
+        },
+        "2025": {
+          "sessions": 250,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 164529.68757955963,
+          "meanDailyTurnover": 0.020026759545261893,
+          "borrowUsd": 577.8056617574061,
+          "sellFeeUsd": 10.334681533608444,
+          "costs": {
+            "5": {
+              "netUsd": -5145.234763457414,
+              "exTop5Usd": -14215.95313937567,
+              "exTop10Usd": -19829.627819761874,
+              "sharpe": -0.48140285065388666,
+              "maxDrawdown": 0.11757236086091229,
+              "calmar": -0.4411237984495832,
+              "spyBeta": 0.1817971821742078,
+              "upSpy": {
+                "sessions": 142,
+                "netUsd": -392.67936566569426
+              },
+              "downSpy": {
+                "sessions": 108,
+                "netUsd": -4752.555397791718
+              },
+              "bootstrapPValue": 0.6979302069793021,
+              "deflatedSharpe": 0.10195345093596281
+            },
+            "10": {
+              "netUsd": -5395.569257773179,
+              "exTop5Usd": -14455.629853620578,
+              "exTop10Usd": -20065.473369332307,
+              "sharpe": -0.5048192993192592,
+              "maxDrawdown": 0.11833317055447215,
+              "calmar": -0.4596119402827763,
+              "spyBeta": 0.181786363751408,
+              "upSpy": {
+                "sessions": 142,
+                "netUsd": -534.5816626124652
+              },
+              "downSpy": {
+                "sessions": 108,
+                "netUsd": -4860.987595160719
+              },
+              "bootstrapPValue": 0.7050294970502949,
+              "deflatedSharpe": 0.0926987157492242
+            },
+            "20": {
+              "netUsd": -5896.238246404732,
+              "exTop5Usd": -14934.983282110414,
+              "exTop10Usd": -20537.164468473202,
+              "sharpe": -0.5516494763516651,
+              "maxDrawdown": 0.11985656266723574,
+              "calmar": -0.4958767396723178,
+              "spyBeta": 0.18176472690580928,
+              "upSpy": {
+                "sessions": 142,
+                "netUsd": -818.3862565060056
+              },
+              "downSpy": {
+                "sessions": 108,
+                "netUsd": -5077.851989898728
+              },
+              "bootstrapPValue": 0.7203279672032796,
+              "deflatedSharpe": 0.05397947442471011
+            }
+          }
+        },
+        "2026": {
+          "sessions": 227,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 227,
+          "peakGross": 158236.50575055537,
+          "meanDailyTurnover": 0.0196448350259626,
+          "borrowUsd": 404.65987694144286,
+          "sellFeeUsd": 10.277020961401776,
+          "costs": {
+            "5": {
+              "netUsd": 1107.7442273070485,
+              "exTop5Usd": -7411.060892515048,
+              "exTop10Usd": -13933.037530524201,
+              "sharpe": 0.10443301434016587,
+              "maxDrawdown": 0.1120845683916313,
+              "calmar": 0.10971559313406291,
+              "spyBeta": 0.14872327226657192,
+              "upSpy": {
+                "sessions": 121,
+                "netUsd": 6543.240145869008
+              },
+              "downSpy": {
+                "sessions": 106,
+                "netUsd": -5435.49591856196
+              },
+              "bootstrapPValue": 0.45145485451454853,
+              "deflatedSharpe": 0.26376392475444527
+            },
+            "10": {
+              "netUsd": 884.7753497623703,
+              "exTop5Usd": -7628.369015239765,
+              "exTop10Usd": -14146.629684547943,
+              "sharpe": 0.0834355760548627,
+              "maxDrawdown": 0.11293219035716072,
+              "calmar": 0.0869741006344446,
+              "spyBeta": 0.14911407255744577,
+              "upSpy": {
+                "sessions": 121,
+                "netUsd": 6443.1862660133675
+              },
+              "downSpy": {
+                "sessions": 106,
+                "netUsd": -5558.4109162509985
+              },
+              "bootstrapPValue": 0.45885411458854114,
+              "deflatedSharpe": 0.24860539209817262
+            },
+            "20": {
+              "netUsd": 438.83759467301934,
+              "exTop5Usd": -8062.985260689191,
+              "exTop10Usd": -14573.813992595424,
+              "sharpe": 0.04140461454817975,
+              "maxDrawdown": 0.11462831253818326,
+              "calmar": 0.04249977300177561,
+              "spyBeta": 0.14989567313919333,
+              "upSpy": {
+                "sessions": 121,
+                "netUsd": 6243.078506302091
+              },
+              "downSpy": {
+                "sessions": 106,
+                "netUsd": -5804.2409116290655
+              },
+              "bootstrapPValue": 0.47525247475252475,
+              "deflatedSharpe": 0.1745163921685142
+            }
+          }
+        }
+      }
+    },
+    {
+      "spec": {
+        "id": "ensemble",
+        "sleeves": [
+          {
+            "family": "momentum",
+            "config": {
+              "regression": 120,
+              "lookback": 120,
+              "skip": 21,
+              "cycle": 10,
+              "book": "sector-2"
+            },
+            "id": "momentum-120-120-21-10-sector-2"
+          },
+          {
+            "family": "trend",
+            "config": {
+              "weighting": "vol",
+              "mode": "long-only",
+              "deadband": 0
+            },
+            "id": "trend-vol-long-only-0"
+          },
+          {
+            "family": "reversal",
+            "config": {
+              "lookback": 5,
+              "cycle": 5
+            },
+            "id": "reversal-5-5"
+          },
+          {
+            "family": "defensive",
+            "config": {
+              "metric": "beta",
+              "depth": 15
+            },
+            "id": "defensive-beta-15"
+          }
+        ]
+      },
+      "holdout": {
+        "sessions": 729,
+        "errors": 219,
+        "firstError": "2026-01-14 MMC: missing execution price or prior close",
+        "activeSessions": 729,
+        "peakGross": 135785.31079464173,
+        "meanDailyTurnover": 0.09694691792429701,
+        "borrowUsd": 1527.506977588786,
+        "sellFeeUsd": 148.59932554926135,
+        "costs": {
+          "5": null,
+          "10": null,
+          "20": null
+        }
+      },
+      "loso": {
+        "XLK": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLF": {
+          "5": 13188.085643915936,
+          "10": 9739.489280643818,
+          "20": 2842.29655409961
+        },
+        "XLV": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLY": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLC": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLI": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLP": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLE": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLU": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLRE": {
+          "5": null,
+          "10": null,
+          "20": null
+        },
+        "XLB": {
+          "5": null,
+          "10": null,
+          "20": null
+        }
+      },
+      "plateau": {
+        "10": {
+          "required": 10,
+          "pass": false,
+          "points": [
+            {
+              "id": "ensemble:momentum-60-120-21-10-sector-2",
+              "netUsd": 4066.624442599409,
+              "sharpe": 0.365803883504207,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-60-21-10-sector-2",
+              "netUsd": 4375.00391684222,
+              "sharpe": 0.37246823949976526,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-120-10-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-120-21-5-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-120-21-10-sector-1",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-120-21-21-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-180-21-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-252-120-21-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:trend-atr-long-only-0",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:trend-vol-long-short-0",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:trend-vol-long-only-0.25",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:reversal-3-5",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:reversal-5-3",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:defensive-vol-15",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:defensive-beta-10",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            }
+          ]
+        },
+        "20": {
+          "required": 10,
+          "pass": false,
+          "points": [
+            {
+              "id": "ensemble:momentum-60-120-21-10-sector-2",
+              "netUsd": -3118.829514121742,
+              "sharpe": -0.280696326556765,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-60-21-10-sector-2",
+              "netUsd": -2819.988409062527,
+              "sharpe": -0.24014311945967332,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-120-10-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-120-21-5-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-120-21-10-sector-1",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-120-21-21-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-120-180-21-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:momentum-252-120-21-10-sector-2",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:trend-atr-long-only-0",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:trend-vol-long-short-0",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:trend-vol-long-only-0.25",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:reversal-3-5",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:reversal-5-3",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:defensive-vol-15",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            },
+            {
+              "id": "ensemble:defensive-beta-10",
+              "netUsd": null,
+              "sharpe": null,
+              "pass": false
+            }
+          ]
+        }
+      },
+      "gates": {
+        "10": {
+          "netPositive": false,
+          "exTop5Positive": false,
+          "bootstrap": false,
+          "allSectorsPositive": false,
+          "neighboringPlateau": false
+        },
+        "20": {
+          "netPositive": false,
+          "exTop5Positive": false,
+          "bootstrap": false,
+          "allSectorsPositive": false,
+          "neighboringPlateau": false
+        }
+      },
+      "developmentPass": false,
+      "pass": false,
+      "years": {
+        "2016": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 191,
+          "peakGross": 74340.29242123112,
+          "meanDailyTurnover": 0.05422555811697146,
+          "borrowUsd": 261.38155582210226,
+          "sellFeeUsd": 28.510991134778983,
+          "costs": {
+            "5": {
+              "netUsd": -2523.195408899341,
+              "exTop5Usd": -4049.4479674227277,
+              "exTop10Usd": -5264.3503685207515,
+              "sharpe": -1.2939836489738124,
+              "maxDrawdown": 0.03363160490376531,
+              "calmar": -0.7502453172006819,
+              "spyBeta": 0.026148237028414078,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 1204.233279571587
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": -3727.428688470927
+              },
+              "bootstrapPValue": 0.8753124687531247,
+              "deflatedSharpe": 0.019192961591448194
+            },
+            "10": {
+              "netUsd": -3206.4374411731815,
+              "exTop5Usd": -4714.162256624907,
+              "exTop10Usd": -5910.934834077347,
+              "sharpe": -1.6435907885698888,
+              "maxDrawdown": 0.03765371351543106,
+              "calmar": -0.851559419194905,
+              "spyBeta": 0.02609517310952835,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 825.525663195303
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": -4031.963104368485
+              },
+              "bootstrapPValue": 0.9286071392860714,
+              "deflatedSharpe": 0.007096651068218609
+            },
+            "20": {
+              "netUsd": -4572.921505720864,
+              "exTop5Usd": -6043.5908350292675,
+              "exTop10Usd": -7204.771486182075,
+              "sharpe": -2.340562876624184,
+              "maxDrawdown": 0.04700951167402494,
+              "calmar": -0.9727651581302487,
+              "spyBeta": 0.025989045271756883,
+              "upSpy": {
+                "sessions": 138,
+                "netUsd": 68.1104304427327
+              },
+              "downSpy": {
+                "sessions": 113,
+                "netUsd": -4641.031936163597
+              },
+              "bootstrapPValue": 0.9809019098090191,
+              "deflatedSharpe": 0.0003495858368133764
+            }
+          }
+        },
+        "2017": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 133436.95217420146,
+          "meanDailyTurnover": 0.08742133064643762,
+          "borrowUsd": 491.285261392664,
+          "sellFeeUsd": 45.77111175292545,
+          "costs": {
+            "5": {
+              "netUsd": 3944.4065749372603,
+              "exTop5Usd": 1705.6810613504495,
+              "exTop10Usd": 212.2317620728527,
+              "sharpe": 1.5787640942053711,
+              "maxDrawdown": 0.01508699065795014,
+              "calmar": 2.624858351112776,
+              "spyBeta": 0.22813396067287683,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 10426.666255681237
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -6482.259680743974
+              },
+              "bootstrapPValue": 0.047595240475952406,
+              "deflatedSharpe": 0.7879491485465236
+            },
+            "10": {
+              "netUsd": 2847.268875324467,
+              "exTop5Usd": 631.2938954561246,
+              "exTop10Usd": -839.6599652887626,
+              "sharpe": 1.1395683558576608,
+              "maxDrawdown": 0.017419281831660218,
+              "calmar": 1.641062245647425,
+              "spyBeta": 0.22812049407148358,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 9712.298000524548
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -6865.029125200081
+              },
+              "bootstrapPValue": 0.11758824117588242,
+              "deflatedSharpe": 0.6315141108668487
+            },
+            "20": {
+              "netUsd": 652.9934760988826,
+              "exTop5Usd": -1517.4804363325225,
+              "exTop10Usd": -2943.4434200119895,
+              "sharpe": 0.2613148057582494,
+              "maxDrawdown": 0.022090434955470657,
+              "calmar": 0.2967777886919269,
+              "spyBeta": 0.2280935608686968,
+              "upSpy": {
+                "sessions": 163,
+                "netUsd": 8283.56149021119
+              },
+              "downSpy": {
+                "sessions": 88,
+                "netUsd": -7630.5680141123075
+              },
+              "bootstrapPValue": 0.39406059394060594,
+              "deflatedSharpe": 0.22165836658336094
+            }
+          }
+        },
+        "2018": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 124389.11613680497,
+          "meanDailyTurnover": 0.09149199942989965,
+          "borrowUsd": 528.8286895369005,
+          "sellFeeUsd": 48.444946571592034,
+          "costs": {
+            "5": {
+              "netUsd": -1796.5033497838735,
+              "exTop5Usd": -4226.176634391029,
+              "exTop10Usd": -6009.073056063096,
+              "sharpe": -0.5208394607381185,
+              "maxDrawdown": 0.03545487953290277,
+              "calmar": -0.5087200287829844,
+              "spyBeta": 0.10908791805151477,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 9422.454638602076
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -11218.957988385946
+              },
+              "bootstrapPValue": 0.6934306569343066,
+              "deflatedSharpe": 0.09563427692094896
+            },
+            "10": {
+              "netUsd": -2944.7279426291148,
+              "exTop5Usd": -5351.793244122642,
+              "exTop10Usd": -7111.004222407486,
+              "sharpe": -0.8538241099984462,
+              "maxDrawdown": 0.04155945648940853,
+              "calmar": -0.7113807966227247,
+              "spyBeta": 0.10901358616312025,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 8816.389782655031
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -11761.117725284152
+              },
+              "bootstrapPValue": 0.7872212778722127,
+              "deflatedSharpe": 0.04589461570107045
+            },
+            "20": {
+              "netUsd": -5241.177128319598,
+              "exTop5Usd": -7603.0264635858675,
+              "exTop10Usd": -9315.538632042275,
+              "sharpe": -1.5199839537621929,
+              "maxDrawdown": 0.06246230103313881,
+              "calmar": -0.842437474294459,
+              "spyBeta": 0.10886492238633132,
+              "upSpy": {
+                "sessions": 131,
+                "netUsd": 7604.260070760961
+              },
+              "downSpy": {
+                "sessions": 120,
+                "netUsd": -12845.437199080563
+              },
+              "bootstrapPValue": 0.916108389161084,
+              "deflatedSharpe": 0.004160937381244471
+            }
+          }
+        },
+        "2019": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 134491.90413911568,
+          "meanDailyTurnover": 0.0900708602943909,
+          "borrowUsd": 540.3955309009177,
+          "sellFeeUsd": 47.57206308804537,
+          "costs": {
+            "5": {
+              "netUsd": 5178.126282041786,
+              "exTop5Usd": 2178.7845585011064,
+              "exTop10Usd": 49.85609095307245,
+              "sharpe": 1.5054314106125235,
+              "maxDrawdown": 0.01658516629151467,
+              "calmar": 3.1221431193554134,
+              "spyBeta": 0.09928622837981724,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 12997.287549310135
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -7819.1612672683395
+              },
+              "bootstrapPValue": 0.05909409059094091,
+              "deflatedSharpe": 0.7658060567381745
+            },
+            "10": {
+              "netUsd": 4043.2334423324646,
+              "exTop5Usd": 1066.0213673423586,
+              "exTop10Usd": -1041.7697777981084,
+              "sharpe": 1.175591200465594,
+              "maxDrawdown": 0.01691297157487992,
+              "calmar": 2.3906109133049678,
+              "spyBeta": 0.0991782402463161,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 12315.646411932288
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -8272.412969599822
+              },
+              "bootstrapPValue": 0.1126887311268873,
+              "deflatedSharpe": 0.6447336534054208
+            },
+            "20": {
+              "netUsd": 1773.4477629138114,
+              "exTop5Usd": -1159.5050149751469,
+              "exTop10Usd": -3225.0215153004806,
+              "sharpe": 0.5157222112079217,
+              "maxDrawdown": 0.020339392548727814,
+              "calmar": 0.871927595017943,
+              "spyBeta": 0.09896226397931378,
+              "upSpy": {
+                "sessions": 151,
+                "netUsd": 10952.36413717659
+              },
+              "downSpy": {
+                "sessions": 101,
+                "netUsd": -9178.916374262779
+              },
+              "bootstrapPValue": 0.29947005299470053,
+              "deflatedSharpe": 0.30383608985551325
+            }
+          }
+        },
+        "2020": {
+          "sessions": 253,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 253,
+          "peakGross": 128722.50735907462,
+          "meanDailyTurnover": 0.09910214183284478,
+          "borrowUsd": 504.9562140245752,
+          "sellFeeUsd": 52.9062021269377,
+          "costs": {
+            "5": {
+              "netUsd": 7626.6333448771065,
+              "exTop5Usd": 1931.008327168639,
+              "exTop10Usd": -1957.007454656833,
+              "sharpe": 1.083507579142833,
+              "maxDrawdown": 0.06228467966086696,
+              "calmar": 1.2196399805553428,
+              "spyBeta": 0.11414497801427598,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 22819.66472928098
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": -15193.03138440388
+              },
+              "bootstrapPValue": 0.13608639136086392,
+              "deflatedSharpe": 0.6191494317029056
+            },
+            "10": {
+              "netUsd": 6372.991250691628,
+              "exTop5Usd": 701.1521794698992,
+              "exTop10Usd": -3161.9328271673367,
+              "sharpe": 0.9053323467962073,
+              "maxDrawdown": 0.06352080379687328,
+              "calmar": 0.9993263911226166,
+              "spyBeta": 0.11416415222286169,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 22080.48346154825
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": -15707.492210856622
+              },
+              "bootstrapPValue": 0.18018198180181982,
+              "deflatedSharpe": 0.5405183128820171
+            },
+            "20": {
+              "netUsd": 3865.7070623206573,
+              "exTop5Usd": -1758.5601159275966,
+              "exTop10Usd": -5571.7835721883575,
+              "sharpe": 0.5490519660457729,
+              "maxDrawdown": 0.06793205894791902,
+              "calmar": 0.5668056654543637,
+              "spyBeta": 0.11420250064003312,
+              "upSpy": {
+                "sessions": 150,
+                "netUsd": 20602.12092608275
+              },
+              "downSpy": {
+                "sessions": 103,
+                "netUsd": -16736.413863762107
+              },
+              "bootstrapPValue": 0.2947705229477052,
+              "deflatedSharpe": 0.316823698886006
+            }
+          }
+        },
+        "2021": {
+          "sessions": 252,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 252,
+          "peakGross": 131144.6038137009,
+          "meanDailyTurnover": 0.10612591110509847,
+          "borrowUsd": 586.5699275313962,
+          "sellFeeUsd": 56.53536634739598,
+          "costs": {
+            "5": {
+              "netUsd": 2389.7158662889387,
+              "exTop5Usd": -1176.078597905545,
+              "exTop10Usd": -3991.042901938001,
+              "sharpe": 0.5234699742673672,
+              "maxDrawdown": 0.04907835998228161,
+              "calmar": 0.48691844371973303,
+              "spyBeta": 0.22745296466004303,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 16205.215030225336
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -13815.499163936403
+              },
+              "bootstrapPValue": 0.29757024297570245,
+              "deflatedSharpe": 0.4020107387311248
+            },
+            "10": {
+              "netUsd": 1052.5293863646982,
+              "exTop5Usd": -2487.5632313901515,
+              "exTop10Usd": -5276.5065320235135,
+              "sharpe": 0.23054807420424933,
+              "maxDrawdown": 0.05453628260254273,
+              "calmar": 0.19299617358144328,
+              "spyBeta": 0.22753059328767397,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 15409.828041259892
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -14357.298654895192
+              },
+              "bootstrapPValue": 0.4136586341365863,
+              "deflatedSharpe": 0.28467586348074425
+            },
+            "20": {
+              "netUsd": -1621.8435734837828,
+              "exTop5Usd": -5110.5324983593655,
+              "exTop10Usd": -7847.433792194541,
+              "sharpe": -0.35518835342863325,
+              "maxDrawdown": 0.06560585426887579,
+              "calmar": -0.24721019054746235,
+              "spyBeta": 0.227685850542936,
+              "upSpy": {
+                "sessions": 153,
+                "netUsd": 13819.054063328991
+              },
+              "downSpy": {
+                "sessions": 99,
+                "netUsd": -15440.897636812773
+              },
+              "bootstrapPValue": 0.6514348565143485,
+              "deflatedSharpe": 0.08278355949107989
+            }
+          }
+        },
+        "2022": {
+          "sessions": 251,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 251,
+          "peakGross": 121402.02265101594,
+          "meanDailyTurnover": 0.09875999441716954,
+          "borrowUsd": 512.9809785373476,
+          "sellFeeUsd": 51.83462801144364,
+          "costs": {
+            "5": {
+              "netUsd": -6907.338089979822,
+              "exTop5Usd": -9434.69192860265,
+              "exTop10Usd": -11596.374016527185,
+              "sharpe": -1.6119620797011855,
+              "maxDrawdown": 0.08105565453971547,
+              "calmar": -0.8555673758504756,
+              "spyBeta": 0.06728969730315967,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 5397.343987433275
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -12275.37668456707
+              },
+              "bootstrapPValue": 0.9398060193980602,
+              "deflatedSharpe": 0.006265258603836751
+            },
+            "10": {
+              "netUsd": -8146.776019915306,
+              "exTop5Usd": -10651.504278034174,
+              "exTop10Usd": -12784.98252672215,
+              "sharpe": -1.9012161978931563,
+              "maxDrawdown": 0.09042158066014833,
+              "calmar": -0.9045665022863174,
+              "spyBeta": 0.06719971382426783,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 4812.050066844559
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -12901.000914703218
+              },
+              "bootstrapPValue": 0.9659034096590341,
+              "deflatedSharpe": 0.0021658800433371522
+            },
+            "20": {
+              "netUsd": -10625.651879786248,
+              "exTop5Usd": -13085.128976897195,
+              "exTop10Usd": -15162.19954711205,
+              "sharpe": -2.479347447256723,
+              "maxDrawdown": 0.11075176001208238,
+              "calmar": -0.9632339163769399,
+              "spyBeta": 0.06701974686648436,
+              "upSpy": {
+                "sessions": 120,
+                "netUsd": 3641.4622256671337
+              },
+              "downSpy": {
+                "sessions": 130,
+                "netUsd": -14152.249374975496
+              },
+              "bootstrapPValue": 0.9906009399060094,
+              "deflatedSharpe": 0.00008360621589640522
+            }
+          }
+        },
+        "2023": {
+          "sessions": 250,
+          "errors": 0,
+          "firstError": null,
+          "activeSessions": 250,
+          "peakGross": 129964.24970516295,
+          "meanDailyTurnover": 0.09728401546301042,
+          "borrowUsd": 535.0074756975966,
+          "sellFeeUsd": 51.21579857597158,
+          "costs": {
+            "5": {
+              "netUsd": -4325.340147904175,
+              "exTop5Usd": -7408.987356659218,
+              "exTop10Usd": -9466.410102524582,
+              "sharpe": -1.2430546724293567,
+              "maxDrawdown": 0.05479703998280645,
+              "calmar": -0.7956529897336458,
+              "spyBeta": 0.13196006326526877,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": 7826.118369234985
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -12151.45851713916
+              },
+              "bootstrapPValue": 0.8884111588841116,
+              "deflatedSharpe": 0.02253871464810924
+            },
+            "10": {
+              "netUsd": -5541.390341191812,
+              "exTop5Usd": -8599.960957082712,
+              "exTop10Usd": -10632.853323525009,
+              "sharpe": -1.5927582918834235,
+              "maxDrawdown": 0.0660693395466564,
+              "calmar": -0.8454332224672624,
+              "spyBeta": 0.13195788446537648,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": 7209.526157549753
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -12750.916498741562
+              },
+              "bootstrapPValue": 0.9387061293870613,
+              "deflatedSharpe": 0.008716427608924127
+            },
+            "20": {
+              "netUsd": -7973.490727767073,
+              "exTop5Usd": -10981.908157929689,
+              "exTop10Usd": -12965.73976552585,
+              "sharpe": -2.292028234949445,
+              "maxDrawdown": 0.0886139386743569,
+              "calmar": -0.9069993698310846,
+              "spyBeta": 0.1319535268655921,
+              "upSpy": {
+                "sessions": 129,
+                "netUsd": 5976.341734179283
+              },
+              "downSpy": {
+                "sessions": 121,
+                "netUsd": -13949.832461946353
+              },
+              "bootstrapPValue": 0.9852014798520148,
+              "deflatedSharpe": 0.0005031805914029711
+            }
+          }
+        },
+        "2024": {
+          "sessions": 252,
+          "errors": 219,
+          "firstError": "2026-01-14 MMC: missing execution price or prior close",
+          "activeSessions": 252,
+          "peakGross": 135785.31079464173,
+          "meanDailyTurnover": 0.09635559664058686,
+          "borrowUsd": 549.0452603080519,
+          "sellFeeUsd": 50.7360325188562,
+          "costs": {
+            "5": null,
+            "10": null,
+            "20": null
+          }
+        },
+        "2025": {
+          "sessions": 250,
+          "errors": 219,
+          "firstError": "2026-01-14 MMC: missing execution price or prior close",
+          "activeSessions": 250,
+          "peakGross": 134986.12440169664,
+          "meanDailyTurnover": 0.10027112551465178,
+          "borrowUsd": 528.3168372231659,
+          "sellFeeUsd": 52.64588743091633,
+          "costs": {
+            "5": null,
+            "10": null,
+            "20": null
+          }
+        },
+        "2026": {
+          "sessions": 227,
+          "errors": 219,
+          "firstError": "2026-01-14 MMC: missing execution price or prior close",
+          "activeSessions": 227,
+          "peakGross": 131743.10354198178,
+          "meanDailyTurnover": 0.09394234112212145,
+          "borrowUsd": 450.1448800575676,
+          "sellFeeUsd": 45.21740559948882,
+          "costs": {
+            "5": null,
+            "10": null,
+            "20": null
+          }
+        }
+      }
+    }
+  ],
+  "passed": []
+}

@@ -149,3 +149,66 @@ describe('causal factor and portfolio math', () => {
     )
   })
 })
+
+test('sector momentum is dollar-neutral in stock targets and SPY-hedged after sizing', () => {
+  const n = 190
+  const symbols = ['A', 'B', 'SPY', 'XLK']
+  const market = (i: number) => 0.02 * Math.sin(i * 0.7)
+  const sector = (i: number) => 0.015 * Math.sin(i * 1.1)
+  const stock = (symbol: string, i: number) => {
+    const residual = (symbol === 'A' ? 1 : -1) * (Math.max(0, i - 100) * 0.002 + 0.003 * Math.sin(i * 2.1))
+    return (symbol === 'A' ? 2 : 0.5) * market(i) + sector(i) + residual
+  }
+  const content = symbols
+    .flatMap((symbol) =>
+      Array.from({ length: n }, (_, i) => {
+        const log = symbol === 'SPY' ? market(i) : symbol === 'XLK' ? sector(i) : stock(symbol, i)
+        return bar(symbol, date(i), 100 * Math.exp(log))
+      }),
+    )
+    .join('\n')
+  const tape = parseTape(content, [['A', 'B']], [['SPY', 'XLK']], date(n - 1))
+  const spec = grid().find(({ id }) => id === 'momentum-60-60-5-5-sector-1')
+  if (spec === undefined) throw new Error('Missing momentum')
+  const f = features(tape)
+  const positions = targetBook(tape, spec, f)
+  const i = tape.dates.length - 1
+  const [long, short, overlay] = positions[i]
+  expect(long).toBeGreaterThan(0)
+  expect(short).toBeLessThan(0)
+  expect(long + short).toBeCloseTo(0, 12)
+  expect(long * f.beta[0][i] + short * f.beta[1][i] + overlay).toBeCloseTo(0, 12)
+  expect(gross(positions[i])).toBeLessThanOrEqual(1)
+  expect(gross(targetBook(tape, spec, f, 0)[i])).toBe(0)
+})
+
+test('a positive primary-cost holdout does not override the stress-cost or sector gate', () => {
+  const run = {
+    firstError: null,
+    errors: 0,
+    days: Array.from({ length: 60 }, (_, i) => ({
+      date: date(i),
+      traded: 10_000,
+      pnl: 6 + (i % 3),
+      spy: i % 2 === 0 ? 0.01 : -0.01,
+      gross: 20_000,
+      borrow: 0,
+      sellFee: 0,
+    })),
+  }
+  const s = summarize(run, {})
+  const probes = [
+    { id: 'a', result: s },
+    { id: 'b', result: s },
+  ]
+  const checks = gates(s, {}, { 10: plateau(s, probes, 10), 20: plateau(s, probes, 20) }, true)
+  expect(checks[10]).toEqual({
+    netPositive: true,
+    exTop5Positive: true,
+    bootstrap: true,
+    allSectorsPositive: false,
+    neighboringPlateau: true,
+  })
+  expect(checks[20].netPositive).toBe(false)
+  expect(checks[20].neighboringPlateau).toBe(false)
+})
