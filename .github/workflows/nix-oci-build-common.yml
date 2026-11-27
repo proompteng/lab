@@ -22,6 +22,10 @@ on:
         required: false
         type: string
         default: ''
+      tmpfs:
+        description: Build both platform archives on the standard tmpfs runners
+        type: boolean
+        default: false
       latest:
         required: false
         type: boolean
@@ -79,7 +83,7 @@ jobs:
           - platform: linux/arm64
             arch: arm64
             runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ format('{0}{1}', matrix.runner, inputs.tmpfs && '-tmpfs' || '') }}
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
