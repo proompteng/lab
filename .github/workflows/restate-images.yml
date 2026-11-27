@@ -16,10 +16,11 @@ on:
       - 'packages/scripts/src/restate/**'
       - 'services/restate/**'
       - 'argocd/applications/restate/**'
+  workflow_dispatch:
 
 concurrency:
   group: restate-images-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 permissions:
   contents: read
@@ -29,9 +30,10 @@ env:
 
 jobs:
   changes:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
-      changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
+      changed: ${{ github.event_name == 'workflow_dispatch' || fromJSON(steps.filter.outputs.affected).service }}
       reuse: ${{ steps.plan.outputs.reuse }}
       source: ${{ steps.plan.outputs.source }}
       run: ${{ steps.plan.outputs.run }}
@@ -41,6 +43,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/affected-inputs
+        if: github.event_name != 'workflow_dispatch'
         id: filter
         with:
           workflow: .github/workflows/restate-images.yml
@@ -57,12 +60,13 @@ jobs:
             packages/scripts/src/ci/__tests__/affected-inputs.test.ts packages/scripts/src/shared/__tests__/kargo.test.ts
           bun packages/scripts/src/ci/generate-observability-workflows.ts --check
       - name: Select build or qualified runtime reuse
+        if: github.event_name != 'workflow_dispatch'
         id: plan
         run: bun packages/scripts/src/restate/release-inputs.ts
 
   build:
     needs: changes
-    if: needs.changes.outputs.changed == 'true' && needs.changes.outputs.reuse != 'true'
+    if: needs.changes.outputs.changed == 'true' && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.reuse != 'true')
     name: Restate build and fault tests (${{ matrix.architecture }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
@@ -115,6 +119,7 @@ jobs:
           platforms: linux/${{ matrix.architecture }}
           outputs: type=local,dest=.artifacts/restate
           provenance: false
+          no-cache-filters: ${{ github.event_name == 'workflow_dispatch' && 'test' || '' }}
           cache-from: type=gha,scope=restate-test-${{ matrix.architecture }}
           cache-to: type=gha,mode=max,scope=restate-test-${{ matrix.architecture }}
       - name: Build runtime
@@ -125,6 +130,7 @@ jobs:
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           outputs: type=image,oci-mediatypes=true
           provenance: false
+          no-cache-filters: ${{ github.event_name == 'workflow_dispatch' && 'builder' || '' }}
           tags: ${{ env.IMAGE }}:prepare-sha-${{ github.sha }}-run-${{ github.run_id }}-${{ matrix.architecture }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -133,7 +139,7 @@ jobs:
           cache-from: type=gha,scope=restate-runtime-${{ matrix.architecture }}
           cache-to: type=gha,mode=max,scope=restate-runtime-${{ matrix.architecture }}
       - name: Persist Cargo cache mounts for future source builds
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
         run: |
@@ -148,6 +154,9 @@ jobs:
             docker buildx build "${cache_args[@]}" --target archive --provenance=false \
               --label "org.opencontainers.image.revision=$GITHUB_SHA" --tag "$reference" --push .
             crane digest "$reference" > .artifacts/restate/cache-digest
+          elif test "$GITHUB_EVENT_NAME" = workflow_dispatch; then
+            echo "No Cargo cache was produced for $ARCHITECTURE" >&2
+            exit 1
           fi
       - uses: actions/upload-artifact@v4
         if: always()
@@ -168,10 +177,12 @@ jobs:
 
   publish:
     if: >-
-      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      !cancelled() && github.ref == 'refs/heads/main' &&
       needs.changes.result == 'success' && needs.changes.outputs.changed == 'true' &&
       needs.cache-proof.result == 'success' &&
-      (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.changes.outputs.reuse == 'true'))
+      ((github.event_name == 'workflow_dispatch' && needs.build.result == 'success') ||
+       (github.event_name == 'push' &&
+        (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.changes.outputs.reuse == 'true'))))
     needs: [changes, build, cache-proof]
     runs-on: arc-amd64
     timeout-minutes: 20
@@ -201,7 +212,7 @@ jobs:
             crane tag "${IMAGE}@${digest}" "cargo-cache-${architecture}"
           done
       - name: Reuse the signed runtime for unchanged build inputs
-        if: needs.changes.outputs.reuse == 'true'
+        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
         env:
           QUALIFIED_DIGEST: ${{ needs.changes.outputs.digest }}
           QUALIFIED_SOURCE: ${{ needs.changes.outputs.source }}
@@ -232,6 +243,7 @@ jobs:
                  <(crane manifest "$target" | jq -S '.layers')
           done
       - name: Assemble and validate the immutable release index
+        if: github.event_name == 'push'
         id: release
         run: |
           set -euo pipefail
@@ -269,11 +281,13 @@ jobs:
             > .artifacts/restate/signature.json
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
         with:
           name: restate-release-${{ github.run_id }}
           path: .artifacts/restate
           if-no-files-found: error
       - name: Expose the validated digest to Kargo
+        if: github.event_name == 'push'
         env:
           DIGEST: ${{ steps.release.outputs.digest }}
         run: |

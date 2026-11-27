@@ -5,10 +5,13 @@ import { Effect, Redacted, Result, Schema } from 'effect'
 
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import { SignedBrokerNotificationSchema, verifyBrokerNotification } from '../broker/notifications'
+import { type BrokerSourceProjectionReceipt, BrokerStreamReconciliationReason } from '../broker/trade-update-projection'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { settleCompletedBrokerObservationPoll } from '../composition/broker-observation-runtime'
 import {
+  brokerSourceProjectionContract,
   makeBaynBrokerObservations,
+  makeBaynBrokerSourceProjector,
   type BrokerObservationPoll,
   type BrokerObservationRuntime,
   type BrokerObservationOwnerStateSchema,
@@ -38,7 +41,7 @@ const identity = Result.getOrThrow(
 )
 const connection = { identity, key: Redacted.make(fixture.keyId), secret: Redacted.make(fixture.secret) }
 const controllerKey = identity.identityHash
-const sourceRevision = 'b'.repeat(40)
+const sourceRevision = 'a'.repeat(40)
 const initialNow = Date.parse('2026-11-11T17:37:20.000Z')
 const config = { controllerKey, sourceRevision, maxAgeMs: 60_000, freshnessLeadMs: 30_000, operationTimeoutMs: 30_000 }
 type State = typeof BrokerObservationOwnerStateSchema.Type
@@ -80,7 +83,15 @@ const harness = (
   const deliveries: Delivery[] = []
   const runtime: BrokerObservationRuntime = {
     verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
+    probeProtection: async () => undefined,
     recordNotification: async () => ({ covered: false }),
+    isNotificationCovered: async () => false,
+    project: async (_signal, eventId) => ({
+      _tag: 'ReconcileRequired',
+      eventId,
+      observedAt: new Date(initialNow).toISOString(),
+      reason: BrokerStreamReconciliationReason.SessionBoundary,
+    }),
     invalidate: async () => {
       invalidations += 1
     },
@@ -110,6 +121,7 @@ const harness = (
   const object = makeBaynBrokerObservations({ ...config, ...input.ownerConfig }, runtime, [], {
     currentTimeMillisUnsafe: () => now,
   })
+  const projector = makeBaynBrokerSourceProjector({ ...config, ...input.ownerConfig }, runtime)
   const context = {
     key: input.key ?? controllerKey,
     date: { now: async () => now },
@@ -140,8 +152,11 @@ const harness = (
     object as unknown as {
       object: {
         activate: (ctx: ObjectContext, input: unknown) => Promise<State>
-        notify: (ctx: ObjectSharedContext, input: unknown) => Promise<{ accepted: boolean; eventId: string }>
-        accept: (ctx: ObjectContext, input: unknown) => Promise<void>
+        notify: (
+          ctx: ObjectSharedContext,
+          input: unknown,
+        ) => Promise<{ accepted: boolean; eventId: string; sourceRevision: string; projectionContract: string }>
+        reconcile: (ctx: ObjectContext, input: unknown) => Promise<void>
         refresh: (ctx: ObjectContext, input: unknown) => Promise<void>
         capture: (ctx: ObjectContext, input: unknown) => Promise<void>
         freshness: (ctx: ObjectContext, input: unknown) => Promise<void>
@@ -149,8 +164,16 @@ const harness = (
       }
     }
   ).object
+  const projectorHandlers = (
+    projector as unknown as {
+      object: {
+        project: (ctx: ObjectContext, input: unknown) => Promise<BrokerSourceProjectionReceipt>
+      }
+    }
+  ).object
   return {
     handlers,
+    projectorHandlers,
     context,
     deliveries,
     sleeps,
@@ -167,6 +190,7 @@ const harness = (
       request += 1
     },
     timers: () => deliveries.filter((delivery) => delivery.service === 'BaynBrokerObservations'),
+    projections: () => deliveries.filter((delivery) => delivery.service === 'BaynBrokerSourceProjector'),
   }
 }
 const tick = (state: State) => ({ sourceRevision: state.sourceRevision, epoch: state.epoch, sequence: state.sequence })
@@ -184,6 +208,57 @@ const receipt = { eventId: 'd'.repeat(64) }
 const pollResult = (poll: BrokerObservationPoll) => ({ poll, startedAtMs: initialNow, completedAtMs: initialNow })
 
 describe('event-driven Restate broker observation owner', () => {
+  test('probes immediately and wakes the exact protective cycle before scheduling the ordinary capture', async () => {
+    const proof = {
+      proofId: '1'.repeat(64),
+      cycleId: '2'.repeat(64),
+      checkedAt: new Date(initialNow).toISOString(),
+    }
+    const probes: string[] = []
+    const h = harness({
+      state: active(),
+      runtime: {
+        probeProtection: async (_signal, cycleId) => {
+          probes.push(cycleId)
+          return proof
+        },
+      },
+    })
+    await h.handlers.refresh(h.context, { sourceRevision: 'f'.repeat(40), cycleId: proof.cycleId })
+    expect(probes).toEqual([])
+    await h.handlers.refresh(h.context, { sourceRevision, cycleId: proof.cycleId })
+    expect(h.sleeps).toEqual([])
+    expect(probes).toEqual([proof.cycleId])
+    expect(h.deliveries).toMatchObject([
+      {
+        service: 'BaynExecutionController',
+        method: 'wake',
+        parameter: { _tag: 'ProtectionRelease', sourceRevision, eventId: proof.proofId, ...proof },
+      },
+      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 100 } },
+    ])
+    expect(h.calls().polls).toBe(0)
+  })
+
+  test.each(['unproven', 'failed'])(
+    '%s protection readback schedules capture without waking execution',
+    async (outcome) => {
+      const h = harness({
+        state: active({ nextCaptureNotBeforeMs: initialNow + 30_000 }),
+        runtime: {
+          probeProtection: async () => {
+            if (outcome === 'failed') throw new Error('injected unavailable read')
+            return undefined
+          },
+        },
+      })
+      await h.handlers.refresh(h.context, { sourceRevision, cycleId: '2'.repeat(64) })
+      expect(h.deliveries).toMatchObject([
+        { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 30_000 } },
+      ])
+    },
+  )
+
   test('activation publishes one canonical cut, wakes the account and arms only its completeness deadline', async () => {
     const h = harness()
     const state = await h.handlers.activate(h.context, { sourceRevision })
@@ -203,17 +278,28 @@ describe('event-driven Restate broker observation owner', () => {
       observedAt: new Date(initialNow).toISOString(),
     })
   })
-  test('a signed notification is verified once in the journal and retains only a stable event ID', async () => {
+  test('a signed notification is verified once then routes durable projection and reconciliation by stable ID', async () => {
     const runResults = new Map<string, unknown>()
     const h = harness({ state: active(), runResults })
     const accepted = await h.handlers.notify(h.context, fixture.notification)
-    expect(accepted.accepted).toBe(true)
+    expect(accepted).toMatchObject({
+      accepted: true,
+      sourceRevision,
+      projectionContract: brokerSourceProjectionContract,
+    })
     expect(h.commands).toEqual(['verify broker notification', 'record verified broker notification'])
     expect(h.calls().polls).toBe(0)
-    expect(h.timers()[0]).toMatchObject({
-      method: 'accept',
+    expect(h.projections()[0]).toMatchObject({
+      method: 'project',
       parameter: { eventId: accepted.eventId },
-      idempotencyKey: `broker-notification:${accepted.eventId}`,
+      idempotencyKey: `broker-source-project:${accepted.eventId}`,
+    })
+    expect(h.timers()).toEqual([])
+    await h.projectorHandlers.project(h.context, { eventId: accepted.eventId })
+    expect(h.timers()[0]).toMatchObject({
+      method: 'reconcile',
+      parameter: { eventId: accepted.eventId },
+      idempotencyKey: `broker-source-reconcile:${accepted.eventId}`,
     })
     const replay = harness({
       runResults,
@@ -224,14 +310,23 @@ describe('event-driven Restate broker observation owner', () => {
       },
     })
     expect(await replay.handlers.notify(replay.context, fixture.notification)).toEqual(accepted)
-    expect(replay.timers()[0]?.idempotencyKey).toBe(h.timers()[0]?.idempotencyKey)
+    expect(replay.projections().map((delivery) => delivery.idempotencyKey)).toEqual(
+      h.projections().map((delivery) => delivery.idempotencyKey),
+    )
     expect(JSON.stringify([...h.durable.entries()])).not.toContain(fixture.secret)
+  })
+  test('rejects a signed notification from another source revision before persistence', async () => {
+    const h = harness({ ownerConfig: { sourceRevision: 'b'.repeat(40) } })
+    const failure = await h.handlers.notify(h.context, fixture.notification).catch((cause: unknown) => cause)
+    expect(String(failure)).toContain('broker notification source revision mismatch')
+    expect(h.commands).toEqual(['verify broker notification'])
+    expect(h.deliveries).toEqual([])
   })
   test.each([
     { name: 'null', candidate: null },
     { name: 'empty', candidate: {} },
     { name: 'signature', candidate: { ...fixture.notification, signature: 'f'.repeat(64) } },
-  ])('rejects malformed or unsigned Kafka payloads before enqueueing ($name)', async ({ candidate }) => {
+  ])('rejects malformed or unsigned ingress payloads before enqueueing ($name)', async ({ candidate }) => {
     const h = harness({ state: active() })
     const failure = await h.handlers.notify(h.context, candidate).catch((cause: unknown) => cause)
     expect(String(failure)).toContain('broker notification rejected')
@@ -251,19 +346,215 @@ describe('event-driven Restate broker observation owner', () => {
     expect(String(failure)).toContain('account binding mismatch')
     expect(h.commands).toEqual([])
   })
-  test('permanent receipt coverage suppresses republished events beyond transport retention', async () => {
-    const h = harness({ runtime: { recordNotification: async () => ({ covered: true }) } })
-    expect((await h.handlers.notify(h.context, fixture.notification)).accepted).toBe(true)
-    expect(h.deliveries).toEqual([])
+  test('canonical coverage suppresses redundant reconciliation after durable projection', async () => {
+    const h = harness({ runtime: { isNotificationCovered: async () => true } })
+    const accepted = await h.handlers.notify(h.context, fixture.notification)
+    expect(accepted.accepted).toBe(true)
+    await h.projectorHandlers.project(h.context, { eventId: accepted.eventId })
+    expect(h.deliveries).toHaveLength(1)
+    expect(h.deliveries[0]?.method).toBe('project')
     expect(h.invalidations()).toBe(0)
+  })
+  test('canonical source coverage completes without another database check, wake, or reconciliation', async () => {
+    const h = harness({
+      runtime: {
+        project: async (_signal, eventId) => ({
+          _tag: 'CanonicallyCovered',
+          eventId,
+          observedAt: new Date(initialNow).toISOString(),
+        }),
+        isNotificationCovered: async () => {
+          throw new Error('canonical coverage receipt is final')
+        },
+      },
+    })
+    expect(await h.projectorHandlers.project(h.context, receipt)).toEqual({
+      _tag: 'CanonicallyCovered',
+      eventId: receipt.eventId,
+      observedAt: new Date(initialNow).toISOString(),
+    })
+    expect(h.commands).toEqual(['project durable broker source event'])
+    expect(h.deliveries).toEqual([])
+  })
+  test.each(['CanonicallyCovered', 'Projected'] as const)(
+    'an early child dispatches independent recovery and resolves as %s',
+    async (outcome) => {
+      let calls = 0
+      const h = harness({
+        runtime: {
+          project: async (_signal, eventId) => {
+            calls++
+            if (calls === 1)
+              return {
+                _tag: 'AwaitingProtection',
+                eventId,
+                observedAt: new Date(initialNow).toISOString(),
+                deadlineAt: new Date(initialNow + config.operationTimeoutMs).toISOString(),
+              }
+            expect(h.timers()[0]).toMatchObject({
+              method: 'reconcile',
+              idempotencyKey: `broker-source-reconcile:${eventId}`,
+            })
+            return outcome === 'CanonicallyCovered'
+              ? { _tag: outcome, eventId, observedAt: new Date(initialNow).toISOString() }
+              : {
+                  _tag: outcome,
+                  eventId,
+                  observedAt: new Date(initialNow).toISOString(),
+                  orderEventId: 'e'.repeat(64),
+                }
+          },
+          isNotificationCovered: async () => true,
+        },
+      })
+      expect(await h.projectorHandlers.project(h.context, receipt)).toMatchObject({ _tag: outcome })
+      expect(h.sleeps).toEqual([1000])
+      expect(h.calls().polls).toBe(0)
+      expect(h.deliveries.filter((delivery) => delivery.method === 'wake')).toHaveLength(
+        outcome === 'Projected' ? 1 : 0,
+      )
+      expect(h.commands).toContain('resolve broker protection binding 1')
+    },
+  )
+  test('a missing protection identity exhausts only its original remaining deadline and keeps fail-closed reconciliation', async () => {
+    const permissions: boolean[] = []
+    const h = harness({
+      runtime: {
+        project: async (_signal, eventId, allowProtectionWait = true) => {
+          permissions.push(allowProtectionWait)
+          return allowProtectionWait
+            ? {
+                _tag: 'AwaitingProtection',
+                eventId,
+                observedAt: new Date(initialNow - 28000).toISOString(),
+                deadlineAt: new Date(initialNow + 2000).toISOString(),
+              }
+            : {
+                _tag: 'ReconcileRequired',
+                eventId,
+                observedAt: new Date(initialNow - 28000).toISOString(),
+                reason: BrokerStreamReconciliationReason.MissingIntent,
+              }
+        },
+      },
+    })
+    expect(await h.projectorHandlers.project(h.context, receipt)).toMatchObject({
+      _tag: 'ReconcileRequired',
+      reason: BrokerStreamReconciliationReason.MissingIntent,
+    })
+    expect(h.sleeps).toEqual([1000, 1000])
+    expect(permissions).toEqual([true, true, false])
+    expect(h.deliveries.every((delivery) => delivery.method === 'reconcile')).toBe(true)
+  })
+  test('replayed protection recovery reuses each journaled attempt and preserves delivery identity', async () => {
+    const runResults = new Map<string, unknown>()
+    let calls = 0
+    const initial = harness({
+      runResults,
+      runtime: {
+        project: async (_signal, eventId) => {
+          calls++
+          return calls === 1
+            ? {
+                _tag: 'AwaitingProtection',
+                eventId,
+                observedAt: new Date(initialNow).toISOString(),
+                deadlineAt: new Date(initialNow + 30000).toISOString(),
+              }
+            : { _tag: 'CanonicallyCovered', eventId, observedAt: new Date(initialNow).toISOString() }
+        },
+      },
+    })
+    const expected = await initial.projectorHandlers.project(initial.context, receipt)
+    const replay = harness({
+      runResults,
+      runtime: {
+        project: async () => {
+          throw new Error('must reuse journaled projection')
+        },
+      },
+    })
+    expect(await replay.projectorHandlers.project(replay.context, receipt)).toEqual(expected)
+    expect(replay.deliveries).toEqual(initial.deliveries)
+    expect(calls).toBe(2)
+  })
+  test('a database failure during protection recovery cannot publish a projection or execution wake', async () => {
+    let calls = 0
+    const h = harness({
+      runtime: {
+        project: async (_signal, eventId) => {
+          if (++calls > 1) throw new Error('database unavailable')
+          return {
+            _tag: 'AwaitingProtection',
+            eventId,
+            observedAt: new Date(initialNow).toISOString(),
+            deadlineAt: new Date(initialNow + 30000).toISOString(),
+          }
+        },
+      },
+    })
+    const failure = await h.projectorHandlers.project(h.context, receipt).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    )
+    expect(failure).toMatchObject({ message: 'database unavailable' })
+    expect(h.deliveries.map((delivery) => delivery.method)).toEqual(['reconcile'])
+    expect(h.runOptions.get('resolve broker protection binding 1')).toEqual({
+      initialRetryInterval: 50,
+      maxRetryInterval: 1000,
+    })
+  })
+  test('a projected source event wakes execution immediately without waiting for the reconciliation capture', async () => {
+    const h = harness({
+      runtime: {
+        project: async (_signal, eventId) => ({
+          _tag: 'Projected',
+          eventId,
+          observedAt: new Date(initialNow).toISOString(),
+          orderEventId: 'a'.repeat(64),
+          fillEventId: 'b'.repeat(64),
+        }),
+      },
+    })
+    expect(await h.projectorHandlers.project(h.context, receipt)).toMatchObject({
+      _tag: 'Projected',
+      eventId: receipt.eventId,
+    })
+    expect(h.runOptions.get('project durable broker source event')).toEqual({
+      initialRetryInterval: 50,
+      maxRetryInterval: 1_000,
+    })
+    expect(h.runOptions.get('check canonical broker source coverage')).toEqual({
+      initialRetryInterval: 50,
+      maxRetryInterval: 1_000,
+    })
+    expect(h.deliveries).toMatchObject([
+      {
+        service: 'BaynExecutionController',
+        method: 'wake',
+        idempotencyKey: `broker-source-wake:${receipt.eventId}`,
+        parameter: {
+          _tag: 'BrokerEvent',
+          eventId: receipt.eventId,
+          sourceRevision,
+          observedAt: new Date(initialNow).toISOString(),
+        },
+      },
+      {
+        service: 'BaynBrokerObservations',
+        method: 'reconcile',
+        idempotencyKey: `broker-source-reconcile:${receipt.eventId}`,
+      },
+    ])
+    expect(h.calls().polls).toBe(0)
   })
   test('receipt and notification invalidation retain durable retries independently of finite handler attempts', async () => {
     const h = harness({ state: active() })
     await h.handlers.notify(h.context, fixture.notification)
-    await h.handlers.accept(h.context, receipt)
+    await h.handlers.reconcile(h.context, receipt)
     for (const operation of [
       'record verified broker notification',
-      'invalidate broker observation after notification',
+      'invalidate broker observation after source event',
     ]) {
       expect(h.runOptions.get(operation)).toEqual({ initialRetryInterval: 50, maxRetryInterval: 1_000 })
     }
@@ -296,8 +587,8 @@ describe('event-driven Restate broker observation owner', () => {
   })
   test('a notification arriving behind a freshness capture invalidates the older projection once without another timer', async () => {
     const h = harness({ state: active({ captureScheduled: true }) })
-    await h.handlers.accept(h.context, receipt)
-    await h.handlers.accept(h.context, { eventId: 'e'.repeat(64) })
+    await h.handlers.reconcile(h.context, receipt)
+    await h.handlers.reconcile(h.context, { eventId: 'e'.repeat(64) })
     expect(h.invalidations()).toBe(1)
     expect(h.state()).toMatchObject({ captureScheduled: true, pendingNotificationId: receipt.eventId, sequence: 1 })
     expect(h.state()?.lastSnapshotHash).toBeUndefined()
@@ -305,7 +596,7 @@ describe('event-driven Restate broker observation owner', () => {
   })
   test('coalesces a hundred unique queued wakeups into one quota-paced capture', async () => {
     const h = harness({ state: active({ nextCaptureNotBeforeMs: initialNow + 16_800 }) })
-    for (let i = 0; i < 100; i++) await h.handlers.accept(h.context, { eventId: i.toString(16).padStart(64, '0') })
+    for (let i = 0; i < 100; i++) await h.handlers.reconcile(h.context, { eventId: i.toString(16).padStart(64, '0') })
     expect(h.calls().polls).toBe(0)
     expect(h.timers()).toHaveLength(1)
     expect(h.invalidations()).toBe(1)
@@ -323,7 +614,7 @@ describe('event-driven Restate broker observation owner', () => {
   test('a burst preempts the retained freshness timer and fences its stale delivery', async () => {
     const h = harness()
     const initial = await h.handlers.activate(h.context, { sourceRevision })
-    await h.handlers.accept(h.context, receipt)
+    await h.handlers.reconcile(h.context, receipt)
     await h.handlers.freshness(h.context, tick(initial))
     expect(h.timers().map((delivery) => delivery.method)).toEqual(['freshness', 'capture'])
     expect(h.timers()[1]?.delay?.milliseconds).toBe(100)
@@ -432,7 +723,7 @@ describe('event-driven Restate broker observation owner', () => {
     await h.handlers.capture(h.context, tick(current))
     expect(h.calls().polls).toBe(1)
     const restarted = harness({ state })
-    await restarted.handlers.accept(restarted.context, receipt)
+    await restarted.handlers.reconcile(restarted.context, receipt)
     expect(restarted.calls().activations).toBe(0)
     expect(restarted.timers()).toHaveLength(1)
   })

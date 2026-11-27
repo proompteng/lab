@@ -8,7 +8,7 @@ import {
   makeActiveStrategyRuntime,
   type StrategyRuntime,
 } from './strategy'
-import type { JevProtocol } from './jev/protocol'
+import type { IntradayAlphaPolicy } from './strategy/intraday-alpha/policy'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig } from './config/load'
 import { type LoadedRuntimeConfig } from './config/model'
@@ -37,7 +37,7 @@ type RuntimeIdentityFailure =
 
 type RuntimeSeed = {
   readonly config: LoadedRuntimeConfig
-  readonly strategyProtocol: JevProtocol
+  readonly strategyProtocol: IntradayAlphaPolicy
 }
 
 type ParameterizedRuntime = RuntimeSeed & { readonly parameterHash: string }

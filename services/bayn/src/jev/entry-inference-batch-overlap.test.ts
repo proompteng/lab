@@ -19,7 +19,7 @@ const fixture = () => {
   const bars = [
     { minuteBeforeWindowEnd: 4, open: 100, high: 103, low: 97, close: 101, volume: 100 },
     { minuteBeforeWindowEnd: 3, open: 101, high: 102, low: 99, close: 100, volume: 100 },
-    { minuteBeforeWindowEnd: 2, open: 103, high: 108, low: 102, close: 104, volume: 100 },
+    { minuteBeforeWindowEnd: 2, open: 103, high: 113, low: 102, close: 104, volume: 100 },
     { minuteBeforeWindowEnd: 1, open: 104, high: 105, low: 103, close: 104, volume: 100 },
   ]
   return {
@@ -32,7 +32,7 @@ const fixture = () => {
       numericalState: {
         schemaVersion: defaultJevProtocolDocument.inputDefinition,
         webullContext: null,
-        entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
+        entryEconomics: { maximumEntryQuoteDriftBps: 5, maximumEntryLimitSlippageBps: 5 },
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },
@@ -295,7 +295,7 @@ const mixedDispatches = () => {
   const bars = Array.from({ length: 6 }, (_, index) => ({
     minuteBeforeWindowEnd: 6 - index,
     open: 100,
-    high: 108,
+    high: 113,
     low: 97,
     close: 104,
     volume: 100,
@@ -311,22 +311,23 @@ const mixedDispatches = () => {
   }
   return [direct, base].map((claim) => {
     const prepared = Result.getOrThrow(prepareClaimedEntry(claim))
-    return makeJevDispatch({
-      claimedAt: claim.claimedAt,
-      visualClaim: prepared.visualClaim,
-      request: {
-        schemaVersion: 'bayn.jev-evaluation-request.v3',
-        requestId: claim.requestId,
-        cycleId: 'a'.repeat(64),
-        authorityGenerationHash: 'b'.repeat(64),
-        snapshotId: 'c'.repeat(64),
-        symbol: 'AAPL',
-        observedAt: claim.observedAt,
-        expiresAt: claim.expiresAt,
-        request: prepared.prepared.input,
-        requestHash: prepared.prepared.requestHash,
-      },
-    })
+    return Result.getOrThrow(
+      makeJevDispatch({
+        claimedAt: claim.claimedAt,
+        request: {
+          schemaVersion: 'bayn.jev-evaluation-request.v3',
+          requestId: claim.requestId,
+          cycleId: 'a'.repeat(64),
+          authorityGenerationHash: 'b'.repeat(64),
+          snapshotId: 'c'.repeat(64),
+          symbol: 'AAPL',
+          observedAt: claim.observedAt,
+          expiresAt: claim.expiresAt,
+          request: prepared.prepared.input,
+          requestHash: prepared.prepared.requestHash,
+        },
+      }),
+    )
   })
 }
 
@@ -348,16 +349,7 @@ const lateDispatches = () =>
         request: dispatch.request.request,
       }),
     )
-    const prepared = Result.getOrThrow(
-      prepareClaimedEntry({
-        requestId: request.requestId,
-        input: request.request,
-        observedAt,
-        expiresAt,
-        claimedAt,
-      }),
-    )
-    return makeJevDispatch({ claimedAt, visualClaim: prepared.visualClaim, request })
+    return Result.getOrThrow(makeJevDispatch({ claimedAt, request }))
   })
 
 test('an expired chart does not erase a paid sibling in the same parallel batch', async () => {

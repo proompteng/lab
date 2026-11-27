@@ -15,10 +15,15 @@ on:
       - 'services/khoshut/**'
       - 'argocd/applications/khoshut/**'
       - 'argocd/applicationsets/product.yaml'
+      - '.github/workflows/khoshut-ci.yml'
+  workflow_call:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: khoshut-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,4 +37,3 @@ jobs:
       oxlint-command: bun run --cwd services/khoshut lint:oxlint
       oxlint-type-command: bun run --cwd services/khoshut lint:oxlint:type
       test-command: bun run --cwd services/khoshut tsc && bun run --cwd services/khoshut test
-    secrets: inherit

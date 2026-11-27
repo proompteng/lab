@@ -22,6 +22,7 @@ import {
 import { legacyReconciliationIdSchemaVersion } from '../execution/legacy-wire'
 import { Sha256Schema, StrictNonEmptyStringSchema } from '../schemas'
 import { isProtectedEntryTarget } from '../strategy/runtime-decision'
+import { isShortExitPlan } from '../strategy/funded-exit-plan'
 import { SystemAssessmentError } from './economics'
 
 export const ProtectionIntentEvidenceSchema = Schema.Struct({
@@ -73,7 +74,7 @@ export const executionPositionDirections = (plans: ReadonlyMap<string, Execution
         ? binding.positions.find((position) => position.symbol === plan.target.symbol)
         : undefined
     const short =
-      funded?.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1' ||
+      (funded !== undefined && isShortExitPlan(funded)) ||
       (decision?.schemaVersion === 'bayn.jev-exit-target.v5' &&
         decision.evidence.portfolio.brokerState.positions.some(
           (position) => position.symbol === plan.target.symbol && BigInt(position.quantityAtoms) < 0n,
@@ -170,12 +171,8 @@ export const executionOrderPlans = (
         plan.decisionHash !== document.bindings.strategyDecisionHash ||
         plan.policyHash !== document.bindings.policyHash ||
         plan.strategyName !== document.bindings.strategyName ||
-        plan.side !==
-          (entryPlan.levels.schemaVersion === 'bayn.jev-short-strategy-exit-plan.v1'
-            ? OrderSide.Buy
-            : OrderSide.Sell) ||
-        isEquityShortProtection(terms) !==
-          (entryPlan.levels.schemaVersion === 'bayn.jev-short-strategy-exit-plan.v1') ||
+        plan.side !== (isShortExitPlan(entryPlan) ? OrderSide.Buy : OrderSide.Sell) ||
+        isEquityShortProtection(terms) !== isShortExitPlan(entryPlan) ||
         plan.createdAt < document.createdAt ||
         risk.decidedAt < plan.createdAt ||
         risk.expiresAt <= risk.decidedAt ||

@@ -1,12 +1,17 @@
 name: schematic-ci
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
       - 'packages/schematic/**'
+      - '.github/workflows/schematic-ci.yml'
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: schematic-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

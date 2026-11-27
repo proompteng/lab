@@ -9,7 +9,7 @@ import {
   reconciledPositionLiquidationBindingSchemaVersion,
 } from '../shadow-decision-contract'
 import { SystemAssessmentError } from './economics'
-import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
+import { RetainedSystemSourceCutSchema, type SystemSourceCut } from './source-cut'
 import { ExecutionEvidenceKind, type FillRealismSchema } from './realism'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema } from '../schemas'
@@ -55,7 +55,7 @@ export const captureExecutionOrders = (
         ...observation,
       })
     }
-    return yield* Schema.decodeUnknownResult(SystemSourceCutSchema.fields.orders)(orders)
+    return yield* Schema.decodeUnknownResult(RetainedSystemSourceCutSchema.fields.orders)(orders)
   })
 
 export const captureExecutionFills = (
@@ -330,7 +330,7 @@ export const bindExecutionEvidence = (
           heldQuantity === 0n ||
           actual.side !== (heldQuantity < 0n ? OrderSide.Buy : OrderSide.Sell) ||
           quantity > (heldQuantity < 0n ? -heldQuantity : heldQuantity) ||
-          document.targetPlan.executionTerms?.executionPurpose === undefined
+          document.targetPlan.executionTerms?.executionPurpose !== 'forced-close'
         )
           return yield* Result.fail(
             new SystemAssessmentError({ message: 'Reconciled liquidation cannot price an entry' }),

@@ -1,18 +1,18 @@
 { pkgs }:
 
 let
-  codexVersion = "0.166.0";
+  codexVersion = "0.172.0";
   codexPlatform =
     {
       x86_64-linux = {
         npmVersion = "${codexVersion}-linux-x64";
         vendor = "x86_64-unknown-linux-musl";
-        hash = "sha256-y8AKJtPQ4s7vxL6IkfioHvHjSbOxdbwK4wh2K8AB/ZM=";
+        hash = "sha256-SKXuXbqYx3RaSLjXKvhPkYgP7FhWJpYnMo/VZPYNQac=";
       };
       aarch64-linux = {
         npmVersion = "${codexVersion}-linux-arm64";
         vendor = "aarch64-unknown-linux-musl";
-        hash = "sha256-kEToQDl4ZPxsU50TcZsl+yars11TUzZsur97RVVAas0=";
+        hash = "sha256-Qm85pbYgCuZwahN6FBkSyOu9vfxiAhmZ1oHB/TmSiio=";
       };
     }
     .${pkgs.stdenv.hostPlatform.system}

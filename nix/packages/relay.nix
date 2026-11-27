@@ -18,5 +18,8 @@ in pkgs.rustPlatform.buildRustPackage {
   cargoLock.lockFile = repoRoot + "/services/relay/Cargo.lock";
   nativeBuildInputs = [ pkgs.cmake pkgs.protobuf ];
   nativeCheckInputs = [ pkgs.python3 pkgs.openssl ];
+  preCheck = ''
+    export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+  '';
   PROTOC = "${pkgs.protobuf}/bin/protoc";
 }

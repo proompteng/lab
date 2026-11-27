@@ -2,6 +2,7 @@ import { JevBatchPlanVersion } from './batch'
 import { JevPositionExitPolicySchema, jevPositionExitPolicy } from './exit-policy'
 import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
+import { freezeEvidence } from '../immutable-evidence'
 
 import { canonicalHashV1Result } from '../hash'
 import { IsoDateSchema, Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -9,14 +10,19 @@ import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import type { StrategyDefinition } from '../strategy/core'
 import { JevBatchPlanSchema, JevBatchResultSchema, usableEntryBatchInferences } from './batch'
 import { JevContractError } from './contract'
-import { selectSupportedEntryProposal } from './entry-questions'
+import { evaluateSupportedEntryProposals } from './entry-questions'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
-import type { JevProtocol } from './protocol'
-import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
+import type { JevProtocol, JevProtocolMaterial } from './protocol'
+import {
+  isPreparedJevBatch,
+  jevEntryQuoteExclusion,
+  reproduceJevTradingSignalBatchEvidence,
+  type PreparedJevBatch,
+} from './trading-signals'
 import { JevCandidatePlanStatus } from './batch'
 import { JevFundedExitPlanSchema, type JevFundedExitPlan } from './strategy-exit-plan'
-import { nativeEntryProposalExitPlan, isShortEntryProposal } from './native-entry-proposal'
+import { nativeEntryProposalExitPlan, isShortEntryProposal, type NativeEntryProposal } from './native-entry-proposal'
 import { ShortFundedExitPlanSchema, type ShortFundedExitPlan } from './short-exit-plan'
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
@@ -29,13 +35,96 @@ export type JevDecisionEvidence = typeof JevDecisionEvidenceSchema.Type
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
+type SupportedEntryCandidate = {
+  readonly symbol: string
+  readonly proposalId: string
+  readonly structuralSupport: number
+  readonly modeledGainMicros?: bigint
+  readonly modeledLossMicros: bigint
+}
+
+const EV_PROBABILITY_SCALE = 10_000n
+
+const compareSupportedEntryCandidates = (
+  left: SupportedEntryCandidate,
+  right: SupportedEntryCandidate,
+  rankByModeledExpectedValue = false,
+) => {
+  if (
+    rankByModeledExpectedValue &&
+    left.modeledGainMicros !== undefined &&
+    right.modeledGainMicros !== undefined &&
+    left.modeledLossMicros > 0n &&
+    right.modeledLossMicros > 0n
+  ) {
+    const leftProb = BigInt(Math.round(left.structuralSupport * Number(EV_PROBABILITY_SCALE)))
+    const rightProb = BigInt(Math.round(right.structuralSupport * Number(EV_PROBABILITY_SCALE)))
+    const leftEvNum = leftProb * left.modeledGainMicros - (EV_PROBABILITY_SCALE - leftProb) * left.modeledLossMicros
+    const rightEvNum =
+      rightProb * right.modeledGainMicros - (EV_PROBABILITY_SCALE - rightProb) * right.modeledLossMicros
+    const crossDiff = rightEvNum * left.modeledLossMicros - leftEvNum * right.modeledLossMicros
+    if (crossDiff > 0n) return 1
+    if (crossDiff < 0n) return -1
+  }
+  const supportOrder = right.structuralSupport - left.structuralSupport
+  if (supportOrder !== 0) return supportOrder
+  if (left.modeledLossMicros < right.modeledLossMicros) return -1
+  if (left.modeledLossMicros > right.modeledLossMicros) return 1
+  const symbolOrder = left.symbol.localeCompare(right.symbol)
+  return symbolOrder !== 0 ? symbolOrder : left.proposalId.localeCompare(right.proposalId)
+}
+
+export const selectJevEntryCandidatesFromSupported = <Candidate extends SupportedEntryCandidate>(
+  candidates: readonly Candidate[],
+  maximumPositions: number,
+  rankByModeledExpectedValue = false,
+) => {
+  const selected: Candidate[] = []
+  for (const candidate of candidates.toSorted((left, right) =>
+    compareSupportedEntryCandidates(left, right, rankByModeledExpectedValue),
+  )) {
+    if (selected.some((entry) => entry.symbol === candidate.symbol)) continue
+    selected.push(candidate)
+    if (selected.length === maximumPositions) break
+  }
+  return selected
+}
+
+const decisionPreparations = new WeakMap<object, { evidence: JevDecisionEvidence; batch: PreparedJevBatch }>()
+
+export const prepareJevDecisionEvidence = (
+  batch: PreparedJevBatch,
+  result: JevDecisionEvidence['batchResult'],
+  decidedAt: string,
+) =>
+  Result.gen(function* () {
+    if (!isPreparedJevBatch(batch)) return yield* unavailable('Jev decision requires its owned batch preparation')
+    const clock = yield* Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(decidedAt)
+    const batchResult = yield* Schema.decodeUnknownResult(JevBatchResultSchema, strictParseOptions)(result)
+    const detachedResult = yield* Result.try({
+      try: () => structuredClone(batchResult),
+      catch: (cause) => new JevContractError({ message: 'Jev decision could not retain its exact result', cause }),
+    })
+    const { snapshot: _snapshot, contentHash: _contentHash, ...observation } = batch.source.verified
+    const evidence: JevDecisionEvidence = freezeEvidence({
+      observation,
+      batchPlan: batch.plan,
+      batchResult: detachedResult,
+      decidedAt: clock,
+    })
+    decisionPreparations.set(evidence, { evidence, batch })
+    return evidence
+  })
+
 export const reproduceDecisionEvidence = (input: unknown, expectedVersion: JevBatchPlanVersion) =>
   Result.gen(function* () {
-    const evidence = yield* Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(input)
-    const { observation, plan } = yield* reproduceJevTradingSignalBatchEvidence(
-      evidence.observation,
-      evidence.batchPlan,
-    )
+    const prepared = typeof input === 'object' && input !== null ? decisionPreparations.get(input) : undefined
+    const evidence =
+      prepared?.evidence ?? (yield* Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(input))
+    const { observation, plan } =
+      prepared === undefined
+        ? yield* reproduceJevTradingSignalBatchEvidence(evidence.observation, evidence.batchPlan)
+        : { observation: prepared.batch.source.verified, plan: prepared.batch.plan }
     if (observation.schemaVersion !== 'bayn.jev-observation.v1')
       return yield* unavailable('Native Jev decisions require native observations')
     const inferences = yield* usableEntryBatchInferences(
@@ -63,7 +152,7 @@ export const reproduceDecisionEvidence = (input: unknown, expectedVersion: JevBa
 
 export const selectJevEntryCandidates = (
   observation: Pick<Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['observation'], 'snapshot'> & {
-    readonly protocol: Pick<JevProtocol, 'maximumPositions'>
+    readonly protocol: Pick<JevProtocolMaterial, 'schemaVersion' | 'maximumPositions'>
   },
   inferences: Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['inferences'],
   requests: readonly {
@@ -73,13 +162,7 @@ export const selectJevEntryCandidates = (
 ) =>
   Result.gen(function* () {
     const entryPlanRejections: Record<string, 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS' | 'NO_FUNDED_CANDIDATES'> = {}
-    const eligible: {
-      symbol: string
-      judgmentSupport: number
-      modeledLossMicros: bigint
-      weight: number
-      exitPlan: JevFundedExitPlan | ShortFundedExitPlan
-    }[] = []
+    const eligible: (SupportedEntryCandidate & { readonly proposal: NativeEntryProposal })[] = []
     for (const { symbol, inference } of inferences) {
       const quote = observation.snapshot.latestQuotes[symbol]
       const candidate = requests.find((entry) => entry.symbol === symbol)
@@ -92,35 +175,42 @@ export const selectJevEntryCandidates = (
       }
       if (disposition.status !== 'READY' || inference.jev.status !== 'RECEIVED')
         return yield* unavailable('Entry inference has no complete source-bound provider judgments')
-      const choice = yield* selectSupportedEntryProposal({
+      const evaluation = yield* evaluateSupportedEntryProposals({
         proposals: disposition.evaluation.proposals,
         response: inference.jev.inference.response,
+        protocol: observation.protocol,
       })
-      if (choice.selected === null) {
+      if (evaluation.supported.length === 0) {
         entryPlanRejections[symbol] = 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS'
         continue
       }
       if ((yield* jevEntryQuoteExclusion(quote)) !== null) continue
-      const { proposal, judgmentSupport, modeledLossMicros } = choice.selected
-      if (proposal.symbol !== symbol) return yield* unavailable('Selected proposal belongs to another symbol')
-      eligible.push({
+      for (const { proposal, structuralSupport, modeledGainMicros, modeledLossMicros } of evaluation.supported) {
+        if (proposal.symbol !== symbol) return yield* unavailable('Supported proposal belongs to another symbol')
+        eligible.push({
+          symbol,
+          proposalId: proposal.proposalId,
+          structuralSupport,
+          modeledGainMicros,
+          modeledLossMicros,
+          proposal,
+        })
+      }
+    }
+    return {
+      entryPlanRejections,
+      selected: selectJevEntryCandidatesFromSupported(
+        eligible,
+        observation.protocol.maximumPositions,
+        observation.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+          observation.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+          observation.protocol.schemaVersion === 'bayn.jev.protocol.v44',
+      ).map(({ symbol, proposal }) => ({
         symbol,
-        judgmentSupport,
-        modeledLossMicros,
         weight: proposal.funding.maximumTargetWeight * (isShortEntryProposal(proposal) ? -1 : 1),
         exitPlan: nativeEntryProposalExitPlan(proposal),
-      })
+      })),
     }
-    eligible.sort(
-      (left, right) =>
-        right.judgmentSupport - left.judgmentSupport ||
-        (left.modeledLossMicros < right.modeledLossMicros
-          ? -1
-          : left.modeledLossMicros > right.modeledLossMicros
-            ? 1
-            : left.symbol.localeCompare(right.symbol)),
-    )
-    return { entryPlanRejections, selected: eligible.slice(0, observation.protocol.maximumPositions) }
   })
 
 export const makeChartEntryTargetMaterial = <Evidence extends { readonly decidedAt: string }>(

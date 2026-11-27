@@ -209,6 +209,16 @@ visible unclaimed failures that the pool can retire; a restart keeps that failur
 Loss of an active runner, Pod, or node retains the owner and home for explicit fenced recovery. Lease age, missing
 Pods, and controller disconnection never authorize a replacement writer. Sleeping journals can reopen only with
 unchanged runtime and disk identities. An exited VMM fences traffic and reports failure.
+If a lifecycle command was withdrawn or the guest timed out, the workspace can cold boot from its retained disks
+after the runner confirms termination and authorization returns. During a runner upgrade, the controller waits for
+the running container's image ID to match the desired immutable image before dispatching the cold boot.
+While authority is paused, the desktop waits to
+reconnect automatically. An intentional sleep keeps the same disks and presents Resume.
+
+On cold boot the runner installs the Nanoagent binary and Codex bootstrap packaged in its current image. It updates
+and validates a copy of the private root before atomically replacing it. Nanoagent then installs the pinned Codex CLI
+in the retained home before starting the app-server. The other root and home files stay in place. A memory resume
+still uses its original guest process.
 
 Lifecycle commands monitor database leadership throughout execution. Withdrawn authority closes the private command's
 write side; the runner cancels that operation, terminates and reaps its VMM, and durably retains a failed claim before
@@ -321,8 +331,8 @@ failed or interrupted page fails the restore instead of displaying incomplete hi
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 History retains `control_codex` authorization and fresh policy checks, while reusing bounded observation audit receipts.
 
-The guest pins Codex 0.164.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
-`gpt-6.1-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
+The guest pins Codex 0.172.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
+`gpt-6.2-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
 
@@ -576,18 +586,21 @@ Ofz authority. Snapshot sleep and resume can therefore change the runtime epoch 
 observation. A replaced workspace, expired session or grant, revocation or changed recovery generation still denies
 access. Uncertain dispatch is reconciled through its exact native operation receipt and never resends the turn.
 
-Recovery preserves the accepted turn ID. Expired authority produces `authorization_required`; **Resume recovery**
+Recovery preserves the accepted turn ID. Expired authority produces `authorization_required`; **Reconnect**
 hands the workflow the current authenticated session through `RecoverCodexRun`, without sending another turn.
 Execution reconciliation backs off from two seconds to one minute. An authorization wait checks once a minute;
 a fresh recovery or Stop control wakes it immediately. Stop retains authorization and reconciliation states instead
 of masking them as cancellation. Neither action releases a conversation whose effects remain unknown.
-This changes the workflow journal and snapshot contract. Drain old active workflows before registration; do not
-move their journals onto the new worker or invent native terminal receipts to finish them.
+Drain old active workflows before changing the workflow journal or snapshot contract. Keep their journals on the
+workers that started them and preserve any native terminal receipts.
 
-Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
-transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
-receipt that can terminate admission. Other native errors retain acceptance reconciliation. Native terminal
-notifications are fsynced under their accepting generation, thread and turn. Version 2 interrupted receipts additionally
+Nanoagent fsyncs one operation intent and links its conversation gate before dispatch. An error that proves the
+native write never began is recorded as a rejection, along with native invalid-request, method-not-found and
+invalid-params errors. Transport failures after a write begins and other native errors retain acceptance
+reconciliation. Native terminal notifications are fsynced under their accepting generation, thread and turn.
+Dispatch and reconciliation serialize within the affected conversation. The first durable writer owns the operation ID
+across all conversations. A bounded observer can commit an exact native reply after the caller times out.
+Version 2 interrupted receipts additionally
 require confirmed termination of that turn's native command sessions. Nanoagent tracks command item IDs before
 interruption, inventories and terminates only those background terminals, and verifies their absence before writing
 the receipt. Other turns' background commands remain running. Cleanup retries cannot target a replacement process.
@@ -651,7 +664,7 @@ The [execution plan](../../docs/tengri/durable-agent-execution-plan.md) tracks e
 Run the native correlation and interruption contract with an isolated pinned binary:
 
 ```sh
-TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.164.0 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
+TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.172.0 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
 ```
 
 The test creates an isolated Codex home with an unauthenticated loopback fixture provider. It does not use a user's

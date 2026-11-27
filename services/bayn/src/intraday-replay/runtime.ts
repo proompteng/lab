@@ -3,7 +3,8 @@ import {
   constructExecutionDecision as buildExecutionDecision,
   constructObserveShadowDecision as buildObserveShadowDecision,
 } from '../shadow-decision'
-import { buildResearchMutationCycleDecision } from './decision-builder'
+import { buildResearchMutationCycleDecision, type ResearchAlphaBaselineLoader } from './decision-builder'
+import type { AnyReplayAlphaBaselineUse } from './alpha-baseline-use'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
@@ -36,6 +37,7 @@ import {
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
+import { readCurrentProtectionClose, readProtectionSubmit } from '../db/protection-release'
 import { CycleStore } from '../cycle/store/model'
 import { makeCycleStore, withWriterFenceCycleStore } from '../cycle/store/postgres'
 import { BrokerAccess, grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
@@ -102,6 +104,11 @@ export const reconcileReplayForActivation = <R>(
   )
 
 export interface ReplayExecutionRuntimeInput {
+  readonly loadAlphaBaseline?: (
+    ...args: [...Parameters<ResearchAlphaBaselineLoader>, commandIssuedAt: string]
+  ) => ReturnType<ResearchAlphaBaselineLoader>
+  readonly recordAlphaBaselineUse?: (use: AnyReplayAlphaBaselineUse) => Effect.Effect<void, OperationalError>
+  readonly decisionTrigger?: 'polling' | 'streaming'
   readonly decisionLatencyStress: Parameters<typeof makeReplayDecisionLatency>[1]
   readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
   readonly config: ExecutionStoreRuntimeConfig
@@ -157,7 +164,13 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const jevClient = yield* JevClient
     const entryInferenceJournal = yield* makeEntryInferenceJournal
     const jevEvaluations = yield* makeJevEvaluationStore
-    const latency = makeReplayDecisionLatency(input.currentUtcInstant, input.decisionLatencyStress)
+    const latency = makeReplayDecisionLatency(
+      input.currentUtcInstant,
+      input.decisionLatencyStress,
+      input.recordAlphaBaselineUse !== undefined,
+    )
+    const recordAlphaBaselineUse = input.recordAlphaBaselineUse
+    const loadAlphaBaseline = input.loadAlphaBaseline
     const jevBatches = latency.wrapStore(
       yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations)),
     )
@@ -279,7 +292,22 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           }),
         )
         const engine = yield* makeTradingEngine({
-          buildDecision: buildResearchMutationCycleDecision,
+          buildDecision: (decision) =>
+            buildResearchMutationCycleDecision(
+              decision,
+              loadAlphaBaseline === undefined
+                ? undefined
+                : (query, observedAt) =>
+                    latency.currentCommandIssuedAt.pipe(
+                      Effect.flatMap((commandIssuedAt) => loadAlphaBaseline(query, observedAt, commandIssuedAt)),
+                    ),
+              recordAlphaBaselineUse === undefined
+                ? undefined
+                : (use) =>
+                    latency.currentCommandIssuedAt.pipe(
+                      Effect.flatMap((commandIssuedAt) => recordAlphaBaselineUse({ ...use, commandIssuedAt })),
+                    ),
+            ),
           authority,
           riskPolicyHash: generation.riskPolicyHash,
           cycle: {
@@ -288,6 +316,11 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             strategy: input.strategy,
             intradayMarketData: marketData,
             executionCycleClosureStore: closures,
+            readProtectionClose: (reference, maxAgeMs) =>
+              readCurrentProtectionClose(reference, identity.accountId, maxAgeMs).pipe(
+                Effect.provideService(PgClient.PgClient, sql),
+                Effect.provideService(WriterFence, fence),
+              ),
             blockedCycleIntentStore,
             reconciliationIntervalMs: input.reconciliationIntervalMs,
             reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
@@ -305,6 +338,11 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             persistedCapitalGrants,
             readFinalExecutionRiskContext: (observedAt) =>
               readFinalExecutionRiskContext(sql, identity.accountId, observedAt),
+            readProtectionSubmit: (intentId, proofId) =>
+              readProtectionSubmit(intentId, proofId, 'transmission').pipe(
+                Effect.provideService(PgClient.PgClient, sql),
+                Effect.provideService(WriterFence, fence),
+              ),
           },
         })
         const startup = yield* engine.startCycle({
@@ -350,13 +388,17 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       mutations: mutationStore,
       store,
       marketData,
-      // Offline studies retain their registered sampling cadence even when the live owner waits for a stream event.
+      // Retained v11 studies keep their polling cadence; native replay preserves the owner's next wake.
       advance: driver.advance.pipe(
         Effect.provideContext(resources),
-        Effect.map((pass) => ({
-          ...pass,
-          nextDelayMs: Math.min(input.pollIntervalMs, pass.nextDelayMs ?? input.pollIntervalMs),
-        })),
+        Effect.map((pass) =>
+          input.decisionTrigger === 'streaming'
+            ? pass
+            : {
+                ...pass,
+                nextDelayMs: Math.min(input.pollIntervalMs, pass.nextDelayMs ?? input.pollIntervalMs),
+              },
+        ),
       ),
       nextDelayMs: input.pollIntervalMs,
       reconcile,

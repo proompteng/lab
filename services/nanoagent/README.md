@@ -262,7 +262,7 @@ guest has Linux administration capabilities inside the VM. The host VMM runs wit
 default seccomp filter, and with no host namespace or filesystem mounts in its Pod. Codex threads and turns use
 `danger-full-access` inside the guest.
 
-Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread and turn options override that default;
+Nanoagent starts Codex with `gpt-6.2-sol` as its default model. Explicit thread and turn options override that default;
 omitted options preserve an existing thread's settings.
 
 The operating-system root is the private 1.5 GiB Firecracker disk. Snapshot sleep/resume retains its changes and running
@@ -272,7 +272,7 @@ installed system packages consume root-filesystem space. Image builds exercise p
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Its `--runtime` mode requires an independently provisioned real guest to exercise mounts and network administration;
 the container-based KVM fixture has been removed.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.164.0 package from the npm registry,
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.172.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available. Preparing a vacant slot allows 35 minutes for language-toolchain, developer-tool,

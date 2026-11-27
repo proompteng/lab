@@ -27,16 +27,13 @@ References:
 - https://forgejo.org/docs/latest/
 - https://artifacthub.io/packages/helm/forgejo-helm/forgejo
 
-## Version 16 rollout
+## Version 17 recovery
 
 The Application tracks `kargo/forgejo` and authorizes only `forgejo-release:forgejo`.
-The Warehouse requires a main source commit and its matching immutable
-published image. The Stage updates both Helm-rendered containers and the
-isolated rehearsal through a Kustomize image transformation, writes source
-metadata, and syncs the exact generated commit.
+The 17.0.2 cutover retained offline PostgreSQL and repository snapshots and
+their isolated clone claims. Recover them as a pair from the
+`forgejo-server-17-0-2-cutover-*` resources. The published image uses the
+upstream rootless index and platform digests exercised in the clone rehearsal.
 
-The selected-image rehearsal passed against new snapshots and isolated clones.
-The final promotion restores one production replica and retires the maintenance
-Jobs, ConfigMap, read-only RBAC and isolation policy. Both recovery sets and all
-claims remain retained. Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md)
-for migration acceptance and coordinated recovery.
+Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md) for
+the acceptance checks and coordinated recovery.

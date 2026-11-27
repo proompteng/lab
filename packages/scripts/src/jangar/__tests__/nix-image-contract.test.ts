@@ -14,6 +14,6 @@ describe('Jangar Nix image contract', () => {
     expect(image).toContain('mcp_servers = builtins.removeAttrs codexConfigTemplate.mcp_servers [ "alpaca" ];')
     expect(image).toContain('"HOME=/root"')
     expect(image).toContain('"CODEX_HOME=/root/.codex"')
-    expect(config).toContain('model = "gpt-6-astra"')
+    expect(config).toContain('model = "gpt-6.2-sol"')
   })
 })

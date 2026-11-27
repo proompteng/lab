@@ -33,7 +33,7 @@ spec:
       terminationGracePeriodSeconds: 120
       initContainers:
         - name: model-init
-          image: ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2
+          image: ollama/ollama:0.40.17@sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754
           imagePullPolicy: IfNotPresent
           command:
             - sh
@@ -85,7 +85,7 @@ spec:
               readOnly: true
       containers:
         - name: ollama
-          image: ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2
+          image: ollama/ollama:0.40.17@sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754
           imagePullPolicy: IfNotPresent
           env:
             - name: OLLAMA_HOST

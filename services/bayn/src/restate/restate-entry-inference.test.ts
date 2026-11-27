@@ -16,7 +16,7 @@ const request = {
   epoch: 2,
   sourceRevision: config.sourceRevision,
   jobId: 'd'.repeat(64),
-}
+} as const
 const completed: JevInferenceCompletion = {
   schemaVersion: 'bayn.jev-inference-completion.v1',
   jobId: request.jobId,
@@ -28,9 +28,9 @@ const completed: JevInferenceCompletion = {
   status: 'Completed',
   resultHash: '1'.repeat(64),
 }
-const evaluate = (runtime: Parameters<typeof makeBaynEntryInference>[1]) =>
+const evaluate = (runtime: Pick<Parameters<typeof makeBaynEntryInference>[1], 'executeInference'>) =>
   (
-    makeBaynEntryInference(config, runtime) as unknown as {
+    makeBaynEntryInference(config, { ...runtime, awaitDispatch: async () => ({ active: false }) }) as unknown as {
       service: { evaluate: (ctx: restate.Context, input: unknown) => Promise<void> }
     }
   ).service.evaluate
@@ -39,9 +39,9 @@ test('inference completion returns only a durable hint to the same account owner
   const sends: unknown[] = []
   let calls = 0
   await evaluate({
-    executeInference: async (jobId) => {
+    executeInference: async (command) => {
       calls += 1
-      expect(jobId).toBe(request.jobId)
+      expect(command).toEqual(request)
       return completed
     },
   })(

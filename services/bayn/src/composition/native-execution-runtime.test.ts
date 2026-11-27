@@ -48,16 +48,15 @@ import {
   ExecutionControllerStatusStoreError,
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
-import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
+import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import type { RecoveryFirstRuntime } from '../observe-composition/model'
 import type { CycleRunnerError } from '../cycle/runner/model'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
-import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { AuthorityGenerationStore } from '../db/execution-store/contract'
-import { Authority, KillState, type AuthorityState } from '../execution/contracts'
+import { Authority, KillState } from '../execution/contracts'
 import { operationalError, type OperationalError } from '../errors'
 import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeRebindingCycleDriver } from './generation-cycle'
@@ -312,7 +311,7 @@ describe('native execution runtime', () => {
       dueAt: '2026-08-13T18:00:07.000Z',
     },
   ])(
-    'one pending query supplies fresh dispatch jobs and the original expiry/protection timer: $dueAt',
+    'one pending query preserves the original expiry and protection timer: $dueAt',
     async ({ protectionAt, expiresAt, dueAt }) => {
       let reads = 0
       let advances = 0
@@ -349,7 +348,6 @@ describe('native execution runtime', () => {
       )
       expect(reads).toBe(1)
       expect(advances).toBe(1)
-      expect(result.inferenceJobs).toEqual([job])
       expect(result.outcome.nextWakeAt).toBe(dueAt)
       expect(projected).toMatchObject({ nextDueAt: dueAt })
     },
@@ -581,9 +579,8 @@ describe('native execution runtime', () => {
     },
   )
 
-  test('an uncertain SQL projection and its later replay rediscover committed work without another financial pass', async () => {
+  test('an uncertain projection replays the original expiry without reloading the committed jobs', async () => {
     const job = pendingJob('2026-08-13T18:00:07.000Z')
-    const recoveredJob: JevInferenceJob = { ...job, status: 'Claimed' }
     let reads = 0
     let advances = 0
     let projects = 0
@@ -598,7 +595,7 @@ describe('native execution runtime', () => {
       },
       Effect.sync(() => {
         reads++
-        return reads === 1 ? [job] : [recoveredJob]
+        return [job]
       }),
     )
     const store: ExecutionControllerStatusStoreShape = {
@@ -624,75 +621,16 @@ describe('native execution runtime', () => {
         yield* TestClock.setTime(Date.parse(completedAt))
         const bound = yield* makeBound
         const first = yield* executeNativeExecutionAdvance(command, bound, store, controllerPlanHash)
-        expect(reads).toBe(2)
+        expect(reads).toBe(1)
         const replay = yield* executeNativeExecutionAdvance(command, bound, store, controllerPlanHash)
         return [first, replay] as const
       }).pipe(Effect.provide(TestClock.layer())),
     )
-    expect(reads).toBe(3)
+    expect(reads).toBe(1)
     expect(advances).toBe(1)
     expect(projects).toBe(1)
-    expect(first.inferenceJobs).toEqual([recoveredJob])
-    expect(replay.inferenceJobs).toEqual([recoveredJob])
+    expect(first.outcome.nextWakeAt).toBe(job.expiresAt)
     expect(replay.outcome).toEqual(first.outcome)
-  })
-
-  test('a replay cannot acknowledge committed work when durable pending recovery fails', async () => {
-    let reads = 0
-    const failure = operationalError({
-      component: 'database',
-      operation: 'jev-batch',
-      message: 'recovery query failed',
-    })
-    const bound = await Effect.runPromise(
-      bindPendingDriver(
-        {
-          ...windowClosedDriver,
-          advance: Effect.die('replayed receipt cannot repeat financial work'),
-        },
-        Effect.sync(() => {
-          reads++
-        }).pipe(Effect.andThen(Effect.fail(failure))),
-      ),
-    )
-    const result = await Effect.runPromise(
-      executeNativeExecutionAdvance(
-        command,
-        bound,
-        {
-          read: () => Effect.succeed(status({ lastPass: windowClosedObservation })),
-          project: () => Effect.die('replayed receipt cannot be rewritten'),
-        },
-        controllerPlanHash,
-      ).pipe(Effect.result),
-    )
-    expect(reads).toBe(1)
-    expect(result).toMatchObject({ _tag: 'Failure', failure: { _tag: 'TransientExecutionFailure', cause: failure } })
-  })
-
-  test('pending dispatch continuation can change without changing its canonical financial receipt', async () => {
-    const job = pendingJob('2026-08-13T18:00:07.000Z')
-    const pass = { observation: windowClosedObservation, nextWakeAt: job.expiresAt }
-    const [prepared, claimed] = await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(completedAt))
-        return [
-          yield* advanceExecutionOnce(command, {
-            ...windowClosedDriver,
-            advance: Effect.succeed({ ...pass, inferenceJobs: [job] }),
-          }),
-          yield* advanceExecutionOnce(command, {
-            ...windowClosedDriver,
-            advance: Effect.succeed({ ...pass, inferenceJobs: [{ ...job, status: 'Claimed' as const }] }),
-          }),
-        ] as const
-      }).pipe(Effect.provide(TestClock.layer())),
-    )
-    expect(prepared.receiptHash).toBe(claimed.receiptHash)
-    expect(prepared.nextWakeAt).toBe(job.expiresAt)
-    expect(claimed.nextWakeAt).toBe(job.expiresAt)
-    expect(prepared.inferenceJobs?.[0]?.status).toBe('Prepared')
-    expect(claimed.inferenceJobs?.[0]?.status).toBe('Claimed')
   })
 
   test('blocked historical expense cleanup cannot delay serialized protection advances', async () => {
@@ -786,118 +724,6 @@ describe('native execution runtime', () => {
     )
   })
 
-  test.each([
-    {
-      name: 'execution allowed',
-      maximum: Authority.Execution,
-      effective: Authority.Execution,
-      kill: KillState.Clear,
-      rotated: false,
-      claims: 1,
-    },
-    {
-      name: 'observe allowed',
-      maximum: Authority.Observe,
-      effective: Authority.Observe,
-      kill: KillState.Clear,
-      rotated: false,
-      claims: 1,
-    },
-    {
-      name: 'operator kill',
-      maximum: Authority.Execution,
-      effective: Authority.Observe,
-      kill: KillState.Active,
-      rotated: false,
-      claims: 0,
-    },
-    {
-      name: 'safety restriction',
-      maximum: Authority.Execution,
-      effective: Authority.Observe,
-      kill: KillState.Clear,
-      rotated: false,
-      claims: 0,
-    },
-    {
-      name: 'generation rotated',
-      maximum: Authority.Execution,
-      effective: Authority.Execution,
-      kill: KillState.Clear,
-      rotated: true,
-      claims: 0,
-    },
-  ])('queued inference rereads authority before claiming provider expense: $name', async (scenario) => {
-    const evidence = nativeJevDecisionEvidence(nativeJevFixture())
-    const retained = { plan: evidence.batchPlan, result: evidence.batchResult }
-    const job: JevInferenceJob = {
-      schemaVersion: 'bayn.jev-inference-job.v1',
-      jobId: retained.plan.batchId,
-      batchId: retained.plan.batchId,
-      cycleId: retained.plan.cycleId,
-      authorityGenerationHash: retained.plan.authorityGenerationHash,
-      expiresAt: retained.plan.expiresAt,
-      status: 'Prepared',
-    }
-    let authority: AuthorityState = {
-      schemaVersion: 'bayn.paper-authority.v1',
-      generationHash: job.authorityGenerationHash,
-      maximum: scenario.maximum,
-      effective: scenario.maximum,
-      kill: KillState.Clear,
-      version: 1,
-      updatedAt: completedAt,
-    }
-    let claims = 0
-    let settlements = 0
-    const forbidden = () => Effect.die('queued dispatch must not mutate authority or financial state')
-    const captured = Context.make(AuthorityGenerationStore, {
-      readAuthorityState: Effect.sync(() => authority),
-      ensureAuthorityGeneration: forbidden,
-      readOrInitializeObserveAuthority: forbidden,
-      readResearchAuthorityGeneration: forbidden,
-      readAuthorityGenerationLineage: forbidden,
-    }).pipe(
-      Context.add(JevInferenceWorkStore, {
-        pending: forbidden,
-        settleExpired: forbidden,
-        resume: forbidden,
-        read: () => Effect.succeed(job),
-        claim: () =>
-          Effect.sync(() => {
-            claims += 1
-            return null
-          }),
-      }),
-      Context.add(JevBatchStore, {
-        read: forbidden,
-        pending: forbidden,
-        begin: forbidden,
-        complete: forbidden,
-        finish: () =>
-          Effect.sync(() => {
-            settlements += 1
-            return retained
-          }),
-      }),
-    ) as Context.Context<RecoveryFirstRuntime>
-    const bound = await Effect.runPromise(
-      bindRecoveryFirstCycleDriver(windowClosedDriver, executionBuild).pipe(Effect.provideContext(captured)),
-    )
-    authority = {
-      ...authority,
-      effective: scenario.effective,
-      kill: scenario.kill,
-      generationHash: scenario.rotated ? hash('f') : authority.generationHash,
-    }
-    if (bound.inference === undefined) throw new Error('admitted inference adapter was not bound')
-    const completed = await Effect.runPromise(bound.inference.execute(job.jobId))
-    expect(claims).toBe(scenario.claims)
-    expect(settlements).toBe(1)
-    expect(completed?.status).toBe('Completed')
-    expect(completed?.authorityGenerationHash).toBe(job.authorityGenerationHash)
-  })
-
   const observePreflight = <E>(read: Effect.Effect<readonly unknown[], E>) => {
     const original = plan({ brokerAccess: 'read-only' })
     const { capitalActivationRequestJson: _request, ...config } = original.config
@@ -914,6 +740,7 @@ describe('native execution runtime', () => {
     version: '1',
     updated_at: '2026-11-05T18:00:00.000Z',
     observed_at: new Date('2026-11-05T18:01:00.000Z'),
+    replaces_account: false,
   }
 
   test.each([{ rows: [] }, { rows: [authorityRow] }])(
@@ -932,11 +759,21 @@ describe('native execution runtime', () => {
     },
   )
 
+  test('authority preflight recognizes a different configured account', async () => {
+    const result = await Effect.runPromise(
+      observePreflight(
+        Effect.succeed([{ ...authorityRow, maximum: 'PAPER', effective: 'PAPER', replaces_account: true }]),
+      ).pipe(Effect.result),
+    )
+    expect(Result.isSuccess(result)).toBe(true)
+  })
+
   test.each([
     { ...authorityRow, maximum: 'PAPER', effective: 'PAPER' },
     { ...authorityRow, maximum: 'invalid' },
     { ...authorityRow, version: '0' },
     { ...authorityRow, updated_at: '2026-11-05T18:02:00.000Z' },
+    { ...authorityRow, replaces_account: null },
   ])('authority preflight rejects incompatible or invalid durable state: %j', async (row) => {
     const result = await Effect.runPromise(observePreflight(Effect.succeed([row])).pipe(Effect.result))
     expect(Result.isFailure(result)).toBe(true)
@@ -992,14 +829,25 @@ describe('native execution runtime', () => {
     } as CandidateObservation
     const batch = { plan: { observationHash: recoveredHash }, result: null } as JevBatchEvidence
     const momentum = makeRepeatedMomentumPolicy(fixtureRuntime.definition.parameters)
-    const retainedPolicies: Array<typeof momentum | undefined> = []
+    const retainedPolicies: Array<Parameters<CandidateObservationStore['Service']['record']>[1]> = []
+    const sessionState = { morningOrbTakenSymbols: ['COHR'], middayReversionCompleted: true }
     let advances = 0
     const currentDriver = {
       ...driver,
       advance: Effect.gen(function* () {
         if (++advances === 1) {
-          yield* (yield* CandidateObservationStore).record(candidate, momentum).pipe(Effect.orDie)
-          yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.orDie)
+          const observations = yield* CandidateObservationStore
+          const readSessionState = observations.readIntradayAlphaSessionState
+          if (readSessionState === undefined) return yield* Effect.die('Wrapped store lost session history')
+          const history = yield* readSessionState({
+            cycleId: hash('d'),
+            accountId: 'paper-fixture',
+            sessionDate: '2026-09-04',
+            strategyProtocolHash: hash('e'),
+          }).pipe(Effect.orDie)
+          expect(history).toEqual(sessionState)
+          yield* observations.record(candidate, momentum).pipe(Effect.orDie)
+          yield* observations.record(candidate).pipe(Effect.orDie)
           yield* (yield* JevBatchStore).finish(hash('c')).pipe(Effect.orDie)
         }
         return { observation: windowClosedObservation }
@@ -1011,6 +859,7 @@ describe('native execution runtime', () => {
           retainedPolicies.push(policy)
         }),
       latestJevWindowEnd: () => Effect.succeed(Option.none()),
+      readIntradayAlphaSessionState: () => Effect.succeed(sessionState),
     }).pipe(
       Context.add(JevBatchStore, {
         read: () => Effect.succeed(batch),
@@ -1034,11 +883,13 @@ describe('native execution runtime', () => {
       ...windowClosedObservation,
       executionBuild,
       jevObservationReferences: { hashes: [recoveredHash, firstHash], complete: true },
+      alphaObservationReferences: { hashes: [], complete: true },
     })
     expect(results[1]?.observation).toEqual({
       ...windowClosedObservation,
       executionBuild,
       jevObservationReferences: { hashes: [], complete: true },
+      alphaObservationReferences: { hashes: [], complete: true },
     })
     expect(retainedPolicies).toEqual([momentum, undefined])
   })
@@ -1155,7 +1006,66 @@ describe('native execution runtime', () => {
               : [],
           complete: false,
         },
+        alphaObservationReferences: { hashes: [], complete: true },
       })
+    },
+  )
+
+  test.each(['complete', 'failure', 'overflow', 'malformed', 'instrumentation-failure'] as const)(
+    'retains independent alpha references with %s source evidence and no Jev batch store',
+    async (mode) => {
+      const failure = operationalError({ component: 'database', operation: 'fixture', message: 'record failed' })
+      let writes = 0
+      const context = Context.make(CandidateObservationStore, {
+        record: () =>
+          Effect.suspend(() => {
+            writes++
+            return mode === 'failure' && writes > 1 ? Effect.fail(failure) : Effect.void
+          }),
+        latestJevWindowEnd: () => Effect.succeed(Option.none()),
+      }) as Context.Context<RecoveryFirstRuntime>
+      const results = await Effect.runPromise(
+        Effect.gen(function* () {
+          let pass = 0
+          const bound = yield* bindRecoveryFirstCycleDriver(
+            {
+              ...driver,
+              advance: Effect.gen(function* () {
+                if (pass++ === 0) {
+                  const store = yield* CandidateObservationStore
+                  for (let index = 0; index < (mode === 'overflow' ? 20 : 2); index++) {
+                    const candidate = {
+                      payload: { schemaVersion: 'bayn.intraday-alpha-observation.v2' },
+                      get contentHash() {
+                        if (mode === 'instrumentation-failure') throw new Error('reference unavailable')
+                        return mode === 'malformed' ? 'invalid' : index.toString(16).padStart(64, '0')
+                      },
+                    } as CandidateObservation
+                    yield* store.record(candidate).pipe(Effect.ignore)
+                    // A duplicate successful reference must not consume the bounded inventory.
+                    if (mode === 'complete') yield* store.record(candidate).pipe(Effect.orDie)
+                  }
+                }
+                return { observation: windowClosedObservation, nextDelayMs: 1000 }
+              }),
+            },
+            executionBuild,
+          ).pipe(Effect.provideContext(context))
+          return [yield* bound.advance, yield* bound.advance]
+        }),
+      )
+      const expectedCount = mode === 'overflow' ? 16 : mode === 'complete' ? 2 : mode === 'failure' ? 1 : 0
+      expect(results[0]?.observation).toMatchObject({
+        ...windowClosedObservation,
+        alphaObservationReferences: {
+          hashes: Array.from({ length: expectedCount }, (_, index) => index.toString(16).padStart(64, '0')),
+          complete: mode === 'complete',
+        },
+        jevObservationReferences: { hashes: [], complete: false },
+      })
+      expect(results[0]?.nextDelayMs).toBe(1000)
+      expect(results[1]?.observation.alphaObservationReferences).toEqual({ hashes: [], complete: true })
+      expect(writes).toBe(mode === 'overflow' ? 20 : mode === 'complete' ? 4 : 2)
     },
   )
 

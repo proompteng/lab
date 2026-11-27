@@ -7,7 +7,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
-  version: "9.1"
+  version: "9.2"
   arch: replica
   replicas:
     shards: 1
@@ -31,7 +31,7 @@ spec:
   storage:
     storageClassName: local-path
     capacity: 10Gi
-    # v2.1.0 adds a Cluster ownerReference when this is true. Leave it
+    # The operator adds a Cluster ownerReference when this is true. Leave it
     # false so Kubernetes retains the PVCs independently of the Cluster.
     retainAfterDeleted: false
   access:

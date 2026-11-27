@@ -17,6 +17,29 @@ const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
 const sourceRevision = 'c'.repeat(40)
 const requestIdentityKey = 'publickeyv1_2G8dCQhArfvGpzPw5Vx2ALciR4xCLHfS5YaT93XjNxX9'
+const inactiveActivityRuntime = {
+  verify: () => {
+    throw new Error('discovery does not verify broker activities')
+  },
+  cursor: async () => ({
+    cursor: null,
+    caughtUp: false,
+    replayFromId: null,
+    replayUntilId: null,
+    completionHash: null,
+    fillFeeComplete: true,
+    sourceRevision,
+  }),
+  record: async () => {
+    throw new Error('discovery does not record broker activities')
+  },
+  completeCatchup: async () => {
+    throw new Error('discovery does not record broker activity catchup')
+  },
+  heartbeat: async () => {
+    throw new Error('discovery does not record broker activity heartbeats')
+  },
+}
 
 test.each([400, 403, 404, 408, 412, 429, 503])(
   'market hint HTTP %s keeps permanent rejection distinct from retryable ingress failures',
@@ -241,7 +264,7 @@ describe('native Restate execution server', () => {
     )
   })
 
-  test('discovers two owners and a shared authenticated deployment activation with seven-day receipts', async () => {
+  test('discovers separate execution, observation and projection owners with seven-day receipts', async () => {
     const handler = makeRestateExecutionEndpointHandler(
       { controllerKey, operationTimeoutMs: 30_000, planHash, sourceRevision },
       {
@@ -252,10 +275,16 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [],
-      { executeInference: async () => null },
+      { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
       {
+        activityRuntime: inactiveActivityRuntime,
         runtime: {
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
+          isNotificationCovered: async () => false,
+          project: async () => {
+            throw new Error('endpoint discovery does not project broker source events')
+          },
           verifyNotification: () => {
             throw new Error('discovery does not verify notifications')
           },
@@ -323,9 +352,11 @@ describe('native Restate execution server', () => {
       },
       {
         name: 'BaynBrokerObservations',
-        handlers: ['notify', 'accept', 'refresh', 'activate', 'capture', 'freshness', 'status'],
+        handlers: ['notify', 'reconcile', 'refresh', 'activate', 'capture', 'freshness', 'status'],
       },
-      { name: 'BaynEntryInference', handlers: ['evaluate'] },
+      { name: 'BaynBrokerSourceProjector', handlers: ['project'] },
+      { name: 'BaynBrokerActivities', handlers: ['cursor', 'ingest', 'catchup', 'heartbeat'] },
+      { name: 'BaynEntryInference', handlers: ['watch', 'evaluate'] },
     ])
     expect(services[0]?.handlers?.find(({ name }) => name === 'prepareActivation')).toMatchObject({
       ty: 'SHARED',
@@ -342,6 +373,31 @@ describe('native Restate execution server', () => {
       ingressPrivate: false,
       idempotencyRetention: 0,
       journalRetention: 0,
+    })
+    expect(services[2]?.handlers?.find(({ name }) => name === 'project')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: true,
+      idempotencyRetention: 7 * 24 * 60 * 60_000,
+    })
+    expect(services[3]?.handlers?.find(({ name }) => name === 'cursor')).toMatchObject({
+      ty: 'SHARED',
+      ingressPrivate: false,
+    })
+    expect(services[3]?.handlers?.find(({ name }) => name === 'ingest')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: false,
+      idempotencyRetention: 7 * 24 * 60 * 60_000,
+    })
+    for (const name of ['catchup', 'heartbeat'])
+      expect(services[3]?.handlers?.find((handler) => handler.name === name)).toMatchObject({
+        ty: 'EXCLUSIVE',
+        ingressPrivate: false,
+        idempotencyRetention: 7 * 24 * 60 * 60_000,
+      })
+    expect(services[4]?.handlers?.find(({ name }) => name === 'watch')).toMatchObject({ ingressPrivate: true })
+    expect(services[1]?.handlers?.find(({ name }) => name === 'refresh')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: true,
     })
     expect(
       services[0]?.handlers
@@ -404,10 +460,16 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [requestIdentityKey],
-      { executeInference: async () => null },
+      { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
       {
+        activityRuntime: inactiveActivityRuntime,
         runtime: {
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
+          isNotificationCovered: async () => false,
+          project: async () => {
+            throw new Error('endpoint discovery does not project broker source events')
+          },
           verifyNotification: () => {
             throw new Error('discovery does not verify notifications')
           },

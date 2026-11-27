@@ -8,7 +8,7 @@ import {
 import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import { replayFeeActivity } from './broker-fees'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
-import { InstrumentSymbolSchema } from '../instruments'
+import { InstrumentSymbolSchema, instrumentMarket, MarketKind } from '../instruments'
 import { Data, Result, Schema } from 'effect'
 import {
   AssetClass,
@@ -19,7 +19,7 @@ import {
   TimeInForce,
   TradeActivityType,
 } from '../broker/alpaca/model'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import {
   OrderSide as DomainSide,
@@ -39,7 +39,8 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { applyReplayFill, createReplayLedger } from './ledger'
-import { ReplayOrderExecutionSchema } from './broker-execution-evidence'
+import { ReplayOrderExecutionSchema, replayArrivalQuote } from './broker-execution-evidence'
+import { equityStopTradeQuote } from './equity-execution-tape'
 import type { ReplayBrokerConfig, ReplayBrokerFill, ReplayBrokerState, ReplayOrder } from './broker'
 
 const OrderFields = {
@@ -172,6 +173,7 @@ export type ReplayBrokerEvidenceConfig = Pick<
   | 'sourceManifestHash'
   | 'openingCashMicros'
   | 'protocol'
+  | 'equityExecutionTape'
   | 'assumptions'
   | 'fractionalTrading'
   | 'shortingEnabled'
@@ -185,6 +187,7 @@ export const replayBrokerConfigurationHash = (config: ReplayBrokerEvidenceConfig
     sourceManifestHash: config.sourceManifestHash,
     openingCashMicros: config.openingCashMicros,
     protocol: config.protocol,
+    ...(config.equityExecutionTape === undefined ? {} : { equityExecutionTapeHash: config.equityExecutionTape.hash }),
     assumptions: config.assumptions,
     cryptoFeeSchedule: cryptoTakerFeeSchedule,
     fractionalTrading: config.fractionalTrading,
@@ -309,25 +312,48 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         )
           return yield* fail('Broker checkpoint protection group differs from submitted strategy terms')
       }
+      const record = state.orders.find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
+      const tape = instrumentMarket(order.symbol) === MarketKind.Equity ? config.equityExecutionTape : undefined
+      const elections = record?.executions.filter((execution) => execution.stopTradeIndex !== undefined) ?? []
+      if (
+        elections.length !==
+        (tape !== undefined && order.orderType === OrderType.StopLimit && order.stopTriggeredAt !== undefined ? 1 : 0)
+      )
+        return yield* fail('Broker checkpoint has unexpected stop-election evidence')
       if (
         order.orderType === OrderType.StopLimit &&
         (order.stopPriceMicros === undefined ||
           (order.stopTriggeredAt !== undefined &&
             (order.stopTriggeredAt < order.createdAt ||
               order.stopTriggeredAt > order.updatedAt ||
-              state.orders
-                .find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
-                ?.executions.some(
-                  (execution) =>
-                    execution.arrivedAt === order.stopTriggeredAt &&
-                    execution.quote !== null &&
-                    (order.side === OrderSide.Buy
-                      ? Math.round(execution.quote.askPrice * 1_000_000) >= Number(order.stopPriceMicros)
-                      : Math.round(execution.quote.bidPrice * 1_000_000) <= Number(order.stopPriceMicros)),
-                ) !== true)))
+              record?.executions.some((execution) => {
+                const quote = execution.quote
+                const stopPrice = order.stopPriceMicros
+                if (execution.arrivedAt !== order.stopTriggeredAt || quote === null || stopPrice === undefined)
+                  return false
+                if (tape === undefined) {
+                  return order.side === OrderSide.Buy
+                    ? Math.round(quote.askPrice * 1_000_000) >= Number(stopPrice)
+                    : Math.round(quote.bidPrice * 1_000_000) <= Number(stopPrice)
+                }
+                if (execution.stopTradeIndex === undefined) return false
+                const pinnedQuote = equityStopTradeQuote({
+                  tape,
+                  index: execution.stopTradeIndex,
+                  symbol: order.symbol,
+                  side: order.side,
+                  stopMicros: stopPrice,
+                  atMs: Date.parse(execution.arrivedAt),
+                  maximumQuoteAgeMs: config.protocol.maximumQuoteAgeMs,
+                })
+                return (
+                  pinnedQuote !== undefined &&
+                  execution.maximumQuoteAgeMs === config.protocol.maximumQuoteAgeMs &&
+                  canonicalJsonEqualV1(quote, replayArrivalQuote(pinnedQuote, execution.arrivedAt))
+                )
+              }) !== true)))
       )
         return yield* fail('Broker checkpoint stop trigger lacks its executable quote')
-      const record = state.orders.find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
       if (
         ([OrderStatus.New, OrderStatus.PartiallyFilled, OrderStatus.Filled].includes(order.status) ||
           (record?.executions.length ?? 0) > 0) &&

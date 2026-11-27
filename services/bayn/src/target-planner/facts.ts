@@ -1,6 +1,7 @@
 import { instrumentMarket, MarketKind } from '../instruments'
 import { quantityScale } from '../quantity'
 import { equityShortIsEligible } from '../execution/equity-short'
+import { matchesProtectionCloseBook } from '../execution/protection-close-basis'
 import { Result, pipe } from 'effect'
 
 import { AccountStatus, OrderStatus, ReconciliationStatus } from '../execution/contracts'
@@ -178,7 +179,7 @@ export const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: Targe
 const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
   const { input, priceSymbols, targetSymbols } = facts
   const accountId = input.accountId
-  const partialClose = input.executionTerms.executionPurpose !== undefined
+  const partialScope = input.executionTerms.executionPurpose !== undefined
   return (
     (targetSymbols.length > 0 || input.brokerState.positions.length === 0) &&
     sameStrings(targetSymbols, priceSymbols) &&
@@ -187,7 +188,7 @@ const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
     input.brokerState.account.accountId === accountId &&
     input.brokerState.reconciliation.accountId === accountId &&
     input.brokerState.positions.every(
-      (position) => position.accountId === accountId && (partialClose || targetSymbols.includes(position.symbol)),
+      (position) => position.accountId === accountId && (partialScope || targetSymbols.includes(position.symbol)),
     ) &&
     input.brokerState.orders.every((order) => order.accountId === accountId)
   )
@@ -330,7 +331,10 @@ export const derivePlannedTargetFacts = (
             const maximumBuyQuantity = facts.maximumBuyQuantities.get(symbol)
             const buyLiquidityUnavailable = desiredDelta > 0n && maximumBuyQuantity === 0n
             const buyLiquidityBlocked =
-              buyLiquidityUnavailable && facts.positionQuantities.some((quantity) => quantity !== 0n)
+              buyLiquidityUnavailable &&
+              (facts.input.executionTerms.executionPurpose === 'disjoint-entry'
+                ? facts.targetSymbols.some((targetSymbol) => (facts.positions.get(targetSymbol) ?? 0n) !== 0n)
+                : facts.positionQuantities.some((quantity) => quantity !== 0n))
             if (buyLiquidityUnavailable && !buyLiquidityBlocked) {
               return Result.fail(
                 deriveTargetsFailure({
@@ -387,8 +391,37 @@ export const selectTargetPlannerPreflightReason = (facts: TargetPlannerFacts): B
   if (!brokerStateIsCurrent(facts)) return TargetPlanReason.ReconciliationNotExact
   if (input.brokerState.account.status !== AccountStatus.Active) return TargetPlanReason.AccountNotActive
   if (input.brokerState.unknownOrderCount > 0) return TargetPlanReason.UnknownOrder
-  if (input.brokerState.orders.some((order) => isUnresolved(order.status))) return TargetPlanReason.UnresolvedOrder
-  const forcedClose = input.executionTerms.executionPurpose !== undefined
+  const forcedClose = input.executionTerms.executionPurpose === 'forced-close'
+  const disjointEntry = input.executionTerms.executionPurpose === 'disjoint-entry'
+  const targetSymbolSet = new Set(facts.targetSymbols)
+  const protectionClose = input.protectionClose
+  if (protectionClose !== undefined) {
+    if (
+      !forcedClose ||
+      input.strategyName !== 'jev' ||
+      input.executionTerms.priceReference !== 'verified-adverse-quote-boundary' ||
+      facts.targetSymbols.length !== 1 ||
+      facts.targetSymbols[0] !== protectionClose.symbol ||
+      !matchesProtectionCloseBook(
+        protectionClose,
+        input.brokerState,
+        input.cycleId,
+        input.observedAt,
+        input.maximumInputAgeMs,
+      )
+    )
+      return TargetPlanReason.UnresolvedOrder
+  } else if (forcedClose || disjointEntry) {
+    if (
+      input.brokerState.orders.some(
+        (order) => isUnresolved(order.status) && (order.intentId === undefined || targetSymbolSet.has(order.symbol)),
+      )
+    ) {
+      return TargetPlanReason.UnresolvedOrder
+    }
+  } else if (input.brokerState.orders.some((order) => isUnresolved(order.status))) {
+    return TargetPlanReason.UnresolvedOrder
+  }
   if (
     Object.entries(input.targetWeights).some(
       ([symbol, weight]) =>
@@ -406,7 +439,12 @@ export const selectTargetPlannerPreflightReason = (facts: TargetPlannerFacts): B
     )
   )
     return TargetPlanReason.ShortPositionNotAllowed
-  if (!forcedClose && facts.positionQuantities.some((quantity) => quantity < 0n)) {
+  if (
+    !forcedClose &&
+    (disjointEntry
+      ? facts.targetSymbols.some((symbol) => (facts.positions.get(symbol) ?? 0n) < 0n)
+      : facts.positionQuantities.some((quantity) => quantity < 0n))
+  ) {
     return TargetPlanReason.ShortPositionNotAllowed
   }
   if (facts.equity <= 0n) return TargetPlanReason.NonPositiveEquity

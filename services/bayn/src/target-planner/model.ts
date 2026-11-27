@@ -12,6 +12,7 @@ import {
 import { legacyReconciliationSchemaVersion, legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
 import { IntentPlanSchema, type IntentPlan } from '../execution/intents/domain'
 import { EquityShortEligibilitySchema } from '../execution/equity-short'
+import { ProtectionCloseBasisSchema } from '../execution/protection-close-basis'
 import {
   IsoDateSchema,
   NonNegativeIntegerSchema,
@@ -162,7 +163,7 @@ export const quoteBoundTargetPlannerInputSchemaVersion = 'bayn.target-planner-in
 
 const QuoteBoundLimitExecutionIdentityFields = {
   equityShortEntries: Schema.optionalKey(Schema.Record(SymbolSchema, EquityShortEligibilitySchema)),
-  executionPurpose: Schema.optionalKey(Schema.Literal('forced-close')),
+  executionPurpose: Schema.optionalKey(Schema.Literals(['forced-close', 'disjoint-entry'])),
   orderType: Schema.Literal(OrderType.Limit),
   timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
   priceReference: Schema.Literals(['verified-adverse-quote-boundary', 'reconciled-broker-position-mark']),
@@ -194,6 +195,7 @@ const QuoteBoundTargetPlannerInputBase = Schema.Struct({
   ...TargetPlannerInputFields,
   allocationCapitalMicros: UnsignedMicrosSchema,
   executionTerms: QuoteBoundExecutionTermsSchema,
+  protectionClose: Schema.optionalKey(ProtectionCloseBasisSchema),
 })
 
 const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Type): readonly Schema.FilterIssue[] => {
@@ -224,9 +226,25 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
     })
   }
   const quantityIncrement = BigInt(input.precision.quantityIncrementAtoms)
-  const forcedClose = input.executionTerms.executionPurpose !== undefined
+  const forcedClose = input.executionTerms.executionPurpose === 'forced-close'
+  const disjointEntry = input.executionTerms.executionPurpose === 'disjoint-entry'
   if (input.executionTerms.priceReference === 'reconciled-broker-position-mark' && !forcedClose)
     issues.push({ path: ['executionTerms'], issue: 'a reconciled position mark can only price a forced close' })
+  if (disjointEntry) {
+    const positionQuantities = new Map(
+      input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityAtoms)]),
+    )
+    if (
+      targetSymbols.some(
+        (symbol) => (input.targetWeights[symbol] ?? 0) !== 0 && (positionQuantities.get(symbol) ?? 0n) !== 0n,
+      )
+    ) {
+      issues.push({
+        path: ['targetWeights'],
+        issue: 'disjoint entry targets must be flat in the reconciled broker position book',
+      })
+    }
+  }
   if (forcedClose) {
     if (Object.values(input.targetWeights).some((weight) => weight !== 0)) {
       issues.push({ path: ['targetWeights'], issue: 'forced close must target a flat account' })

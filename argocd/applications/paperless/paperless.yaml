@@ -6,6 +6,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "-2"
 data:
   PAPERLESS_URL: https://paperless.ide-newton.ts.net
+  PAPERLESS_ALLOWED_HOSTS: localhost,paperless.ide-newton.ts.net,paperless.paperless.svc.cluster.local
   PAPERLESS_DBENGINE: postgresql
   PAPERLESS_DBHOST: paperless-db-rw.paperless.svc.cluster.local
   PAPERLESS_DBNAME: paperless
@@ -105,7 +106,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: paperless
-          image: ghcr.io/paperless-ngx/paperless-ngx:3.4.2@sha256:d704e84f88300eb6ab001ab15720a2330ff99169cf9f94d6b8fcc44b63a84c84
+          image: ghcr.io/paperless-ngx/paperless-ngx:3.5.1@sha256:8508853b8a0f8394074260957d0be186c8c64f346973b24a7583de4580f306b9
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -143,12 +144,18 @@ spec:
             httpGet:
               path: /
               port: http
+              httpHeaders:
+                - name: Host
+                  value: paperless.ide-newton.ts.net
             periodSeconds: 10
             failureThreshold: 120
           readinessProbe:
             httpGet:
               path: /
               port: http
+              httpHeaders:
+                - name: Host
+                  value: paperless.ide-newton.ts.net
             periodSeconds: 10
             timeoutSeconds: 5
           livenessProbe:

@@ -13,6 +13,8 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
+  NonTradeActivityStatementSchema,
+  verifyNonTradeActivityStatement,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -28,6 +30,7 @@ import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/prefligh
 import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
 import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
 import { make, alpacaHttpLayer } from './alpaca/http'
+import { fillActivityIdentity } from './activities'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
@@ -183,6 +186,17 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
+  test('preserves ledger identity across Eastern daylight time and microsecond rounding', () => {
+    expect(fillActivityIdentity(orderId, '2026-10-05T15:12:39.021034500Z')).toEqual({
+      activityId: `20261005111239021::${orderId}`,
+      transactionTime: '2026-10-05T15:12:39.021034000Z',
+    })
+    expect(fillActivityIdentity(orderId, '2026-11-05T15:12:39.999999500Z')).toEqual({
+      activityId: `20261105101239999::${orderId}`,
+      transactionTime: '2026-11-05T15:12:40.000000000Z',
+    })
+  })
+
   test('retains the broker crypto fee tier with its account response evidence', async () => {
     const raw = { ...accountResponse, crypto_status: 'ACTIVE', crypto_tier: 4 }
     const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
@@ -265,6 +279,7 @@ describe('Alpaca paper reads', () => {
       'feeActivities',
       'fillActivities',
       'marketCalendar',
+      'nonTradeActivityStatement',
       'orderByClientId',
       'orderById',
       'orders',
@@ -1330,6 +1345,102 @@ describe('Alpaca paper reads', () => {
     expect(Result.getOrThrow(decimalToMicrosResult('-0.01', true, 'fee'))).toBe('-10000')
     expect(Result.isFailure(decimalToMicrosResult('-0.01', false, 'quantity'))).toBe(true)
     expect(Result.getOrThrow(decimalToMicrosResult('0.01', true, 'fee refund'))).toBe('10000')
+  })
+
+  test('captures all non-trade activity through empty terminal pages in both directions', async () => {
+    const bounds = { after: '2026-09-10T13:00:00.000Z', until: '2026-09-11T13:00:00.000Z' }
+    const fee = {
+      id: `20260911010000000::${orderId}`,
+      activity_type: 'FEE',
+      date: '2026-09-10',
+      net_amount: '-0.21',
+      description: 'private account detail',
+    }
+    const deposit = {
+      id: `20260910160000000::${assetId}`,
+      activity_type: 'CSD',
+      date: '2026-09-10',
+      created_at: '2026-09-10T16:00:00Z',
+      net_amount: '0.21',
+    }
+    const calls: { direction: string | null; pageToken: string | null }[] = []
+    const client = HttpClient.make((request, url) => {
+      expect(request.method).toBe('GET')
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      expect(url.pathname).toBe('/v2/account/activities')
+      expect(url.searchParams.get('category')).toBe('non_trade_activity')
+      expect(url.searchParams.has('activity_types')).toBe(false)
+      expect(url.searchParams.get('after')).toBe(bounds.after)
+      expect(url.searchParams.get('until')).toBe(bounds.until)
+      const direction = url.searchParams.get('direction')
+      const pageToken = url.searchParams.get('page_token')
+      calls.push({ direction, pageToken })
+      const [first, second] = direction === 'asc' ? [deposit, fee] : [fee, deposit]
+      return Effect.succeed(
+        jsonResponse(request, pageToken === null ? [first] : pageToken === first.id ? [second] : []),
+      )
+    })
+    const result = await Effect.runPromise(
+      make(options).pipe(
+        Effect.flatMap((read) => read.nonTradeActivityStatement(bounds)),
+        Effect.provideService(HttpClient.HttpClient, client),
+      ),
+    )
+    expect(calls).toEqual([
+      { direction: 'asc', pageToken: null },
+      { direction: 'asc', pageToken: deposit.id },
+      { direction: 'asc', pageToken: fee.id },
+      { direction: 'desc', pageToken: null },
+      { direction: 'desc', pageToken: fee.id },
+      { direction: 'desc', pageToken: deposit.id },
+    ])
+    expect(result.accountIdentityHash).toBe(options.identity.identityHash)
+    expect(result.window).toEqual(bounds)
+    const statement = Result.getOrThrow(Schema.decodeUnknownResult(NonTradeActivityStatementSchema)(result))
+    expect(statement.accountBody).toEqual(accountResponse)
+    expect(
+      verifyNonTradeActivityStatement({ ...statement, accountBody: { ...accountResponse, id: assetId } }, assetId),
+    ).toMatchObject({ _tag: 'Failure' })
+    expect(Result.getOrThrow(verifyNonTradeActivityStatement(statement, accountId)).activities).toEqual([
+      {
+        activityId: deposit.id,
+        activityType: 'CSD',
+        date: deposit.date,
+        createdAt: deposit.created_at,
+        netAmount: '0.21',
+      },
+      { activityId: fee.id, activityType: 'FEE', date: fee.date, createdAt: null, netAmount: '-0.21' },
+    ])
+    expect(result.firstPass.at(-1)?.body).toEqual([])
+    expect(result.secondPass.at(-1)?.body).toEqual([])
+    expect(result.firstPass[1]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([fee])))
+  })
+
+  test('withholds the non-trade statement for repeated, changing, wrong-account or out-of-window activities', async () => {
+    const bounds = { after: '2026-09-10T13:00:00.000Z', until: '2026-09-11T13:00:00.000Z' }
+    const fee = { id: `20260911010000000::${orderId}`, activity_type: 'FEE', date: '2026-09-10', net_amount: '-0.21' }
+    const scenarios = [
+      () => [fee],
+      (url: URL) =>
+        url.searchParams.has('page_token')
+          ? []
+          : [{ ...fee, net_amount: url.searchParams.get('direction') === 'asc' ? '-0.21' : '-0.22' }],
+      () => [{ ...fee, account_id: assetId }],
+      () => [{ ...fee, created_at: bounds.until }],
+    ]
+    for (const scenario of scenarios) {
+      const client = HttpClient.make((request, url) =>
+        Effect.succeed(jsonResponse(request, url.pathname === '/v2/account' ? accountResponse : scenario(url))),
+      )
+      const failure = await Effect.runPromise(
+        make(options).pipe(
+          Effect.flatMap((read) => read.nonTradeActivityStatement(bounds)),
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.flip,
+        ),
+      )
+      expect(failure).toMatchObject({ operation: 'non-trade-activities', kind: BrokerReadErrorKind.InvalidResponse })
+    }
   })
 
   test('retains available cash CFEE through the HTTP adapter in a stable broker snapshot', async () => {
