@@ -243,8 +243,9 @@ test('frozen regular-only calendar is accepted by the existing v2 replay', () =>
     query: { start: '2026-11-27', end: '2026-11-27' },
     response: [{ date: '2026-11-27', open: '09:30', close: '13:00' }],
   }
-  expect(() => runIntradayAlphaReplayVerification(['/dev/null'], input)).toThrow('session_open')
-  const replay = runIntradayAlphaReplayVerification(['/dev/null'], regularCalendarReplayInput(input))
+  const replay = runIntradayAlphaReplayVerification(['/dev/null'], input)
+  const expanded = runIntradayAlphaReplayVerification(['/dev/null'], regularCalendarReplayInput(input))
+  expect(replay.calendarHash).toBe(expanded.calendarHash)
   expect(replay.results[0]?.sessionDetails[0]?.expectedRegularMinutes).toBe(210)
 })
 
