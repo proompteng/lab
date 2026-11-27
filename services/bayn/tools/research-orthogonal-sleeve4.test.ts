@@ -27,7 +27,7 @@ const rule = (group: string, entry: number, threshold: number, exit?: number) =>
     (t) =>
       t.group === group && t.entry === entry && t.threshold === threshold && (exit === undefined || t.exit === exit),
   )
-  if (!found) throw new Error(`Missing test rule: ${group}`)
+  if (found === undefined) throw new Error(`Missing test rule: ${group}`)
   return found
 }
 
@@ -173,12 +173,12 @@ test('uses next OPEN with adverse slippage and sell fee, never forward-fills ent
   const actual = fill(long, tape, 1, 2, 4)
   expect(actual).toEqual({ leg: long, entry: 100, exit: 110, delay: 1 })
   const short = fill({ ...long, side: -1 }, tape, 1, 2, 4)
-  if (!actual || !short) throw new Error('Missing fixture fill')
+  if (actual === null || short === null) throw new Error('Missing fixture fill')
   expect(netBps(actual, 5)).toBeCloseTo((10_000 * (109.9725 - 100.025)) / 100.025 - (0.21 * 109.9725) / 100.025, 8)
   expect(netBps(short, 5)).toBeCloseTo((10_000 * (99.975 - 110.0275)) / 99.975 - 0.21, 8)
   expect(fill(long, tape, 2, 3, 4)).toBeNull()
   const unresolved = fill(long, tape, 1, 2, 3)
-  if (!unresolved) throw new Error('Missing fixture fill')
+  if (unresolved === null) throw new Error('Missing fixture fill')
   expect(unresolved.exit).toBeNull()
   expect(economics([{ date: '2026-04-01', fills: [unresolved], intended: 1, observed: true }], 5).netBps).toBeNull()
 })

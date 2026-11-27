@@ -58,7 +58,7 @@ const sipOutcomes = (rule: Rule, frames: ReturnType<typeof sipFrames>): Outcome[
     let observed = false
     const fills = rule.symbols.flatMap((symbol) => {
       const bar = day.bars.get(symbol)
-      if (!bar || !day.prior) return []
+      if (bar === undefined || day.prior === undefined) return []
       const side = contextSide(rule, symbol, bar.open, day.prior)
       if (side === null) return []
       observed = true
@@ -133,7 +133,7 @@ const freezeFor = (development: Development) => {
 }
 
 const benchReplay = (dataset: Dataset) => {
-  if (!dataset.liveRaw) throw new Error('Need the frozen live panel to evaluate v2 benchmark correlations')
+  if (dataset.liveRaw === undefined) throw new Error('Need the frozen live panel to evaluate v2 benchmark correlations')
   const directory = mkdtempSync(join(tmpdir(), 'bayn-sleeve4-v2-'))
   try {
     const path = join(directory, 'live.tsv')
@@ -175,7 +175,7 @@ const measureCorrelation = (daily: readonly Outcome[], benchmark: Benchmark) => 
     if (cost === undefined) throw new Error(`Unknown benchmark cost: ${slippageBps}`)
     const common = days.flatMap(({ date, engineBps }) => {
       const day = byDate.get(date)
-      if (!day?.observed || engineBps === null) return []
+      if (day?.observed !== true || engineBps === null) return []
       const pnl = dailyNet(day, cost)
       return pnl === null ? [] : [{ date, pnl, engineBps }]
     })
@@ -275,32 +275,34 @@ const score = (dataset: Dataset, dev: Development, freeze: ReturnType<typeof fre
             }),
     }
   })
-  const loso = selected
-    ? selected.rule.symbols.map((symbol) => {
-        const symbols = selected.rule.symbols.filter((s) => s !== symbol)
-        // Rotation retains the observable four-index signal while excluding the leg.
-        if (symbols.length === 0) return { symbol, holdout: null }
-        const reduced = { ...selected.rule, symbols }
-        return { symbol, holdout: costGrid(bySplit(minuteOutcomes(reduced, core)).holdout) }
-      })
-    : []
+  const loso =
+    selected !== undefined
+      ? selected.rule.symbols.map((symbol) => {
+          const symbols = selected.rule.symbols.filter((s) => s !== symbol)
+          // Rotation retains the observable four-index signal while excluding the leg.
+          if (symbols.length === 0) return { symbol, holdout: null }
+          const reduced = { ...selected.rule, symbols }
+          return { symbol, holdout: costGrid(bySplit(minuteOutcomes(reduced, core)).holdout) }
+        })
+      : []
   const peers = holdout.filter((peer) => peer !== selected)
   const retainedPeers = peers.filter(({ card }) => stressPass(card))
-  const gates = selected
-    ? {
-        development: freeze.developmentQualified,
-        stress: stressPass(selected.card),
-        bootstrap: costsForGate.every((cost) => (selected.card.statistics[cost]?.bootstrapP ?? 1) < 0.05),
-        deflated: costsForGate.every(
-          (cost) => (selected.card.deflated.find((d) => d.cost === cost)?.probability ?? 0) >= 0.95,
-        ),
-        correlations: correlationPass(selected.card),
-        plateau: retainedPeers.length >= 2 && retainedPeers.length * 2 >= peers.length,
-        leaveOneOut: loso.every(
-          ({ holdout }) => holdout === null || costsForGate.every((cost) => (holdout[cost]?.exTop5Bps ?? 0) > 0),
-        ),
-      }
-    : null
+  const gates =
+    selected !== undefined
+      ? {
+          development: freeze.developmentQualified,
+          stress: stressPass(selected.card),
+          bootstrap: costsForGate.every((cost) => (selected.card.statistics[cost]?.bootstrapP ?? 1) < 0.05),
+          deflated: costsForGate.every(
+            (cost) => (selected.card.deflated.find((d) => d.cost === cost)?.probability ?? 0) >= 0.95,
+          ),
+          correlations: correlationPass(selected.card),
+          plateau: retainedPeers.length >= 2 && retainedPeers.length * 2 >= peers.length,
+          leaveOneOut: loso.every(
+            ({ holdout }) => holdout === null || costsForGate.every((cost) => (holdout[cost]?.exTop5Bps ?? 0) > 0),
+          ),
+        }
+      : null
   const passes = gates !== null && Object.values(gates).every(Boolean)
   return {
     schemaVersion: 'bayn.sleeve4.results.v1',
@@ -346,10 +348,10 @@ export const verifyFreeze = (actual: string, expected: string) => {
 if (import.meta.main) {
   const [mode, freezePath, outputOrDirectory, directory] = process.argv.slice(2)
   if (
-    !freezePath ||
+    freezePath === undefined ||
     (mode !== '--freeze' && mode !== '--score') ||
-    (mode === '--score' && !outputOrDirectory) ||
-    (mode === '--freeze' && directory)
+    (mode === '--score' && outputOrDirectory === undefined) ||
+    (mode === '--freeze' && directory !== undefined)
   ) {
     throw new Error(
       'Usage: bun services/bayn/tools/research-orthogonal-sleeve4.ts --freeze <freeze.json> [dataset-dir] | --score <freeze.json> <results.json> [dataset-dir]',
@@ -360,7 +362,7 @@ if (import.meta.main) {
   const frozen = JSON.stringify(freeze, null, 2) + '\n'
   if (mode === '--freeze') {
     writeFileSync(freezePath, frozen, { flag: 'wx' })
-  } else if (outputOrDirectory) {
+  } else if (outputOrDirectory !== undefined) {
     verifyFreeze(readFileSync(freezePath, 'utf8'), frozen)
     const dataset = await loadDataset(directory, true)
     writeFileSync(outputOrDirectory, JSON.stringify(score(dataset, dev, freeze), null, 2) + '\n', { flag: 'wx' })

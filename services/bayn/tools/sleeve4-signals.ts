@@ -301,10 +301,10 @@ export const addHistory = <T>(
       const last = priorBars.at(-1)
       const lag5 = priorBars.at(-6)
       const lag10 = priorBars.at(-11)
-      if (priorBars.length !== 15 || !last || !lag5 || !lag10) continue
+      if (priorBars.length !== 15 || last === undefined || lag5 === undefined || lag10 === undefined) continue
       const ranges = priorBars.slice(1).map(({ high, low }, index) => {
         const previous = priorBars[index]
-        if (!previous) throw new Error('Missing prior close for true range')
+        if (previous === undefined) throw new Error('Missing prior close for true range')
         return Math.max(high - low, Math.abs(high - previous.close), Math.abs(low - previous.close))
       })
       const volumes = earlier.slice(1).flatMap((v) => volumeOf(v, symbol) ?? [])
@@ -332,12 +332,12 @@ export const minuteHistory = (days: readonly Day[]): Frame[] => {
       if (first5Volume !== null) volumes.set(sym, first5Volume)
       // Require actual open and close endpoints before using a daily summary;
       // internal IEX gaps are not imputed. Only consumed on later sessions.
-      if (!start || !end) continue
+      if (start === undefined || end === undefined) continue
       let high = start.high
       let low = start.low
       let volume = 0
       for (const bar of tape)
-        if (bar) {
+        if (bar !== undefined) {
           high = Math.max(high, bar.high)
           low = Math.min(low, bar.low)
           volume += bar.volume
@@ -373,13 +373,13 @@ const directions = (symbols: readonly string[], signal: (symbol: string) => numb
 
 export const contextSide = (rule: Rule, symbol: string, open: number, priors: Frame['prior']) => {
   const prior = priors.get(symbol)
-  if (!prior || prior.atr <= 0) return null
+  if (prior === undefined || prior.atr <= 0) return null
   if (rule.signal === 'volatile-gap') {
     const gap = (open - prior.previousClose) / prior.atr
     return prior.recentTr >= prior.atr && Math.abs(gap) >= rule.threshold ? -Math.sign(gap) : 0
   }
   const spy = priors.get('SPY')
-  if (!spy) return null
+  if (spy === undefined) return null
   const momentum = rule.length === 5 ? 'momentum5' : 'momentum10'
   const residual = prior[momentum] - (symbol === 'SPY' ? 0 : spy[momentum])
   const highVolatility = prior.recentTr >= prior.atr
@@ -394,12 +394,12 @@ export const decide = (rule: Rule, day: Frame): Decision => {
   const openingReturn = (symbol: string) => {
     const open = day.tapes.get(symbol)?.[0]?.open
     const completed = previousBar(symbol)
-    return open && completed ? 10_000 * (completed.close / open - 1) : null
+    return open !== undefined && completed !== undefined ? 10_000 * (completed.close / open - 1) : null
   }
   if (rule.family === 'C') {
     const leaders: Partial<Record<Signal, string>> = { rates: 'IEF', global: 'EFA', commodity: 'DBC' }
     const leader = leaders[rule.signal]
-    if (leader) {
+    if (leader !== undefined) {
       const value = openingReturn(leader)
       if (value === null) return unavailable
       return directions(rule.symbols, (symbol) =>
@@ -433,7 +433,7 @@ export const decide = (rule: Rule, day: Frame): Decision => {
         const close = previousBar(symbol)?.close
         // Rank returns since 12:30 ET, using only completed bars at both endpoints.
         const base = day.tapes.get(symbol)?.[179]?.close
-        return close && base ? [{ symbol, bps: 10_000 * (close / base - 1) }] : []
+        return close !== undefined && base !== undefined ? [{ symbol, bps: 10_000 * (close / base - 1) }] : []
       })
       .sort((a, b) => a.bps - b.bps || a.symbol.localeCompare(b.symbol))
     if (ranked.length < Math.max(2 * rule.length, Math.ceil(rule.symbols.length * 0.8))) return unavailable
@@ -456,7 +456,8 @@ export const decide = (rule: Rule, day: Frame): Decision => {
     const open = tape?.[0]?.open
     const completed = previousBar(symbol)
     const prior = day.prior.get(symbol)
-    if (!tape || !open || !completed || !prior || prior.atr <= 0) return null
+    if (tape === undefined || open === undefined || completed === undefined || prior === undefined || prior.atr <= 0)
+      return null
     if (rule.family === 'A') {
       const gap = (open - prior.previousClose) / prior.atr
       if (Math.abs(gap) < rule.threshold) return 0
@@ -464,17 +465,17 @@ export const decide = (rule: Rule, day: Frame): Decision => {
       const direction = Math.sign(completed.close - open)
       if (rule.signal === 'gap-fade') return direction !== side ? -side : 0
       const volume = openingVolume(tape)
-      if (volume === null || !prior.first5Volume) return null
+      if (volume === null || prior.first5Volume === null || prior.first5Volume <= 0) return null
       return direction === side && volume >= 1.25 * prior.first5Volume ? side : 0
     }
     if (rule.family === 'B') {
       const firstHalf = tape[29]
-      if (!firstHalf) return null
+      if (firstHalf === undefined) return null
       const early = (firstHalf.close - open) / prior.atr
       if (Math.abs(early) < rule.threshold) return 0
       if (rule.signal === 'first-half') return Math.sign(early)
       const noonToTwo = tape[Math.min(rule.entry - 1, 269)] // capped at 14:00 ET
-      if (!noonToTwo) return null
+      if (noonToTwo === undefined) return null
       return prior.recentTr >= prior.atr && Math.sign(early) === Math.sign(noonToTwo.close - firstHalf.close)
         ? Math.sign(early)
         : 0

@@ -29,12 +29,12 @@ export interface Outcome {
 
 export const fill = (leg: Leg, tape: Tape, entryMinute: number, exitMinute: number, minutes: number): Fill | null => {
   const entry = tape[entryMinute]
-  if (!entry || entryMinute >= exitMinute || exitMinute >= minutes) return null
+  if (entry === undefined || entryMinute >= exitMinute || exitMinute >= minutes) return null
   // Entry is a one-minute IOC; liquidation remains working through the regular close.
   // Never condition entry or the remaining legs on the future availability of the exit.
   for (let minute = exitMinute; minute < minutes; minute++) {
     const bar = tape[minute]
-    if (bar) return { leg, entry: entry.open, exit: bar.open, delay: minute - exitMinute }
+    if (bar !== undefined) return { leg, entry: entry.open, exit: bar.open, delay: minute - exitMinute }
   }
   return { leg, entry: entry.open, exit: null, delay: null }
 }

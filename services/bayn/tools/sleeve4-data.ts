@@ -108,20 +108,20 @@ const minuteDays = (raw: Buffer, rows: number, dates: readonly CalendarDay[], ki
   for (const line of lines(raw)) {
     count++
     const [symbol, timestamp, ...fields] = line.split('\t')
-    if (!symbol || !timestamp || !/^[A-Z]+$/.test(symbol) || fields.length !== 6) {
+    if (symbol === undefined || timestamp === undefined || !/^[A-Z]+$/.test(symbol) || fields.length !== 6) {
       throw new Error(`Malformed ${kind} row ${count}`)
     }
     const date = timestamp.slice(0, 10)
     if (date > end) continue
     const session = sessions.get(date)
     const time = Date.parse(timestamp)
-    if (!session || !Number.isFinite(time) || time % minuteMs !== 0)
+    if (session === undefined || !Number.isFinite(time) || time % minuteMs !== 0)
       throw new Error(`Invalid ${kind} timestamp ${timestamp}`)
     symbols.add(symbol)
     const minute = (time - session.openMs) / minuteMs
     if (minute < 0 || minute >= session.minutes) continue
     const tape = session.tapes.get(symbol) ?? Array.from<Candle | undefined>({ length: session.minutes })
-    if (tape[minute]) throw new Error(`Duplicate regular minute: ${date} ${symbol} ${minute}`)
+    if (tape[minute] !== undefined) throw new Error(`Duplicate regular minute: ${date} ${symbol} ${minute}`)
     const bar = parseBar(fields, `${kind} row ${count}`)
     tape[minute] = kind === 'long' ? adjustSplit(bar, symbol, date) : bar
     session.tapes.set(symbol, tape)
@@ -144,7 +144,13 @@ const sipDays = (raw: Buffer, rows: number, end: string) => {
       continue
     }
     const [symbol, date, ...fields] = line.split('\t')
-    if (!symbol || !date || !/^[A-Z]+$/.test(symbol) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || fields.length !== 7) {
+    if (
+      symbol === undefined ||
+      date === undefined ||
+      !/^[A-Z]+$/.test(symbol) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      fields.length !== 7
+    ) {
       throw new Error(`Malformed SIP row ${count}`)
     }
     if (date > end) continue
@@ -163,29 +169,35 @@ const sipDays = (raw: Buffer, rows: number, end: string) => {
   }
 }
 
+const artifactClient = () => {
+  const accessKeyId = process.env['AWS_ACCESS_KEY_ID']
+  const secretAccessKey = process.env['AWS_SECRET_ACCESS_KEY']
+  if (accessKeyId === undefined || secretAccessKey === undefined || accessKeyId === '' || secretAccessKey === '') {
+    throw new Error('Frozen artifact download requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY')
+  }
+  return new S3Client({
+    endpoint: process.env['AGENTS_ARTIFACTS_ENDPOINT'] || 'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
+    bucket: process.env['AGENTS_ARTIFACTS_BUCKET'] || 'agents-artifacts',
+    accessKeyId,
+    secretAccessKey,
+    region: 'us-east-1',
+  })
+}
+
 export const loadDataset = async (directory: string | undefined, includeHoldout: boolean) => {
-  const client =
-    directory === undefined
-      ? new S3Client({
-          endpoint: process.env.AGENTS_ARTIFACTS_ENDPOINT || 'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
-          bucket: process.env.AGENTS_ARTIFACTS_BUCKET || 'agents-artifacts',
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-          region: 'us-east-1',
-        })
-      : undefined
+  const client = directory === undefined ? artifactClient() : undefined
   const get = async (name: string) => {
     if (directory !== undefined) return readFileSync(join(directory, name))
-    if (!client) throw new Error('S3 client unavailable')
+    if (client === undefined) throw new Error('S3 client unavailable')
     return Buffer.from(await client.file(prefix + name).arrayBuffer())
   }
   const manifest = await get('MANIFEST.json')
   if (sha256(manifest) !== manifestSha256) throw new Error('Frozen manifest SHA-256 mismatch')
   const all = Schema.decodeUnknownSync(Manifest)(JSON.parse(manifest.toString()))
-  const receipts = []
+  const receipts: (typeof all.files)[number][] = []
   const read = async (name: string) => {
     const receipt = all.files.find(({ key }) => key === prefix + name)
-    if (!receipt) throw new Error(`Missing frozen receipt: ${name}`)
+    if (receipt === undefined) throw new Error(`Missing frozen receipt: ${name}`)
     const compressed = await get(name)
     if (compressed.length !== receipt.gzipBytes || sha256(compressed) !== receipt.gzipSha256) {
       throw new Error(`Frozen compressed bytes/SHA-256 mismatch: ${name}`)
@@ -227,21 +239,22 @@ export const loadDataset = async (directory: string | undefined, includeHoldout:
   const sipFile = await read(files.sip)
   const sip = sipDays(sipFile.raw, sipFile.rows, end)
   const liveFile = includeHoldout ? await read(files.live) : undefined
-  const live = liveFile
-    ? minuteDays(
-        liveFile.raw,
-        liveFile.rows,
-        expected.filter((d) => d.date >= '2026-07-16'),
-        'live',
-        end,
-      )
-    : undefined
+  const live =
+    liveFile !== undefined
+      ? minuteDays(
+          liveFile.raw,
+          liveFile.rows,
+          expected.filter((d) => d.date >= '2026-07-16'),
+          'live',
+          end,
+        )
+      : undefined
   const core = [...long.days.values()].map((day) =>
     chooseMinuteSource(day.date) === 'long' ? day : (live?.days.get(day.date) ?? day),
   )
   return {
     core,
-    live: live ? [...live.days.values()] : [],
+    live: live !== undefined ? [...live.days.values()] : [],
     sip: sip.days,
     calendarJson,
     liveRaw: liveFile?.raw,
@@ -250,7 +263,7 @@ export const loadDataset = async (directory: string | undefined, includeHoldout:
       receipts,
       calendarHash: calendar.normalizedResponseHash,
       long: { symbols: long.symbols, regularRows: long.regularRows },
-      live: live ? { symbols: live.symbols, regularRows: live.regularRows } : null,
+      live: live !== undefined ? { symbols: live.symbols, regularRows: live.regularRows } : null,
       sip: sip.symbols,
     },
   }
