@@ -271,7 +271,8 @@ export const preparePortfolioSessions = (
         sessionOpenMs: regular.openMs,
         rangeEndMs: regular.openMs + (minute + 1) * minuteMs,
         symMap,
-        quoteHalfSpreadBps: 1,
+        // The selector checks quote presence; the replay applies scenario costs separately.
+        quoteModel: { slippageRtBps: 2 },
       })
       const extract = (blockNoise: boolean) =>
         Result.isSuccess(baseline)
