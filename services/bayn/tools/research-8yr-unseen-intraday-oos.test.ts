@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { rejects } from 'node:assert/strict'
 
 import { admitUniverse, compareUniverse, loadTapes } from './8yr-unseen-intraday-data'
 import { baselineNames, blind, noiseNames, stocks, universe } from './8yr-unseen-intraday-protocol'
@@ -53,7 +54,7 @@ describe('Wave 4E metadata admission', () => {
         calendar: { key: blind.calendar, bytes: 1, sha256: blind.calendarSha256 },
       },
     }
-    await expect(
+    await rejects(
       loadTapes(
         (key) => {
           objects.push(key)
@@ -64,7 +65,8 @@ describe('Wave 4E metadata admission', () => {
           return Promise.reject(new Error('Attempted to open a bar object'))
         },
       ),
-    ).rejects.toThrow('missing=[INTC]; unexpected=[ADBE]')
+      /missing=\[INTC\]; unexpected=\[ADBE\]/,
+    )
     expect(objects).toEqual([blind.manifest])
   })
 })
