@@ -2,6 +2,8 @@
 
 **Decision: no promotion.** None of the 113 multi-year minute variants qualified in development. The rule locked for diagnostic holdout scoring lost money even at 2 bp round trip. The frozen sources also cannot establish orthogonality to all three v2 engines: only 3 of 66 overlap dates support the full reference, and Noise Area did not trade on those three dates. No v3 candidate or production changes are warranted.
 
+The [consolidated SIP follow-on](sip-follow-on.md) uses a separate input receipt and experiment. It does not supersede this decision.
+
 ## Experimental design
 
 The [prespecified protocol](protocol.md), [development-only freeze](freeze.json), and [full trial ledger](results.json) are separate artifacts. The ledger contains **264 unique registered variants**: 113 multi-year minute, 118 live minute, and 33 daily SIP. All 113 multi-year rules were scored on development; only the frozen rule and its two predetermined neighbors were scored on its holdout. Live-only and SIP results are diagnostic and cannot replace the locked rule. The initial freeze ([a329b2f](https://github.com/proompteng/lab/commit/a329b2f082436e6afb389ce5b091a97f5555e280)) precedes successful holdout scoring. An initial attempt rejected the regular-only calendar before scoring returns; the benchmark-input adapter changed, and the registry, development hash, selected rule, and neighbors were verified unchanged before the rerun.
@@ -52,7 +54,7 @@ The comparison used the existing bar replay under v2 policy hash `f6321704735345
 
 ## Reproduce and continue
 
-Run on the experiment revision with a Bun environment able to read the pinned S3 objects (or give the directory holding the exact compressed exports as the final argument). The CLI creates new files and refuses to overwrite an existing receipt or ledger.
+Run on the [original experiment revision](https://github.com/proompteng/lab/tree/bd06b9c91c84eb168159c9ee5b96a4f604e47ab0) with a Bun environment able to read the pinned S3 objects (or give the directory holding the exact compressed exports as the final argument). The CLI creates new files and refuses to overwrite an existing receipt or ledger.
 
 ```sh
 study=services/bayn/tools/research-orthogonal-sleeve4.ts
