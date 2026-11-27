@@ -36,6 +36,7 @@
     "services/jangar/src/components/ui",
     "src/components/ui",
     "schemas",
+    "docs/bayn/evidence/2026-11-27-etf-canary-macro-v2/{freeze,results}.json",
     "services/facteur/internal/facteurpb",
     "services/dernier/vendor",
     "apps/froussard/src/proto",
