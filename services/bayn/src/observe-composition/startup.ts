@@ -2,6 +2,7 @@ import { Effect, Result } from 'effect'
 import { entryAblationBehaviorHash, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { jevBehaviorHash } from '../jev/protocol'
 import { makeRepeatedMomentumPolicy, repeatedMomentumBehaviorHash } from '../strategy/repeated-momentum/policy'
+import { intradayAlphaBehaviorHash, makeIntradayAlphaPolicy } from '../strategy/intraday-alpha/policy'
 import type { AutonomousCycleDriverStartup } from '../app'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { AuthorityGenerationStore } from '../db/execution-store/contract'
@@ -9,7 +10,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
 import { Authority, type AuthorityState } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
-import { loadActiveStrategyProtocol, strategyTradingProtocol } from '../strategy'
+import { loadSharedJevProtocol, strategyTradingProtocol } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   MutationCycleExecutionMode,
@@ -50,10 +51,17 @@ export const prepareObserveStartup = (
   const parameterSchemaVersion = definition.parameters.schemaVersion
   const ablation = parameterSchemaVersion === 'bayn.entry-ablation-policy.v1'
   const momentum = parameterSchemaVersion === 'bayn.repeated-momentum-policy.v1'
+  const alpha = parameterSchemaVersion === 'bayn.intraday-alpha-policy.v2'
   if (
     definition.name !== input.strategy.provenance.strategy.name ||
     input.strategy.provenance.strategy.behaviorHash !==
-      (momentum ? repeatedMomentumBehaviorHash : ablation ? entryAblationBehaviorHash : jevBehaviorHash) ||
+      (alpha
+        ? intradayAlphaBehaviorHash
+        : momentum
+          ? repeatedMomentumBehaviorHash
+          : ablation
+            ? entryAblationBehaviorHash
+            : jevBehaviorHash) ||
     parameterSchemaVersion !== input.strategy.provenance.strategy.parameterSchemaVersion ||
     parameterHash.success !== input.strategy.provenance.strategy.parameterHash
   ) {
@@ -65,10 +73,16 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const sourceProtocolHash = loadActiveStrategyProtocol().pipe(
+  const sourceProtocolHash = loadSharedJevProtocol().pipe(
     Result.flatMap((protocol) =>
       canonicalHashV1Result(
-        momentum ? makeRepeatedMomentumPolicy(protocol) : ablation ? makeEntryAblationPolicy(protocol) : protocol,
+        alpha
+          ? makeIntradayAlphaPolicy(protocol)
+          : momentum
+            ? makeRepeatedMomentumPolicy(protocol)
+            : ablation
+              ? makeEntryAblationPolicy(protocol)
+              : protocol,
       ),
     ),
   )

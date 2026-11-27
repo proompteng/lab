@@ -131,8 +131,12 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 ## Prospective registration
 
-`validateProspectiveSystemRegistration` admits only `bayn.system-registration.v5`. Stored prior versions retain
-their original registration and assessment paths. Native admission binds a candidate and an `INCUMBENT_JEV`
+`validateProspectiveSystemRegistration` admits only `bayn.system-registration.v7` under qualification policy v8.
+Stored prior versions retain their original registration, policy hashes, and assessment paths. Each v6/v7 policy definition carries a complete
+`bayn.research-strategy-binding.v1`: engine, concrete parameters, strategy identity, and protocol hash. Candidate
+and `INCUMBENT_JEV` are comparison roles; either may explicitly bind Jev v44 or intraday alpha v2. Their role names
+and the shared internal strategy name `jev` never select an implementation. The incumbent must match its separately
+witnessed serving generation, including its complete strategy material. Native admission binds a candidate and an `INCUMBENT_JEV`
 control to separate account and authority identities under the same execution risk policy. The incumbent's
 PostgreSQL store locks its active PAPER authority through candidate admission and writes its own witness.
 The candidate store seals the pair after the peer witness commits. Both commit deadlines precede the first
@@ -205,7 +209,11 @@ Contracted inference discounts are permitted; all costs still require evidence.
 The v37 and v38 candidate and chart ablation require continuous Jev tariff coverage from the first open through the final close.
 Retained historical protocols still require their original provider tariffs for financial verification. The frozen deterministic deployed control and repeated momentum do not
 require inference tariffs. Missing models, expired rates, and gaps reject registration before its terms become immutable.
-Replay requests use `bayn.backtest.v11` and the same `bayn.inference-rate-card.v1` contract as operating-cost reporting.
+Retained replay requests use `bayn.backtest.v11` or the engine-bound `bayn.backtest.v12`; new registrations use
+`bayn.backtest.v13` with independently witnessed baseline preparations. All use the same
+`bayn.inference-rate-card.v1` contract as operating-cost reporting. Required provider models derive from the bound
+engine. The current alpha v2 policy disables catalyst veto, so its replay acquires no provider client and requires
+zero provider dispatches and retained calls. This does not waive broker, data, infrastructure, or other operating costs.
 Adjacent periods may have different prices. Each retained call uses the registered provider/model rate effective at its
 simulated start, with per-call rounding retained. Missing, overlapping, or substituted rates leave usage unresolved.
 The replay binder retains the complete registered schedule; replacing it with one fixed price fails source binding.
@@ -220,6 +228,104 @@ content-addressed documents. Migration 156 makes history and registrations appen
 program row, and requires the next attempt index and predecessor hash. Both insertion and deferred transaction
 completion must precede the first open. Retries return the same registration; failures and candidate changes cannot
 reset the attempt history. These functions require verified audit and allocation-source hashes from their caller.
+
+### Native engine replay and timing
+
+New economic registrations bind `bayn.qualification-runtime.v3`, the explicit candidate strategy, and latency stress
+protocol v5. Version pairing is exact:
+
+| Registration                   | Source cut | Replay input | Replay report | Alpha baseline evidence                       |
+| ------------------------------ | ---------- | ------------ | ------------- | --------------------------------------------- |
+| v7                             | v6         | v13          | v11           | Independent preparation and committed witness |
+| Retained v6                    | v5         | v12          | v10           | Original observation and committed witness    |
+| Earlier retained registrations | v4         | v11          | v9            | Original retained engine contract             |
+
+Historical runtime v1/v2 and all stored hashes remain reproducible. A newer input cannot replace a retained input,
+and a polling replay cannot establish a streaming registration.
+
+The replay image's compiler receipt v5 binds its complete root strategy and explicit compiled engine catalog.
+Each candidate or incumbent executes the exact strategy in its own registration. The native broker, risk checks,
+order terms, shared liquidity, partial fills, fees, accounting and recovery remain the execution path. A declaration
+of alpha with a Jev executable fails identity binding.
+
+Versions 12 and 13 schedule work from retained arrival times, observable broker transitions, and native deadlines.
+The live controller and replay share the successor deadline and market-eligibility calculation. Suppressed market
+hints still advance their frontier; they cannot reappear later as new arrivals. Broker changes wake independently.
+Arrivals during work are serialized after the active pass. Reporting cuts preserve the owner and its pending
+deadline. They do not create a trading poll or a forced terminal trade. Registered streaming stress requires an
+original-capture delivery receipt; reconstructed archive timestamps cannot stand in for original availability.
+
+Source-cuts v5 and v6 retain standalone alpha observations even when no funded decision exists. Their source transaction
+queues an `ALPHA_OBSERVATION` evidence row. A later committed native controller observation supplies the independent
+durability witness. Observation `observedAt` is a logical source timestamp, never a commit time. There is no historical
+backfill. Rolled-back sources, released savepoints, direct witness inserts and uncommitted rows cannot establish
+availability. Missing witnesses stay unknown.
+
+Retained v12 alpha baseline carriers retain the complete source observation, its hash, the independent witness hash, and
+availability time. The provider reproduces each observation and uses only the trailing baseline matching the exact
+session, provider, feed, topics, universe and lookback, with strictly prior baseline dates. Source portfolio state and
+short eligibility are not copied into the replay account. The baseline must already be available at the decision's
+original observation cut; a later processing clock cannot make it causal. A registered carrier array must exactly
+match the authenticated source cut. Standalone v12 fixtures remain declared research input, not qualification evidence.
+
+The first alpha observation of a session cannot retroactively witness its own earlier baseline availability. Without
+an earlier independent witness, replay records `MISSING_CAUSAL_ALPHA_BASELINE`, including the first later availability
+when known, and withholds complete results. A later successful decision does not erase that gap. A Jev candidate's
+source cut also cannot invent an alpha incumbent's missing baseline inventory. These cases require additional retained
+source evidence before economic qualification; changing timestamps or treating the gap as no-signal is invalid.
+
+### Prospective baseline preparation
+
+The native alpha path prepares its baseline on the existing native wake before regular-session warmup. It retains
+the canonical query, actual daily and checkpoint rows, coherent adjusted-daily fallback snapshot, acquisition start
+and completion, and reproduced trailing baseline. Adjusted and raw series are not spliced. The immutable preparation
+binds the account, authority generation, cycle, session, full policy, calendar and physical execution build. Its scope
+excludes the cycle identity so subsequent cycles reuse the first committed source; a new physical build has a new scope.
+Restart and cache reuse preserve the original acquisition and database timestamps.
+
+Preopen acquisition requires every requested daily baseline and noise checkpoint before it can become that immutable
+source. Incomplete preopen reads are not cached or committed; a typed pending-coverage outcome defers the native hook
+to its existing first regular-minute wake. This boundary uses the actual acquisition `startedAt` and the target
+provider session's regular open. Finishing or committing an earlier partial read after the open cannot reclassify it.
+A fresh acquisition beginning at or after the regular open preserves the strategy's existing partial-symbol and
+partial-checkpoint behavior. This preparation condition does not add a whole-universe entry gate.
+
+Migration 225 records the source and pending evidence in one transaction. A later native controller observation can
+witness only committed source and pending rows. Only an already committed v7 registration matching the candidate
+policy, build, account, generation and calendar can enqueue qualification evidence. Registration must commit before
+the first native open; acquisition begins within that native session. Late registrations cannot backfill evidence.
+The server rounds source time upward to milliseconds, and the observer leaves a source pending until its own clock
+reaches that time. Caller timestamps, rollbacks, releasing a savepoint without committing its outer transaction,
+and direct witness inserts cannot establish availability.
+
+Native decisions require the preparation to have been recorded by the original `EntryObservationContext.observedAt`,
+before refreshed eligibility and snapshot reads. If acquisition finishes later, that pass defers to the next existing
+native wake. Warmup does not roll back a completed preparation. Research v13 uses a stricter boundary: the independent
+witness must be available by the actual `runPass` command's `commandIssuedAt`. Its baseline-use v2 receipt retains
+that command, original admission, deadline, preparation hash, witness hash and baseline hash. External verification
+reselects the source at the same command cut; a later admission or snapshot clock cannot admit it.
+
+Source-cut v6 retains the complete preparation inventory and independently committed witnesses, alongside alpha
+observations for latency calibration. A registered v13 input must exactly reproduce the independently witnessed
+preparation array derived from that cut; unwitnessed sources remain visible only in the cut. A compatible alpha
+incumbent may reuse the candidate's pure market baseline only under the same full policy; the producer remains
+the candidate, while the incumbent retains its own account, portfolio, eligibility, authority and build. An incompatible
+policy or missing peer-engine source remains unavailable. Replay never fetches a fresh provider baseline as a fallback.
+
+An unwitnessed first preparation remains `MISSING_CAUSAL_ALPHA_BASELINE` and withholds complete economics. Later
+successes do not erase it, and standalone supplied-source fixtures are not qualification evidence. Native and compiled
+replay tests establish execution and provenance behavior; prospective source capture, complete costs and economic
+qualification still require actual evidence.
+
+`measureRegisteredDecisionLatency` selects the engine's calibration. Jev retains its full-batch measurement; alpha
+uses reproduced observations and decisions or verified abstentions, separately bounded pass references, independent
+durable witnesses, and complete submission/recovery histories. Resolved failures remain timing samples. Missing
+sources, references, original commands, routing or unresolved submissions withhold the complete percentile. Alpha
+controller samples must also match the registered physical source and image digest. All
+registered controller windows remain in the reliability denominator. The shared `p95FullBatchMs` intervention field
+retains the command-through-durable-completion bound; alpha's report identifies observation counts explicitly and
+does not invent inference batches. The same floor applies to each control's own actual completion, preserving expiry
+and downstream pricing/risk checks. A measured percentile or a passing replay test does not establish profit.
 
 ## Evidence and assessment
 
@@ -309,7 +415,7 @@ Missing stress evidence leaves that diagnostic unresolved; supplied contradictor
 There is no fixed session count. Candidate and selected controls must cover every registered session exactly,
 including losses, downtime, blocked decisions, and zero-trade costs.
 
-New `bayn.system-registration.v5` registrations require `statisticalPlan.method: CONDITIONAL_HOEFFDING_V1` and one
+Native `bayn.system-registration.v5` and v6 registrations require `statisticalPlan.method: CONDITIONAL_HOEFFDING_V1` and one
 prospective support interval, source artifact and explicit assumption for every selected policy. They have no
 bootstrap or replicate budget. `economic-qualification.ts` uses actual fully attributed session net profit and exact
 conditional Hoeffding lower bounds for the candidate and every paired control. Its estimand is average registered

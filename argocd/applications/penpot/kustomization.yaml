@@ -10,7 +10,7 @@ resources:
 helmCharts:
   - name: penpot
     repo: https://helm.penpot.app/
-    version: 1.14.0
+    version: 1.16.0
     releaseName: penpot
     namespace: penpot
     valuesFile: values.yaml

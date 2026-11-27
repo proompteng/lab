@@ -6,6 +6,7 @@ import { calendarFixture, nativeRegistrationFixture, registrationFixture, testHa
 import { nativeBrokerRecoveryClose, validateProspectiveSystemRegistration, validateSystemRegistration } from './policy'
 import { ObligationClass } from './reliability'
 import { registeredSchedule } from './schedule'
+import { preparedAlphaRegistrationFixture } from './prepared-alpha-registration.test-support'
 
 test.each(['2026-11-02T14:30:00.000Z', '2027-01-01T00:00:00.000Z', '2040-02-29T23:59:59.999Z'])(
   'registration fixtures keep their complete prospective commitments after %s',
@@ -38,7 +39,7 @@ test('new registrations bind the complete native broker calendar and original na
       { start: dates[0]!, end: dates[1]! },
     ),
   )
-  const native = nativeRegistrationFixture(retained, marketCalendar)
+  const native = preparedAlphaRegistrationFixture(nativeRegistrationFixture(retained, marketCalendar))
   const accepted = Result.getOrThrow(validateProspectiveSystemRegistration(native)).registration
   expect(accepted.calendar.sessions[0]).toEqual({
     sessionDate: dates[0]!,

@@ -485,6 +485,10 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
         ),
       )
       expect(result.unrelatedScope.transactions).toEqual([])
+      expect(result.unrelatedScope.alphaDecisions).toBeUndefined()
+      expect(result.unrelatedScope.unverifiedAlphaDecisionHashes).toBeUndefined()
+      expect(result.postgres.alphaDecisions).toEqual([])
+      expect(result.postgres.unverifiedAlphaDecisionHashes).toEqual([])
       expect(result.unrelatedScope.ledgerTransactions).toHaveLength(2)
       expect(result.unrelatedScope.ledgerReceipts).toHaveLength(2)
       expect(result.unrelatedScope.accountReconciliation).toEqual(result.postgres.accountReconciliation)

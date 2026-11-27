@@ -5,7 +5,7 @@ public import Bayn.Valuation
 public import Bayn.CashHistory
 public import Bayn.CostAttribution
 public import Bayn.Reliability
-public import Bayn.Qualification
+public import Bayn.Registration
 public import Bayn.Bootstrap
 public import Bayn.Execution
 public import Bayn.NativeOrders

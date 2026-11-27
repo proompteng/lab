@@ -200,27 +200,29 @@ export const nextIntradayEntryAttemptOrdinal = (
   observedAt: string,
   submissionCutoffAt: string,
   recoveredBlockedCycle = false,
+  allowConcurrentActive = false,
 ): IntradayCycleEntryAttemptOrdinal | undefined => {
-  if (
-    (cycle.state !== CycleState.Completed &&
-      cycle.state !== CycleState.NoTrade &&
-      !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
-    cycle.terminalAt === undefined ||
-    cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ||
-    observedAt >= submissionCutoffAt
-  )
+  if (cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' || observedAt >= submissionCutoffAt) {
     return undefined
+  }
   const currentAttempt =
     cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4'
       ? cycle.identity.entryAttemptOrdinal
       : undefined
+  if (currentAttempt === undefined || currentAttempt >= 2_147_483_647) return undefined
+  if (allowConcurrentActive && cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined) {
+    const updatedAt = Date.parse(cycle.updatedAt)
+    return Number.isFinite(updatedAt) && Date.parse(observedAt) >= updatedAt ? currentAttempt + 1 : undefined
+  }
+  if (
+    (cycle.state !== CycleState.Completed &&
+      cycle.state !== CycleState.NoTrade &&
+      !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
+    cycle.terminalAt === undefined
+  )
+    return undefined
   const rearmAt = Date.parse(cycle.terminalAt)
-  return currentAttempt !== undefined &&
-    currentAttempt < 2_147_483_647 &&
-    Number.isFinite(rearmAt) &&
-    Date.parse(observedAt) >= rearmAt
-    ? currentAttempt + 1
-    : undefined
+  return Number.isFinite(rearmAt) && Date.parse(observedAt) >= rearmAt ? currentAttempt + 1 : undefined
 }
 
 /**

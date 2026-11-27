@@ -16,6 +16,7 @@ import { JevPositionHoldSchema } from '../../jev/hold'
 import { JevEntryTargetSchema } from '../../jev/decision'
 import { EntryAblationTargetSchema } from '../../jev/entry-ablation'
 import { RepeatedMomentumTargetSchema } from '../../strategy/repeated-momentum/decision'
+import { IntradayAlphaTargetSchema } from '../../strategy/intraday-alpha/decision'
 import { AccountProtectionInputsSchema } from '../../jev/account-protection'
 
 export const AdmissionProtectionEvidenceSchema = Schema.Struct({
@@ -48,6 +49,16 @@ export const ClosedEntryWindowSchema = Schema.Struct({
 export type ClosedEntryWindow = typeof ClosedEntryWindowSchema.Type
 
 export const maximumRetainedJevObservationReferences = 16
+export const maximumRetainedAlphaObservationReferences = 16
+export const AlphaObservationReferencesSchema = Schema.Struct({
+  hashes: Schema.Array(Sha256Schema).check(
+    Schema.isMaxLength(maximumRetainedAlphaObservationReferences),
+    Schema.makeFilter((hashes) => hashes.every((hash, index) => hash > (hashes[index - 1] ?? '')), {
+      expected: 'unique alpha observation hashes in canonical order',
+    }),
+  ),
+  complete: Schema.Boolean,
+})
 export const JevObservationReferencesSchema = Schema.Struct({
   hashes: Schema.Array(Sha256Schema).check(
     Schema.isMaxLength(maximumRetainedJevObservationReferences),
@@ -68,6 +79,7 @@ export const cyclePassObservationSchemaForHold = <Hold extends { readonly eviden
       executionBuild: Schema.optionalKey(ExecutionBuildSchema),
       observedAt: UtcInstantSchema,
       jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
+      alphaObservationReferences: Schema.optionalKey(AlphaObservationReferencesSchema),
       outcome: Schema.Literals([
         'WAITING',
         'ADMISSION_WAITING',
@@ -86,7 +98,12 @@ export const cyclePassObservationSchemaForHold = <Hold extends { readonly eviden
       positionHold: Schema.optionalKey(positionHold),
       protectionReleaseCycleId: Schema.optionalKey(Sha256Schema),
       entryAbstention: Schema.optionalKey(
-        Schema.Union([JevEntryTargetSchema, EntryAblationTargetSchema, RepeatedMomentumTargetSchema]).check(
+        Schema.Union([
+          JevEntryTargetSchema,
+          EntryAblationTargetSchema,
+          RepeatedMomentumTargetSchema,
+          IntradayAlphaTargetSchema,
+        ]).check(
           Schema.makeFilter((target) => target.selectedSymbols.length === 0, {
             expected: 'a reproduced decision with no selected entries',
           }),
@@ -153,6 +170,7 @@ export const cyclePassObservationSchemaForHold = <Hold extends { readonly eviden
       executionBuild: Schema.optionalKey(ExecutionBuildSchema),
       observedAt: UtcInstantSchema,
       jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
+      alphaObservationReferences: Schema.optionalKey(AlphaObservationReferencesSchema),
       operation: Schema.Literals([
         'acquire-cycle',
         'build-decision',

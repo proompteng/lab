@@ -51,6 +51,7 @@ class RestateBrokerPublisherTest {
             assertEquals(notificationDelivery.deliveryId, request.headers[RESTATE_IDEMPOTENCY_HEADER])
             assertEquals(ContentType.Application.Json, request.body.contentType)
             val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
+            assertEquals(notification.schemaVersion, body.getValue("schemaVersion").jsonPrimitive.content)
             assertEquals(notification.message, body.getValue("message").jsonPrimitive.content)
             assertEquals(notification.signature, body.getValue("signature").jsonPrimitive.content)
             respond(
@@ -110,6 +111,13 @@ class RestateBrokerPublisherTest {
             requests += request.url.encodedPath to request.headers[RESTATE_IDEMPOTENCY_HEADER]
             val lifecycle = request.url.encodedPath.substringAfterLast('/')
             val accepted = lifecycle != "cursor"
+            if (accepted) {
+              assertEquals(ContentType.Application.Json, request.body.contentType)
+              val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
+              assertEquals("bayn.signed-broker-activity.v1", body.getValue("schemaVersion").jsonPrimitive.content)
+              assertEquals(activity.message, body.getValue("message").jsonPrimitive.content)
+              assertEquals(activity.signature, body.getValue("signature").jsonPrimitive.content)
+            }
             respond(
               """{"cursor":"$cursor","caughtUp":true,"replayFromId":"$ACTIVITY_HISTORY_REPLAY_FROM_ID","replayUntilId":"$cursor","completionHash":"${"1".repeat(
                 64,

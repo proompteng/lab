@@ -302,6 +302,21 @@ describePostgres('PostgreSQL consumed Jev window lookup', () => {
             expect(actual).toContain('"Node Type":"Limit"')
             expect(actual).not.toContain('"Node Type":"Sort"')
             expect(actual).toContain('cycle_id = ANY')
+            const alphaEnd = '2026-09-04T19:00:00.000Z'
+            yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
+              VALUES ('alpha-window', ${cycleId}, ${alphaEnd}, ${sql.json({
+                schemaVersion: 'bayn.intraday-alpha-observation.v1',
+                manifest: { rangeEndAt: alphaEnd },
+                portfolio: { purpose: JevPurpose.Entry },
+              })})`
+            expect([...(yield* readWindows)]).toEqual(expected)
+            expect(
+              yield* store.latestJevWindowEnd({
+                cycleId,
+                purpose: JevPurpose.Entry,
+                schemaVersion: 'bayn.intraday-alpha-observation.v1',
+              }),
+            ).toEqual(Option.some(alphaEnd))
           }),
         )
       }),

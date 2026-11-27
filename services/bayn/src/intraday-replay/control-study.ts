@@ -37,7 +37,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
-import { BacktestInputSchema, prepareBacktest } from './backtest'
+import { BacktestInputV11Schema as BacktestInputSchema, prepareBacktest } from './backtest'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { makeControlJev, type ControlJevBinding } from './control-jev'
 import { makeControlJevJournal } from './control-jev-journal'

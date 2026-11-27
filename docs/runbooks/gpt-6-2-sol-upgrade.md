@@ -1,7 +1,7 @@
-# GPT-6.2 Sol and Codex 0.170.0 upgrade
+# GPT-6.2 Sol and Codex 0.172.0 upgrade
 
-The repository uses Codex `0.170.0` and defaults hosted OpenAI text generation and Codex tasks to `gpt-6.2-sol`.
-See the [Codex release](https://github.com/openai/codex/releases/tag/rust-v0.170.0) and
+The repository uses Codex `0.172.0` and defaults hosted OpenAI text generation and Codex tasks to `gpt-6.2-sol`.
+See the [Codex release](https://github.com/openai/codex/releases/tag/rust-v0.172.0) and
 [OpenAI migration guide](https://developers.openai.com/api/docs/guides/latest-model#migration-quickstart).
 
 ## Scope and compatibility
