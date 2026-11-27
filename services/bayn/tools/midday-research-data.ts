@@ -87,7 +87,7 @@ export interface Session {
   readonly daily: readonly PriorSessionDailySummary[]
 }
 
-const linesOf = (text: string) => {
+export const linesOf = (text: string) => {
   const lines = text.split('\n')
   if (lines.at(-1) === '') lines.pop()
   return lines
@@ -160,26 +160,29 @@ export const dailySummaries = (date: string, tapes: ReadonlyMap<string, Tape>) =
   return rows
 }
 
-export const decodeRegularCalendar = (input: unknown) => {
+export const regularCalendarReplayInput = (input: unknown) => {
   const { query, response } = Schema.decodeUnknownSync(CalendarSchema, strictParseOptions)(input)
   // The frozen calendar retains regular hours only. Feed those same hours to the unused extended fields.
-  return Result.getOrThrow(
-    normalizeMarketCalendarResult(
-      response.map((day) => ({
-        ...day,
-        session_open: day.open.replace(':', ''),
-        session_close: day.close.replace(':', ''),
-      })),
-      query,
-    ),
-  )
+  return {
+    query,
+    response: response.map((day) => ({
+      ...day,
+      session_open: day.open.replace(':', ''),
+      session_close: day.close.replace(':', ''),
+    })),
+  }
 }
 
-export const readFrozenMiddayTape = (directory: string) => {
+export const decodeRegularCalendar = (input: unknown) => {
+  const { query, response } = regularCalendarReplayInput(input)
+  return Result.getOrThrow(normalizeMarketCalendarResult(response, query))
+}
+
+export const openFrozenBaynDataset = (directory: string, files: readonly string[]) => {
   const manifestBytes = readFileSync(join(directory, 'MANIFEST.json'))
   if (digest(manifestBytes) !== manifestSha256) throw new Error('Unexpected frozen dataset MANIFEST.json SHA-256')
   const manifest = Schema.decodeUnknownSync(ManifestSchema)(JSON.parse(manifestBytes.toString('utf8')))
-  const sources = [calendarFile, barFile, quoteFile].map((name) => {
+  const sources = files.map((name) => {
     const entry = manifest.files.find((file) => file.key === prefix + name)
     if (entry === undefined) throw new Error(`Missing manifest entry for ${name}`)
     return entry
@@ -195,6 +198,11 @@ export const readFrozenMiddayTape = (directory: string) => {
       throw new Error(`Decompressed input SHA-256 or byte count mismatch for ${name}`)
     return { text: raw.toString('utf8'), rows: receipt.rows }
   }
+  return { manifestSha256, sources, read }
+}
+
+export const readFrozenMiddayTape = (directory: string, universe: readonly string[] = symbols) => {
+  const { sources, read } = openFrozenBaynDataset(directory, [calendarFile, barFile, quoteFile])
   const calendar = decodeRegularCalendar(JSON.parse(read(calendarFile).text))
   const dates = new Map(
     calendar.providerSessions
@@ -211,7 +219,7 @@ export const readFrozenMiddayTape = (directory: string) => {
     { symbol, at, date, value }: { symbol: string; at: number; date: string; value: A },
     select: (tape: MutableTape) => Map<number, A>,
   ) => {
-    if (!symbols.includes(symbol)) return
+    if (!universe.includes(symbol)) return
     const day = dates.get(date)
     if (day === undefined) throw new Error(`Date outside frozen calendar: ${date}`)
     if (at < day.openMs || at >= day.closeMs) return
@@ -253,6 +261,7 @@ export const readFrozenMiddayTape = (directory: string) => {
   if (sessions.filter(({ date }) => date >= evaluationStart).length !== 66)
     throw new Error('Expected exactly 66 evaluation calendar sessions')
   return {
+    calendar,
     sources: {
       manifestSha256,
       calendarHash: calendar.normalizedResponseHash,
