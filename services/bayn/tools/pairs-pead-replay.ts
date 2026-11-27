@@ -245,7 +245,8 @@ export const replayUnit = (
         }
       } else {
         if (pending !== 0) output.unfilled[d]++
-        if (book.side !== 0 && (exit || eod)) {
+        // A missing candidate bar can hide a protective stop even without a pending exit.
+        if (book.side !== 0 && (exit || eod || (!isPair && a.open[at] === 0))) {
           output.missing[d]++
           exit = true
         }

@@ -161,6 +161,16 @@ test('intraday fills at the next open and stops against the prior trail, not the
   write(a, at + 3, 0)
   expect(run().unfilled[d]).toBe(1)
   expect(run().entries[d]).toBe(0)
+
+  // A missing held bar might have triggered the protective stop.
+  write(a, at + 3, 110, 114, 109, 112)
+  write(a, at + 4, 0)
+  const missingStop = run()
+  expect(missingStop.entries[d]).toBe(1)
+  expect(missingStop.exits[d]).toBe(1)
+  expect(missingStop.missing[d]).toBe(1)
+  expect(missingStop.gross[d]).toBeCloseTo(1_000 * (108 / 110 - 1))
+  expect(summarize(missingStop, [d], 10, 5, null, [], false).net).toBeNull()
 })
 
 test('swing pairs fill next open, keep the marked book and pay actual elapsed short borrow', () => {
