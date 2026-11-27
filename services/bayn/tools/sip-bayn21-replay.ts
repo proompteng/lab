@@ -186,7 +186,7 @@ export const createReplay = (calendar: ReplayCalendar) => {
         sessionOpenMs: session.openMs,
         rangeEndMs: session.openMs + (minute + 1) * minuteMs,
         symMap: allBars,
-        quoteHalfSpreadBps: 1,
+        quoteModel: { slippageRtBps: 2 },
       })
       const eligibility = makeShortEligibility(snapshot.manifest.observedAt)
       const inputs = {
@@ -363,6 +363,7 @@ const planOrders = (
     })),
     currentBars,
     frame.minute,
+    new Map(),
   )
   const fundingPolicy =
     session.date < '2026-07-01'
