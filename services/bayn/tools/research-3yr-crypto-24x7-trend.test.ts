@@ -28,6 +28,7 @@ const market = (prices: readonly (readonly [number, number])[]): Market => {
     start: Date.parse('2022-01-01'),
     count: prices.length,
     barsPerDay: 1,
+    excludedEndRows: 0,
     coins: new Map(symbols.map((name) => [name, column(name === 'BTC/USD' ? prices : prices.map(() => [0, 0]))])),
   }
 }
@@ -48,6 +49,14 @@ describe('frozen Alpaca research inputs', () => {
     expect(() => parse(valid.replace('T00:', 'T01:'), 1)).toThrow('Invalid')
     expect(() => parse(valid.replace('BTC/USD', 'GOLD/USD'), 1)).toThrow('Invalid')
     expect(() => parse(valid, 2)).toThrow('Expected 2')
+  })
+
+  test('counts but never scores the exclusive-end row from the immutable objects', () => {
+    const rows = [bar('BTC/USD', '2026-11-26'), bar('BTC/USD', '2026-11-27', 999)].join('\n')
+    const market = parseBars(rows, '1d', '2026-11-27', 2)
+    expect(market.excludedEndRows).toBe(1)
+    expect(market.coins.get('BTC/USD')?.close.at(-1)).toBe(100)
+    expect(() => parseBars(rows.replace('2026-11-27T00', '2026-11-27T01'), '1d', '2026-11-27', 2)).toThrow('Invalid')
   })
 
   test('retains independent chronology and does not permit scoring without a stage', () => {
@@ -172,7 +181,7 @@ describe('pre-registered diagnostics', () => {
     expect(new Set(trials.map(({ id }) => id)).size).toBe(trials.length)
     const trial = trials[0]
     const pair = dailyPair(trial, trials)
-    if (!pair) throw new Error('Expected paired daily trial')
+    if (pair === undefined) throw new Error('Expected paired daily trial')
     expect(pair.rule).toEqual(trial.rule)
     expect(
       neighbors(trial, trials).every(({ frame, rule }) => frame === trial.frame && rule.kind === trial.rule.kind),

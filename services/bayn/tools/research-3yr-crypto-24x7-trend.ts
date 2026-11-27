@@ -3,7 +3,7 @@ import { Effect } from 'effect'
 import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { coverage, loadMarkets, sha256, type Market } from './research-crypto-trend-data'
+import { coverage, loadMarkets, ResearchError, sha256, type Market } from './research-crypto-trend-data'
 import {
   economicGates,
   economics,
@@ -135,7 +135,7 @@ const run = (market: Market, frozen: boolean, frame: Frame) => {
             m[primaryFee],
             local.map(({ id }) => {
               const neighbor = byTrial.get(id)
-              if (!neighbor) throw new Error(`Missing registered neighbor: ${id}`)
+              if (neighbor === undefined) throw new Error(`Missing registered neighbor: ${id}`)
               return { id, metrics: neighbor.metrics[period][primaryFee] }
             }),
           ),
@@ -154,9 +154,17 @@ const run = (market: Market, frozen: boolean, frame: Frame) => {
     return { trial, metrics, checks }
   })
   const coverageBySplit = Object.fromEntries(
-    (frozen ? splits : development).map((split) => [split, coverage(market, ...ranges[split])]),
+    (frozen ? splits : development).map((split) => [split, coverage(market, ranges[split][0], ranges[split][1])]),
   )
-  return { dsrReference, benchmarks, analysis, coverageBySplit, dateWindows, simulateSplits }
+  return {
+    dsrReference,
+    benchmarks,
+    analysis,
+    coverageBySplit,
+    dateWindows,
+    simulateSplits,
+    excludedEndRows: market.excludedEndRows,
+  }
 }
 type Analysis = ReturnType<typeof run>['analysis'][number]
 
@@ -177,7 +185,7 @@ export const nominate = (analyses: readonly Analysis[]) => {
   for (const row of analyses) {
     const group = `${row.trial.frame}/${row.trial.rule.kind}`
     const members = groups.get(group)
-    if (members) members.push(row)
+    if (members !== undefined) members.push(row)
     else groups.set(group, [row])
   }
   return Object.fromEntries(
@@ -185,8 +193,8 @@ export const nominate = (analyses: readonly Analysis[]) => {
       const ranked = rows.toSorted(compareRank)
       const eligible = ranked.filter((row) => {
         const pair = dailyPair(row.trial, trials)
-        const paired = pair && members.get(pair.id)
-        return paired && developmentPass(row) && developmentPass(paired)
+        const paired = pair === undefined ? undefined : members.get(pair.id)
+        return paired !== undefined && developmentPass(row) && developmentPass(paired)
       })
       return [
         group,
@@ -221,7 +229,7 @@ const qualification = (row: Analysis, paired: Analysis | undefined, nominated: b
 
 const git = (...args: string[]) => {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
-  if (result.error || result.status !== 0)
+  if (result.error !== undefined || result.status !== 0)
     throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`, { cause: result.error })
   return result.stdout
 }
@@ -256,6 +264,7 @@ const freezeRegistration = (
         periods: run.dateWindows,
         dsrReference: run.dsrReference,
         coverage: run.coverageBySplit,
+        excludedEndRows: run.excludedEndRows,
       },
     ]),
   ),
@@ -273,7 +282,7 @@ export const parseArgs = (args: readonly string[]) => {
 }
 const committedReceipt = () => {
   const commit = git('log', '-1', '--diff-filter=A', '--format=%H', '--', freezePath).trim()
-  if (!commit) throw new Error('Commit freeze.json before scoring Frozen Holdout')
+  if (commit === '') throw new Error('Commit freeze.json before scoring Frozen Holdout')
   const receipt = readFileSync(root + freezePath, 'utf8')
   if (receipt !== git('show', `${commit}:${freezePath}`) || receipt !== git('show', `HEAD:${freezePath}`)) {
     throw new Error('Freeze receipt differs from the original committed receipt')
@@ -281,12 +290,15 @@ const committedReceipt = () => {
   return { commit, receipt }
 }
 
+const checked = <T>(message: string, action: () => T) =>
+  Effect.try({ try: action, catch: (cause) => new ResearchError({ message, cause }) })
+
 const program = Effect.gen(function* () {
-  const { stage, output } = yield* Effect.try(() => parseArgs(Bun.argv.slice(2)))
-  const registered = yield* Effect.try(registeredCommit)
-  const committed = stage === 'score' ? yield* Effect.try(committedReceipt) : null
+  const { stage, output } = yield* checked('Invalid arguments', () => parseArgs(Bun.argv.slice(2)))
+  const registered = yield* checked('Research sources are not registered', registeredCommit)
+  const committed = stage === 'score' ? yield* checked('No committed freeze receipt', committedReceipt) : null
   const dev = yield* loadMarkets(false)
-  const registration = yield* Effect.try(() =>
+  const registration = yield* checked('Development evaluation failed', () =>
     freezeRegistration(
       dev.identity,
       frames.map((frame) => ({
@@ -296,17 +308,19 @@ const program = Effect.gen(function* () {
     ),
   )
   const receipt = json(registration)
-  if (!committed) {
-    yield* Effect.try(() => writeFileSync(output, receipt, { flag: 'wx' }))
+  if (committed === null) {
+    yield* checked('Could not write freeze receipt', () => writeFileSync(output, receipt, { flag: 'wx' }))
     yield* Effect.logInfo(`Wrote development-only freeze: ${output}. Commit the receipt before scoring.`)
     return
   }
   if (receipt !== committed.receipt)
-    return yield* Effect.fail(new Error('Source, protocol, dataset or development selection changed since freeze'))
+    return yield* new ResearchError({
+      message: 'Source, protocol, dataset or development selection changed since freeze',
+    })
   const scored = yield* loadMarkets(true)
   if (json(scored.identity) !== json(dev.identity))
-    return yield* Effect.fail(new Error('Dataset identity changed between phases'))
-  const result = yield* Effect.try(() => {
+    return yield* new ResearchError({ message: 'Dataset identity changed between phases' })
+  const result = yield* checked('Frozen scoring failed', () => {
     const evaluated = frames.map((frame) => ({ frame, run: run(scored.market(frame), true, frame) }))
     const analyses = new Map(evaluated.flatMap(({ run }) => run.analysis.map((row) => [row.trial.id, row])))
     const nominees = new Set(
@@ -318,12 +332,18 @@ const program = Effect.gen(function* () {
       frame,
       periods: run.dateWindows,
       coverage: run.coverageBySplit,
+      excludedEndRows: run.excludedEndRows,
       benchmarks: run.benchmarks,
       dsrReference: run.dsrReference,
       trials: run.analysis.map((row) => {
         const { trial } = row
         const pair = dailyPair(trial, trials)
-        const verdict = qualification(row, pair && analyses.get(pair.id), nominees.has(trial.id), cutoff)
+        const verdict = qualification(
+          row,
+          pair === undefined ? undefined : analyses.get(pair.id),
+          nominees.has(trial.id),
+          cutoff,
+        )
         if (verdict.pass) winners.push(trial.id)
         const leaveOneCoinOut = Object.fromEntries(
           roster(trial.universe).map((omit) => {
@@ -333,7 +353,8 @@ const program = Effect.gen(function* () {
               feeMap((fee) =>
                 splits.map((split) => {
                   const days = replay[split]?.[fee]
-                  if (!days) throw new Error(`Missing leave-one-coin-out replay: ${trial.id} ${omit} ${split}`)
+                  if (days === undefined)
+                    throw new Error(`Missing leave-one-coin-out replay: ${trial.id} ${omit} ${split}`)
                   const { net, sharpe, maxDrawdown, annualTurnover, staleBars, unsettled } = economics(days)
                   return [net, sharpe, maxDrawdown, annualTurnover, staleBars, unsettled]
                 }),
@@ -370,7 +391,7 @@ const program = Effect.gen(function* () {
       `  ${JSON.stringify(frame).slice(0, -1)}, "trials": [\n    ${trials.map((trial) => JSON.stringify(trial)).join(',\n    ')}\n  ]}`,
   )
   const encoded = `${json(metadata).trimEnd().slice(0, -2)},\n  "winners": ${JSON.stringify(winners)},\n  "frames": [\n${frameJson.join(',\n')}\n  ]\n}\n`
-  yield* Effect.try(() => writeFileSync(output, encoded, { flag: 'wx' }))
+  yield* checked('Could not write research results', () => writeFileSync(output, encoded, { flag: 'wx' }))
   yield* Effect.logInfo(`Scored ${trials.length} trials; ${winners.length} qualified. Wrote ${output}.`)
 })
 

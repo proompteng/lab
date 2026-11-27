@@ -152,7 +152,7 @@ const prepareCoin = (bar: Coin, barsPerDay: number): Indicators => {
     const cache = new Map<number, Float64Array>()
     return (length: number) => {
       const exists = cache.get(length)
-      if (exists) return exists
+      if (exists !== undefined) return exists
       const output = new Float64Array(n)
       for (let i = length - 1; i < n; i++) output[i] = compute(i, length)
       cache.set(length, output)
@@ -184,7 +184,7 @@ const prepareCoin = (bar: Coin, barsPerDay: number): Indicators => {
     sma,
     ema: (length) => {
       const existing = expCache.get(length)
-      if (existing) return existing
+      if (existing !== undefined) return existing
       const values = new Float64Array(n)
       const smooth = 2 / (length + 1)
       const seed = sma(length)
@@ -275,8 +275,8 @@ const signal = (market: Market, coins: readonly Indicators[], trial: Trial) => {
         const weekday = (market.start / dayMs + Math.floor((i + 1) / barsPerDay) + 4) % 7
         if (rule.weekend && weekday !== 6 && weekday !== 0) return false
         if (
-          !shortVol ||
-          !longVol ||
+          shortVol === null ||
+          longVol === null ||
           !(shortVol[i - 1] > 0 && shortVol[i - 1] < rule.ratio * longVol[i - 1]) ||
           i - sinceExit[j] < toBars(compression.cooldownHours)
         ) {
@@ -295,7 +295,10 @@ const signal = (market: Market, coins: readonly Indicators[], trial: Trial) => {
     let gross = 0
     for (let j = 0; j < coins.length; j++) {
       const budget = rule.kind === 'compression' ? 0.2 : rule.target
-      const on = vol[j][i] > 0 && (!btcFast || !btcSlow || (btcSlow[i] > 0 && btcFast[i] > btcSlow[i])) && wants[j](i)
+      const on =
+        vol[j][i] > 0 &&
+        (btcFast === undefined || btcSlow === undefined || (btcSlow[i] > 0 && btcFast[i] > btcSlow[i])) &&
+        wants[j](i)
       const size = on ? budget / vol[j][i] / coins.length : 0
       target[j] = rule.kind === 'parity' ? size : Math.min(size, 1 / coins.length)
       gross += target[j]
@@ -323,7 +326,7 @@ export const simulate = (
   )
   const coins = names.map((name) => {
     const value = prepared.coins.get(name)
-    if (!value) throw new Error(`Missing market column: ${name}`)
+    if (value === undefined) throw new Error(`Missing market column: ${name}`)
     return value
   })
   const decide = typeof strategy === 'string' ? null : signal(market, coins, strategy)
@@ -333,7 +336,7 @@ export const simulate = (
   const observed = new Uint8Array(coins.length)
   const books = fees.map((fee) => newBook(fee, coins.length))
   for (let i = from; i < until; i++) {
-    const decision = i > 0 && decide ? decide(i - 1, i === from) : null
+    const decision = i > 0 && decide !== null ? decide(i - 1, i === from) : null
     for (let j = 0; j < coins.length; j++) {
       const open = coins[j].bar.open[i]
       observed[j] = open > 0 ? 1 : 0

@@ -8,7 +8,7 @@ const compound = (returns: readonly number[]) => returns.reduce((wealth, r) => w
 const schedules = new Map<number, Uint16Array>()
 const drawStarts = (n: number) => {
   const existing = schedules.get(n)
-  if (existing) return existing
+  if (existing !== undefined) return existing
   const samples = new Uint16Array(Math.ceil(n / bootstrap.days) * bootstrap.draws)
   let state = bootstrap.seed
   for (let i = 0; i < samples.length; i++) {

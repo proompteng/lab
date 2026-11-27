@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
 import { S3Client } from 'bun'
-import { Config, Effect, Redacted, Schema } from 'effect'
-import { date, dayMs, end, frames, symbols, venues, type Frame } from './research-crypto-trend-protocol'
+import { Config, Data, Effect, Redacted, Schema } from 'effect'
+import { dayMs, end, frames, symbols, venues, type Frame } from './research-crypto-trend-protocol'
 
 const prefix = 'bayn-research-datasets/2026-11-27-crypto-3yr/'
-const SafeCount = Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0))
+const SafeCount = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0))
 const Hex = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
 const FileSchema = Schema.Struct({
   key: Schema.String,
@@ -32,6 +32,7 @@ export type Market = {
   start: number
   barsPerDay: number
   count: number
+  excludedEndRows: number
   coins: ReadonlyMap<string, Coin>
 }
 
@@ -39,9 +40,10 @@ export const parseBars = (raw: string, frame: Frame, until: string, totalRows: n
   const { start: first, barsPerDay } = venues[frame]
   const start = Date.parse(first)
   const stop = Date.parse(until)
+  const exclusiveEnd = Date.parse(end)
   const step = dayMs / barsPerDay
   const count = (stop - start) / step
-  const market = new Map(
+  const market = new Map<string, Coin>(
     symbols.map((name) => [
       name,
       {
@@ -53,24 +55,30 @@ export const parseBars = (raw: string, frame: Frame, until: string, totalRows: n
     ]),
   )
   let rows = 0
+  const excluded = new Set<string>()
   for (const line of raw.trimEnd().split('\n')) {
     rows++
     const [name, time, ...fields] = line.split('\t')
-    // Partition by timestamp before decoding prices; freeze has no access to holdout bars.
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(time) || time.slice(0, 10) >= end) {
-      throw new Error(`Invalid bar timestamp on row ${rows}: ${time}`)
-    }
-    if (time.slice(0, 10) >= until) continue
     const ms = Date.parse(time)
     const i = (ms - start) / step
-    const coin = market.get(name as (typeof symbols)[number])
-    const [open, high, low, close, volume, vwap] = fields.map(Number)
+    const coin = market.get(name)
     if (
-      !coin ||
+      coin === undefined ||
       !Number.isInteger(i) ||
       i < 0 ||
-      i >= count ||
-      new Date(ms).toISOString() !== time.replace('Z', '.000Z') ||
+      ms > exclusiveEnd ||
+      new Date(ms).toISOString().replace('.000Z', 'Z') !== time
+    )
+      throw new Error(`Invalid bar timestamp or symbol on row ${rows}: ${name} ${time}`)
+    // The immutable objects include one bar per coin at the exclusive end; never score these.
+    if (time === `${end}T00:00:00Z`) {
+      if (excluded.has(name)) throw new Error(`Duplicate exclusive-end bar on row ${rows}: ${name}`)
+      excluded.add(name)
+    }
+    // Partition before parsing prices; freeze has no access to numeric holdout bars.
+    if (ms >= stop) continue
+    const [open, high, low, close, volume, vwap] = fields.map(Number)
+    if (
       fields.length !== 6 ||
       fields.some((field) => field.trim() === '') ||
       ![open, high, low, close, volume, vwap].every(Number.isFinite) ||
@@ -88,7 +96,7 @@ export const parseBars = (raw: string, frame: Frame, until: string, totalRows: n
     coin.close[i] = close
   }
   if (rows !== totalRows) throw new Error(`Expected ${totalRows} ${frame} rows; received ${rows}`)
-  return { start, barsPerDay, count, coins: market }
+  return { start, barsPerDay, count, excludedEndRows: excluded.size, coins: market }
 }
 
 export const coverage = (market: Market, from: string, until: string) => {
@@ -121,7 +129,7 @@ export const coverage = (market: Market, from: string, until: string) => {
   )
 }
 
-const verifyFile = (spec: FileSpec, gzip: Uint8Array, frame: Frame, until: string) => {
+const verifyFile = (spec: FileSpec, gzip: Uint8Array<ArrayBuffer>, frame: Frame, until: string) => {
   if (gzip.length !== spec.gzipBytes || sha256(gzip) !== spec.gzipSha256) {
     throw new Error(`Compressed size/hash mismatch: ${spec.key}`)
   }
@@ -129,16 +137,20 @@ const verifyFile = (spec: FileSpec, gzip: Uint8Array, frame: Frame, until: strin
   if (raw.length !== spec.rawBytes || sha256(raw) !== spec.rawSha256) {
     throw new Error(`Uncompressed size/hash mismatch: ${spec.key}`)
   }
-  return parseBars(new TextDecoder('utf8', { fatal: true }).decode(raw), frame, until, spec.rows)
+  const market = parseBars(new TextDecoder('utf8', { fatal: true }).decode(raw), frame, until, spec.rows)
+  if (market.excludedEndRows !== symbols.length) throw new Error(`Unexpected exclusive-end row count: ${spec.key}`)
+  return market
 }
 
+export class ResearchError extends Data.TaggedError('ResearchError')<{ message: string; cause?: unknown }> {}
+
 export const loadMarkets = Effect.fn('researchCryptoTrend.loadMarkets')(function* (includeHoldout: boolean) {
-  const endpoint = yield* Config.string('AGENTS_ARTIFACTS_ENDPOINT').pipe(
+  const endpoint = yield* Config.String('AGENTS_ARTIFACTS_ENDPOINT').pipe(
     Config.withDefault('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80'),
   )
-  const bucket = yield* Config.string('AGENTS_ARTIFACTS_BUCKET').pipe(Config.withDefault('agents-artifacts'))
-  const key = yield* Config.redacted('AWS_ACCESS_KEY_ID')
-  const secret = yield* Config.redacted('AWS_SECRET_ACCESS_KEY')
+  const bucket = yield* Config.String('AGENTS_ARTIFACTS_BUCKET').pipe(Config.withDefault('agents-artifacts'))
+  const key = yield* Config.Redacted('AWS_ACCESS_KEY_ID')
+  const secret = yield* Config.Redacted('AWS_SECRET_ACCESS_KEY')
   const s3 = new S3Client({
     endpoint,
     bucket,
@@ -154,24 +166,24 @@ export const loadMarkets = Effect.fn('researchCryptoTrend.loadMarkets')(function
             s3.file(key).stream().pipeThrough(new TransformStream<Uint8Array, Uint8Array>(), { signal }),
           ),
         ),
-      catch: (cause) => new Error(`S3 download failed: ${key}`, { cause }),
+      catch: (cause) => new ResearchError({ message: `S3 download failed: ${key}`, cause }),
     })
   const manifestBytes = yield* download(prefix + 'MANIFEST.json')
   const manifestText = new TextDecoder('utf8', { fatal: true }).decode(manifestBytes)
   const manifest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ManifestSchema))(manifestText)
   if (manifest.symbols.join(',') !== symbols.join(',') || manifest.files.length !== frames.length) {
-    return yield* Effect.fail(new Error('Unexpected frozen manifest universe or file count'))
+    return yield* new ResearchError({ message: 'Unexpected frozen manifest universe or file count' })
   }
   const markets = new Map<Frame, Market>()
   for (const frame of frames) {
     const spec = manifest.files.find(({ key }) => key === prefix + venues[frame].key)
-    if (!spec || spec.rows !== venues[frame].rows) {
-      return yield* Effect.fail(new Error(`Missing or unexpected frozen manifest file: ${frame}`))
+    if (spec === undefined || spec.rows !== venues[frame].rows) {
+      return yield* new ResearchError({ message: `Missing or unexpected frozen manifest file: ${frame}` })
     }
     const bytes = yield* download(spec.key)
     const market = yield* Effect.try({
       try: () => verifyFile(spec, bytes, frame, includeHoldout ? end : venues[frame].holdout),
-      catch: (cause) => new Error(`Frozen dataset rejected: ${spec.key}`, { cause }),
+      catch: (cause) => new ResearchError({ message: `Frozen dataset rejected: ${spec.key}`, cause }),
     })
     markets.set(frame, market)
   }
@@ -179,10 +191,9 @@ export const loadMarkets = Effect.fn('researchCryptoTrend.loadMarkets')(function
     identity: { manifestSha256: sha256(manifestBytes), files: manifest.files },
     market(frame: Frame) {
       const market = markets.get(frame)
-      if (!market) throw new Error(`Missing loaded market: ${frame}`)
+      if (market === undefined) throw new Error(`Missing loaded market: ${frame}`)
       return market
     },
   }
 })
 export const barIndex = (market: Market, day: string) => ((Date.parse(day) - market.start) / dayMs) * market.barsPerDay
-export const barDay = (market: Market, i: number) => date(market.start + (i * dayMs) / market.barsPerDay)

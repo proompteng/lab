@@ -1,5 +1,4 @@
 export const dayMs = 86_400_000
-export const date = (ms: number) => new Date(ms).toISOString().slice(0, 10)
 export const symbols = [
   'BTC/USD',
   'ETH/USD',

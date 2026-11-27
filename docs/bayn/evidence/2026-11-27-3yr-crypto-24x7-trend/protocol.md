@@ -10,7 +10,9 @@ post-holdout parameter change or promotion of a higher-scoring shadow row.
 Use the two S3 objects in `bayn-research-datasets/2026-11-27-crypto-3yr/MANIFEST.json`: 248,820 1H and 16,772
 daily UTC bars for BTC, ETH, SOL, LINK, AVAX, LTC, DOGE, AAVE, UNI and XRP against USD. Verify manifest schema,
 universe, object paths, raw and compressed sizes and SHA-256 digests, exact row counts, aligned timestamps,
-numeric OHLCV and uniqueness. Bind the exact manifest and file digests to the receipt.
+numeric OHLCV and uniqueness within the scored windows. Both source objects include one row per coin at the
+exclusive 2026-11-27 00:00 UTC boundary. Verify and count these ten rows per object, but never decode
+their prices or score them. Bind the exact manifest and file digests to the receipt.
 
 | Frame | Train (inclusive)       | Validation (inclusive)  | Frozen Holdout (inclusive) |
 | ----- | ----------------------- | ----------------------- | -------------------------- |
