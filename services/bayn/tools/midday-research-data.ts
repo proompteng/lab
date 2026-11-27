@@ -160,19 +160,22 @@ export const dailySummaries = (date: string, tapes: ReadonlyMap<string, Tape>) =
   return rows
 }
 
-export const decodeRegularCalendar = (input: unknown) => {
+export const regularCalendarReplayInput = (input: unknown) => {
   const { query, response } = Schema.decodeUnknownSync(CalendarSchema, strictParseOptions)(input)
   // The frozen calendar retains regular hours only. Feed those same hours to the unused extended fields.
-  return Result.getOrThrow(
-    normalizeMarketCalendarResult(
-      response.map((day) => ({
-        ...day,
-        session_open: day.open.replace(':', ''),
-        session_close: day.close.replace(':', ''),
-      })),
-      query,
-    ),
-  )
+  return {
+    query,
+    response: response.map((day) => ({
+      ...day,
+      session_open: day.open.replace(':', ''),
+      session_close: day.close.replace(':', ''),
+    })),
+  }
+}
+
+export const decodeRegularCalendar = (input: unknown) => {
+  const { query, response } = regularCalendarReplayInput(input)
+  return Result.getOrThrow(normalizeMarketCalendarResult(response, query))
 }
 
 export const readFrozenMiddayTape = (directory: string) => {
