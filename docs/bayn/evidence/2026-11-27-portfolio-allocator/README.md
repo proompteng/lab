@@ -1,11 +1,11 @@
 # Bayn Wave 1F: portfolio allocation
 
-**Decision: no promotion.** Volatility targeting improved Sharpe, Calmar and ex-top-five net at both 5 and 10 bp
-on matched live-universe sessions. At 10 bp, removing AVGO turned its ex-top-five net from **+$1,204.17** to
-**−$2,701.40**, and removing the five best days separately within each live fold left that fold negative. No
-sizing arm survived the longer ORB/Noise check and all the [frozen gates](protocol.md). Keep the primitives
-available for unbound Wave 2 research, not as a policy or a source of trading authority. The live v2 hash and
-migrations 0222/0223 are unchanged.
+**Decision: no promotion.** Volatility plus dispersion improved matched-session Sharpe and Calmar at both
+5 and 10 bp, but every arm lost money after removing its five best days at those costs. At 10 bp, the
+vol-dispersion arm's **+$3,825.61** became **−$4,606.52** after removal and **−$7,863.33** when AVGO was
+also excluded and the portfolio was retrained. No sizing arm passed the longer ORB/Noise stress check or all
+the [frozen gates](protocol.md). Keep the primitives unbound for Wave 2 research; the live v2 hash and migrations
+0222/0223 are unchanged.
 
 [Results](results.json) contains unrounded measurements, the trial registry and gate outcomes, input receipts,
 dated daily net arrays, three folds, four regime slices, sleeve attribution, every candidate omission,
@@ -15,47 +15,46 @@ bootstrap distributions, DSR, and gross-use histograms. A daily `null` means unk
 
 All monetary columns are USD on $100,000 fixed session equity. Sharpe annualizes daily net P&L with 252 sessions.
 Calmar divides linear annualized fixed-notional return by maximum peak-to-trough daily equity drawdown (no
-reinvestment); intraday marked drawdown is separate in JSON. The 2 and 5 bp rows use 65 matched sessions:
-2026-11-17 had a missing concurrent position mark at an otherwise eligible entry. The 10 bp path did not hold
-that position at the checkpoint and all 66 sessions were evaluable. The 65-session statistics are conditional
-diagnostics, not an estimate of full-window net. BootP is the centered one-sided test against zero mean; the
+reinvestment); intraday marked drawdown is separate in JSON. All cost rows use 65 matched sessions out of
+66: on 2026-11-17 a concurrent position mark was missing at an otherwise eligible entry. The 65-session
+statistics are conditional diagnostics, not an estimate of full-window net. BootP is the centered one-sided test against zero mean; the
 uncentered circular 5-session bootstrap (10,000 trials) gives the net and drawdown quantiles. The block clock is
 the matched sequence where coverage is incomplete. [DSR](https://davidhbailey.com/dhbpapers/deflated-sharpe.pdf)
 uses the daily Sharpe distribution across registered arms at each cost; it is not independent confirmation,
 and the arms are correlated.
 
-| RT bp | Arm                  |       Net | Sharpe |  Calmar |   MaxDD | Ex-top-5 | Ex-worst-5 |  BootP |    DSR |
-| ----: | :------------------- | --------: | -----: | ------: | ------: | -------: | ---------: | -----: | -----: |
-|     2 | v2-static            | 15,099.48 | 4.9414 | 42.4066 | 1.3804% | 5,566.61 |  19,469.51 | 0.0020 | 0.9971 |
-|     2 | volatility           | 15,208.35 | 5.3549 | 42.7124 | 1.3804% | 6,018.99 |  18,982.80 | 0.0007 | 0.9988 |
-|     2 | dispersion           | 15,968.41 | 4.7884 | 36.5447 | 1.6940% | 5,589.56 |  21,081.42 | 0.0034 | 0.9953 |
-|     2 | inverse-vol          | 14,052.79 | 4.6120 | 38.7409 | 1.4063% | 4,304.88 |  18,527.28 | 0.0028 | 0.9956 |
-|     2 | erc                  | 13,752.32 | 4.5173 | 38.5900 | 1.3816% | 4,075.00 |  18,333.31 | 0.0033 | 0.9942 |
-|     2 | vol-dispersion       | 16,082.47 | 5.1722 | 40.1737 | 1.5520% | 5,928.28 |  20,619.59 | 0.0017 | 0.9978 |
-|     2 | combined             | 14,816.47 | 4.9102 | 39.0598 | 1.4706% | 4,989.65 |  18,956.45 | 0.0025 | 0.9972 |
-|     2 | combined-loss        | 14,816.47 | 4.9102 | 39.0598 | 1.4706% | 4,989.65 |  18,956.45 | 0.0025 | 0.9972 |
-|     2 | combined-profit-lock | 14,197.25 | 4.9222 | 37.4274 | 1.4706% | 4,989.65 |  18,337.22 | 0.0027 | 0.9963 |
-|     2 | combined-cap-120k    | 14,287.05 | 4.8788 | 37.6642 | 1.4706% | 4,870.54 |  18,427.03 | 0.0019 | 0.9965 |
-|     5 | v2-static            | 13,058.65 | 4.2983 | 34.9117 | 1.4502% | 3,743.95 |  17,585.05 | 0.0045 | 0.9899 |
-|     5 | volatility           | 13,377.37 | 4.7329 | 35.7638 | 1.4502% | 4,387.27 |  17,302.41 | 0.0024 | 0.9953 |
-|     5 | dispersion           | 13,856.54 | 4.1818 | 30.3308 | 1.7712% | 3,718.10 |  19,166.93 | 0.0091 | 0.9861 |
-|     5 | inverse-vol          | 12,038.06 | 3.9735 | 30.8693 | 1.5119% | 2,500.89 |  16,666.08 | 0.0080 | 0.9851 |
-|     5 | erc                  | 11,740.86 | 3.8777 | 30.4629 | 1.4942% | 2,271.62 |  16,472.50 | 0.0095 | 0.9815 |
-|     5 | vol-dispersion       | 14,187.50 | 4.5906 | 32.7451 | 1.6798% | 4,259.75 |  18,897.59 | 0.0058 | 0.9930 |
-|     5 | combined             | 12,985.70 | 4.3281 | 31.3064 | 1.6081% | 3,355.17 |  17,264.98 | 0.0057 | 0.9909 |
-|     5 | combined-loss        | 12,985.70 | 4.3281 | 31.3064 | 1.6081% | 3,355.17 |  17,264.98 | 0.0057 | 0.9909 |
-|     5 | combined-profit-lock | 12,374.69 | 4.3141 | 29.8333 | 1.6081% | 3,355.17 |  16,653.96 | 0.0064 | 0.9886 |
-|     5 | combined-cap-120k    | 12,469.42 | 4.2795 | 30.0617 | 1.6081% | 3,239.47 |  16,748.70 | 0.0053 | 0.9891 |
-|    10 | v2-static            |  8,520.35 | 2.9846 | 16.8889 | 1.9262% |   388.62 |  13,222.49 | 0.0293 | 0.9227 |
-|    10 | volatility           |  9,253.19 | 3.4104 | 20.1202 | 1.7560% | 1,204.17 |  13,449.08 | 0.0162 | 0.9538 |
-|    10 | dispersion           |  9,249.72 | 2.9849 | 14.4076 | 2.4513% |   332.28 |  14,662.75 | 0.0375 | 0.9222 |
-|    10 | inverse-vol          |  7,477.96 | 2.6807 | 12.7367 | 2.2417% |  -651.91 |  12,282.21 | 0.0395 | 0.8947 |
-|    10 | erc                  |  7,196.91 | 2.5775 | 11.8699 | 2.3150% |  -868.71 |  12,168.21 | 0.0437 | 0.8823 |
-|    10 | vol-dispersion       | 10,014.20 | 3.4006 | 18.6905 | 2.0457% | 1,073.79 |  15,031.38 | 0.0212 | 0.9528 |
-|    10 | combined             |  8,752.03 | 3.0970 | 14.4499 | 2.3126% |   249.23 |  13,288.68 | 0.0246 | 0.9347 |
-|    10 | combined-loss        |  8,752.03 | 3.0970 | 14.4499 | 2.3126% |   249.23 |  13,288.68 | 0.0246 | 0.9347 |
-|    10 | combined-profit-lock |  8,752.03 | 3.0970 | 14.4499 | 2.3126% |   249.23 |  13,288.68 | 0.0246 | 0.9347 |
-|    10 | combined-cap-120k    |  8,257.64 | 3.0172 | 13.6199 | 2.3149% |   139.22 |  12,794.30 | 0.0260 | 0.9253 |
+| RT bp | Arm                  |      Net |  Sharpe |  Calmar |   MaxDD |  Ex-top-5 | Ex-worst-5 |  BootP |    DSR |
+| ----: | :------------------- | -------: | ------: | ------: | ------: | --------: | ---------: | -----: | -----: |
+|     2 | v2-static            | 6,835.33 |  2.8569 | 15.4802 | 1.7119% |   -538.14 |  11,208.88 | 0.0601 | 0.8935 |
+|     2 | volatility           | 7,731.02 |  3.0340 | 19.3781 | 1.5467% |   -471.36 |  12,131.79 | 0.0474 | 0.9210 |
+|     2 | dispersion           | 8,490.34 |  3.2743 | 17.5069 | 1.8802% |    748.74 |  13,002.16 | 0.0399 | 0.9296 |
+|     2 | inverse-vol          | 5,047.45 |  2.2574 | 10.8512 | 1.8034% | -1,835.58 |   9,349.03 | 0.0797 | 0.8204 |
+|     2 | erc                  | 4,929.74 |  2.2295 | 10.3844 | 1.8405% | -1,879.92 |   9,194.85 | 0.0824 | 0.8160 |
+|     2 | vol-dispersion       | 9,179.96 |  3.4032 | 20.6689 | 1.7219% |    563.77 |  13,759.23 | 0.0326 | 0.9455 |
+|     2 | combined             | 6,996.15 |  2.8876 | 16.5015 | 1.6437% |   -767.18 |  11,075.14 | 0.0430 | 0.9041 |
+|     2 | combined-loss        | 6,996.15 |  2.8876 | 16.5015 | 1.6437% |   -767.18 |  11,075.14 | 0.0430 | 0.9041 |
+|     2 | combined-profit-lock | 6,996.15 |  2.8876 | 16.5015 | 1.6437% |   -767.18 |  11,075.14 | 0.0430 | 0.9041 |
+|     2 | combined-cap-120k    | 7,046.74 |  2.9079 | 16.6381 | 1.6420% |   -716.59 |  11,124.76 | 0.0419 | 0.9061 |
+|     5 | v2-static            | 3,804.19 |  1.5219 |  4.8018 | 3.0715% | -3,953.04 |   8,316.55 | 0.2102 | 0.7237 |
+|     5 | volatility           | 4,752.39 |  1.7269 |  6.2286 | 2.9581% | -4,112.47 |   9,271.15 | 0.1781 | 0.7717 |
+|     5 | dispersion           | 4,884.87 |  1.8678 |  5.8656 | 3.2287% | -3,208.10 |   9,438.16 | 0.1662 | 0.7828 |
+|     5 | inverse-vol          | 2,636.55 |  1.1374 |  3.9120 | 2.6129% | -4,561.67 |   7,057.95 | 0.2410 | 0.6489 |
+|     5 | erc                  | 2,511.68 |  1.1018 |  3.6752 | 2.6495% | -4,563.80 |   6,894.68 | 0.2491 | 0.6414 |
+|     5 | vol-dispersion       | 5,640.10 |  2.0071 |  6.8301 | 3.2014% | -3,563.99 |  10,270.71 | 0.1450 | 0.8159 |
+|     5 | combined             | 3,994.01 |  1.6177 |  6.1476 | 2.5188% | -4,232.19 |   8,191.86 | 0.1686 | 0.7456 |
+|     5 | combined-loss        | 3,994.01 |  1.6177 |  6.1476 | 2.5188% | -4,232.19 |   8,191.86 | 0.1686 | 0.7456 |
+|     5 | combined-profit-lock | 3,994.01 |  1.6177 |  6.1476 | 2.5188% | -4,232.19 |   8,191.86 | 0.1686 | 0.7456 |
+|     5 | combined-cap-120k    | 4,049.10 |  1.6397 |  6.2418 | 2.5150% | -4,177.10 |   8,244.32 | 0.1658 | 0.7496 |
+|    10 | v2-static            | 1,417.91 |  0.5937 |  1.5970 | 3.4422% | -5,660.52 |   5,731.23 | 0.3471 | 0.4880 |
+|    10 | volatility           | 3,200.12 |  1.2171 |  4.2142 | 2.9440% | -4,907.44 |   7,528.20 | 0.2321 | 0.6217 |
+|    10 | dispersion           | 2,189.52 |  0.8834 |  2.4394 | 3.4799% | -5,490.17 |   6,498.09 | 0.2936 | 0.5480 |
+|    10 | inverse-vol          |   149.25 |  0.0678 |  0.1579 | 3.6657% | -6,669.76 |   4,285.11 | 0.4711 | 0.3839 |
+|    10 | erc                  |   -31.47 | -0.0145 | -0.0334 | 3.6581% | -6,710.01 |   4,062.77 | 0.4917 | 0.3686 |
+|    10 | vol-dispersion       | 3,825.61 |  1.4330 |  5.1158 | 2.8992% | -4,606.52 |   8,224.15 | 0.2017 | 0.6657 |
+|    10 | combined             | 1,954.00 |  0.8461 |  2.5290 | 2.9955% | -5,472.30 |   5,864.68 | 0.2823 | 0.5409 |
+|    10 | combined-loss        | 1,954.00 |  0.8461 |  2.5290 | 2.9955% | -5,472.30 |   5,864.68 | 0.2823 | 0.5409 |
+|    10 | combined-profit-lock | 1,954.00 |  0.8461 |  2.5290 | 2.9955% | -5,472.30 |   5,864.68 | 0.2823 | 0.5409 |
+|    10 | combined-cap-120k    | 2,019.53 |  0.8742 |  2.6155 | 2.9936% | -5,406.76 |   5,924.82 | 0.2779 | 0.5468 |
 
 ### Walk-forward and stress results
 
@@ -65,43 +64,44 @@ need 14 usable readings at the same clock minute. The adaptive selector stayed o
 folds, using 0 / 22 / 44 matched past sessions (the first was a fallback, not a fitted choice). An isolated
 fixed arm can outperform in hindsight without being selected prospectively.
 
-| Forward fold  | Static 5 bp net | Vol 5 bp net | Static 10 bp net | Vol 10 bp net | Vol 10 bp ex-top-5 |
-| :------------ | --------------: | -----------: | ---------------: | ------------: | -----------------: |
-| Aug 25–Sep 24 |        1,477.00 |     1,477.00 |           178.04 |        178.04 |          −4,381.61 |
-| Sep 25–Oct 26 |        3,631.64 |     4,213.55 |         2,750.34 |      3,470.25 |          −1,048.42 |
-| Oct 27–Nov 25 |        7,950.02 |     7,686.83 |         5,591.97 |      5,604.89 |          −1,161.27 |
+| Forward fold  | Static 5 bp net | Vol-dispersion 5 bp net | Static 10 bp net | Vol-dispersion 10 bp net | Vol-dispersion 10 bp ex-top-5 |
+| :------------ | --------------: | ----------------------: | ---------------: | -----------------------: | ----------------------------: |
+| Aug 25–Sep 24 |         −326.89 |                 −258.34 |        −1,342.52 |                −1,171.85 |                     −3,391.40 |
+| Sep 25–Oct 26 |        2,027.68 |                2,714.10 |         1,192.11 |                 1,860.70 |                     −1,639.45 |
+| Oct 27–Nov 25 |        2,103.40 |                3,184.35 |         1,568.31 |                 3,136.75 |                     −4,601.74 |
 
-- **Tail and LOSO:** At 10 bp, ex-top-five stayed positive for 12/20 omissions under static sizing, 15/20 for
-  volatility, 15/20 for vol-dispersion and 14/20 for combined. At 5 bp, volatility's 20/20 is conditional on
-  incomplete coverage, not a promotion pass. LOSO reselects entries, refits priors and reruns portfolio
-  occupancy and capacity; it does not subtract the omitted symbol's historical P&L.
-- **Regimes:** At 10 bp, volatility net was $2,838.19 on up-SPY days and $6,415.00 on down/flat-SPY days.
-  It earned $8,424.57 in high volatility versus $828.62 in low volatility; ex-best-five was negative in the
-  low-vol slice (−$3,660.66). Direction is classified from same-day SIP close-to-close SPY returns; high vol means
-  prior-14-session SPY volatility exceeds the median of the prior 60 such estimates. Neither label sizes a trade.
-- **Bootstrap:** At 10 bp, volatility's bootstrapped fifth-percentile net was $2,268.54 (static $1,213.84),
-  and its 95th-percentile MaxDD was 3.7679% (static 4.3222%). Neither result resolves sign reversals under LOSO.
-- **Plateau:** The combined arm's four ±10% target/slope neighbors had positive matched ex-top-five net at
-  5 bp ($3,193.88–$3,488.59) and 10 bp ($143.40–$355.69). That narrow result did not translate to a Calmar
-  improvement; inverse-vol and ERC on their own both went negative ex-top-five at 10 bp.
-- **Circuit breakers:** The 1.5% drawdown rule did not resize a live-cohort entry. The profit lock resized one
-  entry at 2 and 5 bp, reduced net, and did not reduce MaxDD. The $120k admission variant reduced net and did not
-  reduce end-of-day MaxDD at 5 or 10 bp; market marks drifted briefly over its tighter cap on one day.
+- **Tail and LOSO:** Static, volatility, vol-dispersion and combined had **0/20** omissions with positive
+  ex-top-five net at either 5 or 10 bp. AVGO was the worst omission for all four. LOSO reselects entries, refits
+  priors and reruns portfolio occupancy and capacity; it does not just subtract the omitted symbol's P&L.
+- **Regimes:** At 10 bp, vol-dispersion net was $1,489.00 on up-SPY days and $2,336.61 on down/flat-SPY days.
+  It earned $4,055.68 in high volatility and lost $230.07 in low volatility. Ex-top-five net was negative in
+  every regime. Direction comes from same-day SIP close-to-close SPY returns; high vol means prior-14-session
+  SPY volatility exceeds the median of the prior 60 such estimates. Neither label sizes a trade.
+- **Bootstrap:** At 10 bp, vol-dispersion's bootstrapped fifth-percentile net was −$3,477.40 (static −$5,132.19),
+  and its 95th-percentile MaxDD was 6.0478% (static 7.1323%). BootP of 0.2017 and DSR of 0.6657 did not clear the
+  gates. Even a better matched point estimate does not establish a repeatable improvement.
+- **Plateau:** The combined arm's four ±10% target/slope neighbors all failed the tail test: matched ex-top-five
+  net was −$4,203.43 to −$4,012.16 at 5 bp and −$5,494.65 to −$5,223.20 at 10 bp. Pure ERC had negative net
+  at 10 bp even before removal.
+- **Circuit breakers:** Neither the 1.5% drawdown throttle nor the profit lock resized a live-cohort entry.
+  The $120k variant improved matched net by about $55 at 5 bp and $66 at 10 bp, but had little effect on
+  daily MaxDD, remained tail-fragile and drifted above its tighter cap on one day at 2/5 bp.
 
 ### Gross headroom
 
-There were **zero admissions or sampled market marks over $180k**. At 5 bp, static peaked at $121,504.49
-marked gross; across all live trials the highest mark was $153,999.74, leaving $26,000.26 of account headroom.
-The 5 bp session-peak histograms below include open and close marks plus pre-fill reservations. The JSON also
-reports bar-close exposure time and cap drift. Buckets are relative to each arm's admission cap; off-market
-rounding/price risk is not evidence of intraminute cap enforcement.
+There were **zero admissions or sampled market marks over $180k**. At 5 bp, static peaked at $120,446.92
+marked gross; across all live trials the highest mark was $162,320.04, leaving about $17,680 of account
+headroom. The 5 bp session-peak histograms include open and close marks plus pre-fill reservations; the JSON
+also reports bar-close exposure time and cap drift. Buckets are relative to each arm's admission cap.
+Bar-level prices do not establish intraminute cap enforcement.
 
 | Arm             | No gross | >0–20% | >20–40% | >40–60% | >60–80% | >80% |
 | :-------------- | -------: | -----: | ------: | ------: | ------: | ---: |
-| Static          |        0 |      0 |      24 |      25 |      17 |    0 |
-| Volatility      |        0 |      0 |      28 |      30 |       8 |    0 |
-| Combined        |        0 |      1 |      38 |      22 |       4 |    1 |
-| Combined, $120k |        0 |      0 |      11 |      28 |      14 |   13 |
+| Static          |        0 |      2 |      33 |      22 |       9 |    0 |
+| Volatility      |        0 |      3 |      34 |      18 |      11 |    0 |
+| Vol-dispersion  |        0 |      3 |      25 |      26 |       8 |    4 |
+| Combined        |        0 |      4 |      40 |      14 |       8 |    0 |
+| Combined, $120k |        0 |      0 |      16 |      28 |      10 |   12 |
 
 ## 2024–26 ORB + Noise Area
 
@@ -109,34 +109,36 @@ This is a distinct reduced-universe stress check, not a backfilled full-portfoli
 are the ORB universe; QQQ and SMH are the Noise Area universe; SPY is the benchmark. The historical file
 supplies decisions through 2026-08-24, and the live file supplies the splice starting 2026-08-25. Pre-June-10
 2024 NVDA OHLC/VWAP is divided by 10 and volume multiplied by 10. The development, validation and frozen
-holdout contain 374, 189 and 166 calendar sessions; common support is 286, 185 and 166 respectively. The
+holdout contain 374, 189 and 166 calendar sessions; common support is 284, 186 and 166 at 2/5 bp and 285, 186 and 166 at 10 bp. The
 incomplete paths include starting baseline warmup, missing benchmark checkpoints and missing co-held marks.
 The holdout is complete but includes the live splice; it is not an independent repeat of the 66-day study.
 
-| RT bp | Arm        |  Train net | Validation net | Holdout net | Holdout ex-top-5 | 637-session Sharpe | 637-session Calmar | 637-session MaxDD |
-| ----: | :--------- | ---------: | -------------: | ----------: | ---------------: | -----------------: | -----------------: | ----------------: |
-|     2 | v2-static  |  -2,577.73 |       1,029.63 |    5,533.40 |          -445.40 |             0.2796 |             0.2512 |           6.2755% |
-|     2 | volatility |  -2,855.75 |         -51.63 |    5,718.35 |           290.70 |             0.2056 |             0.1788 |           6.2205% |
-|     5 | v2-static  |  -7,077.38 |      -2,146.50 |    2,526.44 |        -3,333.99 |            -0.4713 |            -0.2071 |          12.7952% |
-|     5 | volatility |  -7,241.29 |      -2,994.17 |    2,879.79 |        -2,415.14 |            -0.5388 |            -0.2277 |          12.7792% |
-|    10 | v2-static  | -13,688.22 |      -6,463.01 |   -2,126.58 |        -6,950.49 |            -1.6697 |            -0.3708 |          23.7656% |
-|    10 | volatility | -13,701.89 |      -6,992.27 |   -1,471.76 |        -5,910.24 |            -1.7187 |            -0.3777 |          23.2173% |
+| RT bp | Arm        | Train net | Validation net | Holdout net | Holdout ex-top-5 | Matched Sharpe | Matched Calmar | Matched MaxDD |
+| ----: | :--------- | --------: | -------------: | ----------: | ---------------: | -------------: | -------------: | ------------: |
+|     2 | v2-static  |  1,848.20 |         342.54 |   -1,293.67 |        -5,012.23 |         0.0747 |         0.0710 |       5.0044% |
+|     2 | volatility |  1,037.55 |      -1,306.82 |     -546.02 |        -4,402.22 |        -0.0707 |        -0.0541 |       5.9748% |
+|     5 | v2-static  |   -312.12 |      -2,432.43 |   -3,348.68 |        -6,782.98 |        -0.5114 |        -0.3226 |       7.4848% |
+|     5 | volatility |   -961.51 |      -3,979.10 |   -2,439.72 |        -6,093.65 |        -0.6462 |        -0.3644 |       8.0241% |
+|    10 | v2-static  | -4,093.84 |      -5,890.84 |   -4,473.37 |        -8,267.01 |        -1.2238 |        -0.3907 |      14.6394% |
+|    10 | volatility | -4,650.77 |      -6,904.54 |   -3,197.17 |        -7,369.11 |        -1.2909 |        -0.3908 |      14.9332% |
 
-At 5 bp on matched long-history sessions, static ORB lost $10,626.14 and Noise Area earned $3,928.70 before
-removing the five best Noise Area days (after removal: −$5,018.85). At 10 bp both sleeves were negative.
-Two-sleeve inverse-volatility and ERC coincide mathematically, and their observed size paths coincide here.
-No variant had positive ex-top-five net in **both** validation and holdout at 5 or 10 bp.
+At 5 bp on matched long-history sessions, static ORB lost $5,381.65 and Noise Area lost $711.57. At 10 bp
+both were also negative (−$9,435.77 and −$5,022.29 respectively). Two-sleeve inverse-volatility and ERC
+coincide mathematically, and their observed size paths coincide here. No variant had positive ex-top-five
+net in both validation and holdout at 5 or 10 bp.
 
 ## What the replay measures
 
 - The control and candidates share v2 phase priority, eligibility and ranking, stops/targets, and holding
   windows. The control uses the v2 static sleeve weights, not a replay of live account mutations.
-- The research clock observes a completed 1m bar, reserves whole-share orders against its close-based collar,
-  then proxies execution at the next bar's open if inside the modeled limit and reservation. Both sides of
-  a basket can fill independently. The model skips the signal-only single-leg Midday fallback. Timed exits
-  use the first subsequent open; stop wins an ambiguous stop/target bar, and a gap through the stop-limit
-  remains working until the tape provides a price or the timed exit takes over. This is not the production
-  target planner, does not model routing/queue/latency/borrow rejections, and cannot certify a live fill.
+- The research clock uses completed 1m bars and v2's two-second observation delay. It reserves whole-share
+  orders against the completed close and admits only an open strictly after the observation and strictly
+  before the one-minute working window expires. The open on the completed bar's boundary precedes the
+  observation and cannot fill. While that order is working, the completed-bar loop does not admit another.
+  Both sides can fill independently, and the v2 single-leg Midday fallback is retained. Timed exits use
+  the first subsequent open; stop wins an ambiguous stop/target bar, and a gap through the stop-limit remains
+  working until the tape provides a price or the timed exit takes over. This is not the production target
+  planner, does not model routing/queue or borrow rejections, and cannot certify a live fill.
 - The execution model applies half of 2/5/10 bp on each side and 0.21 bp on sell notional. The exit slippage is
   an economic haircut even for modeled target exits. IEX-wide quote spreads, including thin mid-cap Semis
   spreads, do not enter the cost model. This follows the consolidated NBBO scenario choice in

@@ -64,26 +64,37 @@ const opportunity = (phase: Opportunity['phase'], legs: readonly SelectedAlphaLe
   trailingDispersion: 10,
 })
 
-const session = (bars: PortfolioSession['bars'], decisions: PortfolioSession['decisions']): PortfolioSession => ({
+type FixtureDecision = Omit<Decision, 'observedMsFromOpen'>
+
+const session = (
+  bars: PortfolioSession['bars'],
+  decisions: ReadonlyMap<number, FixtureDecision>,
+): PortfolioSession => ({
   date: '2026-11-02',
   minutes: 390,
   bars,
-  decisions,
+  decisions: new Map(
+    [...decisions].map(([minute, decision]) => [
+      minute,
+      { ...decision, observedMsFromOpen: (minute + 1) * 60_000 + 2_000 },
+    ]),
+  ),
   baselineAvailable: true,
   noiseSymbolCount: 2,
   spyReturn: 0.01,
   highVol: true,
 })
 
-test('next open, symmetric cost shocks, sell-side fee, and whole shares are reproducible', () => {
+test('only a post-observation open can fill; symmetric cost shocks, sell-side fee, and whole shares are reproducible', () => {
   const data = session(
     new Map([
       [
         'AAPL',
         new Map([
           [31, bar('AAPL', 100)],
-          [32, bar('AAPL', 100)],
-          [93, bar('AAPL', 104)],
+          [32, bar('AAPL', 99)],
+          [33, bar('AAPL', 100)],
+          [94, bar('AAPL', 104)],
         ]),
       ],
     ]),
@@ -105,8 +116,8 @@ test('next open, symmetric cost shocks, sell-side fee, and whole shares are repr
         'AAPL',
         new Map([
           [31, bar('AAPL', 100)],
-          [33, bar('AAPL', 100)],
-          [93, bar('AAPL', 120)],
+          [32, bar('AAPL', 100)],
+          [34, bar('AAPL', 100)],
         ]),
       ],
     ]),
@@ -122,7 +133,7 @@ test('an unresolved exit and a missing eligible benchmark are not zero-return da
         'AAPL',
         new Map([
           [31, bar('AAPL', 100)],
-          [32, bar('AAPL', 100)],
+          [33, bar('AAPL', 100)],
         ]),
       ],
     ]),
@@ -134,7 +145,9 @@ test('an unresolved exit and a missing eligible benchmark are not zero-return da
   const missingBenchmark = replayPortfolioDay(
     {
       ...data,
-      decisions: new Map([[31, { equity: undefined, noise: undefined, missingBenchmark: true }]]),
+      decisions: new Map([
+        [31, { equity: undefined, noise: undefined, missingBenchmark: true, observedMsFromOpen: 1_922_000 }],
+      ]),
     },
     staticArm,
     5,
@@ -147,7 +160,7 @@ test('an unresolved exit and a missing eligible benchmark are not zero-return da
 })
 
 test('dispersion sizes only Midday and concurrent admission reserves room for both sides', () => {
-  const decisions = new Map<number, Decision>([
+  const decisions = new Map<number, FixtureDecision>([
     [
       30,
       { equity: undefined, noise: opportunity(noise, [leg('QQQ', noise), leg('SMH', noise)]), missingBenchmark: false },
@@ -162,7 +175,7 @@ test('dispersion sizes only Midday and concurrent admission reserves room for bo
     ],
   ])
   const tapes = ['QQQ', 'SMH', 'AAPL', 'NVDA'].map(
-    (symbol) => [symbol, new Map([30, 31, 120, 121, 182].map((minute) => [minute, bar(symbol, 100)]))] as const,
+    (symbol) => [symbol, new Map([30, 32, 120, 122, 183].map((minute) => [minute, bar(symbol, 100)]))] as const,
   )
   const unboundedHold = [...decisions].map(
     ([minute, decision]) =>
@@ -190,9 +203,39 @@ test('dispersion sizes only Midday and concurrent admission reserves room for bo
   expect(dispersed.peakReservedGross).toBeLessThanOrEqual(140_000)
 })
 
+test('the static control preserves the single-leg v2 Midday fallback', () => {
+  const data = session(
+    new Map([
+      [
+        'AAPL',
+        new Map([
+          [120, bar('AAPL', 100)],
+          [122, bar('AAPL', 100)],
+          [183, bar('AAPL', 102)],
+        ]),
+      ],
+    ]),
+    new Map([
+      [
+        120,
+        {
+          equity: opportunity(midday, [{ ...leg('AAPL', midday), targetWeight: 0.2 }]),
+          noise: undefined,
+          missingBenchmark: false,
+        },
+      ],
+    ]),
+  )
+  const outcome = replayPortfolioDay(data, staticArm, 5, risk, [])
+  expect(outcome.orderLegs).toBe(1)
+  expect(outcome.filled).toBe(1)
+  expect(outcome.peakReservedGross).toBeCloseTo(199 * 100.1)
+  expect(outcome.net).toBeGreaterThan(0)
+})
+
 test('earlier loss can throttle an afternoon order; a later loss cannot', () => {
-  const cases = [94, 122].map((lossMinute) => {
-    const decisions = new Map<number, Decision>([
+  const cases = [94, 123].map((lossMinute) => {
+    const decisions = new Map<number, FixtureDecision>([
       [
         30,
         {
@@ -216,14 +259,14 @@ test('earlier loss can throttle an afternoon order; a later loss cannot', () => 
           'QQQ',
           new Map([
             [30, bar('QQQ', 100)],
-            [31, bar('QQQ', 100)],
+            [32, bar('QQQ', 100)],
             [120, bar('QQQ', lossMinute < 120 ? 94 : 100)],
             [lossMinute, bar('QQQ', 94)],
-            [182, bar('QQQ', 94)],
+            [183, bar('QQQ', 94)],
           ]),
         ],
         ...['AAPL', 'NVDA'].map(
-          (symbol) => [symbol, new Map([120, 121, 182].map((minute) => [minute, bar(symbol, 100)]))] as const,
+          (symbol) => [symbol, new Map([120, 122, 183].map((minute) => [minute, bar(symbol, 100)]))] as const,
         ),
       ]),
       decisions,

@@ -58,6 +58,7 @@ export interface Opportunity {
 export interface Decision {
   readonly noise: Opportunity | undefined
   readonly equity: Opportunity | undefined
+  readonly observedMsFromOpen: number
   readonly missingBenchmark: boolean
 }
 
@@ -327,6 +328,7 @@ export const preparePortfolioSessions = (
         decisions.set(minute, {
           noise: make(noisePool, IntradayAlphaPhase.NoiseAreaTrend),
           equity,
+          observedMsFromOpen: Date.parse(snapshot.manifest.observedAt) - regular.openMs,
           missingBenchmark: bars.get(benchmark)?.has(minute) !== true,
         })
       }

@@ -6,8 +6,9 @@ This is an offline sizing study. It has no broker authority and does not select 
   contribution (ERC), combined sizing, and combined sizing with the loss throttle, profit lock, or a lower concurrent
   cap. Keep signals, timing, replay economics, and market eligibility identical between comparison arms.
 - Use 2/5/10 bp round-trip consolidated NBBO scenarios plus a 0.21 bp fee on sell notional. IEX quotes are not
-  execution-cost evidence. Use v2 completed-close entry collars and next-minute opens, not eventual intrabar touches,
-  to proxy fills. Record unfilled legs, partial baskets, and unknown exits.
+  execution-cost evidence. Use v2 completed-close entry collars and the first open inside the one-minute working
+  window strictly after v2's delayed observation, not eventual intrabar touches. Record unfilled legs, partial baskets,
+  and unknown exits.
 - Use lagged 14-session returns of the static shadow sleeves, expressed per baseline sleeve budget, for all adaptive
   risk estimates. Fit target volatility from median trailing volatility in development only. The dispersion ratio
   uses eligible equity VWAP deviations on the decision bar and its own checkpoint's lagged 14-session median.

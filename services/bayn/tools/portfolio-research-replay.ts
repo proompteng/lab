@@ -11,7 +11,7 @@ import {
   volatilityMultiplier,
 } from '../src/strategy/intraday-alpha/portfolio-allocator'
 import type { SelectedAlphaLeg } from '../src/strategy/intraday-alpha/signals'
-import type { Bar } from './midday-research-data'
+import { type Bar, minuteMs } from './midday-research-data'
 import { type Opportunity, type PortfolioSession, sleeveBudgetWeights, sleeves } from './portfolio-research-data'
 
 export const startingEquity = 100_000
@@ -169,7 +169,7 @@ export const replayPortfolioDay = (
   const bySleeve = sleeves.map(() => 0)
   const timeBuckets = [0, 0, 0, 0, 0, 0]
   const taken = new Set<string>()
-  let working: WorkingLeg[] = []
+  let working: { readonly fillMinute: number; readonly legs: readonly WorkingLeg[] } | undefined
   let positions: Position[] = []
   let orbDone = false
   let middayDone = false
@@ -195,24 +195,24 @@ export const replayPortfolioDay = (
       (phase === IntradayAlphaPhase.MiddayReversion && middayDone)
     )
       return []
-    // The static policy historically models a balanced Midday basket rather than its signal-only fallback.
-    if (phase === IntradayAlphaPhase.MiddayReversion && legs.length < 2) return []
     return legs.filter((leg) => !taken.has(leg.symbol) || phase !== IntradayAlphaPhase.NoiseAreaTrend)
   }
 
   for (let minute = 0; minute < session.minutes; minute++) {
-    let filledNow = 0
-    for (const order of working) {
-      const open = session.bars.get(order.leg.symbol)?.get(minute)?.open
-      if (open === undefined) continue
-      const position = openLeg(order, open, slip, minute, session.minutes)
-      if (position === null) continue
-      positions.push(position)
-      filledNow++
+    if (working?.fillMinute === minute) {
+      let filledNow = 0
+      for (const order of working.legs) {
+        const open = session.bars.get(order.leg.symbol)?.get(minute)?.open
+        if (open === undefined) continue
+        const position = openLeg(order, open, slip, minute, session.minutes)
+        if (position === null) continue
+        positions.push(position)
+        filledNow++
+      }
+      if (working.legs.length > 1 && filledNow > 0 && filledNow < working.legs.length) partialBaskets++
+      filled += filledNow
+      working = undefined
     }
-    if (working.length > 1 && filledNow > 0 && filledNow < working.length) partialBaskets++
-    filled += filledNow
-    working = []
 
     let grossAtOpen = 0
     let grossUsed = 0
@@ -252,7 +252,8 @@ export const replayPortfolioDay = (
       maxIntradayDrawdown = Math.max(maxIntradayDrawdown, riskState.peakReturn - markedReturn)
     }
     const decision = session.decisions.get(minute)
-    if (decision === undefined) continue
+    // The completed-bar clock serializes admission until the preceding working window is resolved.
+    if (decision === undefined || working !== undefined) continue
     if (decision.missingBenchmark) {
       // Do not claim a known no-signal for an unobserved eligible checkpoint.
       if (
@@ -312,12 +313,18 @@ export const replayPortfolioDay = (
       return buildOrder(leg, close, requests[i]?.dollars ?? 0, scale)
     })
     if (orders.some(({ shares }) => shares === 0)) continue
-    working = orders
+    // The completed bar's boundary open is earlier than the delayed observation. A one-minute
+    // working window can have at most one eligible open, strictly between observation and expiry.
+    const { observedMsFromOpen } = decision
+    const fillMinute = Math.floor(observedMsFromOpen / minuteMs) + 1
+    if (observedMsFromOpen < (minute + 1) * minuteMs) throw new Error('Observation precedes the completed bar')
+    if (fillMinute >= session.minutes || fillMinute * minuteMs >= observedMsFromOpen + minuteMs) continue
+    working = { fillMinute, legs: orders }
     peakReservedGross = Math.max(
       peakReservedGross,
-      grossUsed + working.reduce((sum, { shares, maxPrice }) => sum + shares * maxPrice, 0),
+      grossUsed + orders.reduce((sum, { shares, maxPrice }) => sum + shares * maxPrice, 0),
     )
-    orderLegs += working.length
+    orderLegs += orders.length
     if (loss) throttleEntries++
     if (profit) profitLockEntries++
     if (opportunity.phase === IntradayAlphaPhase.MorningOrb) orbDone = true
