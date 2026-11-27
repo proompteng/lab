@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { rejects } from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 
@@ -87,10 +88,10 @@ test('streams sealed bytes, applies DST/early closes, never decodes holdout pric
   expect(barFor(h, 'A').open[0]).toBe(101)
   expect(barFor(h, 'A').open[78]).toBe(102)
   expect(barFor(h, 'A').open[2 * 78 + 41]).toBe(103)
-  await expect(read(raw.replace('103', 'bad'), '2024-03-11')).resolves.toMatchObject({ observed: { A: 2 } })
-  await expect(read(raw.replace('103', 'bad'), '2024-07-03')).rejects.toThrow('Invalid or duplicate OHLCV')
-  await expect(read(raw, '2024-03-11', undefined, 'invalid')).rejects.toThrow('bytes do not match')
-  await expect(read(raw, '2024-03-11', AbortSignal.abort())).rejects.toThrow('SIP read aborted')
+  expect(await read(raw.replace('103', 'bad'), '2024-03-11')).toMatchObject({ observed: { A: 2 } })
+  await rejects(read(raw.replace('103', 'bad'), '2024-07-03'), /Invalid or duplicate OHLCV/)
+  await rejects(read(raw, '2024-03-11', undefined, 'invalid'), /bytes do not match/)
+  await rejects(read(raw, '2024-03-11', AbortSignal.abort()), /SIP read aborted/)
 })
 
 test('strict regular-way eligibility and causal lookback, including current-close mutation', () => {
