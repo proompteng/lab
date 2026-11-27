@@ -1,5 +1,4 @@
-// Frozen Wave 5D target equations from 06e85b0e5; Wave 6C calls only the registered base.
-import type { CanarySession as Session } from './pure-etf-dual-horizon-data'
+import type { Session } from './etf-canary-macro-data'
 import {
   annualDays,
   asset,

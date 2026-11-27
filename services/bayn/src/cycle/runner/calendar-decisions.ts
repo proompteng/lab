@@ -1,5 +1,6 @@
 import {
   isContinuousMarket,
+  regularEquitySessions,
   tradingWindow,
   continuousExecutionPolicy,
   continuousMarketHours,
@@ -120,7 +121,7 @@ export const selectIntradayExecutionSession = (
   const observedAtMillis = Date.parse(observedAt)
   if (!Number.isFinite(observedAtMillis)) return undefined
 
-  return observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
+  return regularEquitySessions(observation).reduce<MarketCalendarSession | undefined>((selected, session) => {
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
     const hasExecutableWindow = firstIntradayObservationAtMs(session, executionPolicy) < cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected

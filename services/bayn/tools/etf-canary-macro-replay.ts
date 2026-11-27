@@ -1,6 +1,5 @@
-// Frozen Wave 5D standalone reference; not the shared-account replay.
-import type { CanarySession as Session } from './pure-etf-dual-horizon-data'
-import { borrow, etfs, mix, sellFee, shy, spy } from './etf-canary-macro-protocol'
+import type { Session } from './etf-canary-macro-data'
+import { borrow, etfs, sellFee, shy, spy, type Trial } from './etf-canary-macro-protocol'
 import { executionRule } from './etf-canary-macro-signals'
 
 const n = etfs.length
@@ -30,7 +29,14 @@ export const needsTrade = (desired: number, heldAtClose: number, scheduled: bool
 
 // Positions are normalized to the prior close's net equity. Mark old positions to the next open,
 // use only prior-close decisions, then mark the post-trade portfolio to today's close.
-export const replay = (prices: Marks, desired: readonly Float64Array[], roundTripBp: number, sweep: boolean): Path => {
+export const replay = (
+  prices: Marks,
+  desired: readonly Float64Array[],
+  trial: Trial,
+  roundTripBp: number,
+  sweep: boolean,
+  omit: number,
+): Path => {
   const net = new Float64Array(prices.length)
   const turnover = new Float64Array(prices.length)
   const held = new Float64Array(n + 1)
@@ -39,7 +45,7 @@ export const replay = (prices: Marks, desired: readonly Float64Array[], roundTri
   const changing = new Uint8Array(n)
   for (let t = 0; t < prices.length; t++) {
     const marks = prices[t]
-    const rule = executionRule(mix, t - 1)
+    const rule = executionRule(trial, t - 1)
     const target = desired[t - 1]
     let openNav = 1
     let change = t === 0 && sweep
@@ -110,7 +116,7 @@ export const replay = (prices: Marks, desired: readonly Float64Array[], roundTri
         held[i] = 0
         continue
       }
-      if (!(marks.day[u] > 0) || !Number.isFinite(marks.day[u]))
+      if (u === omit || !(marks.day[u] > 0) || !Number.isFinite(marks.day[u]))
         throw new Error(`Invalid ETF allocation ${etfs[u]} on ${marks.date}`)
       held[i] = pos * marks.day[u]
       closeNav += held[i] - pos

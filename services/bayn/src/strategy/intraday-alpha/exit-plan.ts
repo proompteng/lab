@@ -10,6 +10,7 @@ import { instrumentMarket, MarketKind } from '../../instruments'
 import { JevContractError } from '../../jev/contract'
 import { jevExitLimitValue } from '../../jev/liquidation-economics'
 import type { reproduceJevCandidateObservation } from '../../jev/observation'
+import type { IntradayAlphaTrailingBaseline } from '../../market-data/intraday/trailing-baseline'
 import { shortCoverCostMicros } from '../../jev/short-entry'
 import { quantityScale } from '../../quantity'
 import {
@@ -25,6 +26,7 @@ import { calculateSessionFees } from '../execution-model/fees'
 import { desiredQuantityAtoms, priceNumberToMicros } from '../execution-model/fixed-point'
 import { IntradayAlphaPhase, IntradayAlphaSetup } from './constants'
 import type { IntradayAlphaPolicyMaterial } from './policy'
+import { intradayAlphaV21StopLimitPriceMicros, type IntradayAlphaPolicyV21 } from './policy-v2-1'
 import type { SelectedAlphaLeg } from './signals'
 
 const HoldingMinutesSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(390))
@@ -152,10 +154,42 @@ export type IntradayAlphaFundedExitPlan = IntradayAlphaLongFundedExitPlan | Intr
 export type IntradayAlphaFundingObservation = Pick<
   Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>,
   'snapshot' | 'portfolio' | 'observedAt' | 'contentHash'
->
+> & { readonly trailingBaseline?: IntradayAlphaTrailingBaseline }
+
+const stopLimitPrice = (
+  policy: IntradayAlphaPolicyMaterial | IntradayAlphaPolicyV21,
+  observation: IntradayAlphaFundingObservation,
+  leg: SelectedAlphaLeg,
+  stop: bigint,
+): bigint | null => {
+  if (policy.schemaVersion === 'bayn.intraday-alpha-policy.v2_1') {
+    const baseline = observation.trailingBaseline
+    const volatility = baseline?.symbols[leg.symbol]
+    if (
+      baseline === undefined ||
+      baseline.sessionDate !== observation.snapshot.manifest.sessionDate ||
+      baseline.latestPriorSessionDate >= baseline.sessionDate ||
+      baseline.lookbackSessions !== policy.trailingBaseline.lookbackSessions ||
+      volatility === undefined ||
+      volatility.priorSessions < policy.trailingBaseline.minimumSessions
+    )
+      return null
+    return intradayAlphaV21StopLimitPriceMicros({
+      collar: policy.stopLimitCollar,
+      symbol: leg.symbol,
+      direction: leg.direction,
+      stopPriceMicros: stop,
+      atr14Ratio: volatility.atr14Ratio,
+    })
+  }
+  const slippage = BigInt(policy.entryLimitSlippageBps)
+  return leg.direction === 'LONG'
+    ? quantizeInstrumentPriceMicros(leg.symbol, (stop * (10_000n - slippage) + 9_999n) / 10_000n, 'UP')
+    : quantizeInstrumentPriceMicros(leg.symbol, (stop * (10_000n + slippage)) / 10_000n, 'DOWN')
+}
 
 export const makeIntradayAlphaFundedExitPlan = (input: {
-  readonly policy: IntradayAlphaPolicyMaterial
+  readonly policy: IntradayAlphaPolicyMaterial | IntradayAlphaPolicyV21
   readonly observation: IntradayAlphaFundingObservation
   readonly leg: SelectedAlphaLeg
 }): Result.Result<
@@ -217,17 +251,20 @@ export const makeIntradayAlphaFundedExitPlan = (input: {
         (maximumEntryPrice * BigInt(10_000 - leg.protectiveStopBps)) / 10_000n,
         'DOWN',
       )
-      const stopLimit = quantizeInstrumentPriceMicros(
-        symbol,
-        (stop * (10_000n - limitSlippageBps) + 9_999n) / 10_000n,
-        'UP',
-      )
+      const stopLimit = stopLimitPrice(policy, observation, leg, stop)
       const target = quantizeInstrumentPriceMicros(
         symbol,
         (maximumEntryPrice * BigInt(10_000 + leg.profitTargetBps) + 9_999n) / 10_000n,
         'UP',
       )
-      if (stopLimit <= 0n || stopLimit > stop || stop >= barCloseUp || target <= maximumEntryPrice) return null
+      if (
+        stopLimit === null ||
+        stopLimit <= 0n ||
+        stopLimit > stop ||
+        stop >= barCloseUp ||
+        target <= maximumEntryPrice
+      )
+        return null
       const buyNotional = (maximumEntryPrice * quantityAtoms + quantityScale - 1n) / quantityScale
       const buyFees = yield* calculateSessionFees(
         [{ symbol, side: 'buy', quantityAtoms, notionalMicros: buyNotional }],
@@ -324,13 +361,14 @@ export const makeIntradayAlphaFundedExitPlan = (input: {
       (minimumEntryPrice * BigInt(10_000 + leg.protectiveStopBps) + 9_999n) / 10_000n,
       'UP',
     )
-    const stopLimit = quantizeInstrumentPriceMicros(symbol, (stop * (10_000n + limitSlippageBps)) / 10_000n, 'DOWN')
+    const stopLimit = stopLimitPrice(policy, observation, leg, stop)
     const target = quantizeInstrumentPriceMicros(
       symbol,
       (minimumEntryPrice * BigInt(10_000 - leg.profitTargetBps)) / 10_000n,
       'DOWN',
     )
-    if (target <= 0n || target >= minimumEntryPrice || stop <= barCloseDown || stopLimit < stop) return null
+    if (target <= 0n || target >= minimumEntryPrice || stop <= barCloseDown || stopLimit === null || stopLimit < stop)
+      return null
     const stopCover = yield* shortCoverCostMicros({
       protocol,
       symbol,
