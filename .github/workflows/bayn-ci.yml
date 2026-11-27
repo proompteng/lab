@@ -9,8 +9,8 @@ on:
   workflow_call:
 
 concurrency:
-  group: bayn-validation-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: bayn-validation-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -21,8 +21,10 @@ jobs:
       gepa: ${{ github.event_name != 'pull_request' && steps.manual.outputs.gepa || fromJSON(steps.filter.outputs.affected).gepa }}
     steps:
       - uses: actions/checkout@v5
+        if: github.event_name == 'pull_request'
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - name: Detect Bayn release inputs
         id: filter
@@ -117,7 +119,6 @@ jobs:
         bun services/bayn/tools/verify-image-metadata.ts &&
         bun run --cwd services/bayn build:research &&
         bash packages/scripts/src/bayn/verify-research-commands.sh
-    secrets: inherit
 
   gepa:
     needs: changes
@@ -259,7 +260,21 @@ jobs:
           --filter @proompteng/source
           --filter @proompteng/bayn
       - name: Verify isolated PostgreSQL persistence shard
-        run: bun run --cwd services/bayn test:postgres ${{ matrix.shard }}/4
+        env:
+          BAYN_CI_POSTGRES_TIMINGS_PATH: ${{ format('{0}/bayn-postgres-timings.json', runner.temp) }}
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          docker exec "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bayn -d bayn_test -c 'ALTER ROLE bayn SET jit TO off'
+          bun run --cwd services/bayn test:postgres "$SHARD/4"
+      - name: Record PostgreSQL test file durations
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-postgres-timings-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bayn-postgres-timings.json*
+          if-no-files-found: error
+          retention-days: 7
 
   archive-integration:
     needs: changes
@@ -372,6 +387,7 @@ jobs:
           --health-retries 30
     env:
       BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
+      BAYN_LEDGER_CONTAINER_PREFIX: bayn-ledger-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.group }}
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -385,29 +401,57 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts
           --filter @proompteng/source
           --filter @proompteng/bayn
-      - name: Start isolated TigerBeetle for durable replay acceptance
+      - name: Start isolated stores for durable replay acceptance
+        env:
+          LEDGER_GROUP: ${{ matrix.group }}
+          PRIMARY_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           set -euo pipefail
+          shopt -s inherit_errexit
           replay_tb_image='ghcr.io/tigerbeetle/tigerbeetle:0.17.9@sha256:48f623f9c1e9b6cc44d77ca93634595ae99cce3246ded418763eb1a62eee45e9'
-          replay_tb_directory="$(mktemp -d)"
-          docker run --rm --security-opt seccomp=unconfined \
-            -v "${replay_tb_directory}:/data" "${replay_tb_image}" \
-            format --cluster=20912 --replica=0 --replica-count=1 --development /data/0_0.tigerbeetle
-          docker run -d --name bayn-replay-tigerbeetle --security-opt seccomp=unconfined \
-            --memory 2g --cpus 2 -p 127.0.0.1::3000 \
-            -v "${replay_tb_directory}:/data" "${replay_tb_image}" \
-            start --addresses=0.0.0.0:3000 --development /data/0_0.tigerbeetle
-          for _attempt in {1..30}; do
-            if [[ "$(docker logs bayn-replay-tigerbeetle 2>&1)" == *'listening on'* ]]; then
-              replay_tb_address="$(docker port bayn-replay-tigerbeetle 3000/tcp)"
-              [[ "${replay_tb_address}" =~ ^127[.]0[.]0[.]1:[1-9][0-9]{0,4}$ ]]
-              echo "BAYN_TEST_TIGERBEETLE_ADDRESS=${replay_tb_address}" >> "${GITHUB_ENV}"
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs bayn-replay-tigerbeetle
-          exit 1
+          start_tigerbeetle() {
+            local name="$1" directory="${RUNNER_TEMP}/$1" address
+            mkdir -p "$directory"
+            docker run --rm --security-opt seccomp=unconfined -v "$directory:/data" "$replay_tb_image" \
+              format --cluster=20912 --replica=0 --replica-count=1 --development /data/0_0.tigerbeetle >&2
+            docker run -d --name "$name" --security-opt seccomp=unconfined --memory 2g --cpus 2 \
+              -p 127.0.0.1::3000 -v "$directory:/data" "$replay_tb_image" \
+              start --addresses=0.0.0.0:3000 --development /data/0_0.tigerbeetle >&2
+            for _attempt in {1..30}; do
+              if [[ "$(docker logs "$name" 2>&1)" == *'listening on'* ]]; then
+                address="$(docker port "$name" 3000/tcp)"
+                [[ "$address" =~ ^127[.]0[.]0[.]1:[1-9][0-9]{0,4}$ ]]
+                printf '%s\n' "$address"
+                return
+              fi
+              sleep 1
+            done
+            docker logs "$name" >&2
+            return 1
+          }
+          primary_address="$(start_tigerbeetle "${BAYN_LEDGER_CONTAINER_PREFIX}-tb")"
+          echo "BAYN_TEST_TIGERBEETLE_ADDRESS=$primary_address" >> "$GITHUB_ENV"
+          if [[ "$LEDGER_GROUP" == runtime ]]; then
+            postgres_image="$(docker inspect --format '{{.Image}}' "$PRIMARY_POSTGRES_CONTAINER")"
+            second_postgres_container="${BAYN_LEDGER_CONTAINER_PREFIX}-pg-second"
+            docker run -d --name "$second_postgres_container" -p 127.0.0.1::5432 \
+              -e POSTGRES_USER=bayn -e POSTGRES_PASSWORD=bayn -e POSTGRES_DB=bayn_test "$postgres_image"
+            second_tigerbeetle="$(start_tigerbeetle "${BAYN_LEDGER_CONTAINER_PREFIX}-tb-second")"
+            for _attempt in {1..30}; do
+              if docker exec "$second_postgres_container" pg_isready -h 127.0.0.1 -U bayn -d bayn_test; then
+                second_postgres="$(docker port "$second_postgres_container" 5432/tcp)"
+                [[ "$second_postgres" =~ ^127[.]0[.]0[.]1:[1-9][0-9]{0,4}$ ]]
+                {
+                  echo "BAYN_TEST_SECOND_POSTGRES_URL=postgresql://bayn:bayn@$second_postgres/bayn_test"
+                  echo "BAYN_TEST_SECOND_TIGERBEETLE_ADDRESS=$second_tigerbeetle"
+                } >> "$GITHUB_ENV"
+                exit 0
+              fi
+              sleep 1
+            done
+            docker logs "$second_postgres_container"
+            exit 1
+          fi
       - name: Verify replay accounting with PostgreSQL and TigerBeetle
         run: bun run --cwd services/bayn test:ledger ${{ matrix.group }}
       - uses: actions/upload-artifact@v4
@@ -416,9 +460,11 @@ jobs:
           name: bayn-${{ matrix.group }}-${{ github.sha }}
           path: services/bayn/node_modules/.cache/bayn-latency
           if-no-files-found: error
-      - name: Stop isolated replay TigerBeetle
+      - name: Stop isolated replay stores
         if: always()
-        run: docker rm -f bayn-replay-tigerbeetle || true
+        run: |
+          docker rm -fv "${BAYN_LEDGER_CONTAINER_PREFIX}-tb" "${BAYN_LEDGER_CONTAINER_PREFIX}-tb-second" \
+            "${BAYN_LEDGER_CONTAINER_PREFIX}-pg-second" || true
 
   replay-execution-observer:
     needs: changes
@@ -475,6 +521,7 @@ jobs:
     steps:
       - name: Require every applicable Bayn release check
         env:
+          MERGE_GROUP: ${{ github.event_name == 'merge_group' }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
@@ -493,6 +540,10 @@ jobs:
           set -euo pipefail
           if [[ "${CHANGES_RESULT}" != 'success' ]]; then
             echo "Bayn change detection failed: ${CHANGES_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${MERGE_GROUP}" == 'true' && "${BAYN_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'true/true/true' ]]; then
+            echo 'Merge group validation must select every Bayn check.' >&2
             exit 1
           fi
           if [[ "${FORMAL_RELEVANT}" == 'true' && "${FORMAL_RESULT}" != 'success' ]]; then

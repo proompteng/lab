@@ -1,6 +1,7 @@
 name: agentctl packaging checks
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - 'services/agents/agentctl/**'
@@ -17,7 +18,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: agentctl packaging checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -24,7 +24,7 @@ import {
 } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
-import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
+import { streamingFixtureFromRaw, streamingFixtureRequest } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { makeJevObservation } from './observation'
 import { decodeJevPortfolio, JevPurpose } from './portfolio'
@@ -46,6 +46,60 @@ import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { makeJevTradingSignalBatch } from './trading-signals'
 import { jevHistoryStartMs } from './observation-query'
 
+export const withObservedEntryBars = <
+  Raw extends {
+    readonly bars: readonly {
+      readonly symbol: string
+      readonly eventAt: string
+      readonly open: number
+      readonly high: number
+      readonly low: number
+    }[]
+    readonly latestQuotes: Readonly<Record<string, { readonly bidPrice: number; readonly askPrice: number }>>
+  },
+>(
+  raw: Raw,
+  protocol: Pick<{ readonly schemaVersion: string }, 'schemaVersion'>,
+  shortFavored = false,
+): Raw => {
+  const firstMinute = raw.bars[0]?.eventAt
+  return {
+    ...raw,
+    bars: raw.bars.map((bar) => {
+      const quote = raw.latestQuotes[bar.symbol]
+      return bar.symbol !== 'SPY' && bar.eventAt === firstMinute
+        ? {
+            ...bar,
+            high: Math.max(
+              bar.high,
+              (protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v44') &&
+                quote !== undefined
+                ? quote.askPrice *
+                    (shortFavored
+                      ? 1.04
+                      : protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                          protocol.schemaVersion === 'bayn.jev.protocol.v44'
+                        ? 1.045
+                        : 1.035)
+                : bar.open * 1.05,
+            ),
+            low: Math.min(
+              bar.low,
+              (protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v44') &&
+                quote !== undefined
+                ? quote.bidPrice * (shortFavored ? 0.94 : 0.97)
+                : bar.open * 0.95,
+            ),
+          }
+        : bar
+    }),
+  }
+}
+
 export const nativeJevFixture = (
   purpose: JevPurpose = JevPurpose.Entry,
   observedAt?: string,
@@ -53,23 +107,23 @@ export const nativeJevFixture = (
   protocolDocument: unknown = defaultJevProtocolDocument,
   cycleBindingId = 'a'.repeat(64),
   returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
-  calendar?: ReturnType<typeof streamingFixture>['query']['calendar'],
+  calendar?: ReturnType<typeof streamingFixtureRequest>['calendar'],
   observedPriceChoices = true,
   momentum = true,
+  shortFavored = false,
 ) => {
-  const base = streamingFixture()
+  const base = streamingFixtureRequest()
   const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
   const equity = protocol.marketProfiles.find((profile) => profile.feed === 'iex')
   if (equity === undefined) throw new Error('Expected the exact equity source profile')
-  const selectedCalendar = calendar ?? base.query.calendar
+  const selectedCalendar = calendar ?? base.calendar
   const selectedDate = Schema.decodeUnknownSync(IsoDateSchema)(
-    calendar === undefined ? base.query.sessionDate : (exchangeSessions(calendar)[0]?.date ?? base.query.sessionDate),
+    calendar === undefined ? base.sessionDate : (exchangeSessions(calendar)[0]?.date ?? base.sessionDate),
   )
   const end =
-    Math.floor((Date.parse(observedAt ?? base.query.observedAt) - protocol.decisionDelaySeconds * 1000) / 60_000) *
-    60_000
+    Math.floor((Date.parse(observedAt ?? base.observedAt) - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
   const timedQuery = {
-    ...base.query,
+    ...base,
     universeId: equity.universeId,
     universeSymbolHash: equity.universeSymbolHash,
     universe: equity.universe,
@@ -78,7 +132,7 @@ export const nativeJevFixture = (
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
-    observedAt: observedAt ?? base.query.observedAt,
+    observedAt: observedAt ?? base.observedAt,
     rangeStartAt: new Date(
       jevHistoryStartMs(
         selectedCalendar,
@@ -110,20 +164,8 @@ export const nativeJevFixture = (
     snapshot,
   } = streamingFixtureFromRaw(
     (() => {
-      const raw = makeIntradayMomentumTestSnapshot(
-        protocol,
-        { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
-        returns,
-      )
-      const firstMinute = raw.bars[0]?.eventAt
-      return {
-        ...raw,
-        bars: raw.bars.map((bar) =>
-          observedPriceChoices && bar.symbol !== 'SPY' && bar.eventAt === firstMinute
-            ? { ...bar, high: Math.max(bar.high, bar.open * 1.05), low: Math.min(bar.low, bar.open * 0.95) }
-            : bar,
-        ),
-      }
+      const raw = makeIntradayMomentumTestSnapshot(protocol, query, returns)
+      return observedPriceChoices ? withObservedEntryBars(raw, protocol, shortFavored) : raw
     })(),
     query,
   )
@@ -242,8 +284,8 @@ export const nativeJevFixture = (
                   symbol: 'AAPL',
                   windowEndAt: new Date(Math.floor(Date.parse(at) / 60_000) * 60_000 - 3 * 60_000).toISOString(),
                   bars: [
-                    { minuteBeforeWindowEnd: 27, open: 102, high: 103, low: 99.01, close: 102, volume: 100 },
-                    { minuteBeforeWindowEnd: 2, open: 102, high: 105.01, low: 101, close: 102, volume: 100 },
+                    { minuteBeforeWindowEnd: 27, open: 102, high: 103, low: 99.75, close: 102, volume: 100 },
+                    { minuteBeforeWindowEnd: 2, open: 102, high: 105.05, low: 101, close: 102, volume: 100 },
                     { minuteBeforeWindowEnd: 1, open: 102, high: 103, low: 101, close: 102, volume: 100 },
                   ],
                 }),

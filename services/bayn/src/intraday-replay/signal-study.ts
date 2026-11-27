@@ -1,5 +1,5 @@
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
-import { selectSupportedEntryProposal } from '../jev/entry-questions'
+import { evaluateSupportedEntryProposals } from '../jev/entry-questions'
 import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
@@ -150,11 +150,12 @@ export const prepareSignalStudyBatch = (input: unknown) =>
       const t = signalStudyDefinition.breakoutThresholds
       const liquid = quote.bidSize > 0 && quote.askSize > 0 && metrics.spreadBps <= t.spreadBps
       const inference = inferences.find((entry) => entry.symbol === candidate.symbol)?.inference
-      const selection =
+      const evaluation =
         inference?.handoff.disposition.status === 'READY' && inference.jev.status === 'RECEIVED'
-          ? yield* selectSupportedEntryProposal({
+          ? yield* evaluateSupportedEntryProposals({
               proposals: inference.handoff.disposition.evaluation.proposals,
               response: inference.jev.inference.response,
+              protocol: observation.protocol,
             })
           : null
       const retained = batchResult?.candidates.find((entry) => entry.symbol === candidate.symbol)
@@ -177,7 +178,10 @@ export const prepareSignalStudyBatch = (input: unknown) =>
                 responseHash: factors.responseHash,
                 answers: factors.response.answers,
               },
-        judgmentSupport: selection?.selected?.judgmentSupport ?? null,
+        judgmentSupport:
+          evaluation === null || evaluation.supported.length === 0
+            ? null
+            : Math.max(...evaluation.supported.map((proposal) => proposal.structuralSupport)),
         breakout:
           liquid &&
           metrics.lookbackReturnBps >= t.lookbackReturnBps &&

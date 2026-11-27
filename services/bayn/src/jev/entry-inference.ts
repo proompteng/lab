@@ -2,7 +2,8 @@ import type { ChartStageInferenceSchema, ChartStageUsageSchema } from './chart-s
 import { Context, Data, type Effect, Result } from 'effect'
 
 import type { OperationalError } from '../errors'
-import { makeNativeChartEvidence } from './chart-evidence'
+import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evidence'
+import type { PreparedChartRequest } from './chart-questions'
 import {
   makeStagedDispatchClaim,
   stageResponseIdentity,
@@ -11,7 +12,7 @@ import {
   type BaseStartEvidence,
 } from './staged-checkpoint'
 import { type ChartAssessments, type ChartAssessmentsMaterial } from './chart-assessments'
-import { makeInitialChartStageRequest, stagedChartAssessments } from './staged-chart-questions'
+import { assessPreparedChart, makeInitialChartStageRequest } from './staged-chart-questions'
 import type { JevInference } from './client'
 import { JevFailure, JevResponseSchema, type JevRequest } from './contract'
 import type { DecisionsError } from './decisions'
@@ -228,8 +229,13 @@ export const evaluateEntrySourceFeasibility = (
       protocol: input.protocol,
       bidMicros: BigInt(input.funding.bidMicros),
     })
+    const shortEnabled =
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v44'
     const shortFeasible =
-      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' && input.funding.equityShortEligibility !== undefined
+      shortEnabled && input.funding.equityShortEligibility !== undefined
         ? yield* mayHaveFundableShortSource({
             chart,
             protocol: input.protocol,
@@ -256,15 +262,26 @@ export const hasFeasibleEntrySource = (
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
 ) => evaluateEntrySourceFeasibility(input, chart).pipe(Result.map((result) => result.feasible))
 
-export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: ChartStageInference) =>
+export const deriveEntryHandoffDisposition = (
+  {
+    input,
+    chart,
+    visualRequest,
+  }: {
+    readonly input: EntryInferenceInput
+    readonly chart: NativeChartEvidence
+    readonly visualRequest: PreparedChartRequest
+  },
+  visual: ChartStageInference,
+) =>
   Result.gen(function* () {
-    const chart = yield* makeNativeChartEvidence(input.chartSource)
     return yield* deriveEntryDispositionForChart(
       input,
       visual,
       chart,
-      yield* stagedChartAssessments(
+      yield* assessPreparedChart(
         { chart, protocol: input.protocol, funding: input.funding },
+        visualRequest,
         stageResponseIdentity(visual),
       ),
       makeEntryJudgmentRequest,
@@ -304,8 +321,13 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
             protocol: input.protocol,
             bidMicros: BigInt(input.funding.bidMicros),
           })
+    const symmetric =
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v44'
+    const shortEnabled = input.protocol.schemaVersion === 'bayn.jev.protocol.v41' || symmetric
     const shortProposals =
-      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' && input.funding.equityShortEligibility !== undefined
+      shortEnabled && input.funding.equityShortEligibility !== undefined
         ? yield* makeShortEntryProposals({
             chart,
             assessments,
@@ -322,8 +344,8 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
       chart,
       assessments,
     }
-    const jev = yield* input.protocol.schemaVersion === 'bayn.jev.protocol.v41'
-      ? makeNativeEntryJudgmentRequest({ ...requestInput, proposals: nativeEvaluation.proposals })
+    const jev = yield* shortEnabled
+      ? makeNativeEntryJudgmentRequest({ ...requestInput, symmetric, proposals: nativeEvaluation.proposals })
       : prepareJudgments({ ...requestInput, proposals: nativeEvaluation.proposals.filter(isLongEntryProposal) })
     return jev === null
       ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation: nativeEvaluation } as const)

@@ -1,5 +1,5 @@
 import { JevEvaluationStore, type JevDispatch } from './evaluation'
-import { JevOutcome, makeJevEvaluationReceipt, type JevEvaluationRequest } from './evidence'
+import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { Cause, Clock, Deferred, Effect, Exit, Redacted, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -10,7 +10,6 @@ import {
   deriveEntryHandoffDisposition,
   EntryInferenceError,
   EntryInferenceJournal,
-  prepareClaimedEntry,
   type EntryHandoff,
   type EntryInferenceClaim,
   type EntryInferenceCompletion,
@@ -19,11 +18,10 @@ import {
 import { logCommittedEntryHandoff } from './entry-inference-diagnostics'
 import { makeStagedTerminalReceipt, type StagedDispatchClaim, type StagedTerminalReceipt } from './staged-checkpoint'
 
-type PreparedEntry = Result.Result.Success<ReturnType<typeof prepareClaimedEntry>>
+type PreparedEntry = Effect.Success<JevDispatch['consume']>
 type Work = PreparedEntry & {
   terminal: StagedTerminalReceipt | null
   terminalCommitted: boolean
-  readonly request: JevEvaluationRequest
   completion: EntryInferenceCompletion | null
 }
 
@@ -197,7 +195,10 @@ const handoff = (
     else if (terminal.outcome.status === 'FAILED')
       disposition = { status: 'VISUAL_FAILED', failure: terminal.outcome.failure }
     else {
-      const derived = deriveEntryHandoffDisposition(work.prepared.input, terminal.outcome.inference)
+      const derived = deriveEntryHandoffDisposition(
+        { input: work.prepared.input, chart: work.chart, visualRequest: work.visualRequest },
+        terminal.outcome.inference,
+      )
       disposition = Result.isSuccess(derived)
         ? derived.success
         : {
@@ -224,35 +225,12 @@ export const evaluateClaimedEntryInferences = (
   Effect.gen(function* () {
     const journal = yield* EntryInferenceJournal
     const work: Work[] = yield* Effect.forEach(dispatches, (dispatch) =>
-      Effect.gen(function* () {
-        yield* dispatch.consume
-        const request = yield* Effect.try({
-          try: () => structuredClone(dispatch.request),
-          catch: (cause) =>
-            new EntryInferenceError({
-              category: 'INPUT',
-              message: 'Admitted entry cannot be privately retained',
-              cause,
-            }),
-        })
-        const claim = {
-          requestId: request.requestId,
-          input: request.request,
-          observedAt: request.observedAt,
-          expiresAt: request.expiresAt,
-          claimedAt: dispatch.claimedAt,
-        }
-        const prepared = yield* Effect.fromResult(prepareClaimedEntry(claim))
-        if (
-          (yield* Effect.fromResult(canonicalHashV1Result(prepared.visualClaim))) !==
-          (yield* Effect.fromResult(canonicalHashV1Result(dispatch.visualClaim)))
-        )
-          return yield* new EntryInferenceError({
-            category: 'INPUT',
-            message: 'Initial visual dispatch differs from its admitted claim',
-          })
-        return { ...prepared, request, completion: null, terminal: null, terminalCommitted: false }
-      }),
+      Effect.map(dispatch.consume, (prepared) => ({
+        ...prepared,
+        completion: null,
+        terminal: null,
+        terminalCommitted: false,
+      })),
     )
     const commit = (transitions: readonly EntryStageTransition[]) =>
       Effect.gen(function* () {

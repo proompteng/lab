@@ -839,9 +839,14 @@ impl Drop for Worker {
         let _ = self.0.wait();
     }
 }
-fn worker(port: u16, key_file: &std::path::Path) -> Worker {
+fn worker(port: u16, key_file: &std::path::Path, previous: bool) -> Worker {
+    let executable = previous
+        .then(|| env::var_os("TENGRI_RESTATE_PREVIOUS_WORKER"))
+        .flatten()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| env::current_exe().unwrap());
     Worker(
-        Command::new(env::current_exe().unwrap())
+        Command::new(executable)
             .args([
                 "--ignored",
                 "--exact",
@@ -856,6 +861,17 @@ fn worker(port: u16, key_file: &std::path::Path) -> Worker {
             .spawn()
             .unwrap(),
     )
+}
+
+async fn invocation_row(http: &reqwest::Client, admin: &str, run: &str) -> serde_json::Value {
+    let response: serde_json::Value = http
+        .post(format!("{admin}/query"))
+        .header("accept", "application/json")
+        .json(&serde_json::json!({"query": format!(
+            "SELECT id,status,pinned_deployment_id,journal_size,last_failure FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{run}'"
+        )}))
+        .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+    response["rows"][0].clone()
 }
 
 async fn register(
@@ -998,7 +1014,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = socket.local_addr().unwrap().port();
     drop(socket);
-    let mut process = worker(port, &key_file);
+    let mut process = worker(port, &key_file, true);
     let http = reqwest::Client::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     let original_deployment = register(&http, &admin, port, deadline).await;
@@ -1293,12 +1309,58 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
     let next_port = socket.local_addr().unwrap().port();
     drop(socket);
-    let mut next_version = worker(next_port, &key_file);
+    let mut next_version = worker(next_port, &key_file, false);
     let next_deployment = register(&http, &admin, next_port, deadline).await;
     assert_ne!(
         original_deployment, next_deployment,
         "version registration must retain the original pinned endpoint"
     );
+    let original = invocation_row(&http, &admin, &parallel.id).await;
+    let invocation_id = original["id"].as_str().unwrap();
+    assert_eq!(original["pinned_deployment_id"], original_deployment);
+    let paused = loop {
+        let current = invocation_row(&http, &admin, &parallel.id).await;
+        if matches!(current["status"].as_str(), Some("paused" | "suspended")) {
+            break current;
+        }
+        let pause = http
+            .patch(format!("{admin}/invocations/{invocation_id}/pause"))
+            .send()
+            .await
+            .unwrap();
+        assert!(pause.status().is_success() || pause.status() == reqwest::StatusCode::CONFLICT);
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "run could not be paused before migration"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    http.patch(format!("{admin}/invocations/{invocation_id}/resume"))
+        .query(&[("deployment", &next_deployment)])
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    loop {
+        let current = invocation_row(&http, &admin, &parallel.id).await;
+        assert_eq!(current["id"], invocation_id);
+        assert_eq!(current["last_failure"], serde_json::Value::Null);
+        if current["pinned_deployment_id"] == next_deployment
+            && current["journal_size"].as_u64().unwrap() > paused["journal_size"].as_u64().unwrap()
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "run did not replay on the replacement worker"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(matches!(
+        status(&read_client, &parallel, &owner).await.unwrap().state,
+        State::WaitingForGuest { .. }
+    ));
     // Repeated input is the same workflow, and a changed payload is rejected by readback.
     workspace
         .admit(Json(admission(&service, input.clone()).await))
@@ -1388,8 +1450,8 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         "the mounted key must actually rotate before admission readback"
     );
     // These are independent OS processes. Listener cancellation alone would leave HTTP/2 tasks alive.
-    process = worker(port, &key_file);
-    next_version = worker(next_port, &key_file);
+    process = worker(port, &key_file, true);
+    next_version = worker(next_port, &key_file, false);
     let latest = proof_client
         .inspect(Json(proof_claim.clone()))
         .call()
@@ -1551,17 +1613,30 @@ async fn completing_one_conversation_keeps_the_other_run_pinned() {
         thread_id: "second-thread".into(),
         ..input()
     };
-    service.pin_run(&principal(), &first, true).await.unwrap();
-    service.pin_run(&principal(), &second, true).await.unwrap();
-    service.pin_run(&principal(), &first, false).await.unwrap();
-    service.pin_run(&principal(), &first, false).await.unwrap();
+    assert!(
+        service
+            .pinned_start_guest(&principal(), &first)
+            .await
+            .is_err()
+    );
+    assert!(
+        service
+            .pinned_start_guest(&principal(), &second)
+            .await
+            .is_err()
+    );
+    service.release_run_pin(&principal(), &first).await.unwrap();
+    service.release_run_pin(&principal(), &first).await.unwrap();
     let agents: kube::Api<crate::crd::MicroVM> =
         kube::Api::namespaced(service.client.clone(), "tengri");
     let agent = agents.get(&first.agent_id).await.unwrap();
     let pins: BTreeSet<String> =
         serde_json::from_str(&agent.annotations()[crate::activity::ACTIVE_RUN_ANNOTATION]).unwrap();
     assert_eq!(pins, BTreeSet::from([second.id.clone()]));
-    service.pin_run(&principal(), &second, false).await.unwrap();
+    service
+        .release_run_pin(&principal(), &second)
+        .await
+        .unwrap();
     assert!(
         !agents
             .get(&first.agent_id)
@@ -1593,7 +1668,7 @@ async fn an_accepted_run_is_pinned_before_guest_availability_is_required() {
         agent.spec.desired_state,
         crate::crd::MicroVMDesiredState::Sleeping
     );
-    service.pin_run(&principal(), &input, false).await.unwrap();
+    service.release_run_pin(&principal(), &input).await.unwrap();
     assert!(
         !agents
             .get(&input.agent_id)
@@ -1621,7 +1696,7 @@ async fn snapshot_resume_rebinds_the_run_pin_to_current_authority() {
     let mut admitted = principal();
     admitted.context.runtime_epoch = "55555555-5555-4555-8555-555555555555".into();
 
-    service.pin_run(&admitted, &input, true).await.unwrap();
+    assert!(service.pinned_start_guest(&admitted, &input).await.is_err());
 
     let agents: kube::Api<crate::crd::MicroVM> =
         kube::Api::namespaced(service.client.clone(), "tengri");
@@ -1713,20 +1788,25 @@ async fn refreshed_run_context_still_requires_current_ofz_authority() {
 #[test]
 fn identifying_an_old_turn_does_not_revive_its_dead_process() {
     let history = serde_json::json!({"thread":{"turns":[{"id":"accepted","status":"inProgress"}]}});
-    for _ in 0..3 {
-        let recovered =
-            bind_native_generation(observed_turn(&history, "accepted"), false, "accepted");
-        assert!(matches!(recovered, State::NeedsReconciliation { .. }));
-        assert_eq!(turn_id(&recovered), Some("accepted"));
-        assert!(!recovered.terminal());
-    }
+    let live = observed_turn(&history, "accepted");
+    let recovered = bind_native_generation(live.clone(), false, false, "accepted");
+    assert!(matches!(recovered, State::NeedsReconciliation { .. }));
+    assert_eq!(turn_id(&recovered), Some("accepted"));
+    assert!(!recovered.terminal());
+
+    let fenced = bind_native_generation(live.clone(), false, true, "accepted");
+    assert!(fenced.terminal());
+    assert!(matches!(fenced, State::Unconfirmed { turn_id: Some(id), .. } if id == "accepted"));
+
     let completed = State::Succeeded {
         turn_id: "accepted".into(),
     };
     assert_eq!(
-        bind_native_generation(completed.clone(), false, "accepted"),
+        bind_native_generation(completed.clone(), false, true, "accepted"),
         completed
     );
-    let live = observed_turn(&history, "accepted");
-    assert_eq!(bind_native_generation(live.clone(), true, "accepted"), live);
+    assert_eq!(
+        bind_native_generation(live.clone(), true, false, "accepted"),
+        live
+    );
 }

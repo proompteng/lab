@@ -11,6 +11,7 @@ import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } fro
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import {
   ControllerPassEvidenceSchema,
+  RetainedV37ControllerPassEvidenceSchema,
   controllerBuildMatchesRegistration,
   decisionMarketScopeSupported,
   type ControllerBuildBindingPolicy,
@@ -20,7 +21,7 @@ import { executionOrderPlans, protectionIntentsByDecision } from './execution-pl
 import { earliestDurableWitnesses } from './obligation-witnesses'
 import { bindOperationalWork, registeredControllerWork, registeredDecisionWork } from './operational-obligations'
 import { type OperationalRegistration, verifyStoredOperationalRegistration } from './operational-period'
-import { readSystemSourceCutPayload, SystemSourceCutSchema } from './source-cut'
+import { readSystemSourceCutPayload, RetainedSystemSourceCutSchema } from './source-cut'
 import { RecordedSystemSourceCutSchema } from './recorded-source-cut'
 import { readSystemSourceRecord, SystemSourceRecordKind } from './source-records'
 import { makeOperationalSafetyScan, type NativeOperationalSafetyAudit } from './operational-safety'
@@ -37,12 +38,12 @@ export const OperationalSourceCutSchema = Schema.Struct({
   registrationHash: Sha256Schema,
   asOf: UtcInstantSchema,
   runtimeConfigurationHash: Sha256Schema,
-  financial: SystemSourceCutSchema.fields.financial,
+  financial: RetainedSystemSourceCutSchema.fields.financial,
   records: Schema.Array(OperationalSourceReferenceSchema),
-  protectionIntents: SystemSourceCutSchema.fields.protectionIntents,
-  decisionAdmissions: SystemSourceCutSchema.fields.decisionAdmissions,
-  mutations: SystemSourceCutSchema.fields.mutations,
-  durableObservations: SystemSourceCutSchema.fields.durableObservations,
+  protectionIntents: RetainedSystemSourceCutSchema.fields.protectionIntents,
+  decisionAdmissions: RetainedSystemSourceCutSchema.fields.decisionAdmissions,
+  mutations: RetainedSystemSourceCutSchema.fields.mutations,
+  durableObservations: RetainedSystemSourceCutSchema.fields.durableObservations,
   sourceMaterial: Schema.Unknown,
   sourceMaterialHash: Sha256Schema,
 })
@@ -95,9 +96,13 @@ const readDecision = (reference: SourceReference, registration: OperationalRegis
       Schema.Struct({ sessionDate: IsoDateSchema, document: Schema.Unknown }),
       strictParseOptions,
     )(record.payload)
-    const document = !['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'].includes(
-      registration.obligations.configuration.protocol.schemaVersion,
-    )
+    const document = ![
+      'bayn.jev.protocol.v40',
+      'bayn.jev.protocol.v41',
+      'bayn.jev.protocol.v42',
+      'bayn.jev.protocol.v43',
+      'bayn.jev.protocol.v44',
+    ].includes(registration.obligations.configuration.protocol.schemaVersion)
       ? yield* Effect.fromResult(decodeRetainedJevExecutionDecisionDocument(row.document))
       : yield* Effect.fromResult(decodeExecutionDecisionDocument(row.document))
     if (document.contentHash !== reference.sourceId)
@@ -107,12 +112,16 @@ const readDecision = (reference: SourceReference, registration: OperationalRegis
     return { ...row, document }
   })
 
-const readController = (reference: SourceReference) =>
+const readController = (reference: SourceReference, registration: OperationalRegistration) =>
   Effect.gen(function* () {
     const record = yield* readSystemSourceRecord(reference.recordHash)
     if (record.kind !== SystemSourceRecordKind.Controller || reference.kind !== record.kind)
       return yield* new SystemAssessmentError({ message: 'Controller source record kind differs' })
-    const pass = yield* Schema.decodeUnknownEffect(ControllerPassEvidenceSchema, strictParseOptions)(record.payload)
+    const schema =
+      registration.obligations.configuration.protocol.schemaVersion === 'bayn.jev.protocol.v37'
+        ? RetainedV37ControllerPassEvidenceSchema
+        : ControllerPassEvidenceSchema
+    const pass = yield* Schema.decodeUnknownEffect(schema, strictParseOptions)(record.payload)
     if (pass.receiptHash !== reference.sourceId)
       return yield* new SystemAssessmentError({ message: 'Controller source identity differs' })
     return pass
@@ -193,7 +202,7 @@ export const replayOperationalSourceRecords = (
     const unboundControllerBuilds: VerifiedOperationalSourceCut['unboundControllerBuilds'][number][] = []
     const witnesses = earliestDurableWitnesses(cut)
     for (const reference of controllers.values()) {
-      const pass = yield* readController(reference)
+      const pass = yield* readController(reference, registration)
       // Retain only small provenance/timing evidence, including passes with no durable work witness.
       if (!controllerBuildMatchesRegistration(pass, registration))
         unboundControllerBuilds.push({

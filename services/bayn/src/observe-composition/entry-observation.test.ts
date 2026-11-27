@@ -6,17 +6,18 @@ import { BrokerRead, MarketCalendarObservationSchema, type BrokerReadShape } fro
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { canonicalHashV1Result } from '../hash'
-import type { JevBatchPlan } from '../jev/batch'
-import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevBatchPlanVersion, type JevBatchPlan } from '../jev/batch'
+import { JevBatchStore, retainJevBatchPreparation } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevInferenceWorkStore } from '../jev/inference-work'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
-import { restoreJevObservation, type JevObservation } from '../jev/observation'
+import { ownJevObservation, restoreJevObservation, type JevObservation } from '../jev/observation'
 import { JevPurpose } from '../jev/portfolio'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { shortEntryBrokerReads } from '../testing/entry-broker-reads.test-support'
+import { prepareJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore } from './candidate-observation'
 import { observeNativeEntry, type EntryObservationContext } from './entry-observation'
 
@@ -62,7 +63,7 @@ const inferenceWork: JevInferenceWorkStore['Service'] = {
   resume: (cycleId, generation) => {
     expect(cycleId).toBe(saved.plan.cycleId)
     expect(generation).toBe(saved.plan.authorityGenerationHash)
-    return Effect.succeed({ batchId: saved.plan.batchId, source: restored })
+    return Effect.succeed({ batchId: saved.plan.batchId, loadSource: Effect.succeed(restored) })
   },
 }
 const layer = Layer.mergeAll(
@@ -106,8 +107,32 @@ test('native completion preserves admitted evidence without discarded broker eli
   const resumed = Result.getOrThrow(await runObservation(observeNativeEntry(context)))
   expect(resumed.snapshot).toBe(restored.snapshot)
   expect<unknown>(resumed.decision.evidence.observation).toEqual(restored.observation)
+  if (resumed.decision.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected Jev entry target')
   expect(resumed.decision.evidence.batchPlan).toEqual(saved.plan)
   expect(resumed.decision.evidence.batchResult).toEqual(saved.result)
+})
+
+test('native completion reuses the admitted source and preserves the exact decision', async () => {
+  const source = Result.getOrThrow(ownJevObservation(fixture.observation.payload))
+  const prepared = Result.getOrThrow(prepareJevTradingSignalBatch(source, saved.plan.expiresAt, JevBatchPlanVersion.V8))
+  const cold = Result.getOrThrow(await runObservation(observeNativeEntry(context)))
+  const warm = Result.getOrThrow(
+    await runObservation(
+      observeNativeEntry(context).pipe(
+        Effect.provideService(JevBatchStore, {
+          ...batches,
+          read: () => Effect.succeed(retainJevBatchPreparation({ ...saved }, prepared)),
+        }),
+        Effect.provideService(JevInferenceWorkStore, {
+          ...inferenceWork,
+          resume: () => Effect.succeed({ batchId: saved.plan.batchId, loadSource: unused }),
+        }),
+      ),
+    ),
+  )
+  expect(warm.decision).toEqual(cold.decision)
+  expect(warm.snapshot).toBe(source.verified.snapshot)
+  expect(warm.decision.evidence.observation.rows).toBe(source.verified.rows)
 })
 
 test('new native source obtains fresh eligibility before sampling its observation clock and admitting the batch', async () => {
@@ -143,7 +168,7 @@ test('new native source obtains fresh eligibility before sampling its observatio
       Effect.provideService(JevBatchStore, {
         ...batches,
         pending: () => Effect.succeed([]),
-        begin: (plan, observation) =>
+        begin: ({ plan, source: { payload: observation } }) =>
           Effect.sync(() => {
             admitted.push({ plan, observation })
             return { plan, result: null, dispatches: null }
@@ -155,7 +180,10 @@ test('new native source obtains fresh eligibility before sampling its observatio
   )
   expect(Result.isFailure(outcome)).toBe(true)
   if (Result.isFailure(outcome) && outcome.failure._tag === 'JevAwaitingEvidence')
-    expect(outcome.failure.readiness).toBe(DecisionReadinessReason.InferenceUnavailable)
+    expect(outcome.failure).toMatchObject({
+      readiness: DecisionReadinessReason.DecisionPending,
+      availableAt: new Date(Date.parse(eligibilityAt) + fresh.protocol.inferenceValidityMs).toISOString(),
+    })
   else throw new Error('Expected a durably admitted batch awaiting inference')
   expect(admitted).toHaveLength(1)
   const admission = admitted[0]!
@@ -212,7 +240,7 @@ test.each([
     observeNativeEntry(changed).pipe(
       Effect.provideService(JevInferenceWorkStore, {
         ...inferenceWork,
-        resume: () => Effect.succeed({ batchId: saved.plan.batchId, source: restored }),
+        resume: () => Effect.succeed({ batchId: saved.plan.batchId, loadSource: Effect.succeed(restored) }),
       }),
     ),
     now,

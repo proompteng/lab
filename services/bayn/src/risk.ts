@@ -1,6 +1,11 @@
 import { executionIntentSchemaVersion, submittedBrokerOrderCount } from './execution/contracts'
 import { isEquityShortProtection } from './execution/contracts'
 import { EquityShortEligibilitySchema, equityShortIsEligible } from './execution/equity-short'
+import {
+  ProtectionCloseBasisSchema,
+  matchesProtectionCloseBook,
+  protectionCloseReducesPosition,
+} from './execution/protection-close-basis'
 import { Data, Result, Schema, pipe } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
@@ -248,7 +253,17 @@ export const UncappedTurnoverRiskPolicySchema = Schema.Struct({
   maxDailyTradedNotionalMicros: Schema.Null,
 })
 
-export const PolicySchema = Schema.Union([ExecutionRiskPolicySchema, UncappedTurnoverRiskPolicySchema])
+export const MultiSleevePaperRiskPolicySchema = Schema.Struct({
+  ...ExecutionRiskPolicySchema.fields,
+  schemaVersion: Schema.Literal('bayn.execution-risk-policy.v6'),
+  maxDailyTradedNotionalMicros: Schema.Null,
+})
+
+export const PolicySchema = Schema.Union([
+  ExecutionRiskPolicySchema,
+  UncappedTurnoverRiskPolicySchema,
+  MultiSleevePaperRiskPolicySchema,
+])
 export type Policy = typeof PolicySchema.Type
 
 export const EntryQuoteFreshnessSchema = Schema.Struct({
@@ -291,6 +306,7 @@ const StateBase = Schema.Struct({
   evaluatedAt: UtcInstant,
   closeOnly: Schema.optional(Schema.Boolean),
   closeOnlyExpiresAt: Schema.optional(UtcInstant),
+  protectionClose: Schema.optionalKey(ProtectionCloseBasisSchema),
 })
 
 const timeDoesNotFollow = (candidate: string, boundary: string): boolean => candidate > boundary
@@ -698,6 +714,7 @@ interface RiskFacts {
 }
 
 interface DerivedRiskMetrics {
+  readonly validProtectionClose: boolean
   readonly orderNotionalMicros: bigint
   readonly currentSymbolQuantityAtoms: bigint
   readonly currentSymbolExposureMagnitudeMicros: bigint
@@ -811,7 +828,23 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
       ? positiveDifference(facts.expectedExecutionPriceMicros, facts.referencePriceMicros)
       : positiveDifference(facts.referencePriceMicros, facts.expectedExecutionPriceMicros)
   const adverseSlippageBps = divideUp(adversePriceDifference * BASIS_POINTS, facts.referencePriceMicros)
-  const unresolvedOrderCount = facts.state.orders.filter((order) => isUnresolved(order.status)).length
+  const protectionClose = facts.state.protectionClose
+  const validProtectionClose =
+    protectionClose !== undefined &&
+    facts.state.closeOnly === true &&
+    facts.intent.schemaVersion === executionIntentSchemaVersion &&
+    facts.intent.strategyName === 'jev' &&
+    matchesProtectionCloseBook(
+      protectionClose,
+      facts.state,
+      facts.intent.cycleId,
+      facts.state.evaluatedAt,
+      facts.policy.maxBrokerStateAgeMs,
+    ) &&
+    protectionCloseReducesPosition(protectionClose, facts.intent)
+  const unresolvedOrderCount = validProtectionClose
+    ? 0
+    : facts.state.orders.filter((order) => isUnresolved(order.status)).length
   const oldestBrokerStateAt = Math.min(
     instant(facts.state.account.observedAt),
     instant(facts.state.positionsObservedAt),
@@ -822,6 +855,7 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
   )
 
   return Result.succeed({
+    validProtectionClose,
     orderNotionalMicros,
     currentSymbolQuantityAtoms,
     currentSymbolExposureMagnitudeMicros,
@@ -975,7 +1009,8 @@ const buildAuthorityAndStateGates = (
       Gate.Reconciliation,
       state.reconciliation.status === ReconciliationStatus.Exact &&
         state.reconciliation.expectedHash === reconciledHash &&
-        state.reconciliation.observedHash === reconciledHash,
+        state.reconciliation.observedHash === reconciledHash &&
+        (state.protectionClose === undefined || metrics.validProtectionClose),
       `${state.reconciliation.status}:${state.reconciliation.expectedHash}:${state.reconciliation.observedHash}`,
       `${ReconciliationStatus.Exact}:${reconciledHash}:${reconciledHash}`,
     ),
@@ -1214,6 +1249,7 @@ const deriveRiskBindingHashes = (facts: RiskFacts): Result.Result<RiskBindingHas
       items: facts.state.orders,
       observedAt: facts.state.ordersObservedAt,
       unknownMutationCount: facts.state.unknownMutationCount,
+      ...(facts.state.protectionClose === undefined ? {} : { protectionClose: facts.state.protectionClose }),
       ...(facts.state.closeOnly === true
         ? {
             closeOnly: true,

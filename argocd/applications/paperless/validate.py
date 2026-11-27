@@ -3,6 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 def yamls(text: str) -> list[dict]:
@@ -44,6 +45,9 @@ def main() -> None:
     assert config["PAPERLESS_DBENGINE"] == "postgresql"
     assert config["PAPERLESS_PORT"] == "8000"
     assert config["PAPERLESS_TIKA_ENABLED"] == "true"
+    assert "paperless.paperless.svc.cluster.local" in config[
+        "PAPERLESS_ALLOWED_HOSTS"
+    ].split(",")
 
     secret = resource("ExternalSecret", "paperless-runtime")["spec"]
     assert secret["refreshPolicy"] == "CreatedOnce"
@@ -63,6 +67,12 @@ def main() -> None:
     deployment = resource("Deployment", "paperless")["spec"]
     assert deployment["replicas"] == 1
     assert deployment["strategy"]["type"] == "Recreate"
+    assert (
+        deployment["template"]["metadata"]["annotations"][
+            "paperless.proompteng.ai/allowed-hosts"
+        ]
+        == config["PAPERLESS_ALLOWED_HOSTS"]
+    ), "Host changes must roll the envFrom consumer"
     pod = deployment["template"]["spec"]
     assert pod["securityContext"]["runAsNonRoot"] is True
     assert pod["automountServiceAccountToken"] is False
@@ -70,6 +80,11 @@ def main() -> None:
     container = pod["containers"][0]
     assert container["securityContext"]["allowPrivilegeEscalation"] is False
     assert "@sha256:" in container["image"]
+    host = urlparse(config["PAPERLESS_URL"]).hostname
+    for probe in ("startupProbe", "readinessProbe"):
+        assert {"name": "Host", "value": host} in container[probe]["httpGet"].get(
+            "httpHeaders", []
+        ), f"{probe} must send the configured Paperless host"
     assert "PAPERLESS_SECRET_KEY" not in config
     for name in ("PAPERLESS_SECRET_KEY", "PAPERLESS_ADMIN_PASSWORD", "PAPERLESS_REDIS"):
         assert (
@@ -121,6 +136,44 @@ def main() -> None:
     assert resource("NetworkPolicy", "paperless-private-ingress")["spec"][
         "policyTypes"
     ] == ["Ingress"]
+    sources = resource("NetworkPolicy", "paperless-private-ingress")["spec"]["ingress"][
+        0
+    ]["from"]
+    assert {
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "agents"}},
+        "podSelector": {
+            "matchLabels": {
+                "app.kubernetes.io/name": "agents-shell",
+                "app.kubernetes.io/component": "agents-shell",
+            }
+        },
+    } in sources
+    token = resource("ExternalSecret", "paperless-agent-api")["spec"]
+    assert token["refreshPolicy"] == "CreatedOnce"
+    assert token["target"]["creationPolicy"] == "Orphan"
+    assert token["target"]["deletionPolicy"] == "Retain"
+    assert resource("Password", "paperless-agent-token")["spec"]["length"] == 40
+    assert resource("Role", "paperless-agent-token-reader")["rules"] == [
+        {
+            "apiGroups": [""],
+            "resources": ["secrets"],
+            "resourceNames": ["paperless-agent-api"],
+            "verbs": ["get"],
+        }
+    ]
+    assert resource("RoleBinding", "paperless-agent-token-reader")["subjects"] == [
+        {
+            "kind": "ServiceAccount",
+            "name": "paperless-agent-token-reader",
+            "namespace": "agents",
+        }
+    ]
+    bootstrap = resource("Job", "paperless-agent-bootstrap")
+    assert bootstrap["metadata"]["annotations"]["argocd.argoproj.io/hook"] == "PostSync"
+    bootstrap_pod = bootstrap["spec"]["template"]["spec"]
+    assert bootstrap_pod["automountServiceAccountToken"] is False
+    assert bootstrap_pod["securityContext"]["runAsNonRoot"] is True
+    assert bootstrap_pod["containers"][0]["image"] == container["image"]
     for name in ("paperless-tika", "paperless-gotenberg"):
         converter = resource("Deployment", name)["spec"]["template"]["spec"]
         assert "@sha256:" in converter["containers"][0]["image"]

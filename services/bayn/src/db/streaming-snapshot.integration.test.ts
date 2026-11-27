@@ -1,6 +1,6 @@
 import { TestClock } from 'effect/testing'
 import { OperationDeadlineClock } from '../operation-timeout'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Context, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted } from 'effect'
@@ -44,15 +44,11 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
       throw new Error('Streaming integration tests require a local _test database')
     runtime = makeRuntime()
   })
-  beforeEach(async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-      }),
-    )
+  const migrateSchema = Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`DROP SCHEMA public CASCADE`
+    yield* sql`CREATE SCHEMA public`
+    yield* postgresMigrations
   })
   afterAll(async () => {
     await runtime?.dispose()
@@ -61,6 +57,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
   test('mixed-source cutover preserves immutable old evidence and rejects new retired writes', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
+        yield* migrateSchema
         const sql = yield* PgClient.PgClient
         const fixture = simulationFixture()
         const market = yield* makeSimulatedMarketData(fixture.source, Effect.succeed(fixture.cursor))
@@ -252,6 +249,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
       const fixture = simulationFixture(undefined, technical ? 'torghut.technical-features.v1' : undefined)
       const result = await runtime.runPromise(
         Effect.gen(function* () {
+          yield* migrateSchema
           const sql = yield* PgClient.PgClient
           const market = yield* makeSimulatedMarketData(fixture.source, Effect.succeed(fixture.cursor))
           const snapshot = yield* market.loadSnapshot(fixture.query)
@@ -314,6 +312,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
   test('only recovers an exact committed cut and rolls evidence back with a failed decision transaction', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
+        yield* migrateSchema
         const sql = yield* PgClient.PgClient
         const missing = yield* Effect.exit(recoverStreamingSnapshotReference(fixture.snapshot.manifest))
         yield* Effect.exit(sql.withTransaction(insert.pipe(Effect.andThen(Effect.fail('decision rejected')))))
@@ -335,6 +334,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
   test('rejects incomplete manifests and every mutation of saved source evidence', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
+        yield* migrateSchema
         const sql = yield* PgClient.PgClient
         const incomplete =
           yield* Effect.exit(sql`INSERT INTO streaming_snapshot_references (snapshot_id,schema_version,content_hash,observed_at,manifest)
@@ -367,6 +367,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
     )
     await runtime.runPromise(
       Effect.gen(function* () {
+        yield* migrateSchema
         const sql = yield* PgClient.PgClient
         const live = StreamingIntradayMarketDataLive.pipe(
           Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
@@ -407,6 +408,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
   test('verifies a consumed Kafka cut and rejects forged rows through the canonical adapter', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
+        yield* migrateSchema
         const sql = yield* PgClient.PgClient
         const live = StreamingIntradayMarketDataLive.pipe(
           Layer.provide(Layer.succeed(PgClient.PgClient, sql)),

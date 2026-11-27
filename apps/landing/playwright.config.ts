@@ -26,7 +26,7 @@ export default defineConfig({
   },
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 2 : 0,
+  retries: 0,
   workers: process.env.CI ? 4 : 2,
   reporter: process.env.CI ? [['line'], ['html', { open: 'never' }]] : 'line',
   use: {
@@ -38,7 +38,7 @@ export default defineConfig({
     locale: 'en-US',
     screenshot: 'only-on-failure',
     timezoneId: 'UTC',
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
     video: 'on-first-retry',
     viewport: { width: 1440, height: 900 },
   },

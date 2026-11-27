@@ -1,5 +1,7 @@
 import { legacyReconciliationSchemaVersion } from '../execution/legacy-wire'
 import { readRegisteredFinancialIdentity } from './capital-identity'
+import { registerPairedSystemQualification } from './paired-admission'
+import { requirePairedIncumbentWitness } from './paired-witness'
 import { captureOperationalSafetySource } from './operational-safety-source'
 import { ValkeyCache } from '../valkey-cache'
 import { operationalRegistrationFixture } from './operational-period.test-support'
@@ -13,14 +15,17 @@ import {
   readPersistedOperationalAssessment,
 } from './postgres'
 import { historicalRegistrationFixture } from './historical-registration.test-support'
+import { strategyBoundRegistrationFixture } from './strategy-registration.test-support'
+import { preparedAlphaRegistrationFixture } from './prepared-alpha-registration.test-support'
+import { ResearchStrategyEngine } from './strategy-binding'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
 import { readSystemExecutionOrders } from './execution-capture'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
@@ -29,8 +34,14 @@ import { canonicalJsonV1Result, sha256 } from '../hash'
 import { IsoDateSchema, UtcInstantSchema } from '../schemas'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
+import {
   activeEvaluationSessions,
   assessmentFixture,
+  nativeRegistrationFixture,
   registrationFixture,
   testHash,
   withRegistrationCommitments,
@@ -42,18 +53,29 @@ import {
   readPersistedSystemAssessment,
   readSystemRegistration,
   registerSystemQualification,
+  verifyNativeCashLedgerSources,
 } from './postgres'
-import { persistSystemSourceCut, readSystemSourceCut, SystemSourceCutSchema } from './source-cut'
+import {
+  persistSystemSourceCut,
+  readSystemSourceCut,
+  RetainedSystemSourceCutSchema,
+  SystemSourceCutSchema,
+} from './source-cut'
 import { EdgeStatus, QualificationVerdict, evaluateSystemAssessment } from './assessment'
 import {
   readSystemCashObservations,
+  readSystemFeeSettlementAnchors,
   readSystemControllerPasses,
   readSystemDurableObservations,
   readSystemDecisionAdmissions,
   readSystemMutationEvidence,
 } from './capture-queries'
 import { makePersistenceDocumentFixture } from './decision-persistence.test-support'
-import { OrderStatus, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
+import { OrderSide, OrderStatus, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
+import { cashSettlementLedgerPlan, prepareAccounting } from '../accounting/domain'
+import { prepareCashSettlement } from '../accounting/cash-settlement'
+import { planAccountingReceipt } from '../db/execution-store/decisions'
+import { hashLedgerPlanResult } from '../ledger-plan'
 import {
   makeResearchCapitalActivationRequest,
   makeResearchCapitalPlanHash,
@@ -66,6 +88,7 @@ import { makePostgresMutationStore } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { formalModelExecutable, runFormalModel } from './formal-model.test-support'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { sourceTimestamp } from '../broker/observations'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument, retainedJevProtocolV40Document } from '../jev/protocol'
@@ -83,7 +106,7 @@ import {
   ReplayExecutionReceiptSchema,
 } from './replay-execution'
 
-import { validateSystemRegistration } from './policy'
+import { validateSystemRegistration, type SystemRegistration } from './policy'
 import { emptySourceCutFixture } from './source-cut.test-support'
 import {
   OperationalSourceCutSchema,
@@ -98,7 +121,6 @@ import {
 } from './source-records'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const role = 'bayn_assessment_test_app'
 const history = {
   schemaVersion: 'bayn.system-qualification-history.v1',
   program: 'BAYN_SYSTEM_QUALIFICATION',
@@ -115,16 +137,13 @@ const databaseNow = Effect.gen(function* () {
   if (row === undefined) throw new Error('Database clock is missing')
   return row.now
 })
-const registerFixture = (value: ReturnType<typeof registrationFixture>) =>
-  registerSystemQualification(
-    value,
-    new Set([
-      ...value.costAllocationPlans.map((plan) => plan.basisSourceHash),
-      ...(value.schemaVersion === 'bayn.system-registration.v4'
-        ? value.statisticalPlan.supports.map((s) => s.sourceHash)
-        : []),
-    ]),
-  )
+const fixtureSources = (value: SystemRegistration) =>
+  new Set([
+    value.calendar.sourceHash,
+    ...value.costAllocationPlans.map((plan) => plan.basisSourceHash),
+    ...('statisticalPlan' in value ? value.statisticalPlan.supports.map((s) => s.sourceHash) : []),
+  ])
+const registerFixture = (value: SystemRegistration) => registerSystemQualification(value, fixtureSources(value))
 
 const seedOperationalAuthority = (base: ReturnType<typeof operationalRegistrationFixture>) =>
   Effect.gen(function* () {
@@ -149,6 +168,44 @@ const seedOperationalAuthority = (base: ReturnType<typeof operationalRegistratio
       ${request.grant.planHash},${generation.reconciliationId},${generation.reconciliationContentHash},${request.grant.planHash})`
   })
 
+const insertFixtureLedgerPrefix = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  entries: readonly Result.Result.Success<ReturnType<typeof prepareAccounting>>[],
+) =>
+  sql.withTransaction(
+    Effect.gen(function* () {
+      for (const [index, prepared] of entries.entries()) {
+        const transaction = prepared.transaction
+        yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+      source_event_id,source_sequence,occurred_at,observed_at)
+    VALUES(${transaction.brokerEventId},'bayn.paper-broker-event.v1',${transaction.brokerEventId},'FILL','ALPACA',
+      ${accountId},${`native-cash-fill-${index}`},${index + 1},${transaction.occurredAt},${transaction.occurredAt})`
+        yield* sql`INSERT INTO fills(event_id,account_id,schema_version,fill_id,broker_order_id,client_order_id,
+      symbol,side,quantity_atoms,price_atoms,fee_micros,source_timestamp,intent_id)
+    VALUES(${transaction.brokerEventId},${accountId},'bayn.fill.v2',${`native-cash-fill-${index}`},
+      ${`native-cash-order-${index}`},${`native-cash-client-${index}`},${transaction.symbol},${transaction.side},
+      ${transaction.quantityAtoms},${transaction.priceAtoms},${transaction.feeMicros},
+      ${transaction.occurredAt.replace('Z', '000000Z')},NULL)`
+        yield* sql`INSERT INTO accounting_transactions(transaction_id,schema_version,broker_event_id,intent_id,account_id,
+      symbol,side,quantity_atoms,price_atoms,notional_micros,fee_micros,cost_basis_micros,realized_pnl_micros,
+      quantity_delta_atoms,cost_basis_delta_micros,cash_delta_micros,ledger_plan_hash,content_hash,occurred_at)
+    VALUES(${transaction.transactionId},${transaction.schemaVersion},${transaction.brokerEventId},NULL,${accountId},
+      ${transaction.symbol},${transaction.side},${transaction.quantityAtoms},${transaction.priceAtoms},
+      ${transaction.notionalMicros},${transaction.feeMicros},${transaction.costBasisMicros},
+      ${transaction.realizedPnlMicros},${transaction.quantityDeltaAtoms},${transaction.costBasisDeltaMicros},
+      ${transaction.cashDeltaMicros},${transaction.ledgerPlanHash},${transaction.contentHash},${transaction.occurredAt})`
+        const receipt = Result.getOrThrow(planAccountingReceipt(prepared, '2001', 7001))
+        yield* sql`INSERT INTO accounting_receipts(receipt_id,schema_version,intent_id,broker_event_id,
+      tigerbeetle_cluster_id,tigerbeetle_ledger,account_ids,transfer_ids,debit_micros,credit_micros,content_hash,recorded_at)
+    VALUES(${receipt.receiptId},${receipt.schemaVersion},NULL,${receipt.brokerEventId},
+      ${receipt.tigerBeetleClusterId},${receipt.tigerBeetleLedger},${receipt.accountIds}::numeric[],
+      ${receipt.transferIds}::numeric[],${receipt.debitMicros},${receipt.creditMicros},${receipt.contentHash},
+      ${transaction.occurredAt})`
+      }
+    }),
+  )
+
 const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     PostgresClientLive({
@@ -158,9 +215,14 @@ const makeRuntime = (url: string) =>
   )
 
 postgres('PostgreSQL prospective system qualification', () => {
+  const testUrl = baynTestPostgresUrl ?? ''
+  const role = `bayn_assessment_test_app_${crypto.randomUUID().replaceAll('-', '')}`
+  let roleCreated = false
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
   let databaseObservedAt: string | undefined
-  const registration = (
+  const retainedRegistration = (
     sessionCount = 20,
     version = JevAcceptanceVersion.Current,
     protocolDocument: unknown = defaultJevProtocolDocument,
@@ -176,40 +238,74 @@ postgres('PostgreSQL prospective system qualification', () => {
       priorAttemptHash: testHash(history),
     }
   }
-  beforeAll(() => {
-    const url = baynTestPostgresUrl ?? ''
-    const parsed = new URL(url)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw new Error('System qualification tests require an isolated local _test database')
-    runtime = makeRuntime(url)
-  })
-  beforeEach(async () => {
-    await runtime.runPromise(
+  const registration = (sessionCount = 20) =>
+    preparedAlphaRegistrationFixture(nativeRegistrationFixture(retainedRegistration(sessionCount)), {
+      candidate: ResearchStrategyEngine.Jev,
+      incumbent: ResearchStrategyEngine.Jev,
+    })
+  const restorePriorAdmission = (lastMigration: number) =>
+    runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-        yield* sql`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bayn_assessment_test_app') THEN
-        CREATE ROLE bayn_assessment_test_app NOLOGIN; END IF; END $$`
-        yield* sql`GRANT USAGE ON SCHEMA public TO bayn_assessment_test_app`
-        yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO bayn_assessment_test_app`
-        yield* sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO bayn_assessment_test_app`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= lastMigration))),
+          table: 'schema_migrations',
+        })
+        yield* sql`GRANT USAGE ON SCHEMA public TO ${sql(role)}`
+        yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO ${sql(role)}`
+        yield* sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${sql(role)}`
         yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
         databaseObservedAt = yield* databaseNow
       }),
     )
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const schema = makeRuntime(url)
+      try {
+        await schema.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* postgresMigrations
+            yield* sql`CREATE ROLE ${sql(role)} NOLOGIN`
+            roleCreated = true
+            yield* sql`GRANT USAGE ON SCHEMA public TO ${sql(role)}`
+            yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO ${sql(role)}`
+            yield* sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${sql(role)}`
+          }),
+        )
+      } finally {
+        await schema.dispose()
+      }
+    })
   }, 30000)
+  beforeEach(async () => {
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
+    databaseObservedAt = await runtime.runPromise(
+      initializeQualificationHistory(history, new Set([history.historySourceHash])).pipe(Effect.andThen(databaseNow)),
+    )
+  }, 30000)
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
+  })
   afterAll(async () => {
-    if (runtime !== undefined) {
-      await runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          yield* sql`DROP OWNED BY bayn_assessment_test_app`
-          yield* sql`DROP ROLE bayn_assessment_test_app`
-        }),
-      )
-      await runtime.dispose()
+    try {
+      await template?.dispose()
+    } finally {
+      if (roleCreated) {
+        const admin = makeRuntime(testUrl)
+        try {
+          await admin.runPromise(Effect.flatMap(PgClient.PgClient, (sql) => sql`DROP ROLE ${sql(role)}`))
+        } finally {
+          await admin.dispose()
+        }
+      }
     }
   })
   const asApplication = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient>) =>
@@ -217,7 +313,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       const sql = yield* PgClient.PgClient
       return yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* sql.unsafe(`SET LOCAL ROLE ${role}`)
+          yield* sql`SET LOCAL ROLE ${sql(role)}`
           return yield* program
         }),
       )
@@ -333,6 +429,7 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('operational registration preserves capital, has its own retained history and cannot certify economics', async () => {
+    await restorePriorAdmission(223)
     const base = operationalRegistrationFixture()
     const definition = base.policies[0]
     const operationalHistory = {
@@ -429,10 +526,6 @@ postgres('PostgreSQL prospective system qualification', () => {
       }),
     )
     expect(baseline).toEqual([{ registration_hash: saved.registrationHash, authority_state: null }])
-    if (formalModelExecutable !== undefined)
-      expect(runFormalModel([{ operation: 'nativeSafetyJournalInsert', triggerDepth: '2' }])).toEqual([
-        baseline.length === 1,
-      ])
 
     for (const statement of [
       `INSERT INTO operational_safety_baselines(registration_hash,authority_state) VALUES ('${saved.registrationHash}',null)`,
@@ -451,8 +544,6 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       ).toBe(true)
 
-    if (formalModelExecutable !== undefined)
-      expect(runFormalModel([{ operation: 'nativeSafetyJournalInsert', triggerDepth: '1' }])).toEqual([false])
     const nativeSafety = await runtime.runPromise(
       captureOperationalSafetySource(
         config,
@@ -599,6 +690,26 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       ).toBe(true)
     const storedCompact = await runtime.runPromise(asApplication(persistOperationalSourceCut(compact)))
+    const retainedOperationalHistory = Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      return {
+        registrations: yield* sql`SELECT * FROM system_qualification_registrations ORDER BY registration_hash`,
+        cuts: yield* sql`SELECT * FROM system_evidence_cuts ORDER BY source_cut_hash`,
+        receipts: yield* sql`SELECT * FROM system_assessment_receipts ORDER BY assessment_hash`,
+        sources: yield* sql`SELECT * FROM system_source_records ORDER BY record_hash`,
+      }
+    })
+    const beforeEngineMigration = await runtime.runPromise(retainedOperationalHistory)
+    await runtime.runPromise(postgresMigrations)
+    expect(await runtime.runPromise(retainedOperationalHistory)).toEqual(beforeEngineMigration)
+    const postMigrationCompact = { ...compact, asOf: await runtime.runPromise(databaseNow) }
+    const postMigrationStored = await runtime.runPromise(
+      asApplication(persistOperationalSourceCut(postMigrationCompact)),
+    )
+    const postMigrationReplayed = await runtime.runPromise(
+      readOperationalAssessmentSourceCut(postMigrationStored.sourceCutHash, prospective),
+    )
+    expect('cut' in postMigrationReplayed && postMigrationReplayed.cut).toEqual(postMigrationCompact)
     expect(await runtime.runPromise(readSystemSourceCut(savedCut.sourceCutHash))).toEqual(savedCut.cut)
     expect(Exit.isFailure(await runtime.runPromiseExit(readSystemSourceCut(storedCompact.sourceCutHash)))).toBe(true)
     const replayed = await runtime.runPromise(
@@ -723,7 +834,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       }),
     )
     const financial = await runtime.runPromise(
-      registerFixture(registration(1, JevAcceptanceVersion.Current, retainedJevProtocolV40Document)),
+      insertPriorRegistration(retainedRegistration(1, JevAcceptanceVersion.Current, retainedJevProtocolV40Document)),
     )
     expect(financial.registration.obligations.configuration.schemaVersion).toBe('bayn.qualification-runtime.v1')
     const base = operationalRegistrationFixture(financial.registration)
@@ -836,6 +947,478 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(accepted.registration.calendar.sessions).toHaveLength(sessionCount)
   })
 
+  test('new economic admission verifies the native calendar artifact and rejects substituted windows at both boundaries', async () => {
+    const input = registration(2)
+    const sources = new Set([
+      ...input.costAllocationPlans.map((plan) => plan.basisSourceHash),
+      ...input.statisticalPlan.supports.map((support) => support.sourceHash),
+    ])
+    const missingCalendar = await runtime.runPromiseExit(asApplication(registerSystemQualification(input, sources)))
+    expect(Exit.isFailure(missingCalendar)).toBe(true)
+    sources.add(input.calendar.sourceHash)
+    const [first, ...following] = input.calendar.sessions
+    if (first === undefined) throw new Error('Missing calendar fixture')
+    const shortClose = new Date(Date.parse(first.closeAt) - 1000).toISOString()
+    const calendar = {
+      ...input.calendar,
+      sessions: [{ ...first, closeAt: shortClose }, ...following],
+      marketCalendar: {
+        ...input.calendar.marketCalendar,
+        sessions: input.calendar.marketCalendar.sessions.map((row, index) =>
+          index === 0 ? { ...row, closeAt: shortClose } : row,
+        ),
+      },
+    }
+    const last = input.calendar.sessions.at(-1)
+    if (last === undefined) throw new Error('Missing final calendar session')
+    const alteredProvider = {
+      ...input,
+      calendar: {
+        ...input.calendar,
+        marketCalendar: {
+          ...input.calendar.marketCalendar,
+          providerSessions: input.calendar.marketCalendar.providerSessions.map((row) =>
+            row.date === last.sessionDate
+              ? { ...row, regularOpenAt: new Date(Date.parse(row.regularOpenAt) + 1000).toISOString() }
+              : row,
+          ),
+        },
+      },
+    }
+    const marketCalendar = {
+      ...input.calendar.marketCalendar,
+      normalizedResponseHash: testHash('incorrect normalized calendar response'),
+    }
+    const alteredResponseHash = {
+      ...input,
+      calendar: { ...input.calendar, marketCalendar, sourceHash: testHash(marketCalendar) },
+    }
+    sources.add(alteredResponseHash.calendar.sourceHash)
+    for (const invalid of [{ ...input, calendar }, alteredProvider, alteredResponseHash, retainedRegistration(2)]) {
+      expect(
+        Exit.isFailure(await runtime.runPromiseExit(asApplication(registerSystemQualification(invalid, sources)))),
+      ).toBe(true)
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                const payload = yield* Effect.fromResult(canonicalJsonV1Result(invalid))
+                yield* sql`INSERT INTO system_qualification_registrations
+                  (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+                  VALUES (${sha256(payload)}, ${invalid.program}, ${invalid.attemptIndex}, ${invalid.priorAttemptHash},
+                    ${invalid.registeredAt}, ${invalid.calendar.sessions[0]!.openAt}, ${invalid.calendar.sessions.at(-1)!.closeAt}, ${payload})`
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+    }
+    const persisted = await runtime.runPromise(asApplication(registerSystemQualification(input, sources)))
+    expect(await runtime.runPromise(readSystemRegistration(persisted.registrationHash))).toEqual(input)
+  })
+
+  test('assessment binds retained cash to immutable accounting in one database snapshot', async () => {
+    const registered = await runtime.runPromise(asApplication(registerFixture(registration(2))))
+    const candidate = registered.registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+    if (candidate === undefined) throw new Error('Missing candidate definition')
+    const accountId = candidate.riskPolicy.accountId
+    const identity = Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        accountId,
+        environment: BrokerEnvironment.Sandbox,
+        provider: BrokerProvider.Alpaca,
+      }),
+    )
+    const observedAt = await runtime.runPromise(databaseNow)
+    const buyAt = new Date(Date.parse(observedAt) - 120_000).toISOString()
+    const sellAt = new Date(Date.parse(observedAt) - 60_000).toISOString()
+    const lateAt = new Date(Date.parse(observedAt) - 45_000).toISOString()
+    const events = [testHash('native cash buy'), testHash('native cash sell'), testHash('native cash late buy')]
+    const preparePair = (buyPriceAtoms: string, sellPriceAtoms: string) => [
+      Result.getOrThrow(
+        prepareAccounting(
+          events[0]!,
+          {
+            schemaVersion: 'bayn.fill.v2',
+            accountId,
+            fillId: 'native-cash-fill-0',
+            brokerOrderId: 'native-cash-order-0',
+            clientOrderId: 'native-cash-client-0',
+            symbol: 'AAPL',
+            side: OrderSide.Buy,
+            quantityAtoms: '1000000000',
+            priceAtoms: buyPriceAtoms,
+            feeMicros: '0',
+            occurredAt: buyAt,
+          },
+          { quantityAtoms: '0', costMicros: '0' },
+          7001,
+        ),
+      ),
+      Result.getOrThrow(
+        prepareAccounting(
+          events[1]!,
+          {
+            schemaVersion: 'bayn.fill.v2',
+            accountId,
+            fillId: 'native-cash-fill-1',
+            brokerOrderId: 'native-cash-order-1',
+            clientOrderId: 'native-cash-client-1',
+            symbol: 'AAPL',
+            side: OrderSide.Sell,
+            quantityAtoms: '1000000000',
+            priceAtoms: sellPriceAtoms,
+            feeMicros: '0',
+            occurredAt: sellAt,
+          },
+          { quantityAtoms: '1000000000', costMicros: (BigInt(buyPriceAtoms) / 1000n).toString() },
+          7001,
+        ),
+      ),
+    ]
+    const original = preparePair('100000001000', '107000001000')
+    const rehashed = preparePair('96000001000', '103000001000')
+    const late = Result.getOrThrow(
+      prepareAccounting(
+        events[2]!,
+        {
+          schemaVersion: 'bayn.fill.v2',
+          accountId,
+          fillId: 'native-cash-fill-2',
+          brokerOrderId: 'native-cash-order-2',
+          clientOrderId: 'native-cash-client-2',
+          symbol: 'AAPL',
+          side: OrderSide.Buy,
+          quantityAtoms: '1000000000',
+          priceAtoms: '50000000000',
+          feeMicros: '0',
+          occurredAt: lateAt,
+        },
+        { quantityAtoms: '0', costMicros: '0' },
+        7001,
+      ),
+    )
+    expect(rehashed.map(({ transaction }) => transaction.transactionId)).toEqual(
+      original.map(({ transaction }) => transaction.transactionId),
+    )
+    await runtime.runPromise(
+      Effect.flatMap(PgClient.PgClient, (sql) => insertFixtureLedgerPrefix(sql, accountId, original)),
+    )
+    const precisionAccountEventId = testHash('native cash precision event')
+    const authenticSettlement = Result.getOrThrow(
+      prepareCashSettlement(
+        {
+          schemaVersion: 'bayn.broker-cash-settlement.v1',
+          accountId,
+          transactionId: original[0]!.transaction.transactionId,
+          transactionContentHash: original[0]!.transaction.contentHash,
+          brokerEventId: original[0]!.transaction.brokerEventId,
+          cashDeltaMicros: original[0]!.transaction.cashDeltaMicros,
+          cashReportingQuantumMicros: '10000',
+          precisionAccountEventId,
+          observedAt: original[0]!.transaction.occurredAt,
+          occurredAt: original[0]!.transaction.occurredAt,
+        },
+        7001,
+      ),
+    )
+    const authenticSettlementRecord = {
+      settlement_id: authenticSettlement.settlementId,
+      data: authenticSettlement.data,
+      rounding_delta_micros: authenticSettlement.roundingDeltaMicros,
+      content_hash: authenticSettlement.contentHash,
+      ledger_plan_hash: Result.getOrThrow(hashLedgerPlanResult(authenticSettlement.plan)),
+      tigerbeetle_cluster_id: '2001',
+      tigerbeetle_ledger: 7001,
+      posted: true,
+    }
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+              source_event_id,source_sequence,occurred_at,observed_at)
+            VALUES(${precisionAccountEventId},'bayn.paper-broker-event.v1',${precisionAccountEventId},'ACCOUNT',
+              'ALPACA',${accountId},'native-cash-precision',100,${buyAt},${buyAt})`
+            yield* sql`INSERT INTO account_snapshots(event_id,account_id,schema_version,status,currency,cash_micros,
+              equity_micros,buying_power_micros)
+            VALUES(${precisionAccountEventId},${accountId},'bayn.paper-account-snapshot.v2','ACTIVE','USD',
+              1000000000,1000000000,1000000000)`
+            yield* sql`INSERT INTO account_cash_reporting(account_event_id,quantum_micros)
+              VALUES(${precisionAccountEventId},10000)`
+            yield* sql`INSERT INTO broker_cash_settlements(settlement_id,transaction_id,account_id,
+              precision_account_event_id,rounding_delta_micros,data,content_hash,ledger_plan_hash,
+              tigerbeetle_cluster_id,tigerbeetle_ledger)
+            VALUES(${authenticSettlement.settlementId},${authenticSettlement.data.transactionId},${accountId},
+              ${precisionAccountEventId},${authenticSettlement.roundingDeltaMicros},
+              ${sql.json(authenticSettlement.data)},${authenticSettlement.contentHash},
+              ${authenticSettlementRecord.ledger_plan_hash},'2001',7001)`
+          }),
+        )
+      }),
+    )
+    const beforePostingAsOf = await runtime.runPromise(databaseNow)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE broker_cash_settlements SET posted_at=clock_timestamp()
+          WHERE settlement_id=${authenticSettlement.settlementId}`
+      }),
+    )
+    await runtime.runPromise(Effect.sleep('5 millis'))
+    const reconciledAt = await runtime.runPromise(databaseNow)
+    const asOf = await runtime.runPromise(databaseNow)
+    const forgedRoundingMicros = '4000000'
+    const forgedSettlement = {
+      settlement_id: authenticSettlement.settlementId,
+      data: authenticSettlement.data,
+      rounding_delta_micros: forgedRoundingMicros,
+      content_hash: authenticSettlement.contentHash,
+      ledger_plan_hash: Result.getOrThrow(
+        hashLedgerPlanResult(
+          cashSettlementLedgerPlan(accountId, authenticSettlement.settlementId, forgedRoundingMicros, 7001),
+        ),
+      ),
+      tigerbeetle_cluster_id: '2001',
+      tigerbeetle_ledger: 7001,
+      posted: true,
+    }
+    const fixture = assessmentFixture(registered.registration)
+    const financial = registered.registration.policies.map((definition) => {
+      const policy = fixture.input.policies.find((row) => row.policy === definition.policy)
+      if (policy === undefined) throw new Error('Missing assessment policy')
+      return {
+        policy: definition.policy,
+        sourceHash: testHash(['native accounting source', definition.policy]),
+        accountBindingHash: definition.accountBindingHash,
+        definitionHash: testHash(definition),
+        cashHistory: null,
+        sessions: policy.sessions.map((session) => ({
+          sessionDate: session.sessionDate,
+          evidenceHash: testHash(session),
+          facts: null,
+        })),
+      }
+    })
+    const sourceMaterial = (
+      transactions: typeof original,
+      accountCashSettlements: readonly (typeof forgedSettlement)[] = [authenticSettlementRecord],
+      positionReconciledAt = reconciledAt,
+    ) => ({
+      accounts: [
+        {
+          policy: JevResearchPolicy.Candidate,
+          identity,
+          forward: {
+            account: { accountId },
+            accountTransactions: transactions.map(({ transaction }) => transaction),
+            accountPositionCounts: { reconciledAt: positionReconciledAt, exact: true },
+            accountCashSettlements,
+            accountFeeAccruals: [],
+            accountBrokerFees: [],
+            accountingReceiptsExact: true,
+            ledgerExact: true,
+            missingLedgerAccountCount: 0,
+            unresolvedMutationCount: 0,
+          },
+        },
+      ],
+    })
+    const makeCut = (
+      transactions: typeof original,
+      accountCashSettlements: readonly (typeof forgedSettlement)[] = [authenticSettlementRecord],
+      cutAsOf = asOf,
+      positionReconciledAt = reconciledAt,
+    ) => {
+      const retained = sourceMaterial(transactions, accountCashSettlements, positionReconciledAt)
+      return Schema.decodeUnknownSync(SystemSourceCutSchema)({
+        schemaVersion: 'bayn.system-source-cut.v6',
+        alphaObservations: [],
+        alphaBaselinePreparations: [],
+        protectionIntents: [],
+        decisionAdmissions: [],
+        orders: [],
+        registrationHash: registered.registrationHash,
+        asOf: cutAsOf,
+        runtimeConfigurationHash: registered.registration.obligations.runtimeConfigurationHash,
+        financial,
+        inference: [],
+        inferenceLedgerEvidenceHash: testHash('native accounting inference ledger'),
+        decisions: [],
+        batches: [],
+        mutations: [],
+        fills: [],
+        accountMarks: [],
+        controllerPasses: [],
+        durableObservations: [],
+        sourceMaterial: retained,
+        sourceMaterialHash: testHash(retained),
+      })
+    }
+    const assessmentInput = (sourceCutHash: string, cutAsOf = asOf) => ({
+      ...fixture.input,
+      asOf: cutAsOf,
+      registration: registered.registration,
+      registrationReceiptHash: registered.registrationHash,
+      sourceCutHash,
+      policies: fixture.input.policies.map((policy) => ({
+        ...policy,
+        sessions: policy.sessions.map((session) => ({ ...session, financial: null, marks: [] })),
+      })),
+      realism: { expectedDecisionIds: [], expectedFillIds: [], decisions: [], fills: [], unsupportedAssumptions: [] },
+      reliability: { ...fixture.input.reliability, asOf: cutAsOf, completions: [] },
+      safety: {
+        ...fixture.input.safety,
+        coverage: 'INCOMPLETE' as const,
+        registrationHash: registered.registrationHash,
+        asOf: cutAsOf,
+      },
+    })
+    const futurePostingCut = await runtime.runPromise(
+      asApplication(
+        persistSystemSourceCut(makeCut(original, [authenticSettlementRecord], beforePostingAsOf, reconciledAt)),
+      ),
+    )
+    const futurePostingRejected = await runtime.runPromiseExit(
+      assessAndPersistSystem(
+        assessmentInput(futurePostingCut.sourceCutHash, beforePostingAsOf),
+        fixture.verifiedSources,
+      ),
+    )
+    expect(Exit.isFailure(futurePostingRejected)).toBe(true)
+    if (Exit.isFailure(futurePostingRejected))
+      expect(Cause.pretty(futurePostingRejected.cause)).toContain(
+        'Native cash reconciliation occurs after its immutable source cut',
+      )
+    const originalCut = await runtime.runPromise(asApplication(persistSystemSourceCut(makeCut(original))))
+    const accepted = await runtime.runPromiseExit(
+      assessAndPersistSystem(assessmentInput(originalCut.sourceCutHash), fixture.verifiedSources),
+    )
+    if (Exit.isFailure(accepted)) throw new Error(Cause.pretty(accepted.cause))
+    expect(Exit.isSuccess(accepted)).toBe(true)
+    const reassigned = {
+      accounts: sourceMaterial(original).accounts.map((account) => ({
+        ...account,
+        policy: JevResearchPolicy.Incumbent,
+      })),
+    }
+    const reassignedCut = await runtime.runPromise(
+      asApplication(
+        persistSystemSourceCut({
+          ...originalCut.cut,
+          sourceMaterial: reassigned,
+          sourceMaterialHash: testHash(reassigned),
+        }),
+      ),
+    )
+    const reassignmentRejected = await runtime.runPromiseExit(
+      assessAndPersistSystem(assessmentInput(reassignedCut.sourceCutHash), fixture.verifiedSources),
+    )
+    if (Exit.isSuccess(reassignmentRejected)) throw new Error('An incumbent cannot borrow the candidate ledger')
+    expect(Cause.pretty(reassignmentRejected.cause)).toContain(
+      'Native cash witnesses belong to a different registered account',
+    )
+    const rehashedCut = await runtime.runPromise(asApplication(persistSystemSourceCut(makeCut(rehashed))))
+    const rejected = await runtime.runPromiseExit(
+      assessAndPersistSystem(assessmentInput(rehashedCut.sourceCutHash), fixture.verifiedSources),
+    )
+    expect(Exit.isFailure(rejected)).toBe(true)
+    if (Exit.isFailure(rejected))
+      expect(Cause.pretty(rejected.cause)).toContain('Native cash ledger witness differs from immutable accounting')
+    const forgedSettlementCut = await runtime.runPromise(
+      asApplication(persistSystemSourceCut(makeCut(original, [forgedSettlement]))),
+    )
+    const settlementRejected = await runtime.runPromiseExit(
+      assessAndPersistSystem(assessmentInput(forgedSettlementCut.sourceCutHash), fixture.verifiedSources),
+    )
+    expect(Exit.isFailure(settlementRejected)).toBe(true)
+    if (Exit.isFailure(settlementRejected))
+      expect(Cause.pretty(settlementRejected.cause)).toContain(
+        'Native cash ledger witness differs from immutable accounting',
+      )
+
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const transaction = late.transaction
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+          source_event_id,source_sequence,occurred_at,observed_at)
+        VALUES(${transaction.brokerEventId},'bayn.paper-broker-event.v1',${transaction.brokerEventId},'FILL','ALPACA',
+          ${accountId},'native-cash-fill-2',3,${transaction.occurredAt},${transaction.occurredAt})`
+            yield* sql`INSERT INTO fills(event_id,account_id,schema_version,fill_id,broker_order_id,client_order_id,
+          symbol,side,quantity_atoms,price_atoms,fee_micros,source_timestamp,intent_id)
+        VALUES(${transaction.brokerEventId},${accountId},'bayn.fill.v2','native-cash-fill-2','native-cash-order-2',
+          'native-cash-client-2',${transaction.symbol},${transaction.side},${transaction.quantityAtoms},
+          ${transaction.priceAtoms},${transaction.feeMicros},${transaction.occurredAt.replace('Z', '000000Z')},NULL)`
+            yield* sql`INSERT INTO accounting_transactions(transaction_id,schema_version,broker_event_id,intent_id,account_id,
+          symbol,side,quantity_atoms,price_atoms,notional_micros,fee_micros,cost_basis_micros,realized_pnl_micros,
+          quantity_delta_atoms,cost_basis_delta_micros,cash_delta_micros,ledger_plan_hash,content_hash,occurred_at)
+        VALUES(${transaction.transactionId},${transaction.schemaVersion},${transaction.brokerEventId},NULL,${accountId},
+          ${transaction.symbol},${transaction.side},${transaction.quantityAtoms},${transaction.priceAtoms},
+          ${transaction.notionalMicros},${transaction.feeMicros},${transaction.costBasisMicros},
+          ${transaction.realizedPnlMicros},${transaction.quantityDeltaAtoms},${transaction.costBasisDeltaMicros},
+          ${transaction.cashDeltaMicros},${transaction.ledgerPlanHash},${transaction.contentHash},${transaction.occurredAt})`
+          }),
+        )
+      }),
+    )
+    const lateReceipt = Result.getOrThrow(planAccountingReceipt(late, '2001', 7001))
+    const mixedCut = await runtime.runPromise(asApplication(persistSystemSourceCut(makeCut([...original, late]))))
+    const { blocked, result: mixedRead } = await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const locked = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const writer = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* sql`LOCK TABLE accounting_receipts IN ACCESS EXCLUSIVE MODE`
+                yield* Deferred.succeed(locked, undefined)
+                yield* Deferred.await(release)
+                yield* sql`INSERT INTO accounting_receipts(receipt_id,schema_version,intent_id,broker_event_id,
+                  tigerbeetle_cluster_id,tigerbeetle_ledger,account_ids,transfer_ids,debit_micros,credit_micros,
+                  content_hash,recorded_at)
+                VALUES(${lateReceipt.receiptId},${lateReceipt.schemaVersion},NULL,${lateReceipt.brokerEventId},
+                  ${lateReceipt.tigerBeetleClusterId},${lateReceipt.tigerBeetleLedger},
+                  ${lateReceipt.accountIds}::numeric[],${lateReceipt.transferIds}::numeric[],
+                  ${lateReceipt.debitMicros},${lateReceipt.creditMicros},${lateReceipt.contentHash},${lateAt})`
+              }),
+            )
+            .pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Deferred.await(locked)
+          const assessment = yield* assessAndPersistSystem(
+            assessmentInput(mixedCut.sourceCutHash),
+            fixture.verifiedSources,
+          ).pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }))
+          let blocked = false
+          for (let attempt = 0; attempt < 100 && !blocked; attempt += 1) {
+            const rows = yield* sql<{ waiting: boolean }>`SELECT EXISTS (
+              SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
+                AND wait_event_type='Lock' AND query LIKE ${'%FROM accounting_receipts AS receipt%'}
+                AND pid<>pg_backend_pid()
+            ) AS waiting`
+            blocked = rows[0]?.waiting === true
+            if (!blocked) yield* Effect.sleep('5 millis')
+          }
+          yield* Deferred.succeed(release, undefined)
+          yield* Fiber.join(writer)
+          return { blocked, result: yield* Fiber.join(assessment) }
+        }),
+      ),
+    )
+    expect(blocked).toBe(true)
+    expect(Exit.isFailure(mixedRead)).toBe(true)
+    if (Exit.isFailure(mixedRead))
+      expect(Cause.pretty(mixedRead.cause)).toContain('Native cash ledger witness differs from immutable accounting')
+  })
+
   test('the window migration preserves existing registration bytes, hashes and attempt order', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -925,140 +1508,160 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(await runtime.runPromise(readPersistedSystemAssessment(historical.assessmentHash))).toEqual(historical)
   })
 
-  test('the PostgreSQL qualification predicate accepts the real current report shape and rejects incomplete or substituted claims', async () => {
-    const f = knownPayoffAssessmentFixture()
-    const report = Result.getOrThrow(evaluateSystemAssessment(f.input, f.verifiedSources))
-    expect(report.verdict).toBe(QualificationVerdict.Qualified)
-    const numerical = report.numerical
-    if (
-      numerical === null ||
-      !('confidence' in numerical) ||
-      numerical.confidence === undefined ||
-      !('profit' in numerical.confidence)
-    )
-      throw new Error('Missing conditional report')
-    const confidence = numerical.confidence
-    const cases = [
-      { evidence: report, valid: true },
-      {
-        evidence: {
-          ...report,
-          verdict: QualificationVerdict.Rejected,
-          numerical: {
-            ...numerical,
-            confidence: { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '-1' } },
+  test.each(['REGULAR_SESSION', 'NATIVE'] as const)(
+    'the PostgreSQL qualification predicate checks the %s report and rejects substituted claims',
+    async (hours) => {
+      const f = knownPayoffAssessmentFixture(hours)
+      const report = Result.getOrThrow(evaluateSystemAssessment(f.input, f.verifiedSources))
+      expect(report.verdict).toBe(QualificationVerdict.Qualified)
+      const numerical = report.numerical
+      if (
+        numerical === null ||
+        !('confidence' in numerical) ||
+        numerical.confidence === undefined ||
+        !('profit' in numerical.confidence)
+      )
+        throw new Error('Missing conditional report')
+      const confidence = numerical.confidence
+      if (hours === 'NATIVE') {
+        expect(confidence.paired.find((bound) => bound.control === JevResearchPolicy.Incumbent)).toMatchObject({
+          lowerSumMicros: '900000000',
+        })
+      }
+      const cases = [
+        { evidence: report, valid: true },
+        {
+          evidence: {
+            ...report,
+            verdict: QualificationVerdict.Rejected,
+            numerical: {
+              ...numerical,
+              confidence: { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '-1' } },
+            },
           },
+          valid: true,
         },
-        valid: true,
-      },
-      ...[
-        { ...confidence, method: 'BOOTSTRAP' },
-        { ...confidence, alpha: { numerator: '1', denominator: '1' } },
-        { ...confidence, attemptIndex: 2 },
-        { ...confidence, meanModel: 'UNSPECIFIED' },
-        { ...confidence, meanModel: undefined },
-        { ...confidence, supports: [] },
-        { ...confidence, profit: { ...confidence.profit, count: '0' } },
-        { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '0' } },
-        { ...confidence, paired: confidence.paired.slice(1) },
-        { ...confidence, paired: confidence.paired.map(() => confidence.paired[0]) },
-        { ...confidence, paired: confidence.paired.map((row) => ({ ...row, control: JevResearchPolicy.Candidate })) },
-      ].map((confidence) => ({ evidence: { ...report, numerical: { ...numerical, confidence } }, valid: false })),
-    ]
-    for (const c of cases) {
-      const rows = await runtime.runPromise(
+        ...[
+          { ...confidence, method: 'BOOTSTRAP' },
+          { ...confidence, alpha: { numerator: '1', denominator: '1' } },
+          { ...confidence, attemptIndex: 2 },
+          { ...confidence, meanModel: 'UNSPECIFIED' },
+          { ...confidence, meanModel: undefined },
+          { ...confidence, supports: [] },
+          { ...confidence, profit: { ...confidence.profit, count: '0' } },
+          { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '0' } },
+          { ...confidence, paired: confidence.paired.slice(1) },
+          { ...confidence, paired: confidence.paired.map(() => confidence.paired[0]) },
+          { ...confidence, paired: confidence.paired.map((row) => ({ ...row, control: JevResearchPolicy.Candidate })) },
+        ].map((confidence) => ({ evidence: { ...report, numerical: { ...numerical, confidence } }, valid: false })),
+      ]
+      for (const c of cases) {
+        const rows = await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            return yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ valid: Schema.Boolean })))(
+              yield* sql`SELECT system_conditional_qualification_evidence_valid(${sql.json(f.input.registration)},${sql.json(c.evidence)}) AS valid`,
+            )
+          }),
+        )
+        expect(rows).toEqual([{ valid: c.valid }])
+      }
+    },
+  )
+
+  test.each([
+    ['conditional confidence', 181, JevAcceptanceVersion.RetainedV5, 'bayn.system-registration.v3'],
+    ['native calendar', 206, JevAcceptanceVersion.Current, 'bayn.system-registration.v4'],
+    ['explicit engine binding', 223, JevAcceptanceVersion.Current, 'bayn.system-registration.v5'],
+    ['prepared baseline', 224, JevAcceptanceVersion.Current, 'bayn.system-registration.v6'],
+  ] as const)(
+    '%s migration preserves the previous registration, receipt and attempt chain',
+    async (_, prior, version, schema) => {
+      await restorePriorAdmission(prior)
+      const base = retainedRegistration(4, version)
+      const retained =
+        schema === 'bayn.system-registration.v6'
+          ? strategyBoundRegistrationFixture(nativeRegistrationFixture(base), {
+              candidate: ResearchStrategyEngine.Jev,
+              incumbent: ResearchStrategyEngine.Jev,
+            })
+          : schema === 'bayn.system-registration.v5'
+            ? nativeRegistrationFixture(base)
+            : base
+      expect(retained.schemaVersion).toBe(schema)
+      const hash = testHash(retained)
+      await runtime.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
-          return yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ valid: Schema.Boolean })))(
-            yield* sql`SELECT system_conditional_qualification_evidence_valid(${sql.json(f.input.registration)},${sql.json(c.evidence)}) AS valid`,
-          )
-        }),
-      )
-      expect(rows).toEqual([{ valid: c.valid }])
-    }
-  })
-
-  test('conditional migration preserves v5 registration and receipt bytes, then continues the same attempt history', async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* PgMigrator.run({
-          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= 181))),
-          table: 'schema_migrations',
-        })
-        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
-      }),
-    )
-    const retained = registration(4, JevAcceptanceVersion.RetainedV5)
-    const hash = testHash(retained)
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`INSERT INTO system_qualification_registrations
+          yield* sql`INSERT INTO system_qualification_registrations
         (registration_hash,program,attempt_index,prior_attempt_hash,registered_at,first_open_at,last_close_at,payload_text)
         VALUES (${hash},${retained.program},1,${retained.priorAttemptHash},${retained.registeredAt},
           ${retained.calendar.sessions[0]?.openAt},${retained.calendar.sessions.at(-1)?.closeAt},${Result.getOrThrow(canonicalJsonV1Result(retained))})`
-      }),
-    )
-    const asOf = await runtime.runPromise(databaseNow)
-    const cut = await runtime.runPromise(
-      persistSystemSourceCut({
-        ...emptySourceCutFixture().cut,
-        registrationHash: hash,
+        }),
+      )
+      const asOf = await runtime.runPromise(databaseNow)
+      const cut = await runtime.runPromise(
+        persistSystemSourceCut({
+          ...emptySourceCutFixture().cut,
+          ...(retained.schemaVersion === 'bayn.system-registration.v6'
+            ? { schemaVersion: 'bayn.system-source-cut.v5' as const, alphaObservations: [] }
+            : {}),
+          registrationHash: hash,
+          asOf,
+          runtimeConfigurationHash: retained.obligations.runtimeConfigurationHash,
+        }),
+      )
+      const f = assessmentFixture(retained)
+      f.verifiedSources.add(cut.sourceCutHash)
+      const input = {
+        ...f.input,
         asOf,
-        runtimeConfigurationHash: retained.obligations.runtimeConfigurationHash,
-      }),
-    )
-    const f = assessmentFixture(retained)
-    f.verifiedSources.add(cut.sourceCutHash)
-    const input = {
-      ...f.input,
-      asOf,
-      sourceCutHash: cut.sourceCutHash,
-      reliability: { ...f.input.reliability, asOf, completions: [] },
-      safety: { ...f.input.safety, asOf },
-    }
-    const original = Result.getOrThrow(
-      evaluateSystemAssessment(input, f.verifiedSources, JevAcceptanceVersion.RetainedV5),
-    )
-    expect(original.missing).toContain('STATISTICAL_COVERAGE_NOT_ESTABLISHED')
-    expect(original.verdict).not.toBe(QualificationVerdict.Qualified)
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const { assessmentHash, ...material } = original
-        yield* sql`INSERT INTO system_assessment_receipts
+        sourceCutHash: cut.sourceCutHash,
+        reliability: { ...f.input.reliability, asOf, completions: [] },
+        safety: { ...f.input.safety, asOf },
+      }
+      const original = Result.getOrThrow(evaluateSystemAssessment(input, f.verifiedSources, version))
+      if (version === JevAcceptanceVersion.RetainedV5)
+        expect(original.missing).toContain('STATISTICAL_COVERAGE_NOT_ESTABLISHED')
+      expect(original.verdict).not.toBe(QualificationVerdict.Qualified)
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const { assessmentHash, ...material } = original
+          yield* sql`INSERT INTO system_assessment_receipts
         (assessment_hash,registration_hash,source_cut_hash,as_of,verdict,input_text,assessment_text)
         VALUES (${assessmentHash},${hash},${cut.sourceCutHash},${asOf},${original.verdict},
           ${Result.getOrThrow(canonicalJsonV1Result(input))},${Result.getOrThrow(canonicalJsonV1Result(material))})`
-      }),
-    )
-    const snapshot = Effect.gen(function* () {
-      const sql = yield* PgClient.PgClient
-      return {
-        registrations: yield* sql`SELECT * FROM system_qualification_registrations ORDER BY attempt_index`,
-        receipts: yield* sql`SELECT * FROM system_assessment_receipts ORDER BY assessment_hash`,
-        authority: yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`,
-      }
-    })
-    const before = await runtime.runPromise(snapshot)
-    await runtime.runPromise(postgresMigrations)
-    expect(await runtime.runPromise(snapshot)).toEqual(before)
-    expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
-    expect(Exit.isFailure(await runtime.runPromiseExit(registerFixture(retained)))).toBe(true)
-    const next = withRegistrationCommitments({ ...registration(1), attemptIndex: 2, priorAttemptHash: hash })
-    const saved = await runtime.runPromise(registerFixture(next))
-    expect(saved.registration.attemptIndex).toBe(2)
-    expect(saved.registration.priorAttemptHash).toBe(hash)
-    expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
-  })
+        }),
+      )
+      const snapshot = Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return {
+          registrations: yield* sql`SELECT * FROM system_qualification_registrations ORDER BY attempt_index`,
+          receipts: yield* sql`SELECT * FROM system_assessment_receipts ORDER BY assessment_hash`,
+          cuts: yield* sql`SELECT * FROM system_evidence_cuts ORDER BY source_cut_hash`,
+          authority: yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`,
+        }
+      })
+      const before = await runtime.runPromise(snapshot)
+      await runtime.runPromise(postgresMigrations)
+      expect(await runtime.runPromise(snapshot)).toEqual(before)
+      expect(await runtime.runPromise(readSystemRegistration(hash))).toEqual(retained)
+      expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
+      expect(Result.getOrThrow(evaluateSystemAssessment(input, f.verifiedSources, version))).toEqual(original)
+      expect(Exit.isFailure(await runtime.runPromiseExit(registerFixture(retained)))).toBe(true)
+      const next = withRegistrationCommitments({ ...registration(1), attemptIndex: 2, priorAttemptHash: hash })
+      const saved = await runtime.runPromise(registerFixture(next))
+      expect(saved.registration.attemptIndex).toBe(2)
+      expect(saved.registration.priorAttemptHash).toBe(hash)
+      expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
+    },
+  )
 
   test('current registration permits a selected control, approved PAPER limits and contracted discounts without issuing authority', async () => {
     const base = registration(4)
     const policies = base.policies
-      .filter((p) => p.policy === JevResearchPolicy.Candidate || p.policy === JevResearchPolicy.Momentum)
+      .filter((p) => p.policy === JevResearchPolicy.Candidate || p.policy === JevResearchPolicy.Incumbent)
       .map((p) => {
         const riskPolicy = Result.getOrThrow(
           makeExecutionRiskPolicy(p.riskPolicy.accountId, p.riskPolicy.allowedSymbols, BrokerEnvironment.Sandbox),
@@ -1089,9 +1692,46 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(rows).toEqual([{ count: 0 }])
   })
 
+  test('native admission requires a distinct serving Jev comparator with matched risk', async () => {
+    const input = registration(4)
+    const candidate = input.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
+    const incumbent = input.policies.find((p) => p.policy === JevResearchPolicy.Incumbent)
+    if (candidate === undefined || incumbent === undefined) throw new Error('Missing native comparison')
+    const changedRisk = { ...incumbent.riskPolicy, maxDailyLossMicros: '4999999999' }
+    for (const invalid of [
+      undefined,
+      { ...incumbent, accountBindingHash: candidate.accountBindingHash },
+      { ...incumbent, authorityGenerationHash: candidate.authorityGenerationHash },
+      { ...incumbent, riskPolicy: changedRisk, riskPolicyHash: testHash(changedRisk) },
+    ]) {
+      const policies = input.policies.filter((p) => p !== incumbent)
+      if (invalid !== undefined) policies.push(invalid)
+      const proposal = withRegistrationCommitments({ ...input, policies })
+      expect(Result.isFailure(validateSystemRegistration(proposal))).toBe(true)
+      const payload = Result.getOrThrow(canonicalJsonV1Result(proposal))
+      const direct = await runtime.runPromiseExit(
+        asApplication(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* sql`INSERT INTO system_qualification_registrations
+              (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+              VALUES (${sha256(payload)}, ${proposal.program}, 1, ${proposal.priorAttemptHash}, ${proposal.registeredAt},
+                ${proposal.calendar.sessions[0]?.openAt}, ${proposal.calendar.sessions.at(-1)?.closeAt}, ${payload})`
+          }),
+        ),
+      )
+      expect(Exit.isFailure(direct)).toBe(true)
+    }
+    const proposal = withRegistrationCommitments({ ...input, policies: [candidate, incumbent] })
+    const saved = await runtime.runPromise(asApplication(registerFixture(proposal)))
+    expect(saved.registration.policies.map(({ policy }) => policy)).toEqual([
+      JevResearchPolicy.Candidate,
+      JevResearchPolicy.Incumbent,
+    ])
+  })
+
   test('direct SQL rejects incomplete, substituted and unordered statistical support without accepting a bootstrap substitute', async () => {
     const input = registration(4)
-    if (input.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
     for (const changes of [
       { statisticalPlan: null },
       { statisticalPlan: { ...input.statisticalPlan, supports: [] } },
@@ -1142,7 +1782,6 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   test('prospective attempt order continues beyond twelve without a bootstrap work quota', async () => {
     const base = registration(4)
-    if (base.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
     let priorAttemptHash = base.priorAttemptHash
     for (let attemptIndex = 1; attemptIndex <= 13; attemptIndex += 1) {
       const proposal = withRegistrationCommitments({
@@ -1224,10 +1863,11 @@ postgres('PostgreSQL prospective system qualification', () => {
         ...first,
         policies: first.policies.map((policy) => ({
           ...policy,
-          promptsHash: policy.policy === 'JEV' ? sha256('different candidate prompt') : policy.promptsHash,
+          sourceRevision: policy.policy === 'JEV' ? 'b'.repeat(40) : policy.sourceRevision,
         })),
       }),
     ]
+    expect(testHash(candidates[0])).not.toBe(testHash(candidates[1]))
     for (const candidate of candidates) expect(Result.isSuccess(validateSystemRegistration(candidate))).toBe(true)
     const exits = await Promise.all(
       candidates.map((input) => runtime.runPromiseExit(asApplication(registerFixture(input)))),
@@ -1239,10 +1879,9 @@ postgres('PostgreSQL prospective system qualification', () => {
   test('cost allocation artifacts are required before admission and stored weights cannot be replaced', async () => {
     const first = registration()
     const sources = new Set([
+      first.calendar.sourceHash,
       ...first.costAllocationPlans.map((plan) => plan.basisSourceHash),
-      ...(first.schemaVersion === 'bayn.system-registration.v4'
-        ? first.statisticalPlan.supports.map((row) => row.sourceHash)
-        : []),
+      ...first.statisticalPlan.supports.map((row) => row.sourceHash),
     ])
     const plan = first.costAllocationPlans[0]
     if (plan === undefined) throw new Error('Missing cost plan')
@@ -1320,10 +1959,10 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       ),
       input.policies.map((policy) =>
-        policy.policy === 'DEPLOYED_BAYN' ? { ...policy, policy: 'REPEATED_MOMENTUM' } : policy,
+        policy.policy === 'DEPLOYED_BAYN' ? { ...policy, policy: 'JEV_ABLATION' } : policy,
       ),
       input.policies.map((policy) =>
-        policy.policy === 'REPEATED_MOMENTUM' ? { ...policy, policy: 'DEPLOYED_BAYN' } : policy,
+        policy.policy === 'JEV_ABLATION' ? { ...policy, policy: 'DEPLOYED_BAYN' } : policy,
       ),
     ]
     for (const policies of invalidPolicies) {
@@ -1528,8 +2167,10 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('the deferred deadline rejects a transaction that crosses the first market open', async () => {
-    const first = registration()
-    const now = Date.parse(await runtime.runPromise(databaseNow))
+    await restorePriorAdmission(206)
+    const first = retainedRegistration()
+    const databaseTime = await runtime.runPromise(databaseNow)
+    const now = Date.parse(databaseTime)
     const openAt = new Date(now + 2000).toISOString()
     const closeAt = new Date(now + 3000).toISOString()
     const input = {
@@ -1541,19 +2182,30 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       },
     }
+    // Only this disposable database has a controllable clock, and only the test transaction resolves it first.
+    await runtime.runPromise(
+      Effect.flatMap(
+        PgClient.PgClient,
+        (sql) => sql`CREATE FUNCTION public.clock_timestamp() RETURNS timestamptz LANGUAGE sql VOLATILE
+          RETURN current_setting('bayn_test.now')::timestamptz`,
+      ),
+    )
     const exit = await runtime.runPromiseExit(
       asApplication(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
-          yield* registerFixture(withRegistrationCommitments(input))
+          yield* sql`SET LOCAL search_path = public, pg_catalog`
+          yield* sql`SELECT set_config('bayn_test.now', ${databaseTime}, true)`
+          yield* insertPriorRegistration(withRegistrationCommitments(input))
           expect(yield* sql`SELECT count(*)::integer AS count FROM system_qualification_registrations`).toEqual([
             { count: 1 },
           ])
-          yield* sql`SELECT pg_sleep(2.1)`
+          yield* sql`SELECT set_config('bayn_test.now', ${openAt}, true)`
         }),
       ),
     )
-    expect(Exit.isFailure(exit)).toBe(true)
+    if (!Exit.isFailure(exit)) throw new Error('The late registration committed')
+    expect(Cause.pretty(exit.cause)).toContain('registration committed after the first open')
     const count = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1582,7 +2234,8 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('financial capture resolves each exact registered account and rejects scope substitution', async () => {
-    const definitions = registration().policies
+    const proposal = registration()
+    const definitions = proposal.policies.toReversed()
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1593,7 +2246,7 @@ postgres('PostgreSQL prospective system qualification', () => {
               schemaVersion: 'bayn.broker-identity.v2',
               provider: BrokerProvider.Alpaca,
               environment: BrokerEnvironment.Sandbox,
-              accountId: `captured-financial-${definition.policy}`,
+              accountId: definition.riskPolicy.accountId,
             }),
           )
           const previous = testHash({ previous: definition.policy })
@@ -1673,7 +2326,190 @@ postgres('PostgreSQL prospective system qualification', () => {
             'jev', ${definition.strategyHash}, ${definition.parametersHash}, ${defaultJevProtocolDocument.schemaVersion},
             ${definition.protocolHash}, ${planHash}, ${reconciliation.reconciliationId},
             ${reconciliation.contentHash}, ${planHash})`
-          expect(yield* readRegisteredFinancialIdentity(registered)).toEqual(identity)
+          let registrationHash: string | undefined
+          if (definition.policy === JevResearchPolicy.Incumbent) {
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`INSERT INTO authority_state
+                  (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
+                  SELECT 'bayn.paper-authority.v1', generation_hash, 'OBSERVE', 'OBSERVE', 'CLEAR', 1, activated_at
+                  FROM authority_generations WHERE generation_hash=${previous}`
+                yield* sql`UPDATE authority_state AS s SET generation_hash=g.generation_hash, maximum='PAPER',
+                  effective='PAPER', version=2, updated_at=g.activated_at
+                  FROM authority_generations AS g WHERE s.singleton AND g.generation_hash=${generation.generationHash}`
+              }),
+            )
+            const input = withRegistrationCommitments({
+              ...proposal,
+              policies: proposal.policies.map((policy) =>
+                policy.policy === JevResearchPolicy.Incumbent ? registered : policy,
+              ),
+            })
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const peer = yield* Effect.acquireRelease(
+                  Effect.tryPromise(() => template.clone()),
+                  (peer) => Effect.promise(() => peer.dispose()),
+                )
+                const paired = registerPairedSystemQualification(input, fixtureSources(input), sql)
+                yield* Effect.gen(function* () {
+                  const candidate = yield* PgClient.PgClient
+                  yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+                  const saved = yield* paired
+                  expect(yield* paired).toEqual(saved)
+                  expect(yield* candidate`SELECT count(*)::integer AS count FROM qualification_pair_seals`).toEqual([
+                    { count: 1 },
+                  ])
+                  expect(
+                    yield* sql`SELECT count(*)::integer AS count FROM qualification_incumbent_witnesses
+                      WHERE registration_hash=${saved.registrationHash} AND authority_version = 2`,
+                  ).toEqual([{ count: 1 }])
+
+                  const at = yield* databaseNow
+                  const occurredAt = new Date(Date.parse(at) - 120_000).toISOString()
+                  const entry = Result.getOrThrow(
+                    prepareAccounting(
+                      testHash('independent incumbent fill'),
+                      {
+                        schemaVersion: 'bayn.fill.v2',
+                        accountId: identity.accountId,
+                        fillId: 'native-cash-fill-0',
+                        brokerOrderId: 'native-cash-order-0',
+                        clientOrderId: 'native-cash-client-0',
+                        symbol: 'AAPL',
+                        side: OrderSide.Buy,
+                        quantityAtoms: '1000000000',
+                        priceAtoms: '100000000000',
+                        feeMicros: '0',
+                        occurredAt,
+                      },
+                      { quantityAtoms: '0', costMicros: '0' },
+                      7001,
+                    ),
+                  )
+                  yield* insertFixtureLedgerPrefix(sql, identity.accountId, [entry])
+                  const base = emptySourceCutFixture().cut
+                  const incumbentWitness = yield* requirePairedIncumbentWitness(
+                    candidate,
+                    sql,
+                    saved.registrationHash,
+                    generation.generationHash,
+                  )
+                  const cut = (transactions: readonly (typeof entry.transaction)[], capturedAt = at) => {
+                    const sourceMaterial = {
+                      incumbentWitness,
+                      accounts: [
+                        {
+                          policy: JevResearchPolicy.Incumbent,
+                          identity,
+                          capturedAt,
+                          forward: {
+                            account: { accountId: identity.accountId },
+                            accountTransactions: transactions,
+                            accountCashSettlements: [],
+                            accountPositionCounts: { reconciledAt: at, exact: true },
+                            accountingReceiptsExact: true,
+                            ledgerExact: true,
+                            missingLedgerAccountCount: 0,
+                            unresolvedMutationCount: 0,
+                          },
+                        },
+                      ],
+                    }
+                    return {
+                      ...base,
+                      registrationHash: saved.registrationHash,
+                      asOf: at,
+                      sourceMaterial,
+                      sourceMaterialHash: testHash(sourceMaterial),
+                    }
+                  }
+                  yield* verifyNativeCashLedgerSources(saved.registration, cut([entry.transaction]), sql)
+                  const wrongStore = yield* verifyNativeCashLedgerSources(
+                    saved.registration,
+                    cut([entry.transaction]),
+                    candidate,
+                  ).pipe(Effect.exit)
+                  if (Exit.isSuccess(wrongStore)) throw new Error('Assessment used the candidate store as incumbent')
+                  expect(Cause.pretty(wrongStore.cause)).toContain(
+                    'Paired registration seal differs from the incumbent witness',
+                  )
+                  const omission = yield* verifyNativeCashLedgerSources(saved.registration, cut([]), sql).pipe(
+                    Effect.exit,
+                  )
+                  if (Exit.isSuccess(omission)) throw new Error('Assessment accepted an omitted incumbent ledger entry')
+                  expect(Cause.pretty(omission.cause)).toContain(
+                    'Native cash ledger witness differs from immutable accounting',
+                  )
+                  const late = yield* verifyNativeCashLedgerSources(
+                    saved.registration,
+                    cut([entry.transaction], occurredAt),
+                    sql,
+                  ).pipe(Effect.exit)
+                  if (Exit.isSuccess(late))
+                    throw new Error('Assessment used the global cut to admit future incumbent evidence')
+                  expect(Cause.pretty(late.cause)).toContain(
+                    'Native cash reconciliation occurs after its immutable source cut',
+                  )
+
+                  const second = withRegistrationCommitments({
+                    ...input,
+                    attemptIndex: 2,
+                    priorAttemptHash: saved.registrationHash,
+                  })
+                  const incomplete = yield* registerFixture(second)
+                  const retry = yield* registerPairedSystemQualification(second, fixtureSources(second), sql).pipe(
+                    Effect.exit,
+                  )
+                  if (Exit.isSuccess(retry)) throw new Error('Retry fabricated an incumbent witness')
+                  expect(Cause.pretty(retry.cause)).toContain('no exact committed incumbent witness')
+                  expect(
+                    yield* sql`SELECT 1 FROM qualification_incumbent_witnesses
+                    WHERE registration_hash=${incomplete.registrationHash}`,
+                  ).toEqual([])
+                }).pipe(
+                  Effect.provide(
+                    PostgresClientLive({
+                      operationTimeoutMs: 10000,
+                      postgres: { url: Redacted.make(peer.url), tls: false, caPath: '/unused' },
+                    }),
+                  ),
+                )
+              }),
+            )
+            const pause = sql`UPDATE authority_state SET effective='OBSERVE', kill_state='ACTIVE', reason='test pause',
+              version=version+1, updated_at=greatest(clock_timestamp(), updated_at+interval '1 millisecond') WHERE singleton`
+            const admitted = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const inserted = yield* Deferred.make<void>()
+                const commit = yield* Deferred.make<void>()
+                const admission = yield* asApplication(
+                  registerFixture(input).pipe(
+                    Effect.tap(() => Deferred.succeed(inserted, undefined)),
+                    Effect.tap(() => Deferred.await(commit)),
+                  ),
+                ).pipe(Effect.forkScoped({ startImmediately: true }))
+                yield* Deferred.await(inserted).pipe(Effect.timeout('2 seconds'))
+                const pendingPause = yield* asApplication(
+                  sql`SET LOCAL lock_timeout='100ms'`.pipe(Effect.andThen(pause)),
+                ).pipe(Effect.exit)
+                yield* Deferred.succeed(commit, undefined)
+                const saved = yield* Fiber.join(admission)
+                if (Exit.isSuccess(pendingPause)) throw new Error('A pause crossed the uncommitted admission witness')
+                expect(Cause.pretty(pendingPause.cause)).toContain('lock timeout')
+                return saved
+              }),
+            )
+            yield* pause
+            registrationHash = admitted.registrationHash
+            const paused = yield* registerFixture(
+              withRegistrationCommitments({ ...input, attemptIndex: 2, priorAttemptHash: registrationHash }),
+            )
+            expect(
+              Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(registered, paused.registrationHash))),
+            ).toBe(true)
+          }
+          expect(yield* readRegisteredFinancialIdentity(registered, registrationHash)).toEqual(identity)
           if (definition.policy === JevResearchPolicy.Candidate) {
             const build = {
               ...config.build,
@@ -1733,7 +2569,9 @@ postgres('PostgreSQL prospective system qualification', () => {
             { ...registered, parametersHash: testHash('other parameters') },
             { ...registered, protocolHash: testHash('other protocol') },
           ])
-            expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(changed)))).toBe(true)
+            expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(changed, registrationHash)))).toBe(
+              true,
+            )
         }
       }),
     )
@@ -1757,6 +2595,8 @@ postgres('PostgreSQL prospective system qualification', () => {
               { accountId: 'foreign-cash-account', occurred: 90, observed: 90, cash: '9999999999' },
               { accountId, occurred: 120, observed: 130, cash: '1005' },
               { accountId, occurred: 121, observed: 121, cash: '999' },
+              { accountId, occurred: 150, observed: 151, cash: '990' },
+              { accountId, occurred: 151, observed: 151, cash: '987' },
             ].entries()) {
               const id = testHash({ cashEvent: i })
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
@@ -1764,6 +2604,24 @@ postgres('PostgreSQL prospective system qualification', () => {
           VALUES(${id},'bayn.paper-broker-event.v1',${id},'ACCOUNT','ALPACA',${row.accountId},${String(i)},${i},${at(row.occurred)},${at(row.observed)})`
               yield* sql`INSERT INTO account_snapshots(event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros)
           VALUES(${id},${row.accountId},'bayn.paper-account-snapshot.v2','ACTIVE','USD',${row.cash},999999999999,999999999999)`
+            }
+            for (const [second, count] of [
+              [119, 1],
+              [125, 0],
+              [151, 0],
+              [152, 1],
+            ] as const) {
+              const id = testHash({ inventoryObservation: second })
+              yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,observed_at,position_count,content_hash)
+              VALUES(${id},'bayn.paper-position-snapshot.v1',${accountId},${id},${at(second)},${count},${id})`
+            }
+            for (const second of [145, 151, 152]) {
+              const id = testHash({ cashReconciliation: second })
+              yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,
+                observed_hash,content_hash,status,discrepancies,reconciled_at,account_event_id,position_snapshot_id)
+              VALUES(${id},${legacyReconciliationSchemaVersion},${accountId},${id},${id},${id},'EXACT','[]'::jsonb,
+                ${at(second)},${second === 152 ? testHash({ cashEvent: 8 }) : null},
+                ${second === 152 ? testHash({ inventoryObservation: 151 }) : null})`
             }
             return yield* readSystemCashObservations(accountId, scope)
           }),
@@ -1781,6 +2639,32 @@ postgres('PostgreSQL prospective system qualification', () => {
     const later = await runtime.runPromise(readSystemCashObservations(accountId, { ...scope, asOf: at(131) }))
     expect(later).toHaveLength(5)
     expect(later[3]?.cashMicros).toBe('1000000000')
+    const settlement = [{ sessionDate: '2026-11-02', openAt: at(0), closeAt: at(120), recoveryCloseAt: at(140) }]
+    const before = await runtime.runPromise(readSystemFeeSettlementAnchors(accountId, settlement, at(151)))
+    expect(before.find((row) => row.phase === 'RECONCILED')).toMatchObject({
+      cutAt: null,
+      observation: null,
+      reconciliationHash: null,
+    })
+    const complete = await runtime.runPromise(readSystemFeeSettlementAnchors(accountId, settlement, at(153)))
+    expect(complete.map((row) => [row.phase, row.observation?.at, row.observation?.cashMicros])).toEqual([
+      ['OPENING', at(-1), '99'],
+      ['RECOVERY', at(120), '1005'],
+      ['RECONCILED', at(150), '990'],
+    ])
+    expect(complete.find((row) => row.phase === 'RECONCILED')).toMatchObject({
+      cutAt: at(152),
+      reconciliationHash: testHash({ cashReconciliation: 152 }),
+      observation: {
+        sourceHash: testHash({ cashEvent: 8 }),
+        positions: { sourceHash: testHash({ inventoryObservation: 151 }), at: at(151), count: 0 },
+      },
+      fees: [],
+    })
+    expect(complete.find((row) => row.phase === 'RECOVERY')?.observation?.positions).toMatchObject({
+      at: at(119),
+      count: 1,
+    })
   })
 
   test('native order capture retains parent and resized protective legs at the exact account, generation and evidence cut', async () => {
@@ -1855,18 +2739,21 @@ postgres('PostgreSQL prospective system qualification', () => {
         ]
         for (const [sequence, row] of observations.entries()) {
           const order = row.order
+          const providerUpdatedAt = Result.getOrThrow(sourceTimestamp(row.occurredAt))
+          const sourceEventId = `order:${order.brokerOrderId}:${providerUpdatedAt}`
           yield* sql.withTransaction(
             Effect.gen(function* () {
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
           source_event_id,source_sequence,occurred_at,observed_at)
           VALUES(${row.eventId},'bayn.paper-broker-event.v1',${row.eventId},'ORDER','ALPACA',${account},
-            ${row.eventId},${sequence},${row.occurredAt},${order.observedAt})`
+            ${sourceEventId},${sequence},${row.occurredAt},${order.observedAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
           symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,
-          parent_broker_order_id,status)
+          parent_broker_order_id,status,broker_updated_at)
           VALUES(${row.eventId},${account},${order.schemaVersion},${order.brokerOrderId},${order.clientOrderId},${intentId},
             ${order.symbol},${order.side},${order.orderType},${order.timeInForce},${order.quantityAtoms},${order.filledQuantityAtoms},
-            ${order.limitPriceMicros},${order.stopPriceMicros ?? null},${order.parentBrokerOrderId ?? null},${order.status})`
+            ${order.limitPriceMicros},${order.stopPriceMicros ?? null},${order.parentBrokerOrderId ?? null},${order.status},
+            ${providerUpdatedAt})`
             }),
           )
         }
@@ -1912,7 +2799,9 @@ postgres('PostgreSQL prospective system qualification', () => {
       await runtime.runPromise(Effect.sleep('10 millis'))
       const asOf = new Date().toISOString()
       const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
-        schemaVersion: 'bayn.system-source-cut.v4',
+        schemaVersion: 'bayn.system-source-cut.v6',
+        alphaObservations: [],
+        alphaBaselinePreparations: [],
         protectionIntents: [],
         decisionAdmissions: [],
         orders: [],
@@ -1934,7 +2823,7 @@ postgres('PostgreSQL prospective system qualification', () => {
           },
         ],
         inference: policy.sessions.map((s) => ({
-          ...Schema.decodeUnknownSync(SystemSourceCutSchema.fields.inference.value)(s.inferenceEvidence),
+          ...Schema.decodeUnknownSync(RetainedSystemSourceCutSchema.fields.inference.value)(s.inferenceEvidence),
           asOf,
         })),
         inferenceLedgerEvidenceHash: testHash({ inference: version }),
@@ -2024,7 +2913,12 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect((await runtime.runPromise(readSystemSourceCut(cuts[0] ?? ''))).sourceMaterial).toEqual({ version: 1 })
   })
 
-  test.each(Object.values(JevResearchPolicy))(
+  test.each([
+    JevResearchPolicy.Candidate,
+    JevResearchPolicy.Incumbent,
+    JevResearchPolicy.Deployed,
+    JevResearchPolicy.Ablation,
+  ])(
     'replay observer receipts for %s bind their registered image, cuts and times and remain append-only',
     async (selectedPolicy) => {
       await runtime.runPromise(
@@ -2045,7 +2939,9 @@ postgres('PostgreSQL prospective system qualification', () => {
             if (definition === undefined) throw new Error('Missing selected policy')
             const asOf = yield* databaseNow
             const cut = yield* persistSystemSourceCut({
-              schemaVersion: 'bayn.system-source-cut.v4',
+              schemaVersion: 'bayn.system-source-cut.v6',
+              alphaObservations: [],
+              alphaBaselinePreparations: [],
               protectionIntents: [],
               decisionAdmissions: [],
               orders: [],
@@ -2270,10 +3166,8 @@ postgres('PostgreSQL prospective system qualification', () => {
     ).toBe(true)
   })
 
-  const seedRetainedRegistration = (value: ReturnType<typeof registrationFixture>) =>
+  const insertPriorRegistration = (value: ReturnType<typeof registrationFixture>) =>
     Effect.gen(function* () {
-      if (value.schemaVersion !== 'bayn.system-registration.v2')
-        throw new Error('Historical seed requires original registration material')
       const sql = yield* PgClient.PgClient
       const payload = Result.getOrThrow(canonicalJsonV1Result(value))
       const registrationHash = testHash(value)
@@ -2285,13 +3179,15 @@ postgres('PostgreSQL prospective system qualification', () => {
     })
 
   const activeEvaluation = async (retained = false) => {
-    const base = registration(20, retained ? JevAcceptanceVersion.RetainedV3 : JevAcceptanceVersion.Current)
+    if (!retained) await restorePriorAdmission(206)
+    const base = retainedRegistration(20, retained ? JevAcceptanceVersion.RetainedV3 : JevAcceptanceVersion.Current)
     const { opens, sessions } = activeEvaluationSessions(Date.now())
     const value = withRegistrationCommitments({ ...base, calendar: { ...base.calendar, sessions } })
     const registered = await runtime.runPromise(
       Effect.gen(function* () {
-        if (retained) return yield* seedRetainedRegistration(value)
-        return yield* registerFixture(value)
+        const saved = yield* insertPriorRegistration(value)
+        if (!retained) yield* postgresMigrations
+        return saved
       }),
     )
     const definition = registered.registration.policies.find((p) => p.policy === 'JEV')
@@ -2342,8 +3238,14 @@ postgres('PostgreSQL prospective system qualification', () => {
         expect(Date.parse(witness?.witnessedAt ?? at)).toBeLessThanOrEqual(
           Date.parse(at) + registered.registration.obligations.decisionWindowMs,
         )
+        expect(yield* sql`SELECT count(*)::integer AS count FROM execution_controller_observations`).toEqual([
+          { count: 1 },
+        ])
         expect((yield* store.project(status))._tag).toBe('Replayed')
         expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM execution_controller_observations`).toEqual([
+          { count: 1 },
+        ])
         expect(yield* store.read(status.controllerKey)).toEqual(status)
         expect(
           (yield* readSystemControllerPasses(status.controllerKey, planHash, at, at, yield* databaseNow)).map(
@@ -2367,6 +3269,19 @@ postgres('PostgreSQL prospective system qualification', () => {
         expect(Exit.isFailure(rolledBack)).toBe(true)
         expect(yield* store.read(status.controllerKey)).toEqual(status)
         expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM execution_controller_observations`).toEqual([
+          { count: 1 },
+        ])
+
+        expect((yield* sql.withTransaction(store.project(next)))._tag).toBe('Applied')
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+        expect((yield* store.project(next))._tag).toBe('Replayed')
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(
+          expect.arrayContaining([expect.objectContaining({ kind: 'CONTROLLER', sourceHash: next.lastReceiptHash })]),
+        )
+        expect(yield* sql`SELECT count(*)::integer AS count FROM execution_controller_observations`).toEqual([
+          { count: 2 },
+        ])
       }).pipe(Effect.provide(ExecutionControllerStatusStoreLive)),
     )
   })

@@ -55,6 +55,9 @@ export class ExecutionCycleClosureStoreError extends Data.TaggedError('Execution
 }> {}
 
 export interface ExecutionCycleClosureStoreShape {
+  readonly stageProtectionClose?: (
+    closure: ExecutionCycleClosure,
+  ) => Effect.Effect<boolean, ExecutionCycleClosureStoreError>
   readonly bind: (
     closure: ExecutionCycleClosure,
   ) => Effect.Effect<ExecutionCycleClosure, ExecutionCycleClosureStoreError>

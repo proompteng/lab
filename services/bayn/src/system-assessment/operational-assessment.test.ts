@@ -10,7 +10,7 @@ import {
   evaluateOperationalAssessment,
 } from './operational-assessment'
 import { emptySourceCutFixture } from './source-cut.test-support'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema as SystemSourceCutSchema } from './source-cut'
 import { testHash, registrationFixture } from './fixtures.test-support'
 import { SafetyViolationKind } from './assessment'
 import { ObligationClass, ReliabilityStatus } from './reliability'
@@ -27,6 +27,7 @@ import {
   readOperationalAssessmentSourceCut,
 } from './operational-source-cut'
 import { makeSystemSourceRecord, SystemSourceRecordKind } from './source-records'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 
 const fixture = (controllerPlanHash?: string | null, baseRegistration = operationalRegistrationFixture()) => {
   const configuration = {
@@ -414,6 +415,60 @@ const completeFixture = () => {
     )
   return { cut, input, verified, safety, evaluate, registration, build, passes, original, at, schedule }
 }
+
+test('source-window admission waits preserve every scheduled decision without earning completion credit', () => {
+  const { cut, evaluate, passes, at, schedule } = completeFixture()
+  const complete = evaluate(cut)
+  expect(complete.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  const waitingPasses = passes.map((pass) => {
+    const observation = {
+      result: 'SUCCESS',
+      outcome: 'ALREADY_TERMINAL',
+      executionIssuedAt: pass.observation.executionIssuedAt,
+      executionBuild: pass.observation.executionBuild,
+      observedAt: pass.observation.observedAt,
+      readiness: {
+        reason: DecisionReadinessReason.SignalWindowObserved,
+        message: 'The current entry signal window is already consumed; successor admission awaits the next due window',
+        availableAt: at(pass.observation.observedAt, 60_000),
+      },
+    }
+    return Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+      ...pass,
+      observation,
+      receiptHash: testHash(observation),
+    })
+  })
+  const waitingCut = {
+    ...cut,
+    controllerPasses: waitingPasses,
+    durableObservations: cut.durableObservations.map((witness) => {
+      const index = passes.findIndex((pass) => pass.receiptHash === witness.sourceHash)
+      return index < 0 ? witness : { ...witness, sourceHash: waitingPasses[index]!.receiptHash }
+    }),
+  }
+  const retainedHash = testHash(waitingCut)
+  const waiting = evaluate(waitingCut)
+  const absent = evaluate({
+    ...cut,
+    controllerPasses: [],
+    durableObservations: cut.durableObservations.filter((witness) => witness.kind !== 'CONTROLLER'),
+  })
+  expect(waiting.verdict).toBe('REJECTED')
+  expect(waiting.reliability).toEqual(absent.reliability)
+  expect(waiting.reliability.classes.map(({ class: kind, scheduled }) => ({ class: kind, scheduled }))).toEqual(
+    complete.reliability.classes.map(({ class: kind, scheduled }) => ({ class: kind, scheduled })),
+  )
+  const decisions = waiting.reliability.classes.find((row) => row.class === ObligationClass.Decision)!
+  expect(decisions.scheduled).toBe('2')
+  expect(decisions.correctOnTime).toBe('0')
+  expect(decisions.missed).toEqual(
+    schedule.filter((row) => row.class === ObligationClass.Decision).map((row) => row.obligationId),
+  )
+  expect(testHash(waitingCut)).toBe(retainedHash)
+  expect(waitingCut.sourceMaterialHash).toBe(cut.sourceMaterialHash)
+  expect(testHash(waitingCut.financial)).toBe(testHash(cut.financial))
+})
 
 test('unbound in-period workers prevent an otherwise complete certificate without changing retained v1 receipts', () => {
   const { cut, input, verified, safety, evaluate, registration, build, passes, original, at, schedule } =

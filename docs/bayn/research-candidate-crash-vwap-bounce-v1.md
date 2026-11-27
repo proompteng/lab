@@ -1,7 +1,6 @@
 # RESEARCH candidate: crash∩VWAP + bounce confirm
 
-**Status:** `RESEARCH_ONLY`, unqualified and not promoted. This change does not alter live strategy, risk, capital
-authority, broker behavior or GitOps.
+**Status:** Retired offline research. The scanner was unqualified and never promoted.
 
 **Candidate lineage:** `bayn.research-candidate.crash-vwap-bounce.v1`. The corrected offline input and output contracts
 are version 2, with model `crash-vwap-bounce-2.0.0`; historical results below are not evidence for this corrected contract.
@@ -92,28 +91,11 @@ The preserved v5 files report, for their selected hard50/bounce1 cell:
 
 These are retained claims, not verified returns, OOS validation or proof of a tradable semiconductor/high-beta edge.
 
-## Offline shadow command
+## Historical implementation
 
-Entry point: [hybrid-crash-vwap-shadow-command.ts](../../services/bayn/src/hybrid-crash-vwap-shadow-command.ts), built by
-`bun run build:research` as `dist/research/hybrid-crash-vwap-shadow-command.js` (script `hybrid:crash-vwap-shadow`). It is not packaged into
-the Bayn image or scheduled by GitOps. It reads one session of bars and writes a new record file, refusing to overwrite.
-It has no broker, ledger, model-inference or live-strategy side effects.
-
-```sh
-BAYN_HYBRID_CRASH_VWAP=shadow node dist/research/hybrid-crash-vwap-shadow-command.js \
-  --input session-bars.json --input-sha256 <sha256-of-input> --output shadow-record.json
-```
-
-`BAYN_HYBRID_CRASH_VWAP` is decoded once at startup through Effect `Config`:
-
-| Value                            | Behavior                                                                                      |
-| -------------------------------- | --------------------------------------------------------------------------------------------- |
-| `off` (default, including unset) | No-op; prints `{"mode":"off","outputPath":null}` and writes nothing                           |
-| `shadow`                         | Writes an unqualified `bayn.hybrid-crash-vwap.shadow.v2` candidate/exclusion record; no fills |
-
-Every other value, including **`on`**, fails startup. It is not coerced to `shadow`. There is no live enablement in this
-contract. `evaluatedAt` comes from the Effect `Clock`; identical validated input and a fixed clock allow deterministic
-record/hash replay. That software property does not reproduce or validate the absent historical economic experiment.
+The [original scanner source](https://github.com/proompteng/lab/blob/a0619edf0ebdc5efd64e7000ad7985c4fb66156a/services/bayn/src/hybrid-crash-vwap-shadow-command.ts)
+remains in Git history. It accepted one session of supplied bars and emitted deterministic, unqualified candidate and
+exclusion records. The retained results above are the historical evidence.
 
 ## Requirements before any promotion proposal
 

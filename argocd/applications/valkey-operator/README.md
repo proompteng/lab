@@ -5,7 +5,7 @@ existing Redis operator. It does not migrate applications or create a shared
 Valkey database.
 
 The platform ApplicationSet owns the `valkey-operator` Application and the
-`valkey-system` namespace. The upstream v2.1.0 Kustomize source is pinned to its
+`valkey-system` namespace. The upstream v2.1.1 Kustomize source is pinned to its
 commit and the multi-architecture operator image is pinned by digest. The helper
 image used for managed instances uses the same release tag. `operatorVersion`
 must remain a semantic version because it also selects reconciliation actors;
@@ -32,10 +32,15 @@ kubectl get crd valkeys.rds.valkey.buf.red clusters.valkey.buf.red \
 
 Before assigning application traffic, validate admission, managed instance
 creation, authenticated write/read, and recovery using a disposable Valkey
-instance. Upstream v2.1.0 reports testing Kubernetes 1.33–1.35; other versions
+instance. Upstream v2.1.1 reports testing Kubernetes 1.33–1.35; other versions
 require live compatibility validation rather than assuming upstream coverage.
 
 ## Upgrade and recovery
+
+The manager's `valkeyVersionMap` maps the `9.2` API version to the exact `9.2.0`
+tag. The operator parses the generated image reference as a semantic version,
+so the mapping requires a bare version. Verify the running digest, replication,
+and application acceptance after changes to the mapping roll the data pods.
 
 Update the source commit, controller image digest, and helper image annotation
 together in a reviewed PR. Render the overlay and inspect CRD changes before

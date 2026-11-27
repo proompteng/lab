@@ -4,7 +4,10 @@ export const entryJudgmentThresholds = { affirmativeAtLeast: 0.7, negativeAtMost
 
 export const chartPresenceIsAbsent = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>, probability: number) =>
   // Pre-v39 financial evidence must retain its original proposal and dispatch decisions.
-  (protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+  (protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v39') &&
   probability <= entryJudgmentThresholds.negativeAtMost

@@ -58,6 +58,7 @@ const acquisitionStage = (cause: BrokerReadError | BrokerAccountPreflightError):
     case 'order-by-client-id':
     case 'fill-activities':
     case 'fee-activities':
+    case 'non-trade-activities':
     case 'asset-by-symbol':
     case 'market-calendar':
       return BrokerSessionAcquisitionStage.ReadSurface

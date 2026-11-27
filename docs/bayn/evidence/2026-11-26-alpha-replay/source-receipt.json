@@ -1,0 +1,31 @@
+{
+  "retrievedAt": "2026-11-26T08:41:32.192Z",
+  "sourceTable": "signal.intraday_bars_1m_v2",
+  "feed": "iex",
+  "provider": "alpaca",
+  "eventStart": "2026-08-25T00:00:00Z",
+  "eventEndExclusive": "2026-11-26T00:00:00Z",
+  "ingestCutoffExclusive": "2026-11-26T08:40:00Z",
+  "selection": "Final bars and updatedBars, latest ingest/source/universe/content ordering per symbol and exact event instant",
+  "provenance": "Retrospective event-time archive. Original runtime availability and executable quotes not established.",
+  "rawRows": "7636045",
+  "uniqueSymbolInstants": "420137",
+  "universes": ["torghut-core-equity-v2", "torghut-core-equity-v3", "torghut-core-equity-v1"],
+  "channels": ["bars", "updatedBars"],
+  "firstIngest": "2026-08-25 12:10:00.045",
+  "lastIngest": "2026-11-25 21:56:00.106",
+  "nullVwapRows": "0",
+  "conflictingSymbolInstants": "1062",
+  "contentVersions": "2127",
+  "tsvRows": 420137,
+  "tsvBytes": 33180305,
+  "tsvSha256": "6c2753fc2dddae60554a501ef508ffa1568fb51af859b687b29b2dbb7efe4180",
+  "calendarSource": "signal.exchange_sessions_v1, provider alpaca, America/New_York, unique regular hours",
+  "calendarRows": 66,
+  "queries": {
+    "query": "SELECT symbol,concat(replaceOne(toString(event_at,'UTC'),' ','T'),'Z'),b.1,b.2,b.3,b.4,b.5,b.6 FROM (SELECT symbol,coalesce(event_ts_exact,toDateTime64(event_ts,9,'UTC')) event_at,argMax(tuple(open,high,low,close,volume,ifNull(vwap,(high+low+close)/3)), tuple(coalesce(ingest_ts_exact,toDateTime64(ingest_ts,9,'UTC')),source_topic,source_partition,source_offset,universe_id,universe_symbol_hash,channel,tuple(open,high,low,close,volume,ifNull(vwap,(high+low+close)/3)))) b FROM signal.intraday_bars_1m_v2 WHERE event_ts >= '2026-08-25 00:00:00' AND event_ts < '2026-11-26 00:00:00' AND ingest_ts < '2026-11-26 08:40:00' AND feed = 'iex' AND provider = 'alpaca' AND is_final = 1 AND channel IN ('bars','updatedBars') AND symbol IN ('SPY','QQQ','NVDA','AAPL','MSFT','AMZN','GOOGL','META','TSLA','AMD','AVGO','COHR','CRDO','INTC','LITE','MRVL','MU','NFLX','SNDK','WDC','SMH','IWM') GROUP BY symbol,event_at) ORDER BY symbol,event_at FORMAT TSV",
+    "metadataQuery": "SELECT count() AS rawRows,uniqExact(tuple(symbol,coalesce(event_ts_exact,toDateTime64(event_ts,9,'UTC')))) AS uniqueSymbolInstants,groupUniqArray(universe_id) AS universes,groupUniqArray(channel) AS channels,min(ingest_ts) AS firstIngest,max(ingest_ts) AS lastIngest,countIf(vwap IS NULL) AS nullVwapRows FROM signal.intraday_bars_1m_v2 WHERE event_ts >= '2026-08-25 00:00:00' AND event_ts < '2026-11-26 00:00:00' AND ingest_ts < '2026-11-26 08:40:00' AND feed = 'iex' AND provider = 'alpaca' AND is_final = 1 AND channel IN ('bars','updatedBars') AND symbol IN ('SPY','QQQ','NVDA','AAPL','MSFT','AMZN','GOOGL','META','TSLA','AMD','AVGO','COHR','CRDO','INTC','LITE','MRVL','MU','NFLX','SNDK','WDC','SMH','IWM') FORMAT JSONEachRow",
+    "conflictQuery": "SELECT count() AS conflictingSymbolInstants,sum(revisions) AS contentVersions FROM (SELECT symbol,coalesce(event_ts_exact,toDateTime64(event_ts,9,'UTC')) event_at,uniqExact(tuple(open,high,low,close,volume,vwap)) revisions FROM signal.intraday_bars_1m_v2 WHERE event_ts >= '2026-08-25 00:00:00' AND event_ts < '2026-11-26 00:00:00' AND ingest_ts < '2026-11-26 08:40:00' AND feed = 'iex' AND provider = 'alpaca' AND is_final = 1 AND channel IN ('bars','updatedBars') AND symbol IN ('SPY','QQQ','NVDA','AAPL','MSFT','AMZN','GOOGL','META','TSLA','AMD','AVGO','COHR','CRDO','INTC','LITE','MRVL','MU','NFLX','SNDK','WDC','SMH','IWM') GROUP BY symbol,event_at HAVING revisions>1) FORMAT JSONEachRow",
+    "calendarQuery": "SELECT toString(session_date) AS date,any(open_time) AS open,any(close_time) AS close,replaceAll(any(open_time),':','') AS session_open,replaceAll(any(close_time),':','') AS session_close FROM signal.exchange_sessions_v1 WHERE session_date>='2026-08-25' AND session_date<='2026-11-25' AND provider='alpaca' AND timezone='America/New_York' GROUP BY session_date HAVING uniqExact(tuple(open_time,close_time))=1 ORDER BY session_date FORMAT JSONEachRow"
+  }
+}

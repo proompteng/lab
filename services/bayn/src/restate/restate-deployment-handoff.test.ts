@@ -62,12 +62,14 @@ const handoff = (
   const events: string[] = []
   const brokerDeliveries: Delivery[] = []
   const controllerDeliveries: Delivery[] = []
+  const inferenceDeliveries: Delivery[] = []
   const acceptedDeliveries = new Set<string>()
   const send = (delivery: Delivery) => {
     const identity = `${delivery.service}:${delivery.method}:${delivery.idempotencyKey ?? ''}`
     if (acceptedDeliveries.has(identity)) return
     acceptedDeliveries.add(identity)
     if (delivery.service === 'BaynBrokerObservations') brokerDeliveries.push(delivery)
+    else if (delivery.service === 'BaynEntryInference') inferenceDeliveries.push(delivery)
     else controllerDeliveries.push(delivery)
   }
   let captures = 0
@@ -83,7 +85,12 @@ const handoff = (
       verifyNotification: () => {
         throw new Error('deployment activation does not ingest notifications')
       },
+      probeProtection: async () => undefined,
       recordNotification: async () => ({ covered: false }),
+      isNotificationCovered: async () => false,
+      project: async () => {
+        throw new Error('deployment handoff does not project broker source events')
+      },
       invalidate: async () => undefined,
       activate: async () => {
         brokerActivations += 1
@@ -279,6 +286,7 @@ const handoff = (
     events,
     brokerDeliveries,
     controllerDeliveries,
+    inferenceDeliveries,
   }
 }
 
@@ -300,6 +308,9 @@ test.each(['unavailable', 'rejected'] as const)(
     expect(h.counts().captures).toBe(3)
     expect(h.brokerDeliveries).toHaveLength(1)
     expect(h.controllerDeliveries).toHaveLength(1)
+    expect(h.inferenceDeliveries).toMatchObject([
+      { method: 'watch', parameter: { controllerKey, epoch: 5, sourceRevision, pending: [] } },
+    ])
     await h.drainControllerEvents()
     expect(h.controllerDeliveries).toHaveLength(0)
     await h.staleControllerTick()
@@ -331,6 +342,7 @@ test.each(['superseded', 'paused'] as const)(
     expect(h.counts().advances).toBe(0)
     expect(h.preflights()).toBe(2)
     expect(h.controllerDeliveries).toHaveLength(0)
+    expect(h.inferenceDeliveries).toHaveLength(0)
     expect(h.events).not.toContain('controller-activated')
   },
 )

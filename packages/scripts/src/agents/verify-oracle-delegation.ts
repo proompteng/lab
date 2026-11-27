@@ -143,8 +143,8 @@ if (mode === 'success') {
     throw new Error('Successful worker has no retained result artifact')
   }
   const preview = record(resultPreview(terminal))
-  if (typeof preview.text !== 'string' || !preview.text.includes(marker) || !preview.text.includes('0.170.0')) {
-    throw new Error('Worker result does not prove the marker and Codex 0.170.0 execution')
+  if (typeof preview.text !== 'string' || !preview.text.includes(marker) || !preview.text.includes('0.172.0')) {
+    throw new Error('Worker result does not prove the marker and Codex 0.172.0 execution')
   }
   const final = telemetry(terminal)
   if (!final || final.state !== 'finished' || !(Number(record(final.usage).totalTokens) > 0)) {

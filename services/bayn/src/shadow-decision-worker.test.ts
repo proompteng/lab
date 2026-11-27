@@ -128,6 +128,9 @@ test('scoped worker reuse preserves independent documents, hashes and owned vali
             expect(Object.isFrozen(actual.strategyDecision)).toBe(true)
             expect(Result.getOrThrow(decodeCycleDecisionDocument(actual))).toBe(actual)
             expect(worker?.threadId).not.toBe(-1)
+            expect(worker?.listenerCount('message')).toBe(0)
+            expect(worker?.listenerCount('error')).toBe(1)
+            expect(worker?.listenerCount('exit')).toBe(1)
           }
           expect(spawns).toBe(1)
         }),
@@ -136,6 +139,8 @@ test('scoped worker reuse preserves independent documents, hashes and owned vali
   )
   expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('reused'), lifecycle('reused')])
   expect(worker?.threadId).toBe(-1)
+  expect(worker?.listenerCount('error')).toBe(0)
+  expect(worker?.listenerCount('exit')).toBe(0)
 }, 10_000)
 
 test('observation construction preserves its risk rejection across the thread boundary', async () => {

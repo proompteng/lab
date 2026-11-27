@@ -21,6 +21,8 @@ use tokio::{
 use vmm::Vmm;
 
 pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.8";
+pub(crate) const LIFECYCLE_WITHDRAWN: &str = "slot lifecycle authority withdrawn";
+pub(crate) const GUEST_LIFECYCLE_TIMEOUT: &str = "guest lifecycle timed out";
 pub const GUEST_API_PORT: u32 = 1024;
 pub const GUEST_CONTROL_PORT: u32 = 1025;
 
@@ -105,6 +107,9 @@ pub enum SlotState {
         claim: Claim,
         generation: u64,
     },
+    ColdBooting {
+        claim: Claim,
+    },
     Awake {
         claim: Claim,
     },
@@ -131,6 +136,7 @@ impl SlotState {
     pub fn claim(&self) -> Option<&Claim> {
         match self {
             Self::Restoring { claim, .. }
+            | Self::ColdBooting { claim }
             | Self::Awake { claim }
             | Self::Saving { claim }
             | Self::Sleeping { claim, .. }
@@ -139,6 +145,12 @@ impl SlotState {
             Self::Failed { claim, .. } => claim.as_ref(),
             Self::Preparing | Self::Vacant { .. } => None,
         }
+    }
+
+    pub(crate) fn lifecycle_fenced(&self) -> bool {
+        // The runner persists Failed with a claim only after stopping its VMM.
+        matches!(self, Self::Failed { claim: Some(_), message }
+            if matches!(message.as_str(), LIFECYCLE_WITHDRAWN | GUEST_LIFECYCLE_TIMEOUT))
     }
 
     fn restore_snapshot(&self, claim: &Claim) -> anyhow::Result<&Snapshot> {
@@ -376,6 +388,30 @@ impl Slot {
         if self.state().serves(&claim) {
             return Ok(());
         }
+        if self.state().lifecycle_fenced() {
+            claim.validate()?;
+            ensure!(
+                self.vm.is_none()
+                    && self
+                        .state()
+                        .claim()
+                        .is_some_and(|owner| owner.allocation() == claim.allocation()),
+                "cold recovery requires a stopped VMM and the same slot allocation"
+            );
+            ensure!(
+                fs::try_exists(&self.config.root_disk).await?,
+                "cold recovery requires the retained root disk"
+            );
+            self.transition(SlotState::ColdBooting {
+                claim: claim.clone(),
+            })
+            .await?;
+            let result = self.cold_boot(&claim).await;
+            if let Err(error) = &result {
+                self.fail(error).await;
+            }
+            return result;
+        }
         let snapshot = self.state().restore_snapshot(&claim)?.clone();
         // The disk may advance as soon as vCPUs run. Consume the snapshot durably first.
         self.transition(SlotState::Restoring {
@@ -388,6 +424,24 @@ impl Slot {
             self.fail(error).await;
         }
         result
+    }
+
+    #[tracing::instrument(name = "guest.cold_boot", skip_all)]
+    async fn cold_boot(&mut self, claim: &Claim) -> anyhow::Result<()> {
+        // A cancelled snapshot is never a boot source. Both disks stay with this runner.
+        self.remove_old_snapshots(0).await?;
+        runner::update_guest_runtime(
+            &self.config.root_disk,
+            std::path::Path::new(runner::PACKAGED_GUEST_AGENT),
+            std::path::Path::new(runner::PACKAGED_CODEX_BOOTSTRAP),
+        )
+        .await?;
+        self.vm = Some(Vmm::spawn(&self.config).await?);
+        let vm = self.vm.as_mut().context("missing recovery VMM")?;
+        vm.boot(&self.config).await?;
+        vm.wait_guest(&self.config.vsock(), runner::COMMAND_TIMEOUT)
+            .await?;
+        self.activate(claim).await
     }
 
     #[tracing::instrument(name = "guest.restore", skip_all)]
@@ -415,6 +469,16 @@ impl Slot {
             "real KVM runner resumed: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
+        self.activate(claim).await?;
+        #[cfg(test)]
+        eprintln!(
+            "real KVM runner guest ready and journal committed: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(())
+    }
+
+    async fn activate(&mut self, claim: &Claim) -> anyhow::Result<()> {
         let reply = vmm::guest_command(
             &self.config.vsock(),
             &serde_json::json!({
@@ -426,21 +490,10 @@ impl Slot {
             reply.get("claim") == Some(&serde_json::to_value(claim)?),
             "restored guest claim does not match its slot"
         );
-        #[cfg(test)]
-        eprintln!(
-            "real KVM runner guest ready: {:.2} ms cumulative",
-            started.elapsed().as_secs_f64() * 1000.0
-        );
         self.transition(SlotState::Awake {
             claim: claim.clone(),
         })
-        .await?;
-        #[cfg(test)]
-        eprintln!(
-            "real KVM runner journal committed: {:.2} ms cumulative",
-            started.elapsed().as_secs_f64() * 1000.0
-        );
-        Ok(())
+        .await
     }
 
     pub async fn sleep(&mut self, claim: &Claim) -> anyhow::Result<()> {
@@ -654,8 +707,7 @@ impl Slot {
             self.state().claim() == Some(claim),
             "slot fencing owner or epoch changed"
         );
-        self.fail(&anyhow::anyhow!("slot lifecycle authority withdrawn"))
-            .await;
+        self.fail(&anyhow::anyhow!(LIFECYCLE_WITHDRAWN)).await;
         ensure!(self.vm.is_none(), "cannot prove VMM termination");
         self.pending_sleep = None;
         self.persist().await
@@ -784,17 +836,18 @@ mod tests {
         .unwrap();
         bytes.push(b'\n');
         writer.write_all(&bytes).await.unwrap();
-        timeout(Duration::from_secs(30), frozen.notified())
+        let fixture_timeout = Duration::from_secs(30);
+        timeout(fixture_timeout, frozen.notified())
             .await
             .expect("guest fixture must reach freeze before testing cancellation");
         writer.shutdown().await.unwrap();
         let mut response = String::new();
         timeout(
-            Duration::from_secs(2),
+            fixture_timeout,
             BufReader::new(reader).read_line(&mut response),
         )
         .await
-        .unwrap()
+        .expect("disconnect must acknowledge after durably fencing the VMM")
         .unwrap();
         let response: runner::CommandResponse = serde_json::from_str(&response).unwrap();
         assert!(response.error.unwrap().contains("caller disconnected"));
@@ -810,9 +863,24 @@ mod tests {
             fs::read(&config.home_disk).await.unwrap(),
             b"retained home history and drafts"
         );
-        let reopened = Slot::open(config.clone()).await.unwrap();
+        let mut reopened = Slot::open(config.clone()).await.unwrap();
         assert_eq!(reopened.state().claim(), Some(&owner));
         assert!(reopened.state().restore_snapshot(&owner).is_err());
+        assert!(reopened.state().lifecycle_fenced());
+        fs::write(&config.root_disk, b"retained private root")
+            .await
+            .unwrap();
+        fs::create_dir(config.snapshot_dir(1)).await.unwrap();
+        assert!(reopened.restore(claim("owner-b", 1)).await.is_err());
+        assert!(fs::try_exists(config.snapshot_dir(1)).await.unwrap());
+        // No Firecracker is installed for this fixture. The authorized request must
+        // still reach the cold boot path and remove the unusable snapshot.
+        assert!(reopened.restore(owner.clone()).await.is_err());
+        assert!(!fs::try_exists(config.snapshot_dir(1)).await.unwrap());
+        assert_eq!(
+            fs::read(&config.root_disk).await.unwrap(),
+            b"retained private root"
+        );
         drop(slot);
         serving.await.unwrap();
         guest.abort();
