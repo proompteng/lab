@@ -158,7 +158,7 @@ const run = async (directory: string, output: string, ledgerDirectory: string | 
   // Replay upstream conventions before harmonizing the books. These are not mixed-dollar overlays.
   const originalMarks = marks(canary)
   const o1Paper = ([2, 5, 10] as const).map((bp, index) => {
-    const path = canaryReplay(originalMarks, target.O1, bp, true)
+    const path = canaryReplay(originalMarks, target.O1, mix, bp, true, -1)
     const net = Array.from(path.net)
     const result = summarize(dates, net, SHY, SPY, 'compound')
     closeTo(result.netReturn, [0.9442965714, 0.9286692789, 0.9029113849][index], 1e-9, `O1 full ${bp} bp`)
