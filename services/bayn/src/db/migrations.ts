@@ -1,3 +1,9 @@
+import alphaBaselinePreparation from '../../migrations/0225_alpha_baseline_preparation'
+import strategyBoundQualification from '../../migrations/0224_strategy_bound_qualification'
+import intradayAlphaV1PaperSettlement from '../../migrations/0223_intraday_alpha_v1_paper_settlement'
+import intradayAlphaV2Admission from '../../migrations/0222_intraday_alpha_v2_admission'
+import v44PaperSettlement from '../../migrations/0221_v44_paper_settlement'
+import intradayAlphaAdmission from '../../migrations/0220_intraday_alpha_admission'
 import positiveNetTargetAdmission from '../../migrations/0219_positive_net_target_admission'
 import v43PaperSettlement from '../../migrations/0218_v43_paper_settlement'
 import stopFloorRewardRiskAdmission from '../../migrations/0217_stop_floor_reward_risk_admission'
@@ -220,6 +226,12 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '224_strategy_bound_qualification': strategyBoundQualification,
+  '225_alpha_baseline_preparation': alphaBaselinePreparation,
+  '223_intraday_alpha_v1_paper_settlement': intradayAlphaV1PaperSettlement,
+  '222_intraday_alpha_v2_admission': intradayAlphaV2Admission,
+  '221_v44_paper_settlement': v44PaperSettlement,
+  '220_intraday_alpha_admission': intradayAlphaAdmission,
   '219_positive_net_target_admission': positiveNetTargetAdmission,
   '218_v43_paper_settlement': v43PaperSettlement,
   '217_stop_floor_reward_risk_admission': stopFloorRewardRiskAdmission,

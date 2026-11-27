@@ -3,7 +3,7 @@ import { Clock, Result, Schema } from 'effect'
 
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import type { BrokerNotification, BrokerNotificationError } from '../broker/notifications'
-import type { BrokerSourceProjectionReceipt } from '../broker/trade-update-projection'
+import type { BrokerSourceProjectionAttempt } from '../broker/trade-update-projection'
 import type { ExecutionWakeup, ProtectionReleaseReference } from '../execution/events'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
@@ -65,7 +65,11 @@ export interface BrokerObservationRuntime {
     notification: BrokerNotification,
   ) => Promise<{ readonly covered: boolean }>
   readonly isNotificationCovered: (signal: AbortSignal, eventId: string) => Promise<boolean>
-  readonly project: (signal: AbortSignal, eventId: string) => Promise<BrokerSourceProjectionReceipt>
+  readonly project: (
+    signal: AbortSignal,
+    eventId: string,
+    allowProtectionWait?: boolean,
+  ) => Promise<BrokerSourceProjectionAttempt>
   readonly invalidate: (signal: AbortSignal) => Promise<void>
   readonly probeProtection: (
     signal: AbortSignal,
@@ -421,11 +425,37 @@ export const makeBaynBrokerSourceProjector = (
           verifyKey(ctx)
           const receipt = decode(ReceiptSchema, candidate)
           const signal = ctx.request().attemptCompletedSignal
-          const projection = await ctx.run(
+          let projection = await ctx.run(
             'project durable broker source event',
             () => runtime.project(signal, receipt.eventId),
             persistenceRunOptions,
           )
+          if (projection._tag === 'AwaitingProtection') {
+            // Only the ordered projector waits. The financial writer transaction has returned, and the independent
+            // canonical owner can establish the parent/child binding or cover this early nonfinancial event.
+            ctx.genericSend({
+              service: 'BaynBrokerObservations',
+              method: 'reconcile',
+              key: ctx.key,
+              parameter: { eventId: receipt.eventId },
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `broker-source-reconcile:${receipt.eventId}`,
+            })
+            const deadlineMs = Date.parse(projection.deadlineAt)
+            let attempt = 0
+            while (projection._tag === 'AwaitingProtection') {
+              const remaining = Math.max(0, deadlineMs - (await ctx.date.now()))
+              if (remaining > 0) await ctx.sleep({ milliseconds: Math.min(recoveryDelayMs, remaining) })
+              const allowProtectionWait = (await ctx.date.now()) < deadlineMs
+              projection = await ctx.run(
+                `resolve broker protection binding ${++attempt}`,
+                () => runtime.project(signal, receipt.eventId, allowProtectionWait),
+                persistenceRunOptions,
+              )
+              if (!allowProtectionWait && projection._tag === 'AwaitingProtection')
+                throw new restate.TerminalError('broker protection binding exceeded its original recovery deadline')
+            }
+          }
           if (projection._tag === 'CanonicallyCovered') return projection
           const covered = await ctx.run(
             'check canonical broker source coverage',

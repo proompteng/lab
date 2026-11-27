@@ -1,0 +1,470 @@
+{
+  "query": {
+    "start": "2026-08-25",
+    "end": "2026-11-25"
+  },
+  "response": [
+    {
+      "date": "2026-08-25",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-08-26",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-08-27",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-08-28",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-08-31",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-01",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-02",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-03",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-04",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-08",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-09",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-10",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-11",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-14",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-15",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-16",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-17",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-18",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-21",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-22",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-23",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-24",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-25",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-28",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-29",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-09-30",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-01",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-02",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-05",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-06",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-07",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-08",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-09",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-12",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-13",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-14",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-15",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-16",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-19",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-20",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-21",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-22",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-23",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-26",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-27",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-28",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-29",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-10-30",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-02",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-03",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-04",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-05",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-06",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-09",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-10",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-11",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-12",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-13",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-16",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-17",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-18",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-19",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-20",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-23",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-24",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    },
+    {
+      "date": "2026-11-25",
+      "open": "09:30",
+      "close": "16:00",
+      "session_open": "0930",
+      "session_close": "1600"
+    }
+  ]
+}

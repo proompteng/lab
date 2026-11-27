@@ -564,6 +564,12 @@ export const verifyBrokerStateVersion = (
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'
               AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.repeated-momentum-policy.v1'
               AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.intraday-alpha-target.v1'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.intraday-alpha-policy.v1'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.intraday-alpha-target.v2'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.intraday-alpha-policy.v2'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
           )
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}

@@ -27,6 +27,7 @@ import {
 import { strictParseOptions } from './schemas'
 import { BrokerMutationError, MutationFailure } from './broker/alpaca-mutations/model'
 import { advancePositionProtection } from './observe-composition/position-protection-interpreter'
+import { IntradayAlphaPhase } from './strategy/intraday-alpha/constants'
 import { withProviderSessions } from './testing/market-calendar-fixture'
 import { currentEquityMarketProfile as equityMarketProfile } from './jev/markets'
 import { CandidateObservationStore } from './observe-composition/candidate-observation'
@@ -9810,8 +9811,8 @@ test.each(['known', 'unknown', 'publication', 'filled', 'unaccounted'] as const)
   },
 )
 
-test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
-  'advancePositionProtection respects opposite IEX stop confirmation when native protection is armed: %s',
+test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent', 'midday-native', 'midday-rejected'] as const)(
+  'advancePositionProtection preserves native exits at the strategy boundary: %s',
   async (scenario) => {
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
@@ -9821,7 +9822,9 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
     const plan = decision.exitPolicy.plans[symbol]
     const levels = plan?.levels
     if (plan === undefined || levels === undefined) throw new Error('Bound strategy prices required')
-    const armed = scenario !== 'wide-iex-absent'
+    const rejected = scenario === 'midday-rejected'
+    const midday = scenario === 'midday-native' || rejected
+    const armed = scenario !== 'wide-iex-absent' && !rejected
     const intent = await Effect.runPromise(
       planExecutionIntent(
         {
@@ -9862,7 +9865,9 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
         },
       ),
     )
-    const held = storedIntent(intent, IntentState.Acknowledged, observedAt)
+    const held = rejected
+      ? storedIntent(intent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected)
+      : storedIntent(intent, IntentState.Acknowledged, observedAt)
     const root = storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Filled)
     const entryOrder: Order = {
       schemaVersion: 'bayn.order.v3',
@@ -9878,7 +9883,7 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
       filledQuantityAtoms: fixture.intent.quantityAtoms,
       limitPriceMicros: fixture.intent.limitPriceMicros,
       status: OrderStatus.Filled,
-      observedAt: fixture.document.createdAt,
+      observedAt,
     }
     const order: Order = {
       schemaVersion: 'bayn.order.v3',
@@ -9930,13 +9935,28 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
       unrealizedPnlMicros: '0',
       observedAt,
     }
-    const reconciliation = reconciliationResultAt(
+    const reconciled = reconciliationResultAt(
       observedAt,
       0,
       0,
       [position],
       armed ? [entryOrder, order, targetOrder] : [entryOrder],
+      rejected ? Authority.Observe : Authority.Execution,
     )
+    const authority = reconciled.riskContext.authority
+    if (authority === null) throw new Error('Expected authority in exact reconciliation')
+    const reconciliation = rejected
+      ? {
+          ...reconciled,
+          riskContext: {
+            ...reconciled.riskContext,
+            authority: {
+              ...authority,
+              reason: 'Bayn execution cycle loop restricted effective authority: submit rejected',
+            },
+          },
+        }
+      : reconciled
     const entryFillPriceAtoms = (entryPriceMicros * 1_000n).toString()
     const portfolio = Result.getOrThrow(
       decodeJevPortfolio({
@@ -9945,7 +9965,7 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
         entryDecisionHash: fixture.document.contentHash,
         exitPolicy: decision.exitPolicy,
         protectionIntentIds: armed ? [intent.intentId] : [],
-        exitRequestedAt: null,
+        exitRequestedAt: rejected ? observedAt : null,
         profitExitRequested: false,
         entryIntentIds: [fixture.intent.intentId],
         entryFills: [
@@ -9985,9 +10005,15 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
       brokerOrderId: order.brokerOrderId,
       occurredAt: observedAt,
     }
+    const { brokerOrderId: _rejectedOrderId, ...submitWithoutOrder } = submit
+    const latestSubmit: MutationEvent | undefined = rejected
+      ? { ...submitWithoutOrder, eventType: MutationEventType.SubmitRejected }
+      : armed
+        ? submit
+        : undefined
     const stopPrice = Number(levels.stopPriceMicros) / 1_000_000
     const quotesRange =
-      scenario === 'gap-armed'
+      scenario === 'gap-armed' || scenario === 'midday-native'
         ? { bidPrice: stopPrice - 0.15, askPrice: stopPrice - 0.05 }
         : { bidPrice: stopPrice - 0.15, askPrice: stopPrice + 0.15 }
     const marketData = {
@@ -10016,6 +10042,7 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
         }),
     }
     const calls: string[] = []
+    let replacement: typeof intent | undefined
     const unused = Effect.die('Unexpected mutation call')
     const program = {
       ...sandboxExecutionProgram(),
@@ -10038,31 +10065,56 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
           } as const
         }),
     }
+    const document: typeof fixture.document = midday
+      ? {
+          ...fixture.document,
+          // Exercise the interpreter with the same sealed protection facts and the midday target discriminator.
+          strategyDecision: {
+            ...decision,
+            schemaVersion: 'bayn.intraday-alpha-target.v2',
+            phase: IntradayAlphaPhase.MiddayReversion,
+            exitPolicy: {
+              ...decision.exitPolicy,
+              plans: {
+                ...decision.exitPolicy.plans,
+                AAPL: { ...plan, levels: { ...levels, symbol: 'AAPL' } },
+              },
+            },
+          } as unknown as NonNullable<typeof fixture.document.strategyDecision>,
+        }
+      : fixture.document
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
         return yield* advancePositionProtection({
           input: { ...fixture.input, intradayMarketData: marketData },
           cycle: fixture.boundCycle,
-          document: fixture.document,
+          document,
           protocol: currentIntradayProtocol,
           policy: fixture.policy,
           reconciliation,
-          capability: { _tag: 'Mutation', executionProgram: program },
+          capability: { _tag: rejected ? 'CloseOnly' : 'Mutation', executionProgram: program },
           closeDue: false,
           closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
         })
       }).pipe(
         Effect.provideService(IntentStore, {
           read: (id) => Effect.succeed(Option.some(id === intent.intentId ? held : root)),
-          protectionForCycle: () => Effect.succeed(armed ? [held] : []),
+          protectionForCycle: () => Effect.succeed(armed || rejected ? [held] : []),
           beginProtectionCancel: () => unused,
           recordProtectionCancelAccepted: () => unused,
           commit: () => unused,
+          commitClosing: (planned, risk) =>
+            Effect.sync(() => {
+              replacement = planned
+              return {
+                record: storedIntent({ ...planned, riskDecisionId: risk.decisionId }, IntentState.Approved, observedAt),
+                deduplicated: false,
+              }
+            }),
         }),
         Effect.provideService(MutationStore, {
-          latest: (_id, operation) =>
-            Effect.succeed(armed && operation === MutationOperation.Submit ? submit : undefined),
+          latest: (_id, operation) => Effect.succeed(operation === MutationOperation.Submit ? latestSubmit : undefined),
           authorizeSubmit: () => unused,
           beginSubmit: () => unused,
           submitAccepted: () => unused,
@@ -10081,6 +10133,25 @@ test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent'] as const)(
         Effect.provide(TestClock.layer()),
       ),
     )
+    if (rejected) {
+      expect(result).toMatchObject({
+        _tag: 'Step',
+        step: { _tag: 'Execute', action: 'SUBMIT', intentId: replacement?.intentId },
+      })
+      expect(replacement).toMatchObject({
+        symbol,
+        quantityAtoms: position.quantityAtoms,
+        protection: { _tag: 'Oco', entryDecisionHash: document.contentHash },
+      })
+      expect(replacement?.intentId).not.toBe(intent.intentId)
+      expect(calls).toEqual([])
+      return
+    }
+    if (scenario === 'midday-native') {
+      expect(result).toEqual({ _tag: 'Step', step: { _tag: 'Wait', observedAt, waitReason: 'JEV_POSITION_HELD' } })
+      expect(calls).toEqual([])
+      return
+    }
     if (scenario === 'wide-iex-armed') {
       expect(result).toEqual({
         _tag: 'Step',

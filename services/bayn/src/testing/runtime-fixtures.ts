@@ -7,14 +7,10 @@ import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import type { RuntimeState } from '../runtime-state'
-import {
-  activeStrategyBehaviorHash,
-  activeStrategyName,
-  loadActiveStrategyProtocol,
-  makeActiveStrategyRuntime,
-} from '../strategy'
+import { jevBehaviorHash } from '../jev/protocol'
+import { activeStrategyName, loadSharedJevProtocol, makeJevStrategyRuntime } from '../strategy'
 
-export const fixtureProtocol = Result.getOrThrow(loadActiveStrategyProtocol())
+export const fixtureProtocol = Result.getOrThrow(loadSharedJevProtocol())
 export const provenance = Result.getOrThrow(
   makeRuntimeProvenanceResult({
     sourceRevision: 'a'.repeat(40),
@@ -24,14 +20,14 @@ export const provenance = Result.getOrThrow(
     },
     strategy: {
       name: activeStrategyName,
-      behaviorHash: activeStrategyBehaviorHash,
+      behaviorHash: jevBehaviorHash,
       parameterHash: Result.getOrThrow(canonicalHashV1Result(fixtureProtocol)),
       parameterSchemaVersion: fixtureProtocol.schemaVersion,
     },
   }),
 )
 
-export const fixtureRuntime = makeActiveStrategyRuntime(fixtureProtocol, provenance)
+export const fixtureRuntime = makeJevStrategyRuntime(fixtureProtocol, provenance)
 
 export const config: RuntimeConfig = {
   host: '127.0.0.1',

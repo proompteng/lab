@@ -79,7 +79,7 @@ import { Journal, JournalLive } from '../ledger'
 import { canonicalHashV1Result } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
-import { makeActiveStrategyRuntime } from '../strategy'
+import { makeJevStrategyRuntime } from '../strategy'
 import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevClient, JevError } from '../jev/client'
@@ -394,7 +394,7 @@ export const testReplayRuntime = registerRuntimeScenarios(
         return arrivals
       })
       .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
-    const candidateRuntime = makeActiveStrategyRuntime(protocol, {
+    const candidateRuntime = makeJevStrategyRuntime(protocol, {
       ...fixtureRuntime.provenance,
       strategy: {
         ...fixtureRuntime.provenance.strategy,

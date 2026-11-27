@@ -14,7 +14,8 @@ const measure = (input: ReturnType<typeof executionQualityFixture>) =>
 test('preserves the synthetic complete report and evidence hashes across input order', () => {
   const input = executionQualityFixture(10)
   const report = Result.getOrThrow(makeForwardPerformanceReport(input, []))
-  assert.equal(report.reportHash, '74f285a84e370480106d65ffa2ebe18d508b66206e9e78855c3d497057d44cd9')
+  assert.equal(report.schemaVersion, 'bayn.forward-performance-report.v9')
+  assert.equal(report.reportHash, '263073ed9761fee10456e325ecc2743c5a7c60f742ed2112987580e88d7e77ca')
   assert.equal(report.receipt.receiptHash, 'f4d8eead77745a0354ca0efdb6d6d3b737ac0013a1a1a83761f00a07300d0f26')
   assert.equal(
     Result.getOrThrow(canonicalHashV1Result(report.receipt)),

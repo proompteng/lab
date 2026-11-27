@@ -679,8 +679,11 @@ capital-authorizing build. Compatible releases preserve the original generation 
 registration binds the existing approved request and build lineage to its physical build. Financial capture verifies
 that saved binding when the reporting worker is later upgraded, preserving late-fee evidence. An unknown or different
 worker build cannot establish correctly completed controller work or supported reporting provenance. Current qualification
-uses `bayn.qualification-runtime.v2` with `decisionTrigger: streaming`. Retained v1 registrations remain readable, while
-old polling latency/replay studies cannot qualify this runtime; a new prospective registration and live evidence are required.
+uses `bayn.qualification-runtime.v3` with `decisionTrigger: streaming` and an explicit complete strategy binding.
+Retained v1/v2 registrations remain readable. Old polling latency/replay studies cannot qualify this runtime;
+a new prospective v6 registration and independently witnessed live evidence are required. Candidate and incumbent
+are comparison roles; either can bind the native Jev v44 or intraday alpha v2 engine. The incumbent must still match
+its independently witnessed serving generation and retain separate account, store and authority identity.
 
 This hard migration changes handler and journal shapes. Roll out immutable `RestateDeployment` revisions so in-flight
 invocations retain their pinned old deployment. Do not force-repin an old invocation onto this revision. The controller
@@ -833,10 +836,10 @@ failure, defect or interruption during atomic persistence rolls back the receipt
 the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
-The submission window follows the entitled equity market calendar. Bayn can evaluate after the first completed minute
-and the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Equity entries
-use up to 30 minutes of actual completed history and evaluate the source-controlled candidates independently until
-five minutes before the close. The retained protocol also defines 120-minute crypto context for historical evidence
+The equity submission window follows the broker's regular calendar, not extended IEX capture hours. The first
+eligible observation is one minute and two seconds after regular open, subject to the active sleeve's signal window.
+Equity entries use actual completed history and stop no later than five minutes before the regular close, including
+early closes. The retained protocol also defines 120-minute crypto context for historical evidence
 and position recovery. The [compiled market profiles](src/jev/protocol.ts) bind the entry spread and positioning
 limits. The current protocol permits one equity long or short position with a gross weight capped at 20% of account
 equity. Allocation reduces the target when required by order, symbol, exposure or remaining daily turnover limits.
@@ -1413,7 +1416,7 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v8`. Its hashed `scope` records the requested
+The forward-performance command emits `bayn.forward-performance-report.v9`. Its hashed `scope` records the requested
 `AUTHORITY_GENERATION` and `authorityGenerationHash`, including when no eligible financial cycle exists. Programmatic
 account-history reports declare `ACCOUNT` scope. Requested scope does not supply missing financial source or strategy
 bindings; those remain null until eligible evidence exists. Its `inferenceExpenses` section joins
@@ -1993,7 +1996,7 @@ The command always requires `--authority-generation`; omitting `--persist-receip
 read-only. Programmatic account-history reports may span retired strategies and mandates and declare `ACCOUNT` scope.
 Account history that includes legacy daily SIP evidence requires the historical settings described above; native-only
 history does not. A scope without completed executions remains unqualified.
-The command emits `bayn.forward-performance-report.v8`. Its `receipt` contains the unchanged v4 financial receipt with explicit broker cash settlement rounding;
+The command emits `bayn.forward-performance-report.v9`. Its `receipt` contains the unchanged v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation. Each session retains the exact current
 `matchedQuoteHashes` and `requestsWithCoverageIssues`, including the provider stage, receipt/resolution identities,
@@ -2016,6 +2019,17 @@ the generation is terminal or whether a receipt was previously saved. An active 
 `NO_PERSISTED_RECEIPT` in status. Only a successful `--persist-receipt` transaction changes the output marker to
 `PERSISTED_TERMINAL`; failed admission emits no successful report. `reportHash` binds that marker and all diagnostics,
 while the immutable per-generation receipt and its hash retain their existing schema and meaning.
+
+`nativeAlpha` retains verified intraday-alpha engine and basket identities through actual execution and completed
+position attribution. It separates committed decision coverage, filled quantities, supported episode gross P&L and
+unallocated account costs. Blocked and unfinished decisions retain their evidence gaps; planned neutrality does not
+establish filled neutrality. Observed intent/order counts record positive evidence; zero observed rows in an unknown
+scope do not prove no submission. `knownCompleted*` fields are supported closed-episode subtotals; `complete*` fields
+require complete terminal entry-fill ownership and closure, with no omitted unverified decision for an engine total.
+`financialConservation.status: RECONCILED` describes an arithmetic bridge to the scoped receipt totals, not final fee coverage
+or fully costed engine profit; the receipt's evidence status and unknown costs remain unchanged.
+See [native alpha performance evidence](../../docs/bayn/native-alpha-performance.md)
+for scope, ownership and cost limits. This analytical section does not change the stored v4 receipt or its persistence gate.
 
 `costDiagnostics` separates the generation receipt's operating-charge evidence, metered inference estimates, and
 the attached assessment's registered cost scope. `receiptOperatingCharges` follows the report's declared account or
@@ -2307,8 +2321,8 @@ node services/bayn/dist/research/backtest-command.js \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
-Set `BAYN_JEV_API_KEY` and `BAYN_EGRESS_PROXY` through the existing protected environment. Current
-requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
+Provider-backed replay uses `BAYN_JEV_API_KEY` and `BAYN_EGRESS_PROXY` through the existing protected environment.
+Retained requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
 `models: {"jev": "jev-1.14.0"}`, `inputDefinition: "bayn.jev-entry-state.v24"` and a positive `maximumCalls`
 shared by every Jev stage. The input binds `jevInstructionsHash` to the exact compiled instruction document.
 `bayn-backtest --instructions` reports it. `costs` uses `bayn.inference-rate-card.v1` with effective-dated provider/model
@@ -2320,6 +2334,23 @@ The input also declares
 An unknown allocation preserves execution evidence while making sessions and net results incomplete; it never
 becomes a zero expense. Control comparisons and net-label training require a priced allocation. Changing these
 assumptions changes the run identity.
+
+New explicit-engine requests use `bayn.backtest.v13`, `strategyBinding` and `alphaBaselinePreparations`, and emit
+`bayn.backtest-report.v11`. Retained v12 requests preserve their `alphaBaselineSources` and report-v10 contract.
+Their decision scheduler consumes retained source arrivals, actual broker changes and
+the native controller's absolute deadlines across reporting boundaries. `pollIntervalMs` remains a legacy input
+field and does not schedule v12/v13 decisions. Registered replay requires authenticated original arrival evidence,
+the complete native calendar, the exact engine policy and independently witnessed alpha baseline availability.
+See [native replay and qualification](src/system-assessment/README.md#native-engine-replay-and-timing).
+
+The current alpha v2 policy disables catalyst inference. Its replay acquires no provider client, requires no provider
+tariffs, and must retain zero provider calls; broker, data and operating costs keep their usual evidence requirements.
+Native alpha prepares and commits its pure market baseline on the existing native wake before regular-session warmup,
+retaining actual query inputs and acquisition clocks. Native reuse requires that source by the original observation
+cut. Research v13 additionally requires an independent committed witness by the original command start, retaining
+both clocks and exact source hashes in the report. An unwitnessed first baseline or unavailable peer-engine source
+remains an explicit gap and prevents complete economics. Historical observation timestamps and refreshed snapshots
+cannot be substituted for independent availability.
 
 An unregistered equity backtest can pass `--equity-execution-tape execution.json` and include
 `equityExecutionTape` with the file's `sha256`, `startAt`, and `endAt` in its input. The tape uses
@@ -2746,12 +2777,16 @@ Historical observations remain immutable; readers reject records missing this ev
 The [matched comparison](../../docs/bayn/matched-entry-study.md) retains its five-session, twenty-different-selection,
 original timing, capacity, and complete-cost requirements. Missing evidence cannot qualify Jev.
 
-Equities use Alpaca's full provider calendar intersected with the entitled IEX data interval, 08:00–17:00
-America/New_York. Provider regular and extended bounds remain in the hashed calendar v2 evidence; DST, holidays
-and early closes follow that source. The shared order loop submits stock LIMIT/DAY with `extended_hours=true`
-and crypto LIMIT/IOC with `extended_hours=false`. An acknowledged open order is canceled through the same durable
-mutation coordinator when its original approval or submission window expires. Known partial fills retain their
-original accounting. Whole-share equity liquidation during an archive outage also uses a bounded LIMIT/DAY order.
+Equity market **data** uses Alpaca's full provider calendar intersected with the entitled IEX interval, 08:00–17:00
+America/New_York. Equity **execution** binds the provider's regular open and close, including early closes. The hashed
+calendar v2 retains both schedules. If IEX cannot price a due flatten, the close planner can use a fresh reconciled
+broker mark within the existing signed quantity and price bounds. It does not query IEX after the regular close;
+recovery then requires a bounded lease within verified broker hours. See the
+[Black Friday incident](../../docs/bayn/incidents/2026-11-27-black-friday-googl-unclosed-exit.md).
+
+The shared order loop uses stock LIMIT/DAY and crypto LIMIT/IOC. Unprotected equity limits are extended-hours
+eligible for recovery; native brackets are not. An acknowledged open order is canceled through the same durable
+mutation coordinator when its approval or submission window expires. Known partial fills retain their accounting.
 
 Dorvud's observed-window and technical definitions v2 isolate the 08:00, 09:30 and 16:00 clock segments. Regular
 indicator math is unchanged, sparse intervals remain missing, and the first completed minute can authorize

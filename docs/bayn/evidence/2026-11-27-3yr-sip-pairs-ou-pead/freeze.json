@@ -1,0 +1,2688 @@
+{
+  "schema": "bayn.wave2f.sip-pairs-pead.freeze.v1",
+  "primaryCost": 10,
+  "bootstrap": {
+    "replicates": 10000,
+    "intradayBlock": 5,
+    "dailyBlock": 10,
+    "seed": 670183405
+  },
+  "splits": {
+    "intraday": [
+      {
+        "id": "train",
+        "from": "2024-01-02",
+        "to": "2025-06-30"
+      },
+      {
+        "id": "validation",
+        "from": "2025-07-01",
+        "to": "2026-03-31"
+      },
+      {
+        "id": "holdout",
+        "from": "2026-04-01",
+        "to": "2026-11-25"
+      }
+    ],
+    "daily": [
+      {
+        "id": "train",
+        "from": "2021-01-04",
+        "to": "2024-06-30"
+      },
+      {
+        "id": "validation",
+        "from": "2024-07-01",
+        "to": "2025-08-31"
+      },
+      {
+        "id": "holdout",
+        "from": "2025-09-01",
+        "to": "2026-11-25"
+      }
+    ]
+  },
+  "trials": [
+    {
+      "engine": "pair-intraday",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "frequency": "intraday",
+      "id": "pair-intraday:20:1.5:none"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:none:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "frequency": "intraday",
+      "id": "pair-intraday:20:1.5:half-life"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:half-life:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "frequency": "intraday",
+      "id": "pair-intraday:20:1.5:correlation"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:20:1.5:correlation:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "frequency": "intraday",
+      "id": "pair-intraday:20:2:none"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "none",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:none:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "frequency": "intraday",
+      "id": "pair-intraday:20:2:half-life"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:half-life:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "frequency": "intraday",
+      "id": "pair-intraday:20:2:correlation"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:20:2:correlation:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "frequency": "intraday",
+      "id": "pair-intraday:20:2.5:none"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:none:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "frequency": "intraday",
+      "id": "pair-intraday:20:2.5:half-life"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:half-life:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "frequency": "intraday",
+      "id": "pair-intraday:20:2.5:correlation"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 20,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:20:2.5:correlation:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "frequency": "intraday",
+      "id": "pair-intraday:40:1.5:none"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "none",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:none:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "frequency": "intraday",
+      "id": "pair-intraday:40:1.5:half-life"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "half-life",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:half-life:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "frequency": "intraday",
+      "id": "pair-intraday:40:1.5:correlation"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 1.5,
+      "filter": "correlation",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:40:1.5:correlation:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "frequency": "intraday",
+      "id": "pair-intraday:40:2:none"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "none",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:none:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "frequency": "intraday",
+      "id": "pair-intraday:40:2:half-life"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "half-life",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:half-life:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "frequency": "intraday",
+      "id": "pair-intraday:40:2:correlation"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2,
+      "filter": "correlation",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:40:2:correlation:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "frequency": "intraday",
+      "id": "pair-intraday:40:2.5:none"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "none",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:none:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "frequency": "intraday",
+      "id": "pair-intraday:40:2.5:half-life"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "half-life",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:half-life:10"
+    },
+    {
+      "engine": "pair-intraday",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "frequency": "intraday",
+      "id": "pair-intraday:40:2.5:correlation"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 1,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:1"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 2,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:2"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 3,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:3"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 4,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:4"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 5,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:5"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 6,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:6"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 7,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:7"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 8,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:8"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 9,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:9"
+    },
+    {
+      "engine": "pair-swing",
+      "lookback": 40,
+      "z": 2.5,
+      "filter": "correlation",
+      "hold": 10,
+      "frequency": "daily",
+      "id": "pair-swing:40:2.5:correlation:10"
+    },
+    {
+      "engine": "gap-intraday",
+      "gap": 1.5,
+      "horizon": 1,
+      "universe": "stocks",
+      "frequency": "intraday",
+      "id": "gap-intraday:1.5:1:stocks"
+    },
+    {
+      "engine": "gap-intraday",
+      "gap": 1.5,
+      "horizon": 3,
+      "universe": "stocks",
+      "frequency": "intraday",
+      "id": "gap-intraday:1.5:3:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 1,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:1:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 2,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:2:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 3,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:3:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 4,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:4:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 5,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:5:stocks"
+    },
+    {
+      "engine": "gap-intraday",
+      "gap": 2,
+      "horizon": 1,
+      "universe": "stocks",
+      "frequency": "intraday",
+      "id": "gap-intraday:2:1:stocks"
+    },
+    {
+      "engine": "gap-intraday",
+      "gap": 2,
+      "horizon": 3,
+      "universe": "stocks",
+      "frequency": "intraday",
+      "id": "gap-intraday:2:3:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 1,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:2:1:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 2,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:2:2:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 3,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:2:3:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 4,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:2:4:stocks"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 5,
+      "universe": "stocks",
+      "frequency": "daily",
+      "id": "gap-swing:2:5:stocks"
+    },
+    {
+      "engine": "gap-fade",
+      "gap": 2,
+      "target": "vwap",
+      "universe": "stocks",
+      "frequency": "intraday",
+      "id": "gap-fade:2:vwap:stocks"
+    },
+    {
+      "engine": "gap-fade",
+      "gap": 2,
+      "target": "prior-close",
+      "universe": "stocks",
+      "frequency": "intraday",
+      "id": "gap-fade:2:prior-close:stocks"
+    },
+    {
+      "engine": "gap-intraday",
+      "gap": 1.5,
+      "horizon": 1,
+      "universe": "core",
+      "frequency": "intraday",
+      "id": "gap-intraday:1.5:1:core"
+    },
+    {
+      "engine": "gap-intraday",
+      "gap": 1.5,
+      "horizon": 3,
+      "universe": "core",
+      "frequency": "intraday",
+      "id": "gap-intraday:1.5:3:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 1,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:1:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 2,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:2:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 3,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:3:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 4,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:4:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 1.5,
+      "hold": 5,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:1.5:5:core"
+    },
+    {
+      "engine": "gap-intraday",
+      "gap": 2,
+      "horizon": 1,
+      "universe": "core",
+      "frequency": "intraday",
+      "id": "gap-intraday:2:1:core"
+    },
+    {
+      "engine": "gap-intraday",
+      "gap": 2,
+      "horizon": 3,
+      "universe": "core",
+      "frequency": "intraday",
+      "id": "gap-intraday:2:3:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 1,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:2:1:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 2,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:2:2:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 3,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:2:3:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 4,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:2:4:core"
+    },
+    {
+      "engine": "gap-swing",
+      "gap": 2,
+      "hold": 5,
+      "universe": "core",
+      "frequency": "daily",
+      "id": "gap-swing:2:5:core"
+    },
+    {
+      "engine": "gap-fade",
+      "gap": 2,
+      "target": "vwap",
+      "universe": "core",
+      "frequency": "intraday",
+      "id": "gap-fade:2:vwap:core"
+    },
+    {
+      "engine": "gap-fade",
+      "gap": 2,
+      "target": "prior-close",
+      "universe": "core",
+      "frequency": "intraday",
+      "id": "gap-fade:2:prior-close:core"
+    }
+  ],
+  "sources": {
+    "pairs-pead-protocol.ts": "03bc74d0d7cfedcd6ea42f5c1c66274cee0e78def69cdbc4cfeb26b22810dd20",
+    "pairs-pead-data.ts": "39ba424fe8688094861c5cc2957255b461dbe34a7f9f8ec2da80c14ccbec2552",
+    "pairs-pead-signals.ts": "a4a0c03122e172a10139c253dd21bc9a22dbf75417fe27db0ad6f1ca0acae076",
+    "pairs-pead-replay.ts": "ef6d692e6e358d0cfed94b839b8f834ccc5c6c6c2bf90b991d059b5c7695dfa0",
+    "pairs-pead-statistics.ts": "4db9db73dfa87ed8f94e6485b2ede76c1d706afb30ebbbe3ab79f28b1f97f2e2",
+    "research-orb-zab-statistics.ts": "a2924c2249ab7af0f34fed1309f7731536a7edd540247a9bc3884b493a0d8b96",
+    "research-3yr-sip-pairs-ou-pead.ts": "c01697e1de9268388d4cffaaa91966136d4223e0862e85d6f914e27146d1cdab",
+    "../../../docs/bayn/evidence/2026-11-27-3yr-sip-pairs-ou-pead/PROTOCOL.md": "090dea88ff60c3486671c9f9a25d7798086099df813d02434931736e76c3004e"
+  },
+  "provenance": {
+    "manifestSha256": "5df0cfe213c69e9a6489dde46553db610edb2632b5e54fb76a6347740abcdead",
+    "calendarKey": "bayn-research-datasets/2026-11-27/calendar_2024_2026.json",
+    "calendarHash": "b7a02f0c79aa479de2eba14e6168826cabaf8eef15df4c94cf1f199511752b71",
+    "files": [
+      {
+        "key": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_daily_62sym_20210104_20261125.tsv.gz",
+        "rows": 87727,
+        "rawBytes": 6091947,
+        "gzipBytes": 2084934,
+        "rawSha256": "f8aa513adb97988a86190e94f837e5a1097fa7f40481665a2dd55210498dd075",
+        "gzipSha256": "e8023075922737f98d9a792267bb02940246971918387a877be92c2ad443b247"
+      },
+      {
+        "key": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz",
+        "rows": 3923737,
+        "rawBytes": 273982883,
+        "gzipBytes": 80649568,
+        "rawSha256": "c053ede2875ad791c99aae517db9efa9a4587b08c9907d55e0960dade59d567e",
+        "gzipSha256": "105972d7825b4deb14a30295fab153b1e734929e1c321642964ec8d35bbbc697"
+      }
+    ]
+  },
+  "coverage": {
+    "intraday": {
+      "sessions": 563,
+      "outsideRth": 330844,
+      "bySymbol": {
+        "AAPL": 43698,
+        "AMD": 43698,
+        "AMZN": 43698,
+        "AVGO": 43698,
+        "COHR": 43698,
+        "GOOGL": 43698,
+        "INTC": 43698,
+        "IWM": 43698,
+        "LITE": 43688,
+        "META": 43698,
+        "MRVL": 43698,
+        "MSFT": 43698,
+        "MU": 43698,
+        "NFLX": 43698,
+        "NVDA": 43698,
+        "QQQ": 43698,
+        "SMH": 43698,
+        "SNDK": 21498,
+        "SPY": 43698,
+        "TSLA": 43698,
+        "WDC": 43698,
+        "PLTR": 43698,
+        "MSTR": 43692,
+        "COIN": 43698,
+        "SMCI": 43698,
+        "ARM": 43698,
+        "ANET": 43698,
+        "PANW": 43698,
+        "CRWD": 43698,
+        "NET": 43698,
+        "APP": 43698,
+        "HOOD": 43698,
+        "SOFI": 43698,
+        "VRT": 43698,
+        "VST": 43698,
+        "CEG": 43698,
+        "GEV": 38862,
+        "ALAB": 39449,
+        "CRDO": 43698,
+        "KLAC": 43557,
+        "LRCX": 43679,
+        "AMAT": 43698,
+        "ASML": 43680,
+        "TSM": 43698,
+        "ORCL": 43698,
+        "NOW": 43680,
+        "SNOW": 43698,
+        "UBER": 43698,
+        "SHOP": 43698,
+        "SPOT": 43691,
+        "XLF": 43698,
+        "XLE": 43698,
+        "XLK": 43698,
+        "XLV": 43698,
+        "XLI": 43698,
+        "XLY": 43698,
+        "XBI": 43698,
+        "ARKK": 43698,
+        "TLT": 43698,
+        "IEF": 43698,
+        "GLD": 43698,
+        "USO": 43698
+      }
+    },
+    "daily": {
+      "sessions": 1170,
+      "bySymbol": {
+        "AAPL": 1170,
+        "AMD": 1170,
+        "AMZN": 1170,
+        "AVGO": 1170,
+        "COHR": 747,
+        "GOOGL": 1170,
+        "INTC": 1170,
+        "IWM": 1170,
+        "LITE": 1170,
+        "META": 809,
+        "MRVL": 1170,
+        "MSFT": 1170,
+        "MU": 1170,
+        "NFLX": 1170,
+        "NVDA": 1170,
+        "QQQ": 1170,
+        "SMH": 1170,
+        "SNDK": 131,
+        "SPY": 1170,
+        "TSLA": 1170,
+        "WDC": 1170,
+        "PLTR": 1170,
+        "MSTR": 1170,
+        "COIN": 1101,
+        "SMCI": 1170,
+        "ARM": 492,
+        "ANET": 1170,
+        "PANW": 1170,
+        "CRWD": 1170,
+        "NET": 1170,
+        "APP": 1100,
+        "HOOD": 1027,
+        "SOFI": 1068,
+        "VRT": 1170,
+        "VST": 1170,
+        "CEG": 897,
+        "GEV": 355,
+        "ALAB": 363,
+        "CRDO": 901,
+        "KLAC": 1170,
+        "LRCX": 1170,
+        "AMAT": 1170,
+        "ASML": 1170,
+        "TSM": 1170,
+        "ORCL": 1170,
+        "NOW": 1170,
+        "SNOW": 1170,
+        "UBER": 1170,
+        "SHOP": 1170,
+        "SPOT": 1170,
+        "XLF": 1170,
+        "XLE": 1170,
+        "XLK": 1170,
+        "XLV": 1170,
+        "XLI": 1170,
+        "XLY": 1170,
+        "XBI": 1170,
+        "ARKK": 1170,
+        "TLT": 1170,
+        "IEF": 1170,
+        "GLD": 1170,
+        "USO": 1170
+      }
+    }
+  },
+  "development": [
+    {
+      "frequency": "daily",
+      "trialCount": 200,
+      "nondegenerateTrainTrials": 200,
+      "benchmark": 0.1249530364,
+      "selected": [
+        {
+          "engine": "pair-swing",
+          "selection": {
+            "id": "pair-swing:20:2.5:half-life:3",
+            "train": {
+              "sessions": 877,
+              "tradedDays": 820,
+              "entries": 843,
+              "exits": 843,
+              "missing": 0,
+              "unfilled": 0,
+              "gross": 11261.8596994605,
+              "slippage": 6724.4511835837,
+              "fees": 141.3317243821,
+              "borrow": 556.5061420858,
+              "supportedNet": 3839.5706494089,
+              "net": 3839.5706494089,
+              "sharpe": 0.4225223739,
+              "maxDrawdown": 3523.1226513817,
+              "exTop5": -262.1204008672,
+              "bootP": 0.203779622,
+              "dsr": 0.0016440977,
+              "betaToSpy": 0.002032387,
+              "maxPostOpenGross": 78260.8695652174,
+              "maxCloseGross": 78906.9982716734,
+              "maxAbsCloseNet": 1178.4983922402,
+              "closeGrossCapBreachDays": 0
+            },
+            "validation": {
+              "sessions": 293,
+              "tradedDays": 276,
+              "entries": 312,
+              "exits": 312,
+              "missing": 0,
+              "unfilled": 0,
+              "gross": 3183.3732006603,
+              "slippage": 2496.6926249076,
+              "fees": 52.4639705417,
+              "borrow": 200.2419832664,
+              "supportedNet": 433.9746219447,
+              "net": 433.9746219447,
+              "sharpe": 0.1345543121,
+              "maxDrawdown": 2942.2320432019,
+              "exTop5": -2766.5517734217,
+              "bootP": 0.4357564244,
+              "dsr": 0.0232571831,
+              "betaToSpy": 0.0082812416,
+              "maxPostOpenGross": 78260.8695652174,
+              "maxCloseGross": 75261.7784255456,
+              "maxAbsCloseNet": 707.7862750915,
+              "closeGrossCapBreachDays": 0
+            },
+            "trainPlateau": {
+              "neighbors": [
+                {
+                  "id": "pair-swing:20:2:half-life:3",
+                  "net": -5589.6254278394
+                },
+                {
+                  "id": "pair-swing:20:2.5:none:3",
+                  "net": 3487.0339296524
+                },
+                {
+                  "id": "pair-swing:20:2.5:half-life:2",
+                  "net": -5225.0904224881
+                },
+                {
+                  "id": "pair-swing:20:2.5:half-life:4",
+                  "net": 2470.8929443936
+                },
+                {
+                  "id": "pair-swing:20:2.5:correlation:3",
+                  "net": 2581.9491024125
+                },
+                {
+                  "id": "pair-swing:40:2.5:half-life:3",
+                  "net": -664.7036097248
+                }
+              ],
+              "pass": false
+            },
+            "validationPlateau": {
+              "neighbors": [
+                {
+                  "id": "pair-swing:20:2:half-life:3",
+                  "net": -4470.1079060369
+                },
+                {
+                  "id": "pair-swing:20:2.5:none:3",
+                  "net": -451.1755650071
+                },
+                {
+                  "id": "pair-swing:20:2.5:half-life:2",
+                  "net": -337.7442697592
+                },
+                {
+                  "id": "pair-swing:20:2.5:half-life:4",
+                  "net": 1356.5502387847
+                },
+                {
+                  "id": "pair-swing:20:2.5:correlation:3",
+                  "net": -1972.7601592117
+                },
+                {
+                  "id": "pair-swing:40:2.5:half-life:3",
+                  "net": 1860.7760838985
+                }
+              ],
+              "pass": false
+            },
+            "trainGates": {
+              "supported": true,
+              "positive": true,
+              "exTop5": false,
+              "bootstrap": false,
+              "dsr": false,
+              "plateau": false,
+              "beta": true
+            },
+            "validationGates": {
+              "supported": true,
+              "positive": true,
+              "exTop5": false,
+              "bootstrap": false,
+              "dsr": false,
+              "plateau": false,
+              "beta": true
+            },
+            "developmentPass": false
+          }
+        },
+        {
+          "engine": "gap-swing",
+          "selection": {
+            "id": "gap-swing:2:2:stocks",
+            "train": {
+              "sessions": 877,
+              "tradedDays": 209,
+              "entries": 105,
+              "exits": 105,
+              "missing": 0,
+              "unfilled": 0,
+              "gross": 2190.6101745524,
+              "slippage": 413.5543832611,
+              "fees": 8.7076434553,
+              "borrow": 25.052457742,
+              "supportedNet": 1743.295690094,
+              "net": 1743.295690094,
+              "sharpe": 0.9990224453,
+              "maxDrawdown": 483.801460368,
+              "exTop5": 623.9519980712,
+              "bootP": 0.0340965903,
+              "dsr": 0.0246872518,
+              "betaToSpy": 0.001088895,
+              "maxPostOpenGross": 19565.2173913044,
+              "maxCloseGross": 20185.0134660936,
+              "maxAbsCloseNet": 359.1173322004,
+              "closeGrossCapBreachDays": 0
+            },
+            "validation": {
+              "sessions": 293,
+              "tradedDays": 108,
+              "entries": 70,
+              "exits": 70,
+              "missing": 0,
+              "unfilled": 0,
+              "gross": 212.140954618,
+              "slippage": 277.1502899039,
+              "fees": 5.822383568,
+              "borrow": 15.2350948967,
+              "supportedNet": -86.0668137506,
+              "net": -86.0668137506,
+              "sharpe": -0.0581310428,
+              "maxDrawdown": 1963.4983550874,
+              "exTop5": -1641.3091908459,
+              "bootP": 0.5285471453,
+              "dsr": 0.0136034452,
+              "betaToSpy": 0.0003984222,
+              "maxPostOpenGross": 46956.5217391304,
+              "maxCloseGross": 47411.5139890709,
+              "maxAbsCloseNet": 480.0952658482,
+              "closeGrossCapBreachDays": 0
+            },
+            "trainPlateau": {
+              "neighbors": [
+                {
+                  "id": "gap-swing:1.5:2:stocks",
+                  "net": 1693.6390048202
+                },
+                {
+                  "id": "gap-swing:2:1:stocks",
+                  "net": 1273.8838749741
+                },
+                {
+                  "id": "gap-swing:2:3:stocks",
+                  "net": 1289.9463480849
+                }
+              ],
+              "pass": true
+            },
+            "validationPlateau": {
+              "neighbors": [
+                {
+                  "id": "gap-swing:1.5:2:stocks",
+                  "net": -684.4790144887
+                },
+                {
+                  "id": "gap-swing:2:1:stocks",
+                  "net": 640.956858339
+                },
+                {
+                  "id": "gap-swing:2:3:stocks",
+                  "net": -299.9901836659
+                }
+              ],
+              "pass": false
+            },
+            "trainGates": {
+              "supported": true,
+              "positive": true,
+              "exTop5": true,
+              "bootstrap": true,
+              "dsr": false,
+              "plateau": true,
+              "beta": true
+            },
+            "validationGates": {
+              "supported": true,
+              "positive": false,
+              "exTop5": false,
+              "bootstrap": false,
+              "dsr": false,
+              "plateau": false,
+              "beta": true
+            },
+            "developmentPass": false
+          }
+        }
+      ]
+    },
+    {
+      "frequency": "intraday",
+      "trialCount": 30,
+      "nondegenerateTrainTrials": 18,
+      "benchmark": 0.2893109095,
+      "selected": [
+        {
+          "engine": "pair-intraday",
+          "selection": null
+        },
+        {
+          "engine": "gap-intraday",
+          "selection": {
+            "id": "gap-intraday:2:1:stocks",
+            "train": {
+              "sessions": 374,
+              "tradedDays": 68,
+              "entries": 88,
+              "exits": 88,
+              "missing": 0,
+              "unfilled": 0,
+              "gross": 1080.5875839,
+              "slippage": 344.1778139465,
+              "fees": 7.2390802625,
+              "borrow": 0,
+              "supportedNet": 729.170689691,
+              "net": 729.170689691,
+              "sharpe": 0.6383458293,
+              "maxDrawdown": 406.9975652632,
+              "exTop5": -723.7963239469,
+              "bootP": 0.2101789821,
+              "dsr": 6.2e-9,
+              "betaToSpy": -0.0014212224,
+              "maxPostOpenGross": 0,
+              "maxCloseGross": 0,
+              "maxAbsCloseNet": 0,
+              "closeGrossCapBreachDays": 0
+            },
+            "validation": {
+              "sessions": 189,
+              "tradedDays": 38,
+              "entries": 46,
+              "exits": 46,
+              "missing": 0,
+              "unfilled": 0,
+              "gross": -683.4247786288,
+              "slippage": 179.4005388012,
+              "fees": 3.7602353546,
+              "borrow": 0,
+              "supportedNet": -866.5855527847,
+              "net": -866.5855527847,
+              "sharpe": -2.4051596872,
+              "maxDrawdown": 1123.4303979788,
+              "exTop5": -1314.0352744623,
+              "bootP": 0.9711028897,
+              "dsr": 2.2e-9,
+              "betaToSpy": -0.0026060604,
+              "maxPostOpenGross": 0,
+              "maxCloseGross": 0,
+              "maxAbsCloseNet": 0,
+              "closeGrossCapBreachDays": 0
+            },
+            "trainPlateau": {
+              "neighbors": [
+                {
+                  "id": "gap-intraday:1.5:1:stocks",
+                  "net": 600.3927737281
+                },
+                {
+                  "id": "gap-intraday:2:3:stocks",
+                  "net": 836.5888818848
+                }
+              ],
+              "pass": true
+            },
+            "validationPlateau": {
+              "neighbors": [
+                {
+                  "id": "gap-intraday:1.5:1:stocks",
+                  "net": -812.2282518811
+                },
+                {
+                  "id": "gap-intraday:2:3:stocks",
+                  "net": -858.609058146
+                }
+              ],
+              "pass": false
+            },
+            "trainGates": {
+              "supported": true,
+              "positive": true,
+              "exTop5": false,
+              "bootstrap": false,
+              "dsr": false,
+              "plateau": true,
+              "beta": true
+            },
+            "validationGates": {
+              "supported": true,
+              "positive": false,
+              "exTop5": false,
+              "bootstrap": false,
+              "dsr": false,
+              "plateau": false,
+              "beta": true
+            },
+            "developmentPass": false
+          }
+        },
+        {
+          "engine": "gap-fade",
+          "selection": {
+            "id": "gap-fade:2:prior-close:stocks",
+            "train": {
+              "sessions": 374,
+              "tradedDays": 39,
+              "entries": 52,
+              "exits": 52,
+              "missing": 0,
+              "unfilled": 0,
+              "gross": 225.345612054,
+              "slippage": 203.7337537601,
+              "fees": 4.2807749579,
+              "borrow": 0,
+              "supportedNet": 17.331083336,
+              "net": 17.331083336,
+              "sharpe": 0.0234393788,
+              "maxDrawdown": 533.5399274568,
+              "exTop5": -841.6109423218,
+              "bootP": 0.4588541146,
+              "dsr": 1.11e-8,
+              "betaToSpy": -0.0020057459,
+              "maxPostOpenGross": 0,
+              "maxCloseGross": 0,
+              "maxAbsCloseNet": 0,
+              "closeGrossCapBreachDays": 0
+            },
+            "validation": {
+              "sessions": 189,
+              "tradedDays": 22,
+              "entries": 25,
+              "exits": 25,
+              "missing": 0,
+              "unfilled": 0,
+              "gross": 308.9201627943,
+              "slippage": 97.4651252568,
+              "fees": 2.0500112921,
+              "borrow": 0,
+              "supportedNet": 209.4050262455,
+              "net": 209.4050262455,
+              "sharpe": 0.6476680694,
+              "maxDrawdown": 270.3276935211,
+              "exTop5": -342.5410485492,
+              "bootP": 0.2331766823,
+              "dsr": 0.0000560723,
+              "betaToSpy": 0.0021500596,
+              "maxPostOpenGross": 0,
+              "maxCloseGross": 0,
+              "maxAbsCloseNet": 0,
+              "closeGrossCapBreachDays": 0
+            },
+            "trainPlateau": {
+              "neighbors": [
+                {
+                  "id": "gap-fade:2:vwap:stocks",
+                  "net": -65.3322317682
+                }
+              ],
+              "pass": false
+            },
+            "validationPlateau": {
+              "neighbors": [
+                {
+                  "id": "gap-fade:2:vwap:stocks",
+                  "net": -0.5268032415
+                }
+              ],
+              "pass": false
+            },
+            "trainGates": {
+              "supported": true,
+              "positive": true,
+              "exTop5": false,
+              "bootstrap": false,
+              "dsr": false,
+              "plateau": false,
+              "beta": true
+            },
+            "validationGates": {
+              "supported": true,
+              "positive": true,
+              "exTop5": false,
+              "bootstrap": false,
+              "dsr": false,
+              "plateau": false,
+              "beta": true
+            },
+            "developmentPass": false
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -2,7 +2,11 @@ import { JevResearchPolicy } from './acceptance'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { BacktestComparisonInputSchema, BacktestInputSchema, BacktestIssue } from '../intraday-replay/backtest'
+import {
+  BacktestComparisonInputSchema,
+  BacktestInputV11Schema as BacktestInputSchema,
+  BacktestIssue,
+} from '../intraday-replay/backtest'
 import { ReplayBrokerCheckpointSchema } from '../intraday-replay/broker-checkpoint'
 import { calculateReplayInferenceCosts, ReplayInferenceCostSummarySchema } from '../intraday-replay/inference-costs'
 import { ReplayInferenceCallSchema } from '../intraday-replay/inference-timing'

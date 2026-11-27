@@ -49,12 +49,15 @@ const signalPriceMicros = (value: number, field: string) =>
     return yield* scaledNumber(Number(BigDecimal.scale(rounded, 6).value), field, 1)
   })
 
-export const jevEntryQuoteExclusion = (quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>) =>
+export const jevEntryQuoteExclusion = (
+  quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>,
+  maximumEntrySpreadBps?: number,
+) =>
   Result.gen(function* () {
     const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
     const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
-    if ((ask - bid) * 20_000n > BigInt(jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps) * (ask + bid))
-      return JevEntryExclusion.Spread
+    const spreadCap = maximumEntrySpreadBps ?? jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps
+    if ((ask - bid) * 20_000n > BigInt(spreadCap) * (ask + bid)) return JevEntryExclusion.Spread
     if (quote.bidSize <= 0 || quote.askSize <= 0) return JevEntryExclusion.DisplayedSize
     return null
   })

@@ -39,6 +39,14 @@ test('runtime migration loader preserves the retained controller cutover sequenc
     [218, 'v43_paper_settlement'],
     [219, 'positive_net_target_admission'],
   ])
+  expect(migrations.filter(([id]) => id >= 220).map(([id, name]) => [id, name])).toEqual([
+    [220, 'intraday_alpha_admission'],
+    [221, 'v44_paper_settlement'],
+    [222, 'intraday_alpha_v2_admission'],
+    [223, 'intraday_alpha_v1_paper_settlement'],
+    [224, 'strategy_bound_qualification'],
+    [225, 'alpha_baseline_preparation'],
+  ])
 })
 
 test('runtime migration loader schedules staged transport after the retained chart checkpoint', () => {

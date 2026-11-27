@@ -45,6 +45,7 @@ const hashCalendar = (hours: MarketHours) =>
 
 export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
+  options?: { readonly allowConcurrentAdmission?: boolean },
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> => {
   const candidate = {
     cycleBindingId: context.cycleBindingId,
@@ -181,6 +182,7 @@ export const discoverAutonomousCyclePass = <R>(
           observedAt,
           firstAttemptDraft.window.submissionCutoffAt,
           recoveredBlockedCycle,
+          options?.allowConcurrentAdmission === true,
         )
       : 1
     if (Option.isSome(existing) && entryAttemptOrdinal === undefined) {
@@ -266,10 +268,11 @@ const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoveryS
 const recoverCycle = <R>(
   selection: CycleRecoverySelection,
   context: CycleRunContext<R>,
+  options?: { readonly allowConcurrentAdmission?: boolean },
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> => {
   switch (selection.action) {
     case 'DISCOVER':
-      return discoverAutonomousCyclePass(context)
+      return discoverAutonomousCyclePass(context, options)
     case 'BLOCK':
       return pipe(
         CycleStore,
@@ -531,6 +534,7 @@ const recoverCycle = <R>(
 export const runAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
   cycle: AutonomousCycle | undefined,
+  options?: { readonly allowConcurrentAdmission?: boolean },
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
   currentUtcInstant.pipe(
     Effect.flatMap((observedAt) =>
@@ -542,5 +546,5 @@ export const runAutonomousCyclePass = <R>(
         cycle,
       }),
     ),
-    Effect.flatMap((selection) => recoverCycle(selection, context)),
+    Effect.flatMap((selection) => recoverCycle(selection, context, options)),
   )

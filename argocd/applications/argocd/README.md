@@ -10,7 +10,7 @@ Reconcile the complete upstream Argo CD v3.6.3 HA manifest through GitOps. Argo 
 HTTPS and Lovely for Applications that select that plugin. Applications with server-side apply use server-side diff,
 so admission failures can surface during comparison.
 
-Reconcile Argo CD first, then sync the `appset-helm` ApplicationSet through `root` so Kargo advances to chart 1.12.6.
+Reconcile Argo CD first, then sync the `appset-helm` ApplicationSet through `root` so Kargo advances to chart 1.12.7.
 Kargo validates subscription fields against their specific Warehouse subscription type. Verify the installed Warehouse
 specs against the target schema and record current Freight before the upgrade.
 
@@ -39,7 +39,7 @@ kubectl -n argocd rollout status deployment/argocd-redis-ha-haproxy --timeout=5m
 ```
 
 Sync the root-owned Helm ApplicationSet at the same commit, then verify the generated Kargo Application finishes
-its automatic sync at chart 1.12.6:
+its automatic sync at chart 1.12.7:
 
 ```bash
 argocd app sync root --revision <merge-commit> --resource argoproj.io:ApplicationSet:appset-helm
