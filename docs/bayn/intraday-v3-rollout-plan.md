@@ -24,7 +24,7 @@ replay. Neither the [Wave 1E execution audit](https://github.com/proompteng/lab/
       for status, bars and executable quotes. Use the [Dorvud forwarder](../../services/dorvud/README.md) and its bounded
       provider REST backfill with explicit `sip` feed selection, isolated Kafka topic and reader identity. Preserve
       native 1m bars/updates, feed, revision, first receipt, and Kafka coordinates. Record trading/listing status and its
-      effective and receipt times separately. Do not infer an active symbol from today's complete tape or duplicate a
+      effective and receipt times separately. Require active status both at the checkpoint and on receipt. Do not infer an active symbol from today's complete tape or duplicate a
       stream to bypass provider connection limits. No credential or permission changes without separate approval.
 - [ ] Extend the [Flink aggregation and archive path](streaming-market-data-design.md) with versioned 5m regular-session
       windows on official Alpaca provider sessions. The calendar must enumerate every exchange session (including

@@ -266,6 +266,27 @@ test('noon re-ranks remaining names when one symbol halts, without using a futur
   ).toBe('insufficient-candidates')
 })
 
+test('noon requires an eligible symbol at the checkpoint and at its actual receipt', () => {
+  const input = noonMarket(1.2)
+  const afterCutoff = '2026-11-27T17:00:00.500Z'
+  const halted = {
+    symbol: 'AAPL' as const,
+    active: false,
+    availableAt: at(blackFriday, 149),
+    effectiveAt: at(blackFriday, 149),
+  }
+  const resumed = { ...halted, active: true, availableAt: afterCutoff, effectiveAt: afterCutoff }
+  const haltAfterCutoff = { ...resumed, active: false }
+  for (const statuses of [
+    [...input.statuses, halted, resumed],
+    [...input.statuses, haltAfterCutoff],
+  ]) {
+    const result = evaluate({ ...input, statuses }).diagnostics.reversion
+    expect(result.reason).toBe('insufficient-candidates')
+    expect(result.diagnostics[0]).toEqual({ symbol: 'AAPL', reason: 'inactive' })
+  }
+})
+
 const noiseMarket = (cutoff: number, close: number, session = blackFriday) =>
   market(
     ['QQQ', 'SMH'],

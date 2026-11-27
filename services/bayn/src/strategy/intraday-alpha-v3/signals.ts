@@ -280,11 +280,12 @@ const orb = (f: Features) => {
     return skip('outside-window')
   if (state.orbUsed) return skip('already-used')
   if (openingObserved === null || openingObserved > observed) return skip('missing-opening-checkpoint')
-  const activeAtOpen = statusAt(market.statuses, openingObserved, openingObserved, market.session.date)
+  const activeAtOpen = statusAt(market.statuses, rangeEnd, openingObserved, market.session.date)
+  const activeAtOpeningReceipt = statusAt(market.statuses, openingObserved, openingObserved, market.session.date)
 
   const ranked = []
   for (const symbol of equitySymbols) {
-    if (!activeAtOpen(symbol)) {
+    if (!activeAtOpen(symbol) || !activeAtOpeningReceipt(symbol)) {
       candidates.push({ symbol, reason: 'inactive-at-opening-checkpoint' })
       continue
     }
@@ -553,6 +554,8 @@ export const evaluateIntradayAlphaV3 = (
         bars: yield* indexBars(bars, bounds, bounds.close, observed, interval),
       })
     }
+    const activeAtCutoff = statusAt(market.statuses, cutoff, observed, market.session.date)
+    const activeAtReceipt = statusAt(market.statuses, observed, observed, market.session.date)
     const features: Features = {
       policy,
       market,
@@ -563,7 +566,7 @@ export const evaluateIntradayAlphaV3 = (
       today,
       history,
       slot: (cutoff - schedule.open) / interval - 1,
-      active: statusAt(market.statuses, observed, observed, market.session.date),
+      active: (symbol) => activeAtCutoff(symbol) && activeAtReceipt(symbol),
     }
     const morning = orb(features)
     const midday = noon(features, morning.signal)
