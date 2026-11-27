@@ -100,6 +100,7 @@ interface Order {
 
 type Funding = NonNullable<Result.Result.Success<ReturnType<typeof makeIntradayAlphaFundedExitPlan>>>
 interface DailyHistory {
+  readonly date: string
   readonly daily: PriorSessionDailySummary[]
   readonly checkpoints: PriorSessionCheckpointSummary[]
   readonly spyClose: number | undefined
@@ -156,11 +157,16 @@ export const createReplay = (calendar: ReplayCalendar) => {
         }
       }
     }
-    history.push({ daily, checkpoints, spyClose: readBar(session, policy.benchmarkSymbol, session.minutes - 1)?.close })
+    history.push({
+      date: session.date,
+      daily,
+      checkpoints,
+      spyClose: readBar(session, policy.benchmarkSymbol, session.minutes - 1)?.close,
+    })
     // The first true range in the 14-session window needs one earlier close. Use
     // the same bounded calendar lookback as the retained verifier, including thin histories.
     const cutoff = Date.parse(session.date) - Math.max(35, policy.trailingBaseline.lookbackSessions * 3) * 86_400_000
-    while (history.length > 15 && Date.parse(history[0].daily[0]?.sessionDate ?? session.date) < cutoff) history.shift()
+    while (history.length > 15 && Date.parse(history[0].date) < cutoff) history.shift()
     if (!sndkReady) allBars.delete('SNDK')
 
     const frames = new Map<number, Frame>()
@@ -487,12 +493,10 @@ export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: str
   const noiseCommitted = new Set<string>()
   let orbCommitted = false
   let middayCommitted = false
-  let pendingUntil = -1
   const sizeByVol = architecture.sizing === 'volatility' || architecture.sizing === 'both'
 
   for (const minute of decisionMinutes) {
     if (!baselineReady || (sizeByVol && volatilityScale === null)) break
-    if (minute < pendingUntil) continue
     const active = trades.filter((trade) => trade.exit.minute > minute)
     const equityOccupied = active.some((trade) => trade.phase !== noise)
     const mayNoise =
@@ -563,7 +567,8 @@ export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: str
       const bps = phase === midday && typeof architecture.bracket === 'number' ? architecture.bracket : undefined
       legs = legs.map((leg) => ({
         ...leg,
-        targetWeight: Math.min(maximum, leg.targetWeight * scale),
+        // Match the precision of live risk weights before entering fixed point.
+        targetWeight: Math.round(Math.min(maximum, leg.targetWeight * scale) * 10_000) / 10_000,
         protectiveStopBps: bps ?? leg.protectiveStopBps,
         profitTargetBps: bps ?? leg.profitTargetBps,
       }))
@@ -599,9 +604,8 @@ export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: str
       middaySelected = orders.length
     }
     if (phase === noise) for (const { leg } of orders) noiseCommitted.add(leg.symbol)
-    // An unfilled intent is still a committed decision. The production 60-second
-    // working window resolves by the observation immediately following t+2.
-    pendingUntil = minute + 1
+    // Unfilled intents still use their quotas; the 60-second working window
+    // resolves no later than the next minute's decision.
     let grossAtFill = heldGross
     for (const { order, limit } of entries) {
       const { leg, shares, stop, target } = order
