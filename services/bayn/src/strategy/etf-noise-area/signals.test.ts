@@ -3,15 +3,9 @@ import { Result } from 'effect'
 
 import type { EquityProviderSession } from '../../equity-hours'
 import { OrderSide } from '../../execution/contracts'
-import {
-  defaultEtfNoiseAreaPolicy,
-  evaluateNoiseAreaCheckpoint,
-  noiseAreaSessionSchedule,
-  planNoiseAreaEntries,
-  planNoiseAreaExit,
-  planNoiseAreaProtection,
-  type PriorNoiseAreaSession,
-} from './index'
+import { planNoiseAreaEntries, planNoiseAreaExit, planNoiseAreaProtection } from './exit-plan'
+import { defaultEtfNoiseAreaPolicy } from './policy'
+import { evaluateNoiseAreaCheckpoint, noiseAreaSessionSchedule, type PriorNoiseAreaSession } from './signals'
 
 const micros = 1_000_000n
 const session = (date: string, halfDay = false): EquityProviderSession => ({
@@ -243,7 +237,7 @@ describe('causal Noise Area evaluator', () => {
     expect(evaluate({ ...inside, priorSessions })._tag).toBe('NoSignal')
   })
 
-  test('keeps observed zero returns in the mean without trading a zero-width noise band', () => {
+  test('keeps observed zero returns in the mean', () => {
     const value = fixture(date, '15:30', false, 100_900_000n)
     const priorSessions = value.priorSessions.map((row, index) => ({
       ...row,
@@ -251,19 +245,34 @@ describe('causal Noise Area evaluator', () => {
     }))
     // Seven 0% and seven 1% samples give a 0.6% band after the multiplier.
     expect(evaluate({ ...value, priorSessions })._tag).toBe('LongBreakout')
-    expect(
-      evaluate({
-        ...value,
-        priorSessions: priorSessions.map((row) => ({ ...row, checkpointCloseMicros: { 60: 100n * micros } })),
-      })._tag,
-    ).toBe('NoSignal')
+  })
+
+  test.each([
+    ['LONG', 99n * micros, 100n * micros],
+    ['SHORT', 102n * micros, 101n * micros],
+  ] as const)('exits a held %s across a zero-width band but suppresses flat entries', (side, price, anchor) => {
+    const value = fixture(date, '15:30', false, price)
+    const priorSessions = value.priorSessions.map((row, index) => ({
+      ...row,
+      // Prior close is $101 and today's open is $100, so the two anchor levels differ.
+      closePriceMicros: index === 13 ? 101n * micros : row.closePriceMicros,
+      checkpointCloseMicros: { 60: row.openPriceMicros },
+    }))
+    const position = { _tag: 'Holding', side } as const
+    expect(evaluate({ ...value, priorSessions })._tag).toBe('NoSignal')
+    expect(evaluate({ ...fixture(date, '15:30', false, anchor), priorSessions, position })._tag).toBe('NoSignal')
+    expect(evaluate({ ...value, priorSessions, position })).toEqual({
+      _tag: 'OppositeBandExit',
+      symbol: 'QQQ',
+      side,
+      flattenAt: `${date}T20:58:00.000Z`,
+    })
   })
 
   test('ignores future events, revisions, and target-session history instead of leaking them', () => {
     const value = fixture(date)
     const futureAt = `${date}T15:00:04.000Z`
     const laterBar = { ...value.bars[1], availableAt: futureAt, closePriceMicros: 80n * micros }
-    const prematureBar = { ...value.bars[1], availableAt: `${date}T14:59:59.999Z` }
     const priorSessions = value.priorSessions.flatMap((row) => [
       row,
       { ...row, availableAt: futureAt, checkpointCloseMicros: { 30: 102n * micros } },
@@ -276,7 +285,6 @@ describe('causal Noise Area evaluator', () => {
         bars: [
           ...value.bars,
           laterBar,
-          prematureBar,
           { ...laterBar, eventAt: `${date}T15:00:00.000Z` },
           { ...laterBar, eventAt: `${date}T14:29:00.000Z` },
           { ...value.bars[1], symbol: 'SMH' },
@@ -284,13 +292,41 @@ describe('causal Noise Area evaluator', () => {
       }),
     ).toEqual(evaluate(value))
 
-    expect(evaluate({ ...value, bars: [value.bars[0], laterBar, prematureBar] })).toEqual({
+    expect(evaluate({ ...value, bars: [value.bars[0], laterBar] })).toEqual({
       _tag: 'MissingWarmup',
       reason: 'CurrentBars',
     })
     expect(evaluate({ ...value, observedAt: `${date}T14:59:59.999Z` })._tag).toBe('NoSignal')
     expect(evaluate({ ...value, observedAt: `${date}T15:01:00.000Z` })._tag).toBe('NoSignal')
     expect(evaluate(fixture(date, '15:15'))._tag).toBe('NoSignal')
+  })
+
+  test.each([
+    ['opening', 0, '14:30:59.999'],
+    ['checkpoint-ending', 1, '14:59:59.999'],
+  ] as const)('fails the observation on a premature %s revision even with a finalized row', (_, index, time) => {
+    const value = fixture(date)
+    const premature = { ...value.bars[index], availableAt: `${date}T${time}Z` }
+    expect(evaluateNoiseAreaCheckpoint({ ...value, bars: [...value.bars, premature] })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'NoiseAreaInputError', message: expect.stringContaining(premature.eventAt) },
+    })
+  })
+
+  test('fails the observation on a premature prior summary even with a finalized summary or missing warmup', () => {
+    const value = fixture(date)
+    const prior = value.priorSessions.at(-1)
+    if (prior === undefined) throw new Error('expected warmup fixture')
+    const premature = { ...prior, availableAt: `${prior.sessionDate}T20:59:59.999Z` }
+    const priorSessions = [...value.priorSessions, premature]
+    const failure = {
+      _tag: 'Failure',
+      failure: { _tag: 'NoiseAreaInputError', message: expect.stringContaining(prior.sessionDate) },
+    }
+    expect(evaluateNoiseAreaCheckpoint({ ...value, priorSessions })).toMatchObject(failure)
+    expect(evaluateNoiseAreaCheckpoint({ ...value, priorSessions: priorSessions.slice(1), bars: [] })).toMatchObject(
+      failure,
+    )
   })
 
   test('fails closed on missing, conflicting, or nonmatching official warmup and current bars', () => {

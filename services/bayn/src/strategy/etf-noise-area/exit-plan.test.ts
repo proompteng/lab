@@ -3,14 +3,9 @@ import { Result } from 'effect'
 
 import { OrderSide, OrderType } from '../../execution/contracts'
 import { quantityScale } from '../../quantity'
-import {
-  decodeEtfNoiseAreaPolicy,
-  defaultEtfNoiseAreaPolicy,
-  expandedEtfNoiseAreaPolicy,
-  planNoiseAreaEntries,
-  planNoiseAreaProtection,
-  type NoiseAreaBreakout,
-} from './index'
+import { planNoiseAreaEntries, planNoiseAreaProtection } from './exit-plan'
+import { decodeEtfNoiseAreaPolicy, defaultEtfNoiseAreaPolicy, expandedEtfNoiseAreaPolicy } from './policy'
+import type { NoiseAreaBreakout } from './signals'
 
 const micros = 1_000_000n
 const breakout = (

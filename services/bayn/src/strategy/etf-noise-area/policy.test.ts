@@ -9,7 +9,7 @@ import {
   defaultEtfNoiseAreaPolicy,
   etfNoiseAreaPolicyHash,
   expandedEtfNoiseAreaPolicy,
-} from './index'
+} from './policy'
 
 describe('ETF Noise Area policy identity', () => {
   test('pins the immutable default policy and hashes by content, not key order', () => {

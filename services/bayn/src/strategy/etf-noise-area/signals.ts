@@ -174,28 +174,56 @@ export const evaluateNoiseAreaCheckpoint = (input: {
     const openMs = Date.parse(session.regularOpenAt)
     const checkpointMs = Date.parse(checkpointAt)
     const elapsedMinutes = (checkpointMs - openMs) / minuteMs
-    const completedBar = (startMs: number) => {
-      const start = new Date(startMs).toISOString()
-      const end = new Date(startMs + minuteMs).toISOString()
+    const checkpointBarStart = new Date(checkpointMs - minuteMs).toISOString()
+    const minuteEnds = new Map([
+      [session.regularOpenAt, new Date(openMs + minuteMs).toISOString()],
+      [checkpointBarStart, checkpointAt],
+    ])
+    const calendar = sessions.slice(0, -1).slice(-policy.lookbackSessions)
+    const priorCloses = new Map(calendar.map((prior) => [prior.date, prior.regularCloseAt]))
+
+    // Validate required evidence before selecting revisions or returning a missing-warmup result.
+    const prematureBar = input.bars.find((bar) => {
+      const end = minuteEnds.get(bar.eventAt)
+      return bar.symbol === symbol && end !== undefined && isUtc(bar.availableAt) && bar.availableAt < end
+    })
+    if (prematureBar !== undefined) {
+      return yield* Result.fail(
+        new NoiseAreaInputError({
+          message: `${symbol} bar at ${prematureBar.eventAt} was available at ${prematureBar.availableAt} before minute completion`,
+        }),
+      )
+    }
+    const prematurePrior = input.priorSessions.find((row) => {
+      const close = priorCloses.get(row.sessionDate)
+      return (
+        row.symbol === symbol &&
+        close !== undefined &&
+        isUtc(close) &&
+        isUtc(row.availableAt) &&
+        row.availableAt < close
+      )
+    })
+    if (prematurePrior !== undefined) {
+      return yield* Result.fail(
+        new NoiseAreaInputError({
+          message: `${symbol} summary for ${prematurePrior.sessionDate} was available at ${prematurePrior.availableAt} before regular close`,
+        }),
+      )
+    }
+
+    const completedBar = (start: string) => {
       const matches = input.bars.filter(
         (bar) =>
-          bar.symbol === symbol &&
-          bar.eventAt === start &&
-          isUtc(bar.availableAt) &&
-          bar.availableAt >= end &&
-          bar.availableAt <= observedAt,
+          bar.symbol === symbol && bar.eventAt === start && isUtc(bar.availableAt) && bar.availableAt <= observedAt,
       )
       return matches.length === 1 ? matches[0] : undefined
     }
-    const open = completedBar(openMs)?.openPriceMicros
-    const close = completedBar(checkpointMs - minuteMs)?.closePriceMicros
+    const open = completedBar(session.regularOpenAt)?.openPriceMicros
+    const close = completedBar(checkpointBarStart)?.closePriceMicros
     if (open === undefined || close === undefined || open <= 0n || close <= 0n) return missing('CurrentBars')
 
-    const calendar = sessions.slice(0, -1).slice(-policy.lookbackSessions)
-    if (
-      calendar.length !== policy.lookbackSessions ||
-      new Set(calendar.map(({ date }) => date)).size !== calendar.length
-    ) {
+    if (calendar.length !== policy.lookbackSessions || priorCloses.size !== calendar.length) {
       return missing('PriorSessions')
     }
 
@@ -212,7 +240,6 @@ export const evaluateNoiseAreaCheckpoint = (input: {
           row.symbol === symbol &&
           row.sessionDate === prior.date &&
           isUtc(row.availableAt) &&
-          row.availableAt >= prior.regularCloseAt &&
           row.availableAt <= observedAt,
       )
       const row = matches[0]
@@ -257,13 +284,14 @@ export const evaluateNoiseAreaCheckpoint = (input: {
     const band = swingNumerator * BigInt(policy.bandMultiplier * 10)
     const upperAnchor = open > prevClose ? open : prevClose
     const lowerAnchor = open < prevClose ? open : prevClose
-    const above = band > 0n && close * denominator > upperAnchor * (denominator + band)
-    const below = band > 0n && close * denominator < lowerAnchor * (denominator - band)
+    const above = close * denominator > upperAnchor * (denominator + band)
+    const below = close * denominator < lowerAnchor * (denominator - band)
     if (position._tag === 'Holding') {
       return (position.side === 'LONG' ? below : above)
         ? { _tag: 'OppositeBandExit', symbol, side: position.side, flattenAt }
         : { ...noSignal, volatility }
     }
+    if (band === 0n) return { ...noSignal, volatility }
     if (volatility.atr14Micros === 0n) return missing('Volatility')
     if (position.entryTaken || (!above && !below)) return { ...noSignal, volatility }
     return {

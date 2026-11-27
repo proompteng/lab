@@ -4,6 +4,11 @@
 policy, controller, migrations, or grants. This runbook is for a separately reviewed activation after
 [Wave 4B](https://github.com/proompteng/lab/pull/16371) is deployed and its recovery behavior is verified.
 
+Import the policy, signal evaluator, and order planners directly from
+[`policy.ts`](../../services/bayn/src/strategy/etf-noise-area/policy.ts),
+[`signals.ts`](../../services/bayn/src/strategy/etf-noise-area/signals.ts), and
+[`exit-plan.ts`](../../services/bayn/src/strategy/etf-noise-area/exit-plan.ts), respectively.
+
 ## Why QQQ + SMH first
 
 Both ETFs already belong to Bayn's [22-symbol equity source universe](../../services/bayn/src/strategy/intraday-market.ts)
@@ -27,6 +32,9 @@ execution grid.
 - Bind the prior 14 official regular sessions and the previous regular close needed to seed ATR14 to immutable
   receipt times. Use finalized opening and checkpoint-ending minutes only. A missing prior checkpoint (including one
   after a prior half-day close) stays `MissingWarmup`; do not fill it from a neighboring minute or another feed.
+  A required minute or prior summary timestamped before its minute completion or regular close fails the observation,
+  even if a finalized revision is also present. A zero-width band blocks entries but still permits opposite-band exits
+  at the open/previous-close anchors.
   Compare captured IEX and same-time SIP decisions and publish missing coverage, data latency, and signal disagreements.
 - Verify 10:00–15:00 ET checkpoints on normal days and a 12:30 ET last checkpoint on 13:00 ET early closes.
   Exercise regular-close-minus-two-minute flatten without bars or a warm baseline. On both
