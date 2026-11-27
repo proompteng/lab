@@ -73,8 +73,10 @@ describe('frozen SIP boundaries', () => {
     const tape = await readTape(cal, cal[0].date, rows([dev, holdout]))
     expect(tape.days).toHaveLength(1)
     expect(tape.row).toBe(2)
-    await expect(readTape(cal, cal[1].date, rows([dev, holdout]))).rejects.toThrow('Invalid OHLCV')
-    await expect(readTape(cal, cal[0].date, rows([dev, dev]))).rejects.toThrow('Invalid symbol/time/order/shape')
+    const invalidHoldout = await readTape(cal, cal[1].date, rows([dev, holdout])).catch((error: unknown) => error)
+    expect(invalidHoldout).toHaveProperty('message', expect.stringContaining('Invalid OHLCV'))
+    const duplicate = await readTape(cal, cal[0].date, rows([dev, dev])).catch((error: unknown) => error)
+    expect(duplicate).toHaveProperty('message', expect.stringContaining('Invalid symbol/time/order/shape'))
     expect(() => requireFreezeMatch({ data: 'a', trial: 'x' }, { data: 'b', trial: 'x' })).toThrow('does not match')
   })
 })
@@ -116,6 +118,9 @@ describe('causal replay', () => {
     expect(result.total.entryNotional).toBe(59_430)
     expect(leaveOut(result, 'AAPL').entryNotional).toBe(59_950)
     expect(leaveOut(result, 'NVDA')).toBe(result.total)
+    const slippedBuy = 105 * 1.0001
+    const slippedSell = 106 * 0.9999
+    expect(netAt(result.total, 2)).toBeCloseTo(566 * (slippedSell - slippedBuy - slippedSell * 0.000021), 8)
     expect(netAt(result.total, 2)).toBeGreaterThan(netAt(result.total, 10))
   })
 
@@ -191,7 +196,8 @@ test('registry covers the full Cartesian design and the plateau is one-axis', ()
 
 test('bootstraps mean-centered circular blocks and keeps incomplete windows out of promotion metrics', () => {
   const input = Array.from({ length: 23 }, (_, i) => (i % 5) - 1.8)
-  expect(blockP(input)).toBe(blockP(input))
+  // 3,922 upper-tail draws from the direct circular-resampling reference, including its partial final block.
+  expect(blockP(input)).toBe(3923 / 10001)
   expect(blockP(Array.from({ length: 25 }, () => 1))).toBe(1 / 10001)
   expect(blockP(Array.from({ length: 25 }, () => 0))).toBe(1)
   expect(blockP(input.slice(0, 9))).toBeNull()
