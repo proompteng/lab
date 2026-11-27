@@ -156,6 +156,7 @@ const allowedSymbols = new Set<string>([...intradayAlphaCandidateSymbols, intrad
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 const policy = makeIntradayAlphaPolicy(protocol)
 const accountId = 'alpha-replay-verifier'
+export { accountId as replayAccountId }
 const cycleId = 'a'.repeat(64)
 const policyHash = Result.getOrThrow(canonicalHashV1Result(policy))
 const observationHash = 'b'.repeat(64)
