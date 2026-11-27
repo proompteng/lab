@@ -394,11 +394,7 @@
               "orb5/3/k1/gap/range/2",
               "orb15/2.5/k1/gap/range/2"
             ],
-            "passing": [
-              "orb5/2/k1/gap/range/2",
-              "orb5/2.5/k1/none/range/2",
-              "orb5/3/k1/gap/range/2"
-            ],
+            "passing": ["orb5/2/k1/gap/range/2", "orb5/2.5/k1/none/range/2", "orb5/3/k1/gap/range/2"],
             "pass": false
           },
           "pass": false
@@ -540,13 +536,8 @@
             }
           ],
           "plateau": {
-            "neighbors": [
-              "combo/0.25",
-              "combo/0.75"
-            ],
-            "passing": [
-              "combo/0.75"
-            ],
+            "neighbors": ["combo/0.25", "combo/0.75"],
+            "passing": ["combo/0.75"],
             "pass": false
           },
           "pass": false
@@ -567,10 +558,7 @@
             }
           ],
           "plateau": {
-            "neighbors": [
-              "combo/0.25",
-              "combo/0.75"
-            ],
+            "neighbors": ["combo/0.25", "combo/0.75"],
             "passing": [],
             "pass": false
           },
