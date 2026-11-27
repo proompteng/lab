@@ -1,4 +1,5 @@
-import { Effect } from 'effect'
+import { Effect, Option } from 'effect'
+import { ReplayAlphaObservationCommit } from './alpha-baseline-use'
 
 import { operationalError } from '../errors'
 import type { CandidateObservationStore } from '../observe-composition/candidate-observation'
@@ -50,6 +51,7 @@ export const makeReplayDecisionLatency = (
     readonly p95FullBatchMs: number
     readonly advanceTo: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>
   } | null,
+  retainOriginalCommand = false,
 ) => {
   let commandIssuedAt: string | undefined
   const admitted = new Map<string, string>()
@@ -70,7 +72,7 @@ export const makeReplayDecisionLatency = (
   )
 
   const runPass = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
-    stress === null
+    stress === null && !retainOriginalCommand
       ? operation
       : Effect.acquireUseRelease(
           Effect.gen(function* () {
@@ -144,7 +146,7 @@ export const makeReplayDecisionLatency = (
     })
 
   const wrapObservations = (store: CandidateObservationStore['Service']): CandidateObservationStore['Service'] =>
-    stress === null
+    stress === null && !retainOriginalCommand
       ? store
       : {
           ...store,
@@ -157,7 +159,12 @@ export const makeReplayDecisionLatency = (
                     return yield* fail('Momentum source admission is outside its replay command')
                   // Admit only after the authoritative PostgreSQL transaction commits; failed writes remain failed passes.
                   yield* store.record(observation, momentumPolicy)
-                  admittedObservations.set(observation.contentHash, issuedAt)
+                  if (stress !== null) admittedObservations.set(observation.contentHash, issuedAt)
+                  if (observation.payload.schemaVersion === 'bayn.intraday-alpha-observation.v2') {
+                    const commit = yield* Effect.serviceOption(ReplayAlphaObservationCommit)
+                    if (Option.isSome(commit)) yield* commit.value.record(observation)
+                  }
+                  if (stress === null) return
                   const previous = observationReceipts.get(observation.contentHash)
                   if (previous !== undefined) return
                   const timing = yield* releaseTime(issuedAt, observation.payload.observedAt, null)
@@ -190,6 +197,11 @@ export const makeReplayDecisionLatency = (
 
   return {
     runPass,
+    currentCommandIssuedAt: Effect.suspend(() =>
+      commandIssuedAt === undefined
+        ? Effect.fail(fail('Alpha baseline admission is outside its original replay command'))
+        : Effect.succeed(commandIssuedAt),
+    ),
     wrapStore,
     wrapObservations,
     evidence: Effect.sync(() => ({

@@ -2,8 +2,8 @@ import type { EntryInferenceMaterial } from './entry-inference-input'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { buildChartQuestions, chartQuestionPolicy } from './chart-questions'
 import * as retainedJevChartStages from './retained-jev-staged-chart-questions'
-import { entryJudgmentPolicy } from './entry-questions'
-import { shortEntryJudgmentPolicy } from './short-entry-questions'
+import { entryJudgmentPolicy, symmetricEntryJudgmentPolicy } from './entry-questions'
+import { shortEntryJudgmentPolicy, symmetricShortEntryJudgmentPolicy } from './short-entry-questions'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -267,7 +267,11 @@ export const jevBatchQuestionSetHash = (
       const input = candidate.request.request
       const { protocol } = input
       const usesBoxes =
-        protocol.schemaVersion === 'bayn.jev.protocol.v41' || protocol.schemaVersion === 'bayn.jev.protocol.v40'
+        protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v40'
       const visual = usesBoxes
         ? { model: protocol.model, questions: buildChartQuestions() }
         : (yield* retainedJevChartStages.makeInitialChartStageRequest({
@@ -285,11 +289,19 @@ export const jevBatchQuestionSetHash = (
         jev:
           input.schemaVersion === 'bayn.entry-ablation-input.v1'
             ? { status: 'OMITTED_BY_POLICY', selectionPolicy: input.selectionPolicy }
-            : {
-                ...entryJudgmentPolicy,
-                model: protocol.model,
-                ...(protocol.schemaVersion === 'bayn.jev.protocol.v41' ? { short: shortEntryJudgmentPolicy } : {}),
-              },
+            : protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v44'
+              ? {
+                  ...symmetricEntryJudgmentPolicy,
+                  model: protocol.model,
+                  short: symmetricShortEntryJudgmentPolicy,
+                }
+              : {
+                  ...entryJudgmentPolicy,
+                  model: protocol.model,
+                  ...(protocol.schemaVersion === 'bayn.jev.protocol.v41' ? { short: shortEntryJudgmentPolicy } : {}),
+                },
       })
     }
     return yield* hash(specifications)

@@ -52,12 +52,12 @@ export const cryptoMarketFixture = (
         throw new Error('Expected final crypto bar and source reference')
       const envelope = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(JSON.parse(record.value))
       const payload = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(envelope['payload'])
-      record.value = JSON.stringify({ ...envelope, payload: { ...payload, h: 110, l: 95 } })
+      record.value = JSON.stringify({ ...envelope, payload: { ...payload, h: 115, l: 95 } })
       input.contentHash = nativeSourceContentHash(
         ['alpaca', 'us', fixture.feature.material.symbol, 'bars', input.eventTimeNanos, input.ingestionTimeNanos],
         Result.getOrThrow(nativePayloadCanonicalJson(record.value)),
       )
-      fixture.feature.material.priceWindow.rangeHighPrice = '110'
+      fixture.feature.material.priceWindow.rangeHighPrice = '115'
       fixture.feature.material.priceWindow.rangeLowPrice = '95'
       fixture.feature.material.historyHash = fixture.feature.material.inputs.reduce(
         (previous, reference) => Result.getOrThrow(canonicalHashV1Result([previous, reference])),

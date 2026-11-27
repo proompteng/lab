@@ -2,6 +2,7 @@ import { BigDecimal, Result, Schema } from 'effect'
 
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { canonicalHashV1Result } from '../hash'
+import { instrumentMarket, MarketKind } from '../instruments'
 import { PositiveIntegerSchema, Sha256Schema, SymbolSchema, UtcInstantSchema } from '../schemas'
 import { numberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import type { NativeChartEvidence } from './chart-evidence'
@@ -98,6 +99,40 @@ type ProposalFundingInput = {
   readonly target: bigint
 }
 
+export const minimumProtectiveStopDistanceBps = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>): bigint =>
+  protocol.schemaVersion === 'bayn.jev.protocol.v43' || protocol.schemaVersion === 'bayn.jev.protocol.v44' ? 15n : 0n
+
+export const meetsMinimumProtectiveStopDistance = (input: {
+  readonly protocol: Pick<JevProtocolMaterial, 'schemaVersion'>
+  readonly side: 'long' | 'short'
+  readonly referenceMicros: bigint
+  readonly stopPriceMicros: bigint
+}): boolean => {
+  const minimumBps = minimumProtectiveStopDistanceBps(input.protocol)
+  if (minimumBps === 0n) return true
+  if (input.referenceMicros <= 0n) return false
+  const distanceMicros =
+    input.side === 'long'
+      ? input.referenceMicros - input.stopPriceMicros
+      : input.stopPriceMicros - input.referenceMicros
+  return distanceMicros > 0n && distanceMicros * 10_000n >= input.referenceMicros * minimumBps
+}
+
+export const hasRequiredRewardRiskRatio = (
+  protocol: Pick<JevProtocolMaterial, 'schemaVersion'>,
+  market: MarketKind,
+  modeledGainMicros: bigint,
+  modeledLossMicros: bigint,
+): boolean => {
+  if (
+    protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+    (protocol.schemaVersion === 'bayn.jev.protocol.v44' && market === MarketKind.Crypto)
+  )
+    return modeledGainMicros * 5n >= modeledLossMicros * 6n
+  if (protocol.schemaVersion === 'bayn.jev.protocol.v42') return modeledGainMicros >= modeledLossMicros
+  return true
+}
+
 const fundProposalPrices = (input: ProposalFundingInput) =>
   Result.gen(function* () {
     const { symbol, economics, protocol, bidMicros, stop, target } = input
@@ -106,7 +141,13 @@ const fundProposalPrices = (input: ProposalFundingInput) =>
       (stop * BigInt(10_000 - protocol.maximumEntryLimitSlippageBps) + 9_999n) / 10_000n,
       'UP',
     )
-    if (stopLimit <= 0n || stopLimit > stop || stop >= bidMicros || target <= BigInt(economics.maximumEntryPriceMicros))
+    if (
+      stopLimit <= 0n ||
+      stopLimit > stop ||
+      stop >= bidMicros ||
+      target <= BigInt(economics.maximumEntryPriceMicros) ||
+      !meetsMinimumProtectiveStopDistance({ protocol, side: 'long', referenceMicros: bidMicros, stopPriceMicros: stop })
+    )
       return { status: 'REJECTED', reason: ProposalRejection.InvalidPrices } as const
     const liquidation = {
       protocol,
@@ -117,10 +158,13 @@ const fundProposalPrices = (input: ProposalFundingInput) =>
     const stopValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: stopLimit })
     const targetValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: target })
     const acquisition = BigInt(economics.acquisitionCostMicros)
+    const modeledLoss = acquisition - stopValue.conservativeNetMicros
+    const modeledGain = targetValue.conservativeNetMicros - acquisition
     if (
       stopValue.conservativeNetMicros <= 0n ||
-      stopValue.conservativeNetMicros >= acquisition ||
-      targetValue.conservativeNetMicros <= acquisition
+      modeledLoss <= 0n ||
+      modeledGain <= 0n ||
+      !hasRequiredRewardRiskRatio(protocol, instrumentMarket(symbol), modeledGain, modeledLoss)
     )
       return { status: 'REJECTED', reason: ProposalRejection.Unfunded } as const
     return {
@@ -220,7 +264,12 @@ export const makeEntrySourceCandidates = (input: {
       const funding = yield* fundProposalPrices({ ...input, symbol: chart.symbol, stop, target: greatestTarget })
       if (funding.status === 'FUNDED') {
         supportBarIds.push(bar.id)
-        admittedStop ??= stop
+        admittedStop =
+          minimumProtectiveStopDistanceBps(protocol) > 0n && admittedStop !== undefined
+            ? stop > admittedStop
+              ? stop
+              : admittedStop
+            : (admittedStop ?? stop)
       }
     }
     if (admittedStop !== undefined)

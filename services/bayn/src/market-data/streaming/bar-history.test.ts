@@ -84,7 +84,7 @@ const referenceHistory = (
   for (const entry of ordered) {
     const minute = entry.value.eventAt.slice(0, -1).padEnd(29, '0')
     const count = counts.get(minute) ?? 0
-    if (count === 0 && counts.size === 61) continue
+    if (count === 0 && counts.size === 391) continue
     counts.set(minute, count + 1)
     if (count < 4) bars.push(entry)
     else {

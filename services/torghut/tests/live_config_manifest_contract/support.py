@@ -37,19 +37,24 @@ _WEBSOCKET_BAR_UNIVERSE = (
     "AVGO",
     "COHR",
     "CRDO",
+    "GOOGL",
+    "INTC",
     "IWM",
     "LITE",
+    "META",
     "MRVL",
+    "MSFT",
     "MU",
+    "NFLX",
     "NVDA",
     "QQQ",
     "SMH",
     "SNDK",
     "SPY",
+    "TSLA",
     "WDC",
 )
-_REST_COMPLETED_BAR_UNIVERSE = ("GOOGL", "INTC", "META", "MSFT", "NFLX", "TSLA")
-_WEBSOCKET_QUOTE_TRADE_UNIVERSE = ("AAPL", "AMZN", "IWM", "NVDA", "QQQ", "SMH", "SPY")
+_WEBSOCKET_QUOTE_TRADE_UNIVERSE = ("AAPL", "AMZN", "NVDA", "SPY")
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
 _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
 
@@ -342,8 +347,8 @@ def _assert_exact_quote_covered_paper_strategy_universe(
 def _assert_exact_shared_market_data_universes(
     test_case: TestCase, data: Mapping[str, object]
 ) -> None:
-    # The reviewed equity-short source adds completed REST bars, not WS subscriptions.
-    # Keep the 503cb2d60c58 source extension separate from the original 30-unit budget.
+    # Completed bars for every shared symbol must arrive on the streamed decision path.
+    # Preserve active execution quotes/trades and SPY within the same 30-unit budget.
     shared_symbols = _csv_symbols(data.get("SYMBOLS"))
     streamed_bars = _csv_symbols(data.get("ALPACA_MARKET_DATA_BARS_SYMBOLS"))
     rest_bars = _csv_symbols(data.get("ALPACA_LATEST_BAR_SYMBOLS"))
@@ -351,17 +356,17 @@ def _assert_exact_shared_market_data_universes(
     test_case.assertEqual(
         tuple(streamed_bars),
         _WEBSOCKET_BAR_UNIVERSE,
-        "WebSocket bars must preserve the exact admitted sixteen-symbol universe",
+        "WebSocket bars must cover the exact shared twenty-two-symbol universe",
     )
     test_case.assertEqual(
-        tuple(rest_bars),
-        _REST_COMPLETED_BAR_UNIVERSE,
-        "completed REST bars must preserve the reviewed six-symbol source extension",
+        rest_bars,
+        [],
+        "completed REST bars must not overlap the fully streamed shared universe",
     )
     test_case.assertEqual(
         shared_symbols,
-        sorted([*streamed_bars, *rest_bars]),
-        "shared source symbols must be exactly the sorted WS and completed REST bar union",
+        streamed_bars,
+        "shared source symbols must exactly match streamed bars",
     )
     test_case.assertEqual(_csv_symbols(data.get("SYMBOLS_ALLOWLIST")), shared_symbols)
     test_case.assertEqual(

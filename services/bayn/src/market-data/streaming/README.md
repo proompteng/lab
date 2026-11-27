@@ -73,49 +73,10 @@ so it does not write OffsetCommit requests. An offset-coordinator write failure 
 projection. Assignment, heartbeat and fetch failures still invalidate the epoch and require reconstruction.
 Durable decision snapshots retain their source cuts and PostgreSQL references independently of the ephemeral consumer.
 
-The native worker also retains the original consumer deliveries in PostgreSQL. `native_arrival_epochs` binds the
-embedded build, both market sources and the actual bootstrap bounds. `native_arrival_chunks` holds hash-linked gzip
-chunks of exact Kafka value bytes, transport timestamps, local availability times, consumer and projection sequences,
-and reducer dispositions. Repeated deliveries, rejected inputs, tombstones and invalidated assignments retain their
-own receipts. The global consumer sequence spans equities and crypto; filtering out another market cannot claim a
-complete original prefix.
+The live worker keeps its Kafka projection in memory. Historical research can use original delivery files
+that were previously exported, preserving consumer order, bytes, and availability times.
 
-Chunk appends and replay reads use the `(capture_id, ordinal)` primary key. Migration 0142 removes the unused global
-content-hash unique index, which caused random reads across unrelated captures on every append. Header and compressed
-byte hash checks, ordered-prefix guards and immutable-row triggers remain enforced. The header hash includes the capture
-ID and ordinal, so a repeated valid header is already rejected by the primary key and prefix guard.
-
-The capture owns one database connection outside the trading writer fence. It compresses batches at 256 KiB, bounds
-each uncompressed chunk to 4 MiB and queued compressed bytes to 64 MiB, and flushes a short tail every second.
-Compression batches yield to Node I/O; the writer groups up to 8 MiB or 256 chunks into one atomic database append.
-Within that transaction, PostgreSQL inserts at most 1 MiB or 16 chunks per statement. This bounds each SQL statement
-while sharing one synchronous durable commit across the append. A failed statement rolls back the whole append.
-An individual valid chunk above the SQL byte target is written whole under the existing chunk and queue bounds.
-Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
-writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
-chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
-Connection failures, statement timeouts and PostgreSQL `57P03` startup refusals retry the identical append with
-exponential delays capped at 30 seconds while the capture scope remains alive. Each SQL and socket attempt retains
-its existing deadline. The pinned driver classifies `57P03` as an unknown
-SQL error, so the append policy recognizes that exact code without retrying other unknown errors. A failed COMMIT
-acknowledgement reported as a SQL defect follows the same policy. Each retry reads the existing ordinals and verifies their
-exact hashes and headers before inserting anything, so an already committed batch is acknowledged once.
-If every chunk already exists, a [transactional WAL acknowledgement](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-REPLICATION) makes the retry's COMMIT wait for the configured
-synchronous durability; a locally visible row alone does not prove that its lost COMMIT acknowledgement was durable.
-Other defects, interruptions, invalid evidence and exhausted connection retries retain their failures. Query, socket,
-queue and shutdown deadlines remain unchanged. A failed write, invalid delivery or individually oversized chunk
-permanently marks the epoch incomplete; the
-warning/error retains its capture ID and the periodic projection log reports its observed and acknowledged
-delivery counts. Native capture failures also use the error-only GlitchTip boundary; collector failures do not
-interrupt journal finalization. Shutdown drains queued chunks before flushing its remaining observed tail, retries an interrupted
-chunk by exact content and records `native_arrival_ends` only after
-the stored prefix is confirmed. An unsealed or incomplete epoch cannot assert complete capture coverage.
-`readNativeArrivalEpoch` and bounded `readNativeArrivalChunks` verify stored identities and original bytes for research.
-These native records still require interval, source-cut and strategy qualification. They do not recover missing older
-study sessions or authorize an entry, and the current single-universe backtest manifest cannot label a filtered mixed
-market epoch as a complete original capture.
-
-The projection retains 61 bar minutes, 512
+The projection retains 391 equity bar minutes (121 for crypto), 512
 quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
 remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
 Windows that need the applicable discarded rejection history fail verification. Liquidation checks quote retention
@@ -281,7 +242,7 @@ decision reproduction in addition to infrastructure readiness. The protocol bind
 clock allowance, bootstrap policy and exact-window freshness rule. Reverting the runtime requires a reviewed source
 and protocol change through the same delivery path; retaining archived feature history is required.
 
-Bar history retains at most four winning revisions for each of 61 minutes per symbol. As-of joins select the latest revision received by the observation time. If revision eviction removes the history needed for a cut, the projection rejects that observation.
+Bar history retains at most four winning revisions for each of 391 equity minutes (121 crypto minutes) per symbol. As-of joins select the latest revision received by the observation time. If revision eviction removes the history needed for a cut, the projection rejects that observation.
 
 ## Technical indicator evidence
 
@@ -471,48 +432,8 @@ and `INCOMPLETE`, even with zero failed passes and exact flat accounting. Lookba
 and expected order/reconciliation lifecycle waits do not count as missing decision evidence. These counters measure
 scheduled observations; they do not establish profitability or replace a complete retained source capture.
 
-The research `native:export` command now exports a pinned original consumer prefix from the separate PostgreSQL
-archive. It preserves compressed journal members and validates the resulting source with the same whole-file
-reader used by independent controls. See [the control portfolio export procedure](../../../../../docs/bayn/control-portfolios.md#export-original-deliveries-for-the-controls).
+The research `native:export` command exports a pinned consumer prefix from a database that contains
+previously captured arrivals. See [the control portfolio export procedure](../../../../../docs/bayn/control-portfolios.md#export-original-deliveries-for-the-controls).
 
-## Native capture health transport
-
-The isolated projection worker samples its scoped journals every 15 seconds without waiting on Kafka offsets,
-arrivals or PostgreSQL. One health frame may await acknowledgement on the existing worker MessagePort; stalled
-parents cannot accumulate an unbounded health queue. A final frame follows journal finalization before the normal
-stop acknowledgement. Health delivery has no persistence, retry, readiness or trading authority effect.
-
-The controller aggregates all locally owned projection workers into its existing OTLP exporter and existing
-service, source revision and instance resource identity. No exporter is added to the isolated worker. The metrics
-contain operational counts and times only, never capture IDs, epochs, hashes, markets, payloads or failure strings:
-
-- `bayn_capture_workers_expected`: currently owned worker scopes, including startup and shutdown.
-- `bayn_capture_workers_unobserved`: owned workers with no frame, a frame older than 45 seconds or more than five
-  seconds ahead of the parent's clock. A healthy sibling cannot satisfy another worker's observation.
-- `bayn_capture_active` and `bayn_capture_incomplete`: sums from fresh worker frames only. Missing workers are
-  excluded from these sums and remain explicitly unknown in `workers_unobserved`.
-- `bayn_capture_pending_stagnant_seconds`: maximum sampled duration with observed deliveries still awaiting durable
-  acknowledgement and no durable sequence advance. The monotonic timer begins at the first pending observation,
-  resets on acknowledged progress or no pending work, and excludes incomplete journals. Quiet markets alone cannot
-  increase it. Pending work during normal bounded retry is not itself a terminal failure.
-- `bayn_capture_terminal_failures_total`: each observed incomplete journal once, including failed final sealing.
-- `bayn_capture_last_failure_observed_timestamp_seconds`: parent wall-clock time of the latest newly observed
-  terminal failure. This is detection time, not the original failure time. It can retain a brief failure between
-  periodic samples; a later healthy capture does not repair that historical failure.
-- `bayn_capture_observation_timestamp_seconds`: parent aggregation time. This is not the worker's freshness proof;
-  always inspect `workers_unobserved` too. Retiring the final owner publishes zero expected workers, then stops its
-  sampler. A finite capture or orderly rollout is not an error.
-
-This change supplies instrumentation, not an activated capture alert or verified notification delivery. Existing
-GlitchTip retention-failure reporting remains in place. Before activating rules, prove per-live-instance ownership,
-source revision adoption, OTLP-to-Prometheus instance labels and telemetry freshness. Do not aggregate a healthy
-pod or newer revision over a failed sibling. Missing families or stale parent observations mean unknown, never
-healthy. Zero incomplete or pending values are meaningful only with fresh parent observation and no unobserved
-expected worker. Old-version pods during staged deployment and retired instances must not acquire an invented
-capture expectation. Conservative pending-work alerts must allow ordinary bounded retry and preserve the distinction
-between stagnation, terminal failure and unavailable telemetry. Rules, native PromQL regression cases and verified
-notification delivery are a separate activation boundary.
-
-These observations do not establish source authenticity, complete market coverage, durable suffix recovery,
-profitability or historical archive repair. An interrupted process can leave an unsealed capture; telemetry cannot
-fabricate its end receipt.
+The projection worker samples isolate memory every 15 seconds and sends it through the controller's existing
+telemetry path. It allows one sample to await acknowledgement so a stalled parent cannot grow the message queue.

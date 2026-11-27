@@ -4,7 +4,11 @@ import { Result, Schema } from 'effect'
 import { OrderStatus } from '../broker/alpaca/model'
 import { canonicalHashV1Result } from '../hash'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerEvidenceConfig } from '../intraday-replay/broker-checkpoint'
-import { calculateReplayInferenceCosts, registeredReplayInferenceTariff } from '../intraday-replay/inference-costs'
+import {
+  calculateReplayInferenceCosts,
+  registeredReplayInferenceTariff,
+  registeredStrategyReplayInferenceTariff,
+} from '../intraday-replay/inference-costs'
 import { ReplayInferenceCallSchema } from '../intraday-replay/inference-timing'
 import { validateReplayInferenceCalls } from '../intraday-replay/recorded-inference'
 import {
@@ -20,7 +24,12 @@ import { validateOperatingCostWindow } from '../operating-cost-window'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
 import { validateFrozenCostAllocations } from './cost-allocation'
-import { registeredAllocationMicros, type SystemRegistration, verifyStoredSystemRegistration } from './policy'
+import {
+  registeredAllocationMicros,
+  isStrategyBoundSystemRegistration,
+  type SystemRegistration,
+  verifyStoredSystemRegistration,
+} from './policy'
 
 export const ReplaySessionCostsSchema = Schema.Struct({
   policy: Schema.Enum(JevResearchPolicy),
@@ -113,15 +122,20 @@ export const reproduceSessionEconomics = (
       retained.state.createdAt > first.openAt
     )
       return yield* fail('Replay accounting does not cover the registered evaluation window')
-    const tariff = yield* registeredReplayInferenceTariff(
-      definition.inferenceRateCard,
-      {
-        startAt: first.openAt,
-        endAt: last.closeAt,
-      },
-      costs.policy,
-      registration.obligations.configuration.protocol,
-    )
+    const interval = { startAt: first.openAt, endAt: last.closeAt }
+    const strategyBinding = isStrategyBoundSystemRegistration(registration)
+      ? registration.policies.find((policy) => policy.policy === costs.policy)?.strategyBinding
+      : undefined
+    if (isStrategyBoundSystemRegistration(registration) && strategyBinding === undefined)
+      return yield* fail('Native replay economics requires its registered strategy binding')
+    const tariff = yield* strategyBinding !== undefined
+      ? registeredStrategyReplayInferenceTariff(definition.inferenceRateCard, interval, strategyBinding)
+      : registeredReplayInferenceTariff(
+          definition.inferenceRateCard,
+          interval,
+          costs.policy,
+          registration.obligations.configuration.protocol,
+        )
     if ((yield* canonicalHashV1Result(tariff)) !== (yield* canonicalHashV1Result(costs.inferenceTariff)))
       return yield* fail('Replay accounting changed the registered inference tariff')
     const closes = retained.state.sessionCloses

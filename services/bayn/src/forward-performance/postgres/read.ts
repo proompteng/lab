@@ -1,7 +1,8 @@
 import { PgClient } from '@effect/sql-pg'
 import { strictParseOptions } from '../../schemas'
 import { Effect, Schema } from 'effect'
-import { readPerformanceDecisionCursor } from './decision-cursor'
+import { readPerformanceAlphaDecisionCursor, readPerformanceDecisionCursor } from './decision-cursor'
+import { alphaDecisionQuery } from './alpha-decisions'
 import { openSnapshotRows } from '../../db/snapshot-rows'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
@@ -951,6 +952,12 @@ export const readForwardPerformancePostgres = (
           executionIndex,
           readForwardPerformanceMarketVolumeBindings(sql, accountId, authorityGenerationHash, scopedCycles),
         )
+        const consumeAlphaDecisionRows = yield* openSnapshotRows(
+          sql,
+          alphaDecisionQuery(sql, accountId, authorityGenerationHash, scopedCycles),
+        )
+        const { alphaDecisions, unverifiedAlphaDecisionHashes } =
+          yield* readPerformanceAlphaDecisionCursor(consumeAlphaDecisionRows)
         const marketVolumeRequests = marketVolumeRequestsFromRows(
           [...executionEvidence, ...executionIntentRows.map((row) => ({ cycleId: row.cycle_id, symbol: row.symbol }))],
           marketVolumeBindingRows,
@@ -998,6 +1005,7 @@ export const readForwardPerformancePostgres = (
           ).length,
           transactionEvidence,
           executionEvidence,
+          ...(reconciliationRow === undefined ? {} : { alphaDecisions, unverifiedAlphaDecisionHashes }),
           ...(unverifiedDecisionHashes.length === 0 ? {} : { unverifiedDecisionHashes }),
           marketVolumeRequests,
           receipts,

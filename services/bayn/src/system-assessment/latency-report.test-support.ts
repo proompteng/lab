@@ -1,5 +1,10 @@
 import { Result } from 'effect'
-import { backtestBrokerEvidenceConfig, backtestComparisonInput } from '../intraday-replay/backtest'
+import {
+  backtestBrokerEvidenceConfig,
+  backtestComparisonInput,
+  type prepareBacktest,
+  type BacktestInputSchema,
+} from '../intraday-replay/backtest'
 import { makeReplayBrokerCheckpoint } from '../intraday-replay/broker-checkpoint'
 import { createReplayLedger } from '../intraday-replay/ledger'
 import { calculateReplayInferenceCosts } from '../intraday-replay/inference-costs'
@@ -9,9 +14,21 @@ import { sha256 } from '../hash'
 import { testHash } from './fixtures.test-support'
 import type { nativeLatencyBacktestFixture } from './latency.test-support'
 import type { ReplayImagePlatform } from './replay-image-platform'
+import type { SystemRegistration } from './policy'
+import type { SystemSourceCut } from './source-cut'
+
+type LatencyArtifactInput = Omit<
+  ReturnType<typeof nativeLatencyBacktestFixture>,
+  'input' | 'prepared' | 'registration' | 'cut'
+> & {
+  readonly input: typeof BacktestInputSchema.Type
+  readonly prepared: Result.Result.Success<ReturnType<typeof prepareBacktest>>
+  readonly registration: SystemRegistration
+  readonly cut: SystemSourceCut
+}
 
 export const completeLatencyArtifactFixture = (
-  fixture: ReturnType<typeof nativeLatencyBacktestFixture>,
+  fixture: LatencyArtifactInput,
   executableSha256 = testHash('test executable'),
   imagePlatform: ReplayImagePlatform | null = null,
 ) => {
@@ -42,7 +59,15 @@ export const completeLatencyArtifactFixture = (
     ),
   )
   const report = {
-    schemaVersion: 'bayn.backtest-report.v9',
+    schemaVersion:
+      input.schemaVersion === 'bayn.backtest.v11'
+        ? 'bayn.backtest-report.v9'
+        : input.schemaVersion === 'bayn.backtest.v13'
+          ? 'bayn.backtest-report.v11'
+          : 'bayn.backtest-report.v10',
+    ...(input.schemaVersion === 'bayn.backtest.v11'
+      ? {}
+      : { alphaObservations: [], alphaBaselineGaps: [], decisions: [] }),
     runId: prepared.runId,
     executableSha256,
     evidenceMode: 'simulated-production-execution',

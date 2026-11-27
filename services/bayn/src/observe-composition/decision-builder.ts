@@ -1,6 +1,7 @@
 import { buildExecutionDecision, buildObserveShadowDecision, type DecisionConstruction } from '../decision-construction'
 import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
+  isMiddayAlphaTarget,
   isProtectedEntryTarget,
   protectedEntryExpiresAtMs,
   protectedEntryBuyPriceCeilings,
@@ -8,6 +9,7 @@ import {
   protectedEntryShortEligibility,
   type ProtectedEntryTarget,
 } from '../strategy/runtime-decision'
+import { isBalancedMiddayBasket } from '../strategy/intraday-alpha/decision'
 import { jevEntryPriceAllowances } from '../jev/entry-economics'
 import type { EquityShortEligibility } from '../execution/equity-short'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
@@ -99,7 +101,7 @@ import {
   type TargetPlannerFailure,
   type TargetPlanResult,
 } from '../target-planner/index'
-import { strategyTradingProtocol, type StrategyRuntime } from '../strategy'
+import { isIntradayAlphaRuntime, strategyTradingProtocol, type StrategyRuntime } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import type { IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
@@ -671,8 +673,13 @@ export const readObserveDecisionFacts = <R>(
         operation: 'current-decision',
         message: 'Unresolved broker mutations prevent Jev entry',
       })
+    const concurrentEntry = isIntradayAlphaRuntime(input.strategy)
     const portfolio = yield* Effect.fromResult(
-      decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: reconciliation.brokerState }),
+      decodeJevPortfolio({
+        purpose: JevPurpose.Entry,
+        brokerState: reconciliation.brokerState,
+        ...(concurrentEntry ? { concurrentDisjointPositions: true as const } : {}),
+      }),
     ).pipe(
       Effect.mapError((cause) =>
         operationalError({
@@ -957,7 +964,14 @@ const compileObserveStrategyDecision = <R>(
     const reconciliation =
       pricingReconciliation?.reconciliation ??
       (yield* input.reconcile.pipe(Effect.mapError(reconciliationOperationalError)))
-    yield* Effect.fromResult(decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: reconciliation.brokerState }))
+    const concurrentEntry = isIntradayAlphaRuntime(input.strategy)
+    yield* Effect.fromResult(
+      decodeJevPortfolio({
+        purpose: JevPurpose.Entry,
+        brokerState: reconciliation.brokerState,
+        ...(concurrentEntry ? { concurrentDisjointPositions: true as const } : {}),
+      }),
+    )
     if (reconciliation.riskContext.unknownMutationCount !== 0)
       return yield* operationalError({
         component: 'strategy',
@@ -1121,6 +1135,9 @@ export const prepareObservePlanner = <R>(
             askPriceMicros: compiled.askPriceMicros,
           })
           if (Result.isFailure(boundPrices)) return Result.fail(boundPrices.failure)
+          const hasCoHeldPositions =
+            isIntradayAlphaRuntime(input.strategy) &&
+            facts.reconciliation.brokerState.positions.some((position) => BigInt(position.quantityAtoms) !== 0n)
           const plannerInput: TargetPlannerInput = {
             schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
             ...commonPlannerInput,
@@ -1132,6 +1149,7 @@ export const prepareObservePlanner = <R>(
             },
             allocationCapitalMicros: overrides.allocationCapitalMicros,
             executionTerms: {
+              ...(hasCoHeldPositions ? { executionPurpose: 'disjoint-entry' as const } : {}),
               orderType: OrderType.Limit,
               timeInForce: cashSpotLimitTimeInForce(
                 input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
@@ -1402,6 +1420,7 @@ export function buildStrategyCycleDecision<R>(
     )
     let allocationCapitalMicros: bigint | undefined
     if (requirements.authorityRequirement === Authority.Execution) {
+      const disjointEntry = isIntradayAlphaRuntime(input.strategy)
       allocationCapitalMicros = hasExternalPosition
         ? 0n
         : yield* Effect.fromResult(
@@ -1417,6 +1436,13 @@ export function buildStrategyCycleDecision<R>(
                     : BigInt(input.policy.maxDailyTradedNotionalMicros),
                 maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
                 targetWeights: allocationTargetWeights,
+                ...(disjointEntry
+                  ? {
+                      disjointEntry: true,
+                      signedTargetWeights: planningTargetWeights,
+                      openOrders: facts.reconciliation.brokerState.orders,
+                    }
+                  : {}),
                 positions: facts.reconciliation.brokerState.positions,
                 referencePriceMicros: compiled.priceMicros,
               }),
@@ -1459,17 +1485,28 @@ export function buildStrategyCycleDecision<R>(
       )
     }
     const entryDecision = compiled.decision
+    if (isMiddayAlphaTarget(entryDecision) && !isBalancedMiddayBasket(targetPlan, entryDecision.selectedSymbols)) {
+      const message = 'Executable midday basket exceeds whole-share notional imbalance'
+      return yield* new ObserveDecisionAwaitingSignal({
+        message,
+        observedAt: facts.evaluatedAt,
+        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        readiness: { reason: DecisionReadinessReason.NoEligibleCandidate, message },
+      })
+    }
     const entryLimitSlippageBps =
       requirements.documentMode === Authority.Execution
-        ? isProtectedEntryTarget(entryDecision)
-          ? Math.min(
-              input.policy.maxAdverseSlippageBps,
-              ...entryDecision.selectedSymbols.map(
-                (symbol) =>
-                  jevEntryPriceAllowances(entryDecision.evidence.observation.protocol, symbol).limitSlippageBps,
-              ),
-            )
-          : input.policy.maxAdverseSlippageBps
+        ? entryDecision.schemaVersion === 'bayn.intraday-alpha-target.v2'
+          ? Math.min(input.policy.maxAdverseSlippageBps, entryDecision.policy.entryLimitSlippageBps)
+          : isProtectedEntryTarget(entryDecision)
+            ? Math.min(
+                input.policy.maxAdverseSlippageBps,
+                ...entryDecision.selectedSymbols.map(
+                  (symbol) =>
+                    jevEntryPriceAllowances(entryDecision.evidence.observation.protocol, symbol).limitSlippageBps,
+                ),
+              )
+            : input.policy.maxAdverseSlippageBps
         : 0
     const riskInputs = yield* Effect.fromResult(
       reduceObserveRiskInputs(
@@ -1603,6 +1640,7 @@ export type ClosingSymbolPass = {
 export const selectClosingSymbolPass = (
   positions: readonly Pick<Position, 'symbol' | 'quantityAtoms'>[],
   universe: readonly string[],
+  ownedSymbols?: readonly string[],
 ): ClosingSymbolPass => {
   const activePositions = positions
     .filter(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
@@ -1612,7 +1650,10 @@ export const selectClosingSymbolPass = (
   const externalSymbols = activePositions
     .filter(({ symbol }) => !allowedSymbols.has(symbol))
     .map(({ symbol }) => symbol)
-  const symbols = externalSymbols.length > 0 ? externalSymbols : activePositions.map(({ symbol }) => symbol)
+  const ownedSet = ownedSymbols === undefined ? undefined : new Set(ownedSymbols)
+  const scopedPositions =
+    ownedSet === undefined ? activePositions : activePositions.filter(({ symbol }) => ownedSet.has(symbol))
+  const symbols = externalSymbols.length > 0 ? externalSymbols : scopedPositions.map(({ symbol }) => symbol)
   const first = symbols[0]
   return {
     kind: externalSymbols.length > 0 ? 'broker-position' : 'quote-bound',
@@ -1675,7 +1716,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
       target.entryDecisionHash === entryDocument.contentHash &&
       target.sessionDate === cycle.identity.executionSessionDate &&
       target.evidence.portfolio.brokerState.account.accountId === cycle.identity.accountId &&
-      entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7' &&
+      isProtectedEntryTarget(entryDocument.strategyDecision) &&
       canonicalJsonEqualV1(target.evidence.portfolio.exitPolicy, entryDocument.strategyDecision.exitPolicy)
         ? target
         : undefined
@@ -1683,7 +1724,16 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
       const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
       const portfolio = mandatoryExit?.evidence.portfolio
-      const firstFill = portfolio?.purpose === JevPurpose.Manage ? portfolio.entryFills[0] : undefined
+      const targetSymbol = mandatoryExit?.symbols[0]
+      const firstFill =
+        portfolio?.purpose === JevPurpose.Manage
+          ? (portfolio.entryFills.find((fill) => targetSymbol === undefined || fill.symbol === targetSymbol) ??
+            portfolio.entryFills[0])
+          : undefined
+      const managedPlan =
+        portfolio?.purpose === JevPurpose.Manage && targetSymbol !== undefined
+          ? portfolio.exitPolicy.plans[targetSymbol]
+          : undefined
       // The sealed first-fill deadline authorizes a timed exit independently of any price trigger.
       // Before it elapses, a mark may only resume an already committed non-profit exit.
       const resumeMandatoryExit =
@@ -1691,7 +1741,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
         portfolio?.purpose === JevPurpose.Manage &&
         mandatoryExit.observedAt <= observedAt &&
         ((firstFill !== undefined &&
-          observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)) ||
+          observedAt >=
+            jevMaximumHoldDueAt(
+              firstFill.occurredAt,
+              managedPlan?.levels.maximumHoldingMinutes ?? portfolio.exitPolicy.maximumHoldingMinutes,
+            )) ||
           (mandatoryExit.reason === JevExitReason.ProtectionReleased &&
             portfolio.exitRequestedAt !== null &&
             !portfolio.profitExitRequested))
@@ -1764,9 +1818,14 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
     const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
       ? entryMarketData.universe
       : undefined
+    const ownedSymbols =
+      entryDocument.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+        ? Object.keys(entryDocument.strategyDecision.exitPolicy.plans).sort()
+        : undefined
     const closingPass = selectClosingSymbolPass(
       reconciliation.brokerState.positions,
       persistedUniverse ?? intradayParameters.universe,
+      ownedSymbols,
     )
     const symbols = closingPass.symbols
     const closingSymbol = symbols[0]
@@ -1776,8 +1835,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
         : request.exitTarget.cycleId === cycle.identity.cycleId &&
             request.exitTarget.entryDecisionHash === entryDocument.contentHash &&
             request.exitTarget.sessionDate === cycle.identity.executionSessionDate &&
-            symbols.length === request.exitTarget.symbols.length &&
-            symbols.every((symbol, index) => symbol === request.exitTarget?.symbols[index])
+            canonicalJsonEqualV1(request.exitTarget.symbols, symbols)
           ? Result.succeed(request.exitTarget)
           : Result.fail(
               compositionFailure('cycle-binding', 'Jev exit target does not match this entry and remaining position'),

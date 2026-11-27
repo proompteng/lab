@@ -145,9 +145,9 @@ test.each([
     expect(Result.isFailure(decodeRetainedJevExecutionDecisionDocument(document))).toBe(true)
     const target = document.strategyDecision
     if (target?.schemaVersion === 'bayn.jev-exit-target.v5') {
-      expect(target.evidence.protocol.schemaVersion).toBe('bayn.jev.protocol.v41')
-      expect(target.evidence.protocol.maximumEntryQuoteDriftBps).toBe(10)
-      expect(target.evidence.protocol.maximumEntryLimitSlippageBps).toBe(10)
+      expect(target.evidence.protocol.schemaVersion).toBe('bayn.jev.protocol.v44')
+      expect(target.evidence.protocol.maximumEntryQuoteDriftBps).toBe(5)
+      expect(target.evidence.protocol.maximumEntryLimitSlippageBps).toBe(5)
     }
   },
   15_000,

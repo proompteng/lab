@@ -46,6 +46,60 @@ import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { makeJevTradingSignalBatch } from './trading-signals'
 import { jevHistoryStartMs } from './observation-query'
 
+export const withObservedEntryBars = <
+  Raw extends {
+    readonly bars: readonly {
+      readonly symbol: string
+      readonly eventAt: string
+      readonly open: number
+      readonly high: number
+      readonly low: number
+    }[]
+    readonly latestQuotes: Readonly<Record<string, { readonly bidPrice: number; readonly askPrice: number }>>
+  },
+>(
+  raw: Raw,
+  protocol: Pick<{ readonly schemaVersion: string }, 'schemaVersion'>,
+  shortFavored = false,
+): Raw => {
+  const firstMinute = raw.bars[0]?.eventAt
+  return {
+    ...raw,
+    bars: raw.bars.map((bar) => {
+      const quote = raw.latestQuotes[bar.symbol]
+      return bar.symbol !== 'SPY' && bar.eventAt === firstMinute
+        ? {
+            ...bar,
+            high: Math.max(
+              bar.high,
+              (protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v44') &&
+                quote !== undefined
+                ? quote.askPrice *
+                    (shortFavored
+                      ? 1.04
+                      : protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                          protocol.schemaVersion === 'bayn.jev.protocol.v44'
+                        ? 1.045
+                        : 1.035)
+                : bar.open * 1.05,
+            ),
+            low: Math.min(
+              bar.low,
+              (protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+                protocol.schemaVersion === 'bayn.jev.protocol.v44') &&
+                quote !== undefined
+                ? quote.bidPrice * (shortFavored ? 0.94 : 0.97)
+                : bar.open * 0.95,
+            ),
+          }
+        : bar
+    }),
+  }
+}
+
 export const nativeJevFixture = (
   purpose: JevPurpose = JevPurpose.Entry,
   observedAt?: string,
@@ -56,6 +110,7 @@ export const nativeJevFixture = (
   calendar?: ReturnType<typeof streamingFixtureRequest>['calendar'],
   observedPriceChoices = true,
   momentum = true,
+  shortFavored = false,
 ) => {
   const base = streamingFixtureRequest()
   const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
@@ -110,15 +165,7 @@ export const nativeJevFixture = (
   } = streamingFixtureFromRaw(
     (() => {
       const raw = makeIntradayMomentumTestSnapshot(protocol, query, returns)
-      const firstMinute = raw.bars[0]?.eventAt
-      return {
-        ...raw,
-        bars: raw.bars.map((bar) =>
-          observedPriceChoices && bar.symbol !== 'SPY' && bar.eventAt === firstMinute
-            ? { ...bar, high: Math.max(bar.high, bar.open * 1.05), low: Math.min(bar.low, bar.open * 0.95) }
-            : bar,
-        ),
-      }
+      return observedPriceChoices ? withObservedEntryBars(raw, protocol, shortFavored) : raw
     })(),
     query,
   )
@@ -237,8 +284,8 @@ export const nativeJevFixture = (
                   symbol: 'AAPL',
                   windowEndAt: new Date(Math.floor(Date.parse(at) / 60_000) * 60_000 - 3 * 60_000).toISOString(),
                   bars: [
-                    { minuteBeforeWindowEnd: 27, open: 102, high: 103, low: 99.01, close: 102, volume: 100 },
-                    { minuteBeforeWindowEnd: 2, open: 102, high: 105.01, low: 101, close: 102, volume: 100 },
+                    { minuteBeforeWindowEnd: 27, open: 102, high: 103, low: 99.75, close: 102, volume: 100 },
+                    { minuteBeforeWindowEnd: 2, open: 102, high: 105.05, low: 101, close: 102, volume: 100 },
                     { minuteBeforeWindowEnd: 1, open: 102, high: 103, low: 101, close: 102, volume: 100 },
                   ],
                 }),
