@@ -1,0 +1,38 @@
+{
+  "schema": "bayn.overnight-tugofwar.freeze.v1",
+  "tapeKey": "bayn-research-datasets/2026-11-27-sip-10yr-sp100/alpaca_sip_daily_10yr_sp100_etfs_20160104_20261125.tsv.gz",
+  "manifestSha256": "ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e",
+  "gzipSha256": "fdda4017ee662fae548d8111a970ea90d83b3e8ee6f61abd6153be0fe83547d2",
+  "rawSha256": "e5331bb57e6f6427449d0cd3ab59291f56e508cb8c3961557bfd1374a635c9a8",
+  "protocolSha256": "0b5adb739cebf15d17a0e947517558fe7884b61af6e5444bafe2ed0a0202733a",
+  "engineSha256": "3d222e0d3d1136bb9d2362bb523f6748e779eca0ac916befba50f97c16dd5fe7",
+  "development": {
+    "trialCount": 180,
+    "developmentRows": 330646,
+    "developmentLedgerSha256": "b79c6d27a4f1d90598bc4571d590b4020927b36534c67df035ecfa3af2299a57",
+    "legs": [
+      {
+        "id": "lps-spread-60-sector-long-1",
+        "trainSharpe": 0.9725254482075519,
+        "validationSharpe": 0.21086035082330973,
+        "score": 0.21086035082330973,
+        "weight": 0.20768630281976205
+      },
+      {
+        "id": "gap-continuation-universe-2-prior",
+        "trainSharpe": 0.1753270153962349,
+        "validationSharpe": 0.19116683818233815,
+        "score": 0.1753270153962349,
+        "weight": 0.4010637938539862
+      },
+      {
+        "id": "etf-anchors-intraday-none",
+        "trainSharpe": -0.42764673747625487,
+        "validationSharpe": -0.03873448218254939,
+        "score": -0.42764673747625487,
+        "weight": 0.3912499033262517
+      }
+    ],
+    "dsrBenchmark": 0.5086625862140078
+  }
+}
