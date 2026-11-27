@@ -1,0 +1,302 @@
+{
+  "schema": "bayn.research.wave-4e.freeze.v1",
+  "registeredFiles": {
+    "docs/bayn/evidence/2026-11-27-8yr-unseen-intraday-oos/protocol.md": "b883e516bd890d3ca2cdcdab633dbc56d30ac6bc1c286c5b1698f8a180b9c4e9",
+    "services/bayn/tools/8yr-unseen-intraday-protocol.ts": "b7c4774ce7de804f3bf9964d5afc22ee4673a045f3b27aff6211650fc3a9ee0a"
+  },
+  "inputs": {
+    "blind": {
+      "first": "2016-01-04",
+      "last": "2023-12-29",
+      "sessions": 2012,
+      "manifest": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen/MANIFEST.json",
+      "calendar": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen/calendar_2016_2023.json",
+      "bars": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen/alpaca_sip_5m_rth_62sym_20160104_20231229.tsv.gz",
+      "manifestSha256": "a0ccd4388d6eb8a2c6dcfe8ba85fa2c0aead12c0a2017ad37487c2745d33e7e8",
+      "calendarSha256": "0165400d9544973b0971a2397969e65bd2543beff5d8bd47510f09b015ef7f86",
+      "rows": 9774322
+    },
+    "prior": {
+      "first": "2024-01-02",
+      "last": "2026-11-25",
+      "sessions": 729,
+      "manifest": "bayn-research-datasets/2026-11-27-sip-multiyear/MANIFEST.json",
+      "calendar": "bayn-research-datasets/2026-11-27/calendar_2024_2026.json",
+      "bars": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz",
+      "manifestSha256": "5df0cfe213c69e9a6489dde46553db610edb2632b5e54fb76a6347740abcdead",
+      "calendarSha256": "b7a02f0c79aa479de2eba14e6168826cabaf8eef15df4c94cf1f199511752b71",
+      "rows": 3923737
+    }
+  },
+  "universe": [
+    "AAPL",
+    "ALAB",
+    "AMAT",
+    "AMD",
+    "AMZN",
+    "ANET",
+    "APP",
+    "ARKK",
+    "ARM",
+    "ASML",
+    "AVGO",
+    "CEG",
+    "COHR",
+    "COIN",
+    "CRDO",
+    "CRWD",
+    "GEV",
+    "GLD",
+    "GOOGL",
+    "HOOD",
+    "IEF",
+    "INTC",
+    "IWM",
+    "KLAC",
+    "LITE",
+    "LRCX",
+    "META",
+    "MRVL",
+    "MSFT",
+    "MSTR",
+    "MU",
+    "NET",
+    "NFLX",
+    "NOW",
+    "NVDA",
+    "ORCL",
+    "PANW",
+    "PLTR",
+    "QQQ",
+    "SHOP",
+    "SMCI",
+    "SMH",
+    "SNDK",
+    "SNOW",
+    "SOFI",
+    "SPOT",
+    "SPY",
+    "TLT",
+    "TSLA",
+    "TSM",
+    "UBER",
+    "USO",
+    "VRT",
+    "VST",
+    "WDC",
+    "XBI",
+    "XLE",
+    "XLF",
+    "XLI",
+    "XLK",
+    "XLV",
+    "XLY"
+  ],
+  "stocks": [
+    "AAPL",
+    "ALAB",
+    "AMAT",
+    "AMD",
+    "AMZN",
+    "ANET",
+    "APP",
+    "ARM",
+    "ASML",
+    "AVGO",
+    "CEG",
+    "COHR",
+    "COIN",
+    "CRDO",
+    "CRWD",
+    "GEV",
+    "GOOGL",
+    "HOOD",
+    "INTC",
+    "KLAC",
+    "LITE",
+    "LRCX",
+    "META",
+    "MRVL",
+    "MSFT",
+    "MSTR",
+    "MU",
+    "NET",
+    "NFLX",
+    "NOW",
+    "NVDA",
+    "ORCL",
+    "PANW",
+    "PLTR",
+    "SHOP",
+    "SMCI",
+    "SNDK",
+    "SNOW",
+    "SOFI",
+    "SPOT",
+    "TSLA",
+    "TSM",
+    "UBER",
+    "VRT",
+    "VST",
+    "WDC"
+  ],
+  "baseline": [
+    "AAPL",
+    "AMD",
+    "AMZN",
+    "AVGO",
+    "COHR",
+    "GOOGL",
+    "INTC",
+    "IWM",
+    "LITE",
+    "META",
+    "MRVL",
+    "MSFT",
+    "MU",
+    "NFLX",
+    "NVDA",
+    "QQQ",
+    "SMH",
+    "SNDK",
+    "SPY",
+    "TSLA",
+    "WDC"
+  ],
+  "listingDates": {
+    "ALAB": "2024-03-20",
+    "APP": "2021-04-15",
+    "ARM": "2023-09-14",
+    "CEG": "2022-02-02",
+    "COIN": "2021-04-14",
+    "CRDO": "2022-01-27",
+    "CRWD": "2019-06-12",
+    "GEV": "2024-04-02",
+    "HOOD": "2021-07-29",
+    "NET": "2019-09-13",
+    "PLTR": "2020-09-30",
+    "SMCI": "2007-03-29",
+    "SNDK": "2025-02-24",
+    "SNOW": "2020-09-16",
+    "SOFI": "2021-06-01",
+    "SPOT": "2018-04-03",
+    "UBER": "2019-05-10",
+    "VRT": "2020-02-10",
+    "VST": "2017-05-10"
+  },
+  "parameters": {
+    "historySessions": 14,
+    "barMinutes": 5,
+    "costsRtBps": [2, 5, 10],
+    "sellFeeBps": 0.21,
+    "equityUsd": 100000,
+    "grossCapUsd": 180000,
+    "standaloneSymbolCapUsd": 60000,
+    "historyResets": {
+      "WDC": "2025-02-24"
+    },
+    "listingSuspensions": {
+      "SMCI": ["2018-08-23", "2020-01-14"]
+    },
+    "reversion": {
+      "decisionMinuteFromOpen": 150,
+      "pairs": 2,
+      "stopBps": 500,
+      "targetBps": 800,
+      "flattenBeforeCloseMinutes": 5
+    },
+    "orb": {
+      "rangeMinutes": 5,
+      "rvol": 2.5,
+      "gapAtr": 0.5,
+      "riskUsd": 1000,
+      "hardExitMinuteFromOpen": 118,
+      "shortDayFlattenBeforeCloseMinutes": 25
+    },
+    "noise": {
+      "checkpointMinutes": 30,
+      "lastCheckpointMinuteFromOpen": 330,
+      "band": 1.2,
+      "riskUsd": 1500,
+      "flattenBeforeCloseMinutes": 2
+    },
+    "baseline": {
+      "rangeMinutes": 15,
+      "orbDecisionMinutesFromOpen": [30, 80],
+      "orbRiskUsd": 500,
+      "orbCapUsd": 35000,
+      "orbStopAtr": 0.35,
+      "orbStopBoundsBps": [50, 300],
+      "orbTargetR": 2,
+      "orbHoldMinutes": 60,
+      "reversionDecisionMinutesFromOpen": [120, 150],
+      "reversionCapPerLegUsd": 18000,
+      "noiseBand": 1,
+      "noiseStopAtr": 1.5,
+      "noiseStopBoundsBps": [150, 600],
+      "noiseTargetBps": 1500,
+      "noiseSleeveGrossUsd": 50000,
+      "noiseWeightBounds": [0.15, 0.32]
+    },
+    "bootstrap": {
+      "draws": 10000,
+      "meanBlockSessions": 5,
+      "seed": 670183405
+    },
+    "megaCaps": ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "QQQ", "SMH"],
+    "recentEntryFrom": "2019-01-01"
+  },
+  "roster": {
+    "C1": {
+      "engine": "baseline"
+    },
+    "C2": {
+      "engine": "orb",
+      "top": 1,
+      "targetR": 2
+    },
+    "C3_3R": {
+      "engine": "orb",
+      "top": 1,
+      "targetR": 3
+    },
+    "C3_top2": {
+      "engine": "orb",
+      "top": 2,
+      "targetR": 2
+    },
+    "C4_timed": {
+      "engine": "reversion",
+      "iqrBps": 100,
+      "exit": "timed"
+    },
+    "C4_brackets": {
+      "engine": "reversion",
+      "iqrBps": 100,
+      "exit": "brackets"
+    },
+    "C4_ungated": {
+      "engine": "reversion",
+      "iqrBps": 0,
+      "exit": "brackets"
+    },
+    "C5": {
+      "engine": "noise"
+    },
+    "C6": {
+      "engine": "portfolio",
+      "sleeves": ["C2", "C4_timed"],
+      "weights": [0.75, 0.25]
+    },
+    "C7_equal": {
+      "engine": "portfolio",
+      "sleeves": ["C2", "C4_timed", "C5"],
+      "weights": [0.3333333333333333, 0.3333333333333333, 0.3333333333333333]
+    },
+    "C7_tilt": {
+      "engine": "portfolio",
+      "sleeves": ["C2", "C4_timed", "C5"],
+      "weights": [0.5, 0.25, 0.25]
+    }
+  }
+}
