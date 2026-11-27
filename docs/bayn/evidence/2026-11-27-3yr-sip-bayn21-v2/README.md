@@ -199,7 +199,9 @@ itself proof of a data-delivery failure, nor is it an executable price.
   (`t+2`, 5 bp) Train and Validation Sharpe, then Validation Ex-Top-5, then ID. If none pass, freeze the best diagnostic
   design by the same rank. Score the predeclared execution grid and only that architecture on 2026-04-01–2026-11-25.
   An economic pass also needs the same two-cost Holdout gate, positive primary net in at least five calendar half-years,
-  and higher primary net than v2 in every chronological stage. 2026H1 mixes Validation and Holdout and is descriptive.
+  and higher primary net than v2 in every chronological stage. 2026H1 mixes Validation and Holdout and is descriptive. Wave 1E's 66 IEX research sessions
+  (2026-08-25–2026-11-25) overlap this Holdout and informed the execution hypothesis. The freeze prevents tuning on
+  the SIP Holdout; it does not make the Wave 1E hypothesis test fully independent in calendar time.
 - **Metrics.** Report daily closed P&L, including zero-trade days, at 252 annual sessions. Drawdown is from the
   cumulative closed-P&L peak; Calmar divides annualized arithmetic P&L by max drawdown. Profit factor uses winning
   and losing trades after costs. The fixed-path linear breakeven estimate does not assert identical fills at another
