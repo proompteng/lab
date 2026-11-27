@@ -4,7 +4,9 @@ namespace: agents
 resources:
   - postgres-upgrade-backup.yaml
   - postgres-cluster.yaml
+  - codex-auth-master-externalsecret.yaml
   - codex-auth-externalsecret.yaml
+  - codex-auth-refresher.yaml
   - hf-router-token-sealedsecret.yaml
   - agents-shell-tunnel-runtime-sealedsecret.yaml
   - agents-shell-tunnel-deployment.yaml
