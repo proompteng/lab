@@ -52,7 +52,15 @@ export const planCohortLegs = (input: {
 }) => {
   const { snapshot, completedMinute, bars, eligibility, legs } = input
   const observedAt = snapshot.manifest.observedAt
-  const portfolio = makeEntryPortfolio(observedAt, input.equityUsd, [], bars, completedMinute, input.buyingPowerUsd)
+  const portfolio = makeEntryPortfolio(
+    observedAt,
+    input.equityUsd,
+    [],
+    bars,
+    completedMinute,
+    new Map(),
+    input.buyingPowerUsd,
+  )
   // Pre-schedule bars can exercise sizing and bracket terms using the retained schedule,
   // but cannot establish historical fee-adjusted returns.
   const fundingPolicy =
@@ -238,7 +246,7 @@ export const scanExecutionCohort = (input: {
         sessionOpenMs: regular.openMs,
         rangeEndMs,
         symMap,
-        quoteHalfSpreadBps: 1,
+        quoteModel: { slippageRtBps: 2 },
       })
       const observedAt = snapshot.manifest.observedAt
       const eligibility = makeShortEligibility(observedAt)

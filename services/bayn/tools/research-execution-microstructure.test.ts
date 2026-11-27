@@ -212,7 +212,7 @@ test('real funded sizing and planner keep four legs or block the whole basket at
     calendar,
     sessionOpenMs,
     symMap,
-    quoteHalfSpreadBps: 1,
+    quoteModel: { slippageRtBps: 2 },
     rangeEndMs: sessionOpenMs + (completedMinute + 1) * 60_000,
   })
   const input = {
