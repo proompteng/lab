@@ -152,6 +152,19 @@ test('uses the same calendar, positions and funding for t+1 versus t+2; an exact
     ['AVGO', 122, 206],
   ])
   expect(causal.maxGrossUsd).toBeLessThan(180_000)
+  const budgeted = simulate(prepared, { ...scenario, lag: 2 }, undefined, {
+    scale: 1,
+    capacity: 25_000,
+    cost: (symbol) => (symbol === 'AAPL' ? 1 : 5),
+  })
+  expect(budgeted).toMatchObject({ middaySelected: 4, middayFilled: 4, capacityTouched: true })
+  expect(budgeted.peakRequestedUsd).toBeGreaterThan(25_000)
+  expect(budgeted.maxGrossUsd).toBeLessThanOrEqual(25_000)
+  const aapl = causal.trades.find(({ symbol }) => symbol === 'AAPL')
+  const budgetedAapl = budgeted.trades.find(({ symbol }) => symbol === 'AAPL')
+  if (aapl === undefined || budgetedAapl === undefined) throw new Error('Fixture did not select AAPL')
+  expect(budgetedAapl.shares).toBeLessThan(aapl.shares)
+  expect(budgetedAapl.entryPrice).toBeLessThan(aapl.entryPrice)
   const threePairs = simulate(prepared, {
     ...scenario,
     architecture: { ...scenario.architecture, pairs: 3 },

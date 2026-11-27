@@ -468,6 +468,12 @@ export interface Outcome {
   readonly maxGrossUsd: number
 }
 
+interface ReplayBudget {
+  readonly scale: number
+  readonly capacity: number
+  readonly cost: (symbol: string) => number
+}
+
 const phaseDeadline = (phase: ActiveAlphaPhase, sessionMinutes: number) => {
   if (phase === noise)
     return Math.min(
@@ -479,9 +485,14 @@ const phaseDeadline = (phase: ActiveAlphaPhase, sessionMinutes: number) => {
   return Math.min(deadline, sessionMinutes - protocol.flattenBeforeCloseMinutes)
 }
 
-export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: string): Outcome => {
+export const simulate = (
+  replay: PreparedSession,
+  scenario: Scenario,
+  omit?: string,
+  budget?: ReplayBudget,
+): Outcome & { readonly capacityTouched: boolean; readonly peakRequestedUsd: number } => {
   const { session, decisionMinutes, frameAt, baselineReady, volatilityScale } = replay
-  const { architecture, lag, collar, stopBuffer, cost } = scenario
+  const { architecture, lag, collar, stopBuffer } = scenario
   const trades: Trade[] = []
   let middaySelected = 0
   let middayFilled = 0
@@ -490,6 +501,9 @@ export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: str
   let plannerBlocks = 0
   let capBlocks = 0
   let maxGrossUsd = 0
+  let peakRequestedUsd = 0
+  let capacityTouched = false
+  const limitUsd = budget?.capacity ?? capUsd
   const enabled = new Set(architecture.sleeves)
   const noiseCommitted = new Set<string>()
   let orbCommitted = false
@@ -592,12 +606,30 @@ export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: str
       const bar = readBar(session, leg.symbol, minute)
       if (bar === undefined) throw new Error(`No completed close for ${leg.symbol}`)
       const limit = collar === 10 ? order.liveLimit : modeledEntryLimit(leg.symbol, side(leg), bar.close, collar)
-      return { order, limit, reserve: order.shares * Math.max(limit, order.reference) }
+      const shares = Math.floor(order.shares * (budget?.scale ?? 1))
+      const reservePrice = Math.max(limit, order.reference)
+      return { order, limit, shares, reservePrice }
     })
-    if (heldGross + entries.reduce((sum, order) => sum + order.reserve, 0) > capUsd) {
+    const requested = entries.reduce((sum, entry) => sum + entry.shares * entry.reservePrice, 0)
+    if (requested <= 0) continue
+    peakRequestedUsd = Math.max(peakRequestedUsd, heldGross + requested)
+    const sizeScale = Math.min(1, Math.max(0, limitUsd - heldGross) / requested)
+    capacityTouched ||= sizeScale < 1
+    if (sizeScale === 0 || (budget === undefined && sizeScale < 1)) {
       capBlocks++
       continue
     }
+    const sized = entries.map((entry) => ({ ...entry, shares: Math.floor(entry.shares * sizeScale) }))
+    if (sized.some(({ shares }) => shares === 0)) {
+      capBlocks++
+      continue
+    }
+    if (budget !== undefined)
+      maxGrossUsd = Math.max(
+        maxGrossUsd,
+        heldGross + sized.reduce((sum, entry) => sum + entry.shares * entry.reservePrice, 0),
+      )
+
     if (phase === orb) orbCommitted = true
     if (phase === midday) {
       middayCommitted = true
@@ -607,8 +639,9 @@ export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: str
     // Unfilled intents still use their quotas; the 60-second working window
     // resolves no later than the next minute's decision.
     let grossAtFill = heldGross
-    for (const { order, limit } of entries) {
-      const { leg, shares, stop, target } = order
+    for (const { order, limit, shares } of sized) {
+      const { leg, stop, target } = order
+      const cost = budget?.cost(leg.symbol) ?? scenario.cost
       const direction = side(leg)
       const open = readBar(session, leg.symbol, entryMinute)?.open
       if (open === undefined) {
@@ -617,7 +650,9 @@ export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: str
       }
       const entryPrice = adverse(open, direction, cost)
       if (direction * (entryPrice - limit) > 0) continue
-      if (grossAtFill + entryPrice * shares > capUsd) {
+      peakRequestedUsd = Math.max(peakRequestedUsd, grossAtFill + entryPrice * shares)
+      if (grossAtFill + entryPrice * shares > limitUsd) {
+        capacityTouched = true
         capBlocks++
         continue
       }
@@ -662,5 +697,7 @@ export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: str
     plannerBlocks,
     capBlocks,
     maxGrossUsd,
+    capacityTouched,
+    peakRequestedUsd,
   }
 }
