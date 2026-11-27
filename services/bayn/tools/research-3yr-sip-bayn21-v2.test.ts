@@ -111,6 +111,10 @@ test('uses the same calendar, positions and funding for t+1 versus t+2; an exact
       ['AMD', 0.02],
       ['AMZN', -0.01],
       ['AVGO', 0.01],
+      ['WDC', -0.008],
+      ['COHR', -0.006],
+      ['TSLA', 0.008],
+      ['GOOGL', 0.006],
       ['SNDK', 0.4],
     ] as const) {
       for (let minute = 0; minute < session.minutes; minute++) {
@@ -148,6 +152,13 @@ test('uses the same calendar, positions and funding for t+1 versus t+2; an exact
     ['AVGO', 122, 206],
   ])
   expect(causal.maxGrossUsd).toBeLessThan(180_000)
+  const threePairs = simulate(prepared, {
+    ...scenario,
+    architecture: { ...scenario.architecture, pairs: 3 },
+    lag: 2,
+  })
+  expect(threePairs).toMatchObject({ middaySelected: 6, middayFilled: 6 })
+  expect(threePairs.trades.map(({ symbol }) => symbol).sort()).toEqual(['AAPL', 'AMD', 'AMZN', 'AVGO', 'TSLA', 'WDC'])
 })
 
 test('computes reproducible circular block tails and counts basket fills against committed four-leg orders', () => {

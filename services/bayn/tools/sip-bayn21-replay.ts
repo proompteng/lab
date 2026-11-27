@@ -548,16 +548,15 @@ export const simulate = (replay: PreparedSession, scenario: Scenario, omit?: str
       if (legs.length !== 4) continue
       const used = new Set(legs.map(({ symbol }) => symbol))
       const remaining = (candidate: { readonly symbol: string }) => !used.has(candidate.symbol)
+      // Restrict the second selection to one ranked candidate per side.
+      // The live selector returns its final legs in symbol order, not rank order.
       const extra = selectIntradayAlphaLegs({
         ...selection,
-        longPool: longPool.filter(remaining),
-        shortPool: shortPool.filter(remaining),
+        longPool: longPool.filter(remaining).slice(0, 1),
+        shortPool: shortPool.filter(remaining).slice(0, 1),
       })
-      if (extra.length < 2) continue
-      const long = extra.find(({ direction }) => direction === 'LONG')
-      const short = extra.find(({ direction }) => direction === 'SHORT')
-      if (long === undefined || short === undefined) continue
-      legs = [...legs, long, short].map((leg) => ({ ...leg, targetWeight: 0.12 }))
+      if (extra.length !== 2) continue
+      legs = [...legs, ...extra].map((leg) => ({ ...leg, targetWeight: 0.12 }))
     }
     if (legs.length === 0) continue
     let scale = sizeByVol ? (volatilityScale ?? 1) : 1
