@@ -1,7 +1,7 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
-  name: codex-spark-smoke-implspec
+  name: codex-smoke-implspec
   namespace: agents
 spec:
   contract:
