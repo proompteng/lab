@@ -62,7 +62,13 @@ cmp /tmp/wave2f-score-reproduction.json "$evidence/results.json"
 ```
 
 - [Pre-registered protocol](PROTOCOL.md)
-- [Development-only freeze](freeze.json), committed at `47b2702ed7f905399190ff72b57cc1b74dfd31fb`
+- [Development-only freeze](freeze.json), committed at `31dd7d0c219d7a7dd37159d3ff80e39088e55542`
 - [Complete results](results.json): each panel's `ranges` and `metricColumns` index the result arrays; omitted
   symbol/pair entries use `leaveOutColumns`. SHA-256:
-  `1e3cb9356f07ca3085d9f97fb7a7e2034d18da6a9be529157cb7d6a20cf31fc0`.
+  `4cea00674f453b8620b87b562af43c0728ab647db6904745b6194fe09795e352`.
+
+The initial holdout was scored only after the original development receipt was committed at
+`47b2702ed7f905399190ff72b57cc1b74dfd31fb`. During review, a synthetic regression exposed that a missing
+candidate bar could hide a protective stop. The fix invalidates the affected session and liquidates at the
+next synchronized open. The corrected receipt was committed before rescoring; no parameters, candidate IDs,
+development metrics, or holdout trial outcomes changed.
