@@ -2,7 +2,7 @@
 
 ARC separates architecture-specific runner pods from architecture-neutral control-plane pods.
 
-- The controller and both runner scale sets use chart `0.15.1`. Upgrade the controller and its CRDs before promoting a runner chart that needs new CRD fields.
+- The controller and runner scale sets use chart `0.15.1`. Upgrade the controller and its CRDs before promoting a runner chart that needs new CRD fields.
 - The custom image pins Actions runner `2.337.0` in `nix/images/arc-runner.nix`, independently of the ARC chart version.
   Update its upstream index digest and both platform archive hashes together. Confirm the repository's accepted
   runner version with `gh api repos/proompteng/lab/actions/runners/downloads`, then verify `Runner.Listener --version`
@@ -22,7 +22,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
-- Lab has two execution queues: `arc-arm64` on Altra (`talos-192-168-1-85`) and `arc-amd64` on Turin.
+- The default execution queues are `arc-arm64` on Altra (`talos-192-168-1-85`) and `arc-amd64` on Turin.
   Both have `minRunners: 5` and `maxRunners: 10`. Each worker requests four CPUs and 8Gi memory, with limits
   of 20 CPUs and 16Gi memory. Required hostname selectors keep workers off Ryzen.
 - Publication jobs use the normal `arc-amd64` queue. They retain their existing manifest/index validation,
@@ -32,16 +32,15 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   application-owned actions; application build details stay in the owning repository.
 - Optional Nix image-archive warming has a 30-minute upload budget and 30-second termination grace. A timeout keeps
   its failed cache status and warning, then releases the build runner. Registry publication remains authoritative.
-- Each AMD64 and ARM64 build runner uses one 64Gi generic ephemeral PVC from the existing `rook-ceph-block` StorageClass
+- Each default build runner uses one 64Gi generic ephemeral PVC from the existing `rook-ceph-block` StorageClass
   for `/nix`, `/home/runner/.cache`, `/tmp`, `/var/tmp`, and `/home/runner/_work`. The class provides an ext4 kernel-RBD
   filesystem in `replicapool`. The init rejects other filesystems, non-RBD devices and the runner root filesystem,
   then copies the image's Nix tree and cache with the existing byte, file-count, symlink and ownership checks.
   The PVC is deleted with its runner Pod. Publication and external application builds use the same scratch volume.
-- `/var/tmp` has a separate `var-tmp` subdirectory with explicit mode `01777`; large archive tools can use their
-  normal temporary directory without writing to the runner overlay. Both native build sets expose `CARGO_HOME`
-  and `RUSTUP_HOME` beneath the Ceph-backed cache. The init creates these directories after verifying the seed
-  copy, assigns them to UID 1001 with mode `00700`, and checks the 45Gi free-space reserve afterward.
-- The init requires enough space for the seed plus 45Gi and verifies at least 45Gi remains after copying, including
+- `/var/tmp` has a separate `var-tmp` subdirectory with explicit mode `01777`. All runner sets expose `CARGO_HOME`
+  and `RUSTUP_HOME` beneath their scratch cache. The init creates these directories after verifying the seed
+  copy, assigns them to UID 1001 with mode `00700`, and checks the free-space reserve afterward.
+- The Ceph init requires enough space for the seed plus 45Gi and verifies at least 45Gi remains after copying, including
   filesystem overhead. The 64Gi RBD claim is separate from the runner's 100Gi local ephemeral-storage resource limit.
   A failed bootstrap remains an admission failure; do not weaken the free-space or complete-copy checks.
 - New AMD64 scratch claims never use `local-path-ci-amd64`. Existing busy runners keep their old local claims until
@@ -50,7 +49,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   separate from the build nodes' system NVMe and Talos `/var`. ARM64 build scratch no longer uses node-local
   `emptyDir` or the runner overlay. Image layers, runtime metadata and runner logs still use node
   storage, so verify system-disk and control-plane latency during representative builds.
-- Each native build scratch init requests 2Gi and is limited to 8Gi of memory. The AMD64 Nix-tree bootstrap exceeded the prior
+- Each scratch init requests 2Gi and is limited to 8Gi of memory. The AMD64 Nix-tree bootstrap exceeded the prior
   512Mi limit and was OOM-killed before the runner could register. This stays within the Pod's 8Gi aggregate
   memory request for the runner, so the init does not increase its scheduling reservation.
 - Tailscale connectivity comes from the Omni-owned node configuration in
@@ -60,15 +59,36 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - ARC runner and listener pods append the tailnet search suffix `ide-newton.ts.net` via `dnsConfig.searches`, so bare tailnet hosts such as `temporal-grpc` resolve from GitHub Actions jobs without hardcoding the full `*.ts.net` name.
 - Generate the `github-token` SealedSecret with `scripts/generate-arc-github-token-secret.sh`. The script reads the token from 1Password via `${ARC_GITHUB_TOKEN_OP_PATH}` (defaults to `op://infra/github personal token/token`) and writes the sealed manifest to `argocd/applications/arc/github-token.yaml`.
 
+## Opt-in tmpfs runners
+
+Set `runs-on` to one of these labels to run on memory-backed scratch.
+
+| AMD64 on Turin | ARM64 on Altra | Scratch capacity | Runner memory limit |
+| --- | --- | ---: | ---: |
+| `arc-amd64-tmpfs` | `arc-arm64-tmpfs` | 16 GiB | 18 GiB |
+| `arc-amd64-tmpfs-large` | `arc-arm64-tmpfs-large` | 24 GiB | 28 GiB |
+
+The standard labels scale from zero to three workers per architecture. The large labels scale from zero to two.
+Each worker requests 8 GiB of memory. Scratch and job processes share the memory limit. Bootstrap allows up to
+4 GiB for the seed and verifies the copy and remaining capacity. Jobs with larger scratch requirements, such as
+the Restate Cargo cache export, use the default 64 GiB Ceph labels.
+
+OpenCode release images, the main Bayn image and the Bayn broker-feed image use the standard tmpfs labels through
+`nix-oci-build-common.yml`. These families accounted for 812 of 2,030 ARC build jobs in the 14 days ending
+2026-11-27 UTC. Their observed concurrency at job start was three at p95 on each architecture.
+
+After promotion, dispatch `ARC tmpfs acceptance` to verify both limits, placement, scratch mounts, Nix and BuildKit on
+all four labels.
+
 ## Runner capacity and delivery
 
-Each lab queue keeps five idle runners and grows to ten. At maximum, each host reserves 40 CPUs and 80Gi memory
+Each default queue keeps five idle runners and grows to ten. At maximum, each host reserves 40 CPUs and 80Gi memory
 for ten workers, with aggregate limits of 200 CPUs and 160Gi memory. Altra and Turin retain their existing node roles,
 networking and application workloads. Ryzen hosts the ARC controller, listeners and CI telemetry, not lab job workers.
 Do not add duplicate ARC scale sets with the same label; Update labels through the documented runner-set change procedure.
 
 Capacity and scratch changes follow the reviewed Git, runner-image, Warehouse/Freight and `arc-runner` Kargo path.
-The Stage updates both native init/runner image pairs together; each init must seed the image its runner executes.
+The Stage updates every init/runner image pair together. Each init must seed the image its runner executes.
 Publish workflows now use the existing AMD64 label, so delivery does not depend on creating a new queue first.
 Finish accepted jobs normally and let ARC retire old Pods and claims; do not shrink existing PVCs or delete active jobs.
 Older workflow revisions still targeting the retired publication label must finish before retirement or be updated to

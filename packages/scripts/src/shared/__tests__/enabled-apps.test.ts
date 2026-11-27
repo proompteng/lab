@@ -458,11 +458,11 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
-    expect(argoCdKustomization).toContain('argo-cd/v3.6.2/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argo-cd/v3.6.3/manifests/ha/install.yaml')
     expect(argoCdKustomization).not.toContain('argo-cd/v3.4.6/')
-    expect(applicationSetsReadme.split('argo-cd/v3.6.2/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
+    expect(applicationSetsReadme.split('argo-cd/v3.6.3/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
     expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
-    expect(argoCdReadme).toContain('## Argo CD v3.6.2 upgrade')
+    expect(argoCdReadme).toContain('## Argo CD v3.6.3 upgrade')
     expect(argoCdReadme).toContain('argocd login argocd.proompteng.ai --username admin --grpc-web')
     expect(argoCdReadme).not.toContain('argocd login argocd.proompteng.ai --sso')
     expect(argoCdReadme).toContain('kargo login https://kargo.ide-newton.ts.net --sso')
@@ -507,7 +507,7 @@ describe('enabled app inventory', () => {
       'sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189',
     )
     expect(natsKustomization).toContain('newTag: v1.22.0')
-    expect(observabilityKustomization).toContain('version: 8.4.2')
+    expect(observabilityKustomization).toContain('version: 9.1.0')
   })
 
   it('pins the enabled service image upgrade wave', () => {
@@ -517,7 +517,7 @@ describe('enabled app inventory', () => {
       'digest: sha256:121830e237c3a0d2b875f73905944d6ff301fdd7881c5abdec5f24f5549537e8',
     )
     expect(cloudflaredDeployment).toContain(
-      'cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d',
+      'cloudflare/cloudflared:2026.11.2@sha256:55c7e3e8d89d5e8d20b75a82f3602cbf98e06db406e73e282073cfdc5a9a3af6',
     )
     expect(karapaceManifest).toContain(
       'ghcr.io/aiven-open/karapace:6.2.4@sha256:005eda40272a09f34e60605ae40b1c205c0a5119164b8a090a51ad7f939f79f3',
@@ -602,8 +602,8 @@ describe('enabled app inventory', () => {
       .map((container) => container.image)
 
     expect(ollamaImages).toEqual([
-      'ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592',
-      'ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592',
+      'ollama/ollama:0.40.17@sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754',
+      'ollama/ollama:0.40.17@sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754',
     ])
   })
 

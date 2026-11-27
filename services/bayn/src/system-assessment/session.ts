@@ -12,7 +12,7 @@ import {
   SystemAssessmentError,
 } from './economics'
 import { CashFlowEvidenceSchema, cashFlowTotals, cashFlowsSupported, cashFlowsMatchSession } from './cash-flows'
-import { registeredFinancialTerms, type SystemRegistration } from './policy'
+import { registeredFinancialTerms, isNativeSystemRegistration, type SystemRegistration } from './policy'
 import { JevAcceptanceVersion, usesLegacyAcceptance } from '../jev/acceptance'
 import { costAttributionRule, indexOperatingCosts } from './cost-attribution'
 import { validateFrozenCostAllocations } from './cost-allocation'
@@ -178,7 +178,7 @@ export const assessSession = (
     else {
       requireSource(financial.sourceHash)
       if (
-        registration.schemaVersion === 'bayn.system-registration.v5' &&
+        isNativeSystemRegistration(registration) &&
         session.sessionDate === registration.calendar.sessions[0]?.sessionDate &&
         BigInt(financial.cashInventory.openingEquityMicros) !== BigInt(registration.allocationMicros)
       )

@@ -23,7 +23,7 @@ const fixture = () => {
   const bars = [
     { minuteBeforeWindowEnd: 4, open: 100, high: 103, low: 97, close: 101, volume: 100 },
     { minuteBeforeWindowEnd: 3, open: 101, high: 102, low: 99, close: 100, volume: 100 },
-    { minuteBeforeWindowEnd: 2, open: 103, high: 112, low: 102, close: 104, volume: 100 },
+    { minuteBeforeWindowEnd: 2, open: 103, high: 113, low: 102, close: 104, volume: 100 },
     { minuteBeforeWindowEnd: 1, open: 104, high: 105, low: 103, close: 104, volume: 100 },
   ]
   return {
@@ -239,8 +239,8 @@ const run = (claim: Parameters<typeof evaluateFixtureEntry>[0], setup: ReturnTyp
 
 describe('claimed sequential entry inference', () => {
   test.each([
-    { presence: { support_present: 0.1 }, setups: [], visualCalls: 1 },
-    { presence: { resistance_present: 0.25 }, setups: [], visualCalls: 1 },
+    { presence: { support_present: 0.1 }, setups: [EntrySetup.BaseBreakout], visualCalls: 1 },
+    { presence: { resistance_present: 0.25 }, setups: [EntrySetup.BaseBreakout], visualCalls: 1 },
     { presence: { base_present: 0.3 }, setups: [EntrySetup.SupportRecovery], visualCalls: 1 },
     {
       presence: { support_present: 0.1, resistance_present: 0.25, base_present: 0.1 },
@@ -249,7 +249,7 @@ describe('claimed sequential entry inference', () => {
     },
     {
       presence: { support_present: 0.5, resistance_present: 0.5, base_present: 0.5 },
-      setups: [EntrySetup.SupportRecovery],
+      setups: [EntrySetup.SupportRecovery, EntrySetup.BaseBreakout],
       visualCalls: 1,
     },
   ])('presence $presence removes only inapplicable downstream questions', async ({ presence, setups, visualCalls }) => {
@@ -307,7 +307,7 @@ describe('claimed sequential entry inference', () => {
       const bars = Array.from({ length: count }, (_, index) => ({
         minuteBeforeWindowEnd: count - index,
         open: 100,
-        high: index === count - 1 ? 112 : 102,
+        high: index === count - 1 ? 113 : 102,
         low: 97,
         close: index === count - 1 ? 104 : 101,
         volume: 100,
@@ -331,7 +331,7 @@ describe('claimed sequential entry inference', () => {
     const bars = Array.from({ length: 6 }, (_, index) => ({
       minuteBeforeWindowEnd: 6 - index,
       open: 100,
-      high: 112,
+      high: 113,
       low: 97,
       close: 104,
       volume: 100,

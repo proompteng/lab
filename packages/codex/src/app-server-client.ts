@@ -13,7 +13,6 @@ import type {
   ChatgptAuthTokensRefreshResponse,
   CommandExecutionOutputDeltaNotification,
   ContextCompactedNotification,
-  CurrentTimeReadResponse,
   DynamicToolCallParams,
   DynamicToolCallResponse,
   DynamicToolSpec,
@@ -1019,11 +1018,6 @@ export class CodexAppServerClient {
           break
         case 'mcpServer/elicitation/request':
           result = { action: 'decline', content: null }
-          break
-        case 'currentTime/read':
-          result = {
-            currentTimeAt: Math.floor(Date.now() / 1000),
-          } satisfies CurrentTimeReadResponse
           break
         case 'applyPatchApproval':
           result = { decision: 'denied' }

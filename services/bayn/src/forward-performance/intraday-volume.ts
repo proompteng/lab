@@ -1,5 +1,5 @@
 import { quantityFromDecimal } from '../quantity'
-import { exchangeSessions, isContinuousMarket } from '../market-hours'
+import { isContinuousMarket, matchesEquityExecutionSession } from '../market-hours'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -91,7 +91,6 @@ export const intradayPerformanceDecisionRequest = (
       minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
       archiveWatermarks,
     })
-    const session = exchangeSessions(original.calendar).find((item) => item.date === request.executionSessionDate)
     if (
       request.sourceFeed !== manifest.feed ||
       request.decisionSnapshotAsOfSession !== manifest.sessionDate ||
@@ -106,7 +105,11 @@ export const intradayPerformanceDecisionRequest = (
           Date.parse(request.windowClosedAt) - Date.parse(request.windowOpenedAt) > 86_400_000 ||
           Math.ceil(Date.parse(request.windowOpenedAt) / 60_000) >=
             Math.floor(Date.parse(request.windowClosedAt) / 60_000)
-        : session?.openAt !== request.windowOpenedAt || session.closeAt !== request.windowClosedAt) ||
+        : !matchesEquityExecutionSession(original.calendar, {
+            date: request.executionSessionDate,
+            openAt: request.windowOpenedAt,
+            closeAt: request.windowClosedAt,
+          })) ||
       !Number.isFinite(Date.parse(request.evidenceCutoffAt)) ||
       request.evidenceCutoffAt < request.windowClosedAt ||
       request.evidenceCutoffAt < manifest.observedAt

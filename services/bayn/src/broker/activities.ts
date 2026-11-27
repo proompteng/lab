@@ -406,11 +406,11 @@ export const decideBrokerActivityEvent = (
     readonly contentHash: string
     readonly session: { readonly sessionId: string; readonly requestId: string }
   },
-  retainedContentHash: string | undefined,
+  retained: { readonly sourceEventHash: string; readonly equivalentContent: boolean } | undefined,
   projectionSupported: boolean,
 ): Result.Result<BrokerActivityEventDecision, BrokerActivityCursorRejection> => {
   if (current.cursor !== null && event.sourceEventId <= current.cursor)
-    return retainedContentHash === event.contentHash
+    return retained !== undefined && (retained.sourceEventHash === event.contentHash || retained.equivalentContent)
       ? Result.succeed({ _tag: 'Replay' })
       : Result.fail(BrokerActivityCursorRejection.Replay)
   const invalidatesCoverage =

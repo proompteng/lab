@@ -307,7 +307,10 @@ export const evaluateSupportedEntryProposals = (input: {
   readonly protocol?: Pick<JevProtocolMaterial, 'schemaVersion'>
 }) =>
   Result.gen(function* () {
-    const includeEquityObstruction = input.protocol?.schemaVersion === 'bayn.jev.protocol.v42'
+    const includeEquityObstruction =
+      input.protocol?.schemaVersion === 'bayn.jev.protocol.v42' ||
+      input.protocol?.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol?.schemaVersion === 'bayn.jev.protocol.v44'
     const supported: {
       readonly proposal: NativeEntryProposal
       readonly structuralSupport: number

@@ -114,6 +114,7 @@ jobs:
     with:
       image_name: bayn
       package_attr: bayn-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_index: false
       publish_kargo_tag: false
@@ -145,6 +146,7 @@ jobs:
     with:
       image_name: bayn-broker-feed
       package_attr: bayn-broker-feed-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_index: false
       publish_kargo_tag: false

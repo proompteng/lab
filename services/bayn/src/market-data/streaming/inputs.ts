@@ -1,3 +1,5 @@
+import { MarketKind } from '../../instruments'
+import { marketHistoryMinutes } from '../history'
 import { snapshotMarketCloseAt } from '../../market-hours'
 import { nativeFeatureMatchesBars, rollingWindowStartMs } from '../features/native-feature'
 import { isCryptoMarketFeature } from '../features/crypto-contract'
@@ -155,13 +157,17 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
         }
       }
       let selected: StreamingFeatureReceipt | undefined
+      const expectedEquityFeatureStartMs = Math.max(
+        Date.parse(request.rangeEndAt) - marketHistoryMinutes[MarketKind.Equity] * 60_000,
+        Date.parse(request.rangeStartAt),
+      )
       for (const candidate of state.features.get(symbol) ?? []) {
         if (
           candidate.availableAtMs > observedAtMs ||
           (!isCryptoMarketFeature(candidate.value) && candidate.value.material.sessionDate !== request.sessionDate) ||
           (isCryptoMarketFeature(candidate.value)
             ? rollingWindowStartMs(candidate.value) < Date.parse(request.rangeStartAt)
-            : rollingWindowStartMs(candidate.value) !== Date.parse(request.rangeStartAt)) ||
+            : rollingWindowStartMs(candidate.value) !== expectedEquityFeatureStartMs) ||
           candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
         )
           continue

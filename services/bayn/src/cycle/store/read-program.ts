@@ -9,6 +9,7 @@ export interface CycleReadPrograms {
   readonly readAuthoritySlot: CycleStoreShape['readAuthoritySlot']
   readonly readDecisionDocument: CycleStoreShape['readDecisionDocument']
   readonly readOldestUnfinished: CycleStoreShape['readOldestUnfinished']
+  readonly readUnfinished: NonNullable<CycleStoreShape['readUnfinished']>
 }
 
 export const makeCycleReadPrograms = (queries: CycleQueries): CycleReadPrograms => {
@@ -65,5 +66,11 @@ export const makeCycleReadPrograms = (queries: CycleQueries): CycleReadPrograms 
       ),
     )
 
-  return { read, readAuthoritySlot, readDecisionDocument, readOldestUnfinished }
+  const readUnfinished: NonNullable<CycleStoreShape['readUnfinished']> = (scope) =>
+    runCycleStore(
+      'read-unfinished',
+      decodeCycleRecoveryScope(scope).pipe(Effect.flatMap(queries.selectUnfinishedCycles)),
+    )
+
+  return { read, readAuthoritySlot, readDecisionDocument, readOldestUnfinished, readUnfinished }
 }

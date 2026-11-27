@@ -1,6 +1,7 @@
 import { isStopProtection, isEquityShortProtection } from '../execution/contracts'
 import { PgClient } from '@effect/sql-pg'
 import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
+import { brokerActivitySourceContentIsConsistent } from './broker-activity-conflicts'
 import { Data, Effect, Option, Result, Schema } from 'effect'
 import {
   CryptoFeeTierSchema,
@@ -522,7 +523,9 @@ export const verifyBrokerStateVersion = (
         AND observed_at > ${version.reconciledAt}::timestamptz)
       AND NOT EXISTS (SELECT 1 FROM broker_activity_events WHERE account_id = ${accountId}
         AND recorded_at > ${version.reconciledAt}::timestamptz)
-      AND NOT EXISTS (SELECT 1 FROM broker_activity_source_conflicts WHERE account_id = ${accountId})
+      AND (${brokerActivitySourceContentIsConsistent(sql, accountId)})
+      AND NOT EXISTS (SELECT 1 FROM broker_activity_source_conflicts WHERE account_id = ${accountId}
+        AND recorded_at > ${version.reconciledAt}::timestamptz)
       AND NOT EXISTS (SELECT 1 FROM broker_activity_coverage_receipts WHERE account_id = ${accountId}
         AND status = 'POISONED')
     ) AS valid
@@ -554,13 +557,19 @@ export const verifyBrokerStateVersion = (
           AND d.document #>> '{bindings,accountId}' = ${accountId}
           AND (
             (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v7'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.entry-ablation-target.v1'
               AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.entry-ablation-policy.v1'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'
               AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.repeated-momentum-policy.v1'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.intraday-alpha-target.v1'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.intraday-alpha-policy.v1'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.intraday-alpha-target.v2'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.intraday-alpha-policy.v2'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
           )
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}

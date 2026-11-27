@@ -77,7 +77,7 @@ describe('Signal publisher GitOps authority contract', () => {
     const cronVariables = environment(cronJob.spec.jobTemplate.spec.template.spec.containers[0])
     const coreSymbols = csv(websocketConfig.data.SYMBOLS)
     const schedulerSymbols = csv(schedulerVariables.get('TRADING_UNIVERSE_SYMBOL_ALLOWLIST')?.value ?? '')
-    const decisionSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY']
+    const decisionSymbols = ['AAPL', 'AMZN', 'NVDA', 'SPY']
     const channels = csv(websocketConfig.data.ALPACA_MARKET_DATA_CHANNELS)
     const symbolsByChannel = {
       bars: csv(websocketConfig.data.ALPACA_MARKET_DATA_BARS_SYMBOLS),
@@ -95,15 +95,19 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     expect(schedulerSymbols.every((symbol) => coreSymbols.includes(symbol))).toBe(true)
     expect(csv(websocketConfig.data.SYMBOLS_ALLOWLIST)).toEqual(coreSymbols)
-    expect(symbolsByChannel.bars).toHaveLength(16)
-    const restBars = csv(websocketConfig.data.ALPACA_LATEST_BAR_SYMBOLS)
-    expect(restBars).toEqual(['GOOGL', 'INTC', 'META', 'MSFT', 'NFLX', 'TSLA'])
-    expect(restBars.some((symbol) => symbolsByChannel.bars.includes(symbol))).toBe(false)
-    expect([...symbolsByChannel.bars, ...restBars].sort()).toEqual(coreSymbols)
+    expect(symbolsByChannel.bars).toEqual(coreSymbols)
+    expect(symbolsByChannel.bars).toHaveLength(22)
+    expect(websocketConfig.data.ALPACA_LATEST_BAR_SYMBOLS).toBeUndefined()
     expect(channels).toEqual(['trades', 'quotes', 'bars'])
     expect(symbolsByChannel.quotes).toEqual(decisionSymbols)
     expect(symbolsByChannel.trades).toEqual(decisionSymbols)
+    expect(csv(websocketConfig.data.ALPACA_LATEST_SYMBOLS)).toEqual(
+      coreSymbols.filter((symbol) => !decisionSymbols.includes(symbol)),
+    )
     expect(channels.reduce((total, channel) => total + symbolsByChannel[channel].length, 0)).toBe(30)
+    expect(
+      websocketDeployment.spec.template.metadata.annotations['torghut.proompteng.ai/market-data-subscription-plan'],
+    ).toBe('iex-all-bars-v1')
     expect(selected.length * 4).toBeLessThanOrEqual(30)
     expect(websocketVariables.get('ALPACA_OBSERVATION_SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
     expect(websocketVariables.get('MARKET_DATA_UNIVERSE_ID')).toMatchObject(universeRef('UNIVERSE_ID'))
@@ -309,7 +313,7 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     const liveCoreSymbols = csv(websocket.data.SYMBOLS)
     const liveCoreChannels = csv(websocket.data.ALPACA_MARKET_DATA_CHANNELS)
-    const liveDecisionSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY']
+    const liveDecisionSymbols = ['AAPL', 'AMZN', 'NVDA', 'SPY']
     expect(liveCoreSymbols).toEqual(coreArchiveSymbols)
     expect(csv(websocket.data.SYMBOLS_ALLOWLIST)).toEqual(liveCoreSymbols)
     expect(csv(websocket.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS)).toEqual(liveDecisionSymbols)
@@ -317,7 +321,8 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(liveCoreChannels).toEqual(['trades', 'quotes', 'bars'])
     const websocketBars = csv(websocket.data.ALPACA_MARKET_DATA_BARS_SYMBOLS)
     expect(websocketBars.length + liveDecisionSymbols.length * 2).toBe(30)
-    expect([...websocketBars, ...csv(websocket.data.ALPACA_LATEST_BAR_SYMBOLS)].sort()).toEqual(coreArchiveSymbols)
+    expect(websocketBars).toEqual(coreArchiveSymbols)
+    expect(websocket.data.ALPACA_LATEST_BAR_SYMBOLS).toBeUndefined()
     expect(coreTopics.find((topic) => topic.metadata.name === 'torghut.quotes.v1')?.spec.partitions).toBe(13)
     expect(websocket.data.ALPACA_FEED).toBe('iex')
     expect(websocket.data.TOPIC_CRYPTO_EVENTS).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)
@@ -354,9 +359,6 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     expect(websocketDeployment.metadata.annotations).toMatchObject({
       'argocd.argoproj.io/sync-wave': '5',
-    })
-    expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
-      'torghut.proompteng.ai/ws-config-generation': 'bayn-iex-single-session-qualification-v1',
     })
   })
 
