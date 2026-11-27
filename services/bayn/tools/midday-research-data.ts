@@ -87,7 +87,7 @@ export interface Session {
   readonly daily: readonly PriorSessionDailySummary[]
 }
 
-const linesOf = (text: string) => {
+export const linesOf = (text: string) => {
   const lines = text.split('\n')
   if (lines.at(-1) === '') lines.pop()
   return lines
@@ -175,11 +175,11 @@ export const decodeRegularCalendar = (input: unknown) => {
   )
 }
 
-export const readFrozenMiddayTape = (directory: string) => {
+export const openFrozenBaynDataset = (directory: string, files: readonly string[]) => {
   const manifestBytes = readFileSync(join(directory, 'MANIFEST.json'))
   if (digest(manifestBytes) !== manifestSha256) throw new Error('Unexpected frozen dataset MANIFEST.json SHA-256')
   const manifest = Schema.decodeUnknownSync(ManifestSchema)(JSON.parse(manifestBytes.toString('utf8')))
-  const sources = [calendarFile, barFile, quoteFile].map((name) => {
+  const sources = files.map((name) => {
     const entry = manifest.files.find((file) => file.key === prefix + name)
     if (entry === undefined) throw new Error(`Missing manifest entry for ${name}`)
     return entry
@@ -195,6 +195,11 @@ export const readFrozenMiddayTape = (directory: string) => {
       throw new Error(`Decompressed input SHA-256 or byte count mismatch for ${name}`)
     return { text: raw.toString('utf8'), rows: receipt.rows }
   }
+  return { manifestSha256, sources, read }
+}
+
+export const readFrozenMiddayTape = (directory: string, universe: readonly string[] = symbols) => {
+  const { sources, read } = openFrozenBaynDataset(directory, [calendarFile, barFile, quoteFile])
   const calendar = decodeRegularCalendar(JSON.parse(read(calendarFile).text))
   const dates = new Map(
     calendar.providerSessions
@@ -211,7 +216,7 @@ export const readFrozenMiddayTape = (directory: string) => {
     { symbol, at, date, value }: { symbol: string; at: number; date: string; value: A },
     select: (tape: MutableTape) => Map<number, A>,
   ) => {
-    if (!symbols.includes(symbol)) return
+    if (!universe.includes(symbol)) return
     const day = dates.get(date)
     if (day === undefined) throw new Error(`Date outside frozen calendar: ${date}`)
     if (at < day.openMs || at >= day.closeMs) return
