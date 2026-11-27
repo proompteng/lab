@@ -121,7 +121,7 @@ export const prepare = (market: Market, core: readonly string[]) => {
       pairWindows.map((lookback) => [`${a}/${b}:${lookback}`, buildPair(market, a, b, lookback, perSession)] as const),
     ),
   )
-  const gaps = new Map(
+  const gaps = new Map<string, ReturnType<typeof buildGap>>(
     core
       .filter((s) => s !== 'SPY')
       .flatMap((symbol) =>
@@ -270,7 +270,7 @@ export const replayUnit = (
           }
         }
       } else if (t + 1 < s.slots - 1 && eligibleA(d) && eligibleB(d) && !wdcClosing(symA, symB, s.date)) {
-        if (trial.engine === 'pair-intraday' && pair && t >= 5) {
+        if (trial.engine === 'pair-intraday' && pair !== undefined && t >= 5) {
           const z = pair.z[at]
           if (entryAllowed(trial, z, pair.model[d])) pending = -Math.sign(z)
         } else if (
