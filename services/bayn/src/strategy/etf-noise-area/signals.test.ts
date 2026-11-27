@@ -329,6 +329,28 @@ describe('causal Noise Area evaluator', () => {
     )
   })
 
+  test('fails the observation on malformed prior OHLC, mismatched previous close, or out-of-range checkpoint close', () => {
+    const value = fixture(date)
+    const prior = value.priorSessions.at(-1)
+    if (prior === undefined) throw new Error('expected warmup fixture')
+    const malformedCases = [
+      { ...prior, lowPriceMicros: prior.highPriceMicros + 1n },
+      { ...prior, previousClosePriceMicros: prior.previousClosePriceMicros + 1n },
+      { ...prior, checkpointCloseMicros: { ...prior.checkpointCloseMicros, 30: prior.highPriceMicros + 1n } },
+    ]
+    for (const bad of malformedCases) {
+      expect(
+        evaluateNoiseAreaCheckpoint({
+          ...value,
+          priorSessions: [...value.priorSessions.slice(0, -1), bad],
+        }),
+      ).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'NoiseAreaInputError', message: expect.stringContaining(prior.sessionDate) },
+      })
+    }
+  })
+
   test('fails closed on missing, conflicting, or nonmatching official warmup and current bars', () => {
     const value = fixture(date, '18:30')
     const prior = value.priorSessions.at(-1)

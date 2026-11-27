@@ -254,17 +254,24 @@ export const evaluateNoiseAreaCheckpoint = (input: {
         closePriceMicros > highPriceMicros ||
         previousClosePriceMicros <= 0n ||
         (prevClose !== undefined && previousClosePriceMicros !== prevClose)
-      )
-        return missing('PriorSessions')
+      ) {
+        return yield* Result.fail(
+          new NoiseAreaInputError({
+            message: `${symbol} prior summary for ${row.sessionDate} has malformed OHLC or inconsistent previous close`,
+          }),
+        )
+      }
 
       const checkpointClose = row.checkpointCloseMicros[elapsedMinutes]
-      if (
-        bounds.open + elapsedMinutes * minuteMs > bounds.close ||
-        checkpointClose === undefined ||
-        checkpointClose < lowPriceMicros ||
-        checkpointClose > highPriceMicros
-      )
+      if (bounds.open + elapsedMinutes * minuteMs > bounds.close || checkpointClose === undefined)
         return missing('PriorCheckpoint')
+      if (checkpointClose < lowPriceMicros || checkpointClose > highPriceMicros) {
+        return yield* Result.fail(
+          new NoiseAreaInputError({
+            message: `${symbol} prior checkpoint close for ${row.sessionDate} falls outside session low/high range`,
+          }),
+        )
+      }
 
       swingNumerator = swingNumerator * openPriceMicros + abs(checkpointClose - openPriceMicros) * swingDenominator
       swingDenominator *= openPriceMicros
