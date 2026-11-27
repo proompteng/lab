@@ -1,4 +1,10 @@
 import { expect, test } from 'bun:test'
+import { nativeAlphaDecisionFixture } from './alpha-decision.test-support'
+import {
+  makeAlphaStreamingSnapshot,
+  makeTestTrailingBaseline,
+  makeFlatAlphaPortfolio as makeFlatPortfolio,
+} from './test-support'
 import { Effect, Fiber, Layer, Option, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
@@ -17,28 +23,14 @@ import {
 import { executionMandateAllocationCapitalMicros } from '../../execution/mandate'
 import type { EquityShortEligibility } from '../../execution/equity-short'
 import { canonicalHashV1Result } from '../../hash'
-import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
-import { BrokerRead } from '../../broker/alpaca/model'
-import {
-  makeCycleDraft,
-  makeCycleIdentity,
-  makeExecutionCalendarObservation,
-  makeIntradayCycleWindow,
-} from '../../cycle/construction'
-import { CycleState, type AutonomousCycle } from '../../cycle/model'
-import { DecisionConstruction } from '../../decision-construction'
-import { operationalError } from '../../errors'
-import { Authority, KillState } from '../../execution/contracts'
-import { makeExecutionRiskPolicy } from '../../execution/risk-policy'
+import { CycleState } from '../../cycle/model'
 import { makeIntradayAlphaRuntime } from '../../intraday-replay/strategy'
-import { JevBatchStore } from '../../jev/batch-evaluation'
-import { EntryInferenceJournal } from '../../jev/entry-inference'
-import { JevEvaluationStore } from '../../jev/evaluation'
-import { buildMutationShadowCycleDecision } from '../../observe-composition/decision-builder'
 import { closeWindowForCycle } from '../../observe-composition/execution-cycle'
-import { constructExecutionDecision, constructObserveShadowDecision } from '../../shadow-decision'
 import { decodeExecutionDecisionDocument } from '../../shadow-decision-contract'
-import { shortEntryBrokerReads } from '../../testing/entry-broker-reads.test-support'
+import { verifyReportJob } from '../../forward-performance-verification-worker'
+import { ReportVerificationTask } from '../../forward-performance/verification'
+import { AlphaDecisionJsonRow, verifyAlphaDecisionJson } from '../../forward-performance/postgres/alpha-decisions'
+import { readPerformanceAlphaDecisionCursor } from '../../forward-performance/postgres/decision-cursor'
 import { JevClient, JevError, type JevInference } from '../../jev/client'
 import { JevFailure } from '../../jev/contract'
 import { JevExitReason, decideJevExit } from '../../jev/exit'
@@ -50,34 +42,12 @@ import {
 } from '../../jev/portfolio'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../../jev/protocol'
 import { compileJevEntry } from '../../jev/runtime'
-import {
-  MarketFeatureContract,
-  MarketFeatureDefinition,
-  MarketFeatureSessionPolicy,
-  decodeRollingMarketFeature,
-  featureBarContentHash,
-} from '../../market-data/features/contract'
-import { type IntradayBar, type IntradayQuote, type IntradayTrade } from '../../market-data/intraday/model'
-import {
-  IntradayTrailingBaseline,
-  intradayAlphaTrailingBaselineSchemaVersion,
-  noiseAreaCheckpointMinutes,
-  type IntradayAlphaTrailingBaseline,
-} from '../../market-data/intraday/trailing-baseline'
-import { intradayInstantNanos } from '../../market-data/intraday/time'
-import { KafkaBootstrapTimestampPolicy } from '../../market-data/streaming/bootstrap'
-import {
-  emptyStreamingProjection,
-  incorporateMarketRecord,
-  incorporateRecordedMarketValue,
-} from '../../market-data/streaming/projection'
-import { constructStreamingSnapshot } from '../../market-data/streaming/snapshot'
+import { IntradayTrailingBaseline } from '../../market-data/intraday/trailing-baseline'
 import { CandidateObservationStore } from '../../observe-composition/candidate-observation'
 import { prepareObserveStartup } from '../../observe-composition/startup'
 import { IsoDateSchema, strictParseOptions } from '../../schemas'
 import { reconciledStateHash } from '../../simulation-reconciliation/broker-model'
-import { numberToMicros, priceNumberToMicros } from '../execution-model/fixed-point'
-import { intradayMomentumFeatureTopic } from '../intraday-momentum/protocol'
+import { priceNumberToMicros } from '../execution-model/fixed-point'
 import { TargetPlanStatus, planTargets, quoteBoundTargetPlannerInputSchemaVersion } from '../../target-planner/index'
 import { fixtureRuntime } from '../../testing/runtime-fixtures'
 import { utcInstantFromEpochMillis } from '../../time'
@@ -93,9 +63,7 @@ import {
   IntradayAlphaPhase,
   IntradayAlphaSetup,
   decodeIntradayAlphaPolicy,
-  intradayAlphaBenchmarkSymbol,
   intradayAlphaCandidateSymbols,
-  intradayAlphaEquityMarketProfile,
   intradayAlphaStrategyIdentity,
   makeIntradayAlphaPolicy,
 } from './policy'
@@ -109,12 +77,6 @@ import {
 } from './signals'
 
 const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)('2026-09-04')
-const calendar = Result.getOrThrow(
-  normalizeMarketCalendarResult(
-    [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],
-    { start: '2026-09-04', end: '2026-09-04' },
-  ),
-)
 const sessionOpenMs = Date.parse('2026-09-04T13:30:00.000Z') // 09:30 EDT
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 const policy = makeIntradayAlphaPolicy(protocol)
@@ -122,98 +84,10 @@ const accountId = 'alpha-test-account'
 const cycleId = '1'.repeat(64)
 const authorityGenerationHash = '2'.repeat(64)
 
-const makeTestTrailingBaseline = (
-  overrides?: Readonly<
-    Record<
-      string,
-      {
-        readonly prevClose?: number
-        readonly atr14Ratio?: number
-        readonly avgSwingByCheckpoint?: Readonly<Record<string, number>>
-      }
-    >
-  >,
-): IntradayAlphaTrailingBaseline => ({
-  schemaVersion: intradayAlphaTrailingBaselineSchemaVersion,
-  sessionDate,
-  lookbackSessions: 14,
-  latestPriorSessionDate: Schema.decodeUnknownSync(IsoDateSchema)('2026-09-03'),
-  symbols: Object.fromEntries(
-    intradayAlphaCandidateSymbols.map((symbol) => {
-      const custom = overrides?.[symbol]
-      const isNoise = policy.noiseAreaSymbols.includes(symbol)
-      return [
-        symbol,
-        {
-          priorSessions: 14,
-          prevClose: custom?.prevClose ?? (symbol === 'QQQ' ? 500 : symbol === 'SMH' ? 250 : 140),
-          atr14Ratio: custom?.atr14Ratio ?? (symbol === 'QQQ' ? 0.014 : symbol === 'SMH' ? 0.024 : 0.04),
-          ...(isNoise
-            ? {
-                avgSwingByCheckpoint:
-                  custom?.avgSwingByCheckpoint ??
-                  Object.fromEntries(
-                    noiseAreaCheckpointMinutes.map((cp) => [String(cp), symbol === 'QQQ' ? 0.004 : 0.006]),
-                  ),
-              }
-            : {}),
-        },
-      ]
-    }),
-  ),
-})
-
 const testTrailingBaseline = makeTestTrailingBaseline()
 const testTrailingBaselineLayer = Layer.succeed(IntradayTrailingBaseline, {
   load: () => Effect.succeed(testTrailingBaseline),
 })
-
-const makeFlatPortfolio = (observedAt: string, equityMicros = '100000000000', buyingPowerMicros = equityMicros) => {
-  const material = {
-    account: {
-      schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
-      accountId,
-      status: AccountStatus.Active,
-      currency: 'USD' as const,
-      cashMicros: equityMicros,
-      buyingPowerMicros,
-      equityMicros,
-      cryptoFeeTier: null,
-      observedAt,
-    },
-    positions: [] as const,
-    positionsObservedAt: observedAt,
-    orders: [] as const,
-    ordersObservedAt: observedAt,
-    accountingHash: 'd'.repeat(64),
-  }
-  const stateHash = Result.getOrThrow(reconciledStateHash(material))
-  const reconciliationMaterial = {
-    schemaVersion: 'bayn.paper-reconciliation.v1' as const,
-    accountId,
-    expectedHash: stateHash,
-    observedHash: stateHash,
-    status: ReconciliationStatus.Exact,
-    discrepancies: [] as const,
-    reconciledAt: observedAt,
-  }
-  const reconciliationId = Result.getOrThrow(canonicalHashV1Result(reconciliationMaterial))
-  const contentHash = Result.getOrThrow(canonicalHashV1Result({ ...reconciliationMaterial, reconciliationId }))
-  return Result.getOrThrow(
-    decodeJevPortfolio({
-      purpose: JevPurpose.Entry,
-      brokerState: {
-        ...material,
-        unknownOrderCount: 0,
-        reconciliation: {
-          ...reconciliationMaterial,
-          reconciliationId,
-          contentHash,
-        },
-      },
-    }),
-  )
-}
 
 const makeShortEligibility = (
   symbols: readonly string[],
@@ -244,268 +118,6 @@ const makeShortEligibility = (
       },
     ]),
   )
-
-interface BarProfile {
-  readonly basePrice: number
-  readonly endReturnBps: number
-  readonly gapMinutes?: readonly number[]
-  readonly spreadBps?: number
-  readonly overrideLatestClose?: number
-  readonly overridePrevClose?: number
-  readonly openingRangeHigh?: number
-  readonly openingRangeLow?: number
-}
-
-/**
- * Constructs a genuine cryptographically verified full-session StreamingVerifiedMarketSnapshot
- * spanning [09:30 ET, rangeEndAt) with real PT30M Flink rolling feature receipts and SPY CompletedBars.
- */
-const makeAlphaStreamingSnapshot = (input: {
-  readonly minutesFromOpen: number // rangeEndAt = sessionOpen + minutesFromOpen * 60_000 (last bar is minutesFromOpen - 1)
-  readonly profiles: Readonly<Record<string, BarProfile>>
-  readonly spyProfile?: BarProfile
-  readonly quoteSpreadBps?: number
-  readonly quoteBidSize?: number
-  readonly quoteAskSize?: number
-  readonly snapshotCalendar?: typeof calendar
-}) => {
-  const effectiveCalendar = input.snapshotCalendar ?? calendar
-  const rangeEndMs = sessionOpenMs + input.minutesFromOpen * 60_000
-  const observedAtMs = rangeEndMs + protocol.decisionDelaySeconds * 1000
-  const observedAt = utcInstantFromEpochMillis(observedAtMs)
-  const rangeStartAt = utcInstantFromEpochMillis(sessionOpenMs)
-  const rangeEndAt = utcInstantFromEpochMillis(rangeEndMs)
-  const market = intradayAlphaEquityMarketProfile
-  const symbols = [...new Set([...intradayAlphaCandidateSymbols, intradayAlphaBenchmarkSymbol])].sort()
-
-  const universe = {
-    universeId: market.universeId,
-    universeSymbolHash: market.universeSymbolHash,
-    symbols: market.universe,
-    feed: market.feed,
-    delayClass: market.delayClass,
-    topics: { ...market.sourceTopics, features: intradayMomentumFeatureTopic },
-  }
-
-  let barOffset = 0
-  let quoteOffset = 0
-  let tradeOffset = 0
-  const bars: IntradayBar[] = []
-  const quotes: IntradayQuote[] = []
-  const trades: IntradayTrade[] = []
-
-  const defaultSpy: BarProfile = input.spyProfile ?? { basePrice: 550, endReturnBps: 0 }
-
-  for (const symbol of symbols) {
-    const profile: BarProfile =
-      symbol === intradayAlphaBenchmarkSymbol
-        ? defaultSpy
-        : (input.profiles[symbol] ?? { basePrice: 120, endReturnBps: 0 })
-    const gapSet = new Set(profile.gapMinutes ?? [])
-    const totalSteps = Math.max(1, input.minutesFromOpen - 1)
-
-    let lastClose = profile.basePrice
-    for (let m = 0; m < input.minutesFromOpen; m++) {
-      if (gapSet.has(m) && m !== input.minutesFromOpen - 1) continue
-      const barTime = utcInstantFromEpochMillis(sessionOpenMs + m * 60_000)
-      const ingestedAt = utcInstantFromEpochMillis(sessionOpenMs + (m + 1) * 60_000 - 1_000)
-      const frac = m / totalSteps
-      let close = Number((profile.basePrice * (1 + (profile.endReturnBps / 10_000) * frac)).toFixed(2))
-      if (m === input.minutesFromOpen - 2 && profile.overridePrevClose !== undefined) close = profile.overridePrevClose
-      if (m === input.minutesFromOpen - 1 && profile.overrideLatestClose !== undefined)
-        close = profile.overrideLatestClose
-      const open = m === 0 ? profile.basePrice : lastClose
-      let high = Number((Math.max(open, close) * 1.0005).toFixed(2))
-      let low = Number((Math.min(open, close) * 0.9995).toFixed(2))
-      if (m < 30) {
-        if (profile.openingRangeHigh !== undefined) high = Math.max(high, profile.openingRangeHigh)
-        if (profile.openingRangeLow !== undefined) low = Math.min(low, profile.openingRangeLow)
-      }
-      const vwap = Number(((open + high + low + close) / 4).toFixed(4))
-      lastClose = close
-      bars.push({
-        provider: 'alpaca',
-        universeId: market.universeId,
-        universeSymbolHash: market.universeSymbolHash,
-        marketSession: 'regular',
-        schemaVersion: 1,
-        channel: 'bars',
-        final: true,
-        symbol,
-        eventAt: barTime,
-        ingestedAt,
-        feed: market.feed,
-        delayClass: market.delayClass,
-        sourceTopic: market.sourceTopics.bars,
-        sourcePartition: 0,
-        sourceOffset: String(barOffset++),
-        open,
-        high,
-        low,
-        close,
-        volume: 15_000,
-        vwap,
-        tradeCount: '150',
-      })
-    }
-
-    // Candidate quotes & trades (benchmark SPY uses CompletedBars so does not need quotes/trades, though adding trade is harmless)
-    if (symbol !== intradayAlphaBenchmarkSymbol) {
-      const spreadBps = profile.spreadBps ?? input.quoteSpreadBps ?? 6
-      const halfSpread = (lastClose * (spreadBps / 10_000)) / 2
-      const bidPrice = Number((lastClose - halfSpread).toFixed(2))
-      const askPrice = Number(Math.max(bidPrice + 0.01, lastClose + halfSpread).toFixed(2))
-      const quoteTime = utcInstantFromEpochMillis(observedAtMs - 1_000)
-      quotes.push({
-        provider: 'alpaca',
-        universeId: market.universeId,
-        universeSymbolHash: market.universeSymbolHash,
-        marketSession: 'regular',
-        schemaVersion: 1,
-        symbol,
-        eventAt: quoteTime,
-        ingestedAt: quoteTime,
-        feed: market.feed,
-        delayClass: market.delayClass,
-        sourceTopic: market.sourceTopics.quotes,
-        sourcePartition: 0,
-        sourceOffset: String(quoteOffset++),
-        bidPrice,
-        bidSize: input.quoteBidSize ?? 5_000,
-        askPrice,
-        askSize: input.quoteAskSize ?? 5_000,
-      })
-      trades.push({
-        provider: 'alpaca',
-        universeId: market.universeId,
-        universeSymbolHash: market.universeSymbolHash,
-        marketSession: 'regular',
-        schemaVersion: 1,
-        symbol,
-        eventAt: quoteTime,
-        ingestedAt: quoteTime,
-        feed: market.feed,
-        delayClass: market.delayClass,
-        sourceTopic: market.sourceTopics.trades,
-        sourcePartition: 0,
-        sourceOffset: String(tradeOffset++),
-        price: lastClose,
-        size: 500,
-      })
-    }
-  }
-
-  let projection = emptyStreamingProjection('alpha-test-epoch')
-  for (const record of [...bars, ...quotes, ...trades]) {
-    projection = incorporateRecordedMarketValue(projection, record, universe, observedAtMs)
-  }
-
-  // Rolling PT30M features match the last 30m suffix [max(rangeEndMs - 30m, sessionOpenMs), rangeEndMs)
-  const featureWindowStartMs = Math.max(rangeEndMs - 30 * 60_000, sessionOpenMs)
-  let featureOffset = 0
-  for (const symbol of symbols) {
-    const windowBars = bars.filter(
-      (bar) =>
-        bar.symbol === symbol &&
-        Date.parse(bar.eventAt) >= featureWindowStartMs &&
-        Date.parse(bar.eventAt) < rangeEndMs,
-    )
-    if (windowBars.length === 0) continue
-    const material = {
-      schemaVersion: MarketFeatureContract.V1,
-      definitionId: MarketFeatureDefinition.ObservedPriceWindow,
-      definitionHash: market.streamingInput.requiredDefinitionHash,
-      provider: 'alpaca' as const,
-      feed: 'iex' as const,
-      delayClass: 'real_time_exchange_only' as const,
-      universeId: market.universeId,
-      universeSymbolHash: market.universeSymbolHash,
-      symbol,
-      sessionDate,
-      sessionPolicy: MarketFeatureSessionPolicy.IexClockSegments,
-      windowStartMs: featureWindowStartMs,
-      windowEndMs: rangeEndMs,
-      inputs: windowBars.map((bar) => ({
-        eventTimeNanos: intradayInstantNanos(bar.eventAt).toString(),
-        ingestionTimeNanos: intradayInstantNanos(bar.ingestedAt).toString(),
-        sourceTopic: bar.sourceTopic,
-        sourcePartition: bar.sourcePartition,
-        sourceOffset: bar.sourceOffset,
-        contentHash: Result.getOrThrow(featureBarContentHash(bar)),
-      })),
-      values: {
-        referencePriceMicros: Result.getOrThrow(numberToMicros(windowBars[0]?.open ?? 0, 'open')).toString(),
-        rangeHighPriceMicros: Result.getOrThrow(
-          numberToMicros(Math.max(...windowBars.map((bar) => bar.high)), 'high'),
-        ).toString(),
-        rangeLowPriceMicros: Result.getOrThrow(
-          numberToMicros(Math.min(...windowBars.map((bar) => bar.low)), 'low'),
-        ).toString(),
-        lastClosePriceMicros: Result.getOrThrow(numberToMicros(windowBars.at(-1)?.close ?? 0, 'close')).toString(),
-        totalVolumeMicros: Result.getOrThrow(
-          numberToMicros(
-            windowBars.reduce((sum, bar) => sum + bar.volume, 0),
-            'vol',
-          ),
-        ).toString(),
-      },
-    }
-    const feature = Result.getOrThrow(
-      decodeRollingMarketFeature({
-        material,
-        featureId: Result.getOrThrow(canonicalHashV1Result(material)),
-        computedAtMs: observedAtMs,
-        producerRevision: 'alpha-test-flink',
-      }),
-    )
-    projection = incorporateMarketRecord(
-      projection,
-      {
-        topic: intradayMomentumFeatureTopic,
-        partition: 0,
-        offset: String(featureOffset++),
-        value: JSON.stringify(feature),
-      },
-      universe,
-      observedAtMs,
-    )
-  }
-
-  const positions = Object.values(universe.topics)
-    .sort()
-    .map((topic) => ({
-      topic,
-      partition: 0,
-      offset: String(BigInt(projection.offsets.get(`${topic}:0`) ?? '-1') + 1n),
-    }))
-
-  const cut = {
-    projection,
-    consumerSequence: bars.length + quotes.length + trades.length + featureOffset,
-    positions,
-    deliveredPositions: positions,
-    bootstrap: {
-      schemaVersion: 'bayn.kafka-bootstrap.v1' as const,
-      epoch: projection.epoch,
-      observedAtMs: observedAtMs - 1_000,
-      lowerTimestampMs: sessionOpenMs - 5_000,
-      timestampPolicy: KafkaBootstrapTimestampPolicy.ProducerClock,
-      partitions: positions.map((position) => ({
-        topic: position.topic,
-        partition: position.partition,
-        logStartOffset: '0',
-        startOffset: '0',
-        endOffset: position.offset,
-      })),
-    },
-  }
-
-  const query = Result.getOrThrow(
-    makeIntradayAlphaEntryQuery({ policy, calendar: effectiveCalendar, sessionDate, observedAtMs }),
-  )
-  const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut, query))
-  return { snapshot, cut, observedAt, observedAtMs, rangeStartAt, rangeEndAt, query }
-}
 
 test('gap-resilient session VWAP and 30m Opening Range handle silent IEX minutes accurately', () => {
   // Simulate COHR with 4 missing morning minutes (where Flink recursive VWAP returns GAP)
@@ -1460,219 +1072,7 @@ test('intraday alpha policy identity and native startup preparation bind distinc
 })
 
 test('durable execution decision validation reproduces bar-close alpha pricing, 10bp slippage, uncapped short sizing, and regular-session midday close window', async () => {
-  const extendedCalendar = Result.getOrThrow(
-    normalizeMarketCalendarResult(
-      [{ session_open: '0800', session_close: '1700', date: '2026-09-04', open: '09:30', close: '16:00' }],
-      { start: '2026-09-04', end: '2026-09-04' },
-    ),
-  )
-  const { snapshot, cut, observedAt, rangeEndAt } = makeAlphaStreamingSnapshot({
-    minutesFromOpen: 121,
-    spyProfile: { basePrice: 550, endReturnBps: 0 },
-    profiles: {
-      COHR: { basePrice: 100, endReturnBps: -350 },
-      LITE: { basePrice: 90, endReturnBps: -280 },
-      SNDK: { basePrice: 60, endReturnBps: 340 },
-      MU: { basePrice: 80, endReturnBps: 250 },
-    },
-    quoteSpreadBps: 450, // Wide single-exchange IEX spread (~4.5%)
-    quoteBidSize: 1, // Thin top-of-book displayed bid size on IEX
-    quoteAskSize: 1,
-    snapshotCalendar: extendedCalendar,
-  })
-
-  const identity = Result.getOrThrow(intradayAlphaStrategyIdentity(policy))
-  const strategy = makeIntradayAlphaRuntime(policy, { ...fixtureRuntime.provenance, strategy: identity.strategy })
-  const prepared = Result.getOrThrow(
-    prepareObserveStartup({
-      strategy,
-      accountId,
-      authorityGenerationHash,
-      reconciliationIntervalMs: 30_000,
-      reconciliationPassTimeoutMs: 30_000,
-    }),
-  )
-  const brokerIdentity = Result.getOrThrow(
-    makeBrokerIdentity({
-      schemaVersion: 'bayn.broker-identity.v2',
-      provider: BrokerProvider.Alpaca,
-      environment: BrokerEnvironment.Sandbox,
-      accountId,
-    }),
-  )
-  const riskPolicy = Result.getOrThrow(
-    makeExecutionRiskPolicy(accountId, policy.sharedProtocol.universe, BrokerEnvironment.Sandbox),
-  )
-  const portfolio = makeFlatPortfolio(observedAt)
-  const calendarSession = extendedCalendar.sessions[0]
-  if (calendarSession === undefined) throw new Error('Missing extended calendar session')
-  const executionCalendar = Result.getOrThrow(
-    makeExecutionCalendarObservation({
-      schemaVersion: extendedCalendar.schemaVersion,
-      source: extendedCalendar.source,
-      ...calendarSession,
-    }),
-  )
-  const cycleIdentity = Result.getOrThrow(
-    makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
-      qualificationRunId: '1'.repeat(64),
-      strategyName: 'jev',
-      strategyProtocolHash: identity.protocolHash,
-      accountId,
-      executionSessionDate: sessionDate,
-      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
-      executionCalendarSource: executionCalendar.executionCalendarSource,
-      executionCalendarHash: executionCalendar.executionCalendarHash,
-      entryAttemptOrdinal: 1,
-      executionPolicy: prepared.executionPolicy,
-    }),
-  )
-  const cycleWindow = Result.getOrThrow(makeIntradayCycleWindow(executionCalendar, prepared.executionPolicy))
-  const cycleDraft = Result.getOrThrow(makeCycleDraft(cycleIdentity, cycleWindow))
-  const cycle: AutonomousCycle = {
-    ...cycleDraft,
-    state: CycleState.Active,
-    stateVersion: 1,
-    bindings: {},
-    createdAt: observedAt,
-    updatedAt: observedAt,
-  }
-  const reconciliation = {
-    brokerState: portfolio.brokerState,
-    riskContext: {
-      authority: {
-        schemaVersion: 'bayn.paper-authority.v1' as const,
-        generationHash: authorityGenerationHash,
-        maximum: Authority.Execution,
-        effective: Authority.Execution,
-        kill: KillState.Clear,
-        version: 2,
-        updatedAt: observedAt,
-      },
-      authorityObservedAt: observedAt,
-      brokerIdentity,
-      tradingDate: sessionDate,
-      dayStartEquityMicros: portfolio.brokerState.account.equityMicros,
-      peakEquityMicros: portfolio.brokerState.account.equityMicros,
-      dailyTradedNotionalMicros: '0',
-      dailyLossMicros: '0',
-      drawdownMicros: '0',
-      unknownMutationCount: 0,
-      observedAt,
-    },
-    report: {
-      reconciliation: portfolio.brokerState.reconciliation,
-      metrics: {
-        reconciliationStatus: ReconciliationStatus.Exact,
-        brokerPollAgeMs: 0,
-        brokerEventLagMs: 0,
-        cashDifferenceMicros: '0',
-        positionDifferenceMicros: '0',
-        equityDifferenceMicros: '0',
-        discrepancyCount: 0,
-        unknownMutationCount: 0,
-        oldestUnknownMutationAgeMs: 0,
-        accountingExact: true,
-      },
-    },
-  }
-
-  const unused = Effect.die('unused')
-  let jevCalls = 0
-  const document = await Effect.runPromise(
-    TestClock.setTime(Date.parse(observedAt)).pipe(
-      Effect.andThen(
-        buildMutationShadowCycleDecision({
-          authorityGenerationHash,
-          cycle,
-          executionModel: prepared.executionModel,
-          policy: riskPolicy,
-          strategy,
-          reconcile: Effect.succeed(reconciliation),
-          intradayMarketData: {
-            check: Effect.void,
-            verifyReference: () => unused,
-            loadSnapshot: (query) =>
-              query.purpose === 'ENTRY_PRICING'
-                ? Effect.fromResult(constructStreamingSnapshot(cut, query)).pipe(
-                    Effect.mapError((cause) =>
-                      operationalError({
-                        component: 'market-data',
-                        operation: 'load-snapshot',
-                        message: 'pricing snapshot failed',
-                        cause,
-                      }),
-                    ),
-                  )
-                : Effect.succeed(snapshot),
-          },
-          decisionFinalizationHeadroomMs: 0,
-        }),
-      ),
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(CandidateObservationStore, {
-            record: () => Effect.void,
-            latestJevWindowEnd: () => Effect.succeed(Option.none()),
-            readIntradayAlphaSessionState: () =>
-              Effect.succeed({
-                morningOrbTakenSymbols: [],
-                middayReversionCompleted: false,
-                noiseAreaTakenSymbols: [],
-              }),
-          }),
-          testTrailingBaselineLayer,
-          Layer.succeed(BrokerRead, {
-            ...shortEntryBrokerReads(portfolio.brokerState.account, observedAt),
-            positions: unused,
-            orders: () => unused,
-            orderById: () => unused,
-            orderByClientId: () => unused,
-            fillActivities: () => unused,
-            feeActivities: () => unused,
-            marketCalendar: () =>
-              Effect.succeed({
-                value: extendedCalendar,
-                evidence: {
-                  requestId: 'alpha-test-calendar',
-                  status: 200,
-                  contentHash: extendedCalendar.normalizedResponseHash,
-                  observedAt,
-                },
-              }),
-          }),
-          Layer.succeed(EntryInferenceJournal, {
-            recordVisualClaims: () => unused,
-            recordTransitions: () => unused,
-          }),
-          Layer.succeed(JevBatchStore, {
-            read: () => unused,
-            pending: () => unused,
-            begin: () => unused,
-            complete: () => unused,
-            finish: () => unused,
-          }),
-          Layer.succeed(JevEvaluationStore, {
-            read: () => unused,
-            recordAll: () => unused,
-            abandon: () => unused,
-          }),
-          Layer.succeed(JevClient, {
-            evaluate: () => {
-              jevCalls += 1
-              return Effect.die('catalyst veto must not execute while disabled')
-            },
-          }),
-          Layer.succeed(DecisionConstruction, {
-            observe: constructObserveShadowDecision,
-            execution: constructExecutionDecision,
-          }),
-          TestClock.layer(),
-        ),
-      ),
-    ),
-  )
+  const { document, cycle, rangeEndAt, jevCalls } = await nativeAlphaDecisionFixture()
 
   expect(jevCalls).toBe(0)
   expect(document.entryLimitSlippageBps).toBe(10)
@@ -1689,6 +1089,92 @@ test('durable execution decision validation reproduces bar-close alpha pricing, 
     expect(BigInt(shortIntent?.quantityAtoms ?? '0')).toBeGreaterThan(100_000_000_000n)
   }
   expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+
+  // A real strictly decoded native decision remains visible before any execution evidence exists.
+  // The projection must not mistake bound intent identities for persisted/submitted orders.
+  const alphaRow = Schema.decodeUnknownSync(
+    AlphaDecisionJsonRow,
+    strictParseOptions,
+  )({
+    cycle_id: document.bindings.cycleId,
+    decision_hash: document.contentHash,
+    document_json: JSON.stringify(document),
+    created_at: new Date(document.createdAt),
+    account_id: document.bindings.accountId,
+    authority_generation_hash: document.bindings.authorityGenerationHash,
+    qualification_run_id: document.bindings.qualificationRunId,
+    strategy_protocol_hash: document.bindings.strategyProtocolHash,
+    risk_policy_hash: document.bindings.policyHash,
+    session_date: sessionDate,
+    cycle_state: CycleState.Active,
+    terminal_at: null,
+    generation_activated_at: new Date(Date.parse(document.createdAt) - 1_000),
+    reconciled_at: new Date(Date.parse(document.createdAt) + 2_000),
+    execution_evidence_in_scope: false,
+    qualification_build: null,
+    activation_build: null,
+  })
+  const alphaProjection = verifyAlphaDecisionJson(alphaRow)
+  expect(alphaProjection.unverifiedAlphaDecisionHashes).toEqual([])
+  expect(alphaProjection.alphaDecisions).toHaveLength(1)
+  const alphaEvidence = alphaProjection.alphaDecisions[0]!
+  expect(alphaEvidence.selectedSymbols.toSorted()).toEqual(['COHR', 'LITE', 'MU', 'SNDK'])
+  expect(alphaEvidence.targetPlan.legs.map((leg) => leg.intentId)).toEqual([...document.orderedIntentIds])
+  expect(alphaEvidence.targetPlan.legs.map((leg) => leg.quantityAtoms)).toEqual(
+    document.targetPlan.intentTargets.map((leg) => leg.quantityAtoms),
+  )
+  expect(alphaEvidence.cycleState).toBe(CycleState.Active)
+  expect(alphaEvidence.executionEvidenceInScope).toBe(false)
+  expect(alphaEvidence.executingBuild).toBeNull()
+  expect(alphaEvidence.strategyProtocolHash).toBe(document.bindings.strategyProtocolHash)
+  expect(alphaEvidence.riskPolicyHash).toBe(document.bindings.policyHash)
+  for (const state of [CycleState.Pending, CycleState.Blocked, CycleState.NoTrade]) {
+    const projected = verifyAlphaDecisionJson({ ...alphaRow, cycle_state: state })
+    expect(projected.alphaDecisions[0]?.cycleState).toBe(state)
+    expect(projected.alphaDecisions[0]?.targetPlan).toEqual(alphaEvidence.targetPlan)
+    expect(projected.alphaDecisions[0]?.executionEvidenceInScope).toBe(false)
+  }
+  const completedProjection = verifyAlphaDecisionJson({
+    ...alphaRow,
+    cycle_state: CycleState.Completed,
+    terminal_at: new Date(Date.parse(document.createdAt) + 1_000),
+    execution_evidence_in_scope: true,
+  })
+  expect(completedProjection.alphaDecisions[0]?.executionEvidenceInScope).toBe(true)
+  expect(completedProjection.alphaDecisions[0]?.targetPlan).toEqual(alphaEvidence.targetPlan)
+  expect(verifyReportJob({ id: 1, input: { task: ReportVerificationTask.AlphaDecision, row: alphaRow } })).toEqual({
+    id: 1,
+    outcome: 'ALPHA_DECISION',
+    value: alphaProjection,
+  })
+  expect(
+    await Effect.runPromise(
+      readPerformanceAlphaDecisionCursor((consume) => consume(alphaRow).pipe(Effect.as(undefined))),
+    ),
+  ).toEqual({
+    alphaDecisions: [...alphaProjection.alphaDecisions],
+    unverifiedAlphaDecisionHashes: [...alphaProjection.unverifiedAlphaDecisionHashes],
+  })
+  for (const invalid of [
+    { ...alphaRow, decision_hash: 'f'.repeat(64) },
+    { ...alphaRow, cycle_id: 'f'.repeat(64) },
+    { ...alphaRow, account_id: 'foreign-account' },
+    { ...alphaRow, authority_generation_hash: 'f'.repeat(64) },
+    { ...alphaRow, qualification_run_id: 'f'.repeat(64) },
+    { ...alphaRow, strategy_protocol_hash: 'f'.repeat(64) },
+    { ...alphaRow, risk_policy_hash: 'f'.repeat(64) },
+    { ...alphaRow, session_date: Schema.decodeUnknownSync(IsoDateSchema)('2026-09-05') },
+    { ...alphaRow, created_at: new Date(Date.parse(document.createdAt) + 1) },
+    { ...alphaRow, generation_activated_at: new Date(Date.parse(document.createdAt) + 1) },
+    { ...alphaRow, reconciled_at: new Date(Date.parse(document.createdAt) - 1) },
+    { ...alphaRow, execution_evidence_in_scope: true },
+    { ...alphaRow, cycle_state: CycleState.Completed, execution_evidence_in_scope: true },
+    { ...alphaRow, document_json: JSON.stringify({ ...document, dispatchable: !document.dispatchable }) },
+  ])
+    expect(verifyAlphaDecisionJson(invalid)).toEqual({
+      alphaDecisions: [],
+      unverifiedAlphaDecisionHashes: [invalid.decision_hash],
+    })
 
   // Tampering slippage above policy (11bp) or reference price away from bar close fails durable validation.
   const { contentHash: _ignored, ...docMaterial } = document

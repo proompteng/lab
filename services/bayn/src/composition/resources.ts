@@ -6,6 +6,7 @@ import { ValkeyCacheLive } from '../valkey-cache'
 import { BrokerObservationsLive } from '../db/broker-observations'
 import { brokerSnapshotCacheConfig } from '../broker/alpaca/snapshot-cache'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
+import { NativeAlphaBaselinePreparationLive } from '../db/alpha-baseline-preparation-postgres'
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevInferenceWorkStoreLive } from '../db/jev-inference-work-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
@@ -218,6 +219,11 @@ export const AutonomousRuntimeResourcesLive = (
     BrokerSessionResourceLive(plan.config),
     executionPersistence,
     trailingBaseline,
+    NativeAlphaBaselinePreparationLive({
+      sourceRevision: plan.config.build.sourceRevision,
+      imageRepository: plan.config.build.imageRepository,
+      imageDigest: plan.config.build.imageDigest,
+    }).pipe(Layer.provide(trailingBaseline)),
     WriterFencedCycleStoreLive.pipe(Layer.provide(executionPersistence)),
   ).pipe(
     Layer.provideMerge(ValkeyCacheLive),

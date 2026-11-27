@@ -8,7 +8,7 @@ import { emptySourceCutFixture } from './source-cut.test-support'
 import { operationalRegistrationFixture } from './operational-period.test-support'
 import { testHash } from './fixtures.test-support'
 import { OperationalSafetySourceSchema } from './operational-safety-source'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema as SystemSourceCutSchema } from './source-cut'
 
 export const nativeSafetyFixture = () => {
   const registration = operationalRegistrationFixture()
