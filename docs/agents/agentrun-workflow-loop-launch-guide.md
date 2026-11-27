@@ -69,7 +69,7 @@ metadata:
   namespace: agents
 spec:
   agentRef:
-    name: codex-spark-agent
+    name: codex-agent
   implementationSpecRef:
     name: torghut-v5-uncertainty-gates-priority
   runtime:

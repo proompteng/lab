@@ -59,9 +59,9 @@ spec:
             - name: UI_PORT
               value: '8080'
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: 2f9ab794d3c64f7587c2995274ffebc0ba6fee0c
+              value: f1d680a8c70b840e73cba7f9e94b6316277a525c
             - name: JANGAR_GITOPS_REVISION
-              value: 2f9ab794d3c64f7587c2995274ffebc0ba6fee0c
+              value: f1d680a8c70b840e73cba7f9e94b6316277a525c
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: '120'
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -262,7 +262,7 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: '300'
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
-              value: codex-spark,codex
+              value: codex
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD
               value: '3'
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS
@@ -351,15 +351,15 @@ spec:
             - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
               value: '5000'
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "45912210831"
+              value: "46080974530"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:e3f75e254455e7a4a9d382bd72a14561007d2a05484c561da8316c3ff05b14e8
+              value: sha256:f100f524e8807c7422f6412a85d41eea53624d0852769667ebac2feb920e0d90
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: 2f9ab794d3c64f7587c2995274ffebc0ba6fee0c
+              value: f1d680a8c70b840e73cba7f9e94b6316277a525c
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:e3f75e254455e7a4a9d382bd72a14561007d2a05484c561da8316c3ff05b14e8
+              value: sha256:f100f524e8807c7422f6412a85d41eea53624d0852769667ebac2feb920e0d90
             - name: JANGAR_FLAMINGO_MODEL
               value: qwen38-flamingo
             - name: JANGAR_FLAMINGO_REASONING_EFFORT

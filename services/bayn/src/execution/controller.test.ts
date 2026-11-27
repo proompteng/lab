@@ -181,6 +181,30 @@ describe('execution controller decisions', () => {
     },
   )
 
+  test('an expired close window is not awakened by market ticks', () => {
+    const observedAt = '2026-11-27T22:00:02.000Z'
+    const state = Result.getOrThrow(
+      completeExecutionControllerTick(
+        activated(),
+        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+        {
+          completedAt: observedAt,
+          observation: {
+            result: 'SUCCESS',
+            observedAt,
+            outcome: 'RECOVERED',
+            recoveryAction: 'WAITING',
+            waitReason: 'CLOSE_WINDOW_EXPIRED',
+          },
+          outcome: { ...completedResult.outcome, _tag: ExecutionControllerOutcome.Waiting },
+        },
+        sourceRevision,
+      ),
+    )
+    expect(state.nextDueAt).toBeUndefined()
+    expect(state.marketDataWakeSuppressed).toBe(true)
+  })
+
   test('successful progress replaces an earlier broker recovery deadline', () => {
     const nextWakeAt = '2026-08-13T18:00:42.000Z'
     const state = Result.getOrThrow(

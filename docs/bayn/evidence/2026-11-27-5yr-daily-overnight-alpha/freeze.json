@@ -1,0 +1,145 @@
+{
+  "type": "bayn.daily-overnight-freeze.v1",
+  "objectKey": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_daily_62sym_20210104_20261125.tsv.gz",
+  "tapeSha256": "e8023075922737f98d9a792267bb02940246971918387a877be92c2ad443b247",
+  "protocolSha256": "ce5877e4487c52b3450eee62281b08e22581b6e8ea42ebe1dc6f5f079ef47be9",
+  "engineSha256": "ecbdb4c6df398725f33710f580e05929e30e12159cd0427b5bdf0b735a21bf24",
+  "developmentLedgerSha256": "7f383ce3da545306f53041440adc2f99fde1b28650430b2b3bf59d7f72044237",
+  "trialCount": 848,
+  "familyBenchmarkDaily": 0.18279755226147598,
+  "benchmarkDaily": 0.18153789343022125,
+  "incumbents": {
+    "expanded": [
+      {
+        "id": "etf-trend/open-open/etfs/10/20/0/5/0/0",
+        "trainPass": false
+      },
+      {
+        "id": "momentum/open-open/expanded/60/60/4/10/1/0",
+        "trainPass": false
+      },
+      {
+        "id": "reversal/open-close/expanded/2/40/5/1/0/0",
+        "trainPass": false
+      },
+      {
+        "id": "overnight/lagged-close-open/expanded/5/60/3/1/0/0",
+        "trainPass": false
+      }
+    ],
+    "live": [
+      {
+        "id": "momentum/open-open/live/60/60/8/10/1/0",
+        "trainPass": false
+      },
+      {
+        "id": "etf-trend/open-open/live-etfs/10/20/0/5/0/0",
+        "trainPass": false
+      },
+      {
+        "id": "reversal/open-close/live/2/40/5/1/0/1",
+        "trainPass": false
+      },
+      {
+        "id": "overnight/lagged-close-open/live/3/40/3/1/0/0",
+        "trainPass": false
+      }
+    ],
+    "expanded-stocks": [
+      {
+        "id": "etf-trend/open-open/etfs/10/20/0/5/0/0",
+        "trainPass": false
+      },
+      {
+        "id": "momentum/open-open/expanded-stocks/60/60/4/10/1/0",
+        "trainPass": false
+      },
+      {
+        "id": "reversal/open-close/expanded-stocks/2/40/5/1/0/0",
+        "trainPass": false
+      },
+      {
+        "id": "overnight/lagged-close-open/expanded-stocks/5/60/3/1/0/0",
+        "trainPass": false
+      }
+    ],
+    "live-stocks": [
+      {
+        "id": "momentum/open-open/live-stocks/60/60/4/10/1/0",
+        "trainPass": false
+      },
+      {
+        "id": "etf-trend/open-open/live-etfs/10/20/0/5/0/0",
+        "trainPass": false
+      },
+      {
+        "id": "reversal/open-close/live-stocks/2/40/5/1/0/1",
+        "trainPass": false
+      },
+      {
+        "id": "overnight/lagged-close-open/live-stocks/5/40/3/1/0/0",
+        "trainPass": false
+      }
+    ]
+  },
+  "finalists": [
+    {
+      "id": "momentum/open-open/live-stocks/60/60/4/10/1/0",
+      "trainFailures": [
+        "sharpe",
+        "bootstrap",
+        "dsr"
+      ],
+      "validationFailures": [
+        "net",
+        "ex-top-five",
+        "sharpe",
+        "bootstrap",
+        "loso",
+        "plateau"
+      ]
+    },
+    {
+      "id": "etf-trend/open-open/live-etfs/10/20/0/5/0/0",
+      "trainFailures": [
+        "sharpe",
+        "bootstrap",
+        "dsr",
+        "plateau"
+      ],
+      "validationFailures": [
+        "ex-top-five",
+        "sharpe",
+        "bootstrap",
+        "loso",
+        "plateau"
+      ]
+    }
+  ],
+  "holdoutIds": [
+    "etf-trend/open-open/etfs/10/20/0/5/0/0",
+    "etf-trend/open-open/etfs/20/20/0/5/0/0",
+    "etf-trend/open-open/live-etfs/10/20/0/5/0/0",
+    "etf-trend/open-open/live-etfs/20/20/0/5/0/0",
+    "momentum/open-open/expanded-stocks/20/60/4/10/1/0",
+    "momentum/open-open/expanded-stocks/60/60/4/10/0/0",
+    "momentum/open-open/expanded-stocks/60/60/4/10/1/0",
+    "momentum/open-open/expanded-stocks/60/60/4/5/1/0",
+    "momentum/open-open/expanded-stocks/60/60/6/10/1/0",
+    "momentum/open-open/expanded/20/60/4/10/1/0",
+    "momentum/open-open/expanded/60/60/4/10/0/0",
+    "momentum/open-open/expanded/60/60/4/10/1/0",
+    "momentum/open-open/expanded/60/60/4/5/1/0",
+    "momentum/open-open/expanded/60/60/6/10/1/0",
+    "momentum/open-open/live-stocks/20/60/4/10/1/0",
+    "momentum/open-open/live-stocks/60/60/4/10/0/0",
+    "momentum/open-open/live-stocks/60/60/4/10/1/0",
+    "momentum/open-open/live-stocks/60/60/4/5/1/0",
+    "momentum/open-open/live-stocks/60/60/6/10/1/0",
+    "momentum/open-open/live/20/60/4/10/1/0",
+    "momentum/open-open/live/60/60/4/10/0/0",
+    "momentum/open-open/live/60/60/4/10/1/0",
+    "momentum/open-open/live/60/60/4/5/1/0",
+    "momentum/open-open/live/60/60/6/10/1/0"
+  ]
+}
