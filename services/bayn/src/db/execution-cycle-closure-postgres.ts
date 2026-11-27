@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Option, Result, Schema } from 'effect'
 
-import { executionCloseRecoveryExpiry } from '../market-hours'
+import { executionCloseRecoveryExpiry, isContinuousMarket, regularEquitySessions } from '../market-hours'
 import { WriterFence } from '../execution/writer-fence'
 import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { currentUtcInstant } from '../time'
@@ -169,15 +169,27 @@ const makeStore = Effect.gen(function* () {
         const prior = closure.document.replanGenerationHash
         const latest = yield* readLatestReplanByCycleId(sql, closure.cycleId)
         const predecessor = Option.getOrElse(latest, () => original)
+        const originalSession = original.document.executionSession
+        const regularCloseAt =
+          originalSession === undefined || isContinuousMarket(originalSession.calendar)
+            ? null
+            : (regularEquitySessions(originalSession.calendar).find(
+                ({ date }) => date === originalSession.executionSession.date,
+              )?.closeAt ?? null)
         const [recovery] = yield* Schema.decodeUnknownEffect(
           Schema.Tuple([Schema.Struct({ allowed: Schema.Boolean })]),
         )(
-          yield* sql`SELECT EXISTS(SELECT 1 FROM autonomous_cycles WHERE cycle_id=${closure.cycleId} AND execution_close_at<=${closure.createdAt}::timestamptz) AS allowed`,
+          yield* sql`
+            SELECT EXISTS (
+              SELECT 1 FROM autonomous_cycles WHERE cycle_id = ${closure.cycleId}
+                AND LEAST(execution_close_at, ${regularCloseAt}::timestamptz) <= ${closure.createdAt}::timestamptz
+            ) AS allowed
+          `,
         )
         const recoveryDeadline =
-          closure.document.executionSession === undefined
+          originalSession === undefined
             ? null
-            : executionCloseRecoveryExpiry(closure.document.executionSession.calendar, closure.createdAt)
+            : executionCloseRecoveryExpiry(originalSession.calendar, closure.createdAt)
         const boundedRecoveryLease =
           recovery.allowed &&
           closure.expiresAt > closure.createdAt &&

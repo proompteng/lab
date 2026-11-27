@@ -132,6 +132,20 @@ export const marketHoursAreCanonical = (hours: MarketHours): boolean => {
 export const exchangeSessions = (hours: MarketHours): readonly MarketCalendarSession[] =>
   isContinuousMarket(hours) ? [] : hours.sessions
 
+/** Execution uses the regular session. The independent IEX capture envelope stays unchanged. */
+export const regularEquitySessions = (hours: MarketCalendarObservation): readonly MarketCalendarSession[] =>
+  hours.providerSessions.map(({ date, regularOpenAt: openAt, regularCloseAt: closeAt }) => ({ date, openAt, closeAt }))
+
+export const matchesEquityExecutionSession = (
+  hours: MarketCalendarObservation,
+  session: MarketCalendarSession,
+): boolean => {
+  const matches = (entry: MarketCalendarSession) =>
+    entry.date === session.date && entry.openAt === session.openAt && entry.closeAt === session.closeAt
+  // Existing cycle IDs and bindings sealed the IEX envelope; keep them verifiable for recovery.
+  return regularEquitySessions(hours).some(matches) || hours.sessions.some(matches)
+}
+
 export const brokerCalendarResponseHash = (hours: MarketHours): string | null =>
   isContinuousMarket(hours) ? null : hours.normalizedResponseHash
 

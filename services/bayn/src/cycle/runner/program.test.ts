@@ -227,7 +227,7 @@ describe('unbound pre-submission cycle recovery', () => {
     const { terminalReason: _, ...prior } = blockedCycle()
     const f = fixture(
       { ...prior, state: CycleState.Completed },
-      { ...calendar, sessions: [{ ...session, closeAt: '2026-09-18T19:00:00.000Z' }] },
+      withProviderSessions({ ...calendar, sessions: [{ ...session, closeAt: '2026-09-18T19:00:00.000Z' }] }),
     )
     expect((await f.run({ ...context, nextEntryWindowDueAt: forbidden })).outcome).toBe('ACQUIRED')
     expect(f.acquisitions()).toBe(1)
@@ -572,7 +572,10 @@ describe('unbound pre-submission cycle recovery', () => {
   }
 
   test('rejects changed exchange-calendar evidence', async () => {
-    const f = fixture(blockedCycle(2), { ...calendar, sessions: [{ ...session, closeAt: '2026-09-18T19:00:00.000Z' }] })
+    const f = fixture(
+      blockedCycle(2),
+      withProviderSessions({ ...calendar, sessions: [{ ...session, closeAt: '2026-09-18T19:00:00.000Z' }] }),
+    )
     expect((await f.run()).outcome).toBe('ALREADY_TERMINAL')
     expect(f.acquisitions()).toBe(0)
   })

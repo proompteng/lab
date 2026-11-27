@@ -2,7 +2,7 @@ import { Result } from 'effect'
 
 import { equityShortIsEligible, type EquityShortEligibility } from '../../execution/equity-short'
 import { JevContractError } from '../../jev/contract'
-import { exchangeSessions, isContinuousMarket, type MarketHours } from '../../market-hours'
+import { isContinuousMarket, regularEquitySessions, type MarketHours } from '../../market-hours'
 import type { IntradayBar } from '../../market-data/intraday/model'
 import type { IntradayAlphaTrailingBaseline } from '../../market-data/intraday/trailing-baseline'
 import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
@@ -22,7 +22,7 @@ export interface RegularAlphaSessionBounds {
 }
 
 /**
- * Resolve regular US equity trading hours (09:30–16:00 America/New_York) from broker
+ * Resolve regular US equity trading hours (including early closes) from broker
  * providerSessions rather than the extended 08:00–17:00 IEX data-session envelope.
  */
 export const resolveAlphaRegularSession = (
@@ -30,11 +30,9 @@ export const resolveAlphaRegularSession = (
   sessionDate: string,
 ): Result.Result<RegularAlphaSessionBounds, JevContractError> => {
   if (isContinuousMarket(calendar)) return unavailable('Intraday alpha requires an exchange-session equity calendar')
-  const session = exchangeSessions(calendar).find((entry) => entry.date === sessionDate)
+  const session = regularEquitySessions(calendar).find((entry) => entry.date === sessionDate)
   if (session === undefined) return unavailable('Intraday alpha snapshot has no matching regular session')
-  const provider = calendar.providerSessions.find((entry) => entry.date === sessionDate)
-  const openAt = provider?.regularOpenAt ?? session.openAt
-  const closeAt = provider?.regularCloseAt ?? session.closeAt
+  const { openAt, closeAt } = session
   const openMs = Date.parse(openAt)
   const closeMs = Date.parse(closeAt)
   if (!Number.isFinite(openMs) || !Number.isFinite(closeMs) || openMs >= closeMs) {

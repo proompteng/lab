@@ -2,7 +2,7 @@ import { DecisionConstruction } from '../decision-construction'
 import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
-import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
+import { MarketCalendarObservationSchema, MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { executionCloseRecoveryExpiry } from '../market-hours'
@@ -27,6 +27,8 @@ import {
   Authority,
   IntentState,
   KillState,
+  isBracketProtection,
+  type Order,
   OrderType,
   OrderSide,
   OrderStatus,
@@ -50,9 +52,13 @@ import {
   type ExecutionCycleClosure,
   type ExecutionCycleClosureStoreShape,
 } from '../db/execution-cycle-closure'
-import { ensureExecutionCycleClosure } from './execution-cycle'
+import { nativeAlphaDecisionFixture } from '../strategy/intraday-alpha/alpha-decision.test-support'
+import { IntradayAlphaPhase } from '../strategy/intraday-alpha/policy'
+import { closeWindowForCycle, ensureExecutionCycleClosure } from './execution-cycle'
 import { resolveExecutionCycleCloseWindow } from './execution-window'
-import { prepareMutationIntent } from './mutation-intent-interpreter'
+import { BrokerAccess, grantedCapitalAuthority } from '../execution/authority'
+import { advancePositionProtection } from './position-protection-interpreter'
+import { prepareMutationIntent, readPreparedExecutionIntents } from './mutation-intent-interpreter'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
@@ -312,6 +318,272 @@ describe('closing market-data fallback boundaries', () => {
     const { input, ...state } = defaultFixture
     return { input: { ...input }, ...structuredClone(state) }
   }
+
+  test.each(['16:28:02.379', '17:55:02.000', '18:02:03.000'])(
+    'Black Friday MorningOrb closes GOOGL -103 with a stale IEX quote at %sZ',
+    async (time) => {
+      const date = '2026-11-27'
+      const calendar = Result.getOrThrow(
+        normalizeMarketCalendarResult(
+          [{ date, open: '09:30', close: '13:00', session_open: '0400', session_close: '1700' }],
+          { start: date, end: date },
+        ),
+      )
+      const { document, cycle, strategy, prepared, riskPolicy, reconciliation, policy } =
+        await nativeAlphaDecisionFixture({
+          calendar: Schema.decodeUnknownSync(MarketCalendarObservationSchema)(calendar),
+          snapshot: {
+            minutesFromOpen: 32,
+            spyProfile: { basePrice: 550, endReturnBps: -55 },
+            profiles: {
+              GOOGL: {
+                basePrice: 274,
+                endReturnBps: -60,
+                openingRangeLow: 272,
+                overridePrevClose: 272.1,
+                overrideLatestClose: 271.08,
+              },
+            },
+          },
+        })
+      expect(document.strategyDecision).toMatchObject({
+        phase: IntradayAlphaPhase.MorningOrb,
+        selectedSymbols: ['GOOGL'],
+        exitPolicy: {
+          plans: { GOOGL: { levels: { minimumEntryPriceMicros: '270810000', maximumHoldingMinutes: 60 } } },
+        },
+      })
+      expect(document.executionSession?.executionSession.closeAt).toBe('2026-11-27T22:00:00.000Z')
+      const observedAt = `${date}T${time}Z`
+      const state = {
+        ...reconciliation.brokerState,
+        account: { ...reconciliation.brokerState.account, observedAt },
+        positions: [
+          {
+            schemaVersion: 'bayn.position.v2' as const,
+            accountId: cycle.identity.accountId,
+            symbol: 'GOOGL',
+            quantityAtoms: '-103000000000',
+            averageEntryPriceMicros: '271025500',
+            costBasisMicros: '-27915626500',
+            marketPriceMicros: '275880000',
+            marketValueMicros: '-28415640000',
+            unrealizedPnlMicros: '-500013500',
+            observedAt,
+          },
+        ],
+        positionsObservedAt: observedAt,
+        ordersObservedAt: observedAt,
+      }
+      const hash = Result.getOrThrow(reconciledStateHash(state))
+      const cut = { ...state.reconciliation, reconciledAt: observedAt, expectedHash: hash, observedHash: hash }
+      const exact = {
+        ...reconciliation,
+        brokerState: { ...state, reconciliation: cut },
+        report: { ...reconciliation.report, reconciliation: cut },
+        riskContext: {
+          ...reconciliation.riskContext,
+          authority: { ...reconciliation.riskContext.authority, updatedAt: observedAt },
+          authorityObservedAt: observedAt,
+        },
+      }
+      const window = await Effect.runPromise(closeWindowForCycle(cycle, document, policy.sharedProtocol, observedAt))
+      expect(window.startAt).toBe('2026-11-27T16:28:00.000Z')
+      const postClose = time === '18:02:03.000'
+      expect(window.expiresAt).toBe(postClose ? '2026-11-27T18:05:03.000Z' : '2026-11-27T18:00:00.000Z')
+      let quoteReads = 0
+      const input = {
+        accountId: cycle.identity.accountId,
+        authorityGenerationHash: document.bindings.authorityGenerationHash,
+        pollIntervalMs: 30_000,
+        reconciliationIntervalMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
+        strategy,
+        intradayMarketData: {
+          ...freshMarket,
+          loadSnapshot: () => {
+            quoteReads++
+            return Effect.fail(
+              retryableOperationalError({
+                component: 'market-data',
+                operation: 'load',
+                message: 'Streaming snapshot verification failed',
+                cause: new IntradaySnapshotFailure({
+                  reason: 'not-ready',
+                  message: 'intraday snapshot lacks a post-range quote for every symbol',
+                  facts: { symbol: 'GOOGL', quoteAgeMs: 61_000 },
+                }),
+              }),
+            )
+          },
+        },
+      }
+      if (!postClose) {
+        const unused = () => Effect.die('Unexpected protection operation')
+        let stored: StoredIntent | undefined
+        let submitted: MutationEvent | undefined
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            yield* TestClock.setTime(Date.parse(observedAt))
+            const [entry] = yield* readPreparedExecutionIntents(document)
+            if (entry === undefined || !isBracketProtection(entry.intent.protection))
+              throw new Error('Expected a durable native short bracket')
+            const intent = entry.intent
+            const terms = entry.intent.protection
+            stored = {
+              intent: { ...intent, state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Filled },
+              stateVersion: 3,
+              updatedAt: '2026-11-27T15:02:09.000Z',
+            }
+            submitted = {
+              schemaVersion: 'bayn.paper-mutation-event.v1',
+              eventId: 'a'.repeat(64),
+              mutationId: 'b'.repeat(64),
+              intentId: intent.intentId,
+              sequence: 2,
+              operation: MutationOperation.Submit,
+              eventType: MutationEventType.SubmitAccepted,
+              requestHash: 'c'.repeat(64),
+              consistencyDelayMs: 1_000,
+              brokerOrderId: 'googl-entry',
+              occurredAt: stored.updatedAt,
+            }
+            const stop: Order = {
+              schemaVersion: 'bayn.order.v3',
+              accountId: input.accountId,
+              brokerOrderId: 'googl-stop',
+              clientOrderId: 'googl-stop-client',
+              intentId: intent.intentId,
+              symbol: 'GOOGL',
+              side: OrderSide.Buy,
+              orderType: OrderType.StopLimit,
+              timeInForce: TimeInForce.Day,
+              quantityAtoms: '103000000000',
+              filledQuantityAtoms: '0',
+              status: OrderStatus.New,
+              stopPriceMicros: terms.stopPriceMicros,
+              limitPriceMicros: terms.stopLimitPriceMicros,
+              observedAt,
+            }
+            const { stopPriceMicros: _stop, ...profit } = stop
+            const orders: readonly Order[] = [
+              stop,
+              {
+                ...profit,
+                brokerOrderId: 'googl-profit',
+                clientOrderId: 'googl-profit-client',
+                orderType: OrderType.Limit,
+                limitPriceMicros: terms.profitLimitPriceMicros,
+              },
+            ]
+            const cancels: string[] = []
+            const advance = (openOrders: readonly Order[]) =>
+              advancePositionProtection({
+                input,
+                cycle,
+                document,
+                protocol: policy.sharedProtocol,
+                policy: riskPolicy,
+                reconciliation: { ...exact, brokerState: { ...exact.brokerState, orders: openOrders } },
+                closeDue: observedAt >= window.startAt,
+                closeExpiresAt: window.expiresAt,
+                capability: {
+                  _tag: 'Mutation',
+                  executionProgram: {
+                    _tag: 'ExecutionProgram',
+                    schemaVersion: 'bayn.execution-program.v1',
+                    authority: {
+                      brokerAccess: BrokerAccess.Mutation,
+                      brokerIdentity: exact.riskContext.brokerIdentity,
+                      capitalAuthority: grantedCapitalAuthority(input.authorityGenerationHash),
+                      strategy: strategy.provenance.strategy,
+                    },
+                    recordReconciliation: unused,
+                    invalidateBrokerState: unused(),
+                    dryRunSubmit: unused,
+                    submit: unused,
+                    submitProtectionClose: unused,
+                    cancel: unused,
+                    recover: unused,
+                    cancelProtectionOrder: (intentId, brokerOrderId) =>
+                      Effect.sync(() => {
+                        cancels.push(brokerOrderId)
+                        return {
+                          _tag: 'Accepted',
+                          phase: 'Fresh',
+                          receipt: {
+                            command: { intentId, accountId: input.accountId, brokerOrderId, requestedAt: observedAt },
+                            requestHash: 'a'.repeat(64),
+                            evidence: {
+                              requestId: 'incident-test-cancel',
+                              status: 204,
+                              contentHash: 'b'.repeat(64),
+                              observedAt,
+                            },
+                          },
+                        } as const
+                      }),
+                  },
+                },
+              })
+            expect(yield* advance(orders)).toMatchObject({ _tag: 'PostMutationReconciliation' })
+            expect(cancels).toEqual(['googl-stop'])
+            expect(yield* advance([])).toEqual({ _tag: 'Ready' })
+            expect(quoteReads).toBe(0)
+          }).pipe(
+            Effect.provideService(IntentStore, {
+              read: () => Effect.succeed(Option.fromUndefinedOr(stored)),
+              protectionForCycle: () => Effect.succeed(stored === undefined ? [] : [stored]),
+              beginProtectionCancel: unused,
+              recordProtectionCancelAccepted: unused,
+              commit: unused,
+            }),
+            Effect.provideService(MutationStore, {
+              latest: (_id, operation) =>
+                Effect.succeed(operation === MutationOperation.Submit ? submitted : undefined),
+              authorizeSubmit: unused,
+              beginSubmit: unused,
+              submitAccepted: unused,
+              submitRejected: unused,
+              submitDenied: unused,
+              submitUnknown: unused,
+              beginCancel: unused,
+              cancelAccepted: unused,
+              cancelUnknown: unused,
+              recoveryFound: unused,
+              recoveryNotFound: unused,
+              recoveryUnknown: unused,
+            }),
+            Effect.provideService(JevPositionStore, { read: unused }),
+            Effect.provide(TestClock.layer()),
+          ),
+        )
+      }
+      const closed = await runWithConstruction(
+        TestClock.setTime(Date.parse(observedAt)).pipe(
+          Effect.andThen(
+            prepareClosingExecutionCycleDecision({
+              input,
+              preparation: prepared,
+              policy: riskPolicy,
+              cycle,
+              entryDocument: document,
+              closeExpiresAt: window.expiresAt,
+              reconcile: Effect.succeed(exact),
+            }),
+          ),
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+      expect(quoteReads).toBe(postClose ? 0 : 1)
+      expect(closed.document.dispatchable).toBe(true)
+      expect(closed.document.deltaRisk[0]?.limitPriceMicros).toBe('276150000')
+      expect(closed.document.targetPlan.executionTerms?.priceReference).toBe('reconciled-broker-position-mark')
+      expect(closed.document.targetPlan.intentTargets).toMatchObject([
+        { symbol: 'GOOGL', side: OrderSide.Buy, quantityAtoms: '103000000000', orderType: OrderType.Limit },
+      ])
+    },
+  )
 
   test.each([
     'stop',

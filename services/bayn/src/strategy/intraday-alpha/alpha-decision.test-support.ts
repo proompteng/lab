@@ -44,15 +44,14 @@ export const nativeAlphaDecisionFixture = async (
     readonly accountId?: string
     readonly authorityGenerationHash?: string
     readonly calendar?: typeof MarketCalendarObservationSchema.Type
+    readonly snapshot?: Omit<Parameters<typeof makeAlphaStreamingSnapshot>[0], 'snapshotCalendar'>
     readonly baselinePreparation?: RecordedAlphaBaselinePreparation
   } = {},
 ) => {
   const accountId = options.accountId ?? 'alpha-test-account'
   const authorityGenerationHash = options.authorityGenerationHash ?? '2'.repeat(64)
-  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)('2026-09-04')
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
   const policy = makeIntradayAlphaPolicy(protocol)
-  const preparedBaseline = options.baselinePreparation ?? preparedAlphaBaselineFixture()
   const testTrailingBaselineLayer = Layer.succeed(NativeAlphaBaselinePreparation, {
     prepare: (request) =>
       Effect.fromResult(reproduceAlphaBaselinePreparation({ ...preparedBaseline.payload, ...request })).pipe(
@@ -67,6 +66,8 @@ export const nativeAlphaDecisionFixture = async (
         { start: '2026-09-04', end: '2026-09-04' },
       ),
     )
+  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)(extendedCalendar.sessions[0]?.date)
+  const preparedBaseline = options.baselinePreparation ?? preparedAlphaBaselineFixture(sessionDate)
   const { snapshot, cut, observedAt, rangeEndAt } = makeAlphaStreamingSnapshot({
     minutesFromOpen: 121,
     spyProfile: { basePrice: 550, endReturnBps: 0 },
@@ -79,6 +80,7 @@ export const nativeAlphaDecisionFixture = async (
     quoteSpreadBps: 450, // Wide single-exchange IEX spread (~4.5%)
     quoteBidSize: 1, // Thin top-of-book displayed bid size on IEX
     quoteAskSize: 1,
+    ...options.snapshot,
     snapshotCalendar: extendedCalendar,
   })
 
@@ -275,5 +277,18 @@ export const nativeAlphaDecisionFixture = async (
     ),
   )
 
-  return { document, cycle, rangeEndAt, jevCalls, observedAt, policy, identity, portfolio }
+  return {
+    document,
+    cycle,
+    rangeEndAt,
+    jevCalls,
+    observedAt,
+    policy,
+    identity,
+    portfolio,
+    strategy,
+    reconciliation,
+    prepared,
+    riskPolicy,
+  }
 }

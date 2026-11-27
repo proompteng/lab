@@ -836,10 +836,10 @@ failure, defect or interruption during atomic persistence rolls back the receipt
 the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
-The submission window follows the entitled equity market calendar. Bayn can evaluate after the first completed minute
-and the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Equity entries
-use up to 30 minutes of actual completed history and evaluate the source-controlled candidates independently until
-five minutes before the close. The retained protocol also defines 120-minute crypto context for historical evidence
+The equity submission window follows the broker's regular calendar, not extended IEX capture hours. The first
+eligible observation is one minute and two seconds after regular open, subject to the active sleeve's signal window.
+Equity entries use actual completed history and stop no later than five minutes before the regular close, including
+early closes. The retained protocol also defines 120-minute crypto context for historical evidence
 and position recovery. The [compiled market profiles](src/jev/protocol.ts) bind the entry spread and positioning
 limits. The current protocol permits one equity long or short position with a gross weight capped at 20% of account
 equity. Allocation reduces the target when required by order, symbol, exposure or remaining daily turnover limits.
@@ -2777,12 +2777,16 @@ Historical observations remain immutable; readers reject records missing this ev
 The [matched comparison](../../docs/bayn/matched-entry-study.md) retains its five-session, twenty-different-selection,
 original timing, capacity, and complete-cost requirements. Missing evidence cannot qualify Jev.
 
-Equities use Alpaca's full provider calendar intersected with the entitled IEX data interval, 08:00–17:00
-America/New_York. Provider regular and extended bounds remain in the hashed calendar v2 evidence; DST, holidays
-and early closes follow that source. The shared order loop submits stock LIMIT/DAY with `extended_hours=true`
-and crypto LIMIT/IOC with `extended_hours=false`. An acknowledged open order is canceled through the same durable
-mutation coordinator when its original approval or submission window expires. Known partial fills retain their
-original accounting. Whole-share equity liquidation during an archive outage also uses a bounded LIMIT/DAY order.
+Equity market **data** uses Alpaca's full provider calendar intersected with the entitled IEX interval, 08:00–17:00
+America/New_York. Equity **execution** binds the provider's regular open and close, including early closes. The hashed
+calendar v2 retains both schedules. If IEX cannot price a due flatten, the close planner can use a fresh reconciled
+broker mark within the existing signed quantity and price bounds. It does not query IEX after the regular close;
+recovery then requires a bounded lease within verified broker hours. See the
+[Black Friday incident](../../docs/bayn/incidents/2026-11-27-black-friday-googl-unclosed-exit.md).
+
+The shared order loop uses stock LIMIT/DAY and crypto LIMIT/IOC. Unprotected equity limits are extended-hours
+eligible for recovery; native brackets are not. An acknowledged open order is canceled through the same durable
+mutation coordinator when its approval or submission window expires. Known partial fills retain their accounting.
 
 Dorvud's observed-window and technical definitions v2 isolate the 08:00, 09:30 and 16:00 clock segments. Regular
 indicator math is unchanged, sparse intervals remain missing, and the first completed minute can authorize

@@ -3,7 +3,9 @@ import { describe, expect, test } from 'bun:test'
 
 import { Result, Schema } from 'effect'
 
-import type { MarketCalendarObservation } from './broker/alpaca/model'
+import { normalizeMarketCalendarResult } from './broker/alpaca/normalizers'
+import { makeIntradayCycleDraft, selectIntradayExecutionSession } from './cycle/runner/calendar-decisions'
+import { MarketCalendarObservationSchema, type MarketCalendarObservation } from './broker/alpaca/model'
 import { CycleState, type AutonomousCycle } from './cycle/model'
 import {
   makeCycleDraft,
@@ -106,6 +108,48 @@ const bind = (overrides: Partial<BindCycleExecutionSessionInput> = {}): Executio
   value(bindCycleExecutionSession(input(overrides)))
 
 describe('intraday execution-session binding', () => {
+  test.each(['2026-11-27', '2026-12-24'])('binds the regular half-day and stops entry at 12:55 ET: %s', (date) => {
+    const hours = value(
+      normalizeMarketCalendarResult(
+        [{ date, open: '09:30', close: '13:00', session_open: '0400', session_close: '1700' }],
+        { start: date, end: date },
+      ),
+    )
+    const old = activeCycle()
+    const policy = old.identity.executionPolicy
+    if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('Expected v3 policy')
+    const observedAt = `${date}T15:02:09.000Z`
+    const session = selectIntradayExecutionSession(hours, policy, observedAt)
+    if (session === undefined) throw new Error('Expected regular equity session')
+    const draft = value(
+      makeIntradayCycleDraft(
+        {
+          cycleBindingId: hash('1'),
+          strategyName: 'jev',
+          strategyProtocolHash: hash('2'),
+          accountId: 'account-1',
+          executionPolicy: policy,
+        },
+        hours,
+        session,
+      ),
+    )
+    const binding = bind({
+      cycle: { ...old, ...draft, createdAt: observedAt, updatedAt: observedAt },
+      executionSessionDate: date,
+      planningBrokerState: { observedAt, contentHash: hash('3') },
+      calendar: hours,
+    })
+    expect(binding.executionSession).toEqual({
+      date,
+      openAt: `${date}T14:30:00.000Z`,
+      closeAt: `${date}T18:00:00.000Z`,
+    })
+    expect(binding.calendar).toEqual(Schema.decodeUnknownSync(MarketCalendarObservationSchema)(hours))
+    expect(binding.submissionCutoffAt).toBe(`${date}T17:55:00.000Z`)
+    expect(selectIntradayExecutionSession(hours, policy, `${date}T17:55:00.000Z`)).toBeUndefined()
+  })
+
   test('binds the exact session, warmup, cutoff, broker observation, and content hash', () => {
     const binding = bind()
 

@@ -361,6 +361,7 @@ export const executionControllerSuccessorSchedule = (
       ? undefined
       : result.observation.outcome === 'WINDOW_CLOSED' ||
           result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
+          result.observation.waitReason === 'CLOSE_MARKET_DATA_UNAVAILABLE' ||
           result.observation.waitReason === 'POST_MUTATION_RECONCILIATION'
         ? dueAt
         : result.observation.readiness?.availableAt
@@ -368,8 +369,8 @@ export const executionControllerSuccessorSchedule = (
     ...(dueAt === undefined ? {} : { nextDueAt: dueAt }),
     ...(availableAt !== undefined && availableAt > result.completedAt ? { marketEligibleAt: availableAt } : {}),
     ...(result.observation?.result === 'SUCCESS' &&
-    result.observation.outcome === 'WINDOW_CLOSED' &&
-    decodedNextDueAt.success === undefined
+    (result.observation.waitReason === 'CLOSE_WINDOW_EXPIRED' ||
+      (result.observation.outcome === 'WINDOW_CLOSED' && decodedNextDueAt.success === undefined))
       ? { marketDataWakeSuppressed: true as const }
       : {}),
   })

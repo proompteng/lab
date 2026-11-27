@@ -4,7 +4,12 @@ import { AutonomousCycleSchema } from './cycle/model'
 import { makeExecutionCalendarObservation } from './cycle/construction'
 import { ExecutionModelV6Schema } from './execution-model-contract'
 import { canonicalHashV1Result } from './hash'
-import { continuousExecutionPolicy, isContinuousMarket, marketHoursAreCanonical } from './market-hours'
+import {
+  continuousExecutionPolicy,
+  isContinuousMarket,
+  marketHoursAreCanonical,
+  matchesEquityExecutionSession,
+} from './market-hours'
 import { SnapshotCalendarSchema } from './market-data/streaming/manifest-schema'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
 
@@ -64,9 +69,7 @@ const bindingIssues = (binding: typeof BindingBase.Type): Schema.FilterIssue[] =
       !marketHoursAreCanonical(calendar) ||
       Result.isFailure(calendarHash) ||
       calendarHash.success !== normalizedResponseHash ||
-      !calendar.sessions.some(
-        (entry) => entry.date === session.date && entry.openAt === session.openAt && entry.closeAt === session.closeAt,
-      )
+      !matchesEquityExecutionSession(calendar, session)
     )
       issues.push({ path: ['calendar'], issue: 'must bind the exact authoritative exchange session' })
     let previous = ''
@@ -167,18 +170,8 @@ export const bindCycleExecutionSession = (
       openAt: cycle.window.executionOpenAt,
       closeAt: cycle.window.executionCloseAt,
     }
-    if (!isContinuousMarket(calendar)) {
-      const observed = calendar.sessions.find((entry) => entry.date === session.date)
-      if (observed === undefined || observed.openAt !== session.openAt || observed.closeAt !== session.closeAt)
-        return yield* Result.fail(
-          new ExecutionSessionBindingFailure({
-            operation: 'bind-cycle',
-            reason: 'cycle-calendar',
-            message: 'authoritative exchange hours differ from the durable cycle',
-            facts: { field: observed?.openAt !== session.openAt ? 'executionOpenAt' : 'executionCloseAt' },
-          }),
-        )
-    }
+    if (!isContinuousMarket(calendar) && !matchesEquityExecutionSession(calendar, session))
+      return yield* Result.fail(failure('cycle-calendar', 'authoritative exchange hours differ from the durable cycle'))
     const selected = yield* makeExecutionCalendarObservation({
       schemaVersion: calendar.schemaVersion,
       source: calendar.source,
