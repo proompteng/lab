@@ -57,6 +57,9 @@ const bar = (
   vwap: open,
 })
 
+const tape = (symbol: string, start: number, end: number, overrides: readonly (readonly [number, RawBar])[] = []) =>
+  new Map([...Array.from({ length: end - start + 1 }, (_, i) => [start + i, bar(symbol, 100)] as const), ...overrides])
+
 const opportunity = (phase: Opportunity['phase'], legs: readonly SelectedAlphaLeg[]): Opportunity => ({
   phase,
   legs,
@@ -90,10 +93,8 @@ test('only a post-observation open can fill; symmetric cost shocks, sell-side fe
     new Map([
       [
         'AAPL',
-        new Map([
-          [31, bar('AAPL', 100)],
+        tape('AAPL', 31, 94, [
           [32, bar('AAPL', 99)],
-          [33, bar('AAPL', 100)],
           [94, bar('AAPL', 104)],
         ]),
       ],
@@ -123,7 +124,63 @@ test('only a post-observation open can fill; symmetric cost shocks, sell-side fe
     ]),
     data.decisions,
   )
-  expect(replayPortfolioDay(missingOpen, staticArm, 5, risk, []).filled).toBe(0)
+  const unknown = replayPortfolioDay(missingOpen, staticArm, 5, risk, [])
+  expect(unknown).toMatchObject({ filled: 0, missingEntryPrices: 1, net: null, sleeveNet: [null, null, null] })
+
+  const rejected = session(
+    new Map([
+      [
+        'AAPL',
+        new Map([
+          [31, bar('AAPL', 100)],
+          [33, bar('AAPL', 101)],
+        ]),
+      ],
+    ]),
+    data.decisions,
+  )
+  expect(replayPortfolioDay(rejected, staticArm, 5, risk, [])).toMatchObject({
+    filled: 0,
+    missingEntryPrices: 0,
+    net: 0,
+  })
+})
+
+test('a later timed open cannot repair a missing held bar or support that trade’s P&L', () => {
+  const interrupted = tape('AAPL', 31, 94, [[94, bar('AAPL', 104)]])
+  interrupted.delete(44)
+  const data = session(
+    new Map([['AAPL', interrupted]]),
+    new Map([[31, { equity: opportunity(orb, [leg('AAPL', orb)]), noise: undefined, missingBenchmark: false }]]),
+  )
+  expect(replayPortfolioDay(data, staticArm, 5, risk, [])).toMatchObject({
+    filled: 1,
+    unresolvedExits: 0,
+    missingHeldBars: 1,
+    closedNet: 0,
+    net: null,
+    sleeveNet: [null, null, null],
+  })
+})
+
+test('the next delayed decision admits ORB using the expiring Noise order’s open, not its future close', () => {
+  const decisions = new Map<number, FixtureDecision>([
+    [30, { noise: opportunity(noise, [leg('QQQ', noise)]), equity: undefined, missingBenchmark: false }],
+    [31, { equity: opportunity(orb, [leg('AAPL', orb)]), noise: undefined, missingBenchmark: false }],
+  ])
+  const outcomes = [100, 104].map((close) => {
+    const data = session(
+      new Map([
+        ['QQQ', tape('QQQ', 30, 94, [[32, bar('QQQ', 100, close)]])],
+        ['AAPL', tape('AAPL', 31, 94, [[94, bar('AAPL', 104)]])],
+      ]),
+      decisions,
+    )
+    return replayPortfolioDay(data, { name: 'overlap', grossCap: 45_000 }, 5, risk, [])
+  })
+  expect(outcomes[0]).toMatchObject({ orderLegs: 2, filled: 2, capConstrained: 1, peakReservedGross: 44_915 })
+  expect(outcomes[1]?.peakReservedGross).toBe(outcomes[0]?.peakReservedGross)
+  expect(outcomes[1]?.sleeveNet).toEqual(outcomes[0]?.sleeveNet)
 })
 
 test('an unresolved exit and a missing eligible benchmark are not zero-return days', () => {
@@ -174,9 +231,7 @@ test('dispersion sizes only Midday and concurrent admission reserves room for bo
       },
     ],
   ])
-  const tapes = ['QQQ', 'SMH', 'AAPL', 'NVDA'].map(
-    (symbol) => [symbol, new Map([30, 32, 120, 122, 183].map((minute) => [minute, bar(symbol, 100)]))] as const,
-  )
+  const tapes = ['QQQ', 'SMH', 'AAPL', 'NVDA'].map((symbol) => [symbol, tape(symbol, 30, 183)] as const)
   const unboundedHold = [...decisions].map(
     ([minute, decision]) =>
       [
@@ -205,16 +260,7 @@ test('dispersion sizes only Midday and concurrent admission reserves room for bo
 
 test('the static control preserves the single-leg v2 Midday fallback', () => {
   const data = session(
-    new Map([
-      [
-        'AAPL',
-        new Map([
-          [120, bar('AAPL', 100)],
-          [122, bar('AAPL', 100)],
-          [183, bar('AAPL', 102)],
-        ]),
-      ],
-    ]),
+    new Map([['AAPL', tape('AAPL', 120, 183, [[183, bar('AAPL', 102)]])]]),
     new Map([
       [
         120,
@@ -257,17 +303,14 @@ test('earlier loss can throttle an afternoon order; a later loss cannot', () => 
       new Map([
         [
           'QQQ',
-          new Map([
-            [30, bar('QQQ', 100)],
-            [32, bar('QQQ', 100)],
-            [120, bar('QQQ', lossMinute < 120 ? 94 : 100)],
-            [lossMinute, bar('QQQ', 94)],
-            [183, bar('QQQ', 94)],
-          ]),
+          tape(
+            'QQQ',
+            30,
+            183,
+            Array.from({ length: 184 - lossMinute }, (_, i) => [lossMinute + i, bar('QQQ', 94)] as const),
+          ),
         ],
-        ...['AAPL', 'NVDA'].map(
-          (symbol) => [symbol, new Map([120, 122, 183].map((minute) => [minute, bar(symbol, 100)]))] as const,
-        ),
+        ...['AAPL', 'NVDA'].map((symbol) => [symbol, tape(symbol, 120, 183)] as const),
       ]),
       decisions,
     )

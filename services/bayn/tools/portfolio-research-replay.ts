@@ -59,7 +59,9 @@ export interface PortfolioDay {
   readonly partialBaskets: number
   readonly unresolvedExits: number
   readonly missingBenchmarkChecks: number
-  readonly missingMarkChecks: number
+  readonly missingEntryPrices: number
+  readonly missingHeldBars: number
+  readonly unknownExposureMinutes: number
   readonly capConstrained: number
   readonly throttleEntries: number
   readonly profitLockEntries: number
@@ -79,6 +81,11 @@ interface WorkingLeg {
   readonly maxPrice: number
   readonly shares: number
 }
+interface WorkingBasket {
+  readonly fillMinute: number
+  readonly expiresMs: number
+  readonly legs: readonly WorkingLeg[]
+}
 interface Position extends WorkingLeg {
   readonly entry: number
   readonly stop: number
@@ -86,6 +93,7 @@ interface Position extends WorkingLeg {
   readonly target: number
   readonly deadline: number
   triggered: boolean
+  continuous: boolean
   mark: number
 }
 
@@ -123,7 +131,8 @@ const openLeg = (
     target: collar * (1 + (direction * leg.profitTargetBps) / 10_000),
     deadline: Math.min(minute + leg.maximumHoldingMinutes, deadline, sessionMinutes - closeLead),
     triggered: false,
-    mark: entry,
+    continuous: true,
+    mark: open,
   }
 }
 
@@ -169,7 +178,7 @@ export const replayPortfolioDay = (
   const bySleeve = sleeves.map(() => 0)
   const timeBuckets = [0, 0, 0, 0, 0, 0]
   const taken = new Set<string>()
-  let working: { readonly fillMinute: number; readonly legs: readonly WorkingLeg[] } | undefined
+  let working: WorkingBasket | undefined
   let positions: Position[] = []
   let orbDone = false
   let middayDone = false
@@ -178,7 +187,9 @@ export const replayPortfolioDay = (
   let orderLegs = 0
   let partialBaskets = 0
   let missingBenchmarkChecks = 0
-  let missingMarkChecks = 0
+  let missingEntryPrices = 0
+  let missingHeldBars = 0
+  let unknownExposureMinutes = 0
   let capConstrained = 0
   let throttleEntries = 0
   let profitLockEntries = 0
@@ -198,62 +209,93 @@ export const replayPortfolioDay = (
     return legs.filter((leg) => !taken.has(leg.symbol) || phase !== IntradayAlphaPhase.NoiseAreaTrend)
   }
 
-  for (let minute = 0; minute < session.minutes; minute++) {
-    if (working?.fillMinute === minute) {
-      let filledNow = 0
-      for (const order of working.legs) {
-        const open = session.bars.get(order.leg.symbol)?.get(minute)?.open
-        if (open === undefined) continue
-        const position = openLeg(order, open, slip, minute, session.minutes)
-        if (position === null) continue
-        positions.push(position)
-        filledNow++
+  const executionUnknown = () => missingEntryPrices > 0 || missingHeldBars > 0 || missingBenchmarkChecks > 0
+  const settleWorking = ({ fillMinute, legs }: WorkingBasket) => {
+    const opened: Position[] = []
+    for (const order of legs) {
+      const open = session.bars.get(order.leg.symbol)?.get(fillMinute)?.open
+      if (open === undefined) {
+        missingEntryPrices++
+        continue
       }
-      if (working.legs.length > 1 && filledNow > 0 && filledNow < working.legs.length) partialBaskets++
-      filled += filledNow
-      working = undefined
+      const position = openLeg(order, open, slip, fillMinute, session.minutes)
+      if (position !== null) opened.push(position)
     }
+    if (legs.length > 1 && opened.length > 0 && opened.length < legs.length) partialBaskets++
+    filled += opened.length
+    working = undefined
+    return opened
+  }
+  const pnlAt = ({ direction, entry, shares }: Position, price: number) => {
+    const exit = price * (1 - direction * slip)
+    return (direction * (exit - entry) - sellFee * (direction === 1 ? exit : entry)) * shares
+  }
+  const markRisk = (markedReturn: number) => {
+    riskState = updateIntradayRisk(riskState, markedReturn, trial.throttle ?? {})
+    maxIntradayDrawdown = Math.max(maxIntradayDrawdown, riskState.peakReturn - markedReturn)
+  }
+
+  for (let minute = 0; minute < session.minutes; minute++) {
+    if (working?.fillMinute === minute) positions.push(...settleWorking(working))
 
     let grossAtOpen = 0
     let grossUsed = 0
     let netUsed = 0
     let unrealized = 0
-    let completeMarks = true
+    const addMark = (position: Position) => {
+      grossUsed += position.mark * position.shares
+      netUsed += position.direction * position.mark * position.shares
+      unrealized += pnlAt(position, position.mark)
+    }
     positions = positions.filter((position) => {
-      const { leg, direction, entry, shares } = position
-      const tape = session.bars.get(leg.symbol)
-      const bar = tape?.get(minute)
+      const { leg, shares } = position
+      const bar = session.bars.get(leg.symbol)?.get(minute)
+      if (bar === undefined) {
+        missingHeldBars++
+        position.continuous = false
+        return true
+      }
+
       // Active at the open even if an exit is modeled later in the same minute.
-      grossAtOpen += shares * (bar?.open ?? position.mark)
-      const exit = bar === undefined ? undefined : exitPrice(position, bar, minute)
-      if (exit !== undefined) {
-        const realized = exit * (1 - direction * slip)
-        const value = (direction * (realized - entry) - sellFee * (direction === 1 ? realized : entry)) * shares
+      grossAtOpen += shares * bar.open
+      const exit = exitPrice(position, bar, minute)
+      if (exit === undefined) {
+        position.mark = bar.close
+        addMark(position)
+        return true
+      }
+      if (position.continuous) {
+        const value = pnlAt(position, exit)
         const i = sleeves.indexOf(leg.phase)
         bySleeve[i] = (bySleeve[i] ?? 0) + value
         closedNet += value
-        return false
       }
-      if (bar === undefined) completeMarks = false
-      else position.mark = bar.close
-      grossUsed += position.mark * shares
-      netUsed += direction * position.mark * shares
-      // Mark equity at modeled liquidation value, including costs; never see future exits.
-      const liquidation = position.mark * (1 - direction * slip)
-      unrealized += (direction * (liquidation - entry) - sellFee * (direction === 1 ? liquidation : entry)) * shares
-      return true
+      return false
     })
+
+    if (executionUnknown()) {
+      unknownExposureMinutes++
+      continue
+    }
     peakMarkedGross = Math.max(peakMarkedGross, grossUsed, grossAtOpen)
     const bucket = usageBucket(grossUsed, grossCap)
     timeBuckets[bucket] = (timeBuckets[bucket] ?? 0) + 1
-    const markedReturn = (closedNet + unrealized) / startingEquity
-    if (completeMarks) {
-      riskState = updateIntradayRisk(riskState, markedReturn, trial.throttle ?? {})
-      maxIntradayDrawdown = Math.max(maxIntradayDrawdown, riskState.peakReturn - markedReturn)
-    }
+    markRisk((closedNet + unrealized) / startingEquity)
+
     const decision = session.decisions.get(minute)
-    // The completed-bar clock serializes admission until the preceding working window is resolved.
-    if (decision === undefined || working !== undefined) continue
+    if (decision === undefined) continue
+    const { observedMsFromOpen } = decision
+    if (observedMsFromOpen < (minute + 1) * minuteMs) throw new Error('Observation precedes the completed bar')
+    if (working !== undefined) {
+      if (observedMsFromOpen < working.expiresMs) continue
+      // The next open can be known by the delayed observation, but its close/range cannot.
+      const opened = settleWorking(working)
+      positions.push(...opened)
+      if (executionUnknown()) continue
+      for (const position of opened) addMark(position)
+      peakMarkedGross = Math.max(peakMarkedGross, grossUsed)
+      markRisk((closedNet + unrealized) / startingEquity)
+    }
     if (decision.missingBenchmark) {
       // Do not claim a known no-signal for an unobserved eligible checkpoint.
       if (
@@ -277,10 +319,6 @@ export const replayPortfolioDay = (
       opportunity.phase !== IntradayAlphaPhase.NoiseAreaTrend
     )
       continue
-    if (!completeMarks) {
-      missingMarkChecks++
-      continue
-    }
     const index = sleeves.indexOf(opportunity.phase)
     if ((budgets[index] ?? 0) <= 0) continue
     const loss = minute >= policy.middayReversion.entryStartMinuteFromOpen && riskState.lossThrottled
@@ -298,7 +336,7 @@ export const replayPortfolioDay = (
       grossCap,
       grossUsed,
       netUsed,
-      equity: startingEquity * (1 + markedReturn),
+      equity: startingEquity + closedNet + unrealized,
       buyingPowerMultiple: 4,
       netCap: 100_000,
       maxLeg: 40_000,
@@ -315,11 +353,10 @@ export const replayPortfolioDay = (
     if (orders.some(({ shares }) => shares === 0)) continue
     // The completed bar's boundary open is earlier than the delayed observation. A one-minute
     // working window can have at most one eligible open, strictly between observation and expiry.
-    const { observedMsFromOpen } = decision
+    const expiresMs = observedMsFromOpen + minuteMs
     const fillMinute = Math.floor(observedMsFromOpen / minuteMs) + 1
-    if (observedMsFromOpen < (minute + 1) * minuteMs) throw new Error('Observation precedes the completed bar')
-    if (fillMinute >= session.minutes || fillMinute * minuteMs >= observedMsFromOpen + minuteMs) continue
-    working = { fillMinute, legs: orders }
+    if (fillMinute >= session.minutes || fillMinute * minuteMs >= expiresMs) continue
+    working = { fillMinute, expiresMs, legs: orders }
     peakReservedGross = Math.max(
       peakReservedGross,
       grossUsed + orders.reduce((sum, { shares, maxPrice }) => sum + shares * maxPrice, 0),
@@ -332,17 +369,13 @@ export const replayPortfolioDay = (
     else for (const { symbol } of legs) taken.add(symbol)
   }
 
-  const unknown =
-    !session.baselineAvailable || missingBenchmarkChecks > 0 || missingMarkChecks > 0 || positions.length > 0
+  const unknown = !session.baselineAvailable || executionUnknown() || positions.length > 0
   return {
     date: session.date,
     net: unknown ? null : closedNet,
     closedNet,
     sleeveNet: sleeves.map((phase, index) =>
-      !session.baselineAvailable ||
-      missingBenchmarkChecks > 0 ||
-      missingMarkChecks > 0 ||
-      positions.some(({ leg }) => leg.phase === phase)
+      !session.baselineAvailable || executionUnknown() || positions.some(({ leg }) => leg.phase === phase)
         ? null
         : (bySleeve[index] ?? 0),
     ),
@@ -351,7 +384,9 @@ export const replayPortfolioDay = (
     partialBaskets,
     unresolvedExits: positions.length,
     missingBenchmarkChecks,
-    missingMarkChecks,
+    missingEntryPrices,
+    missingHeldBars,
+    unknownExposureMinutes,
     capConstrained,
     throttleEntries,
     profitLockEntries,
