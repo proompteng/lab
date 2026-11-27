@@ -219,9 +219,18 @@ export const evaluateNoiseAreaCheckpoint = (input: {
       )
       return matches.length === 1 ? matches[0] : undefined
     }
-    const open = completedBar(session.regularOpenAt)?.openPriceMicros
-    const close = completedBar(checkpointBarStart)?.closePriceMicros
-    if (open === undefined || close === undefined || open <= 0n || close <= 0n) return missing('CurrentBars')
+    const openBar = completedBar(session.regularOpenAt)
+    const closeBar = completedBar(checkpointBarStart)
+    if (openBar === undefined || closeBar === undefined) return missing('CurrentBars')
+    const open = openBar.openPriceMicros
+    const close = closeBar.closePriceMicros
+    if (open <= 0n || close <= 0n) {
+      return yield* Result.fail(
+        new NoiseAreaInputError({
+          message: `${symbol} current-session bar on ${sessionDate} has nonpositive open or checkpoint close`,
+        }),
+      )
+    }
 
     if (calendar.length !== policy.lookbackSessions || priorCloses.size !== calendar.length) {
       return missing('PriorSessions')

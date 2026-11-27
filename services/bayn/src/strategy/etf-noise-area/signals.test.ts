@@ -349,6 +349,15 @@ describe('causal Noise Area evaluator', () => {
         failure: { _tag: 'NoiseAreaInputError', message: expect.stringContaining(prior.sessionDate) },
       })
     }
+    for (const badBars of [
+      [{ ...value.bars[0], openPriceMicros: 0n }, value.bars[1]],
+      [value.bars[0], { ...value.bars[1], closePriceMicros: -1n }],
+    ]) {
+      expect(evaluateNoiseAreaCheckpoint({ ...value, bars: badBars })).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'NoiseAreaInputError', message: expect.stringContaining(date) },
+      })
+    }
   })
 
   test('fails closed on missing, conflicting, or nonmatching official warmup and current bars', () => {
