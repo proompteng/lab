@@ -23,10 +23,12 @@ import {
   type PriorSessionDailySummary,
 } from '../src/market-data/intraday/trailing-baseline'
 import type { StrategyMarketSnapshot } from '../src/market-data/streaming/snapshot'
+import { quantityScale } from '../src/quantity'
 import { IsoDateSchema, strictParseOptions } from '../src/schemas'
 import { reconciledStateHash } from '../src/simulation-reconciliation/broker-model'
-import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
-import { isBalancedMiddayBasket } from '../src/strategy/intraday-alpha/decision'
+import { numberToMicros, priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
+import { balancedFundedMiddaySymbols, isBalancedMiddayBasket } from '../src/strategy/intraday-alpha/decision'
+import { evaluateMiddayResidualProtection } from '../src/strategy/intraday-alpha/midday-residual-protection'
 import { makeIntradayAlphaFundedExitPlan } from '../src/strategy/intraday-alpha/exit-plan'
 import {
   IntradayAlphaPhase,
@@ -34,7 +36,9 @@ import {
   intradayAlphaCandidateSymbols,
   intradayAlphaEquityMarketProfile,
   makeIntradayAlphaPolicy,
+  type IntradayAlphaPolicy,
 } from '../src/strategy/intraday-alpha/policy'
+import { makeIntradayAlphaPolicyV21, type IntradayAlphaPolicyV21 } from '../src/strategy/intraday-alpha/policy-v2-1'
 import {
   extractIntradayAlphaCandidates,
   resolveAlphaRegularSession,
@@ -75,7 +79,7 @@ interface TradeOutcome {
   readonly exitPrice: number
   readonly entryAt: string
   readonly exitAt: string
-  readonly exitReason: 'STOP' | 'TARGET' | 'MAX_HOLD' | 'EOD'
+  readonly exitReason: 'STOP' | 'TARGET' | 'MAX_HOLD' | 'EOD' | 'MIDDAY_RESIDUAL_TRIM'
   readonly grossPnlUsd: number
   readonly netPnlUsd: number
 }
@@ -102,13 +106,25 @@ interface EntryAttempt {
   readonly filledSymbols: string[]
   longEntryNotionalUsd: number
   shortEntryNotionalUsd: number
+  residualProtection?:
+    | { readonly observedAt: string; readonly status: 'EVIDENCE_UNAVAILABLE' }
+    | {
+        readonly observedAt: string
+        readonly status: 'MODELED'
+        readonly signedNotionalMicros: string
+        readonly modeledSignedNotionalAfterTrimMicros: string
+        readonly trims: readonly { readonly symbol: string; readonly shares: number }[]
+      }
 }
 
 interface UnresolvedExit {
   readonly symbol: string
   readonly entryAt: string
   readonly exitDueAt: string
-  readonly reason: 'POST_DEADLINE_PRICE_UNAVAILABLE' | 'L1_EXIT_MINUTE_UNAVAILABLE'
+  readonly reason:
+    | 'POST_DEADLINE_PRICE_UNAVAILABLE'
+    | 'L1_EXIT_MINUTE_UNAVAILABLE'
+    | 'MIDDAY_RESIDUAL_EVIDENCE_UNAVAILABLE'
 }
 
 interface CoHeldMarkGap {
@@ -147,6 +163,7 @@ interface ActiveSimulatedPosition {
   readonly entryPrice: number
   readonly entryMinute: number
   readonly exitMinute: number
+  readonly trim?: { readonly minute: number; readonly shares: number }
   readonly stopPriceMicros: string
   readonly stopLimitPriceMicros: string
   readonly profitLimitPriceMicros: string
@@ -154,11 +171,13 @@ interface ActiveSimulatedPosition {
 
 const allowedSymbols = new Set<string>([...intradayAlphaCandidateSymbols, intradayAlphaBenchmarkSymbol])
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-const policy = makeIntradayAlphaPolicy(protocol)
+const v2Policy = makeIntradayAlphaPolicy(protocol)
+type ReplayPolicy = IntradayAlphaPolicy | IntradayAlphaPolicyV21
+const ReplayPolicyOption = Schema.Literals(['v2', 'v2_1'])
 const accountId = 'alpha-replay-verifier'
 export { accountId as replayAccountId }
 const cycleId = 'a'.repeat(64)
-const policyHash = Result.getOrThrow(canonicalHashV1Result(policy))
+const v2PolicyHash = Result.getOrThrow(canonicalHashV1Result(v2Policy))
 const observationHash = 'b'.repeat(64)
 const snapshotId = 'c'.repeat(64)
 const snapshotContentHash = 'd'.repeat(64)
@@ -513,7 +532,7 @@ export const buildSessionSummaries = (
 } => {
   const dailyByDate = new Map<string, PriorSessionDailySummary[]>()
   const checkpointsByDate = new Map<string, PriorSessionCheckpointSummary[]>()
-  const noiseSet = new Set<string>(policy.noiseAreaSymbols)
+  const noiseSet = new Set<string>(v2Policy.noiseAreaSymbols)
 
   for (const date of sessions) {
     const isoDate = Schema.decodeUnknownSync(IsoDateSchema)(date)
@@ -572,6 +591,7 @@ export const planReplayTargets = (input: {
   readonly observedAt: string
   readonly orderExpiresAt: string
   readonly disjoint: boolean
+  readonly policyHash?: string
 }) => {
   const { selectedSymbols, portfolio, targetWeights, maxBuy, maxSell, eligibility, observedAt } = input
   // Exercise actual production target-planner (planTargets) with bar-close reference prices (matching compileJevEntry)
@@ -620,7 +640,7 @@ export const planReplayTargets = (input: {
       strategyName: 'jev',
       cycleId,
       decisionHash: 'e'.repeat(64),
-      policyHash,
+      policyHash: input.policyHash ?? v2PolicyHash,
       accountId,
       signalDate: Schema.decodeUnknownSync(IsoDateSchema)(input.sessionDate),
       targetWeights,
@@ -647,6 +667,8 @@ export const planReplayTargets = (input: {
 }
 
 const simulateSession = (input: {
+  readonly policy: ReplayPolicy
+  readonly policyHash: string
   readonly sessionDate: string
   readonly calendar: ReplayCalendar
   readonly trailingBaseline: IntradayAlphaTrailingBaseline
@@ -674,6 +696,7 @@ const simulateSession = (input: {
   readonly maximumConcurrentLegs: number
   readonly maximumConcurrentGrossEntryNotionalUsd: number
 } => {
+  const { policy } = input
   const regular = Result.getOrThrow(resolveAlphaRegularSession(input.calendar, input.sessionDate))
   const sessionOpenMs = regular.openMs
   const expectedRegularMinutes = (regular.closeMs - sessionOpenMs) / 60_000
@@ -717,7 +740,13 @@ const simulateSession = (input: {
     // Serialize decisions until the preceding entry working window resolves. Future fill outcomes
     // must not contribute inventory, occupancy or account headroom to an earlier decision.
     if (decisionMs < pendingAttemptUntilMs) return
-    activePositions = activePositions.filter((position) => position.exitMinute > completedMinute)
+    activePositions = activePositions
+      .filter((position) => position.exitMinute > completedMinute)
+      .map((position) => {
+        if (position.trim === undefined || position.trim.minute > completedMinute) return position
+        const { trim, ...rest } = position
+        return { ...rest, shares: position.shares - trim.shares }
+      })
     if (activePositions.some((position) => sessionOpenMs + position.entryMinute * 60_000 > decisionMs))
       throw new Error('Replay cannot plan against inventory whose modeled fill is still in the future')
     const occupiedSymbols = activePositions.map((position) => position.symbol).sort()
@@ -821,7 +850,13 @@ const simulateSession = (input: {
       const funded = Result.getOrThrow(
         makeIntradayAlphaFundedExitPlan({
           policy,
-          observation: { snapshot, portfolio, observedAt, contentHash: observationHash },
+          observation: {
+            snapshot,
+            portfolio,
+            observedAt,
+            contentHash: observationHash,
+            trailingBaseline: input.trailingBaseline,
+          },
           leg,
         }),
       )
@@ -833,7 +868,19 @@ const simulateSession = (input: {
       if (leg.direction === 'LONG') maxBuy[leg.symbol] = funded.plan.maximumQuantityAtoms
       else maxSell[leg.symbol] = funded.plan.maximumQuantityAtoms
     }
-    const selectedSymbols = Object.keys(fundedPlans).sort()
+    const fundedSymbols = Object.keys(fundedPlans)
+    const selectedSymbols = (
+      policy.schemaVersion === 'bayn.intraday-alpha-policy.v2_1' &&
+      extracted.context.phase === IntradayAlphaPhase.MiddayReversion
+        ? balancedFundedMiddaySymbols(fundedSymbols, targetWeights)
+        : fundedSymbols
+    ).toSorted()
+    for (const symbol of fundedSymbols) {
+      if (selectedSymbols.includes(symbol)) continue
+      delete targetWeights[symbol]
+      delete maxBuy[symbol]
+      delete maxSell[symbol]
+    }
     if (selectedSymbols.length === 0) return
 
     const planned = planReplayTargets({
@@ -848,6 +895,7 @@ const simulateSession = (input: {
       observedAt,
       orderExpiresAt: utcInstantFromEpochMillis(orderExpiresAtMs),
       disjoint: activePositions.length > 0,
+      policyHash: input.policyHash,
     })
     if (
       planned.status !== TargetPlanStatus.Planned ||
@@ -894,26 +942,29 @@ const simulateSession = (input: {
 
     const entryMinute = Math.ceil((Date.parse(observedAt) - sessionOpenMs) / 60_000)
     const perSideSlipMult = input.quoteModel.slippageRtBps / 2 / 10_000
-    for (const intent of planned.intentTargets) {
+    const l1 = input.quoteModel.bySymbol !== undefined
+    const entries = planned.intentTargets.flatMap((intent) => {
       const funded = fundedPlans[intent.symbol]
-      if (funded === undefined) continue
+      if (funded === undefined) return []
       const symBars = barByMinute.get(intent.symbol)
-      const l1 = input.quoteModel.bySymbol !== undefined
       const quotes = input.quoteModel.bySymbol?.get(intent.symbol)
       const isLong = intent.side === OrderSide.Buy
+      const shares = BigInt(intent.quantityAtoms) / quantityScale
+      if (shares <= 0n) return []
       const levels = funded.plan.levels
       const limitPrice =
         Number('maximumEntryPriceMicros' in levels ? levels.maximumEntryPriceMicros : levels.minimumEntryPriceMicros) /
         1_000_000
       // Minute bars cannot establish the time or queue priority of an intrabar touch.
       // A post-decision open within the working window is our conservative executable-price proxy.
-      let fill: { readonly minute: number; readonly bar: RawBar; readonly price: number } | undefined
+      let fill: { readonly minute: number; readonly price: number } | undefined
+      let entryGap: L1ExecutionGap | undefined
       for (let minute = entryMinute; sessionOpenMs + minute * 60_000 < orderExpiresAtMs; minute++) {
         const bar = symBars?.get(minute)
         if (bar === undefined) continue
         const quote = quotes?.get(bar.eventMs)
         if (l1 && quote === undefined) {
-          l1ExecutionGaps.push({ symbol: intent.symbol, minuteAt: bar.eventAt, stage: 'ENTRY' })
+          entryGap = { symbol: intent.symbol, minuteAt: bar.eventAt, stage: 'ENTRY' }
           break
         }
         const price =
@@ -923,23 +974,29 @@ const simulateSession = (input: {
               ? quote.firstAsk
               : quote.firstBid
         if (isLong ? price <= limitPrice : price >= limitPrice) {
-          fill = { minute, bar, price }
+          fill = { minute, price }
           break
         }
       }
-      if (fill === undefined) continue
-      const { minute: fillMinute, price: entryPrice } = fill
-      const shares = Number(BigInt(intent.quantityAtoms) / 1_000_000_000n)
-      if (shares <= 0) continue
-      attempt.filledSymbols.push(intent.symbol)
-      if (isLong) attempt.longEntryNotionalUsd += entryPrice * shares
-      else attempt.shortEntryNotionalUsd += entryPrice * shares
+      if (fill !== undefined) {
+        attempt.filledSymbols.push(intent.symbol)
+        if (isLong) attempt.longEntryNotionalUsd += fill.price * Number(shares)
+        else attempt.shortEntryNotionalUsd += fill.price * Number(shares)
+      }
+      return [{ symbol: intent.symbol, shares, isLong, levels, symBars, quotes, fill, entryGap }]
+    })
 
-      const stopPrice = Number(BigInt(funded.plan.levels.stopPriceMicros)) / 1_000_000
-      const stopLimitPrice = Number(BigInt(levels.stopLimitPriceMicros)) / 1_000_000
-      const targetPrice = Number(BigInt(levels.profitLimitPriceMicros)) / 1_000_000
-      // Holding duration starts at first fill; v2 also enforces the absolute phase deadline.
-      const phaseHoldMinute = fillMinute + funded.plan.levels.maximumHoldingMinutes
+    const resolveExit = (
+      entry: (typeof entries)[number],
+      fill: NonNullable<(typeof entries)[number]['fill']>,
+      window: { readonly start: number; readonly end: number; readonly triggered: boolean },
+    ) => {
+      const { levels, symbol, isLong, symBars, quotes } = entry
+      const stopPrice = Number(levels.stopPriceMicros) / 1_000_000
+      const stopLimitPrice = Number(levels.stopLimitPriceMicros) / 1_000_000
+      const targetPrice = Number(levels.profitLimitPriceMicros) / 1_000_000
+      // Holding duration starts at first fill; both policies enforce the absolute phase deadline.
+      const phaseHoldMinute = fill.minute + levels.maximumHoldingMinutes
       const exitDueMs = Math.min(sessionOpenMs + phaseHoldMinute * 60_000, flattenMs)
 
       let exitPrice: number | undefined
@@ -947,14 +1004,14 @@ const simulateSession = (input: {
       let exitReason: TradeOutcome['exitReason'] = exitDueMs === flattenMs ? 'EOD' : 'MAX_HOLD'
 
       let missingExitQuote = false
-      let stopTriggered = false
+      let stopTriggered = window.triggered
       const clearsStopLimit = (price: number) => (isLong ? price >= stopLimitPrice : price <= stopLimitPrice)
-      for (let m = fillMinute; m < expectedRegularMinutes; m++) {
+      for (let m = window.start; m < window.end; m++) {
         const bar = symBars?.get(m)
         if (bar === undefined) continue
         const quote = quotes?.get(bar.eventMs)
         if (l1 && quote === undefined) {
-          l1ExecutionGaps.push({ symbol: intent.symbol, minuteAt: bar.eventAt, stage: 'EXIT' })
+          l1ExecutionGaps.push({ symbol, minuteAt: bar.eventAt, stage: 'EXIT' })
           missingExitQuote = true
           break
         }
@@ -1001,15 +1058,20 @@ const simulateSession = (input: {
           break
         }
       }
-      if (exitPrice === undefined) {
-        unresolvedExits.push({
-          symbol: intent.symbol,
-          entryAt: utcInstantFromEpochMillis(sessionOpenMs + fillMinute * 60_000),
-          exitDueAt: utcInstantFromEpochMillis(exitDueMs),
-          reason: missingExitQuote ? 'L1_EXIT_MINUTE_UNAVAILABLE' : 'POST_DEADLINE_PRICE_UNAVAILABLE',
-        })
-        continue
-      }
+      return { exitPrice, exitMinute, exitReason, exitDueMs, missingExitQuote, stopTriggered }
+    }
+
+    const recordExit = (
+      entry: (typeof entries)[number],
+      fill: NonNullable<(typeof entries)[number]['fill']>,
+      shares: number,
+      exitPrice: number,
+      exitMinute: number,
+      exitReason: TradeOutcome['exitReason'],
+    ) => {
+      const { isLong, symbol } = entry
+      const entryPrice = fill.price
+      const stopLimitPrice = Number(entry.levels.stopLimitPriceMicros) / 1_000_000
       const exitSlipMult = exitReason === 'TARGET' ? 0 : perSideSlipMult
       const slippedExit = isLong ? exitPrice * (1 - exitSlipMult) : exitPrice * (1 + exitSlipMult)
       const realizedExit =
@@ -1025,25 +1087,128 @@ const simulateSession = (input: {
       trades.push({
         sessionDate: input.sessionDate,
         phase,
-        symbol: intent.symbol,
+        symbol,
         direction: isLong ? 'LONG' : 'SHORT',
         shares,
         entryPrice,
         exitPrice: realizedExit,
-        entryAt: utcInstantFromEpochMillis(sessionOpenMs + fillMinute * 60_000),
+        entryAt: utcInstantFromEpochMillis(sessionOpenMs + fill.minute * 60_000),
         exitAt: utcInstantFromEpochMillis(sessionOpenMs + exitMinute * 60_000),
         exitReason,
         grossPnlUsd,
         netPnlUsd,
       })
+    }
+
+    const protectPartialBasket =
+      policy.schemaVersion === 'bayn.intraday-alpha-policy.v2_1' &&
+      phase === IntradayAlphaPhase.MiddayReversion &&
+      entries.length === policy.middayReversion.targetPairs * 2 &&
+      attempt.filledSymbols.length > 0 &&
+      attempt.filledSymbols.length < entries.length
+    // The working window must resolve before any trim. Use the first open strictly after expiry,
+    // with protection already exercised on earlier bars. Never use the fill bar's open for a trim.
+    const guardMinute = Math.floor((orderExpiresAtMs - sessionOpenMs) / 60_000) + 1
+    const earlyExits = new Map<string, ReturnType<typeof resolveExit>>()
+    const trims = new Map<string, { readonly shares: number; readonly executable: number }>()
+    let missingResidualEvidence = false
+    if (protectPartialBasket) {
+      const marks = new Map<string, number>()
+      missingResidualEvidence = entries.some((entry) => entry.entryGap !== undefined)
+      const legs = entries.map((entry) => {
+        const { fill, symbol, isLong } = entry
+        const early =
+          fill === undefined
+            ? undefined
+            : resolveExit(entry, fill, { start: fill.minute, end: guardMinute, triggered: false })
+        if (early !== undefined) earlyExits.set(symbol, early)
+        const openShares = fill !== undefined && early?.exitPrice === undefined ? entry.shares : 0n
+        const bar = entry.symBars?.get(guardMinute)
+        const quote = bar === undefined ? undefined : entry.quotes?.get(bar.eventMs)
+        const mark = quote === undefined ? bar?.open : (quote.firstBid + quote.firstAsk) / 2
+        if (openShares > 0n) {
+          if (mark === undefined || (l1 && quote === undefined) || early?.missingExitQuote === true)
+            missingResidualEvidence = true
+          else marks.set(symbol, quote === undefined ? mark : isLong ? quote.firstBid : quote.firstAsk)
+        }
+        return {
+          symbol,
+          direction: isLong ? ('LONG' as const) : ('SHORT' as const),
+          intendedShares: entry.shares,
+          filledShares: fill === undefined ? 0n : entry.shares,
+          openShares,
+          workingEntry: false,
+          markPriceMicros: mark === undefined ? null : Result.getOrThrow(numberToMicros(mark, 'residual mark')),
+        }
+      })
+      const guardAt = utcInstantFromEpochMillis(sessionOpenMs + guardMinute * 60_000)
+      if (missingResidualEvidence) attempt.residualProtection = { observedAt: guardAt, status: 'EVIDENCE_UNAVAILABLE' }
+      else {
+        const plan = Result.getOrThrow(evaluateMiddayResidualProtection(legs))
+        if (plan.action !== 'NO_TRIM' && plan.action !== 'TRIM_REDUCE_ONLY')
+          throw new Error('Partial replay basket is not terminal at the residual checkpoint')
+        for (const trim of plan.trims) {
+          const executable = marks.get(trim.symbol)
+          if (executable === undefined) throw new Error(`Residual trim for ${trim.symbol} lacks an executable price`)
+          trims.set(trim.symbol, { shares: Number(trim.shares), executable })
+        }
+        attempt.residualProtection = {
+          observedAt: guardAt,
+          status: 'MODELED',
+          signedNotionalMicros: plan.exposure.signedNotionalMicros.toString(),
+          modeledSignedNotionalAfterTrimMicros: plan.modeledSignedNotionalAfterTrimMicros.toString(),
+          trims: plan.trims.map(({ symbol, shares }) => ({ symbol, shares: Number(shares) })),
+        }
+      }
+    }
+
+    for (const entry of entries) {
+      const { fill, isLong, symbol, levels } = entry
+      if (entry.entryGap !== undefined) l1ExecutionGaps.push(entry.entryGap)
+      if (fill === undefined) continue
+      const early = earlyExits.get(symbol)
+      let shares = Number(entry.shares)
+      const trim = trims.get(symbol)
+      if (trim !== undefined) {
+        recordExit(entry, fill, trim.shares, trim.executable, guardMinute, 'MIDDAY_RESIDUAL_TRIM')
+        shares -= trim.shares
+      }
+      const exit =
+        early !== undefined && (early.exitPrice !== undefined || early.missingExitQuote || missingResidualEvidence)
+          ? early
+          : shares === 0
+            ? undefined
+            : resolveExit(entry, fill, {
+                start: early === undefined ? fill.minute : guardMinute,
+                end: expectedRegularMinutes,
+                triggered: early?.stopTriggered ?? false,
+              })
+      if (shares > 0 && exit?.exitPrice === undefined) {
+        unresolvedExits.push({
+          symbol,
+          entryAt: utcInstantFromEpochMillis(sessionOpenMs + fill.minute * 60_000),
+          exitDueAt: utcInstantFromEpochMillis(
+            missingResidualEvidence ? sessionOpenMs + guardMinute * 60_000 : (exit?.exitDueMs ?? flattenMs),
+          ),
+          reason: missingResidualEvidence
+            ? 'MIDDAY_RESIDUAL_EVIDENCE_UNAVAILABLE'
+            : exit?.missingExitQuote === true
+              ? 'L1_EXIT_MINUTE_UNAVAILABLE'
+              : 'POST_DEADLINE_PRICE_UNAVAILABLE',
+        })
+        continue
+      }
+      if (exit?.exitPrice !== undefined)
+        recordExit(entry, fill, shares, exit.exitPrice, exit.exitMinute, exit.exitReason)
       activePositions.push({
         phase,
-        symbol: intent.symbol,
+        symbol,
         direction: isLong ? 'LONG' : 'SHORT',
-        shares,
-        entryPrice,
-        entryMinute: fillMinute,
-        exitMinute,
+        shares: Number(entry.shares),
+        entryPrice: fill.price,
+        entryMinute: fill.minute,
+        exitMinute: exit?.exitMinute ?? guardMinute,
+        ...(trim === undefined ? {} : { trim: { minute: guardMinute, shares: trim.shares } }),
         stopPriceMicros: levels.stopPriceMicros,
         stopLimitPriceMicros: levels.stopLimitPriceMicros,
         profitLimitPriceMicros: levels.profitLimitPriceMicros,
@@ -1108,6 +1273,7 @@ const simulateSession = (input: {
 }
 
 interface ReplayOptions {
+  readonly policy?: string
   readonly evaluationStart?: string
   readonly evaluationEnd?: string
   readonly quotes?: string
@@ -1120,6 +1286,9 @@ export const runIntradayAlphaReplayVerification = (
   options: ReplayOptions = {},
 ) => {
   if (paths.length === 0) throw new Error('At least one bar file is required')
+  const selection = Schema.decodeUnknownSync(ReplayPolicyOption)(options.policy ?? 'v2')
+  const policy = selection === 'v2_1' ? Result.getOrThrow(makeIntradayAlphaPolicyV21(protocol)) : v2Policy
+  const policyHash = selection === 'v2_1' ? Result.getOrThrow(canonicalHashV1Result(policy)) : v2PolicyHash
   const calendarSource = Schema.decodeUnknownSync(ReplayCalendarSchema, strictParseOptions)(calendarInput)
   const calendar = Result.getOrThrow(
     normalizeMarketCalendarResult(
@@ -1292,6 +1461,8 @@ export const runIntradayAlphaReplayVerification = (
         carryCoHeldMarks = false,
       ) =>
         simulateSession({
+          policy,
+          policyHash,
           sessionDate: date,
           calendar,
           symMap: bars,
@@ -1413,6 +1584,7 @@ export const runIntradayAlphaReplayVerification = (
             date: day.date,
             selectedLegs: attempt.selectedSymbols.length,
             filledLegs: attempt.filledSymbols.length,
+            ...(attempt.residualProtection === undefined ? {} : { residualProtection: attempt.residualProtection }),
             complete: attempt.filledSymbols.length === attempt.selectedSymbols.length,
             bothSidesFilled: attempt.longEntryNotionalUsd > 0 && attempt.shortEntryNotionalUsd > 0,
             longEntryNotionalUsd: attempt.longEntryNotionalUsd,
@@ -1611,7 +1783,9 @@ export const runIntradayAlphaReplayVerification = (
       account:
         'Fixed $100000 equity and hypothetical 4x buying power less occupied entry notional; no broker account, collateral, margin-interest or final account-risk proof',
       baseline:
-        'Strictly prior supplied IEX regular-session summaries; historical adjusted-daily supplements are not supplied; insufficient baselines remain unavailable outcomes',
+        selection === 'v2'
+          ? 'Strictly prior supplied IEX regular-session summaries; historical adjusted-daily supplements are not supplied; insufficient baselines remain unavailable outcomes'
+          : 'Strictly prior supplied regular-session summaries; historical adjusted-daily supplements are not supplied; missing per-leg ATR cannot fund entry',
       completeness:
         'Every visited active decision requires the production extractor completed-SPY/VWAP result and any co-held current marks needed for planning; first missing observation stops later entries and suppresses whole-window metrics; closed-trade subtotals and basket attribution cover only the supported committed path',
       concurrency:
@@ -1627,7 +1801,13 @@ export const runIntradayAlphaReplayVerification = (
       exit: 'OHLC stop/target proxies with stop-first both-touch convention and resting gapped stop limits; first full minute open after time deadline; missing exit prices remain unresolved',
       liquidity:
         'Whole intended quantity assumed filled at the price proxy; capacity and queue priority are unmeasured',
-      basket: 'Legs fill independently; planned dollar neutrality does not prove realized neutrality',
+      ...(selection === 'v2_1'
+        ? { tradeCount: 'Each modeled closed slice counts separately; a trimmed leg can have multiple exits' }
+        : {}),
+      basket:
+        selection === 'v2'
+          ? 'Legs fill independently; planned dollar neutrality does not prove realized neutrality'
+          : 'For incomplete 2L+2S attempts, assumes terminal entries at expiry and reduce-only trims at the next whole-minute open; uses open or L1 midpoint exposure marks. Missing marks withhold outcomes. Not a broker cancel or fill receipt.',
       costs:
         'Sell fee and fixed slippage scenarios; operating expense, borrow, impact and real settlement are unmeasured',
       selection:
@@ -1657,13 +1837,14 @@ if (import.meta.main) {
   const args = process.argv.slice(2)
   if (args[0] !== '--calendar' || args[1] === undefined || args.length < 3) {
     console.error(
-      'Usage: bun run tools/verify-intraday-alpha-replay.ts --calendar <calendar_json> [--evaluation-start YYYY-MM-DD] [--evaluation-end YYYY-MM-DD] [--quotes <quotes_tsv>] [--splits <splits_json>] <bars_tsv_1> [bars_tsv_2 ...]',
+      'Usage: bun run tools/verify-intraday-alpha-replay.ts --calendar <calendar_json> [--policy v2|v2_1] [--evaluation-start YYYY-MM-DD] [--evaluation-end YYYY-MM-DD] [--quotes <quotes_tsv>] [--splits <splits_json>] <bars_tsv_1> [bars_tsv_2 ...]',
     )
     process.exit(1)
   }
   const calendarInput: unknown = JSON.parse(readFileSync(args[1], 'utf8'))
   const paths: string[] = []
   const flags = new Map<string, keyof ReplayOptions>([
+    ['--policy', 'policy'],
     ['--evaluation-start', 'evaluationStart'],
     ['--evaluation-end', 'evaluationEnd'],
     ['--quotes', 'quotes'],

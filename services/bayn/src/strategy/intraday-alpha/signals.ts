@@ -8,6 +8,9 @@ import type { IntradayAlphaTrailingBaseline } from '../../market-data/intraday/t
 import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
 import { IntradayAlphaPhase, IntradayAlphaSetup, type IntradayAlphaPolicyMaterial } from './policy'
 
+// Signal selection deliberately depends only on fields shared by both execution policies.
+type AlphaSignalPolicy = Omit<IntradayAlphaPolicyMaterial, 'schemaVersion' | 'entryLimitSlippageBps'>
+
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.min(maximum, Math.max(minimum, value))
@@ -170,12 +173,12 @@ export const computeOpeningRange = (
   return { open, close, high, low, barCount }
 }
 
-const isNoiseAreaCheckpoint = (elapsedMinutesFromOpen: number, policy: IntradayAlphaPolicyMaterial): boolean =>
+const isNoiseAreaCheckpoint = (elapsedMinutesFromOpen: number, policy: AlphaSignalPolicy): boolean =>
   policy.noiseArea.checkpointMinutesFromOpen.includes(elapsedMinutesFromOpen)
 
 export const resolveAlphaSessionContext = (input: {
   readonly snapshot: Pick<StrategyMarketSnapshot, 'manifest'>
-  readonly policy: IntradayAlphaPolicyMaterial
+  readonly policy: AlphaSignalPolicy
   readonly middayReversionCompleted?: boolean
   readonly noiseAreaAllTaken?: boolean
 }): Result.Result<AlphaSessionContext, JevContractError> => {
@@ -255,7 +258,7 @@ const symbolSessionStats = (
 }
 
 const computeNoiseAreaWeights = (
-  policy: IntradayAlphaPolicyMaterial,
+  policy: AlphaSignalPolicy,
   trailingBaseline: IntradayAlphaTrailingBaseline,
 ): ReadonlyMap<string, number> => {
   const invAtrs: { readonly symbol: string; readonly invAtr: number }[] = []
@@ -277,7 +280,7 @@ const computeNoiseAreaWeights = (
 
 export const extractIntradayAlphaCandidates = (input: {
   readonly snapshot: StrategyMarketSnapshot
-  readonly policy: IntradayAlphaPolicyMaterial
+  readonly policy: AlphaSignalPolicy
   readonly trailingBaseline: IntradayAlphaTrailingBaseline
   readonly accountId: string
   readonly equityShortEligibility?: Readonly<Record<string, EquityShortEligibility>>
@@ -463,7 +466,7 @@ export const extractIntradayAlphaCandidates = (input: {
 
 const extractEquityAlphaCandidates = (input: {
   readonly snapshot: StrategyMarketSnapshot
-  readonly policy: IntradayAlphaPolicyMaterial
+  readonly policy: AlphaSignalPolicy
   readonly trailingBaseline: IntradayAlphaTrailingBaseline
   readonly context: AlphaSessionContext
   readonly spy: SessionBarStats
@@ -663,7 +666,7 @@ const extractEquityAlphaCandidates = (input: {
 
 export const selectIntradayAlphaLegs = (input: {
   readonly context: AlphaSessionContext
-  readonly policy: IntradayAlphaPolicyMaterial
+  readonly policy: AlphaSignalPolicy
   readonly longPool: readonly AlphaRankedCandidate[]
   readonly shortPool: readonly AlphaRankedCandidate[]
   readonly vetoedSymbols: ReadonlySet<string>

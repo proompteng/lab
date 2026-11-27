@@ -717,3 +717,120 @@ test('unmatched L1 input cannot manufacture a complete zero-profit day', () => {
     expect(report.l1?.unavailableSessions).toBe(1)
   })
 })
+
+test('CLI opt-in preserves default v2 and feeds v2.1 collars and residual reductions into replay', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, (symbol, minute) => {
+    if (minute === 122 && symbol === 'AAPL') return 99.6
+    if (minute === 122 && symbol === 'AVGO') return 99
+    return middayPrice(symbol, minute)
+  })
+  withRows(lines, (path) => {
+    const calendarPath = join(dirname(path), 'calendar.json')
+    writeFileSync(calendarPath, JSON.stringify(calendar([date])))
+    const args = [
+      process.execPath,
+      join(import.meta.dir, 'verify-intraday-alpha-replay.ts'),
+      '--calendar',
+      calendarPath,
+      '--evaluation-start',
+      date,
+      path,
+    ]
+    const execute = (...policyArgs: string[]) => Bun.spawnSync([...args, ...policyArgs])
+    const defaultRun = execute()
+    const explicitV2 = execute('--policy', 'v2')
+    expect(defaultRun.exitCode).toBe(0)
+    expect(explicitV2.exitCode).toBe(0)
+    expect(defaultRun.stdout.toString()).toBe(explicitV2.stdout.toString())
+    const candidateRun = execute('--policy', 'v2_1')
+    expect(candidateRun.stderr.toString()).toBe('')
+    expect(candidateRun.exitCode).toBe(0)
+    expect(execute('--policy', 'v3').exitCode).not.toBe(0)
+
+    const v2 = runReplay([path], calendar([date]), { evaluationStart: date })
+    const v21 = runReplay([path], calendar([date]), { evaluationStart: date, policy: 'v2_1' })
+    expect(JSON.parse(candidateRun.stdout.toString())).toEqual(v21)
+    expect(v2.policyHash).toBe('f632170473534577a59a98c800bca69917b710c3857a68d0c52ec776ebcdd509')
+    expect(v21.policyHash).toBe('5b3c0205f2ff3ba18bc70197fbc4b715fd8d1f721ea59114232bde95fde527bd')
+    expect(v21.qualification).toBe('UNQUALIFIED')
+    const v2Day = v2.results[0]?.sessionDetails[0]
+    const v21Day = v21.results[0]?.sessionDetails[0]
+    expect(v2Day?.attempts[0]?.filledSymbols).toEqual(['AMD', 'AMZN'])
+    const attempt = v21Day?.attempts[0]
+    expect(attempt?.filledSymbols.toSorted()).toEqual(['AAPL', 'AMD', 'AMZN'])
+    expect(attempt?.residualProtection).toMatchObject({ status: 'MODELED', observedAt: '2026-11-27T16:33:00.000Z' })
+    const protection = attempt?.residualProtection
+    if (protection?.status !== 'MODELED') throw new Error('Expected modeled residual protection')
+    const exposure = BigInt(protection.modeledSignedNotionalAfterTrimMicros)
+    expect(exposure).toBeGreaterThanOrEqual(0n)
+    expect(exposure).toBeLessThan(100_000_000n)
+    const trims = v21Day?.trades.filter((trade) => trade.exitReason === 'MIDDAY_RESIDUAL_TRIM') ?? []
+    expect(trims.map(({ symbol, shares }) => ({ symbol, shares }))).toEqual([...protection.trims])
+    expect(trims.every((trade) => trade.exitAt === '2026-11-27T16:33:00.000Z')).toBe(true)
+  })
+})
+
+test('v2.1 does not invent a trim or completed outcome without a residual checkpoint mark', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, (symbol, minute) => {
+    if (symbol === 'AVGO' && minute === 122) return 99
+    if (symbol === 'AAPL' && minute === 123) return null
+    return middayPrice(symbol, minute)
+  })
+  withRows(lines, (path) => {
+    const report = runReplay([path], calendar([date]), { evaluationStart: date, policy: 'v2_1' })
+    const scenario = report.results[0]
+    expect(scenario?.middayBaskets[0]?.residualProtection).toEqual({
+      status: 'EVIDENCE_UNAVAILABLE',
+      observedAt: '2026-11-27T16:33:00.000Z',
+    })
+    expect(scenario?.totalNet).toBeNull()
+    expect(scenario?.sessionDetails[0]?.trades).toEqual([])
+    expect(scenario?.sessionDetails[0]?.unresolvedExits.map((exit) => exit.reason)).toEqual(
+      Array(3).fill('MIDDAY_RESIDUAL_EVIDENCE_UNAVAILABLE'),
+    )
+  })
+})
+
+test('v2.1 short stop fills at a modeled gap price that blocks v2', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, (symbol, minute) =>
+    symbol === 'AMD' && minute === 123 ? 105.78 : middayPrice(symbol, minute),
+  )
+  withRows(lines, (path) => {
+    const v2 = runReplay([path], calendar([date]), { evaluationStart: date })
+    const candidate = runReplay([path], calendar([date]), { evaluationStart: date, policy: 'v2_1' })
+    expect(v2.results[0]?.stopLimitGapBars).toBe(1)
+    expect(candidate.results[0]?.stopLimitGapBars).toBe(0)
+    expect(candidate.results[0]?.middayBaskets[0]).toMatchObject({ complete: true, filledLegs: 4 })
+    expect(candidate.results[0]?.sessionDetails[0]?.trades.find((trade) => trade.symbol === 'AMD')).toMatchObject({
+      direction: 'SHORT',
+      exitReason: 'STOP',
+      exitAt: '2026-11-27T16:33:00.000Z',
+    })
+  })
+})
+
+test('v2.1 protects the post-expiry open inventory without trimming legs that already exited', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, (symbol, minute) => {
+    if (symbol === 'AVGO' && minute === 122) return 99
+    return middayPrice(symbol, minute)
+  }).map((line) => {
+    const fields = line.split('\t')
+    if (fields[0] === 'AMZN' && fields[1] === '2026-11-27T16:32:00.000Z') fields[3] = '110'
+    return fields.join('\t')
+  })
+  withRows(lines, (path) => {
+    const report = runReplay([path], calendar([date]), { evaluationStart: date, policy: 'v2_1' })
+    const day = report.results[0]?.sessionDetails[0]
+    const protection = day?.attempts[0]?.residualProtection
+    expect(protection).toMatchObject({ status: 'MODELED', observedAt: '2026-11-27T16:33:00.000Z' })
+    if (protection?.status !== 'MODELED') throw new Error('Expected modeled residual protection')
+    expect(protection.trims.some((trim) => trim.symbol === 'AMZN')).toBe(false)
+    expect(day?.trades.filter((trade) => trade.symbol === 'AMZN')).toMatchObject([
+      { exitReason: 'TARGET', exitAt: '2026-11-27T16:32:00.000Z' },
+    ])
+  })
+})
