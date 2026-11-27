@@ -9,6 +9,33 @@ import { normalizeResearchCalendar, sha256 } from './research-orb-zab-data'
 const digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 const count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const object = Schema.Struct({ key: Schema.String, bytes: count, sha256: digest })
+const researchKey = /^[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*(?:\/[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*)+$/
+const decodeBlindSource = Schema.decodeUnknownSync(
+  Schema.Struct({
+    schema: Schema.Literal('bayn.research.wave-4e.blind-archive.v1'),
+    manifest: Schema.String.check(Schema.isPattern(researchKey)),
+    manifestSha256: digest,
+    bars: Schema.String.check(Schema.isPattern(researchKey)),
+    rows: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+)
+type BlindSource = Pick<ReturnType<typeof decodeBlindSource>, 'manifest' | 'manifestSha256' | 'bars' | 'rows'>
+
+export const replacementBlindSource = (input: unknown): BlindSource => {
+  const { manifest, manifestSha256, bars, rows } = decodeBlindSource(input, { onExcessProperty: 'error' })
+  if (
+    !manifest.startsWith('bayn-research-datasets/') ||
+    !bars.startsWith('bayn-research-datasets/') ||
+    manifest === blind.manifest ||
+    bars === blind.bars ||
+    manifestSha256 === blind.manifestSha256 ||
+    manifest === bars
+  ) {
+    throw new Error('A corrected blind archive must use a distinct manifest and tape in bayn-research-datasets/')
+  }
+  return { manifest, manifestSha256, bars, rows }
+}
+
 const decodeBlindManifest = Schema.decodeUnknownSync(
   Schema.Struct({
     dataset: Schema.Literal('alpaca-sip-8yr-5m-unseen-2016-2023'),
@@ -86,7 +113,7 @@ const checkCalendar = (input: unknown, window: Window) => {
   return calendar
 }
 
-const checkBlindManifest = (input: unknown) => {
+const checkBlindManifest = (input: unknown, binding: BlindSource) => {
   const manifest = decodeBlindManifest(input)
   const { symbols, symbolRowCounts, files } = manifest
   if (
@@ -94,10 +121,10 @@ const checkBlindManifest = (input: unknown) => {
     manifest.dateRange.end !== blind.last ||
     manifest.calendarSessions !== blind.sessions ||
     manifest.symbolCount !== symbols.length ||
-    manifest.totalRows !== blind.rows ||
-    Object.values(symbolRowCounts).reduce((total, rows) => total + rows, 0) !== blind.rows ||
+    manifest.totalRows !== binding.rows ||
+    Object.values(symbolRowCounts).reduce((total, rows) => total + rows, 0) !== binding.rows ||
     Object.keys(symbolRowCounts).some((symbol) => !symbols.includes(symbol)) ||
-    files.bars_5m.key !== blind.bars ||
+    files.bars_5m.key !== binding.bars ||
     files.bars_5m.bytes <= 0 ||
     files.calendar.key !== blind.calendar ||
     files.calendar.sha256 !== blind.calendarSha256
@@ -107,8 +134,11 @@ const checkBlindManifest = (input: unknown) => {
   return manifest
 }
 
-export const readArchiveMetadata = async (read: (key: string, sha256: string) => Promise<unknown>) => {
-  const source = checkBlindManifest(await read(blind.manifest, blind.manifestSha256))
+export const readArchiveMetadata = async (
+  read: (key: string, sha256: string) => Promise<unknown>,
+  binding: BlindSource = blind,
+) => {
+  const source = checkBlindManifest(await read(binding.manifest, binding.manifestSha256), binding)
   // Never treat an entirely absent early-listed name like an ordinary missing 5m bar.
   admitUniverse('2016–2023 blind SIP', source.symbols, source.symbolRowCounts)
   const blindCalendar = checkCalendar(
@@ -206,9 +236,10 @@ async function* lines(stream: ReadableStream<Uint8Array>) {
 export const loadTapes = async (
   read: (key: string, digest: string) => Promise<unknown>,
   open: (key: string) => Promise<Response>,
+  binding: BlindSource = blind,
 ) => {
   // Both universe/calendar receipts must be admitted before the first bar GET.
-  const metadata = await readArchiveMetadata(read)
+  const metadata = await readArchiveMetadata(read, binding)
   const load = async (kind: 'blind' | 'prior') => {
     const { calendar, receipt } = metadata[kind]
     const compressed = new Bun.CryptoHasher('sha256')
@@ -241,7 +272,7 @@ export const loadTapes = async (
       calendar,
       lines(stream),
       kind,
-      kind === 'blind' ? blind.rows : prior.rows,
+      kind === 'blind' ? binding.rows : prior.rows,
       kind === 'blind' ? metadata.blind.rowsBySymbol : undefined,
     )
     if (

@@ -1,14 +1,76 @@
 import { describe, expect, test } from 'bun:test'
 import { rejects } from 'node:assert/strict'
 
-import { admitUniverse, compareUniverse, loadTapes } from './8yr-unseen-intraday-data'
-import { baselineNames, blind, noiseNames, stocks, universe } from './8yr-unseen-intraday-protocol'
-
+import {
+  admitUniverse,
+  compareUniverse,
+  loadTapes,
+  readArchiveMetadata,
+  replacementBlindSource,
+} from './8yr-unseen-intraday-data'
+import { baselineNames, blind, listingDates, noiseNames, stocks, universe } from './8yr-unseen-intraday-protocol'
 import { createPreparation, exitPath, netAt, replayDay } from './8yr-unseen-intraday-replay'
 import { stationaryP, stationaryPlan } from './8yr-unseen-intraday-statistics'
 import { Field, makeSeries, price, readTape } from './8yr-unseen-intraday-tape'
 
 describe('Wave 4E metadata admission', () => {
+  const correctedReceipt = {
+    schema: 'bayn.research.wave-4e.blind-archive.v1',
+    manifest: 'bayn-research-datasets/corrected/MANIFEST.json',
+    manifestSha256: 'a'.repeat(64),
+    bars: 'bayn-research-datasets/corrected/bars.tsv.gz',
+    rows: universe.filter((symbol) => (listingDates[symbol] ?? blind.first) <= blind.last).length,
+  }
+
+  test('a corrected receipt cannot alter strategy fields or rebind the rejected object in place', () => {
+    expect(() => replacementBlindSource({ ...correctedReceipt, calendar: 'other.json' })).toThrow()
+    expect(() => replacementBlindSource({ ...correctedReceipt, bars: blind.bars })).toThrow(
+      'distinct manifest and tape',
+    )
+    expect(() =>
+      replacementBlindSource({ ...correctedReceipt, manifest: 'bayn-research-datasets/../unexpected' }),
+    ).toThrow()
+    expect(() => replacementBlindSource({ ...correctedReceipt, rows: 0 })).toThrow()
+  })
+
+  test('corrected metadata binds new bytes but still requires the original dates, calendar and exact roster', async () => {
+    const binding = replacementBlindSource(correctedReceipt)
+    const symbolRowCounts = Object.fromEntries(
+      universe.filter((symbol) => (listingDates[symbol] ?? blind.first) <= blind.last).map((symbol) => [symbol, 1]),
+    )
+    const manifest = {
+      dataset: 'alpaca-sip-8yr-5m-unseen-2016-2023',
+      source: 'Alpaca Data API v2 (feed=sip, adjustment=split, timeframe=5Min)',
+      dateRange: { start: blind.first, end: blind.last },
+      calendarSessions: blind.sessions,
+      symbolCount: universe.length,
+      symbols: universe,
+      symbolRowCounts,
+      totalRows: binding.rows,
+      files: {
+        bars_5m: { key: binding.bars, bytes: 1, sha256: 'b'.repeat(64) },
+        calendar: { key: blind.calendar, bytes: 1, sha256: blind.calendarSha256 },
+      },
+    }
+    const reads: Array<[string, string]> = []
+    await rejects(
+      readArchiveMetadata((key, sha) => {
+        reads.push([key, sha])
+        if (key === binding.manifest) return Promise.resolve(manifest)
+        return Promise.reject(new Error('Calendar lookup reached'))
+      }, binding),
+      /Calendar lookup reached/,
+    )
+    expect(reads).toEqual([
+      [binding.manifest, binding.manifestSha256],
+      [blind.calendar, blind.calendarSha256],
+    ])
+    await rejects(
+      readArchiveMetadata(() => Promise.resolve({ ...manifest, totalRows: binding.rows + 1 }), binding),
+      /does not match the registered archive receipt/,
+    )
+  })
+
   test('rejects an equal-size manifest with an unrelated name replacing a strategy input', () => {
     const substituted = universe.map((symbol) => (symbol === 'INTC' ? 'ADBE' : symbol))
     expect(substituted).toHaveLength(62)

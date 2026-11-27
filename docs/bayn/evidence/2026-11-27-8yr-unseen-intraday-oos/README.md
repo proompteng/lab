@@ -32,7 +32,19 @@ checksum must come from that export, not from the mismatched one. No existing al
 object was found under the published `bayn-research-datasets/` prefix.
 
 The scorer is wired separately from the metadata audit. It verifies that the exact code revision and the unchanged
-strategy freeze are published on the study branch before requesting tape. Once an admissible input receipt is bound,
-`--score --output <new JSON file>` writes the annual and aggregate metrics, exact LOSO reruns, bootstrap, attribution
-and stitched daily curves. No results file is present for the rejected archive. Fixtures exercise the fill and admission
-rules; passing them does not establish economic performance.
+strategy freeze are published on the study branch before requesting tape. For an approved corrected export, commit
+`blind-archive.json` in this directory using these fields:
+
+| Field                        | Required value                                                |
+| ---------------------------- | ------------------------------------------------------------- |
+| `schema`                     | `bayn.research.wave-4e.blind-archive.v1`                      |
+| `manifest`, `manifestSha256` | Corrected manifest S3 key and SHA-256 of its exact bytes.     |
+| `bars`, `rows`               | Corrected gzip S3 key and exact row count from that manifest. |
+
+Both keys must be distinct from the rejected objects and under `bayn-research-datasets/`. The corrected manifest uses
+the same schema and must reference the original calendar key and hash, the exact frozen roster, and the new tape's
+size and SHA-256. Do not edit `freeze.json` or the frozen protocol. The CLI reads the replacement receipt from Git,
+not from an untracked or modified file. Run `--audit` after committing the receipt and push that revision before
+running `--score --output <new JSON file>`. The result records the receipt digest, annual and aggregate metrics,
+exact LOSO reruns, bootstrap, attribution and stitched daily curves. No results file is present for the rejected archive.
+Fixtures exercise the fill and admission rules; passing them does not establish economic performance.

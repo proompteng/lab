@@ -5,7 +5,13 @@ import { writeFile } from 'node:fs/promises'
 import { NodeRuntime } from '@effect/platform-node'
 import { Effect } from 'effect'
 
-import { ArchiveError, loadTapes, readArchiveMetadata, withArchive } from './8yr-unseen-intraday-data'
+import {
+  ArchiveError,
+  loadTapes,
+  readArchiveMetadata,
+  replacementBlindSource,
+  withArchive,
+} from './8yr-unseen-intraday-data'
 import {
   baselineNames,
   benchmark,
@@ -39,10 +45,24 @@ export const freezeReceipt = () => ({
   roster,
 })
 
+const git = (...args: string[]) => execFileSync('git', args, { encoding: 'utf8', timeout: 15_000 })
+const freezeCommit = '0ade8141ccba92cd20346579676ee2ca04e62a97'
+const sourcePath = `${evidence}/blind-archive.json`
+const freezePath = `${evidence}/freeze.json`
+
+const committedBlindSource = (revision: string) => {
+  if (git('ls-tree', '--name-only', '--full-tree', revision, '--', sourcePath).trim() === '') return undefined
+  const bytes = git('show', `${revision}:${sourcePath}`)
+  return { binding: replacementBlindSource(JSON.parse(bytes) as unknown), bindingSha256: sha256(bytes) }
+}
+
 const publishedRevision = () => {
-  const git = (...args: string[]) => execFileSync('git', args, { encoding: 'utf8', timeout: 15_000 })
   const revision = git('rev-parse', 'HEAD').trim()
-  const committedFreeze = git('show', `HEAD:${evidence}/freeze.json`)
+  git('merge-base', '--is-ancestor', freezeCommit, revision)
+  const committedFreeze = git('show', `${revision}:${freezePath}`)
+  if (committedFreeze !== git('show', `${freezeCommit}:${freezePath}`)) {
+    throw new Error('The original published strategy freeze must remain byte-identical')
+  }
   const receipt = JSON.parse(committedFreeze) as unknown
   if (JSON.stringify(receipt) !== JSON.stringify(freezeReceipt()))
     throw new Error('Committed strategy freeze does not match')
@@ -54,6 +74,12 @@ const publishedRevision = () => {
   return { revision, freezeSha256: sha256(committedFreeze) }
 }
 
+const provenance = <A>(read: () => A) =>
+  Effect.try({
+    try: read,
+    catch: (cause) => new ArchiveError({ message: `Cannot prove archive provenance: ${String(cause)}` }),
+  })
+
 if (import.meta.main) {
   NodeRuntime.runMain(
     Effect.gen(function* () {
@@ -61,23 +87,29 @@ if (import.meta.main) {
       if (remaining.length === 0 && command === '--freeze') {
         yield* Effect.sync(() => process.stdout.write(`${JSON.stringify(freezeReceipt(), null, 2)}\n`))
       } else if (remaining.length === 0 && command === '--audit') {
-        const metadata = yield* withArchive(readArchiveMetadata)
+        const source = yield* provenance(() => committedBlindSource('HEAD'))
+        const metadata = yield* withArchive((read) => readArchiveMetadata(read, source?.binding))
         yield* Effect.logInfo(
           `Validated metadata for ${metadata.blind.calendar.length} blind and ${metadata.prior.calendar.length} prior sessions`,
         )
       } else if (command === '--score' && remaining.length === 2 && remaining[0] === '--output') {
-        const publication = yield* Effect.try({
-          try: publishedRevision,
-          catch: (cause) => new ArchiveError({ message: `Cannot prove preregistration: ${String(cause)}` }),
+        const { publication, source } = yield* provenance(() => {
+          const publication = publishedRevision()
+          return { publication, source: committedBlindSource(publication.revision) }
         })
         yield* withArchive(async (read, open, signal) => {
-          const { blind, prior } = await loadTapes(read, open)
-          const study = evaluate([...blind.days, ...prior.days], signal)
+          const { blind: blindTape, prior } = await loadTapes(read, open, source?.binding)
+          const study = evaluate([...blindTape.days, ...prior.days], signal)
           const result = {
             schema: 'bayn.research.wave-4e.results.v1',
             ...publication,
             inputs: {
-              blind: { coverage: blind.coverage, receipt: blind.receipt },
+              blind: {
+                binding: source?.binding ?? blind,
+                bindingSha256: source?.bindingSha256 ?? null,
+                coverage: blindTape.coverage,
+                receipt: blindTape.receipt,
+              },
               prior: { coverage: prior.coverage, receipt: prior.receipt },
             },
             ...study,
