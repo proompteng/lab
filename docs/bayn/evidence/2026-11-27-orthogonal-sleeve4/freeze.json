@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "bayn.sleeve4.freeze.v1",
+  "manifestSha256": "3954d5f0ff79bdd280f893cfa133e12e4fccad409ff3f8c907a80410ee19e5ca",
+  "sourceSha256": {
+    "research-orthogonal-sleeve4.ts": "48a80a6bb0f9e632b61130641a01a9f57df39019e68f9de8a55eb60c2558ea30",
+    "sleeve4-data.ts": "e8f6d131c903a8ffe96b68f94d162482ae26177fa278284e72e8fd8547980d66",
+    "sleeve4-evaluation.ts": "d4c75110528871df05d23dfd5bccbfc559322374431cd24dfe18de95135acf20",
+    "sleeve4-signals.ts": "789f017451e486f8684cb2bac8372acf252bdbe8d47dac02041c0f89be776d7d",
+    "midday-research-data.ts": "6f2a2b54b3a856154a3655384cc277be3bf640875683742d30635c12253849b2",
+    "midday-research-statistics.ts": "4c06e30777a5617469bee16497161c804390314c97d1841c94a630eab31f2936",
+    "verify-intraday-alpha-replay.ts": "bf54605f799011694b7803d64d6bb03bbe44f4a36659030cb00de5825dfb9caa"
+  },
+  "splitsThrough": {
+    "train": "2025-06-30",
+    "validation": "2026-03-31",
+    "holdout": "2026-11-25"
+  },
+  "trialCount": 264,
+  "registrySha256": "c2ed147370e0b474f756a8724ecd60f483a3b9d17026d99c589e7ae71ef41b46",
+  "developmentSha256": "33a3fc025c935f6608d60018a0e730558e4b4e937dd3386bf54837e474c604e6",
+  "selected": "A.core.gap-fade.indexes.5-60.0.75.0",
+  "developmentQualified": false,
+  "frozenPeers": ["A.core.gap-fade.indexes.5-45.0.75.0", "A.core.gap-fade.indexes.5-60.0.5.0"]
+}

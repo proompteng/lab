@@ -71,13 +71,17 @@ const normalQuantile = (p: number) => {
   return (lo + hi) / 2
 }
 
-export const expectedMaximumSharpe = (dailySharpes: readonly number[]) => {
-  const n = dailySharpes.length
+export const expectedMaximumStandardNormal = (n: number) => {
   if (n < 2) return null
   const eulerGamma = 0.5772156649015329
-  const expectedMaximum =
-    (1 - eulerGamma) * normalQuantile(1 - 1 / n) + eulerGamma * normalQuantile(1 - 1 / (n * Math.E))
-  return Math.max(0, expectedMaximum * sampleDeviation(dailySharpes))
+  return (1 - eulerGamma) * normalQuantile(1 - 1 / n) + eulerGamma * normalQuantile(1 - 1 / (n * Math.E))
+}
+
+export const expectedMaximumSharpe = (dailySharpes: readonly number[], trialCount = dailySharpes.length) => {
+  const expectedMaximum = expectedMaximumStandardNormal(trialCount)
+  return expectedMaximum === null || dailySharpes.length < 2
+    ? null
+    : Math.max(0, expectedMaximum * sampleDeviation(dailySharpes))
 }
 
 export const deflatedSharpe = (values: readonly number[], benchmark: number | null) => {
