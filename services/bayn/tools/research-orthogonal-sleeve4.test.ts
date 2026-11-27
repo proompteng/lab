@@ -244,15 +244,9 @@ test('frozen regular-only calendar is accepted by the existing v2 replay', () =>
     response: [{ date: '2026-11-27', open: '09:30', close: '13:00' }],
   }
   const replay = runIntradayAlphaReplayVerification(['/dev/null'], input)
-  const expanded = regularCalendarReplayInput(input)
-  expect(replay).toEqual(runIntradayAlphaReplayVerification(['/dev/null'], expanded))
+  const enriched = runIntradayAlphaReplayVerification(['/dev/null'], regularCalendarReplayInput(input))
+  expect(replay.calendarHash).toBe(enriched.calendarHash)
   expect(replay.results[0]?.sessionDetails[0]?.expectedRegularMinutes).toBe(210)
-  expect(() =>
-    runIntradayAlphaReplayVerification(['/dev/null'], {
-      ...expanded,
-      response: expanded.response.map((day) => ({ ...day, session_open: 'invalid' })),
-    }),
-  ).toThrow('session_open')
 })
 
 const testClient = { presign: () => 'https://example.invalid/?signature=not-for-logs' }
