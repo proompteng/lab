@@ -25,16 +25,36 @@ remains `5863a919110021b7bf7f27872aafe0bed44092cf832f8d0e3a6fdb66fb73ff2d`.
 - **6,491,892** rows match both SHA-256 receipts. The exchange calendar admits
   **5,820,222** RTH rows and excludes **671,670** off-session rows.
   The replay retains **729** sessions, including **6** 13:00 ET closes.
-- The object is **not a gap-free 1m grid**: **18,948** RTH symbol-minutes are absent after first
-  availability. SPY has **0** missing minutes. The largest counts are LITE (10,429), SNDK (3,331), and COHR (2,349).
-  An absent bar may mean no qualifying trade or a feed/export gap; these objects do not distinguish them. No prices
-  were fabricated. A gap-free audit needs a verified replacement object, or provider-level gap dispositions proving
-  which minutes had no eligible trades and which require missing records.
+- The minute grid has **18,948** no-bar slots after first availability. SPY has **0**; the largest counts are
+  LITE (10,429), SNDK (3,331), and COHR (2,349). All slots reconcile with the provider's separately frozen five-minute
+  bars (see below). A SIP bar requires valid OHLC and positive volume; not every clock minute produces one. No prices
+  were fabricated.
 - SNDK first appears in RTH on **2025-02-13**, and is first eligible
   **2025-03-10** after 14 usable prior sessions (at least 200 RTH bars each).
   The initial **5** sessions have no trailing baseline.
 - NVDA closes at **$120.87 on June 7** and opens at **$120.35 on June 10, 2024**.
   There is no 10:1 price discontinuity at the split in this object; no manual rescaling was applied.
+
+### Independent check for omitted minute bars
+
+A read-only check verified the compressed and raw manifest digests of the separately frozen
+`alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz` in the same S3 prefix. Its raw SHA-256 is
+`c053ede2875ad791c99aae517db9efa9a4587b08c9907d55e0960dade59d567e` (3,923,737 total rows).
+No five-minute prices were used by the simulator or in the development freeze.
+
+[Alpaca builds its five-minute bars](https://docs.alpaca.markets/us/v1.4.2/docs/market-data-faq#how-are-bars-aggregated)
+from its minute bars. Restrict both objects to the same symbols, calendar bounds, and first available dates. Within
+each five-minute bin, take the open/close from the first/last observed minute, the max high, the min low, and sum volume.
+Compare all five fields exactly against the five-minute export; an empty minute bin must also have no five-minute bar.
+
+- **1,167,834/1,167,834** expected RTH five-minute bins reconcile exactly. This includes **14,291** bins with
+  one or more no-bar slots, accounting for **all 18,948** slots; **102** of these bins have neither a minute nor a
+  five-minute bar. No five-minute data precede the first minute-bar date.
+- A direct SIP query of 2024-01-02 14:30–14:47 UTC also reproduced the LITE omissions at 14:31, 14:32, 14:39,
+  14:43, and 14:46 UTC, and the COHR omission at 14:35 UTC.
+
+This corroborates completeness relative to the frozen provider aggregation, not a bar on every clock minute, venue-level
+trade completeness, or historical NBBO execution.
 
 See [results.json](results.json) for the full engine, portfolio, execution and coverage matrices, and
 [freeze.json](freeze.json) for the development-only design ranking and bindings. No raw data is committed.
