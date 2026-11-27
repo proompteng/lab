@@ -14,7 +14,9 @@ and stayed SHY-excess-positive in all three splits for 27/27 single-symbol omiss
 No trial qualified; the Holdout tape had been seen in prior research and the base trial failed the neighboring
 plateau test. Omission results do not authorize production to trade with missing data.
 
-The [policy and compiler](../../services/bayn/src/strategy/macro-canary-etf/index.ts) record all three arms:
+The [policy](../../services/bayn/src/strategy/macro-canary-etf/policy.ts),
+[signals](../../services/bayn/src/strategy/macro-canary-etf/signals.ts), and
+[rebalance planner](../../services/bayn/src/strategy/macro-canary-etf/rebalance-planner.ts) record all three arms:
 breadth-protected 12/4/2/1 canary momentum, continuous volatility-normalized TSMOM, and the 63-session
 credit/inflation/dollar state with a five-session EMA of regime portfolios. Equal **risk** budgets yield
 variable capital weights through the frozen covariance and solver; neither the standalone trend nor standalone
