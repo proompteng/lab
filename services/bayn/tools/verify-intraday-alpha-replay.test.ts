@@ -717,3 +717,39 @@ test('unmatched L1 input cannot manufacture a complete zero-profit day', () => {
     expect(report.l1?.unavailableSessions).toBe(1)
   })
 })
+
+test('historical fixed sell stress is opt-in and does not change the reference v2 policy identity', () => {
+  const date = '2024-01-09'
+  const warmup = ['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05', '2024-01-08']
+  const dates = [...warmup, date]
+  const source = {
+    query: { start: '2024-01-02', end: date },
+    response: dates.map((d) => ({
+      date: d,
+      open: '09:30',
+      close: '16:00',
+    })),
+  }
+  const tapes = [...warmup.flatMap((d) => rows(d, 390, () => 100)), ...rows(date, 390, middayPrice)]
+  withRows(
+    tapes,
+    (path) => {
+      expect(() => runReplay([path], source, { evaluationStart: date })).toThrow(
+        'entry funding could not be established',
+      )
+      const modeled = runReplay([path], source, { evaluationStart: date, fundingFees: 'fixed-sell-stress' })
+      expect(modeled.policyHash).toBe('f632170473534577a59a98c800bca69917b710c3857a68d0c52ec776ebcdd509')
+      expect(modeled.assumptions.fundingPolicyHash).not.toBe(modeled.policyHash)
+      expect(modeled.assumptions.fundingFees).toBe('fixed-sell-stress')
+      for (const result of modeled.results) {
+        const trades = result.sessionDetails[0]?.trades ?? []
+        expect(trades.length).toBe(4)
+        for (const trade of trades) {
+          const sellNotional = trade.shares * (trade.direction === 'SHORT' ? trade.entryPrice : trade.exitPrice)
+          expect(trade.grossPnlUsd - trade.netPnlUsd).toBeCloseTo((sellNotional * 0.21) / 10_000, 8)
+        }
+      }
+    },
+    false,
+  )
+})

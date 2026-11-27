@@ -167,6 +167,7 @@ const run = (args: readonly string[]) =>
       const months = yield* stage(source, workspace)
       const verifierSource = yield* fs.readFile(join(import.meta.dir, 'verify-intraday-alpha-replay.ts'))
       const rowsByCost = new Map<number, ReferenceRow[]>()
+      const fundingHashes = new Set<string>()
       for (const window of makeWindows(months, holdoutEnd)) {
         const first = window.months[0]
         if (first === undefined)
@@ -181,9 +182,15 @@ const run = (args: readonly string[]) =>
             windowInput,
             {
               evaluationStart: window.start,
+              fundingFees: 'fixed-sell-stress',
             },
           )
           if (receipt.policyHash !== policyHash) throw new Error('Unexpected v2 policy identity')
+          const fundingHash = receipt.assumptions.fundingPolicyHash
+          if (fundingHash === undefined || fundingHash === policyHash) {
+            throw new Error('Missing independent fixed-stress funding policy identity')
+          }
+          fundingHashes.add(fundingHash)
           return receipt.results.map(({ slippageBps, sessionDetails }) => ({
             slippageBps,
             rows: sessionDetails.map((day) => dailyReference(day, receipt.assumptions.startingCapitalUsd)),
@@ -210,10 +217,19 @@ const run = (args: readonly string[]) =>
           return { slippageBps, coverage: coverage(rows), rows }
         }),
       )
+      const fundingPolicyHash = [...fundingHashes][0]
+      if (fundingHashes.size !== 1 || fundingPolicyHash === undefined) {
+        return yield* new Sleeve4ResearchError({
+          operation: 'Verify fixed funding assumption',
+          cause: 'Funding model identity must match across windows',
+        })
+      }
       const receipt = {
         schemaVersion: 'bayn.sleeve4.sip-reference.v1',
         evidenceClass: 'RETROSPECTIVE_SIP_BAR_SCENARIO',
         policyHash,
+        fundingFees: 'fixed-sell-stress-0.21-bp',
+        fundingPolicyHash,
         verifierSha256: sha256(verifierSource),
         sources: { manifestSha256, calendarSha256, compressedSha256, rawSha256, expectedRows },
         metric: 'Engine daily additive modeled net basis points on replay starting equity; null on incomplete days',

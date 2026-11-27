@@ -165,6 +165,27 @@ const snapshotContentHash = 'd'.repeat(64)
 // Hypothetical sell-side cost scenario; this is not an actual fee reconciliation.
 const MODELED_SELL_FEE_BPS = 0.21
 
+// Research-only funding assumption. The retained flat calculator accepts
+// an explicit proportional rate without claiming a historical broker schedule.
+const flatSellFundingPolicy: typeof policy = {
+  ...policy,
+  sharedProtocol: {
+    ...policy.sharedProtocol,
+    executionModel: {
+      ...policy.sharedProtocol.executionModel,
+      fees: {
+        ...policy.sharedProtocol.executionModel.fees,
+        scheduleVersion: 'alpaca-brokerage-2026-07-01',
+        commissionBps: 0,
+        secSellBps: MODELED_SELL_FEE_BPS,
+        tafSellPerShareMicros: '0',
+        catPerShareMicros: '0',
+        roundingIncrementMicros: '1',
+      },
+    },
+  },
+}
+
 const parseBarsFiles = (paths: readonly string[], calendar: ReplayCalendar) => {
   const dedup = new Map<string, RawBar>()
   const sources: { readonly path: string; readonly sha256: string; readonly bytes: number }[] = []
@@ -562,6 +583,7 @@ const simulateSession = (input: {
   readonly trailingBaseline: IntradayAlphaTrailingBaseline
   readonly symMap: Map<string, RawBar[]>
   readonly quoteModel: QuoteModel
+  readonly fundingPolicy: typeof policy
   readonly carryCoHeldMarks?: boolean
   readonly startingCapitalUsd: number
 }): {
@@ -730,7 +752,7 @@ const simulateSession = (input: {
       if (occupiedSymbols.includes(leg.symbol)) continue
       const funded = Result.getOrThrow(
         makeIntradayAlphaFundedExitPlan({
-          policy,
+          policy: input.fundingPolicy,
           observation: { snapshot, portfolio, observedAt, contentHash: observationHash },
           leg,
         }),
@@ -1084,7 +1106,7 @@ interface ReplayOptions {
 export const runIntradayAlphaReplayVerification = (
   paths: readonly string[],
   calendarInput: unknown,
-  options: ReplayOptions = {},
+  options: ReplayOptions & { readonly fundingFees?: 'fixed-sell-stress' } = {},
 ) => {
   if (paths.length === 0) throw new Error('At least one bar file is required')
   const calendarSource = Schema.decodeUnknownSync(ReplayCalendarSchema, strictParseOptions)(calendarInput)
@@ -1159,6 +1181,7 @@ export const runIntradayAlphaReplayVerification = (
     }),
   )
 
+  const fundingPolicy = options.fundingFees === 'fixed-sell-stress' ? flatSellFundingPolicy : policy
   const startingCapitalUsd = 100_000
   const missingBaselineSessionsBySymbol = Object.fromEntries(
     policy.candidateSymbols.map((symbol) => [
@@ -1264,6 +1287,7 @@ export const runIntradayAlphaReplayVerification = (
           symMap: bars,
           trailingBaseline,
           quoteModel,
+          fundingPolicy,
           startingCapitalUsd,
           carryCoHeldMarks,
         })
@@ -1575,6 +1599,12 @@ export const runIntradayAlphaReplayVerification = (
     assumptions: {
       startingCapitalUsd,
       modeledSellFeeBps: MODELED_SELL_FEE_BPS,
+      ...(options.fundingFees === undefined
+        ? {}
+        : {
+            fundingFees: options.fundingFees,
+            fundingPolicyHash: Result.getOrThrow(canonicalHashV1Result(fundingPolicy)),
+          }),
       account:
         'Fixed $100000 equity and hypothetical 4x buying power less occupied entry notional; no broker account, collateral, margin-interest or final account-risk proof',
       baseline:
