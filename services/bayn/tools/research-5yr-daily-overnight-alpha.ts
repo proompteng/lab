@@ -60,16 +60,49 @@ function committedFreeze(requestedCommit: string | undefined) {
   const frozen = git(['show', `${commit}:${path}`])
   if (frozen !== readFileSync(join(root, path), 'utf8'))
     throw new Error('Working freeze.json differs from the committed freeze')
-  return { commit, frozen, ledger: git(['show', `${commit}:${evidence}/results.json`]) }
+  const ledgerPath = `${evidence}/results.json`
+  const ledger = git(['show', `${commit}:${ledgerPath}`])
+  const current = git(['show', `HEAD:${ledgerPath}`])
+  if (current === ledger) return { commit, frozen, ledger }
+
+  const recorded: unknown = JSON.parse(current)
+  if (
+    typeof recorded !== 'object' ||
+    recorded === null ||
+    !('stage' in recorded) ||
+    recorded.stage !== 'scored' ||
+    !('freezeCommit' in recorded) ||
+    recorded.freezeCommit !== commit
+  )
+    throw new Error('Committed results.json is neither the frozen development ledger nor its scored result')
+  return { commit, frozen, ledger, scoredLedger: current }
 }
 
+interface DevelopmentBytes {
+  frozen: string
+  ledger: string
+}
+
+const withoutEngineHash = (receipt: string) => receipt.replace(/^  "engineSha256": "[a-f0-9]{64}",\n/m, '')
+
 export function verifyReproducedFreeze(
-  committed: { frozen: string; ledger: string },
-  reproduced: { frozen: string; ledger: string },
+  committed: DevelopmentBytes & { scoredLedger?: string },
+  reproduced: DevelopmentBytes,
 ) {
-  if (committed.frozen !== reproduced.frozen || committed.ledger !== reproduced.ledger) {
+  // Never open a new holdout with a different engine. Once a result exists in Git, allow only
+  // a read-only audit: every development byte and every previously scored byte must still agree.
+  const sameReceipt =
+    committed.frozen === reproduced.frozen ||
+    (committed.scoredLedger !== undefined &&
+      withoutEngineHash(committed.frozen) === withoutEngineHash(reproduced.frozen))
+  if (!sameReceipt || committed.ledger !== reproduced.ledger) {
     throw new Error('Development replay changed since freeze; refusing to open Holdout')
   }
+}
+
+export function verifyReproducedScore(committed: string, reproduced: string) {
+  if (committed !== reproduced)
+    throw new Error('Holdout replay differs from the committed result; no artifacts written')
 }
 
 async function loadTape(path: string | undefined) {
@@ -125,9 +158,11 @@ async function main() {
   verifyReproducedFreeze(committed, { frozen, ledger })
   const tape = readTape(bytes, 'score')
   const scored = makeLedger(tape, development, scoreHoldout(tape, development))
-  writeFileSync(ledgerPath, encodeLedger({ ...scored, freezeCommit: committed.commit }))
+  const scoredLedger = encodeLedger({ ...scored, freezeCommit: committed.commit })
+  if (committed.scoredLedger === undefined) writeFileSync(ledgerPath, scoredLedger)
+  else verifyReproducedScore(committed.scoredLedger, scoredLedger)
   console.log(
-    `Scored ${development.selection.holdoutIds.length} frozen evaluations; ${scored.accepted.length} passed every gate`,
+    `${committed.scoredLedger === undefined ? 'Scored' : 'Reproduced'} ${development.selection.holdoutIds.length} frozen evaluations; ${scored.accepted.length} passed every gate`,
   )
 }
 

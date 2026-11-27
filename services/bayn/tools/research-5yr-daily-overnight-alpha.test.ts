@@ -12,7 +12,7 @@ import {
   trialGrid,
   trialId,
 } from './daily-alpha-signals'
-import { verifyReproducedFreeze } from './research-5yr-daily-overnight-alpha'
+import { verifyReproducedFreeze, verifyReproducedScore } from './research-5yr-daily-overnight-alpha'
 
 const row = (symbol: string, date: string, open: number, close: number) =>
   [symbol, `${date}T05:00:00Z`, open, Math.max(open, close), Math.min(open, close), close, 100_000, close].join('\t')
@@ -190,4 +190,21 @@ test('rejects realized gross drift beyond the registered cap rather than resizin
   expect(metrics?.peakTradeGross).toBe(1)
   expect(metrics?.peakMarkedGross).toBe(2)
   expect(gates({ metrics, error: null, loso: { SPY: 1 } }, 0, true, false)).toContain('realized gross')
+})
+
+test('only a committed scored ledger permits an engine-change audit, never changed frozen results', () => {
+  const bytes = (engine: string) => ({
+    frozen: `{\n  "engineSha256": "${engine.repeat(64)}",\n  "finalists": []\n}`,
+    ledger: 'development',
+  })
+  const frozen = bytes('a')
+  const replayed = bytes('b')
+  expect(() => verifyReproducedFreeze(frozen, replayed)).toThrow('refusing to open Holdout')
+  const archived = { ...frozen, scoredLedger: 'scored' }
+  expect(() => verifyReproducedFreeze(archived, replayed)).not.toThrow()
+  expect(() => verifyReproducedFreeze(archived, { ...replayed, ledger: 'new development' })).toThrow(
+    'refusing to open Holdout',
+  )
+  expect(() => verifyReproducedScore(archived.scoredLedger, 'scored')).not.toThrow()
+  expect(() => verifyReproducedScore(archived.scoredLedger, 'revised Holdout')).toThrow('no artifacts written')
 })

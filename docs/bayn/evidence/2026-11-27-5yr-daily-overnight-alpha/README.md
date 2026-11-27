@@ -121,8 +121,10 @@ bun services/bayn/tools/research-5yr-daily-overnight-alpha.ts --score \
 
 For a new development-only reproduction, use `--freeze` from the engine revision before the freeze
 commit. The command refuses to overwrite an existing receipt. `--score` requires the original development
-commit to be available in Git and reproduces both its receipt and ledger byte-for-byte before opening
-Holdout. The input gzip is not committed.
+commit to be available in Git. First scoring requires its exact engine, receipt and development ledger.
+Once results are committed, the command is read-only: it allows source changes such as shared-statistics
+refactoring only when the development ledger, every other receipt field and the scored ledger all reproduce
+byte-for-byte. The input gzip is not committed.
 
 **Limit:** the tape fixes prices and coverage, not the point-in-time investable universe, dividend cash flows
 or short liabilities, auction execution, liquidation capacity, or borrow availability. Do not treat any
