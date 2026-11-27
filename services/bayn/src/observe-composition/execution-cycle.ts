@@ -44,8 +44,6 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner/index'
 import { isIntradayAlphaRuntime, strategyTradingProtocol } from '../strategy'
 import { isBrokerManagedAlphaTarget } from '../strategy/runtime-decision'
-import { IntradayAlphaPhase } from '../strategy/intraday-alpha/constants'
-import { resolveAlphaRegularSession } from '../strategy/intraday-alpha/signals'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import type { JevExitTarget } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
@@ -96,6 +94,7 @@ import {
 } from './decision-builder'
 import {
   boundExecutionCycleCloseWindow,
+  executionCycleCloseSchedule,
   resolveExecutionCycleCloseWindow,
   type ExecutionCycleCloseWindow,
 } from './execution-window'
@@ -737,17 +736,23 @@ export const ensureExecutionCycleClosure = <R>({
           }),
         ),
       ExecutionCloseAwaitingMarketData: (failure) =>
-        Effect.logInfo('Execution close awaits market data').pipe(
-          Effect.annotateLogs({
-            cycleId: cycle.identity.cycleId,
-            ...executionCloseMarketDataDiagnostics(failure),
-          }),
-          Effect.as<ExecutionCycleClosureResult>({
+        Effect.gen(function* () {
+          const observedAt = yield* currentUtcInstant
+          if (observedAt >= closeWindow.expiresAt) {
+            yield* Effect.logError('Execution close window expired with exposure unresolved').pipe(
+              Effect.annotateLogs({ cycleId: cycle.identity.cycleId, observedAt }),
+            )
+            return { _tag: 'Wait', observedAt, waitReason: 'CLOSE_WINDOW_EXPIRED' } as const
+          }
+          yield* Effect.logInfo('Execution close awaits market data').pipe(
+            Effect.annotateLogs({ cycleId: cycle.identity.cycleId, ...executionCloseMarketDataDiagnostics(failure) }),
+          )
+          return {
             _tag: 'Wait',
             observedAt: failure.observedAt,
             waitReason: failure.quotePending === true ? 'CLOSE_QUOTE_PENDING' : 'CLOSE_MARKET_DATA_UNAVAILABLE',
-          }),
-        ),
+          } as const
+        }),
     }),
   )
 
@@ -834,56 +839,24 @@ export const closeWindowForCycle = (
   protocol: ReturnType<typeof strategyTradingProtocol>,
   observedAt: string,
 ) =>
-  Effect.gen(function* () {
-    const target = document.strategyDecision
-    let executionCloseAt = cycle.window.executionCloseAt
-    let sessionCloseStartLeadMs = protocol.flattenBeforeCloseMinutes * 60_000
-    if (target?.schemaVersion === 'bayn.intraday-alpha-target.v2' && document.executionSession !== undefined) {
-      // Intraday alpha flattens before the NYSE regular-session close (16:00 ET), even when the
-      // data calendar spans extended hours (08:00-17:00 ET).
-      const regular = yield* Effect.fromResult(
-        resolveAlphaRegularSession(document.executionSession.calendar, target.sessionDate),
-      ).pipe(
-        Effect.mapError((cause) =>
-          mutationRunnerError({
-            message: 'intraday alpha close window requires regular session hours',
-            cause,
-            failure: 'contract',
-          }),
-        ),
-      )
-      if (regular.closeAt < executionCloseAt) executionCloseAt = regular.closeAt
-      const flattenMinute =
-        target.phase === IntradayAlphaPhase.NoiseAreaTrend
-          ? target.policy.noiseArea.flattenMinuteFromOpen
-          : target.phase === IntradayAlphaPhase.MorningOrb
-            ? target.policy.morningOrb.hardExitMinuteFromOpen
-            : target.policy.middayReversion.flattenMinuteFromOpen
-      const flattenDeadlineMs = regular.openMs + flattenMinute * 60_000
-      const minimumCloseLeadMs =
-        target.phase === IntradayAlphaPhase.NoiseAreaTrend
-          ? Math.max(60_000, (390 - target.policy.noiseArea.flattenMinuteFromOpen) * 60_000)
-          : protocol.flattenBeforeCloseMinutes * 60_000
-      sessionCloseStartLeadMs = Math.max(minimumCloseLeadMs, regular.closeMs - flattenDeadlineMs)
-    }
-    return yield* Effect.fromResult(
-      resolveExecutionCycleCloseWindow({
-        executionCalendarSchemaVersion: cycle.window.executionCalendarSchemaVersion,
-        recoveryExpiresAt:
-          document.executionSession === undefined
-            ? null
-            : executionCloseRecoveryExpiry(document.executionSession.calendar, observedAt),
-        observedAt,
-        executionCloseAt,
-        sessionCloseStartLeadMs,
-        sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
+  Effect.fromResult(
+    resolveExecutionCycleCloseWindow({
+      ...executionCycleCloseSchedule(cycle, document, protocol),
+      observedAt,
+      recoveryExpiresAt:
+        document.executionSession === undefined
+          ? null
+          : executionCloseRecoveryExpiry(document.executionSession.calendar, observedAt),
+    }),
+  ).pipe(
+    Effect.mapError((cause) =>
+      mutationRunnerError({
+        message: 'execution cycle close window is invalid',
+        cause,
+        failure: 'contract',
       }),
-    ).pipe(
-      Effect.mapError((cause) =>
-        mutationRunnerError({ message: 'execution cycle close window is invalid', cause, failure: 'contract' }),
-      ),
-    )
-  })
+    ),
+  )
 
 const executeBoundExecutionCycle = (
   input: ObserveAutonomousCycleInput,
