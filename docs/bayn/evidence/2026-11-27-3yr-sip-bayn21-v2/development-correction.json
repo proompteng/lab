@@ -21,11 +21,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MORNING_ORB",
-            "MIDDAY_REVERSION",
-            "NOISE_AREA_TREND"
-          ],
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION", "NOISE_AREA_TREND"],
           "sizing": "fixed",
           "pairs": 3,
           "bracket": "live"
@@ -140,10 +136,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MIDDAY_REVERSION",
-            "NOISE_AREA_TREND"
-          ],
+          "sleeves": ["MIDDAY_REVERSION", "NOISE_AREA_TREND"],
           "sizing": "fixed",
           "pairs": 3,
           "bracket": "live"
@@ -258,11 +251,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MORNING_ORB",
-            "MIDDAY_REVERSION",
-            "NOISE_AREA_TREND"
-          ],
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION", "NOISE_AREA_TREND"],
           "sizing": "both",
           "pairs": 3,
           "bracket": "live"
@@ -377,9 +366,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MIDDAY_REVERSION"
-          ],
+          "sleeves": ["MIDDAY_REVERSION"],
           "sizing": "fixed",
           "pairs": 3,
           "bracket": "live"
@@ -494,9 +481,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MIDDAY_REVERSION"
-          ],
+          "sleeves": ["MIDDAY_REVERSION"],
           "sizing": "both",
           "pairs": 3,
           "bracket": "live"
@@ -611,10 +596,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MIDDAY_REVERSION",
-            "NOISE_AREA_TREND"
-          ],
+          "sleeves": ["MIDDAY_REVERSION", "NOISE_AREA_TREND"],
           "sizing": "both",
           "pairs": 3,
           "bracket": "live"
@@ -729,11 +711,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MORNING_ORB",
-            "MIDDAY_REVERSION",
-            "NOISE_AREA_TREND"
-          ],
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION", "NOISE_AREA_TREND"],
           "sizing": "dispersion",
           "pairs": 3,
           "bracket": "live"
@@ -848,10 +826,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MIDDAY_REVERSION",
-            "NOISE_AREA_TREND"
-          ],
+          "sleeves": ["MIDDAY_REVERSION", "NOISE_AREA_TREND"],
           "sizing": "dispersion",
           "pairs": 3,
           "bracket": "live"
@@ -966,10 +941,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MORNING_ORB",
-            "MIDDAY_REVERSION"
-          ],
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION"],
           "sizing": "both",
           "pairs": 3,
           "bracket": "live"
@@ -1084,10 +1056,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MORNING_ORB",
-            "MIDDAY_REVERSION"
-          ],
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION"],
           "sizing": "fixed",
           "pairs": 3,
           "bracket": "live"
@@ -1202,9 +1171,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MIDDAY_REVERSION"
-          ],
+          "sleeves": ["MIDDAY_REVERSION"],
           "sizing": "dispersion",
           "pairs": 3,
           "bracket": "live"
@@ -1319,11 +1286,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MORNING_ORB",
-            "MIDDAY_REVERSION",
-            "NOISE_AREA_TREND"
-          ],
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION", "NOISE_AREA_TREND"],
           "sizing": "volatility",
           "pairs": 3,
           "bracket": "live"
@@ -1438,10 +1401,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MIDDAY_REVERSION",
-            "NOISE_AREA_TREND"
-          ],
+          "sleeves": ["MIDDAY_REVERSION", "NOISE_AREA_TREND"],
           "sizing": "volatility",
           "pairs": 3,
           "bracket": "live"
@@ -1556,10 +1516,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MORNING_ORB",
-            "MIDDAY_REVERSION"
-          ],
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION"],
           "sizing": "dispersion",
           "pairs": 3,
           "bracket": "live"
@@ -1674,9 +1631,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MIDDAY_REVERSION"
-          ],
+          "sleeves": ["MIDDAY_REVERSION"],
           "sizing": "volatility",
           "pairs": 3,
           "bracket": "live"
@@ -1791,10 +1746,7 @@
         "collar": 25,
         "stopBuffer": 50,
         "architecture": {
-          "sleeves": [
-            "MORNING_ORB",
-            "MIDDAY_REVERSION"
-          ],
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION"],
           "sizing": "volatility",
           "pairs": 3,
           "bracket": "live"

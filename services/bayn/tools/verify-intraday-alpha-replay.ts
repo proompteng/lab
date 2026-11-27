@@ -298,6 +298,7 @@ export const makeEntryPortfolio = (
   barByMinute: Map<string, Map<number, RawBar>>,
   completedMinute: number,
   carriedMarks: ReadonlyMap<string, number>,
+  initialBuyingPowerUsd?: number,
 ) => {
   const equityMicros = BigInt(Math.round(equityUsd * 1_000_000))
   // Hypothetical 4x margin account, matching the prior v2 scenario; this is not broker account evidence.
@@ -328,7 +329,9 @@ export const makeEntryPortfolio = (
         observedAt,
       }
     })
-  const buyingPowerMicros = equityMicros * 4n - usedMarginMicros
+  const initialBuyingPowerMicros =
+    initialBuyingPowerUsd === undefined ? equityMicros * 4n : BigInt(Math.round(initialBuyingPowerUsd * 1_000_000))
+  const buyingPowerMicros = initialBuyingPowerMicros - usedMarginMicros
   const material = {
     account: {
       schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
@@ -499,7 +502,7 @@ export const buildReplaySnapshot = (input: {
   } as unknown as StrategyMarketSnapshot
 }
 
-const buildSessionSummaries = (
+export const buildSessionSummaries = (
   byDate: Map<string, Map<string, RawBar[]>>,
   sessions: readonly string[],
   calendar: ReplayCalendar,
