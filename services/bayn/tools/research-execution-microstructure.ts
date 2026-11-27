@@ -7,7 +7,7 @@ import { adaptiveEntryCollarBps, adaptiveStopBufferBps } from '../src/strategy/e
 import { calculateSessionFees, type FeeInput } from '../src/strategy/execution-model/fees'
 import { intradayAlphaBenchmarkSymbol, intradayAlphaCandidateSymbols } from '../src/strategy/intraday-alpha/constants'
 import { IntradayAlphaPhase, intradayAlphaStrategyIdentity } from '../src/strategy/intraday-alpha/policy'
-import { resolveAlphaRegularSession, type ActiveAlphaPhase } from '../src/strategy/intraday-alpha/signals'
+import { resolveAlphaRegularSession } from '../src/strategy/intraday-alpha/signals'
 import { TargetPlanStatus } from '../src/target-planner'
 import {
   phaseDeadline,
@@ -16,7 +16,6 @@ import {
   protocol,
   scanExecutionCohort,
   sideOf,
-  startingEquityUsd,
   type CohortLeg,
 } from './execution-microstructure-cohort'
 import { asReplayBar, readHistoricalMicrostructureBars } from './execution-microstructure-data'
@@ -31,13 +30,7 @@ import {
   stopLimit,
   type ExitPath,
 } from './execution-microstructure-model'
-import {
-  decodeRegularCalendar,
-  evaluationStart,
-  openFrozenBaynDataset,
-  readFrozenMiddayTape,
-  type Session,
-} from './midday-research-data'
+import { evaluationStart, readFrozenMiddayTape, type Session } from './midday-research-data'
 import { mean, sessionEconomics, sum } from './midday-research-statistics'
 
 const phases = [IntradayAlphaPhase.MorningOrb, IntradayAlphaPhase.MiddayReversion, IntradayAlphaPhase.NoiseAreaTrend]
@@ -264,8 +257,11 @@ const analyzeEntry = (
           pairedDeltaVs10Usd: measures(tradesFor(paired)).netUsd - measures(tradesFor(base)).netUsd,
           marginalFillsVs10: measures(tradesFor(gained)),
           missedCounterfactualClosed: measures(tradesFor(missed.map((row) => ({ ...row, fills: true })))),
-          economics: sessionEconomics(
+          fullCohortEconomics: sessionEconomics(
             dates.map((date) => (unknownDates.has(date) ? null : dayEconomics(byDay.get(date) ?? [], date).netUsd)),
+          ),
+          supportedClosedSubsetEconomics: sessionEconomics(
+            dates.map((date) => dayEconomics(byDay.get(date) ?? [], date).netUsd),
           ),
           phases: Object.fromEntries(
             phases.map((phase) => {
@@ -413,10 +409,7 @@ const analyzeTimedCloses = (cohort: readonly CohortLeg[]) => {
               unavailableOrPastRegularClose: group.length - observed.length,
               adverseMarkBps: distribution(observed.map(({ mark }) => mark.adverseBps)),
               limitClears: Object.fromEntries(
-                [2, 5, 10, protocol.maximumEntryLimitSlippageBps].map((limit) => [
-                  limit,
-                  observed.filter(({ mark }) => mark.adverseBps <= limit).length,
-                ]),
+                [2, 5, 10].map((limit) => [limit, observed.filter(({ mark }) => mark.adverseBps <= limit).length]),
               ),
               incrementalAdverseUsdVsOneMinute: sum(
                 observed.map(({ leg, mark, initial }) => leg.direction * (initial.price - mark.price) * leg.shares),
@@ -505,7 +498,8 @@ const probeBasket = (checkpoint: Checkpoint, fundingCase: (typeof fundingCases)[
     funded: fundedSymbols.length,
     afterPairing: selectedSymbols.length,
     intents: planned?.status === TargetPlanStatus.Planned && balanced ? planned.intentTargets.length : 0,
-    block: planned?.reason ?? (planned !== null && !balanced ? 'MIDDAY_IMBALANCE' : null),
+    block: planned === null ? 'NO_FUNDED_LEGS' : (planned.reason ?? (!balanced ? 'MIDDAY_IMBALANCE' : null)),
+    longMinusShortUsd: gross === 0 ? null : longUsd - shortUsd,
     imbalanceUsd: gross === 0 ? null : Math.abs(longUsd - shortUsd),
     imbalanceBpsOfGross: gross === 0 ? null : (Math.abs(longUsd - shortUsd) / gross) * 10_000,
     allocationUnusedUsd:
@@ -530,6 +524,10 @@ const summarizeBaskets = (rows: ReturnType<typeof probeBasket>[]) => ({
       rows.filter(({ block }) => block === reason).length,
     ]),
   ),
+  longUnderweight: rows.filter(({ longMinusShortUsd }) => longMinusShortUsd !== null && longMinusShortUsd < -0.000001)
+    .length,
+  shortUnderweight: rows.filter(({ longMinusShortUsd }) => longMinusShortUsd !== null && longMinusShortUsd > 0.000001)
+    .length,
   imbalanceUsd: distribution(rows.flatMap(({ imbalanceUsd }) => (imbalanceUsd === null ? [] : [imbalanceUsd]))),
   imbalanceBpsOfGross: distribution(
     rows.flatMap(({ imbalanceBpsOfGross }) => (imbalanceBpsOfGross === null ? [] : [imbalanceBpsOfGross])),
@@ -582,8 +580,7 @@ const feesAudit = (cohort: readonly CohortLeg[]) => ({
 export const runExecutionMicrostructure = (directory: string) => {
   const universe = [...intradayAlphaCandidateSymbols, intradayAlphaBenchmarkSymbol]
   const live = readFrozenMiddayTape(directory, universe)
-  const { read } = openFrozenBaynDataset(directory, ['calendar_2024_2026.json'])
-  const calendar = decodeRegularCalendar(JSON.parse(read('calendar_2024_2026.json').text))
+  const { calendar } = live
   const byDate = new Map(
     live.sessions.map(({ date, tapes }) => {
       const start = Result.getOrThrow(resolveAlphaRegularSession(calendar, date)).openMs

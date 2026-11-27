@@ -97,6 +97,14 @@ test('a raw stop-price recovery is not executable when the stressed sell price i
   expect(wider.blockedMinutes).toBe(0)
 })
 
+test('a wider buffer does not charge an artificial fill at the new limit after a marketable trigger', () => {
+  const bars = new Map([[31, bar(100.5, 101, 99.95, 100.01)]])
+  const baseline = followExit({ ...exitTerms, bars })
+  const wider = followExit({ ...exitTerms, bars, stopLimit: 99.5 })
+  expect(baseline.exit?.price).toBeCloseTo(99.9250125)
+  expect(wider.exit).toEqual(baseline.exit)
+})
+
 test('short stop gaps are symmetric and a later target cannot erase an already active stop', () => {
   const result = followExit({
     ...exitTerms,

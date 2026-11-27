@@ -124,8 +124,12 @@ export const followExit = (input: {
       triggeredMinute ??= minute
       if (activeAtOpen && clearsLimit(openPrice, stopLimit, side))
         return result({ minute, price: openPrice, reason: 'stop' })
-      // Before an intrabar trigger, that bar's favorable extreme may be in the past. Only
-      // accept the close or a bar entirely within the limit after applying the price stress.
+      // The adverse extreme is itself a trigger print. If even that executable proxy clears
+      // the limit, do not book the wider limit as an extra charge on otherwise identical paths.
+      if (!activeAtOpen && clearsLimit(bound(adverseExtreme), stopLimit, side))
+        return result({ minute, price: bound(adverseExtreme), reason: 'stop' })
+      // Otherwise require a subsequent recovery. An intrabar trigger cannot use a favorable
+      // extreme that may be in the past; the completed close provides the ordered endpoint.
       if (clearsLimit(bound(activeAtOpen ? favorableExtreme : bar.close), stopLimit, side))
         return result({ minute, price: stopLimit, reason: 'stop' })
       blockedMinutes++

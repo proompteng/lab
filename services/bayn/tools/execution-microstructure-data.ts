@@ -2,7 +2,14 @@ import { Result } from 'effect'
 import { utcInstantFromEpochMillis } from '../src/time'
 import { intradayAlphaBenchmarkSymbol, intradayAlphaCandidateSymbols } from '../src/strategy/intraday-alpha/constants'
 import { resolveAlphaRegularSession } from '../src/strategy/intraday-alpha/signals'
-import { decodeRegularCalendar, linesOf, minuteMs, openFrozenBaynDataset, parseBar } from './midday-research-data'
+import {
+  decodeRegularCalendar,
+  linesOf,
+  minuteMs,
+  openFrozenBaynDataset,
+  parseBar,
+  type Bar,
+} from './midday-research-data'
 import type { RawBar } from './verify-intraday-alpha-replay'
 
 const historicalFile = 'bars_1m_3yr_7sym_20240102_20260911.tsv.gz'
@@ -54,12 +61,7 @@ export const readHistoricalMicrostructureBars = (directory: string) => {
   return { calendar, byDate, splitAdjustedRows, symbols: [...symbols].sort(), sources }
 }
 
-export const asReplayBar = (
-  symbol: string,
-  start: number,
-  minute: number,
-  value: RawBar | ReturnType<typeof parseBar>['value'],
-): RawBar => {
+export const asReplayBar = (symbol: string, start: number, minute: number, value: Bar): RawBar => {
   const eventMs = start + minute * minuteMs
   return { ...value, symbol, eventMs, eventAt: utcInstantFromEpochMillis(eventMs) }
 }

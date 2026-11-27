@@ -258,6 +258,7 @@ export const readFrozenMiddayTape = (directory: string, universe: readonly strin
   if (sessions.filter(({ date }) => date >= evaluationStart).length !== 66)
     throw new Error('Expected exactly 66 evaluation calendar sessions')
   return {
+    calendar,
     sources: {
       manifestSha256,
       calendarHash: calendar.normalizedResponseHash,

@@ -258,7 +258,12 @@ export const scanExecutionCohort = (input: {
         counts.benchmarkUnavailableCheckpoints++
         continue
       }
-      const candidates = [...extracted.longPool, ...extracted.shortPool]
+      const candidates = [...extracted.longPool, ...extracted.shortPool].filter(
+        ({ direction, relVwapDevBps }) =>
+          phase !== IntradayAlphaPhase.MiddayReversion ||
+          !policy.middayReversion.requireOppositeSigns ||
+          (direction === 'LONG' ? relVwapDevBps < 0 : relVwapDevBps > 0),
+      )
       if (candidates.length === 0) counts.noSignalCheckpoints++
       const legs = selectIntradayAlphaLegs({ ...extracted, policy, vetoedSymbols: new Set() })
       input.onCheckpoint?.({ phase, date, completedMinute, bars, candidates, legs, snapshot, eligibility })
