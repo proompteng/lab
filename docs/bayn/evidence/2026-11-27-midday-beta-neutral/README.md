@@ -33,16 +33,16 @@ like-for-like fee subtraction.
 | Predeclared control                        | Ex-top-five at 5 / 10 bp | IEX four legs | IEX one-sided before → after | IEX partial residual dollars mean / max | IEX retained orphan max |
 | ------------------------------------------ | ------------------------ | ------------: | ---------------------------: | --------------------------------------- | ----------------------: |
 | v2 signal, fixed 10, independent           | $6,074 / $3,516          |          5/66 |                      33 → 33 | $19,585 / $35,802                       |                 $35,808 |
-| Beta-z, spread 1.5×, flatten, equal-dollar | −$269 / −$1,623          |         29/66 |                        3 → 0 | $307 / $1,206                           |                      $0 |
-| Beta-z, spread 1.5×, flatten, beta-dollar  | −$3,548 / −$4,890        |         29/66 |                        3 → 0 | $8,184 / $20,686                        |                      $0 |
-| Beta-z, spread 1.5×, re-quote, beta-dollar | −$3,583 / −$4,938        |         33/66 |                        3 → 0 | $13,920 / $21,249                       |                      $0 |
+| Beta-z, spread 1.5×, flatten, equal-dollar | −$419 / −$1,774          |         29/66 |                        3 → 0 | $307 / $1,206                           |                      $0 |
+| Beta-z, spread 1.5×, flatten, beta-dollar  | −$3,633 / −$4,975        |         29/66 |                        3 → 0 | $8,184 / $20,686                        |                      $0 |
+| Beta-z, spread 1.5×, re-quote, beta-dollar | −$3,668 / −$5,023        |         33/66 |                        3 → 0 | $13,920 / $21,249                       |                      $0 |
 
 - **Completion:** At 5 bp, the reference completed 41/66. The 25 and 35 bp fixed collars reached 49/66
   (74.2%) at all fixed costs, below the 50/66 gate, and only 10/66 on IEX. Across the grid the IEX ceiling was
   34/66 (51.5%, semi-neutral / spread 1.5× / flatten / beta-dollar). The spread-center re-quote rescued seven
   IEX legs and flattened seven, versus 14 flattened without re-quote; higher completion did not establish
   better economics. Holding spread-center flatten, beta-dollar sizing, and 5 bp costs fixed, the v2 signal's
-  ex-top-five net was −$1,656 versus −$3,548 for beta-z. Neither beat the independent fixed-10 reference.
+  ex-top-five net was −$1,656 versus −$3,633 for beta-z. Neither beat the independent fixed-10 reference.
   None of the OLS, ATR, demeaning, or dispersion variants overcame the full gate.
 - **Neutrality:** On the same 52 selected IEX sessions, beta-dollar sizing reduced mean post-work estimated beta
   dollars from $25,109 (equal-dollar) to $1,071 (beta-dollar) under spread-center flatten. Beta-dollar neutrality
@@ -52,10 +52,10 @@ like-for-like fee subtraction.
   exposure is not zero transient exposure, and independent stop/target exits can unbalance a pair later.
 - **Robustness:** All 141 fixed-cost trials resolved. Only nine IEX trials resolved all 66 dates; 38 have a
   missing supported exit on September 22. For example, spread-center beta-z flatten could not price the AAPL
-  and NVDA exits that day. No P&L, Sharpe, ex-top-five, bootstrap or DSR is imputed for incomplete windows.
-  The best ex-top-five among eligible protected rows was still −$2,436 at 5 bp, −$3,140 at 10 bp, and
-  −$9,139 on IEX (among three complete eligible IEX trials). No row passed the core gate or obtained a
-  qualifying neighboring plateau. The maximum DSR anywhere in the ledger was 0.401; using all 150 finite
+  and NVDA exits that day; their last observed quote buckets were both 13:39 ET. No P&L, Sharpe, ex-top-five, bootstrap or DSR is imputed for incomplete windows.
+  The best ex-top-five among eligible protected rows was still −$2,503 at 5 bp, −$3,208 at 10 bp, and
+  −$9,187 on IEX (among three complete eligible IEX trials). No row passed the core gate or obtained a
+  qualifying neighboring plateau. The maximum DSR anywhere in the ledger was 0.400; using all 150 finite
   Sharpe trials, the expected maximum null daily Sharpe was 0.421.
 
 ## Observed midday execution inputs
@@ -133,6 +133,12 @@ with centered 5-session blocks, 10,000 seeded draws and a one-sided mean test. T
 and counts each finite configuration × cost trial as independent for the multiplicity penalty. The dispersion
 weighting is our proxy motivated by [Nagel's liquidity-provision results](https://doi.org/10.1093/rfs/hhs066),
 not that paper's specification.
+
+A stop touched in the entry bucket can activate from that completed bucket, but can only fill from a subsequent
+executable price. Protection stays active while a rescue order is working. If the original leg closes in that
+bucket, the newly filled partner is unwound at the next supported price. In the IEX model, OHLC and quote
+summaries cannot prove the stop touch followed the intra-bucket entry quote; the model treats it as a possible
+trigger, not as evidence of an intra-bucket execution.
 
 Event-time causality does not prove archive arrival latency or executable size. The IEX scenario assumes the
 proxy price for whole shares, no quote queue or impact, and no capital, borrow, funding, or operating-cost

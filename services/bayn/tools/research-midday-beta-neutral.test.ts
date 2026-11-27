@@ -307,6 +307,56 @@ describe('spread-aware execution and orphan protection', () => {
     expect(missingPrior.filled).toBe(0)
   })
 
+  test('activates a stop touched in the entry bucket without filling in that bucket', () => {
+    const amd = {
+      quotes: new Map(),
+      bars: new Map([
+        [121, { ...bar(100), low: 94 }],
+        [122, bar(96)],
+        [206, bar(101)],
+      ]),
+    }
+    const base = scenario(99.85)
+    const session = { ...base, tapes: new Map(base.tapes).set('AMD', amd) }
+    const result = executeBasket({ ...settings, session, protection: 'independent' })
+    expect(result.netUsd).toBeCloseTo(119 * (96 * 0.99975 * (1 - 0.21 / 10_000) - 100 * 1.00025), 8)
+  })
+
+  test('protection stays active during rescue and flattens the newly orphaned rescue leg', () => {
+    const amd = {
+      quotes: new Map(),
+      bars: new Map([
+        [121, { ...bar(100), low: 94 }],
+        [122, bar(96)],
+        [206, bar(101)],
+      ]),
+    }
+    const aapl = {
+      quotes: new Map(),
+      bars: new Map([
+        [121, bar(99.7)],
+        [122, bar(99.85)],
+        [123, bar(101)],
+        [206, bar(99)],
+      ]),
+    }
+    const session = {
+      ...scenario(99.85),
+      tapes: new Map([
+        ['AMD', amd],
+        ['AAPL', aapl],
+      ]),
+    }
+    const result = executeBasket({ ...settings, session, protection: 'requote' })
+    expect(result.rescueCount).toBe(1)
+    expect(result.flattenCount).toBe(1)
+    expect(result.residualUsd).toBe(0)
+    expect(result.orphanUsd).toBe(0)
+    const longPnl = 119 * (96 * 0.99975 * (1 - 0.21 / 10_000) - 100 * 1.00025)
+    const shortPnl = 240 * (99.85 * 0.99975 * (1 - 0.21 / 10_000) - 101 * 1.00025)
+    expect(result.netUsd).toBeCloseTo(longPnl + shortPnl, 8)
+  })
+
   test('uses first price strictly after an early-close deadline and never fills a stop from a prior touch', () => {
     const base = scenario(99.85)
     const session: Session = {

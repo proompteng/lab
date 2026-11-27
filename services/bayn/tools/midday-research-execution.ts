@@ -84,7 +84,12 @@ const tryFill = (order: Order, entry: Price | undefined, limit: number): Filled 
   return { ...order, limit, entry }
 }
 
-const executeExit = (fill: Filled, from: number, minutes: number, cost: Cost, flattenOnly: boolean) => {
+const executeExit = (
+  fill: Filled,
+  minutes: number,
+  cost: Cost,
+  options: { readonly flattenFrom?: number; readonly before?: number } = {},
+) => {
   const direction = fill.leg.direction
   const stop = snap(
     fill.limit * (1 - (direction * checkpoints.protectiveStopBps) / bps),
@@ -99,16 +104,20 @@ const executeExit = (fill: Filled, from: number, minutes: number, cost: Cost, fl
     direction === 1 ? 'UP' : 'DOWN',
   )
   const deadline = Math.min(checkpoints.flattenMinuteFromOpen, minutes - 5)
-  let stopActive = false
-  for (let minute = from; minute < minutes; minute++) {
+  const touchesStop = (minute: number) => {
+    const bar = fill.tape.bars.get(minute)
+    return bar !== undefined && (direction === 1 ? bar.low <= stop : bar.high >= stop)
+  }
+  // The entry bucket can establish a possible stop trigger once completed, but cannot price that stop.
+  let stopActive = touchesStop(fill.entry.minute)
+  for (let minute = fill.entry.minute + 1; minute < (options.before ?? minutes); minute++) {
     const exit = executionPrice(fill.tape, minute, direction === 1 ? -1 : 1, cost)
     if (exit !== undefined) {
-      if (flattenOnly || minute > deadline) return exit
+      if (minute >= (options.flattenFrom ?? minutes) || minute > deadline) return exit
       if (stopActive ? direction * (exit.price - stopLimit) >= 0 : direction * (exit.price - target) >= 0) return exit
     }
     // A stop touched during this minute can only route a limit into the following bucket.
-    const bar = fill.tape.bars.get(minute)
-    if (bar !== undefined && (direction === 1 ? bar.low <= stop : bar.high >= stop)) stopActive = true
+    stopActive ||= touchesStop(minute)
   }
   return undefined
 }
@@ -264,10 +273,20 @@ export const executeBasket = (input: {
       else peakPairOrphanBetaUsd = Math.max(peakPairOrphanBetaUsd, fill.leg.row.beta20 * entryNotional(fill))
     }
     const orphan = groupFills.length === 1
-    const flatten = !independent && orphan
     const workEnd = first + (protection === 'requote' && initialFills.length === 1 ? 2 : 1)
+    const original = initialFills.length === 1 ? initialFills[0] : undefined
+    const exitDuringRescue =
+      original !== undefined && groupFills.length === 2
+        ? executeExit(original, session.minutes, cost, { before: workEnd })
+        : undefined
     for (const fill of groupFills) {
-      const exit = executeExit(fill, workEnd, session.minutes, cost, flatten)
+      // If the first leg closed while a rescue order worked, the newly filled partner is now the orphan.
+      const orphaned = orphan || (exitDuringRescue !== undefined && fill !== original)
+      const flatten = !independent && orphaned
+      const exit =
+        (fill === original ? exitDuringRescue : undefined) ??
+        executeExit(fill, session.minutes, cost, flatten ? { flattenFrom: workEnd } : {})
+
       const direction = fill.leg.direction
       const quantity = fill.shares
       executionCostUsd += quantity * direction * (fill.entry.price - fill.entry.reference)
@@ -277,16 +296,16 @@ export const executeBasket = (input: {
           quantity * direction * (fill.entry.reference - (nextQuote.firstAsk + nextQuote.firstBid) / 2)
         markoutCount++
       }
-      if (!flatten || exit === undefined) {
+      if (exit === undefined || (!flatten && exit.minute >= workEnd)) {
         retained.push(fill)
-        if (orphan) orphanUsd += entryNotional(fill)
+        if (orphaned) orphanUsd += entryNotional(fill)
       }
       if (exit === undefined) {
         unresolvedExitSymbols.push(fill.leg.row.symbol)
         if (flatten) unresolvedOrphans++
         continue
       }
-      if (flatten) {
+      if (flatten && exit.minute >= workEnd) {
         flattenCount++
         maxOrphanExitDelayMinutes = Math.max(maxOrphanExitDelayMinutes, exit.minute - workEnd)
       }
