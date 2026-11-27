@@ -130,6 +130,32 @@ describe('24/7 self-financing portfolios', () => {
     ])[50]
     expect(missing.map(({ net }) => net)).toEqual([0, 0])
   })
+
+  test('a channel liquidated after a missing bar requires a fresh breakout after warmup', () => {
+    const trial: Trial = {
+      id: 'gap-reset',
+      frame: '1d',
+      universe: 'full',
+      axes: [],
+      rule: { kind: 'channel', entry: 72, exit: 24, stop: null, target: 0.25 },
+    }
+    const prices: [number, number][] = Array.from({ length: 55 }, (_, i) => {
+      if (i === 25) return [0, 0]
+      if (i > 25) {
+        const price = 110 - (i - 26) / 2
+        return [price - 1, price]
+      }
+      const price = 100 + (i % 3)
+      if (i === 23) return [price, 115]
+      if (i === 24) return [115, 117]
+      return [price, price]
+    })
+    const history = simulate(prepareMarket(market(prices)), trial, [dateAt(0), dateAt(prices.length)])[50]
+    expect(history[24].turnover).toBeGreaterThan(0)
+    expect(history[25].staleBars).toBe(1)
+    expect(history[26].turnover).toBeGreaterThan(0)
+    expect(history.slice(27).every(({ turnover }) => turnover === 0)).toBe(true)
+  })
 })
 
 describe('pre-registered diagnostics', () => {

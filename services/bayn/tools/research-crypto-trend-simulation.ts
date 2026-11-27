@@ -246,7 +246,7 @@ const signal = (market: Market, coins: readonly Indicators[], trial: Trial) => {
     if (moving) {
       const fast = coin.ema(toBars(rule.fast))
       const slow = coin.ema(toBars(rule.slow))
-      return (i: number) => slow[i] > 0 && fast[i] > slow[i]
+      return (i: number, ready: boolean) => ready && slow[i] > 0 && fast[i] > slow[i]
     }
     const high = coin.high(toBars(rule.entry))
     const low = coin.low(toBars(rule.exit))
@@ -255,7 +255,12 @@ const signal = (market: Market, coins: readonly Indicators[], trial: Trial) => {
     const shortVol = isSqueeze ? coin.vol(toBars(compression.shortHours)) : null
     const longVol = isSqueeze ? coin.vol(toBars(compression.longHours)) : null
     const stop = isSqueeze ? compression.stopAtr : rule.stop
-    return (i: number) => {
+    return (i: number, ready: boolean) => {
+      if (!ready) {
+        if (peak[j] > 0) sinceExit[j] = i
+        peak[j] = 0
+        return false
+      }
       const close = coin.bar.close[i]
       if (peak[j] > 0) {
         peak[j] = Math.max(peak[j], coin.bar.high[i])
@@ -295,11 +300,9 @@ const signal = (market: Market, coins: readonly Indicators[], trial: Trial) => {
     let gross = 0
     for (let j = 0; j < coins.length; j++) {
       const budget = rule.kind === 'compression' ? 0.2 : rule.target
-      const on =
-        vol[j][i] > 0 &&
-        (btcFast === undefined || btcSlow === undefined || (btcSlow[i] > 0 && btcFast[i] > btcSlow[i])) &&
-        wants[j](i)
-      const size = on ? budget / vol[j][i] / coins.length : 0
+      const ready =
+        vol[j][i] > 0 && (btcFast === undefined || btcSlow === undefined || (btcSlow[i] > 0 && btcFast[i] > btcSlow[i]))
+      const size = wants[j](i, ready) ? budget / vol[j][i] / coins.length : 0
       target[j] = rule.kind === 'parity' ? size : Math.min(size, 1 / coins.length)
       gross += target[j]
     }

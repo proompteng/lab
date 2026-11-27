@@ -1,7 +1,7 @@
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime'
-import { Effect } from 'effect'
+import { Effect, Schema } from 'effect'
 import { spawnSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { coverage, loadMarkets, ResearchError, sha256, type Market } from './research-crypto-trend-data'
 import {
@@ -38,6 +38,7 @@ import { dailySharpe, deflationBenchmark } from './research-orb-zab-statistics'
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const folder = 'docs/bayn/evidence/2026-11-27-3yr-crypto-24x7-trend'
 const freezePath = `${folder}/freeze.json`
+const correctionPath = `${folder}/freeze-correction.json`
 const sourcePaths = [
   'services/bayn/tools/research-3yr-crypto-24x7-trend.ts',
   'services/bayn/tools/research-crypto-trend-data.ts',
@@ -243,16 +244,17 @@ const registeredCommit = () => {
   ) {
     throw new Error('Commit the complete protocol and scoring implementation before running --freeze or --score')
   }
-  return git('log', '-1', '--format=%H', '--', ...sourcePaths).trim()
+  return git('rev-parse', 'HEAD').trim()
 }
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
 
 const freezeRegistration = (
+  sourceCommit: string,
   identity: unknown,
   runByFrame: readonly { frame: Frame; run: ReturnType<typeof run> }[],
 ) => ({
   schema: 'bayn.crypto-24x7-trend.freeze.v1',
-  registeredCommit: registeredCommit(),
+  registeredCommit: sourceCommit,
   sourceSha256: sourceDigest(),
   dataset: identity,
   fees,
@@ -273,21 +275,42 @@ const freezeRegistration = (
 
 export const parseArgs = (args: readonly string[]) => {
   if (args.length === 1 && args[0] === '--freeze') return { stage: 'freeze' as const, output: root + freezePath }
+  if (args.length === 2 && args[0] === '--freeze' && args[1] === '--correction') {
+    return { stage: 'correction' as const, output: root + correctionPath }
+  }
   if (args[0] === '--score' && args.length === 1)
     return { stage: 'score' as const, output: `${root}${folder}/results.json` }
   if (args[0] === '--score' && args[1] === '--output' && args.length === 3 && args[2] !== '') {
     return { stage: 'score' as const, output: args[2] }
   }
-  throw new Error('Usage: bun services/bayn/tools/research-3yr-crypto-24x7-trend.ts --freeze | --score [--output PATH]')
+  throw new Error(
+    'Usage: bun services/bayn/tools/research-3yr-crypto-24x7-trend.ts --freeze [--correction] | --score [--output PATH]',
+  )
 }
-const committedReceipt = () => {
-  const commit = git('log', '-1', '--diff-filter=A', '--format=%H', '--', freezePath).trim()
-  if (commit === '') throw new Error('Commit freeze.json before scoring Frozen Holdout')
-  const receipt = readFileSync(root + freezePath, 'utf8')
-  if (receipt !== git('show', `${commit}:${freezePath}`) || receipt !== git('show', `HEAD:${freezePath}`)) {
-    throw new Error('Freeze receipt differs from the original committed receipt')
+const ReceiptSchema = Schema.Struct({
+  schema: Schema.Literal('bayn.crypto-24x7-trend.freeze.v1'),
+  registeredCommit: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
+  sourceSha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+  dataset: Schema.Struct({ manifestSha256: Schema.String }),
+  selection: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      nominee: Schema.NullOr(Schema.String),
+      developmentEligible: Schema.Array(Schema.String),
+      diagnostic: Schema.NullOr(Schema.String),
+    }),
+  ),
+})
+const decodeReceipt = Schema.decodeUnknownSync(Schema.fromJsonString(ReceiptSchema))
+const committedReceipt = (path: string) => {
+  // GitHub previews create merge commits that also touch these paths. The original receipt is a non-merge commit.
+  const commit = git('log', '--full-history', '--no-merges', '-1', '--diff-filter=A', '--format=%H', '--', path).trim()
+  if (commit === '') throw new Error(`Commit ${path} before scoring Frozen Holdout`)
+  const receipt = readFileSync(root + path, 'utf8')
+  if (receipt !== git('show', `${commit}:${path}`) || receipt !== git('show', `HEAD:${path}`)) {
+    throw new Error(`Receipt differs from the original committed bytes: ${path}`)
   }
-  return { commit, receipt }
+  return { commit, receipt, metadata: decodeReceipt(receipt) }
 }
 
 const checked = <T>(message: string, action: () => T) =>
@@ -295,11 +318,26 @@ const checked = <T>(message: string, action: () => T) =>
 
 const program = Effect.gen(function* () {
   const { stage, output } = yield* checked('Invalid arguments', () => parseArgs(Bun.argv.slice(2)))
-  const registered = yield* checked('Research sources are not registered', registeredCommit)
-  const committed = stage === 'score' ? yield* checked('No committed freeze receipt', committedReceipt) : null
+  const head = yield* checked('Research sources are not registered', registeredCommit)
+  const original =
+    stage === 'freeze' ? null : yield* checked('No committed freeze receipt', () => committedReceipt(freezePath))
+  const correcting = stage === 'correction' || (stage === 'score' && existsSync(root + correctionPath))
+  const committed =
+    stage === 'score' && correcting
+      ? yield* checked('No committed correction receipt', () => committedReceipt(correctionPath))
+      : original
+  const sourceCommit = stage === 'score' ? committed?.metadata.registeredCommit : head
+  if (sourceCommit === undefined) return yield* new ResearchError({ message: 'Missing active source registration' })
+  if (stage === 'score' && committed?.metadata.sourceSha256 !== sourceDigest()) {
+    return yield* new ResearchError({ message: 'Scoring sources differ from the committed registration' })
+  }
   const dev = yield* loadMarkets(false)
+  if (original !== null && dev.identity.manifestSha256 !== original.metadata.dataset.manifestSha256) {
+    return yield* new ResearchError({ message: 'Frozen manifest differs from original registration' })
+  }
   const registration = yield* checked('Development evaluation failed', () =>
     freezeRegistration(
+      sourceCommit,
       dev.identity,
       frames.map((frame) => ({
         frame,
@@ -307,16 +345,27 @@ const program = Effect.gen(function* () {
       })),
     ),
   )
-  const receipt = json(registration)
-  if (committed === null) {
+  // A reviewed implementation correction may change metrics, but cannot replace the frozen slate or diagnostics.
+  const active =
+    correcting && original !== null
+      ? {
+          ...registration,
+          selection: original.metadata.selection,
+          correctsFreezeSha256: sha256(original.receipt),
+          correctedDevelopmentSelection: registration.selection,
+        }
+      : registration
+  const receipt = json(active)
+  if (stage !== 'score') {
     yield* checked('Could not write freeze receipt', () => writeFileSync(output, receipt, { flag: 'wx' }))
     yield* Effect.logInfo(`Wrote development-only freeze: ${output}. Commit the receipt before scoring.`)
     return
   }
-  if (receipt !== committed.receipt)
+  if (original === null || committed === null || receipt !== committed.receipt) {
     return yield* new ResearchError({
-      message: 'Source, protocol, dataset or development selection changed since freeze',
+      message: 'Source, protocol, dataset or development evaluation changed since freeze',
     })
+  }
   const scored = yield* loadMarkets(true)
   if (json(scored.identity) !== json(dev.identity))
     return yield* new ResearchError({ message: 'Dataset identity changed between phases' })
@@ -324,7 +373,7 @@ const program = Effect.gen(function* () {
     const evaluated = frames.map((frame) => ({ frame, run: run(scored.market(frame), true, frame) }))
     const analyses = new Map(evaluated.flatMap(({ run }) => run.analysis.map((row) => [row.trial.id, row])))
     const nominees = new Set(
-      Object.values(registration.selection).flatMap(({ nominee }) => (nominee === null ? [] : [nominee])),
+      Object.values(active.selection).flatMap(({ nominee }) => (nominee === null ? [] : [nominee])),
     )
     const cutoff = gate.maxP / Math.max(1, nominees.size)
     const winners: string[] = []
@@ -367,9 +416,12 @@ const program = Effect.gen(function* () {
     }))
     return {
       schema: 'bayn.crypto-24x7-trend.results.v1',
-      registration: registered,
-      freezeCommit: committed.commit,
-      freezeSha256: sha256(receipt),
+      registration: original.metadata.registeredCommit,
+      freezeCommit: original.commit,
+      freezeSha256: sha256(original.receipt),
+      ...(correcting
+        ? { correction: { registration: sourceCommit, commit: committed.commit, sha256: sha256(receipt) } }
+        : {}),
       dataset: scored.identity,
       fees,
       primaryFee,
@@ -379,7 +431,7 @@ const program = Effect.gen(function* () {
         splits,
         columns: ['net', 'sharpe', 'maxDrawdown', 'annualTurnover', 'staleBars', 'unsettled'],
       },
-      selection: registration.selection,
+      selection: active.selection,
       frames: reports,
       winners,
     }
