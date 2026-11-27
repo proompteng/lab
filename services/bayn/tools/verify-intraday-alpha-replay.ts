@@ -53,7 +53,7 @@ import {
 } from './intraday-alpha-replay-inputs'
 import { replayDiagnosticClass, replayScorecard } from './intraday-alpha-replay-scorecard'
 
-interface RawBar {
+export interface RawBar {
   readonly symbol: string
   readonly eventAt: string
   readonly eventMs: number
@@ -91,7 +91,7 @@ const ReplayCalendarSchema = Schema.Struct({
     })),
   ),
 })
-type ReplayCalendar = Result.Result.Success<ReturnType<typeof normalizeMarketCalendarResult>>
+export type ReplayCalendar = Result.Result.Success<ReturnType<typeof normalizeMarketCalendarResult>>
 
 interface EntryAttempt {
   readonly phase: ActiveAlphaPhase
@@ -156,6 +156,7 @@ const allowedSymbols = new Set<string>([...intradayAlphaCandidateSymbols, intrad
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 const policy = makeIntradayAlphaPolicy(protocol)
 const accountId = 'alpha-replay-verifier'
+export { accountId as replayAccountId }
 const cycleId = 'a'.repeat(64)
 const policyHash = Result.getOrThrow(canonicalHashV1Result(policy))
 const observationHash = 'b'.repeat(64)
@@ -265,7 +266,7 @@ const parseBarsFiles = (paths: readonly string[], calendar: ReplayCalendar) => {
   return { byDate, sources, identicalDuplicates, ignoredSymbols, uniqueBars: dedup.size }
 }
 
-const makeShortEligibility = (observedAt: string): Readonly<Record<string, EquityShortEligibility>> =>
+export const makeShortEligibility = (observedAt: string): Readonly<Record<string, EquityShortEligibility>> =>
   Object.fromEntries(
     intradayAlphaCandidateSymbols.map((symbol) => [
       symbol,
@@ -291,13 +292,14 @@ const makeShortEligibility = (observedAt: string): Readonly<Record<string, Equit
     ]),
   )
 
-const makeEntryPortfolio = (
+export const makeEntryPortfolio = (
   observedAt: string,
   equityUsd: number,
   activePositions: readonly ActiveSimulatedPosition[],
   barByMinute: Map<string, Map<number, RawBar>>,
   completedMinute: number,
   carriedMarks: ReadonlyMap<string, number>,
+  initialBuyingPowerUsd?: number,
 ) => {
   const equityMicros = BigInt(Math.round(equityUsd * 1_000_000))
   // Hypothetical 4x margin account, matching the prior v2 scenario; this is not broker account evidence.
@@ -328,7 +330,9 @@ const makeEntryPortfolio = (
         observedAt,
       }
     })
-  const buyingPowerMicros = equityMicros * 4n - usedMarginMicros
+  const initialBuyingPowerMicros =
+    initialBuyingPowerUsd === undefined ? equityMicros * 4n : BigInt(Math.round(initialBuyingPowerUsd * 1_000_000))
+  const buyingPowerMicros = initialBuyingPowerMicros - usedMarginMicros
   const material = {
     account: {
       schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
@@ -372,7 +376,7 @@ const makeEntryPortfolio = (
   )
 }
 
-const buildReplaySnapshot = (input: {
+export const buildReplaySnapshot = (input: {
   readonly sessionDate: string
   readonly calendar: ReturnType<typeof normalizeMarketCalendarResult> extends Result.Result<infer C, unknown>
     ? C
@@ -499,7 +503,7 @@ const buildReplaySnapshot = (input: {
   } as unknown as StrategyMarketSnapshot
 }
 
-const buildSessionSummaries = (
+export const buildSessionSummaries = (
   byDate: Map<string, Map<string, RawBar[]>>,
   sessions: readonly string[],
   calendar: ReplayCalendar,
@@ -554,6 +558,92 @@ const buildSessionSummaries = (
     checkpointsByDate.set(date, checkpoints)
   }
   return { dailyByDate, checkpointsByDate }
+}
+
+export const planReplayTargets = (input: {
+  readonly sessionDate: string
+  readonly selectedSymbols: readonly string[]
+  readonly completedBar: (symbol: string) => Pick<RawBar, 'close'> | undefined
+  readonly portfolio: ReturnType<typeof makeEntryPortfolio>
+  readonly targetWeights: Record<string, number>
+  readonly maxBuy: Record<string, string>
+  readonly maxSell: Record<string, string>
+  readonly eligibility: Readonly<Record<string, EquityShortEligibility>>
+  readonly observedAt: string
+  readonly orderExpiresAt: string
+  readonly disjoint: boolean
+}) => {
+  const { selectedSymbols, portfolio, targetWeights, maxBuy, maxSell, eligibility, observedAt } = input
+  // Exercise actual production target-planner (planTargets) with bar-close reference prices (matching compileJevEntry)
+  const priceMicros: Record<string, string> = {}
+  const bidPriceMicros: Record<string, string> = {}
+  const askPriceMicros: Record<string, string> = {}
+  // compileJevEntry plans only nonzero targets and requires their exact completed bar.
+  // Missing-current-minute candidates are excluded by production signal/funding checks;
+  // do not fabricate references from the first (possibly future) bar or a constant.
+  for (const symbol of selectedSymbols) {
+    const completedBar = input.completedBar(symbol)
+    if (completedBar === undefined) throw new Error(`Selected alpha target ${symbol} lacks completed bar close`)
+    bidPriceMicros[symbol] = quantizeInstrumentPriceMicros(
+      symbol,
+      Result.getOrThrow(priceNumberToMicros(completedBar.close, 'bar close', 'DOWN')),
+      'DOWN',
+    ).toString()
+    askPriceMicros[symbol] = quantizeInstrumentPriceMicros(
+      symbol,
+      Result.getOrThrow(priceNumberToMicros(completedBar.close, 'bar close', 'UP')),
+      'UP',
+    ).toString()
+    priceMicros[symbol] = askPriceMicros[symbol]
+  }
+  const refMaterial = {
+    schemaVersion: 'bayn.intraday-snapshot-reference-prices.v1' as const,
+    snapshotId,
+    snapshotContentHash,
+    priceReference: 'verified-adverse-quote-boundary' as const,
+    signalDate: Schema.decodeUnknownSync(IsoDateSchema)(input.sessionDate),
+    observedAt,
+    priceMicros,
+    bidPriceMicros,
+    askPriceMicros,
+  }
+  const refHash = Result.getOrThrow(canonicalHashV1Result(refMaterial))
+  const shortEntries = Object.fromEntries(
+    selectedSymbols
+      .filter((s) => (targetWeights[s] ?? 0) < 0)
+      .map((s) => [s, eligibility[s]])
+      .filter((entry): entry is [string, EquityShortEligibility] => entry[1] !== undefined),
+  )
+  return Result.getOrThrow(
+    planTargets({
+      schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
+      strategyName: 'jev',
+      cycleId,
+      decisionHash: 'e'.repeat(64),
+      policyHash,
+      accountId,
+      signalDate: Schema.decodeUnknownSync(IsoDateSchema)(input.sessionDate),
+      targetWeights,
+      referencePrices: { ...refMaterial, contentHash: refHash },
+      brokerState: portfolio.brokerState,
+      precision: protocol.executionModel.precision,
+      allocationCapitalMicros: portfolio.brokerState.account.equityMicros,
+      maximumInputAgeMs: 60_000,
+      submissionCutoffAt: input.orderExpiresAt,
+      observedAt,
+      executionTerms: {
+        ...(input.disjoint ? { executionPurpose: 'disjoint-entry' as const } : {}),
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.Day,
+        priceReference: 'verified-adverse-quote-boundary',
+        snapshotId,
+        snapshotContentHash,
+        maximumBuyQuantityAtoms: maxBuy,
+        maximumSellQuantityAtoms: maxSell,
+        ...(Object.keys(shortEntries).length > 0 ? { equityShortEntries: shortEntries } : {}),
+      },
+    }),
+  )
 }
 
 const simulateSession = (input: {
@@ -746,76 +836,19 @@ const simulateSession = (input: {
     const selectedSymbols = Object.keys(fundedPlans).sort()
     if (selectedSymbols.length === 0) return
 
-    // Exercise actual production target-planner (planTargets) with bar-close reference prices (matching compileJevEntry)
-    const priceMicros: Record<string, string> = {}
-    const bidPriceMicros: Record<string, string> = {}
-    const askPriceMicros: Record<string, string> = {}
-    // compileJevEntry plans only nonzero targets and requires their exact completed bar.
-    // Missing-current-minute candidates are excluded by production signal/funding checks;
-    // do not fabricate references from the first (possibly future) bar or a constant.
-    for (const symbol of selectedSymbols) {
-      const completedBar = barByMinute.get(symbol)?.get(completedMinute)
-      if (completedBar === undefined) throw new Error(`Selected alpha target ${symbol} lacks completed bar close`)
-      bidPriceMicros[symbol] = quantizeInstrumentPriceMicros(
-        symbol,
-        Result.getOrThrow(priceNumberToMicros(completedBar.close, 'bar close', 'DOWN')),
-        'DOWN',
-      ).toString()
-      askPriceMicros[symbol] = quantizeInstrumentPriceMicros(
-        symbol,
-        Result.getOrThrow(priceNumberToMicros(completedBar.close, 'bar close', 'UP')),
-        'UP',
-      ).toString()
-      priceMicros[symbol] = askPriceMicros[symbol]
-    }
-    const refMaterial = {
-      schemaVersion: 'bayn.intraday-snapshot-reference-prices.v1' as const,
-      snapshotId,
-      snapshotContentHash,
-      priceReference: 'verified-adverse-quote-boundary' as const,
-      signalDate: Schema.decodeUnknownSync(IsoDateSchema)(input.sessionDate),
+    const planned = planReplayTargets({
+      sessionDate: input.sessionDate,
+      selectedSymbols,
+      completedBar: (symbol) => barByMinute.get(symbol)?.get(completedMinute),
+      portfolio,
+      targetWeights,
+      maxBuy,
+      maxSell,
+      eligibility,
       observedAt,
-      priceMicros,
-      bidPriceMicros,
-      askPriceMicros,
-    }
-    const refHash = Result.getOrThrow(canonicalHashV1Result(refMaterial))
-    const shortEntries = Object.fromEntries(
-      selectedSymbols
-        .filter((s) => (targetWeights[s] ?? 0) < 0)
-        .map((s) => [s, eligibility[s]])
-        .filter((entry): entry is [string, EquityShortEligibility] => entry[1] !== undefined),
-    )
-    const planned = Result.getOrThrow(
-      planTargets({
-        schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
-        strategyName: 'jev',
-        cycleId,
-        decisionHash: 'e'.repeat(64),
-        policyHash,
-        accountId,
-        signalDate: Schema.decodeUnknownSync(IsoDateSchema)(input.sessionDate),
-        targetWeights,
-        referencePrices: { ...refMaterial, contentHash: refHash },
-        brokerState: portfolio.brokerState,
-        precision: protocol.executionModel.precision,
-        allocationCapitalMicros: portfolio.brokerState.account.equityMicros,
-        maximumInputAgeMs: 60_000,
-        submissionCutoffAt: utcInstantFromEpochMillis(orderExpiresAtMs),
-        observedAt,
-        executionTerms: {
-          ...(activePositions.length > 0 ? { executionPurpose: 'disjoint-entry' as const } : {}),
-          orderType: OrderType.Limit,
-          timeInForce: TimeInForce.Day,
-          priceReference: 'verified-adverse-quote-boundary',
-          snapshotId,
-          snapshotContentHash,
-          maximumBuyQuantityAtoms: maxBuy,
-          maximumSellQuantityAtoms: maxSell,
-          ...(Object.keys(shortEntries).length > 0 ? { equityShortEntries: shortEntries } : {}),
-        },
-      }),
-    )
+      orderExpiresAt: utcInstantFromEpochMillis(orderExpiresAtMs),
+      disjoint: activePositions.length > 0,
+    })
     if (
       planned.status !== TargetPlanStatus.Planned ||
       (extracted.context.phase === IntradayAlphaPhase.MiddayReversion &&
