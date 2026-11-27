@@ -24,10 +24,9 @@ import { captureSystemSourceCut } from './system-assessment/capture'
 import { registerPairedSystemQualification } from './system-assessment/paired-admission'
 import { openIncumbentPostgres } from './system-assessment/incumbent-store'
 import { ValkeyCacheLive } from './valkey-cache'
-import { qualificationRuntime } from './system-assessment/configuration'
-import { validateProspectiveSystemRegistration } from './system-assessment/policy'
+import { configuredQualificationRuntime } from './system-assessment/configuration'
+import { isNativeSystemRegistration, validateProspectiveSystemRegistration } from './system-assessment/policy'
 import { SystemAssessmentError } from './system-assessment/economics'
-import { loadActiveStrategyProtocol } from './strategy'
 import { SystemAssessmentInputSchema } from './system-assessment/assessment'
 import { verifyLatencyStressImages } from './system-assessment/latency-report'
 import { CaptureReplayExecutionSchema, captureReplayExecution } from './system-assessment/replay-execution'
@@ -101,7 +100,9 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
           const { registration } = Schema.is(OperationalRegistrationSchema)(packet.payload)
             ? yield* Effect.fromResult(validateOperationalRegistration(packet.payload))
             : yield* Effect.fromResult(validateProspectiveSystemRegistration(packet.payload))
-          const runtime = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
+          const runtime = yield* Effect.fromResult(
+            configuredQualificationRuntime(config, registration.obligations.configuration),
+          )
           if (
             (yield* Effect.fromResult(canonicalHashV1Result(runtime))) !==
             registration.obligations.runtimeConfigurationHash
@@ -168,10 +169,9 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
           input.registration,
           packet.artifacts,
         )
-        const peer =
-          input.registration.schemaVersion === 'bayn.system-registration.v5'
-            ? yield* openIncumbentPostgres(config, true)
-            : undefined
+        const peer = isNativeSystemRegistration(input.registration)
+          ? yield* openIncumbentPostgres(config, true)
+          : undefined
         return yield* assessAndPersistSystem(input, packet.verifiedSources, packet.artifacts, images, peer)
       }).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command owns the scoped database layer

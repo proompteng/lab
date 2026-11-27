@@ -35,3 +35,29 @@ export const systemLatencyStressProtocol = {
 } as const
 
 export const systemLatencyStressProtocolHash = () => canonicalHashV1Result(systemLatencyStressProtocol)
+
+/** New registrations bind the actual engine and its event-driven information availability. */
+export const strategyBoundSystemLatencyStressProtocol = {
+  ...systemLatencyStressProtocol,
+  schemaVersion: 'bayn.system-latency-stress-protocol.v4',
+  calibration: 'COMPLETE_REGISTERED_NATIVE_DECISION_DURATIONS',
+  strategyBinding: 'EXPLICIT_COMPLETE_ENGINE_POLICY',
+  scheduling: 'RETAINED_SOURCE_AVAILABILITY_AND_NATIVE_DEADLINES',
+  alphaBaseline: 'SAME_SESSION_STRICTLY_PRIOR_DAYS_WITH_INDEPENDENT_DURABLE_WITNESS',
+  sourceFailures: 'INCOMPLETE_WITHOUT_FABRICATED_AVAILABILITY',
+} as const
+
+export const strategyBoundSystemLatencyStressProtocolHash = () =>
+  canonicalHashV1Result(strategyBoundSystemLatencyStressProtocol)
+
+/** Preparation availability is established before the original command by an independent committed witness. */
+export const preparedAlphaSystemLatencyStressProtocol = {
+  ...strategyBoundSystemLatencyStressProtocol,
+  schemaVersion: 'bayn.system-latency-stress-protocol.v5',
+  alphaBaseline: 'STANDALONE_SESSION_PREPARATION_WITH_INDEPENDENT_COMMITTED_WITNESS',
+  alphaBaselineAdmission: 'WITNESSED_BEFORE_ORIGINAL_COMMAND_WITHOUT_PROVIDER_FALLBACK',
+  alphaBaselineScope: 'EXACT_POLICY_PROVIDER_SESSION_AND_PHYSICAL_PRODUCER',
+} as const
+
+export const preparedAlphaSystemLatencyStressProtocolHash = () =>
+  canonicalHashV1Result(preparedAlphaSystemLatencyStressProtocol)

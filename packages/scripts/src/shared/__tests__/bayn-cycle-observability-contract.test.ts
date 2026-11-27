@@ -15,30 +15,46 @@ interface MimirRule {
   readonly annotations: { readonly summary: string; readonly description: string }
 }
 
-const baynRules = (): readonly MimirRule[] => {
-  const configMap = YAML.parse(readRepoFile('argocd/applications/observability/graf-mimir-rules.yaml')) as Record<
-    string,
-    any
-  >
-  const rules = YAML.parse(configMap.data['graf-rules.yaml']) as {
-    groups: readonly { readonly name: string; readonly rules: readonly MimirRule[] }[]
+interface MimirRuleGroup {
+  readonly name: string
+  readonly interval: string
+  readonly rules: readonly MimirRule[]
+}
+
+const baynGroupNames = ['bayn-broker-feed.rules', 'bayn-cycle-operations.rules']
+
+const baynRuleGroups = (): readonly MimirRuleGroup[] => {
+  const configMap = YAML.parse(readRepoFile('argocd/applications/observability/graf-mimir-rules.yaml')) as {
+    readonly data: { readonly 'graf-rules.yaml': string }
   }
-  const group = rules.groups.find(({ name }) => name === 'bayn-cycle-operations.rules')
-  if (group === undefined) throw new Error('Bayn cycle operations rule group is missing')
-  return group.rules.filter((rule) => typeof rule.alert === 'string')
+  const { groups } = YAML.parse(configMap.data['graf-rules.yaml']) as { readonly groups: readonly MimirRuleGroup[] }
+  return groups.filter(({ name }) => baynGroupNames.includes(name))
+}
+
+const baynRules = (): readonly MimirRule[] => {
+  return baynRuleGroups().flatMap(({ rules }) => rules.filter((rule) => typeof rule.alert === 'string'))
 }
 
 describe('Bayn cycle operations alert contract', () => {
+  test('fits the deployed Mimir rule-group limit at the existing evaluation interval', () => {
+    const groups = baynRuleGroups()
+    expect(groups.map(({ name }) => name)).toEqual(baynGroupNames)
+    for (const { interval, rules } of groups) {
+      expect(interval).toBe('15s')
+      expect(rules.length).toBeLessThanOrEqual(20)
+    }
+  })
+
   test('alerts only on scrape health, bounded runtime readiness, and canonical cycle conditions', () => {
     const rules = baynRules()
     expect(rules.map(({ alert }) => alert)).toEqual([
-      'BaynMetricsUnavailable',
-      'BaynStatusReplicaTargetMissed',
-      'BaynEgressProxyReplicaTargetMissed',
       'BaynBrokerFeedUnavailable',
       'BaynBrokerSourceProjectionFallbackHigh',
       'BaynBrokerSourceProjectionLatencyHigh',
       'BaynBrokerSourceProjectionStalled',
+      'BaynMetricsUnavailable',
+      'BaynStatusReplicaTargetMissed',
+      'BaynEgressProxyReplicaTargetMissed',
       'BaynExecutionWorkerObservationUnavailable',
       'BaynExecutionWorkerUnavailable',
       'BaynExecutionWorkerReplicaTargetMissed',

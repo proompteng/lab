@@ -5,7 +5,7 @@ import {
   marketHoursAreCanonical,
 } from '../../market-hours'
 import { InstrumentSymbolSchema, MarketKind } from '../../instruments'
-import { marketHistoryMinutes } from '../history'
+import { equitySessionHistoryMinutes, marketHistoryMinutes } from '../history'
 import { maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
 import { equityClockSession } from '../../equity-hours'
@@ -259,7 +259,12 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   ) {
     return Result.fail(failure('request', 'intraday range and observation must remain within the declared session'))
   }
-  const maximumWindowMinutes = marketHistoryMinutes[request.feed === 'us' ? MarketKind.Crypto : MarketKind.Equity]
+  const maximumWindowMinutes =
+    request.feed === 'us'
+      ? marketHistoryMinutes[MarketKind.Crypto]
+      : request.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars
+        ? equitySessionHistoryMinutes
+        : marketHistoryMinutes[MarketKind.Equity]
   const duration = end - start
   if (
     duration <= 0 ||
@@ -337,11 +342,11 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   if (
     request.benchmarkEvidencePolicy !== undefined &&
     (request.benchmarkEvidencePolicy !== IntradayBenchmarkEvidencePolicy.CompletedBars ||
-      request.feed !== 'us' ||
+      (request.feed !== 'us' && request.feed !== 'iex') ||
       request.candidateEvidencePolicy === undefined ||
       request.purpose !== undefined)
   )
-    return Result.fail(failure('request', 'completed-bar benchmarks require an independent crypto decision query'))
+    return Result.fail(failure('request', 'completed-bar benchmarks require an independent real-time decision query'))
   if (request.benchmarkSymbols !== undefined || request.benchmarkEvidencePolicy !== undefined) {
     const benchmarks = request.benchmarkSymbols ?? []
     const canonical = [...new Set(benchmarks)].sort()

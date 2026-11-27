@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Clock, Effect } from 'effect'
 import { TestClock } from 'effect/testing'
-import { makeReplayTimeline, driveReplaySession } from './session'
+import { makeReplayTimeline, driveReplaySession, makeStreamingReplaySession } from './session'
 import { utcInstantFromEpochMillis } from '../time'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { RetainedAutonomousCyclePassObservation } from '../cycle/runner/pass-observation'
@@ -359,4 +359,267 @@ test('a forced terminal pass reports its actual start when the pending command l
   )
   expect(polls).toEqual([10])
   expect(schedule).toMatchObject({ firstPollAtMs: 10, lastPollAtMs: 10, completedAtMs: 10, passCount: 1 })
+})
+
+const streamingFixture = (arrivals: readonly number[], brokerChanges: readonly number[] = []) => {
+  let revision = 0
+  let brokerRevision = 0
+  const advanceTo = (at: number) =>
+    Effect.gen(function* () {
+      while ((arrivals[revision] ?? Number.MAX_SAFE_INTEGER) <= at) revision++
+      while ((brokerChanges[brokerRevision] ?? Number.MAX_SAFE_INTEGER) <= at) brokerRevision++
+      yield* TestClock.setTime(at)
+    })
+  return {
+    advanceTo,
+    drive: makeStreamingReplaySession({
+      nextAvailableAtMs: Effect.sync(() => {
+        const market = arrivals[revision]
+        const broker = brokerChanges[brokerRevision]
+        return market === undefined ? (broker ?? null) : Math.min(market, broker ?? market)
+      }),
+      sourceRevision: Effect.sync(() => revision),
+      brokerStateHash: Effect.sync(() => String(brokerRevision)),
+    }),
+  }
+}
+
+test('streaming replay waits for arrivals and does not resurrect suppressed hints or invent a final poll', async () => {
+  const passes: number[] = []
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      const f = streamingFixture([5, 7, 12])
+      return yield* f.drive(
+        {
+          nextDelayMs: 1,
+          advance: Clock.currentTimeMillis.pipe(
+            Effect.map((at) => {
+              passes.push(at)
+              return {
+                observation: {
+                  result: 'SUCCESS' as const,
+                  outcome: 'RECOVERED' as const,
+                  recoveryAction: 'WAITING' as const,
+                  observedAt: utcInstantFromEpochMillis(at),
+                  readiness: {
+                    reason: DecisionReadinessReason.SignalWindowObserved,
+                    message: 'Wait for a new signal window',
+                    ...(at === 5 ? { availableAt: utcInstantFromEpochMillis(10) } : {}),
+                  },
+                },
+              }
+            }),
+          ),
+        },
+        f.advanceTo,
+        0,
+        15,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(passes).toEqual([0, 5, 12])
+  expect(result).toMatchObject({ passCount: 3, completedAtMs: 15, nextPollAtMs: Number.MAX_SAFE_INTEGER })
+})
+
+test('broker transitions wake a closed owner while quote-only arrivals remain suppressed', async () => {
+  const passes: number[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      const f = streamingFixture([3, 5, 9], [7])
+      yield* f.drive(
+        {
+          nextDelayMs: 1,
+          advance: Clock.currentTimeMillis.pipe(
+            Effect.map((at) => {
+              passes.push(at)
+              return {
+                observation: {
+                  result: 'SUCCESS' as const,
+                  outcome: 'WINDOW_CLOSED' as const,
+                  observedAt: utcInstantFromEpochMillis(at),
+                },
+              }
+            }),
+          ),
+        },
+        f.advanceTo,
+        0,
+        10,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(passes).toEqual([0, 7])
+})
+
+test('an early broker wake preserves the original native reconciliation deadline', async () => {
+  const passes: number[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      const f = streamingFixture([], [5])
+      yield* f.drive(
+        {
+          nextDelayMs: 1,
+          advance: Clock.currentTimeMillis.pipe(
+            Effect.map((at) => {
+              passes.push(at)
+              return at < 12
+                ? {
+                    nextWakeAt: utcInstantFromEpochMillis(at + 12),
+                    observation: {
+                      result: 'SUCCESS' as const,
+                      outcome: 'WAITING' as const,
+                      waitReason: 'BROKER_OBSERVATION_PENDING' as const,
+                      observedAt: utcInstantFromEpochMillis(at),
+                    },
+                  }
+                : {
+                    observation: {
+                      result: 'SUCCESS' as const,
+                      outcome: 'WINDOW_CLOSED' as const,
+                      observedAt: utcInstantFromEpochMillis(at),
+                    },
+                  }
+            }),
+          ),
+        },
+        f.advanceTo,
+        0,
+        20,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(passes).toEqual([0, 5, 12])
+})
+
+test('arrivals during native work produce one serialized wake after completion', async () => {
+  const passes: number[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      const f = streamingFixture([3, 5])
+      yield* f.drive(
+        {
+          nextDelayMs: 1,
+          advance: Effect.gen(function* () {
+            const at = yield* Clock.currentTimeMillis
+            passes.push(at)
+            if (at === 0) yield* f.advanceTo(8)
+            return {
+              observation: {
+                result: 'SUCCESS' as const,
+                outcome: 'ACQUIRED' as const,
+                observedAt: utcInstantFromEpochMillis(at),
+              },
+            }
+          }),
+        },
+        f.advanceTo,
+        0,
+        10,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(passes).toEqual([0, 8])
+})
+
+test('streaming reporting cuts preserve native deadlines and continue consuming arrivals while idle', async () => {
+  const passes: number[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      const f = streamingFixture([9])
+      const runtime = {
+        nextDelayMs: 1,
+        advance: Clock.currentTimeMillis.pipe(
+          Effect.map((at) => {
+            passes.push(at)
+            return {
+              ...(at < 10 ? { nextWakeAt: utcInstantFromEpochMillis(10) } : {}),
+              observation: {
+                result: 'SUCCESS' as const,
+                outcome: 'ACQUIRED' as const,
+                observedAt: utcInstantFromEpochMillis(at),
+              },
+            }
+          }),
+        ),
+      }
+      const first = yield* f.drive(runtime, f.advanceTo, 0, 6, false)
+      expect(first.nextPollAtMs).toBe(10)
+      expect(passes).toEqual([0])
+      const second = yield* f.drive(runtime, f.advanceTo, Number.MAX_SAFE_INTEGER, 12, true)
+      expect(second.passCount).toBe(2)
+      expect(second.nextPollAtMs).toBe(Number.MAX_SAFE_INTEGER)
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(passes).toEqual([0, 9, 10])
+})
+
+test('streaming commands admitted before the reporting cut retain measured completion without a post-cut command', async () => {
+  const issuedAt: number[] = []
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      const f = streamingFixture([8, 9, 12])
+      return yield* f.drive(
+        {
+          nextDelayMs: 1,
+          advance: Effect.gen(function* () {
+            const at = yield* Clock.currentTimeMillis
+            issuedAt.push(at)
+            if (at === 8) yield* f.advanceTo(13)
+            return {
+              observation: {
+                result: 'SUCCESS' as const,
+                outcome: 'ACQUIRED' as const,
+                observedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+              },
+            }
+          }),
+        },
+        f.advanceTo,
+        0,
+        10,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(issuedAt).toEqual([0, 8])
+  expect(result).toMatchObject({ lastPollAtMs: 10, completedAtMs: 13, passCount: 2 })
+})
+
+test('streaming source frontier failures withhold a completed replay', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      const drive = makeStreamingReplaySession({
+        nextAvailableAtMs: Effect.succeed(0),
+        sourceRevision: Effect.succeed(0),
+        brokerStateHash: Effect.succeed('unchanged'),
+      })
+
+      return yield* Effect.result(
+        drive(
+          {
+            nextDelayMs: 1,
+            advance: Effect.succeed({
+              observation: { result: 'SUCCESS', outcome: 'ACQUIRED', observedAt: utcInstantFromEpochMillis(0) },
+            }),
+          },
+          (at) => TestClock.setTime(at),
+          0,
+          10,
+          true,
+        ),
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(result._tag).toBe('Failure')
 })
