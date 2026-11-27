@@ -73,7 +73,10 @@ export const deflatedSharpe = (values: readonly number[], benchmark: number | nu
 export const bootstrap = { replicates: 999, blockDays: 5, seed: 0x2f12cb61 } as const
 
 /** Circular moving blocks from the mean-centered series; null preserves gaps in the original calendar. */
-export const blockBootstrapP = (series: readonly (number | null)[]): number | null => {
+export const blockBootstrapP = (
+  series: readonly (number | null)[],
+  replicates: number = bootstrap.replicates,
+): number | null => {
   if (series.length < 2 * bootstrap.blockDays || series.some((x) => x === null)) return null
   const values = series.filter((x): x is number => x !== null)
   const observed = sum(values)
@@ -91,7 +94,7 @@ export const blockBootstrapP = (series: readonly (number | null)[]): number | nu
   const fullBlocks = Math.floor(values.length / bootstrap.blockDays)
   const remainder = values.length % bootstrap.blockDays
   let tails = 0
-  for (let trial = 0; trial < bootstrap.replicates; trial++) {
+  for (let trial = 0; trial < replicates; trial++) {
     let resampled = 0
     for (let block = 0; block < fullBlocks; block++) resampled += blockSums[nextIndex()]
     if (remainder > 0) {
@@ -100,7 +103,7 @@ export const blockBootstrapP = (series: readonly (number | null)[]): number | nu
     }
     if (resampled >= observed) tails++
   }
-  return (1 + tails) / (1 + bootstrap.replicates)
+  return (1 + tails) / (1 + replicates)
 }
 
 export const summarize = (days: readonly Outcome[], benchmark: number | null) => {
