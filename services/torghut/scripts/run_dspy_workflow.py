@@ -11,6 +11,7 @@ from pathlib import Path
 from app.config import settings
 from app.db import SessionLocal
 from app.trading.llm.dspy_compile import orchestrate_dspy_agentrun_workflow
+from app.trading.llm.dspy_compile.workflow.shared_context import DEFAULT_DSPY_AGENT_NAME
 
 
 def _default_base_url() -> str:
@@ -260,7 +261,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gepa-experiment-name", default="torghut-dspy-gepa-v1")
 
     parser.add_argument("--namespace", default="agents")
-    parser.add_argument("--agent-name", default="codex-spark-agent")
+    parser.add_argument("--agent-name", default=DEFAULT_DSPY_AGENT_NAME)
     parser.add_argument("--vcs-ref-name", default="github")
     parser.add_argument(
         "--secret-binding-ref", default=settings.llm_dspy_secret_binding_ref

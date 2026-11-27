@@ -69,7 +69,7 @@ Correct MCP shape:
 {
   "deliveryId": "mcp-smoke-20260531",
   "payload": {
-    "agentRef": { "name": "codex-spark-agent" },
+    "agentRef": { "name": "codex-agent" },
     "implementation": {
       "text": "Verify the Agents MCP create path without making source changes."
     },

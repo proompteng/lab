@@ -38,6 +38,8 @@ const parseStringList = (value: string | undefined, fallback: string[]) => {
   return parsed.length > 0 ? parsed : [...fallback]
 }
 
+export const DEFAULT_MARKET_CONTEXT_PROVIDER = 'codex'
+
 export type MarketContextRuntimeConfig = {
   requireTechnicalsSourceHealth: boolean
   enabledFallback: boolean
@@ -100,7 +102,7 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
       : (normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL) ??
         'http://torghut.torghut.svc.cluster.local/trading/status'),
     batchTradingStatusTimeoutMs: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS, 2_000),
-    providerChain: parseStringList(env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, ['codex-spark', 'codex']),
+    providerChain: parseStringList(env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, [DEFAULT_MARKET_CONTEXT_PROVIDER]),
     providerFailureThreshold: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD, 3),
     providerCooldownSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS, 900),
     onDemandDispatchEnabled: parseBoolean(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ENABLED, false),

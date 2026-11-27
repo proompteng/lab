@@ -127,7 +127,7 @@ metadata:
   namespace: agents
 spec:
   agentRef:
-    name: codex-spark-agent
+    name: codex-agent
   implementation:
     inline:
       text: |
@@ -184,7 +184,7 @@ metadata:
   namespace: agents
 spec:
   agentRef:
-    name: codex-spark-agent
+    name: codex-agent
   implementation:
     inline:
       text: |
