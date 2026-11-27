@@ -39,6 +39,7 @@ const freezePath = `${evidence}/freeze.json`
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const branch = 'refs/heads/codex/bayn-w5c-10yr-vol-regime-and-carry-alpha'
 const files = [
+  '.oxfmtrc.json',
   `${evidence}/protocol.md`,
   ...[
     'research-10yr-vol-regime-carry',
@@ -60,7 +61,6 @@ const prior = [
 ]
 const cumulativeTrials = prior.reduce((sum, { count }) => sum + count, trials.length)
 const widerTrials = 5000 + trials.length
-const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
 const coverage = (sessions: readonly Session[]) =>
   Object.fromEntries(
     universe.map((symbol, i) => [
@@ -250,6 +250,26 @@ const compute = <A>(operation: string, task: () => A) =>
 const io = <A>(operation: string, task: (signal: AbortSignal) => Promise<A>) =>
   Effect.tryPromise({ try: task, catch: (cause) => new ResearchFailure({ operation, cause }) })
 
+const formatJson = (path: string, value: unknown) =>
+  io(`Format ${path}`, async (signal) => {
+    const encoded = JSON.stringify(value)
+    const child = Bun.spawn(['node', 'node_modules/oxfmt/bin/oxfmt', '--threads=4', `--stdin-filepath=${path}`], {
+      cwd: root,
+      signal,
+      stdin: Buffer.from(encoded),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [code, contents, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ])
+    if (code !== 0 || contents.length === 0) throw new Error(`oxfmt exited ${code}: ${stderr}`)
+    if (JSON.stringify(JSON.parse(contents)) !== encoded) throw new Error('Formatter changed evidence data')
+    return contents
+  })
+
 const read = (path: string) => io(`Read ${path}`, (signal) => readFile(path, { signal }))
 const write = (path: string, contents: string) =>
   io(`Write ${path}`, (signal) => writeFile(join(root, path), contents, { signal }))
@@ -306,7 +326,7 @@ const program = Effect.gen(function* () {
   const sourceHashes = Object.fromEntries(sourceEntries)
   const development = yield* compute('Decode development sessions only', () => loadSessions(archives, developmentEnd))
   const freeze = yield* compute('Evaluate Train and Validation', () => makeFreeze(development, sourceHashes))
-  const receipt = json(freeze)
+  const receipt = yield* formatJson(freezePath, freeze)
   if (revision === undefined || committed === undefined) {
     yield* write(freezePath, receipt)
     yield* Effect.logInfo(`Frozen development receipt: ${hash(receipt)}`)
@@ -317,7 +337,9 @@ const program = Effect.gen(function* () {
   const results = yield* compute('Score registered trials and omissions', () =>
     makeResults(sessions, freeze, revision, receipt),
   )
-  yield* write(`${evidence}/results.json`, json(results))
+  const resultPath = `${evidence}/results.json`
+  const contents = yield* formatJson(resultPath, results)
+  yield* write(resultPath, contents)
   yield* Effect.logInfo(
     `Scored ${results.trials.length} trials, ${results.traded.length} traded ETFs, ${results.qualified.length} qualified`,
   )
