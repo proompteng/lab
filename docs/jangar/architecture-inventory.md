@@ -27,7 +27,7 @@ The inventory keeps the Jangar HTTP registration boundary separate from its UI r
 | ---- | ----------------------------------------------------------------------- | ---: |
 | 1    | `services/jangar/src/server/control-plane-status-types.ts`              | 2611 |
 | 2    | `services/jangar/src/server/chat-completion-encoder.ts`                 | 2073 |
-| 3    | `services/jangar/src/server/torghut-market-context-agents.ts`           | 2002 |
+| 3    | `services/jangar/src/server/torghut-market-context-agents.ts`           | 1996 |
 | 4    | `services/jangar/src/server/atlas-store.ts`                             | 1826 |
 | 5    | `services/jangar/src/server/torghut-simulation-control-plane.ts`        | 1724 |
 | 6    | `services/jangar/src/server/github-review-store.ts`                     | 1459 |
