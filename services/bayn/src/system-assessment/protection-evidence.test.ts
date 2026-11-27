@@ -48,6 +48,38 @@ test.each(['Oco', 'StopLimit'] as const)(
   },
 )
 
+test('replay accepts a replacement receipt after the synthetic close but still rejects late routing', () => {
+  const f = replacementProtectionFixture(document)
+  const replayCloseAt = f.at(10_000)
+  const observedAt = f.at(20_000)
+  const admission = {
+    eventId: f.cut.decisionAdmissions[0]!.eventId,
+    decisionId: document.contentHash,
+    observedAt,
+  }
+  const cut = {
+    ...f.cut,
+    asOf: replayCloseAt,
+    decisionAdmissions: [{ ...admission, sourceHash: testHash(admission) }],
+  }
+  const generationHash = document.bindings.authorityGenerationHash
+  const mutations = indexDecisionAdmissionMutations(cut.mutations)
+  expect(Result.isFailure(decisionAdmissionWitnesses(cut, generationHash, mutations))).toBe(true)
+  expect(Result.isFailure(decisionAdmissionWitnesses(cut, generationHash, mutations, f.at(19_999)))).toBe(true)
+  const witnesses = Result.getOrThrow(decisionAdmissionWitnesses(cut, generationHash, mutations, observedAt))
+  expect(witnesses.sources).toEqual(new Set([testHash(admission)]))
+  expect(witnesses.witnesses).toContainEqual({
+    kind: 'DECISION',
+    sourceHash: f.evidence.intentId,
+    sourceAt: f.evidence.riskDecision.decidedAt,
+    witnessedAt: f.at(1002),
+    correct: true,
+  })
+  expect(
+    Result.isFailure(decisionAdmissionWitnesses({ ...cut, asOf: f.at(1001) }, generationHash, mutations, observedAt)),
+  ).toBe(true)
+})
+
 test('replacement evidence rejects substituted identity, risk approval, ownership, prices and reconciliation', () => {
   const f = replacementProtectionFixture(document)
   const evidence = f.evidence
