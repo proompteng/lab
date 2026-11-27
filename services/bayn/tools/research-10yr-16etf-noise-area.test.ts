@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { rejects } from 'node:assert/strict'
 import { gzipSync } from 'node:zlib'
 
 import { readTape, unpack } from './noise-area-study-data'
@@ -193,7 +194,7 @@ test('freeze uses Train finalists only, and mismatched receipt never opens Holdo
   expect(choose(rankings).selected.id).toBe(grid[2].id)
   let opened = 0
   const open = async () => ++opened
-  await expect(afterFreeze({ hash: 'new' }, '{"hash":"old"}', open)).rejects.toThrow('Published freeze differs')
+  await rejects(afterFreeze({ hash: 'new' }, '{"hash":"old"}', open), /Published freeze differs/)
   expect(opened).toBe(0)
   expect(await afterFreeze({ hash: 'old' }, '{"hash":"old"}', open)).toBe(1)
 })
@@ -212,9 +213,7 @@ test('validates checksummed gzip framing, including trailing bytes, without drop
     ).text()
   expect(await read(bytes, sha256(bytes))).toBe(body)
   bytes[bytes.length - 1] ^= 1
-  await expect(read(bytes, sha256(Buffer.concat([gzip, Buffer.from('suffix')])))).rejects.toThrow(
-    'Byte receipt mismatch',
-  )
+  await rejects(read(bytes, sha256(Buffer.concat([gzip, Buffer.from('suffix')]))), /Byte receipt mismatch/)
 })
 
 test('preserves all physical rows while rejecting bad session bars and reporting gaps', async () => {
@@ -230,14 +229,14 @@ test('preserves all physical rows while rejecting bad session bars and reporting
     outsideRth: 1,
     counts: { QQQ: { rthBars: 1, missingRthBars: 77, missingFlatOpen: 1 } },
   })
-  await expect(readTape([...lines, lines[0]], calendar, roster, 18)).rejects.toThrow('unordered')
-  await expect(readTape(lines, calendar, roster, 16)).rejects.toThrow('row receipt mismatch')
+  await rejects(readTape([...lines, lines[0]], calendar, roster, 18), /unordered/)
+  await rejects(readTape(lines, calendar, roster, 16), /row receipt mismatch/)
   const counts = Object.fromEntries(
     roster.map((symbol) => [symbol, symbol === 'QQQ' ? 2 : symbols.some((name) => name === symbol) ? 1 : 0]),
   )
   const development = ['symbol\tt\to\th\tl\tc\tv\tn\tvw', ...lines.map((line) => line.replace(/\t100$/, '\t1\t100'))]
   expect((await readTape(development, calendar, roster, 17, counts)).coverage).toEqual(tape.coverage)
-  await expect(readTape(lines, calendar, roster, 17, counts)).rejects.toThrow('Missing development SIP header')
+  await rejects(readTape(lines, calendar, roster, 17, counts), /Missing development SIP header/)
 })
 
 test('cost, carry, pairing and deterministic stationary bootstrap are separate', () => {
