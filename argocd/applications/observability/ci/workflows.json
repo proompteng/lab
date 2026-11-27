@@ -31,18 +31,6 @@
       "pattern": "^verify-placement(?: \\(.*\\))?$"
     }
   ],
-  "arc-rollout-ceph-comparison.yml": [
-    {
-      "id": "replay",
-      "pattern": "^replay(?: \\(.*\\))?(?: /.*)?$"
-    }
-  ],
-  "arc-rollout-tmpfs-comparison.yml": [
-    {
-      "id": "replay",
-      "pattern": "^replay(?: \\(.*\\))?(?: /.*)?$"
-    }
-  ],
   "arc-runner-build-push.yml": [
     {
       "id": "nix-image",
