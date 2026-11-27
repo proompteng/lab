@@ -130,17 +130,30 @@ const validateSha = (name: string, bytes: Uint8Array, expected: string) => {
   return bytes
 }
 
-const stage = (source: string, workspace: string) =>
+export const readVerifiedSip = (source: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const manifest = yield* fs.readFile(join(source, 'MANIFEST.json'))
     yield* researchStep('Verify SIP manifest', () => validateSha('MANIFEST.json', manifest, manifestSha256))
+    const calendarBytes = yield* fs.readFile(join(source, calendarName))
+    const calendar: unknown = yield* researchStep(
+      'Verify frozen SIP calendar',
+      () => JSON.parse(Buffer.from(validateSha(calendarName, calendarBytes, calendarSha256)).toString()) as unknown,
+    )
     const compressed = yield* fs.readFile(join(source, minuteName))
-    const partitions = yield* researchStep('Split the verified SIP tape by month', () => {
-      const raw = gunzipSync(validateSha(minuteName, compressed, compressedSha256))
-      validateSha('raw SIP minute bars', raw, rawSha256)
-      return partitionMonths(raw, expectedRows)
-    })
+    const raw = yield* researchStep('Verify the SIP minute tape', () =>
+      gunzipSync(validateSha(minuteName, compressed, compressedSha256)),
+    )
+    yield* researchStep('Verify raw tape digest', () => validateSha(minuteName, raw, rawSha256))
+    return { raw, calendar, sources: { manifestSha256, calendarSha256, compressedSha256, rawSha256, expectedRows } }
+  })
+
+const stage = (raw: Buffer, workspace: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const partitions = yield* researchStep('Split the verified SIP tape by month', () =>
+      partitionMonths(raw, expectedRows),
+    )
     for (const [month, parts] of partitions) yield* fs.writeFile(join(workspace, `${month}.tsv`), Buffer.concat(parts))
     return [...partitions.keys()]
   })
@@ -157,14 +170,15 @@ const run = (args: readonly string[]) =>
         })
       }
       const fs = yield* FileSystem.FileSystem
-      const calendarBytes = yield* fs.readFile(join(source, calendarName))
-      const calendar = yield* researchStep('Verify and normalize the Wave 1 calendar', () =>
-        regularCalendarReplayInput(
-          JSON.parse(Buffer.from(validateSha(calendarName, calendarBytes, calendarSha256)).toString()) as unknown,
-        ),
-      )
       const workspace = yield* fs.makeTempDirectoryScoped({ prefix: 'bayn-sleeve4-sip-' })
-      const months = yield* stage(source, workspace)
+      const { calendar, months, sources } = yield* Effect.gen(function* () {
+        const data = yield* readVerifiedSip(source)
+        const calendar = yield* researchStep('Normalize frozen SIP calendar', () =>
+          regularCalendarReplayInput(data.calendar),
+        )
+        const months = yield* stage(data.raw, workspace)
+        return { calendar, months, sources: data.sources }
+      })
       const verifierSource = yield* fs.readFile(join(import.meta.dir, 'verify-intraday-alpha-replay.ts'))
       const rowsByCost = new Map<number, ReferenceRow[]>()
       const fundingHashes = new Set<string>()
@@ -231,7 +245,7 @@ const run = (args: readonly string[]) =>
         fundingFees: 'fixed-sell-stress-0.21-bp',
         fundingPolicyHash,
         verifierSha256: sha256(verifierSource),
-        sources: { manifestSha256, calendarSha256, compressedSha256, rawSha256, expectedRows },
+        sources,
         metric: 'Engine daily additive modeled net basis points on replay starting equity; null on incomplete days',
         engineOrder: phases,
         results,
