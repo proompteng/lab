@@ -7,7 +7,7 @@ gates below are requirements for a future, separately authorized implementation.
 ## Decision contract
 
 At the next exchange session's open (T), trade a portfolio computed from completed sessions through T−1.
-[The module](../../services/bayn/src/strategy/multi-asset-etf/index.ts) takes a strict, canonical SHA-256 policy
+The owning modules ([policy.ts](../../services/bayn/src/strategy/multi-asset-etf/policy.ts), [signals.ts](../../services/bayn/src/strategy/multi-asset-etf/signals.ts), and [rebalance-planner.ts](../../services/bayn/src/strategy/multi-asset-etf/rebalance-planner.ts)) take a strict, canonical SHA-256 policy
 (`bayn.multi-asset-etf-policy.v1`) and verified inputs. The policy pins the exact universe, the first calendar
 session used for the five-session refresh and Wilder RSI warm-up, and the strategy and risk parameters.
 The signal records raw sleeve weights, effective contributions after netting and caps, exclusions, the two session
