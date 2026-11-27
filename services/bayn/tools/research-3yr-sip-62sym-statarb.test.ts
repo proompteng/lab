@@ -175,3 +175,59 @@ describe('execution', () => {
     expect(run?.loso.get(0)?.at(-1)).toBe(0)
   })
 })
+
+test('two-wave allocation stays capped, excludes previous selections, and clips both exits on half-days', () => {
+  const days = Array.from({ length: 14 }, (_, i) => sample(`2025-11-${String(i + 1).padStart(2, '0')}`, 78, 7))
+  const halfDay = sample('2025-11-28', 42, 7)
+  for (const [id, close] of [98, 99, 100, 100, 101, 102].entries()) {
+    for (const slot of [11, 29]) bar(halfDay, id, slot, [100, 103, 97, close, 100, 100])
+  }
+  for (const id of [0, 5]) halfDay.tape.fill(0, barOffset(id, 30), barOffset(id, 31))
+  const universe = [0, 1, 2, 3, 4, 5]
+  const panel: Panel = {
+    days: [...days, halfDay],
+    symbols: ['A', 'B', 'C', 'D', 'E', 'F', 'SPY'],
+    spy: 6,
+    sector: [6, 6, 6, 6, 6, 6, -1],
+    universes: {
+      'bayn17-stocks': universe,
+      'bayn18-mixed': universe,
+      'expanded46-stocks': universe,
+      'expanded50-mixed': universe,
+    },
+    coverage: [],
+  }
+  const two: Trial = {
+    universe: 'expanded46-stocks',
+    signal: 'spy',
+    pairs: 1,
+    entry: 12,
+    timing: 'two-wave',
+    exit: 'wide',
+    sizing: 'equal',
+    gateBps: 0,
+  }
+  const late: Trial = { ...two, entry: 42, timing: 'single' }
+  const result = replay(panel, [two, late], false)
+  expect(result.get(trialId(two))?.main.at(-1)).toMatchObject({
+    opened: 4,
+    heldGaps: 2,
+    unresolved: 0,
+    timed: 4,
+    entryGross: grossCapUsd,
+  })
+  expect(result.get(trialId(late))?.main.at(-1)).toMatchObject({ attempted: 0, opened: 0 })
+})
+
+test('uses ATR-scaled price levels and 20 strictly prior market returns for volatility timing', () => {
+  const day = sample('2026-01-02')
+  bar(day, 0, 1, [100, 106, 96, 100, 100, 100])
+  expect(replayLeg(day, vwap100(4), 0, 1, 1, 3, 'atr')).toMatchObject({ exit: 97, reason: 'stop' })
+  const history = data.symbols.map(() => [])
+  for (let i = 0; i < 20; i++) {
+    const prior = sample(`2026-02-${String(i + 1).padStart(2, '0')}`)
+    bar(prior, data.spy, 3, [100, 103, 99, 102, 100, 102])
+    expect(buildFeatures(prior, data, history).marketMultiplier).toBe(0)
+  }
+  expect(buildFeatures(sample('2026-02-23'), data, history).marketMultiplier).toBeCloseTo(0.25)
+})
