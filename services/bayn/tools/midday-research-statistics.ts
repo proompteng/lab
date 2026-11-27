@@ -71,9 +71,9 @@ const normalQuantile = (p: number) => {
   return (lo + hi) / 2
 }
 
-export const expectedMaximumSharpe = (dailySharpes: readonly number[]) => {
-  const n = dailySharpes.length
-  if (n < 2) return null
+export const expectedMaximumSharpe = (dailySharpes: readonly number[], trialCount = dailySharpes.length) => {
+  const n = trialCount
+  if (n < 2 || dailySharpes.length < 2) return null
   const eulerGamma = 0.5772156649015329
   const expectedMaximum =
     (1 - eulerGamma) * normalQuantile(1 - 1 / n) + eulerGamma * normalQuantile(1 - 1 / (n * Math.E))
