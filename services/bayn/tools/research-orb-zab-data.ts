@@ -6,6 +6,7 @@ import { Result, Schema } from 'effect'
 
 import { MarketCalendarQueryBase } from '../src/broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../src/broker/alpaca/normalizers'
+import { IsoDateSchema } from '../src/schemas'
 import { intradayAlphaEquitySymbols } from '../src/strategy/intraday-alpha/constants'
 import { openingRangeRelativeVolume } from '../src/strategy/intraday-alpha/stock-in-play'
 
@@ -44,7 +45,7 @@ const decodeCalendar = Schema.decodeUnknownSync(
   Schema.Struct({
     query: MarketCalendarQueryBase,
     response: Schema.Array(
-      Schema.Struct({ date: Schema.String, open: Schema.Literal('09:30'), close: Schema.Literals(['13:00', '16:00']) }),
+      Schema.Struct({ date: IsoDateSchema, open: Schema.Literal('09:30'), close: Schema.Literals(['13:00', '16:00']) }),
     ),
   }),
 )
@@ -164,7 +165,6 @@ interface Features {
   readonly ranges: ReadonlyMap<Horizon, Range>
   readonly high: number
   readonly low: number
-  readonly close: number
 }
 
 export const sessionFeatures = (bars: readonly (Bar | undefined)[]): Features => {
@@ -194,7 +194,7 @@ export const sessionFeatures = (bars: readonly (Bar | undefined)[]): Features =>
       }
     }
   }
-  return { bars, vwap, count, ranges, high, low, close }
+  return { bars, vwap, count, ranges, high, low }
 }
 
 export interface SymbolDay extends Features {
@@ -212,7 +212,9 @@ export const withPriorSessions = (today: Features, prior: readonly (Features | u
   let sumTr = 0
   let dailyCount = 0
   let previousClose: number | null = null
-  for (const day of prior) {
+  const lastFourteen = prior.slice(-14)
+  const lastFifteen = prior.slice(-15)
+  for (const [index, day] of lastFifteen.entries()) {
     const open = day?.bars[0]?.open
     const close = day?.bars.at(-1)?.close
     if (day === undefined || open === undefined || close === undefined) {
@@ -223,15 +225,17 @@ export const withPriorSessions = (today: Features, prior: readonly (Features | u
       previousClose === null
         ? day.high - day.low
         : Math.max(day.high - day.low, Math.abs(day.high - previousClose), Math.abs(day.low - previousClose))
-    sumTr += tr / close
-    dailyCount++
+    if ((lastFifteen.length < 15 || index > 0) && tr > 0) {
+      sumTr += tr / (previousClose ?? open)
+      dailyCount++
+    }
     previousClose = close
   }
   const averageSwing = new Float64Array(today.bars.length).fill(NaN)
   for (let t = 0; t < averageSwing.length; t++) {
     let total = 0
     let n = 0
-    for (const day of prior) {
+    for (const day of lastFourteen) {
       const open = day?.bars[0]?.open
       const close = day?.bars[t]?.close
       if (open === undefined || close === undefined) continue
@@ -245,7 +249,7 @@ export const withPriorSessions = (today: Features, prior: readonly (Features | u
       horizon,
       openingRangeRelativeVolume(
         today.ranges.get(horizon)?.volume ?? null,
-        prior.map((day) => day?.ranges.get(horizon)?.volume ?? null),
+        lastFourteen.map((day) => day?.ranges.get(horizon)?.volume ?? null),
       ),
     ]),
   )
@@ -272,7 +276,7 @@ const panel = (
       const today = sessionFeatures(bars ?? Array.from({ length: session.minutes }))
       result.set(symbol, withPriorSessions(today, days))
       days.push(today)
-      if (days.length > 14) days.shift()
+      if (days.length > 15) days.shift()
     }
     return { ...session, symbols: result }
   })
@@ -339,8 +343,8 @@ const objectReader = (directory: string) => {
     throw new Error('Missing artifacts credentials (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY)')
   }
   const s3 = new S3Client({
-    endpoint: process.env.AGENTS_ARTIFACTS_ENDPOINT ?? 'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
-    bucket: process.env.AGENTS_ARTIFACTS_BUCKET ?? 'agents-artifacts',
+    endpoint: process.env['AGENTS_ARTIFACTS_ENDPOINT'] ?? 'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
+    bucket: process.env['AGENTS_ARTIFACTS_BUCKET'] ?? 'agents-artifacts',
     accessKeyId,
     secretAccessKey,
     region: 'us-east-1',

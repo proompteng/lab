@@ -124,12 +124,22 @@ export const isUpgrade = (trial: Trial): boolean =>
 
 export const neighbors = (trial: Trial, trials: readonly Trial[]): readonly Trial[] => {
   const parameters = Object.entries(trial).filter(([key]) => key !== 'id')
+  const axes: Record<string, readonly unknown[]> =
+    trial.engine === 'orb'
+      ? { rvol: [1.2, 1.5, 2], horizon: horizons, collar: [10, 20, 30] }
+      : { checkpoint: [15, 30, 60], band: [0.8, 1, 1.2], collar: [10, 15, 20, 25] }
   return trials.filter((other) => {
     const difference = parameters.filter(([key, value]) => Reflect.get(other, key) !== value)
     if (difference.length !== 1) return false
-    const [key] = difference[0]
-    return trial.engine === 'orb'
-      ? key === 'rvol' || key === 'horizon' || key === 'collar'
-      : key === 'checkpoint' || key === 'band' || key === 'collar' || key === 'universe'
+    const [key, value] = difference[0]
+    if (key === 'universe') return true
+    const axis = axes[key]
+    const next: unknown = Reflect.get(other, key)
+    return (
+      axis !== undefined &&
+      axis.includes(value) &&
+      axis.includes(next) &&
+      Math.abs(axis.indexOf(value) - axis.indexOf(next)) === 1
+    )
   })
 }

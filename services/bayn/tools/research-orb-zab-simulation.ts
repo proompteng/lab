@@ -103,7 +103,7 @@ export const simulateExit = (
   let heldGaps = 0
   const shares = Math.floor((capital * signal.weight) / entry.price)
   if (shares < 1) return { trade: null, heldGaps }
-  for (let t = minute + (entry.atOpen ? 0 : 1); t < series.bars.length; t++) {
+  for (let t = minute; t < series.bars.length; t++) {
     const bar = series.bars[t]
     if (bar === undefined) {
       heldGaps++
@@ -112,7 +112,10 @@ export const simulateExit = (
     let raw = bar.open
     // An open beyond a stop gaps through it; never grant an intrabar target before an ambiguous stop.
     const stopped = side * ((side === 1 ? bar.low : bar.high) - stop) <= 0
-    const targetHit = side * ((side === 1 ? bar.high : bar.low) - target) >= 0
+    // A resting entry was approached from the wrong side. An adverse print beyond its stop
+    // can occur after the fill, but a favorable print may have happened before it.
+    const intrabarEntry = t === minute && !entry.atOpen
+    const targetHit = !intrabarEntry && side * ((side === 1 ? bar.high : bar.low) - target) >= 0
     const reason: ExitReason | null =
       pending ?? (t >= deadline ? 'time' : stopped ? 'stop' : targetHit ? 'target' : null)
     if (reason !== null) {
@@ -139,6 +142,7 @@ export const simulateExit = (
       }
     }
     // A completed bar can affect only the next minute, including after an intrabar entry.
+    if (intrabarEntry) continue
     const favorable = side === 1 ? bar.high : bar.low
     if (trial?.engine === 'orb') {
       if (trial.exit === 'breakeven' || trial.exit === 'breakeven-vwap') {
@@ -165,8 +169,8 @@ export const simulateExit = (
   return { trade: null, heldGaps }
 }
 
-const fresh = (series: SymbolDay | undefined, t: number, recent = 1): series is SymbolDay =>
-  series?.bars[t] !== undefined && series.count[t + 1] - series.count[Math.max(0, t - 14)] >= recent
+const currentBar = (series: SymbolDay | undefined, t: number, recent = 1): Bar | undefined =>
+  series !== undefined && series.count[t + 1] - series.count[Math.max(0, t - 14)] >= recent ? series.bars[t] : undefined
 
 const attempt = (outcome: Outcome, signal: Signal, t: number, dayMinutes: number, trial: Trial | null, cost: Cost) => {
   outcome.attempts++
@@ -209,19 +213,21 @@ const orbSignals = (day: ResearchDay, outcome: Outcome, trial: OrbTrial, symbols
       : symbols
   for (let t = trial.horizon; t <= spec.entryEndMinuteFromOpen; t++) {
     const spy = day.symbols.get('SPY')
-    if (!fresh(spy, t)) {
+    const benchmark = currentBar(spy, t)
+    if (spy === undefined || benchmark === undefined) {
       outcome.unavailableBenchmark++
       continue
     }
-    const side: TradeSide = spy.bars[t].close > spy.vwap[t] ? 1 : -1
+    const side: TradeSide = benchmark.close > spy.vwap[t] ? 1 : -1
     let best: { signal: Signal; score: number } | undefined
     for (const symbol of pool) {
       const series = day.symbols.get(symbol)
-      if (!fresh(series, t, Math.min(t + 1, spec.minimumRecent15MinBars)) || series.atrRatio === null) continue
+      const bar = currentBar(series, t, Math.min(t + 1, spec.minimumRecent15MinBars))
+      if (series === undefined || bar === undefined || series.atrRatio === null) continue
       const range = series.ranges.get(trial.horizon)
       const prior = series.bars[t - 1]?.close
       if (range === undefined || prior === undefined || side * (range.close - range.open) <= 0) continue
-      const close = series.bars[t].close
+      const close = bar.close
       const boundary = side === 1 ? range.high : range.low
       if (side * (prior - boundary) > 0 || side * (close - series.vwap[t]) <= 0) continue
       const distance = cappedBreakoutExtension(side, close, boundary, series.atrRatio * close, trial.cap)
@@ -270,15 +276,16 @@ const noiseSignals = (
   const committed = new Set<string>()
   for (let t = 0; t < day.minutes - 3 && committed.size < eligible.length; t++) {
     if (!checkpoint(trial, t)) continue
-    if (!fresh(day.symbols.get('SPY'), t)) {
+    if (currentBar(day.symbols.get('SPY'), t) === undefined) {
       outcome.unavailableBenchmark++
       continue
     }
     for (const { symbol, series, atr } of eligible) {
-      if (committed.has(symbol) || !fresh(series, t, spec.minimumRecent15MinBars)) continue
+      const bar = currentBar(series, t, spec.minimumRecent15MinBars)
+      if (committed.has(symbol) || bar === undefined) continue
       const band = bands(trial, series, t)
       if (band === null) continue
-      const close = series.bars[t].close
+      const close = bar.close
       const side: TradeSide | null =
         close > Math.max(band.upper, series.vwap[t]) ? 1 : close < Math.min(band.lower, series.vwap[t]) ? -1 : null
       if (side === null) continue
@@ -305,22 +312,24 @@ const noiseSignals = (
 
 const middaySignals = (day: ResearchDay, outcome: Outcome, symbols: readonly string[], cost: Cost) => {
   const spec = def.middayReversion
-  const phase = IntradayAlphaPhase.MiddayReversion
+  const phase: IntradayAlphaPhase.MiddayReversion = IntradayAlphaPhase.MiddayReversion
   for (let t = spec.entryStartMinuteFromOpen; t <= spec.entryEndMinuteFromOpen; t++) {
     const spy = day.symbols.get('SPY')
-    if (!fresh(spy, t)) {
+    const benchmark = currentBar(spy, t)
+    if (spy === undefined || benchmark === undefined) {
       outcome.unavailableBenchmark++
       continue
     }
-    const deviation = spy.bars[t].close / spy.vwap[t]
+    const deviation = benchmark.close / spy.vwap[t]
     const entries = symbols.flatMap((symbol) => {
       const series = day.symbols.get(symbol)
-      if (!fresh(series, t, spec.minimumRecent15MinBars) || series.count[t + 1] < spec.minimumSessionBars) return []
-      const latestClose = series.bars[t].close
+      const bar = currentBar(series, t, spec.minimumRecent15MinBars)
+      if (series === undefined || bar === undefined || series.count[t + 1] < spec.minimumSessionBars) return []
+      const latestClose = bar.close
       return [
         {
           symbol,
-          phase,
+          phase: IntradayAlphaPhase.MiddayReversion as const,
           latestClose,
           sessionOpenPrice: series.bars[0]?.open ?? latestClose,
           sessionVwap: series.vwap[t],

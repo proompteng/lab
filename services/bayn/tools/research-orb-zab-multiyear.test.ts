@@ -9,6 +9,7 @@ import {
 } from './research-orb-zab-data'
 import { v2Noise, v2Orb } from './research-orb-zab-protocol'
 import { planEntry, replay, simulateExit } from './research-orb-zab-simulation'
+import { blockBootstrapP, deflatedSharpe, deflationBenchmark } from './research-orb-zab-statistics'
 
 const bar = (open: number, overrides: Partial<Bar> = {}): Bar => ({
   open,
@@ -126,4 +127,37 @@ test('LOSO runs selection again rather than subtracting the excluded winner', ()
   const symbols = ['AAPL', 'NVDA']
   expect(replay([day], v2Orb, symbols, 2)[0].trades[0]?.symbol).toBe('AAPL')
   expect(replay([day], v2Orb, symbols, 2, 'AAPL')[0].trades[0]?.symbol).toBe('NVDA')
+})
+
+test('a resting fill can hit the adverse stop in its fill minute but cannot earn a pre-fill target', () => {
+  const signal = {
+    symbol: 'AAPL',
+    side: 1 as const,
+    close: 100,
+    weight: 0.35,
+    stopBps: 100,
+    targetBps: 200,
+    series: features([bar(101, { high: 105, low: 98 }), bar(100)]),
+  }
+  const entry = { kind: 'filled' as const, atOpen: false, raw: 100, price: 100 }
+  expect(simulateExit(signal, entry, 0, 1, 2, null).trade).toMatchObject({ gross: -350, reason: 'stop' })
+  const noStop = { ...signal, series: features([bar(101, { high: 105, low: 100 }), bar(100)]) }
+  expect(simulateExit(noStop, entry, 0, 1, 2, null).trade).toMatchObject({ gross: 0, reason: 'time' })
+})
+
+test('block bootstrap preserves unknown days and uses a deterministic, one-sided null', () => {
+  const increasing = Array.from({ length: 61 }, (_, i) => 20 + i / 10)
+  expect(blockBootstrapP(increasing)).toBe(0.001)
+  expect(blockBootstrapP(increasing.map((x) => -x))).toBe(1)
+  expect(blockBootstrapP(increasing.map((x, i) => (i === 20 ? null : x)))).toBeNull()
+})
+
+test('deflating against more trials raises the benchmark and shrinks confidence', () => {
+  const series = [1, -2, 3, -1, 4, -3, 6, 0, 1, 4]
+  const trialSharpes = [0.02, 0.03, -0.08, 0.15, -0.12]
+  const small = deflatedSharpe(series, deflationBenchmark(trialSharpes, 5))
+  const large = deflatedSharpe(series, deflationBenchmark(trialSharpes, 100))
+  expect(small).not.toBeNull()
+  expect(large).toBeLessThan(small ?? 0)
+  expect(deflatedSharpe([0, 0, 0], 0)).toBeNull()
 })
