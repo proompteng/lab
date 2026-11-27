@@ -52,13 +52,11 @@ jobs:
                         for (i=6;i<NF;i++) if ($i=="-") {
                           print $5, $(i+1), $(i+3)
                           if ($(i+1) !~ /^(overlay|tmpfs|proc|devpts|mqueue|sysfs|cgroup2)$/) invalid=1
-                          if ($(i+1)=="overlay" && $5!="/") invalid=1
                           break
                         }
                       }
                       END { exit invalid }
                     ' /proc/self/mountinfo
-                    test "$(stat -f -c %T /)" = overlayfs
                     for file in /etc/hosts /etc/hostname /etc/resolv.conf /workspace/run.json \
                                 /workspace/status.json /root/.codex /root/.codex/auth.json \
                                 /dev/shm /var/run/secrets/kubernetes.io/serviceaccount/token; do
@@ -96,15 +94,20 @@ jobs:
           fi
           kubectl logs pod/ram-root -c agent
           kubectl logs pod/ram-root -c agent | awk '
-            $1=="/" && $2=="overlay" {
+            $2=="overlay" {
+              hasLower=0
+              hasUpper=0
               n=split($3, options, ",")
-              for(i=1;i<=n;i++) {
-                if(options[i] ~ /^lowerdir=/) { sub(/^lowerdir=/,"",options[i]); count=split(options[i],paths,":") }
-                if(options[i] ~ /^upperdir=/) { sub(/^upperdir=/,"",options[i]); paths[++count]=options[i]; hasUpper=1 }
+              for (i=1;i<=n;i++) {
+                if (options[i] !~ /^(lowerdir|upperdir|workdir)=/) continue
+                if (options[i] ~ /^lowerdir=/) hasLower=1
+                if (options[i] ~ /^upperdir=/) hasUpper=1
+                sub(/^[^=]*=/, "", options[i])
+                count=split(options[i], paths, ":")
+                for (j=1;j<=count;j++) if (paths[j] !~ /^\/var\/lib\/containerd\//) invalid=1
               }
-              for(i=1;i<=count;i++) if(paths[i] !~ /^\/var\/lib\/containerd\//) exit 1
-              verified=(count>1 && hasUpper)
+              if ($1=="/") verified=(hasLower && hasUpper)
             }
-            END { exit !verified }
+            END { exit invalid || !verified }
           '
           test "$(kubectl get pod ram-root -o jsonpath='{.status.containerStatuses[0].state.terminated.message}')" = ram-root-verified
