@@ -68,6 +68,21 @@ export const isBalancedMiddayBasket = (
   )
 }
 
+/** Keep the first funded pairs in selection order, or a single funded leg if only one side remains. */
+export const balancedFundedMiddaySymbols = (
+  symbols: readonly string[],
+  weights: Readonly<Record<string, number>>,
+): readonly string[] => {
+  if (symbols.length <= 1) return symbols
+  const longs = symbols.filter((symbol) => (weights[symbol] ?? 0) > 0)
+  const shorts = symbols.filter((symbol) => (weights[symbol] ?? 0) < 0)
+  if (longs.length === shorts.length) return symbols
+  const pairs = Math.min(longs.length, shorts.length)
+  if (pairs === 0) return symbols.slice(0, 1)
+  const keep = new Set([...longs.slice(0, pairs), ...shorts.slice(0, pairs)])
+  return symbols.filter((symbol) => keep.has(symbol))
+}
+
 export enum IntradayAlphaDecisionReason {
   SelectedMorningOrb = 'SELECTED_MORNING_ORB',
   SelectedMiddayReversion = 'SELECTED_MIDDAY_REVERSION',
@@ -186,22 +201,14 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
     // For paired midday reversion, preserve dollar-neutrality when one leg fails funding:
     // if at least 1 long and 1 short funded, pair equal counts; otherwise retain single funded extreme.
     if (extracted.context.phase === IntradayAlphaPhase.MiddayReversion && selectedSymbols.length > 1) {
-      const fundedLongs = selectedSymbols.filter((symbol) => (weights[symbol] ?? 0) > 0)
-      const fundedShorts = selectedSymbols.filter((symbol) => (weights[symbol] ?? 0) < 0)
-      if (fundedLongs.length !== fundedShorts.length) {
-        const balancedCount = Math.min(fundedLongs.length, fundedShorts.length)
-        const keep =
-          balancedCount > 0
-            ? new Set([...fundedLongs.slice(0, balancedCount), ...fundedShorts.slice(0, balancedCount)])
-            : new Set([selectedSymbols[0] ?? ''])
-        for (const symbol of selectedSymbols) {
-          if (!keep.has(symbol)) {
-            delete plans[symbol]
-            weights[symbol] = 0
-          }
+      const balanced = balancedFundedMiddaySymbols(selectedSymbols, weights)
+      for (const symbol of selectedSymbols) {
+        if (!balanced.includes(symbol)) {
+          delete plans[symbol]
+          weights[symbol] = 0
         }
-        selectedSymbols.splice(0, selectedSymbols.length, ...selectedSymbols.filter((symbol) => keep.has(symbol)))
       }
+      selectedSymbols.splice(0, selectedSymbols.length, ...balanced)
     }
 
     selectedSymbols.sort()
