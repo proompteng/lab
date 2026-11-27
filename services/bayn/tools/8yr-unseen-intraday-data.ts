@@ -3,6 +3,7 @@ import { Config, Data, Effect, Redacted, Schema } from 'effect'
 
 import { IsoDateSchema } from '../src/schemas'
 import { blind, listingDates, prior, universe } from './8yr-unseen-intraday-protocol'
+import { isListed, readTape } from './8yr-unseen-intraday-tape'
 import { normalizeResearchCalendar, sha256 } from './research-orb-zab-data'
 
 const digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
@@ -123,14 +124,20 @@ export const readArchiveMetadata = async (read: (key: string, sha256: string) =>
   if (priorTape.length !== 1 || priorTape[0].rows !== prior.rows) throw new Error('Missing registered continuity tape')
   const priorCalendar = checkCalendar(await read(prior.calendar, prior.calendarSha256), prior)
   return {
-    blind: { calendar: blindCalendar, receipt: source.files.bars_5m },
+    blind: { calendar: blindCalendar, receipt: source.files.bars_5m, rowsBySymbol: source.symbolRowCounts },
     prior: { calendar: priorCalendar, receipt: priorTape[0] },
   }
 }
 
 export class ArchiveError extends Data.TaggedError('ArchiveError')<{ readonly message: string }> {}
 
-export const withArchive = <A>(run: (read: (key: string, digest: string) => Promise<unknown>) => Promise<A>) =>
+export const withArchive = <A>(
+  run: (
+    read: (key: string, digest: string) => Promise<unknown>,
+    open: (key: string) => Promise<Response>,
+    signal: AbortSignal,
+  ) => Promise<A>,
+) =>
   Effect.gen(function* () {
     const endpoint = yield* Config.NonEmptyString('AGENTS_ARTIFACTS_ENDPOINT').pipe(
       Config.withDefault('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80'),
@@ -146,20 +153,109 @@ export const withArchive = <A>(run: (read: (key: string, digest: string) => Prom
       secretAccessKey: Redacted.value(secretAccessKey),
     })
     return yield* Effect.tryPromise({
-      try: (signal) =>
-        run(async (key, expected) => {
-          const response = await fetch(s3.presign(key, { expiresIn: 300 }), { signal, redirect: 'error' }).catch(() => {
+      try: (signal) => {
+        const open = async (key: string) => {
+          const response = await fetch(s3.presign(key, { expiresIn: 300 }), {
+            signal,
+            redirect: 'error',
+            decompress: false,
+          }).catch(() => {
             // A transport cause could contain a presigned URL. Report only the public object name.
-            throw new ArchiveError({ message: `S3 metadata transport failed: ${key}` })
+            throw new ArchiveError({ message: `S3 transport failed: ${key}` })
           })
           if (!response.ok) {
             await response.body?.cancel()
-            throw new ArchiveError({ message: `S3 metadata read failed (${response.status}): ${key}` })
+            throw new ArchiveError({ message: `S3 read failed (${response.status}): ${key}` })
           }
-          const bytes = await response.bytes()
-          if (sha256(bytes) !== expected) throw new ArchiveError({ message: `S3 SHA-256 mismatch: ${key}` })
-          return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown
-        }),
+          return response
+        }
+        return run(
+          async (key, expected) => {
+            const bytes = await (await open(key)).bytes()
+            if (sha256(bytes) !== expected) throw new ArchiveError({ message: `S3 SHA-256 mismatch: ${key}` })
+            return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown
+          },
+          open,
+          signal,
+        )
+      },
       catch: (cause) => new ArchiveError({ message: cause instanceof Error ? cause.message : String(cause) }),
     })
   })
+
+async function* lines(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder('utf-8', { fatal: true })
+  let rest = ''
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      const pieces = (rest + decoder.decode(value, { stream: true })).split('\n')
+      rest = pieces.pop() ?? ''
+      yield* pieces
+    }
+    rest += decoder.decode()
+    if (rest.length > 0) yield rest
+  } finally {
+    await reader.cancel()
+    reader.releaseLock()
+  }
+}
+
+export const loadTapes = async (
+  read: (key: string, digest: string) => Promise<unknown>,
+  open: (key: string) => Promise<Response>,
+) => {
+  // Both universe/calendar receipts must be admitted before the first bar GET.
+  const metadata = await readArchiveMetadata(read)
+  const load = async (kind: 'blind' | 'prior') => {
+    const { calendar, receipt } = metadata[kind]
+    const compressed = new Bun.CryptoHasher('sha256')
+    const raw = new Bun.CryptoHasher('sha256')
+    let gzipBytes = 0
+    let rawBytes = 0
+    const body = (await open(receipt.key)).body
+    if (body === null) throw new Error(`Missing S3 body: ${receipt.key}`)
+    const stream = body
+      .pipeThrough(
+        new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
+          transform(chunk, controller) {
+            gzipBytes += chunk.length
+            compressed.update(chunk)
+            controller.enqueue(chunk)
+          },
+        }),
+      )
+      .pipeThrough(new DecompressionStream('gzip'))
+      .pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            rawBytes += chunk.length
+            raw.update(chunk)
+            controller.enqueue(chunk)
+          },
+        }),
+      )
+    const tape = await readTape(
+      calendar,
+      lines(stream),
+      kind,
+      kind === 'blind' ? blind.rows : prior.rows,
+      kind === 'blind' ? metadata.blind.rowsBySymbol : undefined,
+    )
+    if (
+      gzipBytes !== ('gzipBytes' in receipt ? receipt.gzipBytes : receipt.bytes) ||
+      compressed.digest('hex') !== ('gzipSha256' in receipt ? receipt.gzipSha256 : receipt.sha256) ||
+      ('rawSha256' in receipt && (rawBytes !== receipt.rawBytes || raw.digest('hex') !== receipt.rawSha256))
+    ) {
+      throw new Error(`Byte receipt mismatch: ${receipt.key}`)
+    }
+    const missing = universe.filter(
+      (symbol) => calendar.some(({ date }) => isListed(symbol, date)) && !tape.supported.has(symbol),
+    )
+    if (missing.length > 0) throw new Error(`${kind} SIP lacks any admitted RTH bars for: ${missing.join(', ')}`)
+    return { days: tape.days, coverage: tape.coverage, receipt }
+  }
+  return { blind: await load('blind'), prior: await load('prior') }
+}

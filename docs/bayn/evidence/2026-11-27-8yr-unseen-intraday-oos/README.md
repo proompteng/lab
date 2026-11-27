@@ -30,3 +30,9 @@ split-adjusted Alpaca SIP 5m export for the exact frozen 62-name roster, with a 
 each already-listed name and a pinned calendar for the same 2,012 official sessions. The row count and object
 checksum must come from that export, not from the mismatched one. No existing alternative 2016–2023 five-minute
 object was found under the published `bayn-research-datasets/` prefix.
+
+The scorer is wired separately from the metadata audit. It verifies that the exact code revision and the unchanged
+strategy freeze are published on the study branch before requesting tape. Once an admissible input receipt is bound,
+`--score --output <new JSON file>` writes the annual and aggregate metrics, exact LOSO reruns, bootstrap, attribution
+and stitched daily curves. No results file is present for the rejected archive. Fixtures exercise the fill and admission
+rules; passing them does not establish economic performance.

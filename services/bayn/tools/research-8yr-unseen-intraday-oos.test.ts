@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
-import { admitUniverse, compareUniverse, readArchiveMetadata } from './8yr-unseen-intraday-data'
+import { admitUniverse, compareUniverse, loadTapes } from './8yr-unseen-intraday-data'
 import { baselineNames, blind, noiseNames, stocks, universe } from './8yr-unseen-intraday-protocol'
+
+import { createPreparation, exitPath, netAt, replayDay } from './8yr-unseen-intraday-replay'
+import { stationaryP, stationaryPlan } from './8yr-unseen-intraday-statistics'
+import { Field, makeSeries, price, readTape } from './8yr-unseen-intraday-tape'
 
 describe('Wave 4E metadata admission', () => {
   test('rejects an equal-size manifest with an unrelated name replacing a strategy input', () => {
@@ -50,11 +54,169 @@ describe('Wave 4E metadata admission', () => {
       },
     }
     await expect(
-      readArchiveMetadata((key) => {
-        objects.push(key)
-        return Promise.resolve(metadata)
-      }),
+      loadTapes(
+        (key) => {
+          objects.push(key)
+          return Promise.resolve(metadata)
+        },
+        (key) => {
+          objects.push(key)
+          return Promise.reject(new Error('Attempted to open a bar object'))
+        },
+      ),
     ).rejects.toThrow('missing=[INTC]; unexpected=[ADBE]')
     expect(objects).toEqual([blind.manifest])
+  })
+})
+
+describe('Frozen replay on synthetic fixtures', () => {
+  const session = (date: string, open: string, minutes = 390) => ({
+    date,
+    openMs: Date.parse(`${date}T${open}:00Z`),
+    minutes,
+  })
+  const fillBar = (series: Float64Array, slot: number, bar = [100, 101, 99, 100, 200, 100]) => series.set(bar, slot * 6)
+  const allBars = (slots: number) => {
+    const series = makeSeries(slots)
+    for (let slot = 0; slot < slots; slot++) fillBar(series, slot)
+    return series
+  }
+  test('admission uses UTC bounds for each calendar session and excludes the short-day close itself', async () => {
+    const bar = (date: string, time: string) => `AAPL\t${date}T${time}:00Z\t100\t102\t99\t101\t500\t5\t100`
+    const tape = await readTape(
+      [session('2023-11-03', '13:30'), session('2023-11-24', '14:30', 210)],
+      [
+        'symbol\tt\to\th\tl\tc\tv\tn\tvw',
+        bar('2023-11-03', '13:25'),
+        bar('2023-11-03', '13:30'),
+        bar('2023-11-24', '14:30'),
+        bar('2023-11-24', '17:55'),
+        bar('2023-11-24', '18:00'),
+      ],
+      'blind',
+      5,
+    )
+    expect(tape.coverage).toEqual({ rows: 5, outsideRth: 2, outsideListing: 0, regular: 3 })
+    expect(tape.days[1].slots).toBe(42)
+    const short = tape.days[1].bars.get('AAPL')
+    if (short === undefined) throw new Error('Expected short-day bars')
+    expect(price(short, 41, Field.Open)).toBe(100)
+    expect(price(short, 1, Field.Open)).toBe(0)
+  })
+
+  test('fourteen consecutive complete sessions are required, excluding the current session and pre-listing bars', () => {
+    const prepare = createPreparation()
+    const bars = new Map([['ARM', allBars(78)]])
+    expect(prepare({ date: '2023-09-13', slots: 78, bars }).activeStocks).toEqual([])
+    for (let i = 14; i < 28; i++) {
+      expect(prepare({ date: `2023-09-${i}`, slots: 78, bars }).activeStocks).toEqual([])
+    }
+    expect(prepare({ date: '2023-09-28', slots: 78, bars }).activeStocks).toEqual(['ARM'])
+    expect(prepare({ date: '2023-09-29', slots: 78, bars: new Map() }).activeStocks).toEqual([])
+    expect(prepare({ date: '2023-10-02', slots: 78, bars }).activeStocks).toEqual([])
+  })
+
+  test('a completed bracket touch exits at the next open, not the stop, target or signal close', () => {
+    const series = allBars(5)
+    fillBar(series, 1, [100, 120, 80, 103, 200, 100])
+    fillBar(series, 2, [92, 99, 91, 97, 200, 95])
+    expect(exitPath(series, 1, 1, 4, { stop: 95, target: 108 })).toEqual({ exit: 92, exitSlot: 2, heldGaps: 0 })
+    fillBar(series, 2, [0, 0, 0, 0, 0, 0])
+    expect(exitPath(series, 1, 1, 4, { stop: 95, target: 108 })).toEqual({
+      exit: null,
+      exitSlot: Infinity,
+      heldGaps: 1,
+    })
+  })
+
+  test('OR5 uses actual next-open prices, fee-adjusted slippage and the two registered close clocks', () => {
+    for (const [slots, exitSlot] of [
+      [78, 23],
+      [42, 37],
+    ]) {
+      const prepare = createPreparation()
+      for (let i = 1; i <= 14; i++) {
+        prepare({ date: `2023-02-${String(i).padStart(2, '0')}`, slots: 78, bars: new Map([['AAPL', allBars(78)]]) })
+      }
+      const series = allBars(slots)
+      for (let i = 0; i < slots; i++) fillBar(series, i, [104, 106, 103, 105, 200, 104])
+      fillBar(series, 0, [103, 105, 102, 104, 501, 104])
+      fillBar(series, exitSlot, [107, 108, 102, 102, 200, 105])
+      const prepared = prepare({ date: '2023-02-15', slots, bars: new Map([['AAPL', series]]) })
+      const result = replayDay(prepared, 'C2')
+      const qty = 333
+      expect(result.trades).toBe(1)
+      expect(result.unresolved).toBe(0)
+      expect(result.peakGross).toBeCloseTo(qty * 104 * 1.0005)
+      expect(netAt(result, 5)).toBeCloseTo(
+        qty * (107 * (1 - 5 / 20_000) * (1 - 0.21 / 10_000) - 104 * (1 + 5 / 20_000)),
+      )
+    }
+  })
+
+  test('stationary resampling has geometric blocks that preserve every draw length and is deterministic', () => {
+    const plan = stationaryPlan(12, 24)
+    for (let draw = 0; draw < plan.draws; draw++) {
+      const blocks = plan.blocks.slice(plan.offsets[draw], plan.offsets[draw + 1])
+      expect(blocks.reduce((total, block) => total + (block & 0xffff), 0)).toBe(12)
+    }
+    expect(new Set(plan.blocks.map((block) => block & 0xffff)).size).toBeGreaterThan(1)
+    expect(stationaryPlan(12, 24)).toEqual(plan)
+    expect(
+      stationaryP(
+        Array.from({ length: 12 }, (_, i) => 10 + i),
+        plan,
+      ),
+    ).toBe(1 / 25)
+  })
+  test('the two-engine book reranks around a still-held OR5 name and preserves an atomic reversion basket', () => {
+    const prepare = createPreparation()
+    const names = ['AAPL', 'AMD', 'AMZN', 'GOOGL', 'META', 'NVDA', 'SPY']
+    for (let i = 1; i <= 14; i++) {
+      prepare({
+        date: `2023-11-${String(i).padStart(2, '0')}`,
+        slots: 78,
+        bars: new Map(names.map((symbol) => [symbol, allBars(78)])),
+      })
+    }
+    const short = new Map(names.map((symbol) => [symbol, allBars(42)]))
+    const aapl = short.get('AAPL')
+    const nvda = short.get('NVDA')
+    if (aapl === undefined || nvda === undefined) throw new Error('Expected test bars')
+    for (let i = 0; i < 42; i++) fillBar(aapl, i, [104, 106, 103, 104, 200, 106])
+    fillBar(aapl, 0, [104, 105, 102, 104.5, 800, 104])
+    const scores: Readonly<Record<string, number>> = { AMD: 98.5, AMZN: 99, GOOGL: 101, META: 101.5, NVDA: 102 }
+    for (const [symbol, series] of short) {
+      const close = scores[symbol]
+      if (close !== undefined) fillBar(series, 29, [100, Math.max(100, close), Math.min(100, close), close, 200, 100])
+    }
+    const prepared = prepare({ date: '2023-11-24', slots: 42, bars: short })
+    const single = replayDay(prepared, 'C4_timed')
+    const combined = replayDay(prepared, 'C6')
+    expect([...single.symbols.keys()]).toEqual(['AAPL', 'AMD', 'NVDA', 'META'])
+    expect([...combined.symbols.keys()]).toEqual(['AAPL', 'AMD', 'AMZN', 'NVDA', 'META'])
+    expect(combined.trades).toBe(5)
+    expect(combined.peakGross).toBeLessThanOrEqual(180_000)
+    fillBar(nvda, 30, [0, 0, 0, 0, 0, 0])
+    expect(replayDay(prepared, 'C6')).toMatchObject({ trades: 1, missingEntries: 1 })
+  })
+
+  test('Noise responds only at the 30-minute checkpoints and exits the opposite signal at the next open', () => {
+    const prepare = createPreparation()
+    const prior = allBars(78)
+    fillBar(prior, 5, [100, 101, 99, 101, 200, 100])
+    fillBar(prior, 11, [100, 101, 99, 99, 200, 100])
+    for (let i = 1; i <= 14; i++) {
+      prepare({ date: `2023-02-${String(i).padStart(2, '0')}`, slots: 78, bars: new Map([['QQQ', prior]]) })
+    }
+    const today = allBars(78)
+    fillBar(today, 4, [100, 110, 100, 109, 200, 100])
+    fillBar(today, 5, [100, 103, 100, 102, 200, 100])
+    fillBar(today, 6, [104, 104, 102, 103, 200, 103])
+    fillBar(today, 11, [100, 100, 98, 98, 200, 99])
+    fillBar(today, 12, [96, 99, 96, 98, 200, 97])
+    const result = replayDay(prepare({ date: '2023-02-15', slots: 78, bars: new Map([['QQQ', today]]) }), 'C5')
+    expect(result.trades).toBe(1)
+    expect(result.base).toBeCloseTo(375 * (96 - 104 - (96 * 0.21) / 10_000))
   })
 })
