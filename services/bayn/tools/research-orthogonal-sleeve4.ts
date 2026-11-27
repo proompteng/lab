@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { IntradayAlphaPhase } from '../src/strategy/intraday-alpha/constants'
+import { regularCalendarReplayInput } from './midday-research-data'
 import { mean, sum } from './midday-research-statistics'
 import { holdoutEnd, liveStart, loadDataset, manifestSha256, sha256, split, validationEnd } from './sleeve4-data'
 import {
@@ -138,11 +139,15 @@ const benchReplay = (dataset: Dataset) => {
   try {
     const path = join(directory, 'live.tsv')
     writeFileSync(path, dataset.liveRaw)
-    const { policyHash, results, baselineCoverage, inputRows } = runIntradayAlphaReplayVerification(
-      [path],
-      dataset.calendarJson,
-      { evaluationStart: liveStart },
-    )
+    const source = regularCalendarReplayInput(dataset.calendarJson)
+    const warmupStart = '2026-07-16'
+    const calendar = {
+      query: { start: warmupStart, end: holdoutEnd },
+      response: source.response.filter(({ date }) => date >= warmupStart && date <= holdoutEnd),
+    }
+    const { policyHash, results, baselineCoverage, inputRows } = runIntradayAlphaReplayVerification([path], calendar, {
+      evaluationStart: liveStart,
+    })
     const perCost = results.map(({ slippageBps, sessionDetails }) => ({
       slippageBps,
       days: sessionDetails.map((d) => {

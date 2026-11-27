@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 
+import { regularCalendarReplayInput } from './midday-research-data'
 import { verifyFreeze } from './research-orthogonal-sleeve4'
 import { adjustSplit, chooseMinuteSource, split, type Candle } from './sleeve4-data'
 import {
@@ -13,6 +14,8 @@ import {
   type Outcome,
 } from './sleeve4-evaluation'
 import { decide, minuteHistory, requiredSymbols, trialRegistry, type Frame } from './sleeve4-signals'
+
+import { runIntradayAlphaReplayVerification } from './verify-intraday-alpha-replay'
 
 const price = (open: number, close = open, volume = 100): Candle => ({
   open,
@@ -233,4 +236,14 @@ test('frozen selection checks the receipt and requires adjacent viable variants'
   expect(selection.development.find(({ rule: candidate }) => candidate.id === spec.id)?.adjacentPasses).toHaveLength(4)
   expect(selection.development.every((r) => r.passed)).toBe(true)
   expect(new Set(trialRegistry.map((r) => r.id)).size).toBe(trialRegistry.length)
+})
+
+test('frozen regular-only calendar is accepted by the existing v2 replay', () => {
+  const input = {
+    query: { start: '2026-11-27', end: '2026-11-27' },
+    response: [{ date: '2026-11-27', open: '09:30', close: '13:00' }],
+  }
+  expect(() => runIntradayAlphaReplayVerification(['/dev/null'], input)).toThrow('session_open')
+  const replay = runIntradayAlphaReplayVerification(['/dev/null'], regularCalendarReplayInput(input))
+  expect(replay.results[0]?.sessionDetails[0]?.expectedRegularMinutes).toBe(210)
 })
