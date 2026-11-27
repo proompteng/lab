@@ -1,4 +1,11 @@
-import { isBrokerManagedAlphaTarget, isProtectedEntryTarget } from '../strategy/runtime-decision'
+import { actualAlphaProtectionPrices } from '../strategy/intraday-alpha/exit-plan'
+import { pureEtfCheckpointMinutes } from '../market-data/intraday/trailing-baseline'
+import { resolveAlphaRegularSession } from '../strategy/intraday-alpha/signals'
+import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import { loadIntradaySnapshot } from './intraday-market-data'
+import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
+import { isIntradayAlphaTarget, isBrokerManagedAlphaTarget, isProtectedEntryTarget } from '../strategy/runtime-decision'
 import { Effect, Option, Result } from 'effect'
 
 import { BrokerMutationError, MutationOperation } from '../broker/alpaca-mutations/model'
@@ -21,8 +28,15 @@ import { decidePositionProtection, type ProtectionOrderState } from '../executio
 import { canonicalHashV1Result } from '../hash'
 import { JevPositionStore, JevPurpose } from '../jev/portfolio'
 import type { JevProtocol } from '../jev/protocol'
-import { evaluateJevPositionManagement } from '../jev/runtime'
-import { JevExitReason, jevMaximumHoldDueAt, jevProtectiveStopCrossed, type JevExitTarget } from '../jev/exit'
+import { evaluateJevPositionManagement, jevPricingQuery, JevAwaitingEvidence } from '../jev/runtime'
+import {
+  decideJevExit,
+  oppositeAlphaBandCrossed,
+  JevExitReason,
+  jevMaximumHoldDueAt,
+  jevProtectiveStopCrossed,
+  type JevExitTarget,
+} from '../jev/exit'
 import { decodeIntradayQuoteRows } from '../market-data/intraday/rows'
 import { compareIntradayInstants } from '../market-data/intraday/time'
 import type { ReconciliationPassResult } from '../reconciler'
@@ -31,7 +45,7 @@ import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
 import { quantityScale } from '../quantity'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
-import { isShortExitPlan, type FundedEntryExitPlan } from '../strategy/funded-exit-plan'
+import { isIntradayAlphaExitPlan, isShortExitPlan, type FundedEntryExitPlan } from '../strategy/funded-exit-plan'
 import type { CycleWaitReason } from '../cycle/runner/readiness'
 import { CycleRunnerError } from '../cycle/runner/model'
 import {
@@ -202,6 +216,82 @@ export const advancePositionProtection = (request: {
           symbol,
         })
       }
+      const fillAnchored = isIntradayAlphaExitPlan(plan) && plan.levels.fillAnchored !== undefined
+      let prices = plan.levels
+      if (fillAnchored && quantityAtoms !== 0n && !request.closeDue) {
+        const portfolio = yield* JevPositionStore.pipe(
+          Effect.flatMap((store) =>
+            store.read({
+              cycleId: cycle.identity.cycleId,
+              entryDecisionHash: document.contentHash,
+              brokerState: state,
+              managedSymbol: symbol,
+            }),
+          ),
+        )
+        const anchored = yield* Effect.fromResult(actualAlphaProtectionPrices(plan, portfolio.entryFills))
+        prices = { ...plan.levels, ...anchored }
+        const evidence = {
+          cycleId: cycle.identity.cycleId,
+          sessionDate: cycle.identity.executionSessionDate,
+          protocol,
+          portfolio,
+          observedAt,
+          symbol,
+        }
+        if (portfolio.exitRequestedAt !== null) {
+          management = {
+            _tag: 'Exit',
+            target: yield* Effect.fromResult(
+              decideJevExit({
+                ...evidence,
+                trigger: { reason: JevExitReason.ProtectionReleased },
+              }),
+            ),
+          }
+        } else if (input.intradayMarketData !== undefined && document.executionSession !== undefined) {
+          const calendar = document.executionSession.calendar
+          const regular = yield* Effect.fromResult(resolveAlphaRegularSession(calendar, evidence.sessionDate))
+          const now = Date.parse(observedAt)
+          const minuteEnd = Math.floor(now / 60_000) * 60_000
+          const checkpoint = (minuteEnd - regular.openMs) / 60_000
+          if (
+            pureEtfCheckpointMinutes.some((minute) => minute === checkpoint) &&
+            minuteEnd > Date.parse(plan.levels.sourceEndAt) &&
+            minuteEnd <= regular.closeMs - 30 * 60_000 &&
+            now > minuteEnd + protocol.decisionDelaySeconds * 1000
+          ) {
+            const marketData = input.intradayMarketData
+            const snapshot = yield* Effect.gen(function* () {
+              const query = yield* Effect.fromResult(
+                jevPricingQuery(cycle, protocol, calendar, observedAt, [symbol], IntradaySnapshotPurpose.Liquidation),
+              )
+              return yield* loadIntradaySnapshot(marketData, query)
+            }).pipe(
+              Effect.catch((cause) =>
+                cause instanceof JevAwaitingEvidence || ('cause' in cause && isIntradaySnapshotPending(cause.cause))
+                  ? Effect.void
+                  : Effect.fail(cause),
+              ),
+            )
+            if (snapshot !== undefined && (yield* Effect.fromResult(oppositeAlphaBandCrossed(snapshot, plan)))) {
+              management = {
+                _tag: 'Exit',
+                target: yield* Effect.fromResult(
+                  decideJevExit({
+                    ...evidence,
+                    trigger: {
+                      reason: JevExitReason.OppositeBandExit,
+                      manifest: snapshot.manifest,
+                      rows: yield* Effect.fromResult(persistIntradayRecordRows(snapshot)),
+                    },
+                  }),
+                ),
+              }
+            }
+          }
+        }
+      }
       let protection: ProtectionOrderState = { _tag: 'Absent' }
       const stop = open.find((order) => order.orderType === OrderType.StopLimit)
       if (stop !== undefined && stop.intentId !== undefined) {
@@ -228,6 +318,7 @@ export const advancePositionProtection = (request: {
       }
       const nativeStatus = decidePositionProtection({
         plan,
+        prices,
         entry: { _tag: 'Settled' },
         quantityAtoms,
         protection,
@@ -279,6 +370,7 @@ export const advancePositionProtection = (request: {
       }
       const action = decidePositionProtection({
         plan,
+        prices,
         entry: { _tag: 'Settled' },
         quantityAtoms,
         protection,
@@ -299,6 +391,13 @@ export const advancePositionProtection = (request: {
             order.intentId,
             order.brokerOrderId,
             management._tag === 'Exit' ? management.target : undefined,
+            fillAnchored &&
+              !request.closeDue &&
+              management._tag !== 'Exit' &&
+              protection._tag === 'Armed' &&
+              protection.method === 'BRACKET' &&
+              action._tag === 'CancelProtection' &&
+              quantityAtoms !== 0n,
           )
           .pipe(
             Effect.catch((cause) => {
@@ -358,19 +457,17 @@ export const advancePositionProtection = (request: {
             message: 'Protection is missing its entry-bound risk and session facts',
             failure: 'contract',
           })
-        const limit = BigInt(
-          action.method === 'OCO' ? plan.levels.profitLimitPriceMicros : plan.levels.stopLimitPriceMicros,
-        )
+        const limit = BigInt(action.method === 'OCO' ? prices.profitLimitPriceMicros : prices.stopLimitPriceMicros)
         const conditional =
           action.method === 'OCO'
             ? {
                 _tag: short ? ('EquityShortOco' as const) : ('Oco' as const),
-                ...plan.levels,
+                ...prices,
                 entryDecisionHash: document.contentHash,
               }
             : {
                 _tag: short ? ('EquityShortStopLimit' as const) : ('StopLimit' as const),
-                stopPriceMicros: plan.levels.stopPriceMicros,
+                stopPriceMicros: prices.stopPriceMicros,
                 entryDecisionHash: document.contentHash,
               }
         const protectionTerms = isOcoProtection(conditional)
@@ -414,7 +511,7 @@ export const advancePositionProtection = (request: {
           executionMarketDataHash: generation,
           marketDataObservedAt: state.positionsObservedAt,
           // A conditional sell is priced against its sealed trigger, rather than the present spot price.
-          referencePriceMicros: action.method === 'OCO' ? limit.toString() : plan.levels.stopPriceMicros,
+          referencePriceMicros: action.method === 'OCO' || fillAnchored ? limit.toString() : prices.stopPriceMicros,
           expectedExecutionPriceMicros: limit.toString(),
           marketDataSymbol: plan.levels.symbol,
           reservedBuyingPowerMicros: '0',
@@ -485,7 +582,7 @@ export const advancePositionProtection = (request: {
 
     const planSymbols = new Set(planEntries.map(([symbol]) => symbol))
     const allowedUniverse = new Set(protocol.universe)
-    const isConcurrentAlphaTarget = target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+    const isConcurrentAlphaTarget = isIntradayAlphaTarget(target)
     if (
       state.positions.some(
         (position) =>

@@ -18,6 +18,7 @@ export type IntradayDelayClass =
 export enum IntradaySnapshotPurpose {
   EntryPricing = 'ENTRY_PRICING',
   Liquidation = 'LIQUIDATION',
+  PositionCheckpoint = 'POSITION_CHECKPOINT',
 }
 
 export enum IntradayBenchmarkEvidencePolicy {

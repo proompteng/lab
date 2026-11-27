@@ -49,7 +49,7 @@ import { VerifiedReplayImage } from './replay-image'
 import type { ReplayExecutionReceiptSchema } from './replay-execution'
 import { FrozenControlReplaySchema, prepareFrozenControlReplay } from './frozen-control-replay'
 import { FrozenControlReportSchema, reproduceFrozenControlReport } from './frozen-control-report'
-import { ResearchStrategyEngine } from './strategy-binding'
+import { isAlphaBinding } from './strategy-binding'
 
 // The complete report is hashed first; this projection decodes only fields used by this verifier.
 const RetainedLatencyReportSchema = Schema.Struct({
@@ -461,7 +461,7 @@ export const bindLatencyStressSources = (
         )
           return yield* fail('Latency release does not reproduce its original command, result and registered floor')
       }
-      const alpha = prepared.strategyBinding?.engine === ResearchStrategyEngine.IntradayAlpha
+      const alpha = isAlphaBinding(prepared.strategyBinding)
       if (report.schemaVersion !== 'bayn.backtest-report.v9') {
         if (prepared.strategyBinding === null)
           return yield* fail('Native alpha report requires its independently verified strategy binding')
