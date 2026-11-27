@@ -222,18 +222,19 @@ const main = Effect.gen(function* () {
         const firstSession = registration.calendar.sessions[0]
         const lastSession = registration.calendar.sessions.at(-1)
         assert.ok(firstSession !== undefined && lastSession !== undefined)
-        // Admission receipts use the database wall clock, not the simulated order clock.
-        const [{ receiptObservedAsOf }] = yield* Schema.decodeUnknownEffect(
-          Schema.Tuple([Schema.Struct({ receiptObservedAsOf: UtcInstantSchema })]),
-        )(
-          yield* sql`SELECT to_char(
-            to_timestamp(ceil(extract(epoch FROM statement_timestamp()) * 1000) / 1000) AT TIME ZONE 'UTC',
-            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
-          ) AS "receiptObservedAsOf"`,
-        )
         const documents = yield* Effect.forEach(
           yield* sql`SELECT document FROM (${executionDecisionRows(sql)}) decisions`,
           (row) => Effect.fromResult(decodeExecutionDecisionDocument(row['document'])),
+        )
+        // Admissions are stamped by PostgreSQL wall time, not the replay clock. The child has exited,
+        // so take a database cutoff rounded up to milliseconds just like the receipt timestamps.
+        const [{ asOf: admissionObservedAsOf }] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ asOf: UtcInstantSchema })]),
+        )(
+          yield* sql`SELECT to_char(
+          to_timestamp(ceil(extract(epoch FROM clock_timestamp()) * 1000) / 1000) AT TIME ZONE 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) AS "asOf"`,
         )
         const orders = yield* Effect.forEach(identities, (identity) =>
           Effect.gen(function* () {
@@ -280,7 +281,7 @@ const main = Effect.gen(function* () {
             )
             const decisionAdmissions = yield* readSystemDecisionAdmissions({
               ...scope,
-              asOf: receiptObservedAsOf,
+              asOf: admissionObservedAsOf,
             })
             const executionCut = {
               ...cut,
@@ -325,7 +326,7 @@ const main = Effect.gen(function* () {
                 executionCut,
                 identity.generationHash,
                 indexDecisionAdmissionMutations(executionCut.mutations),
-                receiptObservedAsOf,
+                admissionObservedAsOf,
               ),
             )
             for (const evidence of protection)
