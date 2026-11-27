@@ -14,17 +14,18 @@ warmup is July 16–August 24, evaluation is August 25–November 25 (66 RTH ses
 **not** spliced into live, so overlapping dates are not independent confirmation. Raw NVDA prices and VWAP before
 June 10, 2024 are divided by ten and volumes multiplied by ten before constructing causal history
 (39,532 regular-session rows). The historical tape represents 675 of 676 calendar sessions, with five
-insufficient-baseline sessions and 881 missing required benchmark checkpoints. These are explicit
-limitations on the historical stop-risk denominator.
+insufficient-baseline sessions and 428 missing benchmark checkpoints on the quota-aware decision path. These
+limit the historical stop-risk denominator.
 
 This is a **fixed-opportunity comparison**, not an integrated strategy backtest. The study uses the production
 signal extractor, selector, funded exit plans, whole shares, and target planner. It assumes a flat $100k planning
 book with $400k buying power for the entry/exit cohort, selects the first planned ORB and Midday candidate set per
-day and first Noise leg per symbol, does not let later fills change cohort membership, and assumes short
-eligibility. A synthetic fresh quote on a completed bar lets the production selector and funding contract run;
+day and first Noise leg per symbol. It applies those quotas before resolving each later phase, does not let
+fills change cohort membership, and assumes short eligibility. A synthetic fresh quote on a completed bar lets
+the production selector and funding contract run;
 this does not reconstruct actual simultaneous IEX freshness. No concurrent occupancy, inference/ingestion
-lag distribution, eligible size, queue, retries, or partial fills are inferred. For each collar stress, bracket levels and shares stay sealed at v2's 10 bp sizing so the
-comparison changes **admission price tolerance**, not risk or selection. Adaptive collars use the production
+lag distribution, eligible size, queue, retries, or partial fills are inferred. For each collar stress, bracket
+levels and shares stay sealed at v2's 10 bp sizing so the comparison changes **admission price tolerance**, not risk or selection. Adaptive collars use the production
 trailing daily ATR14 ratio, computed from prior sessions only, expressed as a dollar amount at the signal close.
 Missing ATR does not inherit a 10 bp collar. The historical funding checks before July 2026 use a retained schedule
 for plan construction only; those dollars are gross, not made-up historical fees.

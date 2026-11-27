@@ -126,13 +126,13 @@
       "sessionsWithoutBaseline": 0,
       "sessionsWithoutBars": 0,
       "benchmarkUnavailableCheckpoints": 0,
-      "noSignalCheckpoints": 3058,
+      "noSignalCheckpoints": 3493,
       "selectedBeforeFunding": 382,
       "plannerBlocks": 0,
       "checkpoints": {
         "MORNING_ORB": 3343,
-        "NOISE_AREA_TREND": 312,
-        "MIDDAY_REVERSION": 2021
+        "NOISE_AREA_TREND": 266,
+        "MIDDAY_REVERSION": 66
       }
     },
     "historical": {
@@ -141,14 +141,14 @@
       "plannedLegs": 2852,
       "sessionsWithoutBaseline": 5,
       "sessionsWithoutBars": 1,
-      "benchmarkUnavailableCheckpoints": 881,
-      "noSignalCheckpoints": 32865,
+      "benchmarkUnavailableCheckpoints": 428,
+      "noSignalCheckpoints": 35362,
       "selectedBeforeFunding": 2860,
       "plannerBlocks": 4,
       "checkpoints": {
         "MORNING_ORB": 33967,
-        "NOISE_AREA_TREND": 3048,
-        "MIDDAY_REVERSION": 20587
+        "NOISE_AREA_TREND": 2843,
+        "MIDDAY_REVERSION": 725
       }
     }
   },

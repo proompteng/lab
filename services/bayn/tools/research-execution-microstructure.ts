@@ -1,6 +1,5 @@
-import { writeFileSync } from 'node:fs'
-
-import { Result } from 'effect'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
+import { Data, Effect, FileSystem, Result } from 'effect'
 import { cryptoMaximumTakerFeeBps } from '../src/broker/crypto-fees'
 import { quantityScale } from '../src/quantity'
 import { adaptiveEntryCollarBps, adaptiveStopBufferBps } from '../src/strategy/execution-model/adaptive-collars'
@@ -33,7 +32,11 @@ import {
 import { evaluationStart, readFrozenMiddayTape, type Session } from './midday-research-data'
 import { mean, sessionEconomics, sum } from './midday-research-statistics'
 
-const phases = [IntradayAlphaPhase.MorningOrb, IntradayAlphaPhase.MiddayReversion, IntradayAlphaPhase.NoiseAreaTrend]
+const phases = [
+  IntradayAlphaPhase.MorningOrb,
+  IntradayAlphaPhase.MiddayReversion,
+  IntradayAlphaPhase.NoiseAreaTrend,
+] as const
 const costs = [2, 5, 10]
 const baselineCost = 5
 const baselineCollar = 10
@@ -320,11 +323,11 @@ const analyzeStops = (cohort: readonly CohortLeg[], splits: readonly (typeof sto
         ]
       })
       const priced = selected.flatMap(({ leg, entry, path }): Trade[] =>
-        path?.exit ? [{ leg, entry, exit: path.exit.price }] : [],
+        path === null || path.exit === null ? [] : [{ leg, entry, exit: path.exit.price }],
       )
       const paired = selected.flatMap(({ leg, path }) => {
         const base = baseline.get(leg)
-        return !path?.exit || !base?.exit
+        return path === null || path.exit === null || base === undefined || base === null || base.exit === null
           ? []
           : [
               {
@@ -569,17 +572,16 @@ const feesAudit = (cohort: readonly CohortLeg[]) => ({
   selectedWholeShares: distribution(cohort.map(({ shares }) => shares)),
   selectedNotionalAtReferenceUsd: distribution(cohort.map(({ shares, close }) => shares * close)),
   baselineModeledRoundTrips: measures(
-    tradesFor(
-      stopAtBaseline(cohort, 10).flatMap(({ leg, entry, path }) =>
-        path?.exit ? [{ leg, price: entry, fills: true, exit: path.exit, driftBps: 0 }] : [],
-      ),
+    stopAtBaseline(cohort, 10).flatMap(({ leg, entry, path }) =>
+      path === null || path.exit === null ? [] : [{ leg, entry, exit: path.exit.price }],
     ),
   ),
 })
 
-export const runExecutionMicrostructure = (directory: string) => {
-  const universe = [...intradayAlphaCandidateSymbols, intradayAlphaBenchmarkSymbol]
-  const live = readFrozenMiddayTape(directory, universe)
+const buildExecutionMicrostructureReport = (
+  live: ReturnType<typeof readFrozenMiddayTape>,
+  historical: ReturnType<typeof readHistoricalMicrostructureBars>,
+) => {
   const { calendar } = live
   const byDate = new Map(
     live.sessions.map(({ date, tapes }) => {
@@ -639,7 +641,6 @@ export const runExecutionMicrostructure = (directory: string) => {
       }
     },
   })
-  const historical = readHistoricalMicrostructureBars(directory)
   const historicalDates = historical.calendar.providerSessions
     .map(({ date }) => date)
     .filter((date) => date >= '2024-01-02' && date <= '2026-09-11')
@@ -716,13 +717,38 @@ export const runExecutionMicrostructure = (directory: string) => {
   }
 }
 
-if (import.meta.main) {
-  const [input, output, extra] = process.argv.slice(2)
-  if (input === undefined || output === undefined || extra !== undefined)
-    throw new Error(
-      'Usage: bun services/bayn/tools/research-execution-microstructure.ts <frozen-datasets-dir> <results.json>',
+class ExecutionMicrostructureError extends Data.TaggedError('ExecutionMicrostructureError')<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+const loadFrozenInput = <A>(name: string, read: () => A) =>
+  Effect.try({
+    try: read,
+    catch: (cause) => new ExecutionMicrostructureError({ message: `Cannot load frozen ${name} inputs`, cause }),
+  })
+
+export const runExecutionMicrostructureCommand = (args: readonly string[]) =>
+  Effect.gen(function* () {
+    const [input, output] = args
+    if (args.length !== 2 || input === undefined || output === undefined || input === '' || output === '')
+      return yield* new ExecutionMicrostructureError({
+        message:
+          'Usage: bun services/bayn/tools/research-execution-microstructure.ts <frozen-datasets-dir> <results.json>',
+      })
+    const live = yield* loadFrozenInput('live', () =>
+      readFrozenMiddayTape(input, [...intradayAlphaCandidateSymbols, intradayAlphaBenchmarkSymbol]),
     )
-  const report = runExecutionMicrostructure(input)
-  // Finish all input verification and computation before the only write.
-  writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
-}
+    const historical = yield* loadFrozenInput('historical', () => readHistoricalMicrostructureBars(input))
+    const report = buildExecutionMicrostructureReport(live, historical)
+    const fs = yield* FileSystem.FileSystem
+    yield* fs.writeFileString(output, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
+  })
+
+if (import.meta.main)
+  NodeRuntime.runMain(
+    runExecutionMicrostructureCommand(process.argv.slice(2)).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- the offline command owns its filesystem
+      Effect.provide(NodeServices.layer),
+    ),
+  )

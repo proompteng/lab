@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { NodeServices } from '@effect/platform-node'
+import { Effect, Result } from 'effect'
 
 import {
   intradayAlphaStrategyIdentity,
@@ -8,11 +9,17 @@ import {
 } from '../src/strategy/intraday-alpha/policy'
 import type { SelectedAlphaLeg } from '../src/strategy/intraday-alpha/signals'
 import { TargetPlanReason, TargetPlanStatus } from '../src/target-planner'
-import { phaseDeadline, planCohortLegs, policy, type CohortLeg } from './execution-microstructure-cohort'
+import {
+  phaseDeadline,
+  planCohortLegs,
+  policy,
+  scanExecutionCohort,
+  type CohortLeg,
+} from './execution-microstructure-cohort'
 import { asReplayBar, splitAdjustedBar } from './execution-microstructure-data'
 import { entryLimit, followExit, probeTimedClose, stopLimit } from './execution-microstructure-model'
 import { decodeRegularCalendar, type Bar } from './midday-research-data'
-import { probeEntry } from './research-execution-microstructure'
+import { probeEntry, runExecutionMicrostructureCommand } from './research-execution-microstructure'
 import { buildReplaySnapshot, makeShortEligibility } from './verify-intraday-alpha-replay'
 
 const bar = (open: number, high = open, low = open, close = open): Bar => ({
@@ -232,4 +239,64 @@ test('the compiled v2 protocol matches the retained PAPER activation and still u
   expect(Result.getOrThrow(intradayAlphaStrategyIdentity(policy)).protocolHash).toBe(
     '5863a919110021b7bf7f27872aafe0bed44092cf832f8d0e3a6fdb66fb73ff2d',
   )
+})
+
+test('an already taken Noise leg does not shadow a Midday signal on the overlapping final checkpoint', () => {
+  const date = '2026-11-24'
+  const history = ['2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-23', date]
+  const calendar = decodeRegularCalendar({
+    query: { start: history[0], end: date },
+    response: history.map((day) => ({ date: day, open: '09:30', close: '16:00' })),
+  })
+  const byDate = new Map(
+    history.map((day) => [
+      day,
+      new Map(
+        ['SPY', 'AAPL', 'QQQ'].map((symbol) => [
+          symbol,
+          Array.from({ length: 390 }, (_, minute) => {
+            const price =
+              day === date && symbol === 'QQQ' && minute >= 30
+                ? 102
+                : day === date && symbol === 'AAPL' && minute >= 150
+                  ? 97
+                  : day !== date && symbol === 'QQQ' && minute > 0
+                    ? 100.1
+                    : 100
+            return asReplayBar(symbol, Date.parse(`${day}T14:30:00Z`), minute, bar(price, price + 0.2, price - 0.2))
+          }),
+        ]),
+      ),
+    ]),
+  )
+  const diagnosticAtOverlap: string[] = []
+  const { cohort } = scanExecutionCohort({
+    byDate,
+    calendar,
+    dates: [date],
+    onCheckpoint: (checkpoint) => {
+      if (checkpoint.completedMinute === 150) diagnosticAtOverlap.push(...checkpoint.legs.map(({ symbol }) => symbol))
+    },
+  })
+  expect(diagnosticAtOverlap).toEqual(['QQQ'])
+  expect(cohort.map(({ symbol, phase, completedMinute }) => [symbol, phase, completedMinute])).toEqual([
+    ['QQQ', IntradayAlphaPhase.NoiseAreaTrend, 30],
+    ['AAPL', IntradayAlphaPhase.MiddayReversion, 150],
+  ])
+})
+
+test('the command reports an input error before publishing evidence', async () => {
+  const result = await Effect.runPromise(
+    runExecutionMicrostructureCommand(['/dev/null', '/dev/null']).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- this test owns the command's filesystem
+      Effect.provide(NodeServices.layer),
+      Effect.result,
+    ),
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure).toMatchObject({
+      _tag: 'ExecutionMicrostructureError',
+      message: 'Cannot load frozen live inputs',
+    })
 })

@@ -208,7 +208,8 @@ export const scanExecutionCohort = (input: {
       ]),
     )
     const usedNoise = new Set<string>()
-    const usedSleeve = new Set<ActiveAlphaPhase>()
+    let morningOrbTakenSymbols: readonly string[] = []
+    let middayReversionCompleted = false
     const checkpoints = [
       ...new Set([
         ...Array.from(
@@ -241,14 +242,34 @@ export const scanExecutionCohort = (input: {
       })
       const observedAt = snapshot.manifest.observedAt
       const eligibility = makeShortEligibility(observedAt)
+      const extraction = {
+        snapshot,
+        policy,
+        trailingBaseline: trailingBaseline.success,
+        accountId: 'alpha-replay-verifier',
+        equityShortEligibility: eligibility,
+      }
+      if (input.onCheckpoint !== undefined) {
+        // Measure pre-quota signal drift even if the corresponding sleeve has already traded.
+        const diagnostic = Result.getOrThrow(extractIntradayAlphaCandidates(extraction))
+        const { phase } = diagnostic.context
+        if (phase !== IntradayAlphaPhase.OutsideWindow && diagnostic.spyVwapDevBps !== null) {
+          const candidates = [...diagnostic.longPool, ...diagnostic.shortPool].filter(
+            ({ direction, relVwapDevBps }) =>
+              phase !== IntradayAlphaPhase.MiddayReversion ||
+              !policy.middayReversion.requireOppositeSigns ||
+              (direction === 'LONG' ? relVwapDevBps < 0 : relVwapDevBps > 0),
+          )
+          const legs = selectIntradayAlphaLegs({ ...diagnostic, policy, vetoedSymbols: new Set() })
+          input.onCheckpoint({ phase, date, completedMinute, bars, candidates, legs, snapshot, eligibility })
+        }
+      }
       const extracted = Result.getOrThrow(
         extractIntradayAlphaCandidates({
-          snapshot,
-          policy,
-          trailingBaseline: trailingBaseline.success,
-          accountId: 'alpha-replay-verifier',
-          equityShortEligibility: eligibility,
-          occupiedSymbols: [],
+          ...extraction,
+          morningOrbTakenSymbols,
+          middayReversionCompleted,
+          noiseAreaTakenSymbols: [...usedNoise],
         }),
       )
       const { phase } = extracted.context
@@ -258,40 +279,35 @@ export const scanExecutionCohort = (input: {
         counts.benchmarkUnavailableCheckpoints++
         continue
       }
-      const candidates = [...extracted.longPool, ...extracted.shortPool].filter(
-        ({ direction, relVwapDevBps }) =>
-          phase !== IntradayAlphaPhase.MiddayReversion ||
-          !policy.middayReversion.requireOppositeSigns ||
-          (direction === 'LONG' ? relVwapDevBps < 0 : relVwapDevBps > 0),
-      )
-      if (candidates.length === 0) counts.noSignalCheckpoints++
       const legs = selectIntradayAlphaLegs({ ...extracted, policy, vetoedSymbols: new Set() })
-      input.onCheckpoint?.({ phase, date, completedMinute, bars, candidates, legs, snapshot, eligibility })
-      if (usedSleeve.has(phase)) continue
-      const fresh = legs.filter((leg) => !usedNoise.has(leg.symbol))
-      if (fresh.length === 0) continue
+      if (legs.length === 0) {
+        counts.noSignalCheckpoints++
+        continue
+      }
       const planned = planCohortLegs({
         equityUsd: startingEquityUsd,
         buyingPowerUsd: startingEquityUsd * 4,
-        legs: fresh,
+        legs,
         date,
         snapshot,
         completedMinute,
         bars,
         eligibility,
       })
-      counts.selectedBeforeFunding += fresh.length
+      counts.selectedBeforeFunding += legs.length
       if (planned.planned?.status !== TargetPlanStatus.Planned || !planned.balanced) {
         counts.plannerBlocks++
         continue
       }
       if (phase === IntradayAlphaPhase.NoiseAreaTrend) {
         for (const { symbol } of planned.planned.intentTargets) usedNoise.add(symbol)
+      } else if (phase === IntradayAlphaPhase.MorningOrb) {
+        morningOrbTakenSymbols = planned.selectedSymbols
       } else {
-        usedSleeve.add(phase)
+        middayReversionCompleted = true
       }
       for (const intent of planned.planned.intentTargets) {
-        const leg = fresh.find(({ symbol }) => symbol === intent.symbol)
+        const leg = legs.find(({ symbol }) => symbol === intent.symbol)
         const tape = bars.get(intent.symbol)
         const close = tape?.get(completedMinute)?.close
         const levels = planned.funded.get(intent.symbol)?.plan.levels
