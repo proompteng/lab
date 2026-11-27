@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { S3Client } from 'bun'
-import { Schema } from 'effect'
+import { Config, Data, Effect, FileSystem, Redacted, Schema } from 'effect'
 
 import { decodeRegularCalendar, minuteMs } from './midday-research-data'
 
@@ -169,49 +168,81 @@ const sipDays = (raw: Buffer, rows: number, end: string) => {
   }
 }
 
-const artifactClient = () => {
-  const accessKeyId = process.env['AWS_ACCESS_KEY_ID']
-  const secretAccessKey = process.env['AWS_SECRET_ACCESS_KEY']
-  if (accessKeyId === undefined || secretAccessKey === undefined || accessKeyId === '' || secretAccessKey === '') {
-    throw new Error('Frozen artifact download requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY')
-  }
-  return new S3Client({
-    endpoint: process.env['AGENTS_ARTIFACTS_ENDPOINT'] || 'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
-    bucket: process.env['AGENTS_ARTIFACTS_BUCKET'] || 'agents-artifacts',
-    accessKeyId,
-    secretAccessKey,
-    region: 'us-east-1',
+export class Sleeve4ResearchError extends Data.TaggedError('Sleeve4ResearchError')<{
+  readonly operation: string
+  readonly cause: unknown
+}> {}
+
+export const researchStep = <A>(operation: string, run: () => A) =>
+  Effect.try({ try: run, catch: (cause) => new Sleeve4ResearchError({ operation, cause }) })
+
+const artifactClient = Effect.gen(function* () {
+  const config = yield* Config.all({
+    endpoint: Config.String('AGENTS_ARTIFACTS_ENDPOINT').pipe(Config.withDefault('')),
+    bucket: Config.String('AGENTS_ARTIFACTS_BUCKET').pipe(Config.withDefault('')),
+    accessKeyId: Config.Redacted('AWS_ACCESS_KEY_ID'),
+    secretAccessKey: Config.Redacted('AWS_SECRET_ACCESS_KEY'),
+  })
+  const accessKeyId = Redacted.value(config.accessKeyId)
+  const secretAccessKey = Redacted.value(config.secretAccessKey)
+  return yield* researchStep('Configure the frozen artifact client', () => {
+    if (accessKeyId === '' || secretAccessKey === '') throw new Error('Frozen artifact credentials are empty')
+    return new S3Client({
+      endpoint: config.endpoint === '' ? 'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80' : config.endpoint,
+      bucket: config.bucket === '' ? 'agents-artifacts' : config.bucket,
+      accessKeyId,
+      secretAccessKey,
+      region: 'us-east-1',
+    })
+  })
+})
+
+// Bun's S3 body methods do not accept AbortSignal. Sign with S3Client and
+// transport with abortable fetch, without including signed URLs in errors.
+export const fetchFrozenArtifact = (
+  client: Pick<S3Client, 'presign'>,
+  name: string,
+  request: (url: string, options: RequestInit) => Promise<Response> = fetch,
+) => {
+  const operation = `Download frozen artifact ${name}`
+  return Effect.gen(function* () {
+    const result = yield* Effect.tryPromise({
+      try: async (signal) => {
+        const response = await request(client.presign(prefix + name, { expiresIn: 60 }), { signal, redirect: 'error' })
+        if (!response.ok) {
+          await response.body?.cancel()
+          return { status: response.status, bytes: null }
+        }
+        return { status: response.status, bytes: Buffer.from(await response.arrayBuffer()) }
+      },
+      catch: (cause) =>
+        new Sleeve4ResearchError({ operation, cause: cause instanceof Error ? cause.name : 'Transport failure' }),
+    })
+    if (result.bytes === null) {
+      return yield* new Sleeve4ResearchError({ operation, cause: `HTTP ${result.status}` })
+    }
+    return result.bytes
   })
 }
 
-export const loadDataset = async (directory: string | undefined, includeHoldout: boolean) => {
-  const client = directory === undefined ? artifactClient() : undefined
-  const get = async (name: string) => {
-    if (directory !== undefined) return readFileSync(join(directory, name))
-    if (client === undefined) throw new Error('S3 client unavailable')
-    return Buffer.from(await client.file(prefix + name).arrayBuffer())
-  }
-  const manifest = await get('MANIFEST.json')
+const parseManifest = (manifest: Buffer) => {
   if (sha256(manifest) !== manifestSha256) throw new Error('Frozen manifest SHA-256 mismatch')
-  const all = Schema.decodeUnknownSync(Manifest)(JSON.parse(manifest.toString()))
-  const receipts: (typeof all.files)[number][] = []
-  const read = async (name: string) => {
-    const receipt = all.files.find(({ key }) => key === prefix + name)
-    if (receipt === undefined) throw new Error(`Missing frozen receipt: ${name}`)
-    const compressed = await get(name)
-    if (compressed.length !== receipt.gzipBytes || sha256(compressed) !== receipt.gzipSha256) {
-      throw new Error(`Frozen compressed bytes/SHA-256 mismatch: ${name}`)
-    }
-    const raw = name.endsWith('.gz') ? gunzipSync(compressed) : compressed
-    if (raw.length !== receipt.rawBytes || sha256(raw) !== receipt.rawSha256) {
-      throw new Error(`Frozen raw bytes/SHA-256 mismatch: ${name}`)
-    }
-    receipts.push(receipt)
-    return { raw, rows: receipt.rows }
+  return Schema.decodeUnknownSync(Manifest)(JSON.parse(manifest.toString()))
+}
+
+const unpack = (name: string, compressed: Buffer, receipt: (typeof Manifest.Type.files)[number]) => {
+  if (compressed.length !== receipt.gzipBytes || sha256(compressed) !== receipt.gzipSha256) {
+    throw new Error(`Frozen compressed bytes/SHA-256 mismatch: ${name}`)
   }
-  const calendarJson: unknown = JSON.parse((await read(files.calendar)).raw.toString())
+  const raw = name.endsWith('.gz') ? gunzipSync(compressed) : compressed
+  if (raw.length !== receipt.rawBytes || sha256(raw) !== receipt.rawSha256) {
+    throw new Error(`Frozen raw bytes/SHA-256 mismatch: ${name}`)
+  }
+  return { raw, rows: receipt.rows }
+}
+
+const reconcileCalendar = (calendarJson: unknown, sessionTsv: { readonly raw: Buffer; readonly rows: number }) => {
   const calendar = decodeRegularCalendar(calendarJson)
-  const sessionTsv = await read(files.sessions)
   const expected = calendar.providerSessions.map(({ date, regularOpenAt, regularCloseAt }) => {
     const openMs = Date.parse(regularOpenAt)
     const minutes = (Date.parse(regularCloseAt) - openMs) / minuteMs
@@ -233,38 +264,75 @@ export const loadDataset = async (directory: string | undefined, includeHoldout:
     })
   )
     throw new Error('Frozen exchange calendars disagree')
-  const end = includeHoldout ? holdoutEnd : validationEnd
-  const longFile = await read(files.long)
-  const long = minuteDays(longFile.raw, longFile.rows, expected, 'long', end)
-  const sipFile = await read(files.sip)
-  const sip = sipDays(sipFile.raw, sipFile.rows, end)
-  const liveFile = includeHoldout ? await read(files.live) : undefined
-  const live =
-    liveFile !== undefined
-      ? minuteDays(
-          liveFile.raw,
-          liveFile.rows,
-          expected.filter((d) => d.date >= '2026-07-16'),
-          'live',
-          end,
-        )
-      : undefined
-  const core = [...long.days.values()].map((day) =>
-    chooseMinuteSource(day.date) === 'long' ? day : (live?.days.get(day.date) ?? day),
-  )
-  return {
-    core,
-    live: live !== undefined ? [...live.days.values()] : [],
-    sip: sip.days,
-    calendarJson,
-    liveRaw: liveFile?.raw,
-    sources: {
-      manifestSha256,
-      receipts,
-      calendarHash: calendar.normalizedResponseHash,
-      long: { symbols: long.symbols, regularRows: long.regularRows },
-      live: live !== undefined ? { symbols: live.symbols, regularRows: live.regularRows } : null,
-      sip: sip.symbols,
-    },
-  }
+  return { expected, calendarHash: calendar.normalizedResponseHash }
 }
+
+export const loadDataset = (directory: string | undefined, includeHoldout: boolean) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const get = yield* directory === undefined
+      ? Effect.map(artifactClient, (client) => (name: string) => fetchFrozenArtifact(client, name))
+      : Effect.succeed((name: string) =>
+          fs.readFile(join(directory, name)).pipe(Effect.map((bytes) => Buffer.from(bytes))),
+        )
+    const manifest = yield* get('MANIFEST.json')
+    const all = yield* researchStep('Validate frozen manifest', () => parseManifest(manifest))
+    const receipts: (typeof all.files)[number][] = []
+    const read = (name: string) =>
+      Effect.gen(function* () {
+        const receipt = all.files.find(({ key }) => key === prefix + name)
+        if (receipt === undefined)
+          return yield* new Sleeve4ResearchError({ operation: name, cause: 'No frozen receipt' })
+        const compressed = yield* get(name)
+        const decoded = yield* researchStep(`Unpack frozen artifact ${name}`, () => unpack(name, compressed, receipt))
+        receipts.push(receipt)
+        return decoded
+      })
+    const calendarFile = yield* read(files.calendar)
+    const calendarJson: unknown = yield* researchStep(
+      'Parse frozen calendar JSON',
+      () => JSON.parse(calendarFile.raw.toString()) as unknown,
+    )
+    const sessionTsv = yield* read(files.sessions)
+    const { expected, calendarHash } = yield* researchStep('Reconcile the frozen exchange calendars', () =>
+      reconcileCalendar(calendarJson, sessionTsv),
+    )
+    const end = includeHoldout ? holdoutEnd : validationEnd
+    const longFile = yield* read(files.long)
+    const long = yield* researchStep('Parse core minute bars', () =>
+      minuteDays(longFile.raw, longFile.rows, expected, 'long', end),
+    )
+    const sipFile = yield* read(files.sip)
+    const sip = yield* researchStep('Parse daily SIP bars', () => sipDays(sipFile.raw, sipFile.rows, end))
+    const liveFile = includeHoldout ? yield* read(files.live) : undefined
+    const live =
+      liveFile === undefined
+        ? undefined
+        : yield* researchStep('Parse live minute bars', () =>
+            minuteDays(
+              liveFile.raw,
+              liveFile.rows,
+              expected.filter((d) => d.date >= '2026-07-16'),
+              'live',
+              end,
+            ),
+          )
+    const core = [...long.days.values()].map((day) =>
+      chooseMinuteSource(day.date) === 'long' ? day : (live?.days.get(day.date) ?? day),
+    )
+    return {
+      core,
+      live: live !== undefined ? [...live.days.values()] : [],
+      sip: sip.days,
+      calendarJson,
+      liveRaw: liveFile?.raw,
+      sources: {
+        manifestSha256,
+        receipts,
+        calendarHash,
+        long: { symbols: long.symbols, regularRows: long.regularRows },
+        live: live !== undefined ? { symbols: live.symbols, regularRows: live.regularRows } : null,
+        sip: sip.symbols,
+      },
+    }
+  })

@@ -1,11 +1,21 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
+import { Effect, FileSystem } from 'effect'
 
 import { IntradayAlphaPhase } from '../src/strategy/intraday-alpha/constants'
 import { regularCalendarReplayInput } from './midday-research-data'
 import { mean, sum } from './midday-research-statistics'
-import { holdoutEnd, liveStart, loadDataset, manifestSha256, sha256, split, validationEnd } from './sleeve4-data'
+import {
+  holdoutEnd,
+  liveStart,
+  loadDataset,
+  manifestSha256,
+  researchStep,
+  sha256,
+  Sleeve4ResearchError,
+  split,
+  validationEnd,
+} from './sleeve4-data'
 import {
   bySplit,
   correlation,
@@ -32,7 +42,7 @@ import {
 } from './sleeve4-signals'
 import { runIntradayAlphaReplayVerification } from './verify-intraday-alpha-replay'
 
-type Dataset = Awaited<ReturnType<typeof loadDataset>>
+type Dataset = Effect.Success<ReturnType<typeof loadDataset>>
 const ends = { train: '2025-06-30', validation: validationEnd, holdout: holdoutEnd }
 const coreSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY']
 const costsForGate = [5, 10] as const
@@ -106,8 +116,9 @@ const develop = (dataset: Dataset) => {
 }
 type Development = ReturnType<typeof develop>
 
-const freezeFor = (development: Development) => {
-  const sourceSha256 = Object.fromEntries(
+const sourceHashes = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const entries = yield* Effect.forEach(
     [
       'research-orthogonal-sleeve4.ts',
       'sleeve4-data.ts',
@@ -116,8 +127,13 @@ const freezeFor = (development: Development) => {
       'midday-research-data.ts',
       'midday-research-statistics.ts',
       'verify-intraday-alpha-replay.ts',
-    ].map((name) => [name, sha256(readFileSync(join(import.meta.dir, name)))]),
+    ],
+    (name) => fs.readFile(join(import.meta.dir, name)).pipe(Effect.map((bytes) => [name, sha256(bytes)] as const)),
   )
+  return Object.fromEntries(entries)
+})
+
+const freezeFor = (development: Development, sourceSha256: Record<string, string>) => {
   const chosen = development.development.find(({ rule }) => rule.id === development.selected)
   return {
     schemaVersion: 'bayn.sleeve4.freeze.v1',
@@ -133,46 +149,57 @@ const freezeFor = (development: Development) => {
   }
 }
 
-const benchReplay = (dataset: Dataset) => {
-  if (dataset.liveRaw === undefined) throw new Error('Need the frozen live panel to evaluate v2 benchmark correlations')
-  const directory = mkdtempSync(join(tmpdir(), 'bayn-sleeve4-v2-'))
-  try {
-    const path = join(directory, 'live.tsv')
-    writeFileSync(path, dataset.liveRaw)
-    const source = regularCalendarReplayInput(dataset.calendarJson)
-    const warmupStart = '2026-07-16'
-    const calendar = {
-      query: { start: warmupStart, end: holdoutEnd },
-      response: source.response.filter(({ date }) => date >= warmupStart && date <= holdoutEnd),
-    }
-    const { policyHash, results, baselineCoverage, inputRows } = runIntradayAlphaReplayVerification([path], calendar, {
-      evaluationStart: liveStart,
-    })
-    const perCost = results.map(({ slippageBps, sessionDetails }) => ({
-      slippageBps,
-      days: sessionDetails.map((d) => {
-        const complete =
-          d.baselineAvailable &&
-          d.benchmarkAvailable &&
-          d.baselineMissingSymbols.length === 0 &&
-          d.missingConcurrentMarkWindows === 0 &&
-          d.unresolvedExits.length === 0
-        return {
-          date: d.date,
-          complete,
-          engineBps: complete
-            ? phases.map((phase) => sum(d.trades.filter((t) => t.phase === phase).map((t) => t.netPnlUsd)) / 10)
-            : null,
-        }
-      }),
-    }))
-    return { policyHash, baselineCoverage, inputRows, perCost }
-  } finally {
-    rmSync(directory, { recursive: true, force: true })
+const summarizeBenchmark = (path: string, calendarJson: unknown) => {
+  const source = regularCalendarReplayInput(calendarJson)
+  const warmupStart = '2026-07-16'
+  const calendar = {
+    query: { start: warmupStart, end: holdoutEnd },
+    response: source.response.filter(({ date }) => date >= warmupStart && date <= holdoutEnd),
   }
+  const { policyHash, results, baselineCoverage, inputRows } = runIntradayAlphaReplayVerification([path], calendar, {
+    evaluationStart: liveStart,
+  })
+  const perCost = results.map(({ slippageBps, sessionDetails }) => ({
+    slippageBps,
+    days: sessionDetails.map((d) => {
+      const complete =
+        d.baselineAvailable &&
+        d.benchmarkAvailable &&
+        d.baselineMissingSymbols.length === 0 &&
+        d.missingConcurrentMarkWindows === 0 &&
+        d.unresolvedExits.length === 0
+      return {
+        date: d.date,
+        complete,
+        engineBps: complete
+          ? phases.map((phase) => sum(d.trades.filter((t) => t.phase === phase).map((t) => t.netPnlUsd)) / 10)
+          : null,
+      }
+    }),
+  }))
+  return { policyHash, baselineCoverage, inputRows, perCost }
 }
 
-type Benchmark = ReturnType<typeof benchReplay>
+const benchReplay = (dataset: Dataset) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if (dataset.liveRaw === undefined) {
+        return yield* new Sleeve4ResearchError({
+          operation: 'Replay the v2 benchmark',
+          cause: 'Frozen live panel unavailable',
+        })
+      }
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'bayn-sleeve4-v2-' })
+      const path = join(directory, 'live.tsv')
+      yield* fs.writeFile(path, dataset.liveRaw)
+      return yield* researchStep('Replay the existing v2 verifier', () =>
+        summarizeBenchmark(path, dataset.calendarJson),
+      )
+    }),
+  )
+
+type Benchmark = ReturnType<typeof summarizeBenchmark>
 const measureCorrelation = (daily: readonly Outcome[], benchmark: Benchmark) => {
   const byDate = new Map(daily.map((day) => [day.date, day]))
   return benchmark.perCost.map(({ slippageBps, days }) => {
@@ -236,11 +263,10 @@ const correlationPass = (card: ReturnType<typeof minuteCard>) =>
 const stressPass = (card: ReturnType<typeof minuteCard>) =>
   costsForGate.every((cost) => minimumEvidence(card.statistics[cost]))
 
-const score = (dataset: Dataset, dev: Development, freeze: ReturnType<typeof freezeFor>) => {
+const score = (dataset: Dataset, dev: Development, freeze: ReturnType<typeof freezeFor>, benchmark: Benchmark) => {
   const core = minuteHistory(dataset.core)
   const live = minuteHistory(dataset.live)
   const sip = sipFrames(dataset)
-  const benchmark = benchReplay(dataset)
   const scoredIds = new Set([freeze.selected, ...freeze.frozenPeers])
   const holdout = trialRegistry
     .filter((rule) => scoredIds.has(rule.id))
@@ -352,26 +378,42 @@ export const verifyFreeze = (actual: string, expected: string) => {
   }
 }
 
+const run = (args: readonly string[]) =>
+  Effect.gen(function* () {
+    const [mode, freezePath, outputOrDirectory, directory] = args
+    if (
+      freezePath === undefined ||
+      (mode !== '--freeze' && mode !== '--score') ||
+      (mode === '--score' && outputOrDirectory === undefined) ||
+      (mode === '--freeze' && directory !== undefined)
+    ) {
+      return yield* new Sleeve4ResearchError({
+        operation: 'Parse arguments',
+        cause:
+          'Usage: bun services/bayn/tools/research-orthogonal-sleeve4.ts --freeze <freeze.json> [dataset-dir] | --score <freeze.json> <results.json> [dataset-dir]',
+      })
+    }
+    const fs = yield* FileSystem.FileSystem
+    const dev = develop(yield* loadDataset(mode === '--freeze' ? outputOrDirectory : directory, false))
+    const freeze = freezeFor(dev, yield* sourceHashes)
+    const frozen = JSON.stringify(freeze, null, 2) + '\n'
+    if (mode === '--freeze') {
+      yield* fs.writeFileString(freezePath, frozen, { flag: 'wx' })
+    } else if (outputOrDirectory !== undefined) {
+      const existing = yield* fs.readFileString(freezePath)
+      yield* researchStep('Verify the development-only receipt', () => verifyFreeze(existing, frozen))
+      const dataset = yield* loadDataset(directory, true)
+      const benchmark = yield* benchReplay(dataset)
+      const scored = score(dataset, dev, freeze, benchmark)
+      yield* fs.writeFileString(outputOrDirectory, JSON.stringify(scored, null, 2) + '\n', { flag: 'wx' })
+    }
+  })
+
 if (import.meta.main) {
-  const [mode, freezePath, outputOrDirectory, directory] = process.argv.slice(2)
-  if (
-    freezePath === undefined ||
-    (mode !== '--freeze' && mode !== '--score') ||
-    (mode === '--score' && outputOrDirectory === undefined) ||
-    (mode === '--freeze' && directory !== undefined)
-  ) {
-    throw new Error(
-      'Usage: bun services/bayn/tools/research-orthogonal-sleeve4.ts --freeze <freeze.json> [dataset-dir] | --score <freeze.json> <results.json> [dataset-dir]',
-    )
-  }
-  const dev = develop(await loadDataset(mode === '--freeze' ? outputOrDirectory : directory, false))
-  const freeze = freezeFor(dev)
-  const frozen = JSON.stringify(freeze, null, 2) + '\n'
-  if (mode === '--freeze') {
-    writeFileSync(freezePath, frozen, { flag: 'wx' })
-  } else if (outputOrDirectory !== undefined) {
-    verifyFreeze(readFileSync(freezePath, 'utf8'), frozen)
-    const dataset = await loadDataset(directory, true)
-    writeFileSync(outputOrDirectory, JSON.stringify(score(dataset, dev, freeze), null, 2) + '\n', { flag: 'wx' })
-  }
+  NodeRuntime.runMain(
+    run(process.argv.slice(2)).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- standalone research entry point owns file services
+      Effect.provide(NodeServices.layer),
+    ),
+  )
 }

@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test'
+import { Deferred, Effect, Fiber } from 'effect'
 
 import { regularCalendarReplayInput } from './midday-research-data'
 import { verifyFreeze } from './research-orthogonal-sleeve4'
-import { adjustSplit, chooseMinuteSource, split, type Candle } from './sleeve4-data'
+import { adjustSplit, chooseMinuteSource, fetchFrozenArtifact, split, type Candle } from './sleeve4-data'
 import {
   correlation,
   developmentPass,
@@ -14,7 +15,6 @@ import {
   type Outcome,
 } from './sleeve4-evaluation'
 import { decide, minuteHistory, requiredSymbols, trialRegistry, type Frame } from './sleeve4-signals'
-
 import { runIntradayAlphaReplayVerification } from './verify-intraday-alpha-replay'
 
 const price = (open: number, close = open, volume = 100): Candle => ({
@@ -246,4 +246,74 @@ test('frozen regular-only calendar is accepted by the existing v2 replay', () =>
   expect(() => runIntradayAlphaReplayVerification(['/dev/null'], input)).toThrow('session_open')
   const replay = runIntradayAlphaReplayVerification(['/dev/null'], regularCalendarReplayInput(input))
   expect(replay.results[0]?.sessionDetails[0]?.expectedRegularMinutes).toBe(210)
+})
+
+const testClient = { presign: () => 'https://example.invalid/?signature=not-for-logs' }
+
+test('frozen download returns bytes and cancels a rejected HTTP body exactly once without logging its signed URL', async () => {
+  const result = await Effect.runPromise(
+    fetchFrozenArtifact(testClient, 'MANIFEST.json', async () => new Response('receipt bytes')),
+  )
+  expect(result.toString()).toBe('receipt bytes')
+  let cancellations = 0
+  const response = new Response(
+    new ReadableStream({
+      cancel: () => {
+        cancellations++
+      },
+    }),
+    { status: 403 },
+  )
+  const failure = await Effect.runPromise(
+    Effect.flip(fetchFrozenArtifact(testClient, 'MANIFEST.json', async () => response)),
+  )
+  expect(failure).toMatchObject({
+    _tag: 'Sleeve4ResearchError',
+    operation: 'Download frozen artifact MANIFEST.json',
+    cause: 'HTTP 403',
+  })
+  expect(cancellations).toBe(1)
+  const transport = await Effect.runPromise(
+    Effect.flip(
+      fetchFrozenArtifact(testClient, 'MANIFEST.json', async (url) => {
+        throw new TypeError(url)
+      }),
+    ),
+  )
+  expect(transport.cause).toBe('TypeError')
+  expect(String(transport)).not.toContain('not-for-logs')
+})
+
+test('interrupting a frozen download aborts the in-flight request exactly once', async () => {
+  let cancellations = 0
+  const signal = await Effect.runPromise(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<AbortSignal>()
+      const fiber = yield* Effect.forkChild(
+        fetchFrozenArtifact(
+          testClient,
+          'MANIFEST.json',
+          (_url, options) =>
+            new Promise<Response>((_resolve, reject) => {
+              const signal = options.signal
+              if (signal == null) throw new Error('No transport cancellation signal')
+              signal.addEventListener(
+                'abort',
+                () => {
+                  cancellations++
+                  reject(new Error('Download aborted'))
+                },
+                { once: true },
+              )
+              Deferred.doneUnsafe(started, Effect.succeed(signal))
+            }),
+        ),
+      )
+      const active = yield* Deferred.await(started)
+      yield* Fiber.interrupt(fiber)
+      return active
+    }),
+  )
+  expect(signal.aborted).toBe(true)
+  expect(cancellations).toBe(1)
 })
