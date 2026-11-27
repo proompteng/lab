@@ -220,7 +220,6 @@ test('validates checksummed gzip framing, including trailing bytes, without drop
 test('preserves all physical rows while rejecting bad session bars and reporting gaps', async () => {
   const roster = [...symbols, ...Array.from({ length: 46 }, (_, i) => `X${i}`)]
   const lines = [
-    'symbol\tt\to\th\tl\tc\tv\tvw',
     ...symbols.map((ticker) => `${ticker}\t2024-01-02T14:30:00Z\t100\t101\t99\t100\t100\t100`),
     'QQQ\t2024-01-02T21:00:00Z\t100\t101\t99\t100\t100\t100',
   ]
@@ -231,8 +230,14 @@ test('preserves all physical rows while rejecting bad session bars and reporting
     outsideRth: 1,
     counts: { QQQ: { rthBars: 1, missingRthBars: 77, missingFlatOpen: 1 } },
   })
-  await expect(readTape([...lines, lines[1]], calendar, roster, 18)).rejects.toThrow('unordered')
+  await expect(readTape([...lines, lines[0]], calendar, roster, 18)).rejects.toThrow('unordered')
   await expect(readTape(lines, calendar, roster, 16)).rejects.toThrow('row receipt mismatch')
+  const counts = Object.fromEntries(
+    roster.map((symbol) => [symbol, symbol === 'QQQ' ? 2 : symbols.some((name) => name === symbol) ? 1 : 0]),
+  )
+  const development = ['symbol\tt\to\th\tl\tc\tv\tn\tvw', ...lines.map((line) => line.replace(/\t100$/, '\t1\t100'))]
+  expect((await readTape(development, calendar, roster, 17, counts)).coverage).toEqual(tape.coverage)
+  await expect(readTape(lines, calendar, roster, 17, counts)).rejects.toThrow('Missing development SIP header')
 })
 
 test('cost, carry, pairing and deterministic stationary bootstrap are separate', () => {

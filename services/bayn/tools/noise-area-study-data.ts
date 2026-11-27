@@ -251,11 +251,10 @@ export const readTape = async (
   )
   let physical = 0
   let outsideRth = 0
-  let header = false
+  let header = bySymbol === undefined // The continuity TSV starts directly with a physical row.
   for await (const line of rows) {
     if (!header) {
-      const expected = bySymbol === undefined ? 'symbol\tt\to\th\tl\tc\tv\tvw' : 'symbol\tt\to\th\tl\tc\tv\tn\tvw'
-      if (line !== expected) throw new Error(`Unexpected SIP header: ${line.slice(0, 80)}`)
+      if (line !== 'symbol\tt\to\th\tl\tc\tv\tn\tvw') throw new Error('Missing development SIP header')
       header = true
       continue
     }
@@ -374,20 +373,25 @@ export const loadShy = async (archive: Archive, dates: readonly string[]) => {
   const prices = new Map<string, number>()
   let n = 0
   for await (const line of await tapeLines(archive, compressed, undefined, raw)) {
-    if (n++ === 0) {
-      if (!/^symbol\tt\to\th\tl\tc\tv\t(?:n\t)?vw$/.test(line)) throw new Error('Unexpected SHY tape header')
-      continue
-    }
+    n++
     if (!line.startsWith('SHY\t')) continue
-    const [, stamp, , , , close] = line.split('\t')
+    const fields = line.split('\t')
+    const [, stamp, , , , close] = fields
     const date = stamp?.slice(0, 10)
     const price = Number(close)
-    if (!timestamp.test(stamp) || !wanted.has(date) || !(price > 0) || !Number.isFinite(price) || prices.has(date))
+    if (
+      fields.length !== 8 ||
+      !timestamp.test(stamp) ||
+      !wanted.has(date) ||
+      !(price > 0) ||
+      !Number.isFinite(price) ||
+      prices.has(date)
+    )
       throw new Error(`Invalid SHY observation: ${stamp}`)
     prices.set(date, price)
   }
-  if (n !== src.rows + 1 || prices.size !== dates.length)
-    throw new Error(`SHY row receipt mismatch: ${n - 1} rows and ${prices.size} dates`)
+  if (n !== src.rows || prices.size !== dates.length)
+    throw new Error(`SHY row receipt mismatch: ${n} rows and ${prices.size} dates`)
   return dates.map((date) => {
     const price = prices.get(date)
     if (price === undefined) throw new Error(`Missing SHY close for ${date}`)

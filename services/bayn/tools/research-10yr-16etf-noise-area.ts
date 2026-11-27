@@ -2,7 +2,7 @@ import { lstatSync, readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 
 import { NodeRuntime } from '@effect/platform-node'
-import { Data, Effect } from 'effect'
+import { Data, Effect, Schema } from 'effect'
 
 import { dailySharpe, deflatedSharpe, expectedMaximumSharpe } from './midday-research-statistics'
 import { loadDevelopment, loadHoldout, loadShy, sources, withArchive } from './noise-area-study-data'
@@ -37,12 +37,15 @@ import { sha256 } from './research-orb-zab-data'
 
 const evidence = 'docs/bayn/evidence/2026-11-27-10yr-16etf-noise-area'
 const freezePath = evidence + '/freeze.json'
+const transportPath = evidence + '/transport-erratum.json'
 const branch = 'refs/heads/codex/bayn-w6a-10yr-16etf-noise-area-momentum'
+const transportFiles = ['research-10yr-16etf-noise-area', 'noise-area-study-data'].map(
+  (name) => `services/bayn/tools/${name}.ts`,
+)
 const locked = [
   evidence + '/protocol.md',
+  ...transportFiles,
   ...[
-    'research-10yr-16etf-noise-area',
-    'noise-area-study-data',
     'noise-area-study-replay',
     'noise-area-study-statistics',
     'research-orb-zab-data',
@@ -50,6 +53,15 @@ const locked = [
   ].map((name) => `services/bayn/tools/${name}.ts`),
 ]
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n'
+const digest = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
+const decodeTransport = Schema.decodeUnknownSync(
+  Schema.Struct({
+    schema: Schema.Literal('bayn.research.wave-6a.transport-erratum.v1'),
+    freezeCommit: Schema.String,
+    freezeSha256: digest,
+    files: Schema.Record(Schema.String, digest),
+  }),
+)
 
 type Archive = Parameters<Parameters<typeof withArchive>[0]>[0]
 type Development = Awaited<ReturnType<typeof loadDevelopment>>
@@ -95,7 +107,7 @@ const fingerprints = () => Object.fromEntries(locked.map((path) => [path, sha256
 export const commonMask = (paths: readonly (readonly Ledger[])[], length: number) =>
   Array.from({ length }, (_, i) => paths.every((rows) => rows[i].unresolved === 0))
 
-const develop = (development: Development) => {
+const develop = (development: Development, files = fingerprints()) => {
   const trainCount = splits.train.count
   const tapes = collectGrid(development.days)
   const mask = commonMask(
@@ -123,7 +135,7 @@ const develop = (development: Development) => {
   return {
     schema: 'bayn.research.wave-6a.freeze.v1',
     source: sources,
-    files: fingerprints(),
+    files,
     splits,
     basketMembership: baskets,
     configurationsIncludingLegacy: scores.length,
@@ -148,14 +160,43 @@ const git = (...args: string[]) => {
 const published = () => {
   const revision = git('rev-parse', 'HEAD').trim()
   git('diff', 'HEAD', '--quiet', '--')
-  git('ls-files', '--error-unmatch', '--', freezePath, ...locked)
+  git('ls-files', '--error-unmatch', '--', freezePath, transportPath, ...locked)
   const freezeCommit = git('log', '--diff-filter=A', '-1', '--format=%H', revision, '--', freezePath).trim()
   if (!/^[0-9a-f]{40}$/.test(freezeCommit)) throw new Error('No committed development freeze')
-  git('diff', '--exit-code', freezeCommit, revision, '--', freezePath, ...locked)
+  git(
+    'diff',
+    '--exit-code',
+    freezeCommit,
+    revision,
+    '--',
+    freezePath,
+    ...locked.filter((path) => !transportFiles.includes(path)),
+  )
   const freeze = git('show', `${freezeCommit}:${freezePath}`)
+  const freezeSha256 = sha256(freeze)
+  const transportCommit = git('log', '--diff-filter=A', '-1', '--format=%H', revision, '--', transportPath).trim()
+  if (!/^[0-9a-f]{40}$/.test(transportCommit) || transportCommit === freezeCommit)
+    throw new Error('No distinct committed transport erratum')
+  git('merge-base', '--is-ancestor', freezeCommit, transportCommit)
+  git('diff', '--exit-code', transportCommit, revision, '--', transportPath, ...transportFiles)
+  const transport = git('show', `${transportCommit}:${transportPath}`)
+  const erratum = decodeTransport(JSON.parse(transport))
+  if (
+    erratum.freezeCommit !== freezeCommit ||
+    erratum.freezeSha256 !== freezeSha256 ||
+    Object.keys(erratum.files).length !== transportFiles.length ||
+    transportFiles.some((path) => erratum.files[path] !== sha256(readFileSync(path)))
+  )
+    throw new Error('Transport erratum does not match the published freeze and corrected reader')
   if (git('ls-remote', '--refs', 'origin', branch).trim() !== `${revision}\t${branch}`)
     throw new Error(`Scoring requires HEAD to be published as ${branch}`)
-  return { revision, freezeCommit, freezeSha256: sha256(freeze), freeze }
+  // Reproduce every development result; only the two independently pinned transport fingerprints differ.
+  const frozenFiles = Object.fromEntries(locked.map((path) => [path, sha256(git('show', `${freezeCommit}:${path}`))]))
+  return {
+    publication: { revision, freezeCommit, freezeSha256, transportCommit, transportSha256: sha256(transport) },
+    freeze,
+    frozenFiles,
+  }
 }
 
 export const afterFreeze = async <A>(computed: unknown, receipt: string, open: () => Promise<A>) => {
@@ -181,7 +222,7 @@ const report = (
   days: readonly Day[],
   shyClose: readonly number[],
   freeze: Freeze,
-  provenance: Omit<ReturnType<typeof published>, 'freeze'>,
+  provenance: ReturnType<typeof published>['publication'],
   holdoutCoverage: Awaited<ReturnType<typeof loadHoldout>>['coverage'],
 ) => {
   const dates = days.map(({ date }) => date)
@@ -397,7 +438,7 @@ const score = async (
   computed: Freeze,
   receipt: ReturnType<typeof published>,
 ) => {
-  const { freeze, ...publication } = receipt
+  const { freeze, publication } = receipt
   const holdout = await afterFreeze(computed, freeze, () => loadHoldout(archive))
   const days = [...development.days, ...holdout.days]
   const shy = await loadShy(
@@ -428,7 +469,7 @@ const main = Effect.gen(function* () {
   const receipt = yield* Effect.try({ try: () => (stage === '--score' ? published() : undefined), catch: failure })
   const result = yield* withArchive(async (archive) => {
     const development = await loadDevelopment(archive)
-    const computed = develop(development)
+    const computed = develop(development, receipt?.frozenFiles)
     return receipt === undefined ? computed : score(archive, development, computed, receipt)
   })
   yield* Effect.tryPromise({ try: (signal) => writeFile(output, json(result), { flag: 'wx', signal }), catch: failure })

@@ -1,0 +1,11 @@
+{
+  "schema": "bayn.research.wave-6a.transport-erratum.v1",
+  "freezeCommit": "2ce5e980776bc2fd00d24cc9d1f4188050c08b3b",
+  "freezeSha256": "bde13a89b96da965d120f2b01d31cc072abf202b452d41b07d7ed77e900de3b1",
+  "observation": "The initial locked score stopped at the first physical Holdout TSV row (no header); no Holdout strategy score was computed. Wave 4G source also confirms the unchanged SHY tape is headerless.",
+  "correction": "Count the first physical row in both registered headerless tapes. Preserve the original development header, all dataset byte hashes, the protocol, simulation, statistics and reproduced development receipt.",
+  "files": {
+    "services/bayn/tools/research-10yr-16etf-noise-area.ts": "ad51ce61b96faf5e183418995aa0bfe2b5a77e339c91c047add8419deeed3b8c",
+    "services/bayn/tools/noise-area-study-data.ts": "c25ff53fb943c26c7ab87ddab8ad39d8e1e7a3214805e8cb6c37e3d89e626713"
+  }
+}
