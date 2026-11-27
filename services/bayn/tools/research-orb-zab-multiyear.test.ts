@@ -1,7 +1,9 @@
 import { expect, test } from 'bun:test'
+import { Effect, FileSystem } from 'effect'
 import {
   adjustSplit,
   normalizeResearchCalendar,
+  readResearchData,
   sessionFeatures,
   withPriorSessions,
   type Bar,
@@ -160,4 +162,41 @@ test('deflating against more trials raises the benchmark and shrinks confidence'
   expect(small).not.toBeNull()
   expect(large).toBeLessThan(small ?? 0)
   expect(deflatedSharpe([0, 0, 0], 0)).toBeNull()
+})
+
+test('VWAP-only checkpoint exits do not require a contemporaneous historical band', () => {
+  const bars = Array.from({ length: 32 }, () => bar(100))
+  bars[29] = bar(99)
+  bars[30] = bar(98)
+  const signal = {
+    symbol: 'QQQ',
+    side: 1 as const,
+    close: 100,
+    weight: 0.25,
+    stopBps: 500,
+    targetBps: 1500,
+    series: features(bars),
+  }
+  const fill = { kind: 'filled' as const, atOpen: true, raw: 100, price: 100 }
+  const trail = { ...v2Noise, checkpoint: 30 as const, clock: 'paper' as const, exit: 'vwap' as const }
+  expect(simulateExit(signal, fill, 28, 31, 2, trail).trade).toMatchObject({ gross: -500, reason: 'vwap' })
+})
+
+test('local research validates the frozen manifest as a typed effect failure before any other read', () => {
+  const read: string[] = []
+  const fs = FileSystem.makeNoop({
+    readFile: (path) =>
+      Effect.sync(() => {
+        read.push(path)
+        return new TextEncoder().encode('{}')
+      }),
+  })
+  const result = Effect.runSync(
+    Effect.result(readResearchData('fixture', false).pipe(Effect.provideService(FileSystem.FileSystem, fs))),
+  )
+  expect(read).toEqual(['fixture/MANIFEST.json'])
+  expect(result).toMatchObject({
+    _tag: 'Failure',
+    failure: { _tag: 'ResearchEvidenceError', message: 'Frozen manifest SHA-256 mismatch' },
+  })
 })

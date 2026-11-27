@@ -1,4 +1,7 @@
-import { writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
+import { Effect, FileSystem } from 'effect'
 
 import {
   horizons,
@@ -6,6 +9,7 @@ import {
   liveSymbols,
   multiSymbols,
   readResearchData,
+  ResearchEvidenceError,
   sha256,
   type ResearchDay,
 } from './research-orb-zab-data'
@@ -58,7 +62,8 @@ const inRange = <T extends { readonly date: string }>(days: readonly T[], range:
 
 const observedNet = (days: readonly Outcome[]) => days.map(sessionNet).filter((x): x is number => x !== null)
 
-const sourceIdentity = async () => {
+const sourceIdentity = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
   const paths = [
     'research-orb-zab-data.ts',
     'research-orb-zab-protocol.ts',
@@ -72,9 +77,11 @@ const sourceIdentity = async () => {
     '../src/strategy/intraday-alpha/constants.ts',
   ]
   const hashes: Record<string, string> = {}
-  for (const path of paths) hashes[path] = sha256(await Bun.file(new URL(path, import.meta.url)).bytes())
+  for (const path of paths) {
+    hashes[path] = sha256(yield* fs.readFile(fileURLToPath(new URL(path, import.meta.url))))
+  }
   return hashes
-}
+})
 
 const meets = (value: number | null, threshold = 0) => value !== null && value > threshold
 const plateau = (id: string, nearby: readonly Trial[], metrics: ReadonlyMap<string, Metric>) => {
@@ -83,67 +90,72 @@ const plateau = (id: string, nearby: readonly Trial[], metrics: ReadonlyMap<stri
   return { center: id, points, pass: points.length >= 2 && positive >= Math.ceil(0.75 * points.length) }
 }
 
-const develop = async (input: string) => {
-  const { multiDays, provenance } = await readResearchData(input, false)
-  const outcomes = new Map(trials.map((trial) => [trial.id, replay(multiDays, trial, multiSymbols, primaryCost)]))
-  const trainSharpes = [...outcomes.values()].flatMap((days) => {
-    const sharpe = dailySharpe(observedNet(inRange(days, train)))
-    return sharpe === null ? [] : [sharpe]
-  })
-  const multiplicity = trials.length + priorTrials
-  const benchmark = deflationBenchmark(trainSharpes, multiplicity)
-  const measure = (range: Range) =>
-    new Map([...outcomes].map(([id, days]) => [id, summarize(inRange(days, range), benchmark)]))
-  const trainMetrics = measure(train)
-  const validationMetrics = measure(validation)
-  const select = (engine: Trial['engine']) => {
-    const candidates = trials.filter((trial) => trial.engine === engine && isUpgrade(trial))
-    const trainRank = (id: string) => {
-      const metric = trainMetrics.get(id)
-      if (metric === undefined || metric.closed < 30 || metric.completeSessions / metric.sessions < 0.9)
-        return -Infinity
-      return metric.completeCaseSharpe ?? -Infinity
-    }
-    const selected = candidates.toSorted((a, b) => trainRank(b.id) - trainRank(a.id) || a.id.localeCompare(b.id))[0]
-    const baselineId = engine === 'orb' ? v2Orb.id : v2Noise.id
-    const t = trainMetrics.get(selected.id)
-    const v = validationMetrics.get(selected.id)
-    if (t === undefined || v === undefined) throw new Error('Missing development trial')
-    const supportPass = Number.isFinite(trainRank(selected.id))
-    const stability = plateau(selected.id, neighbors(selected, trials), validationMetrics)
-    const b = validationMetrics.get(baselineId)?.net ?? null
-    const gates = {
-      trainSupport: supportPass,
-      trainPositive: meets(t.net),
-      validationPositive: meets(v.net),
-      validationBeatsReference: b !== null && meets(v.net, b),
-      validationSupport: v.closed >= 20,
-      validationExTop5: meets(v.exTop5Net),
-      validationPlateau: stability.pass,
+const develop = (input: string) =>
+  Effect.gen(function* () {
+    const { multiDays, provenance } = yield* readResearchData(input, false)
+    const outcomes = new Map(trials.map((trial) => [trial.id, replay(multiDays, trial, multiSymbols, primaryCost)]))
+    const trainSharpes = [...outcomes.values()].flatMap((days) => {
+      const sharpe = dailySharpe(observedNet(inRange(days, train)))
+      return sharpe === null ? [] : [sharpe]
+    })
+    const multiplicity = trials.length + priorTrials
+    const benchmark = deflationBenchmark(trainSharpes, multiplicity)
+    const measure = (range: Range) =>
+      new Map([...outcomes].map(([id, days]) => [id, summarize(inRange(days, range), benchmark)]))
+    const trainMetrics = measure(train)
+    const validationMetrics = measure(validation)
+    const select = (engine: Trial['engine']) => {
+      const candidates = trials.filter((trial) => trial.engine === engine && isUpgrade(trial))
+      const trainRank = (id: string) => {
+        const metric = trainMetrics.get(id)
+        if (metric === undefined || metric.closed < 30 || metric.completeSessions / metric.sessions < 0.9)
+          return -Infinity
+        return metric.completeCaseSharpe ?? -Infinity
+      }
+      const selected = candidates.toSorted((a, b) => trainRank(b.id) - trainRank(a.id) || a.id.localeCompare(b.id))[0]
+      const baselineId = engine === 'orb' ? v2Orb.id : v2Noise.id
+      const t = trainMetrics.get(selected.id)
+      const v = validationMetrics.get(selected.id)
+      if (t === undefined || v === undefined) throw new Error('Missing development trial')
+      const supportPass = Number.isFinite(trainRank(selected.id))
+      const stability = plateau(selected.id, neighbors(selected, trials), validationMetrics)
+      const b = validationMetrics.get(baselineId)?.net ?? null
+      const gates = {
+        trainSupport: supportPass,
+        trainPositive: meets(t.net),
+        validationPositive: meets(v.net),
+        validationBeatsReference: b !== null && meets(v.net, b),
+        validationSupport: v.closed >= 20,
+        validationExTop5: meets(v.exTop5Net),
+        validationPlateau: stability.pass,
+      }
+      return {
+        trial: selected,
+        train: t,
+        validation: v,
+        validationPlateau: stability,
+        gates,
+        developmentPass: Object.values(gates).every(Boolean),
+      }
     }
     return {
-      trial: selected,
-      train: t,
-      validation: v,
-      validationPlateau: stability,
-      gates,
-      developmentPass: Object.values(gates).every(Boolean),
+      schemaVersion: 'bayn.orb-zab-wave1b.freeze.v1',
+      manifestSha256: provenance.manifestHash,
+      sources: yield* sourceIdentity,
+      primaryCost,
+      split: { train, validation, holdout },
+      currentTrials: trials.length,
+      priorTrials,
+      benchmark: {
+        trainDailyDeflationBenchmark: benchmark,
+        nondegenerateTrainTrials: trainSharpes.length,
+        multiplicity,
+      },
+      selected: { orb: select('orb'), noise: select('noise') },
     }
-  }
-  return {
-    schemaVersion: 'bayn.orb-zab-wave1b.freeze.v1',
-    manifestSha256: provenance.manifestHash,
-    sources: await sourceIdentity(),
-    primaryCost,
-    split: { train, validation, holdout },
-    currentTrials: trials.length,
-    priorTrials,
-    benchmark: { trainDailyDeflationBenchmark: benchmark, nondegenerateTrainTrials: trainSharpes.length, multiplicity },
-    selected: { orb: select('orb'), noise: select('noise') },
-  }
-}
+  })
 
-type Freeze = Awaited<ReturnType<typeof develop>>
+type Freeze = Effect.Success<ReturnType<typeof develop>>
 
 const leaveOneOut = (
   days: readonly ResearchDay[],
@@ -298,112 +310,132 @@ const correlations = (
     }
   })
 
-const report = async (input: string, freeze: Freeze) => {
-  const { multiDays, liveDays, iexDiagnostic, provenance } = await readResearchData(input, true)
-  const multiRanges = [all, train, validation, holdout, ...halfYears]
-  const liveRanges = [live, ...liveFolds(liveDays)]
-  const benchmark = freeze.benchmark.trainDailyDeflationBenchmark
-  const multi = evaluate(multiDays, multiRanges, multiSymbols, benchmark)
-  const recent = evaluate(liveDays, liveRanges, liveSymbols, benchmark)
-  const holdoutIndex = multiRanges.indexOf(holdout)
-  const holdoutMetrics = new Map(multi.map((trial) => [trial.id, trial.costs[primaryCost].windows[holdoutIndex]]))
-  const audit = (selection: Freeze['selected']['orb'], reference: Trial) => {
-    const { trial, developmentPass } = selection
-    const row = multi.find((candidate) => candidate.id === trial.id)
-    const liveRow = recent.find((candidate) => candidate.id === trial.id)
-    if (row === undefined || liveRow === undefined) throw new Error('Missing frozen trial in report')
-    const hold = row.costs[primaryCost].windows[holdoutIndex]
-    const referenceNet = holdoutMetrics.get(reference.id)?.net ?? null
-    const loo = Object.values(row.costs[primaryCost].loso)
-    const stability = plateau(trial.id, neighbors(trial, trials), holdoutMetrics)
-    const gates = {
-      developmentPass,
-      holdoutPositiveAllCosts: costs.every((cost) => meets(row.costs[cost].windows[holdoutIndex].net)),
-      holdoutBeatsReference: referenceNet !== null && meets(hold.net, referenceNet),
-      holdoutSupport: hold.closed >= 20,
-      holdoutExTop5: meets(hold.exTop5Net),
-      holdoutPlateau: stability.pass,
-      holdoutLoso: loo.length >= 2 && loo.every((variant) => meets(variant[holdoutIndex][0])),
-      holdoutBlockBootstrap: hold.blockP !== null && hold.blockP < 0.05,
-      holdoutDeflatedSharpe: hold.dsr !== null && hold.dsr >= 0.95,
-      live66PositiveAt10: meets(liveRow.costs[primaryCost].windows[0].net),
+const report = (input: string, freeze: Freeze) =>
+  Effect.gen(function* () {
+    const { multiDays, liveDays, iexDiagnostic, provenance } = yield* readResearchData(input, true)
+    const multiRanges = [all, train, validation, holdout, ...halfYears]
+    const liveRanges = [live, ...liveFolds(liveDays)]
+    const benchmark = freeze.benchmark.trainDailyDeflationBenchmark
+    const multi = evaluate(multiDays, multiRanges, multiSymbols, benchmark)
+    const recent = evaluate(liveDays, liveRanges, liveSymbols, benchmark)
+    const holdoutIndex = multiRanges.indexOf(holdout)
+    const holdoutMetrics = new Map(multi.map((trial) => [trial.id, trial.costs[primaryCost].windows[holdoutIndex]]))
+    const audit = (selection: Freeze['selected']['orb'], reference: Trial) => {
+      const { trial, developmentPass } = selection
+      const row = multi.find((candidate) => candidate.id === trial.id)
+      const liveRow = recent.find((candidate) => candidate.id === trial.id)
+      if (row === undefined || liveRow === undefined) throw new Error('Missing frozen trial in report')
+      const hold = row.costs[primaryCost].windows[holdoutIndex]
+      const referenceNet = holdoutMetrics.get(reference.id)?.net ?? null
+      const loo = Object.values(row.costs[primaryCost].loso)
+      const stability = plateau(trial.id, neighbors(trial, trials), holdoutMetrics)
+      const gates = {
+        developmentPass,
+        holdoutPositiveAllCosts: costs.every((cost) => meets(row.costs[cost].windows[holdoutIndex].net)),
+        holdoutBeatsReference: referenceNet !== null && meets(hold.net, referenceNet),
+        holdoutSupport: hold.closed >= 20,
+        holdoutExTop5: meets(hold.exTop5Net),
+        holdoutPlateau: stability.pass,
+        holdoutLoso: loo.length >= 2 && loo.every((variant) => meets(variant[holdoutIndex][0])),
+        holdoutBlockBootstrap: hold.blockP !== null && hold.blockP < 0.05,
+        holdoutDeflatedSharpe: hold.dsr !== null && hold.dsr >= 0.95,
+        live66PositiveAt10: meets(liveRow.costs[primaryCost].windows[0].net),
+      }
+      return { id: trial.id, gates, holdoutPlateau: stability, passedModelGates: Object.values(gates).every(Boolean) }
     }
-    return { id: trial.id, gates, holdoutPlateau: stability, passedModelGates: Object.values(gates).every(Boolean) }
-  }
-  const orb = freeze.selected.orb.trial
-  const noise = freeze.selected.noise.trial
-  const attribution = (days: readonly ResearchDay[], ranges: readonly Range[], universe: readonly string[]) =>
-    Object.fromEntries(
-      [v2Orb, v2Noise, orb, noise].map((trial) => {
-        const a = replay(days, trial, universe, 2)
-        const b = replay(days, trial, universe, 10)
-        return [trial.id, ranges.map((range) => tradeAttribution(inRange(a, range), inRange(b, range)))]
-      }),
-    )
-  return {
-    schemaVersion: 'bayn.orb-zab-wave1b.results.v1',
-    qualification: 'UNQUALIFIED',
-    provenance,
-    freezeSha256: sha256(JSON.stringify(freeze)),
-    trials,
-    bootstrap,
-    dsr: freeze.benchmark,
-    metricColumns: Object.keys(summarize([], null)),
-    losoColumns: ['wholeWindowNet', 'supportedClosedNet', 'completeSessions', 'closedTrades'],
-    rvolCoverageHorizons: horizons,
-    correlationOrder: ['frozenOrb', 'frozenNoise', 'v2MiddaySelector'],
-    iexDiagnostic,
-    qualificationAudit: { orb: audit(freeze.selected.orb, v2Orb), noise: audit(freeze.selected.noise, v2Noise) },
-    multiyear: {
-      universe: multiSymbols,
-      windows: multiRanges,
-      coverage: coverage(multiDays, multiRanges),
-      trials: compactTrials(multi),
-      correlations: correlations(multiDays, multiRanges, multiSymbols, ['AAPL', 'AMZN', 'NVDA'], orb, noise),
-      attribution: attribution(multiDays, multiRanges, multiSymbols),
-    },
-    live66: {
-      universe: liveSymbols,
-      windows: liveRanges,
-      coverage: coverage(liveDays, liveRanges),
-      trials: compactTrials(recent),
-      correlations: correlations(liveDays, liveRanges, liveSymbols, liveSymbols, orb, noise),
-      attribution: attribution(liveDays, liveRanges, liveSymbols),
-    },
-  }
-}
+    const orb = freeze.selected.orb.trial
+    const noise = freeze.selected.noise.trial
+    const attribution = (days: readonly ResearchDay[], ranges: readonly Range[], universe: readonly string[]) =>
+      Object.fromEntries(
+        [v2Orb, v2Noise, orb, noise].map((trial) => {
+          const a = replay(days, trial, universe, 2)
+          const b = replay(days, trial, universe, 10)
+          return [trial.id, ranges.map((range) => tradeAttribution(inRange(a, range), inRange(b, range)))]
+        }),
+      )
+    return {
+      schemaVersion: 'bayn.orb-zab-wave1b.results.v1',
+      qualification: 'UNQUALIFIED',
+      provenance,
+      freezeSha256: sha256(JSON.stringify(freeze)),
+      trials,
+      bootstrap,
+      dsr: freeze.benchmark,
+      metricColumns: Object.keys(summarize([], null)),
+      losoColumns: ['wholeWindowNet', 'supportedClosedNet', 'completeSessions', 'closedTrades'],
+      rvolCoverageHorizons: horizons,
+      correlationOrder: ['frozenOrb', 'frozenNoise', 'v2MiddaySelector'],
+      iexDiagnostic,
+      qualificationAudit: { orb: audit(freeze.selected.orb, v2Orb), noise: audit(freeze.selected.noise, v2Noise) },
+      multiyear: {
+        universe: multiSymbols,
+        windows: multiRanges,
+        coverage: coverage(multiDays, multiRanges),
+        trials: compactTrials(multi),
+        correlations: correlations(multiDays, multiRanges, multiSymbols, ['AAPL', 'AMZN', 'NVDA'], orb, noise),
+        attribution: attribution(multiDays, multiRanges, multiSymbols),
+      },
+      live66: {
+        universe: liveSymbols,
+        windows: liveRanges,
+        coverage: coverage(liveDays, liveRanges),
+        trials: compactTrials(recent),
+        correlations: correlations(liveDays, liveRanges, liveSymbols, liveSymbols, orb, noise),
+        attribution: attribution(liveDays, liveRanges, liveSymbols),
+      },
+    }
+  })
 
-if (import.meta.main) {
-  const [mode, input, freezePath, output, ...extra] = process.argv.slice(2)
-  if (
-    input === undefined ||
-    freezePath === undefined ||
-    extra.length !== 0 ||
-    (mode === '--freeze' ? output !== undefined : mode !== '--report' || output === undefined)
-  ) {
-    throw new Error(
-      'Usage: --freeze <directory|--s3> <new-freeze.json> | --report <directory|--s3> <freeze.json> <new-results.json>',
-    )
-  }
-  const destination = mode === '--freeze' ? freezePath : output
-  if (destination === undefined || (await Bun.file(destination).exists())) throw new Error('Output must not exist')
-  if (new Set(trials.map((trial) => trial.id)).size !== trials.length) throw new Error('Duplicate trial ID')
-  const freeze = await develop(input)
-  if (mode === '--freeze') {
-    await writeFile(destination, JSON.stringify(freeze, null, 2) + '\n', { flag: 'wx' })
-  } else {
-    const expected: unknown = JSON.parse(await Bun.file(freezePath).text())
-    if (JSON.stringify(expected) !== JSON.stringify(freeze))
-      throw new Error('Development freeze does not match inputs, source or selection')
-    await writeFile(
-      destination,
+const runResearch = (args: readonly string[]) =>
+  Effect.gen(function* () {
+    const [mode, input, freezePath, output, ...extra] = args
+    if (
+      input === undefined ||
+      freezePath === undefined ||
+      extra.length !== 0 ||
+      (mode === '--freeze' ? output !== undefined : mode !== '--report' || output === undefined)
+    ) {
+      return yield* new ResearchEvidenceError({
+        message:
+          'Usage: --freeze <directory|--s3> <new-freeze.json> | --report <directory|--s3> <freeze.json> <new-results.json>',
+      })
+    }
+    const fs = yield* FileSystem.FileSystem
+    const destination = mode === '--freeze' ? freezePath : output
+    if (destination === undefined || (yield* fs.exists(destination))) {
+      return yield* new ResearchEvidenceError({ message: 'Output must not exist' })
+    }
+    if (new Set(trials.map((trial) => trial.id)).size !== trials.length) throw new Error('Duplicate trial ID')
+    const freeze = yield* develop(input)
+    const write = (text: string) => fs.writeFileString(destination, text + '\n', { flag: 'wx', mode: 0o600 })
+    if (mode === '--freeze') return yield* write(JSON.stringify(freeze, null, 2))
+
+    const freezeText = yield* fs.readFileString(freezePath)
+    const expected: unknown = yield* Effect.try({
+      try: () => JSON.parse(freezeText),
+      catch: (cause) => new ResearchEvidenceError({ message: 'Invalid development freeze JSON', cause }),
+    })
+    if (JSON.stringify(expected) !== JSON.stringify(freeze)) {
+      return yield* new ResearchEvidenceError({
+        message: 'Development freeze does not match inputs, source or selection',
+      })
+    }
+    const result = yield* report(input, freeze)
+    return yield* write(
       JSON.stringify(
-        await report(input, freeze),
+        result,
         (_key, value: unknown) =>
           typeof value === 'number' && !Number.isInteger(value) ? Number(value.toFixed(8)) : value,
         2,
-      ) + '\n',
-      { flag: 'wx' },
+      ),
     )
-  }
+  })
+
+if (import.meta.main) {
+  NodeRuntime.runMain(
+    runResearch(process.argv.slice(2)).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- offline CLI owns the platform file boundary
+      Effect.provide(NodeServices.layer),
+    ),
+  )
 }

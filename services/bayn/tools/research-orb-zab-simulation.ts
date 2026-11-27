@@ -157,12 +157,14 @@ export const simulateExit = (
         stop = tightenProtectiveStop(side, stop, best - side * risk)
       } else if (trial.exit !== 'static' && checkpoint(trial, t)) {
         const band = bands(trial, series, t)
-        if (
-          band !== null &&
-          side * (bar.close - noiseAreaExitLevel(side, trial.exit, series.vwap[t], band.lower, band.upper)) <= 0
-        ) {
-          pending = trial.exit
-        }
+        const vwap = series.vwap[t]
+        const level =
+          trial.exit === 'vwap'
+            ? vwap
+            : band === null
+              ? null
+              : noiseAreaExitLevel(side, trial.exit, vwap, band.lower, band.upper)
+        if (level !== null && side * (bar.close - level) <= 0) pending = trial.exit
       }
     }
   }

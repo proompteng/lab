@@ -95,6 +95,8 @@ tool=services/bayn/tools/research-orb-zab-multiyear.ts
 dir=docs/bayn/evidence/2026-11-27-orb-zab-research
 bun "$tool" --freeze --s3 /tmp/wave1b-new-freeze.json
 bun "$tool" --report --s3 "$dir/freeze.json" /tmp/wave1b-new-results.json
+bunx oxfmt /tmp/wave1b-new-results.json
+cmp "$dir/results.json" /tmp/wave1b-new-results.json
 ```
 
 The report first recomputes and validates the development receipt, including relevant code SHA-256s, without
@@ -102,7 +104,11 @@ scoring any later session. The two commands exclusively create their output file
 
 ## Decision: no v3 promotion
 
-The [development receipt](freeze.json) was pushed before this report was generated. Neither sleeve had an upgrade
+The [original development freeze](https://github.com/proompteng/lab/commit/028118b64f5911e33c731d54c910a68e19465acf)
+was pushed before Holdout scoring. Review moved I/O into the Effect runtime and corrected the VWAP-only
+exit to work even when a historical band is unavailable. The regenerated [receipt](freeze.json)
+rebinds the source hashes; dates, trial parameters, selection and qualification rules did not change.
+Neither sleeve had an upgrade
 eligible for selection under the Train coverage/support rule, so the receipt records diagnostic fallbacks, not
 winners. The diagnostic ORB had 249/374 complete Train sessions and Noise had 253/374. Holdout covered 166 sessions;
 **no trial with a complete Holdout had positive net at 10 bp** (93/93 ORB and 37/62 Noise had complete Holdout
@@ -284,7 +290,7 @@ rather than total net.
 | `noise-v2-vwap-boundary`             |    -539\* |   -3,155\* |    +11\* |   +2,728 |
 | `noise-v2-trailing-atr`              |    -158\* |   -1,158\* | +2,222\* |   +2,292 |
 | `noise-grid15-static`                |  +3,821\* |   -1,466\* |   -4,031 |     -608 |
-| `noise-grid15-vwap`                  |  -3,187\* |   -4,693\* |   -7,188 |     -187 |
+| `noise-grid15-vwap`                  |  -3,165\* |   -4,693\* |   -7,188 |     -158 |
 | `noise-grid15-opposite-band`         |  +4,459\* |   -1,324\* |   -3,692 |     -672 |
 | `noise-grid15-trailing-atr`          |  +3,913\* |   -1,454\* |   -4,006 |     -684 |
 | `noise-grid15-band0.8-collar10`      |  -9,607\* |   -5,183\* |   -8,527 |   -1,844 |
@@ -316,7 +322,7 @@ rather than total net.
 | `noise-grid30-band1.2-collar20`      |  -2,072\* |   -3,534\* |   -1,222 |   +2,360 |
 | `noise-grid30-band1.2-collar25`      |  -2,149\* |   -3,534\* |   -1,222 |   +2,360 |
 | `noise-grid60-static`                |    -512\* |   -3,212\* |   -436\* |    -30\* |
-| `noise-grid60-vwap`                  |  -3,198\* |   -5,234\* | -2,430\* |   +785\* |
+| `noise-grid60-vwap`                  |  -3,127\* |   -5,234\* | -2,430\* |   +785\* |
 | `noise-grid60-opposite-band`         |    -257\* |   -3,528\* |   -182\* |   +224\* |
 | `noise-grid60-trailing-atr`          |    -403\* |   -3,212\* |   -450\* |   -203\* |
 | `noise-grid60-band0.8-collar10`      |  -5,071\* |   -6,581\* | -3,034\* |   +983\* |

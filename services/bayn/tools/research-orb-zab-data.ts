@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 
 import { S3Client } from 'bun'
-import { Result, Schema } from 'effect'
+import { Config, Data, Effect, FileSystem, Redacted, Result, Schema } from 'effect'
 
 import { MarketCalendarQueryBase } from '../src/broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../src/broker/alpaca/normalizers'
@@ -336,83 +337,113 @@ const quoteDiagnostic = (content: string, rows: number, sessions: ReadonlyMap<st
   )
 }
 
-const objectReader = (directory: string) => {
-  if (directory !== '--s3') return (name: string) => Bun.file(join(directory, name)).bytes()
-  const { AWS_ACCESS_KEY_ID: accessKeyId, AWS_SECRET_ACCESS_KEY: secretAccessKey } = process.env
-  if (accessKeyId === undefined || accessKeyId === '' || secretAccessKey === undefined || secretAccessKey === '') {
-    throw new Error('Missing artifacts credentials (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY)')
-  }
-  const s3 = new S3Client({
-    endpoint: process.env['AGENTS_ARTIFACTS_ENDPOINT'] ?? 'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
-    bucket: process.env['AGENTS_ARTIFACTS_BUCKET'] ?? 'agents-artifacts',
-    accessKeyId,
-    secretAccessKey,
-    region: 'us-east-1',
-  })
-  return (name: string) => s3.file(prefix + name).bytes()
-}
+export class ResearchEvidenceError extends Data.TaggedError('ResearchEvidenceError')<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
 
-export const readResearchData = async (directory: string, includeHoldout: boolean) => {
-  const get = objectReader(directory)
-  const decoder = new TextDecoder('utf-8', { fatal: true })
-  const manifestBytes = await get('MANIFEST.json')
-  const manifestHash = sha256(manifestBytes)
-  if (manifestHash !== '3954d5f0ff79bdd280f893cfa133e12e4fccad409ff3f8c907a80410ee19e5ca')
-    throw new Error('Frozen manifest SHA-256 mismatch')
-  const manifest = decodeManifest(JSON.parse(decoder.decode(manifestBytes)))
-  const receipts = [calendarName, longName, liveName, quotesName].map((name) => {
-    const receipt = manifest.files.find((file) => file.key === prefix + name)
-    if (receipt === undefined) throw new Error(`Missing receipt: ${name}`)
-    return receipt
+const objectReader = (directory: string) =>
+  Effect.gen(function* () {
+    if (directory !== '--s3') {
+      const fs = yield* FileSystem.FileSystem
+      return (name: string) => fs.readFile(join(directory, name))
+    }
+    const endpoint = yield* Config.NonEmptyString('AGENTS_ARTIFACTS_ENDPOINT').pipe(
+      Config.withDefault('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80'),
+    )
+    const bucket = yield* Config.NonEmptyString('AGENTS_ARTIFACTS_BUCKET').pipe(Config.withDefault('agents-artifacts'))
+    const accessKeyId = yield* Config.Redacted('AWS_ACCESS_KEY_ID')
+    const secretAccessKey = yield* Config.Redacted('AWS_SECRET_ACCESS_KEY')
+    const s3 = new S3Client({
+      endpoint,
+      bucket,
+      accessKeyId: Redacted.value(accessKeyId),
+      secretAccessKey: Redacted.value(secretAccessKey),
+      region: 'us-east-1',
+    })
+    return (name: string) =>
+      Effect.tryPromise({
+        try: async (signal) => {
+          const url = s3.presign(prefix + name, { expiresIn: 300 })
+          const response = await fetch(url, { signal, redirect: 'error', decompress: false })
+          if (!response.ok) {
+            await response.body?.cancel()
+            throw new ResearchEvidenceError({ message: `S3 read failed for ${name}: HTTP ${response.status}` })
+          }
+          return new Uint8Array(await response.arrayBuffer())
+        },
+        // A transport error may embed the signed URL. Keep the object and error class, not the URL.
+        catch: (error) =>
+          error instanceof ResearchEvidenceError
+            ? error
+            : new ResearchEvidenceError({
+                message: `S3 transport failed for ${name}`,
+                cause: error instanceof Error ? error.name : 'Unknown transport failure',
+              }),
+      })
   })
-  const read = async (name: string) => {
-    const receipt = receipts.find((entry) => entry.key === prefix + name)
-    if (receipt === undefined) throw new Error(`Missing receipt: ${name}`)
-    const bytes = await get(name)
-    if (bytes.length !== receipt.gzipBytes || sha256(bytes) !== receipt.gzipSha256) {
-      throw new Error(`Frozen object mismatch: ${name}`)
+
+export const readResearchData = (directory: string, includeHoldout: boolean) =>
+  Effect.gen(function* () {
+    const get = yield* objectReader(directory)
+    const decoder = new TextDecoder('utf-8', { fatal: true })
+    const manifestBytes = yield* get('MANIFEST.json')
+    const manifestHash = sha256(manifestBytes)
+    if (manifestHash !== '3954d5f0ff79bdd280f893cfa133e12e4fccad409ff3f8c907a80410ee19e5ca')
+      return yield* new ResearchEvidenceError({ message: 'Frozen manifest SHA-256 mismatch' })
+    const manifest = decodeManifest(JSON.parse(decoder.decode(manifestBytes)))
+    const receipts = [calendarName, longName, liveName, quotesName].map((name) => {
+      const receipt = manifest.files.find((file) => file.key === prefix + name)
+      if (receipt === undefined) throw new Error(`Missing receipt: ${name}`)
+      return receipt
+    })
+    const read = (name: string) =>
+      Effect.gen(function* () {
+        const receipt = receipts.find((entry) => entry.key === prefix + name)
+        if (receipt === undefined) throw new Error(`Missing receipt: ${name}`)
+        const bytes = yield* get(name)
+        if (bytes.length !== receipt.gzipBytes || sha256(bytes) !== receipt.gzipSha256) {
+          return yield* new ResearchEvidenceError({ message: `Frozen object mismatch: ${name}` })
+        }
+        const decoded = name.endsWith('.gz') ? gunzipSync(bytes) : bytes
+        if (decoded.length !== receipt.rawBytes || sha256(decoded) !== receipt.rawSha256) {
+          return yield* new ResearchEvidenceError({ message: `Decompressed object mismatch: ${name}` })
+        }
+        return { text: decoder.decode(decoded), rows: receipt.rows }
+      })
+    const calendar = yield* read(calendarName)
+    const sessions = normalizeResearchCalendar(JSON.parse(calendar.text)).filter((s) => s.date <= end)
+    const byDate = new Map(sessions.map((s) => [s.date, s]))
+    if (sessions.length !== 729 || byDate.size !== sessions.length) throw new Error('Unexpected calendar coverage')
+    const readBars = (name: string) =>
+      read(name).pipe(Effect.map(({ text, rows }) => parseBars(name, text, byDate, rows)))
+    const long = yield* readBars(longName)
+    const live = includeHoldout ? yield* readBars(liveName) : undefined
+    const quotes = includeHoldout ? yield* read(quotesName) : undefined
+    const multiDays = panel(
+      sessions.filter((day) => includeHoldout || day.date <= '2026-03-31'),
+      multiSymbols,
+      (date) => (date <= splice ? long.raw.get(date) : live?.raw.get(date)),
+    )
+    const liveDays =
+      live === undefined
+        ? []
+        : panel(
+            sessions.filter((day) => day.date >= '2026-07-16'),
+            [...liveSymbols, ...noiseSymbols],
+            (date) => live.raw.get(date),
+          ).filter((day) => day.date >= liveStart)
+    if (includeHoldout && liveDays.length !== 66) throw new Error('Unexpected live session count')
+    return {
+      provenance: {
+        manifestHash,
+        receipts,
+        spliceThrough: splice,
+        longRegularRows: long.regular,
+        liveRegularRows: live?.regular,
+      },
+      multiDays,
+      liveDays,
+      iexDiagnostic: quotes === undefined ? null : quoteDiagnostic(quotes.text, quotes.rows, byDate),
     }
-    const decoded = name.endsWith('.gz') ? Bun.gunzipSync(bytes) : bytes
-    if (decoded.length !== receipt.rawBytes || sha256(decoded) !== receipt.rawSha256) {
-      throw new Error(`Decompressed object mismatch: ${name}`)
-    }
-    return { text: decoder.decode(decoded), rows: receipt.rows }
-  }
-  const calendar = await read(calendarName)
-  const sessions = normalizeResearchCalendar(JSON.parse(calendar.text)).filter((s) => s.date <= end)
-  const byDate = new Map(sessions.map((s) => [s.date, s]))
-  if (sessions.length !== 729 || byDate.size !== sessions.length) throw new Error('Unexpected calendar coverage')
-  const readBars = async (name: string) => {
-    const { text, rows } = await read(name)
-    return parseBars(name, text, byDate, rows)
-  }
-  const long = await readBars(longName)
-  const live = includeHoldout ? await readBars(liveName) : undefined
-  const quotes = includeHoldout ? await read(quotesName) : undefined
-  const multiDays = panel(
-    sessions.filter((day) => includeHoldout || day.date <= '2026-03-31'),
-    multiSymbols,
-    (date) => (date <= splice ? long.raw.get(date) : live?.raw.get(date)),
-  )
-  const liveDays =
-    live === undefined
-      ? []
-      : panel(
-          sessions.filter((day) => day.date >= '2026-07-16'),
-          [...liveSymbols, ...noiseSymbols],
-          (date) => live.raw.get(date),
-        ).filter((day) => day.date >= liveStart)
-  if (includeHoldout && liveDays.length !== 66) throw new Error('Unexpected live session count')
-  return {
-    provenance: {
-      manifestHash,
-      receipts,
-      spliceThrough: splice,
-      longRegularRows: long.regular,
-      liveRegularRows: live?.regular,
-    },
-    multiDays,
-    liveDays,
-    iexDiagnostic: quotes === undefined ? null : quoteDiagnostic(quotes.text, quotes.rows, byDate),
-  }
-}
+  })
