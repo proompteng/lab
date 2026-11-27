@@ -1,7 +1,7 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentProvider
 metadata:
-  name: codex-spark-smoke
+  name: codex-smoke
 spec:
   binary: /usr/local/bin/agent-runner
   adapter:

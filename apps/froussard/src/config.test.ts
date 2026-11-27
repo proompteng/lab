@@ -69,7 +69,7 @@ describe('loadConfig', () => {
       AGENTS_SERVICE_BASE_URL: 'http://agents.override/',
       AGENTS_SERVICE_CLIENT_NAME: 'froussard-tests',
       AGENTS_NAMESPACE: 'agents-dev',
-      AGENTS_CODEX_AGENT_NAME: 'codex-spark-agent',
+      AGENTS_CODEX_AGENT_NAME: 'custom-codex-agent',
       AGENTS_LINEAR_AGENT_NAME: 'codex-linear-dev',
       AGENTS_VCS_PROVIDER_NAME: 'github-dev',
       AGENTS_SERVICE_ACCOUNT_NAME: 'custom-sa',
@@ -99,7 +99,7 @@ describe('loadConfig', () => {
     expect(config.agents.serviceBaseUrl).toBe('http://agents.override')
     expect(config.agents.serviceClientName).toBe('froussard-tests')
     expect(config.agents.namespace).toBe('agents-dev')
-    expect(config.agents.agentName).toBe('codex-spark-agent')
+    expect(config.agents.agentName).toBe('custom-codex-agent')
     expect(config.agents.linearAgentName).toBe('codex-linear-dev')
     expect(config.agents.vcsProviderName).toBe('github-dev')
     expect(config.agents.serviceAccountName).toBe('custom-sa')
