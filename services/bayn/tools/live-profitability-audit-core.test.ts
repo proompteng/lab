@@ -418,6 +418,80 @@ test('collar misses require executable-side evidence near submission, not just e
   expect(audit(false).metrics).toMatchObject({ entryFillRate: 0, collarMissRate: 0 })
 })
 
+test('uses the latest retained quote before a microsecond submission, not a quote one nanosecond after it', () => {
+  const base = healthy.entries[0]
+  if (base === undefined) throw new Error('Expected QQQ leg')
+  const report = audited({
+    ...session,
+    entries: [base],
+    orders: [order({ entryId: base.id, status: OrderStatus.Expired, openedAt: '2026-11-27T15:00:00.123456Z' })],
+    market: {
+      bars: [],
+      quotes: [
+        {
+          symbol: 'QQQ',
+          at: '2026-11-27T15:00:00.123456001Z',
+          feed: 'iex',
+          bidMicros: '100014000',
+          askMicros: '100015000',
+        },
+        { symbol: 'QQQ', at: '2026-11-27T15:00:00.123Z', feed: 'iex', bidMicros: '100018000', askMicros: '100019000' },
+        {
+          symbol: 'QQQ',
+          at: '2026-11-27T15:00:00.123455999Z',
+          feed: 'iex',
+          bidMicros: '100010000',
+          askMicros: '100030000',
+        },
+      ],
+    },
+  })
+  expect(report.metrics.collarMissRate).toBe(1)
+})
+
+test('preserves nanoseconds when ordering stop crossings and excluding quotes at or after termination', () => {
+  const orderId = 'QQQ-stop'
+  const report = audited({
+    ...session,
+    openingPositions: [{ symbol: 'QQQ', quantityAtoms: atoms(10) }],
+    orders: [
+      order({
+        id: orderId,
+        entryId: null,
+        side: OrderSide.Sell,
+        type: OrderType.StopLimit,
+        status: OrderStatus.Canceled,
+        openedAt: '2026-11-27T15:30:00.123Z',
+        terminalAt: '2026-11-27T15:30:00.123457Z',
+        stopMicros: '99000000',
+        limitMicros: '98000000',
+        protective: true,
+      }),
+    ],
+    market: {
+      bars: [],
+      quotes: [
+        { symbol: 'QQQ', at: '2026-11-27T15:30:00.123456999Z', feed: 'iex', bidMicros: '97000000', askMicros: null },
+        { symbol: 'QQQ', at: '2026-11-27T15:30:00.123457Z', feed: 'iex', bidMicros: '96500000', askMicros: null },
+        { symbol: 'QQQ', at: '2026-11-27T15:30:00.123456998Z', feed: 'iex', bidMicros: '98500000', askMicros: null },
+        { symbol: 'QQQ', at: '2026-11-27T15:30:00.122999999Z', feed: 'iex', bidMicros: '96000000', askMicros: null },
+      ],
+    },
+  })
+  expect(report.protectiveStops).toMatchObject([
+    {
+      orderId,
+      observedQuotes: 2,
+      stopCrossed: true,
+      gapThrough: {
+        source: 'QUOTE',
+        at: '2026-11-27T15:30:00.123456999Z',
+        firstObservedCrossAlreadyPastLimit: false,
+      },
+    },
+  ])
+})
+
 test('long protective stop fills on a crossing; later quotes cannot invent a gap after termination', () => {
   const withStop: Session = {
     ...healthy,

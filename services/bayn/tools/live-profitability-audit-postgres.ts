@@ -32,7 +32,7 @@ const DecisionRow = Schema.Struct({ ...CycleDecisionJsonRow.fields, entry: Schem
 const StoredOrder = Schema.Struct({
   ...Session.fields.orders.value.fields,
   intentId: nullableId,
-  decisionHash: nullableId,
+  strategyDecisionHash: nullableId,
   protectionEntryHash: nullableId,
 })
 const { positions: PositionRows, ...reconciliationFields } = Session.fields.reconciliation.members[0].fields
@@ -68,8 +68,16 @@ const projectDecisions = (rows: readonly (typeof DecisionRow.Type)[], account: s
 
     const target = document.strategyDecision
     if (!row.entry) {
-      for (const item of document.targetPlan.targets)
-        exits.set(JSON.stringify([document.contentHash, item.symbol]), item.referencePriceMicros)
+      for (const [index, leg] of document.targetPlan.intentTargets.entries()) {
+        const intentId = document.orderedIntentIds[index]
+        const reference = document.targetPlan.targets.find(({ symbol }) => symbol === leg.symbol)
+        // Replans can retain the same strategy hash but quote a new reference for a distinct intent.
+        if (intentId !== undefined && reference !== undefined)
+          exits.set(
+            JSON.stringify([document.bindings.strategyDecisionHash, intentId, leg.symbol]),
+            reference.referencePriceMicros,
+          )
+      }
       continue
     }
     if (
@@ -201,7 +209,8 @@ const readSession = (sql: PgClient.PgClient, account: string, date: string, cont
           THEN o.broker_updated_at END AS "terminalAt",
         (o.parent_broker_order_id IS NOT NULL OR coalesce(m.protection->>'_tag','') IN
           ('Oco','EquityShortOco','StopLimit','EquityShortStopLimit')) AS protective,
-        m.intent_id AS "intentId",m.decision_hash AS "decisionHash",m.protection->>'entryDecisionHash' AS "protectionEntryHash"
+        m.intent_id AS "intentId",m.decision_hash AS "strategyDecisionHash",
+        m.protection->>'entryDecisionHash' AS "protectionEntryHash"
       FROM latest o JOIN first f USING (broker_order_id)
       LEFT JOIN latest parent ON parent.broker_order_id=o.parent_broker_order_id
       LEFT JOIN intents m ON m.account_id=o.account_id AND m.intent_id=coalesce(o.intent_id,parent.intent_id)
@@ -214,7 +223,7 @@ const readSession = (sql: PgClient.PgClient, account: string, date: string, cont
         OR o.broker_order_id=ANY(${fills.map(({ orderId }) => orderId)}::text[])
     `.pipe(read(StoredOrder))
     const entriesById = new Set(entries.map(({ id }) => id))
-    const orders = storedOrders.map(({ intentId, decisionHash, protectionEntryHash, ...order }) => ({
+    const orders = storedOrders.map(({ intentId, strategyDecisionHash, protectionEntryHash, ...order }) => ({
       ...order,
       entryId:
         intentId !== null && entriesById.has(intentId)
@@ -223,7 +232,7 @@ const readSession = (sql: PgClient.PgClient, account: string, date: string, cont
       // A child's trigger or profit limit is a precommitted exit benchmark, not its execution price.
       exitReferenceMicros: order.protective
         ? (order.stopMicros ?? order.limitMicros)
-        : (exits.get(JSON.stringify([decisionHash, order.symbol])) ?? null),
+        : (exits.get(JSON.stringify([strategyDecisionHash, intentId, order.symbol])) ?? null),
     }))
 
     const stopSymbols = [

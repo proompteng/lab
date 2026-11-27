@@ -112,7 +112,7 @@ export const MarketEvidence = Schema.Struct({
   quotes: Schema.Array(
     Schema.Struct({
       symbol: SymbolSchema,
-      at: At,
+      at: UtcSourceTimestampSchema,
       feed: Feed,
       bidMicros: Price,
       askMicros: Price,
