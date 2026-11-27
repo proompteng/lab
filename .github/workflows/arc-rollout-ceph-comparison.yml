@@ -1,0 +1,26 @@
+name: ARC rollout ceph comparison
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/arc-rollout-ceph-comparison.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  replay:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [opencode, bayn, bayn-broker-feed]
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: ${{ matrix.image }}
+      package_attr: ${{ format('{0}-image', matrix.image) }}
+      tag: sha-c262638b291775193b92d87ec2b64e858edf1229
+      source_revision: c262638b291775193b92d87ec2b64e858edf1229
+      publish_index: false
+      tmpfs: false
