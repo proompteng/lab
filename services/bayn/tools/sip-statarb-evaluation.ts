@@ -39,6 +39,7 @@ const metrics = (days: readonly Outcome[], cost: Cost, dsrBenchmark: number | nu
   const add = (field: keyof Outcome) => sum(days.map((day) => day[field]))
   return {
     ...econ,
+    completeCases: econ.net === null ? economics(resolved) : null,
     bootstrapP: econ.net === null ? null : bootstrapPValue(resolved),
     dsr: econ.net === null ? null : deflatedSharpe(resolved, dsrBenchmark),
     sessions: days.length,
@@ -215,19 +216,29 @@ export const losoSummaries = (ledger: ReplayDays, symbols: readonly string[], ra
   const omittedSymbols = [...ledger.loso.keys()].map((id) => symbols[id])
   const summarizeCost = (costIndex: number) =>
     ranges.map((range) => {
+      const read = (series: Float64Array, day: number) => series[day * costs.length + costIndex]
       const omitted = [...ledger.loso.entries()].map(([id, series]) => {
-        const daily: (number | null)[] = []
-        for (let day = range.start; day < range.end; day++) {
-          const net = series[day * costs.length + costIndex]
-          daily.push(Number.isNaN(net) ? null : net)
-        }
-        return { symbol: symbols[id], ...economics(daily) }
+        let net = 0
+        for (let day = range.start; day < range.end; day++) net += read(series, day)
+        return { id, series, net: Number.isNaN(net) ? null : net }
       })
       const worst = omitted.reduce<(typeof omitted)[number] | null>(
         (prev, current) => (prev === null || (current.net ?? -Infinity) < (prev.net ?? -Infinity) ? current : prev),
         null,
       )
-      return { range: range.id, worst, netByOmittedSymbol: omitted.map((item) => item.net) }
+      const worstMetrics =
+        worst === null
+          ? null
+          : {
+              symbol: symbols[worst.id],
+              ...economics(
+                Array.from({ length: range.end - range.start }, (_, i) => {
+                  const net = read(worst.series, i + range.start)
+                  return Number.isNaN(net) ? null : net
+                }),
+              ),
+            }
+      return { range: range.id, worst: worstMetrics, netByOmittedSymbol: omitted.map((item) => item.net) }
     })
   return {
     omittedSymbols,

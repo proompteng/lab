@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
+import { createGunzip } from 'node:zlib'
 
 import { Config, Effect, Redacted, Schema } from 'effect'
 import { S3Client } from 'bun'
@@ -53,12 +55,12 @@ export const loadSources = (inputDir: string | undefined) =>
       }
     }
     const options = yield* Config.all({
-      endpoint: Config.string('AGENTS_ARTIFACTS_ENDPOINT').pipe(
+      endpoint: Config.String('AGENTS_ARTIFACTS_ENDPOINT').pipe(
         Config.withDefault('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80'),
       ),
-      bucket: Config.string('AGENTS_ARTIFACTS_BUCKET').pipe(Config.withDefault('agents-artifacts')),
-      accessKeyId: Config.redacted('AWS_ACCESS_KEY_ID'),
-      secretAccessKey: Config.redacted('AWS_SECRET_ACCESS_KEY'),
+      bucket: Config.String('AGENTS_ARTIFACTS_BUCKET').pipe(Config.withDefault('agents-artifacts')),
+      accessKeyId: Config.Redacted('AWS_ACCESS_KEY_ID'),
+      secretAccessKey: Config.Redacted('AWS_SECRET_ACCESS_KEY'),
     })
     const source = new S3Client({
       ...options,
@@ -258,37 +260,38 @@ export const readPanel = async (sources: Sources, through: string, signal: Abort
     counts.regularBars++
   }
 
-  const digest = (digestHash: ReturnType<typeof createHash>, size: (bytes: number) => void) =>
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        digestHash.update(chunk)
-        size(chunk.byteLength)
-        controller.enqueue(chunk)
-      },
-    })
-  const text = sources.bars
-    .stream()
-    .pipeThrough(
-      digest(gzip, (bytes) => (gzipBytes += bytes)),
-      { signal },
-    )
-    .pipeThrough(new DecompressionStream('gzip'), { signal })
-    .pipeThrough(
-      digest(raw, (bytes) => (rawBytes += bytes)),
-      { signal },
-    )
-    .pipeThrough(new TextDecoderStream('utf-8', { fatal: true }), { signal })
   let pending = ''
-  for await (const chunk of text) {
+  const accept = (chunk: string) => {
     const lines = splitLines(pending + chunk)
     let result = lines.next()
-    while (!result.done) {
+    while (result.done !== true) {
       readRow(result.value)
       result = lines.next()
     }
     pending = result.value
     if (pending.length > 512) throw new Error('SIP row exceeds permitted length')
   }
+  await pipeline(
+    sources.bars.stream(),
+    async function* (chunks: AsyncIterable<Uint8Array>) {
+      for await (const chunk of chunks) {
+        gzip.update(chunk)
+        gzipBytes += chunk.byteLength
+        yield chunk
+      }
+    },
+    createGunzip(),
+    async (chunks: AsyncIterable<Buffer>) => {
+      const decoder = new TextDecoder('utf-8', { fatal: true })
+      for await (const chunk of chunks) {
+        raw.update(chunk)
+        rawBytes += chunk.byteLength
+        accept(decoder.decode(chunk, { stream: true }))
+      }
+      accept(decoder.decode())
+    },
+    { signal },
+  )
   if (pending !== '') readRow(pending)
   for (const day of days) {
     for (const [id, count] of coverage.entries()) {

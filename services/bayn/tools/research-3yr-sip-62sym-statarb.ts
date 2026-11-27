@@ -49,7 +49,7 @@ export const cliOptions = (args: readonly string[]) => {
       'Usage: bun research-3yr-sip-62sym-statarb.ts (--freeze | --score) [--input-dir DIR] [--output PATH]',
     )
   return {
-    stage: flags.freeze ? ('freeze' as const) : ('score' as const),
+    stage: flags.freeze === true ? ('freeze' as const) : ('score' as const),
     inputDir: flags['input-dir'],
     output: flags.output,
   }

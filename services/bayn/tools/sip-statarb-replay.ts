@@ -144,7 +144,7 @@ export const selectBasket = (
   omitted = -1,
   held: ReadonlySet<number> | null = null,
 ) => {
-  const eligible = (row: Rank) => row.id !== omitted && !held?.has(row.id)
+  const eligible = (row: Rank) => row.id !== omitted && held?.has(row.id) !== true
   const mustFilter = omitted >= 0 || held !== null
   const ascending = mustFilter ? section.longs.filter(eligible) : section.longs
   const dispersion = mustFilter ? section.deviations.filter(eligible) : section.deviations
