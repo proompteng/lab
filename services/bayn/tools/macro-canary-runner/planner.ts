@@ -6,10 +6,10 @@ import { failure, type Options } from './contract'
 import { etfs, type Etf } from './signals'
 
 export const overnightCapCents = 15_000_000
-const intradayCapCents = 18_000_000
-const collarBp = 15
+export const intradayCapCents = 18_000_000
+export const collarBp = 15
 const driftBand = 0.1
-const microsPerCent = 10_000
+export const microsPerCent = 10_000
 const intradaySymbols = ['QQQ', 'SMH']
 const wholeShares = (qty: string) => Number(qty.split('.')[0])
 
@@ -30,7 +30,7 @@ const rawPositionGross = (qty: string, priceMicros: number) => {
   return Number((microsTimesShares + divisor - 1n) / divisor)
 }
 
-const limitCents = (referenceMicros: number, side: Side) => {
+export const limitCents = (referenceMicros: number, side: Side) => {
   const scaled = referenceMicros * (side === Side.Buy ? 10_000 + collarBp : 10_000 - collarBp)
   const priceCents = scaled / (10_000 * microsPerCent)
   return side === Side.Buy ? Math.floor(priceCents) : Math.ceil(priceCents)
