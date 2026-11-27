@@ -131,9 +131,9 @@ export function summarize(run: Run, benchmarks: Record<number, number | null>, b
     borrowUsd: sum(days.map((day) => day.borrow)),
     sellFeeUsd: sum(days.map((day) => day.sellFee)),
     costs: {
-      5: errors ? null : economics(days, 5, benchmarks[5], bootstrap),
-      10: errors ? null : economics(days, 10, benchmarks[10], bootstrap),
-      20: errors ? null : economics(days, 20, benchmarks[20], bootstrap),
+      5: errors > 0 ? null : economics(days, 5, benchmarks[5], bootstrap),
+      10: errors > 0 ? null : economics(days, 10, benchmarks[10], bootstrap),
+      20: errors > 0 ? null : economics(days, 20, benchmarks[20], bootstrap),
     },
   }
 }
@@ -149,6 +149,6 @@ export function annualRuns(run: Run, years: number[], benchmarks: Record<number,
 
 export function trainBenchmark(runs: Run[]) {
   const calculate = (bps: number) =>
-    runs.map(({ days, errors }) => (errors ? 0 : (dailySharpe(days.map((day) => net(day, bps))) ?? 0)))
+    runs.map(({ days, errors }) => (errors > 0 ? 0 : (dailySharpe(days.map((day) => net(day, bps))) ?? 0)))
   return costs.map((bps) => calculate(bps))
 }

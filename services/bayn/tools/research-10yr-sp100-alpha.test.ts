@@ -22,7 +22,8 @@ const fixture = (n: number, price: (symbol: string, i: number) => number): Tape 
 
 describe('Wave 3A pre-registration', () => {
   test('allows exactly one stage and an optional local input directory', () => {
-    expect(argumentsFor(['--freeze'])).toEqual({ stage: '--freeze', input: undefined })
+    expect(argumentsFor(['--freeze']).stage).toBe('--freeze')
+    expect(argumentsFor(['--freeze']).input).toBeUndefined()
     expect(argumentsFor(['--score', '--input-dir', '/tmp/sample']).input).toBe('/tmp/sample')
     for (const args of [[], ['--freeze', '--score'], ['--score', '--input-dir'], ['--score', '--seed', '1']]) {
       expect(() => argumentsFor(args)).toThrow('Usage')
@@ -102,7 +103,7 @@ describe('causal execution and costs', () => {
       tape.series[0].open[i] = price
       const run = replay(tape, targets, [date(0), date(3)])
       const summary = summarize(run, {})
-      expect(summary.firstError).toContain(reason)
+      expect(summary.firstError ?? '').toContain(reason)
       expect(summary.costs).toEqual({ 5: null, 10: null, 20: null })
       const probes = { 10: plateau(summary, [], 10), 20: plateau(summary, [], 20) }
       expect(gates(summary, {}, probes, true)[10].netPositive).toBe(false)

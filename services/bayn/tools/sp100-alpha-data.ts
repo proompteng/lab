@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { gunzipSync } from 'node:zlib'
 
 import { Schema } from 'effect'
 
@@ -152,7 +153,7 @@ export function loadTape(
   const [file] = manifest.files
   if (compressed.length !== file.gzipBytes || sha256(compressed) !== file.gzipSha256)
     throw new Error('Frozen SIP gzip identity mismatch')
-  const raw = Bun.gunzipSync(compressed)
+  const raw = gunzipSync(compressed)
   if (raw.length !== file.rawBytes || sha256(raw) !== file.rawSha256)
     throw new Error('Frozen SIP TSV identity mismatch')
   const stockGroups = sectors.map((sector) => manifest.sectorMap[sector])

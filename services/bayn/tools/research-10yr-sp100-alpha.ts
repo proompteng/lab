@@ -50,12 +50,12 @@ const inputs = (local?: string) =>
         gzip: yield* fs.readFile(`${local}/${dataName}`),
       }
     }
-    const endpoint = yield* Config.string('AGENTS_ARTIFACTS_ENDPOINT').pipe(
+    const endpoint = yield* Config.NonEmptyString('AGENTS_ARTIFACTS_ENDPOINT').pipe(
       Config.withDefault('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80'),
     )
-    const bucket = yield* Config.string('AGENTS_ARTIFACTS_BUCKET').pipe(Config.withDefault('agents-artifacts'))
-    const access = yield* Config.redacted('AWS_ACCESS_KEY_ID')
-    const secret = yield* Config.redacted('AWS_SECRET_ACCESS_KEY')
+    const bucket = yield* Config.NonEmptyString('AGENTS_ARTIFACTS_BUCKET').pipe(Config.withDefault('agents-artifacts'))
+    const access = yield* Config.Redacted('AWS_ACCESS_KEY_ID')
+    const secret = yield* Config.Redacted('AWS_SECRET_ACCESS_KEY')
     const s3 = new S3Client({
       endpoint,
       bucket,
@@ -64,17 +64,23 @@ const inputs = (local?: string) =>
       secretAccessKey: Redacted.value(secret),
     })
     const fetchObject = (name: string) =>
-      Effect.tryPromise({
-        try: async (signal) => {
-          const response = await fetch(s3.presign(`${prefix}/${name}`, { expiresIn: 300 }), {
-            signal,
-            redirect: 'error',
-          })
-          if (!response.ok) throw new Error(`S3 GET ${name}: HTTP ${response.status}`)
-          return new Uint8Array(await response.arrayBuffer())
-        },
-        // Presigned URLs contain credential material; do not propagate transport exceptions with request URLs.
-        catch: () => new ResearchError({ operation: `Read frozen S3 object ${name}`, cause: 'Request failed' }),
+      Effect.gen(function* () {
+        const operation = `Read frozen S3 object ${name}`
+        const download = yield* Effect.tryPromise({
+          try: async (signal) => {
+            const response = await fetch(s3.presign(`${prefix}/${name}`, { expiresIn: 300 }), {
+              signal,
+              redirect: 'error',
+            })
+            return response.ok ? { bytes: new Uint8Array(await response.arrayBuffer()) } : { status: response.status }
+          },
+          // Presigned URLs contain credential material. Don't report the transport exception.
+          catch: () => new ResearchError({ operation, cause: 'S3 transport failed' }),
+        })
+        if (download.bytes === undefined) {
+          return yield* new ResearchError({ operation, cause: `S3 GET failed: HTTP ${download.status}` })
+        }
+        return download.bytes
       })
     return { manifest: yield* fetchObject('MANIFEST.json'), gzip: yield* fetchObject(dataName) }
   })
@@ -175,4 +181,11 @@ const research = Effect.gen(function* () {
   )
 })
 
-if (import.meta.main) NodeRuntime.runMain(research.pipe(Effect.provide(NodeServices.layer)))
+if (import.meta.main) {
+  NodeRuntime.runMain(
+    research.pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- offline CLI owns the platform file boundary
+      Effect.provide(NodeServices.layer),
+    ),
+  )
+}
