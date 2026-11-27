@@ -29,11 +29,15 @@ export const indexDecisionAdmissionMutations = (mutations: SystemSourceCut['muta
   return { events, routing }
 }
 
-/** A committed admission followed by routing supplies an upper bound, not an invented commit timestamp. */
+/**
+ * A committed admission followed by routing supplies an upper bound, not an invented commit timestamp.
+ * Replay can observe receipts on the database clock while keeping routing bounded by the simulated cut.
+ */
 export const decisionAdmissionWitnesses = (
   cut: Pick<SystemSourceCut, 'decisions' | 'protectionIntents' | 'decisionAdmissions' | 'asOf'>,
   generationHash: string,
   { events, routing }: ReturnType<typeof indexDecisionAdmissionMutations>,
+  receiptObservedAsOf: string = cut.asOf,
 ) =>
   Result.gen(function* () {
     const plans = yield* executionOrderPlans(cut.decisions, cut.protectionIntents)
@@ -50,7 +54,7 @@ export const decisionAdmissionWitnesses = (
       if (
         retained.has(key) ||
         sourceHash !== (yield* canonicalHashV1Result(material)) ||
-        receipt.observedAt > cut.asOf ||
+        receipt.observedAt > receiptObservedAsOf ||
         document === undefined ||
         admitted === undefined ||
         admitted.event.eventType !== MutationEventType.SubmitStarted ||

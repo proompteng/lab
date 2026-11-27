@@ -48,6 +48,33 @@ test.each(['Oco', 'StopLimit'] as const)(
   },
 )
 
+test('replay verifies a wall-clock replacement admission without extending the routing cutoff', () => {
+  const f = replacementProtectionFixture(document)
+  const [receipt] = f.cut.decisionAdmissions
+  if (receipt === undefined) throw new Error('Expected replacement admission')
+  const observedAt = f.at(20_000)
+  const material = { eventId: receipt.eventId, decisionId: receipt.decisionId, observedAt }
+  const cut = {
+    ...f.cut,
+    asOf: f.at(1004),
+    decisionAdmissions: [{ ...material, sourceHash: testHash(material) }],
+  }
+  const generation = document.bindings.authorityGenerationHash
+  const witness = (asOf = cut.asOf, receiptObservedAsOf?: string) =>
+    decisionAdmissionWitnesses(
+      { ...cut, asOf },
+      generation,
+      indexDecisionAdmissionMutations(cut.mutations),
+      receiptObservedAsOf,
+    )
+  expect(Result.getOrThrow(witness(cut.asOf, observedAt)).witnesses).toContainEqual(
+    expect.objectContaining({ sourceHash: f.evidence.intentId, witnessedAt: f.at(1002) }),
+  )
+  expect(Result.isFailure(witness())).toBe(true)
+  expect(Result.isFailure(witness(cut.asOf, f.at(19_999)))).toBe(true)
+  expect(Result.isFailure(witness(f.at(1001), observedAt))).toBe(true)
+})
+
 test('replacement evidence rejects substituted identity, risk approval, ownership, prices and reconciliation', () => {
   const f = replacementProtectionFixture(document)
   const evidence = f.evidence

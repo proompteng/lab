@@ -13,7 +13,7 @@ import { sha256 } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs'
-import { IsoDateSchema } from '../schemas'
+import { IsoDateSchema, UtcInstantSchema } from '../schemas'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { registeredTradeReplayFixture } from '../testing/registered-replay-fixture'
 import { retainReplayArrivals, nativeReplayFixture as retainedReplayFixture } from '../testing/retained-replay-fixture'
@@ -222,6 +222,15 @@ const main = Effect.gen(function* () {
         const firstSession = registration.calendar.sessions[0]
         const lastSession = registration.calendar.sessions.at(-1)
         assert.ok(firstSession !== undefined && lastSession !== undefined)
+        // Admission receipts use the database wall clock, not the simulated order clock.
+        const [{ receiptObservedAsOf }] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ receiptObservedAsOf: UtcInstantSchema })]),
+        )(
+          yield* sql`SELECT to_char(
+            to_timestamp(ceil(extract(epoch FROM statement_timestamp()) * 1000) / 1000) AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) AS "receiptObservedAsOf"`,
+        )
         const documents = yield* Effect.forEach(
           yield* sql`SELECT document FROM (${executionDecisionRows(sql)}) decisions`,
           (row) => Effect.fromResult(decodeExecutionDecisionDocument(row['document'])),
@@ -270,11 +279,8 @@ const main = Effect.gen(function* () {
               firstSession.openAt,
             )
             const decisionAdmissions = yield* readSystemDecisionAdmissions({
-              ...identity,
-              openAt: firstSession.openAt,
-              firstSession: firstSession.sessionDate,
-              lastSession: lastSession.sessionDate,
-              asOf: scope.asOf,
+              ...scope,
+              asOf: receiptObservedAsOf,
             })
             const executionCut = {
               ...cut,
@@ -319,6 +325,7 @@ const main = Effect.gen(function* () {
                 executionCut,
                 identity.generationHash,
                 indexDecisionAdmissionMutations(executionCut.mutations),
+                receiptObservedAsOf,
               ),
             )
             for (const evidence of protection)
