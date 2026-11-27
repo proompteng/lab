@@ -1,7 +1,14 @@
 package ai.proompteng.dorvud.ws
 
 import ai.proompteng.dorvud.platform.CRYPTO_LOCATIONS
+import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.isCryptoPair
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
@@ -21,6 +28,29 @@ enum class EquityFeed(
       entries.firstOrNull { it.id == value.trim().lowercase() }
         ?: error("unsupported Alpaca equity feed: $value")
   }
+}
+
+internal const val BASIC_SYMBOL_CHANNEL_LIMIT = 30
+private const val SIP_SYMBOL_CHANNEL_CEILING = 400
+
+internal fun marketDataSubscriptionLimit(
+  env: Map<String, String>,
+  consolidatedSip: Boolean,
+): Int {
+  val entitlement = env["ALPACA_MARKET_DATA_ENTITLEMENT"]?.trim()?.lowercase()
+  val configuredLimit = env["ALPACA_MAX_SYMBOL_CHANNELS"]
+  require(consolidatedSip || (entitlement == null && configuredLimit == null)) {
+    "ALPACA_MARKET_DATA_ENTITLEMENT and ALPACA_MAX_SYMBOL_CHANNELS are only supported on consolidated SIP"
+  }
+  require(entitlement == null || entitlement == "basic" || entitlement == "algo_trader_plus") {
+    "ALPACA_MARKET_DATA_ENTITLEMENT must be basic or algo_trader_plus"
+  }
+  val ceiling = if (entitlement == "basic") BASIC_SYMBOL_CHANNEL_LIMIT else SIP_SYMBOL_CHANNEL_CEILING
+  return configuredLimit?.let { raw ->
+    val limit = raw.trim().toIntOrNull()
+    require(limit != null && limit in 1..ceiling) { "ALPACA_MAX_SYMBOL_CHANNELS must be within [1, $ceiling]" }
+    limit
+  } ?: if (entitlement == "algo_trader_plus") SIP_SYMBOL_CHANNEL_CEILING else BASIC_SYMBOL_CHANNEL_LIMIT
 }
 
 enum class MarketSession(
@@ -59,7 +89,28 @@ data class FeedRuntimeConfig(
   val symbolAllowlist: Set<String>,
   val core: Boolean,
   val cryptoEventsTopic: String? = null,
+  val sipUniverse: MarketDataUniverseContract? = null,
 )
+
+// The shared Envelope layout also lives in Flink's Kryo checkpoints. Extend only the SIP wire record.
+internal fun MarketDataUniverseContract.encodeSipKafkaEnvelope(
+  json: Json,
+  envelope: Envelope<JsonElement>,
+): String {
+  val delayClass = MarketDataDelayClass.RealTimeConsolidated.id
+  check(envelope.feed == EquityFeed.Sip.id && envelope.delayClass == delayClass) {
+    "invalid consolidated SIP record provenance"
+  }
+  val fields = json.encodeToJsonElement(envelope).jsonObject
+  return buildJsonObject {
+    fields.forEach { (key, value) ->
+      if (key != "delayClass") put(key, value)
+    }
+    put("delay_class", delayClass)
+    put("universe_id", id)
+    put("universe_symbol_hash", symbolHash)
+  }.toString()
+}
 
 data class CryptoFeedConfig(
   val location: String,
@@ -145,6 +196,7 @@ internal fun ForwarderConfig.marketDataFeedConfigs(): List<FeedRuntimeConfig> {
     } else {
       null
     }
+  require(coreEquityFeed != EquityFeed.Sip || latestMarketData == null) { "latest market data is IEX-only" }
   val core =
     FeedRuntimeConfig(
       marketType = alpacaMarketType,
@@ -157,6 +209,7 @@ internal fun ForwarderConfig.marketDataFeedConfigs(): List<FeedRuntimeConfig> {
       symbolAllowlist = symbolAllowlist,
       core = true,
       cryptoEventsTopic = cryptoFeed?.takeIf { alpacaMarketType == AlpacaMarketType.CRYPTO }?.topic,
+      sipUniverse = if (coreEquityFeed == EquityFeed.Sip) requireNotNull(universeContract) else null,
     )
   return listOf(core) +
     observationFeeds.map { observation ->
