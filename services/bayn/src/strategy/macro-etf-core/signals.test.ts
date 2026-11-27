@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { evidence, fixture, preset } from './fixtures.test-support'
-import { MacroEtfCoreEvidenceError, Profile } from './policy'
+import { asset, MacroEtfCoreEvidenceError, Profile } from './policy'
 import { computeMacroEtfCoreSignal, replayMacroEtfCoreSignals } from './signals'
 
 const path = (input: ReturnType<typeof fixture>) => computeMacroEtfCoreSignal(preset(), evidence(input))
@@ -81,3 +81,19 @@ test('rejects a hash mismatch or relabeled archive', () => {
   })
   expect(Result.isFailure(relabeled) && relabeled.failure).toBeInstanceOf(MacroEtfCoreEvidenceError)
 })
+
+test.each([Profile.F2, Profile.F4])(
+  'masks missing optional candidate weights to zero after smoothing for %s',
+  (profile) => {
+    const full = fixture(184)
+    const fullSignal = Result.getOrThrow(computeMacroEtfCoreSignal(preset(profile), evidence(full)))
+    expect(fullSignal).toBeDefined()
+    expect(fullSignal?.weights[asset.XLC]).toBeGreaterThan(0)
+
+    const missingXlc = fixture(184)
+    missingXlc.bars[183] = missingXlc.bars[183].filter((row) => row.symbol !== 'XLC')
+    const maskedSignal = Result.getOrThrow(computeMacroEtfCoreSignal(preset(profile), evidence(missingXlc)))
+    expect(maskedSignal).toBeDefined()
+    expect(maskedSignal?.weights[asset.XLC]).toBe(0)
+  },
+)

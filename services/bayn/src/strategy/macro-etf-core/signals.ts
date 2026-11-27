@@ -312,6 +312,10 @@ const evaluate = (
         (weight, i) => weight * (w1 * scale(mid) + w3 * scale(slow) * compression) + w2 * atIndex(smoothed, i),
       )
     }
+    // Never emit positive weight for an excluded optional candidate even if smoothing retains prior weight.
+    weights = weights.map((weight, i) =>
+      optional.has(atIndex(universe, i)) && atIndex(consecutive, i) < parameters.minimumCandidateHistory ? 0 : weight,
+    )
     if (
       weights.some((weight) => !Number.isFinite(weight) || weight < 0) ||
       weights.reduce((sum, weight) => sum + weight, 0) > 1 + 1e-12
