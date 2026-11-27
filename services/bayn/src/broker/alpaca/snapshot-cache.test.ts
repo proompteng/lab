@@ -2,7 +2,7 @@ import { ValkeyCache } from '../../valkey-cache'
 import { observedBrokerState } from './observed-snapshot'
 import { describe, expect, test } from 'bun:test'
 import type { PgClient } from '@effect/sql-pg'
-import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit } from 'effect'
+import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit, Redacted } from 'effect'
 import {
   BrokerObservations,
   decodeObservedBrokerSnapshot,
@@ -42,6 +42,9 @@ import {
   type Position,
   type ReadResult,
 } from './model'
+import { BrokerEnvironment, BrokerProvider } from '../identity'
+import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
+import { ordersUrl } from './requests'
 import { brokerSnapshotCacheConfig, makeBrokerObservationCapture, makeProjectedBrokerRead } from './snapshot-cache'
 
 const config = { maxAgeMs: 60_000 }
@@ -856,6 +859,100 @@ describe('complete open broker order capture', () => {
       },
     }
   }
+
+  test('Black Friday: a filled GOOGL short bracket does not hide either live DAY child', async () => {
+    const checkedAt = '2026-11-27T16:28:02.379Z'
+    const fillAt = '2026-11-27T15:02:09.000Z'
+    const template = observedBrokerSnapshotFixture(accountId, checkedAt, fillAt)
+    const parent = template.snapshot.history.orders.rows[0]?.value
+    const fill = template.snapshot.history.fills[0]?.value
+    if (parent === undefined || fill === undefined) throw new Error('Expected broker fill fixture')
+    const positionQuantity = '103000000000'
+    const f = protectionFixture()
+    const profit: Order = {
+      ...f.profit,
+      symbol: 'GOOGL',
+      side: OrderSide.Buy,
+      quantityAtoms: positionQuantity,
+      limitPriceMicros: '261810000',
+      createdAt: fillAt,
+      submittedAt: fillAt,
+      updatedAt: fillAt,
+      observedAt: checkedAt,
+    }
+    const stop: Order = {
+      ...profit,
+      brokerOrderId: f.stop.brokerOrderId,
+      clientOrderId: f.stop.clientOrderId,
+      orderType: OrderType.StopLimit,
+      stopPriceMicros: '275310000',
+      limitPriceMicros: '275580000',
+    }
+    const bracket: Order = {
+      ...parent,
+      symbol: 'GOOGL',
+      side: OrderSide.Sell,
+      quantityAtoms: positionQuantity,
+      filledQuantityAtoms: positionQuantity,
+      filledAveragePriceMicros: '271025500',
+      limitPriceMicros: '270810000',
+      orderClass: OrderClass.Bracket,
+      timeInForce: TimeInForce.Day,
+      legs: [profit, stop],
+    }
+    const source = fixture({
+      orders: [bracket],
+      fills: [
+        {
+          ...fill,
+          symbol: 'GOOGL',
+          side: OrderSide.Sell,
+          quantityAtoms: positionQuantity,
+          cumulativeQuantityAtoms: positionQuantity,
+          priceAtoms: '271025500000',
+        },
+      ],
+    })
+    const connection = Result.getOrThrow(
+      decodeBrokerConnection({
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        baseUrl: alpacaSandboxBaseUrl,
+        expectedAccountId: accountId,
+        key: Redacted.make('key'),
+        secret: Redacted.make('secret'),
+        proxyUrl: 'http://proxy.test:3128',
+        operationTimeoutMs: 15_000,
+        retryAttempts: 2,
+      }),
+    )
+    const read: BrokerReadShape = {
+      ...source.read,
+      orders: (query) =>
+        source.read.orders(query).pipe(
+          Effect.map((response) =>
+            query?.status !== OrderCollection.Open
+              ? response
+              : {
+                  ...response,
+                  value:
+                    ordersUrl(connection, query).searchParams.get('nested') === 'false'
+                      ? [f.standalone(profit), f.standalone(stop)]
+                      : [],
+                },
+          ),
+        ),
+    }
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(checkedAt))
+        const capture = yield* makeBrokerObservationCapture
+        const snapshot = yield* capture(read, { generation: 1, startedAt: checkedAt }, 15_000)
+        expect(snapshot.openOrders.value).toEqual([profit, stop])
+        expect(snapshot.snapshot.history.orders.rows[0]?.value).toEqual(bracket)
+      }),
+    )
+  })
 
   test('retains both protective children and every unrelated open order without another broker request', async () => {
     const f = protectionFixture()
