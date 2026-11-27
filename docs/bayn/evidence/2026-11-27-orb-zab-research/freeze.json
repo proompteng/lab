@@ -1,0 +1,264 @@
+{
+  "schemaVersion": "bayn.orb-zab-wave1b.freeze.v1",
+  "manifestSha256": "3954d5f0ff79bdd280f893cfa133e12e4fccad409ff3f8c907a80410ee19e5ca",
+  "sources": {
+    "research-orb-zab-data.ts": "2128021f73ed208e8937dadead6b9cae679bd3f45f519f40ff8f689e4cbf18d3",
+    "research-orb-zab-protocol.ts": "f4292a70b591e45b358f4c563df0f71ae62def301a35590b138b122aeb0677f2",
+    "research-orb-zab-simulation.ts": "5dea6ab3fa96ce8c70326ba2c9756e3d9d6e22ce0967c4a5e339ac44f1145631",
+    "research-orb-zab-statistics.ts": "a2924c2249ab7af0f34fed1309f7731536a7edd540247a9bc3884b493a0d8b96",
+    "research-orb-zab-multiyear.ts": "54ec204aa031093485f6ed8d241633bb8c259454047d17f5c1b5e07f5a56b615",
+    "../src/strategy/intraday-alpha/stock-in-play.ts": "5e321c26d74750eca733572c3d6dc361f7980eddeab2eb7042f46e99f359d3f8",
+    "../src/strategy/intraday-alpha/trailing-exits.ts": "83fb84fea9a2eaba9aec7015ade3cee39d82d7f7e303e0351ed56292924ca8ac",
+    "../src/strategy/intraday-alpha/signals.ts": "6021a270b369fbb07e007807b873d8c2d9cc81cfc837ef554b5db145d72dde5b",
+    "../src/strategy/intraday-alpha/policy.ts": "3edc97f79757a104a22a97f58bace6b8a3024bda9750f6e61fe3a242b4bbfa58",
+    "../src/strategy/intraday-alpha/constants.ts": "b009cfd54faf960b75072a7c264fa43cf2e16b83fdd4c753b7e20b44369634ae"
+  },
+  "primaryCost": 10,
+  "split": {
+    "train": {
+      "id": "train",
+      "from": "2024-01-02",
+      "through": "2025-06-30"
+    },
+    "validation": {
+      "id": "validation",
+      "from": "2025-07-01",
+      "through": "2026-03-31"
+    },
+    "holdout": {
+      "id": "holdout",
+      "from": "2026-04-01",
+      "through": "2026-11-25"
+    }
+  },
+  "currentTrials": 155,
+  "priorTrials": 138,
+  "benchmark": {
+    "trainDailyDeflationBenchmark": 0.17439308515936416,
+    "nondegenerateTrainTrials": 155,
+    "multiplicity": 293
+  },
+  "selected": {
+    "orb": {
+      "trial": {
+        "id": "orb-or15-center-breakeven-60m",
+        "engine": "orb",
+        "horizon": 15,
+        "rvol": 1.5,
+        "rank": "rvol",
+        "cap": 0.25,
+        "collar": 10,
+        "exit": "breakeven",
+        "hold": "60m"
+      },
+      "train": {
+        "sessions": 374,
+        "completeSessions": 249,
+        "activeSessions": 94,
+        "attempts": 95,
+        "fills": 94,
+        "closed": 94,
+        "collarMisses": 1,
+        "missingEntryBars": 0,
+        "unavailableBenchmark": 387,
+        "unresolved": 0,
+        "heldGaps": 23,
+        "net": null,
+        "supportedNet": -4428.0650991585135,
+        "gross": -1166.670204232526,
+        "sellFee": 67.03575720899221,
+        "friction": 3194.359137716994,
+        "notional": 3194823.428499999,
+        "completeCaseNet": -3395.820917656634,
+        "completeCaseSharpe": -1.2361815414939792,
+        "completeCaseMaxDrawdownUsd": 3811.9928635867614,
+        "completeCaseCalmar": -0.9015584618526715,
+        "completeCaseExTop5Net": -7634.73039708913,
+        "completeCaseDsr": 0.00012964869628369057,
+        "sharpe": null,
+        "maxDrawdownUsd": null,
+        "maxDrawdownPctOfCapital": null,
+        "calmar": null,
+        "breakevenBps": null,
+        "supportedBreakEvenBps": -3.8615779214463672,
+        "exTop5Net": null,
+        "blockP": null,
+        "dsr": null
+      },
+      "validation": {
+        "sessions": 189,
+        "completeSessions": 182,
+        "activeSessions": 63,
+        "attempts": 63,
+        "fills": 63,
+        "closed": 63,
+        "collarMisses": 0,
+        "missingEntryBars": 0,
+        "unavailableBenchmark": 10,
+        "unresolved": 0,
+        "heldGaps": 1,
+        "net": null,
+        "supportedNet": -4997.178954073894,
+        "gross": -2766.2511706949495,
+        "sellFee": 45.834974399603155,
+        "friction": 2185.092808979343,
+        "notional": 2185978.7348050973,
+        "completeCaseNet": -4997.178954073894,
+        "completeCaseSharpe": -3.241135704419319,
+        "completeCaseMaxDrawdownUsd": 5219.137048918449,
+        "completeCaseCalmar": -1.325730823819002,
+        "completeCaseExTop5Net": -7000.62499155683,
+        "completeCaseDsr": 4.6470046049374106e-7,
+        "sharpe": null,
+        "maxDrawdownUsd": null,
+        "maxDrawdownPctOfCapital": null,
+        "calmar": null,
+        "breakevenBps": null,
+        "supportedBreakEvenBps": -12.864197168621036,
+        "exTop5Net": null,
+        "blockP": null,
+        "dsr": null
+      },
+      "validationPlateau": {
+        "center": "orb-or15-center-breakeven-60m",
+        "points": [
+          {
+            "id": "orb-or5-center-breakeven-60m",
+            "net": null
+          },
+          {
+            "id": "orb-or30-center-breakeven-60m",
+            "net": null
+          }
+        ],
+        "pass": false
+      },
+      "gates": {
+        "trainSupport": false,
+        "trainPositive": false,
+        "validationPositive": false,
+        "validationBeatsReference": false,
+        "validationSupport": true,
+        "validationExTop5": false,
+        "validationPlateau": false
+      },
+      "developmentPass": false
+    },
+    "noise": {
+      "trial": {
+        "id": "noise-all-etfs",
+        "engine": "noise",
+        "checkpoint": 30,
+        "band": 1,
+        "collar": 15,
+        "exit": "vwap-boundary",
+        "universe": "macro",
+        "clock": "paper"
+      },
+      "train": {
+        "sessions": 374,
+        "completeSessions": 253,
+        "activeSessions": 292,
+        "attempts": 748,
+        "fills": 705,
+        "closed": 705,
+        "collarMisses": 19,
+        "missingEntryBars": 24,
+        "unavailableBenchmark": 177,
+        "unresolved": 0,
+        "heldGaps": 7183,
+        "net": null,
+        "supportedNet": -8405.424770142095,
+        "gross": 1016.7030735832792,
+        "sellFee": 193.71053514309017,
+        "friction": 9228.41730858228,
+        "notional": 9230187.157166531,
+        "completeCaseNet": -5185.628919581002,
+        "completeCaseSharpe": -2.252665517954119,
+        "completeCaseMaxDrawdownUsd": 5185.628919581002,
+        "completeCaseCalmar": -0.9960474308300395,
+        "completeCaseExTop5Net": -8391.143176222722,
+        "completeCaseDsr": 0.000009585381722516476,
+        "sharpe": null,
+        "maxDrawdownUsd": null,
+        "maxDrawdownPctOfCapital": null,
+        "calmar": null,
+        "breakevenBps": null,
+        "supportedBreakEvenBps": 0.8916314744508713,
+        "exTop5Net": null,
+        "blockP": null,
+        "dsr": null
+      },
+      "validation": {
+        "sessions": 189,
+        "completeSessions": 181,
+        "activeSessions": 162,
+        "attempts": 423,
+        "fills": 417,
+        "closed": 417,
+        "collarMisses": 4,
+        "missingEntryBars": 2,
+        "unavailableBenchmark": 6,
+        "unresolved": 0,
+        "heldGaps": 1585,
+        "net": null,
+        "supportedNet": -5208.108624492612,
+        "gross": 148.92063281642098,
+        "sellFee": 110.13132699318751,
+        "friction": 5246.897930315841,
+        "notional": 5247282.915632813,
+        "completeCaseNet": -4998.338604443206,
+        "completeCaseSharpe": -2.9985452968936217,
+        "completeCaseMaxDrawdownUsd": 5122.196657534994,
+        "completeCaseCalmar": -1.3585993137158543,
+        "completeCaseExTop5Net": -7438.961007531851,
+        "completeCaseDsr": 0.00022171425365563317,
+        "sharpe": null,
+        "maxDrawdownUsd": null,
+        "maxDrawdownPctOfCapital": null,
+        "calmar": null,
+        "breakevenBps": null,
+        "supportedBreakEvenBps": 0.07392264996360605,
+        "exTop5Net": null,
+        "blockP": null,
+        "dsr": null
+      },
+      "validationPlateau": {
+        "center": "noise-all-etfs",
+        "points": [
+          {
+            "id": "noise-grid30-band1-collar15",
+            "net": null
+          },
+          {
+            "id": "noise-only-SMH",
+            "net": null
+          },
+          {
+            "id": "noise-only-QQQ",
+            "net": null
+          },
+          {
+            "id": "noise-only-IWM",
+            "net": null
+          },
+          {
+            "id": "noise-only-SPY",
+            "net": null
+          }
+        ],
+        "pass": false
+      },
+      "gates": {
+        "trainSupport": false,
+        "trainPositive": false,
+        "validationPositive": false,
+        "validationBeatsReference": false,
+        "validationSupport": true,
+        "validationExTop5": false,
+        "validationPlateau": false
+      },
+      "developmentPass": false
+    }
+  }
+}

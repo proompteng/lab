@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: kargo-sha-c05b4735614a1f1b42a6e67d94e76d6068813a6f-run-45977120903
-  digest: sha256:7ad6492e8828098445170e8a24e9a50472e9123b12c4da92b7502cfcf8421c53
+  tag: kargo-sha-03b2db92f025bf985ef184dc00f5bdcfc854b9fd-run-46078110479
+  digest: sha256:ea5a1198eb7d56d6184ea63d8fd6560f0c182d9de786490e44bec31b97b8afca
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -14,8 +14,8 @@ tolerations:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: kargo-sha-c05b4735614a1f1b42a6e67d94e76d6068813a6f-run-45977120903
-    digest: sha256:577eb0b721793b21f4b8ca6f1b569da1e724683cd30d4dcc099c9e6bd37c8fd6
+    tag: kargo-sha-03b2db92f025bf985ef184dc00f5bdcfc854b9fd-run-46078110479
+    digest: sha256:9bd1931aae204c5766b3906a2f78fa1c1be9f1fff289e66e33499b417a90e944
   env:
     vars:
       AGENTS_RELAY_TARGETS_FILE: /etc/agents-relay/relay-targets.json
@@ -23,18 +23,18 @@ controlPlane:
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
       AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
-      AGENTS_SOURCE_HEAD_SHA: c05b4735614a1f1b42a6e67d94e76d6068813a6f
-      AGENTS_GITOPS_REVISION: c05b4735614a1f1b42a6e67d94e76d6068813a6f
-      AGENTS_SOURCE_CI_RUN_ID: "45977120903"
+      AGENTS_SOURCE_HEAD_SHA: 03b2db92f025bf985ef184dc00f5bdcfc854b9fd
+      AGENTS_GITOPS_REVISION: 03b2db92f025bf985ef184dc00f5bdcfc854b9fd
+      AGENTS_SOURCE_CI_RUN_ID: "46078110479"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:577eb0b721793b21f4b8ca6f1b569da1e724683cd30d4dcc099c9e6bd37c8fd6
-      AGENTS_SERVING_BUILD_COMMIT: c05b4735614a1f1b42a6e67d94e76d6068813a6f
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:577eb0b721793b21f4b8ca6f1b569da1e724683cd30d4dcc099c9e6bd37c8fd6
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:9bd1931aae204c5766b3906a2f78fa1c1be9f1fff289e66e33499b417a90e944
+      AGENTS_SERVING_BUILD_COMMIT: 03b2db92f025bf985ef184dc00f5bdcfc854b9fd
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:9bd1931aae204c5766b3906a2f78fa1c1be9f1fff289e66e33499b417a90e944
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: kargo-sha-c05b4735614a1f1b42a6e67d94e76d6068813a6f-run-45977120903
-    digest: sha256:64738cd2723166b4cd3d91c855e478dc8121370fd218242e2226407f77ba21ab
+    tag: kargo-sha-03b2db92f025bf985ef184dc00f5bdcfc854b9fd-run-46078110479
+    digest: sha256:76d169e48c098992e7995d1267f8b8c4b3b0d54aca07cdb4017e956df0cd04fa
 linearMcpGateway:
   enabled: false
   replicaCount: 2
@@ -57,8 +57,8 @@ agentsShell:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-shell
-    tag: kargo-sha-c05b4735614a1f1b42a6e67d94e76d6068813a6f-run-45977120903
-    digest: sha256:e025d83de677425b89ee3bbf0e55e30d1feb4721ff733162b0201cba2de551e9
+    tag: kargo-sha-03b2db92f025bf985ef184dc00f5bdcfc854b9fd-run-46078110479
+    digest: sha256:bdf4049e528adfa7bad2cc0aa556df0d4f8f91dba634f53e21ad33704b755a3d
     pullPolicy: IfNotPresent
   env:
     vars:
@@ -146,12 +146,12 @@ argocdHooks:
       apiVersion: agents.proompteng.ai/v1alpha1
       kind: AgentRun
       metadata:
-        name: codex-spark-smoke
+        name: codex-smoke
       spec:
         agentRef:
-          name: codex-spark-smoke-agent
+          name: codex-smoke-agent
         implementationSpecRef:
-          name: codex-spark-smoke-implspec
+          name: codex-smoke-implspec
         goal:
           objective: Verify Codex app-server runner protocol, status, artifact collection, and the promoted runner image without
             external side effects.
@@ -173,7 +173,7 @@ argocdHooks:
           base: main
           head: codex/agents-smoke
           issueNumber: swarm-codex-smoke
-          issueTitle: Codex Spark smoke validation
+          issueTitle: Codex app-server smoke validation
           objective: verify deterministic app-server runner protocol and the promoted runner image without VCS or external model
             calls
         secrets:
@@ -209,8 +209,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: kargo-sha-c05b4735614a1f1b42a6e67d94e76d6068813a6f-run-45977120903
-    digest: sha256:7ad6492e8828098445170e8a24e9a50472e9123b12c4da92b7502cfcf8421c53
+    tag: kargo-sha-03b2db92f025bf985ef184dc00f5bdcfc854b9fd-run-46078110479
+    digest: sha256:ea5a1198eb7d56d6184ea63d8fd6560f0c182d9de786490e44bec31b97b8afca
   autoscaling:
     enabled: false
 swarm:
