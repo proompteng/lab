@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { IntradayAlphaPhase } from '../src/strategy/intraday-alpha/policy'
 import { runIntradayAlphaReplayVerification as runReplay } from './verify-intraday-alpha-replay'
@@ -420,6 +420,31 @@ test('a missing required co-held mark halts planning and retains already support
     expect(scenario.maxDd).toBeNull()
     expect(scenario.chronologicalSlices).toBeNull()
     expect(scenario.recentDays[0]?.modeledNet).toBeNull()
+    expect(scenario.diagnostics.coHeldMarkGaps).toEqual([
+      {
+        date,
+        phase: IntradayAlphaPhase.MorningOrb,
+        symbol: 'QQQ',
+        observedAt: '2026-11-27T15:02:02.000Z',
+        expectedBarAt: '2026-11-27T15:01:00.000Z',
+        lastPriorBarAt: '2026-11-27T15:00:00.000Z',
+        ageMinutes: 1,
+        carried: false,
+      },
+    ])
+    expect(scenario.diagnostics.carryForwardSensitivity).toMatchObject({
+      evidenceClass: 'DIAGNOSTIC_ONLY_NON_QUALIFYING',
+      maximumAgeMinutes: 2,
+      sessions: [
+        {
+          date,
+          completeWithCarry: true,
+          gaps: [{ symbol: 'QQQ', carried: true }],
+          strictEntryAttempts: 1,
+          carriedEntryAttempts: 3,
+        },
+      ],
+    })
   }
 })
 
@@ -508,4 +533,187 @@ test('retains source hashes and counts harmless identical duplicates', () => {
   expect(report.inputRows.uniqueBars).toBe(5)
   expect(report.sources[0]?.sha256).toMatch(/^[a-f0-9]{64}$/)
   expect(report.evidenceClass).toBe('RETROSPECTIVE_EVENT_TIME_BAR_SCENARIO')
+})
+
+const quoteHeader =
+  'symbol\tminute_utc\tquote_count\tfirst_bid\tfirst_ask\tlast_bid\tlast_ask\tmedian_spread_bps\tp75_spread_bps'
+const quoteRows = (lines: readonly string[], skip: (symbol: string, at: string) => boolean = () => false) =>
+  lines.flatMap((line) => {
+    const [symbol = '', at = '', , , , close = ''] = line.split('\t')
+    if (symbol === 'SPY' || skip(symbol, at)) return []
+    const px = Number(close)
+    return [[symbol, at, 20, px - 0.01, px + 0.01, px - 0.02, px + 0.02, 2, 4].join('\t')]
+  })
+
+test('L1 is additive, uses adverse first BBO on fills and reruns basket selection for LOSO', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, middayPrice)
+  withRows(lines, (path) => {
+    const quotes = join(dirname(path), 'quotes.tsv')
+    writeFileSync(quotes, [quoteHeader, ...quoteRows(lines)].join('\n'))
+    const report = runReplay([path], calendar([date]), { evaluationStart: date, quotes })
+    expect(report.results).toEqual(runReplay([path], calendar([date]), { evaluationStart: date }).results)
+    expect(report.l1?.model).toBe('IEX_L1_MINUTE_BBO')
+    expect(report.l1?.slippageBps).toBeNull()
+    expect(report.l1?.inputQuoteMinutes).toBe(840)
+    const l1 = report.l1
+    const day = l1?.sessionDetails[0]
+    expect(l1?.totalTrades).toBe(4)
+    expect(l1?.completeOutcomes).toBe(true)
+    expect(l1?.diagnostics.middayFillCompleteness).toMatchObject({
+      intendedFourLegBaskets: 1,
+      completeFourLegBaskets: 1,
+      completeFourLegRate: 1,
+    })
+    for (const trade of day?.trades ?? []) {
+      const entryMinute = (Date.parse(trade.entryAt) - Date.parse(`${date}T14:30:00Z`)) / 60_000
+      expect(trade.entryPrice).toBeCloseTo(
+        middayPrice(trade.symbol, entryMinute) + (trade.direction === 'LONG' ? 0.01 : -0.01),
+        8,
+      )
+      expect(trade.exitPrice).toBeCloseTo(
+        middayPrice(trade.symbol, 206) + (trade.direction === 'LONG' ? -0.01 : 0.01),
+        8,
+      )
+    }
+    // Removing a long from the 2x2 set makes selection choose a balanced pair, not three existing legs.
+    expect(l1?.diagnostics.leaveOneSymbolOut.find(({ omittedSymbol }) => omittedSymbol === 'AAPL')).toMatchObject({
+      rerunSessions: 1,
+      trades: 2,
+      completeOutcomes: true,
+    })
+  })
+})
+
+test('L1 exit gaps do not fall back to a synthetic spread or a later price', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, middayPrice)
+  withRows(lines, (path) => {
+    const quotes = join(dirname(path), 'quotes.tsv')
+    const minuteAt = `${date}T17:56:00.000Z`
+    writeFileSync(
+      quotes,
+      [quoteHeader, ...quoteRows(lines, (symbol, at) => symbol === 'AAPL' && at === minuteAt)].join('\n'),
+    )
+    const report = runReplay([path], calendar([date]), { evaluationStart: date, quotes })
+    expect(report.l1?.totalNet).toBeNull()
+    expect(report.l1?.diagnostics.l1ExecutionGaps).toEqual([{ symbol: 'AAPL', minuteAt, stage: 'EXIT' }])
+    expect(report.l1?.sessionDetails[0]?.unresolvedExits).toMatchObject([
+      { symbol: 'AAPL', reason: 'L1_EXIT_MINUTE_UNAVAILABLE' },
+    ])
+    expect(report.l1?.sessionDetails[0]?.trades).toHaveLength(3)
+  })
+})
+
+test('rejects crossed and duplicate L1 rows', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, middayPrice)
+  withRows(lines, (path) => {
+    const quotes = join(dirname(path), 'quotes.tsv')
+    const good = `AAPL\t${date}T14:30:00Z\t1\t100\t101\t100\t101\t5\t10`
+    const bad = good.replace('100\t101', '101\t100')
+    writeFileSync(quotes, [quoteHeader, bad].join('\n'))
+    expect(() => runReplay([path], calendar([date]), { evaluationStart: date, quotes })).toThrow('Invalid L1 minute')
+    writeFileSync(quotes, [quoteHeader, good, good].join('\n'))
+    expect(() => runReplay([path], calendar([date]), { evaluationStart: date, quotes })).toThrow('Duplicate L1 minute')
+  })
+})
+
+test('a future bucket does not fill the decision quote and wide entry BBO cannot cross the limit', () => {
+  const date = '2026-11-27'
+  const lines = rows(date, 210, middayPrice)
+  withRows(lines, (path) => {
+    const quotes = join(dirname(path), 'quotes.tsv')
+    const adjusted = quoteRows(lines, (symbol, at) => symbol === 'AAPL' && at < `${date}T16:32:00.000Z`).map((line) => {
+      if (!line.startsWith('AMZN\t')) return line
+      const cols = line.split('\t')
+      cols[3] = '90'
+      cols[4] = '110'
+      return cols.join('\t')
+    })
+    writeFileSync(quotes, [quoteHeader, ...adjusted].join('\n'))
+    const report = runReplay([path], calendar([date]), { evaluationStart: date, quotes })
+    const first = report.l1?.sessionDetails[0]?.attempts[0]
+    expect(first?.selectedSymbols).toEqual(['AMD', 'AMZN'])
+    expect(first?.filledSymbols).toEqual(['AMD'])
+  })
+})
+
+test('multi-year regular-only calendar and splits adjust only priors crossing the effective date', () => {
+  const before = '2026-11-25'
+  const effectiveDate = '2026-11-27'
+  const extraOldDate = '2024-01-02'
+  const input = {
+    query: { start: extraOldDate, end: '2026-12-31' },
+    response: [
+      { date: extraOldDate, open: '09:30', close: '16:00' },
+      ...calendar([before, effectiveDate], '16:00').response.map(({ date, open, close }) => ({
+        date,
+        open,
+        close: date === effectiveDate ? '13:00' : close,
+      })),
+      { date: '2026-11-30', open: '09:30', close: '16:00' },
+    ],
+  }
+  const bars = [
+    ...rows(before, 390, (symbol, minute) => (symbol === 'QQQ' ? 100 + minute * 0.0001 : 100), ['SPY', 'QQQ']),
+    ...rows(effectiveDate, 210, (symbol, minute) => (symbol === 'QQQ' ? 50 + Math.min(30, minute) * 0.01 : 100), [
+      'SPY',
+      'QQQ',
+    ]),
+  ]
+  withRows(bars, (path) => {
+    const splits = join(dirname(path), 'splits.json')
+    const options = { evaluationStart: before, evaluationEnd: effectiveDate }
+    writeFileSync(splits, JSON.stringify([{ symbol: 'QQQ', effectiveDate, newShares: 2, oldShares: 1 }]))
+    const unadjusted = runReplay([path], input, options)
+    const adjusted = runReplay([path], input, { ...options, splits })
+    expect(adjusted.historySessions).toContain(extraOldDate)
+    expect(adjusted.sessions).toEqual([before, effectiveDate])
+    expect(adjusted.splitAdjustments?.splits).toHaveLength(1)
+    for (const [index, scenario] of adjusted.results.entries()) {
+      const original = unadjusted.results[index]
+      expect(scenario.sessionDetails[0]).toEqual(original?.sessionDetails[0])
+      expect(scenario.sessionDetails[1]?.baselineHash).not.toEqual(original?.sessionDetails[1]?.baselineHash)
+      expect(scenario.sessionDetails[1]?.attempts[0]?.selectedSymbols).toEqual(['QQQ'])
+      expect(original?.sessionDetails[1]?.attempts).toEqual([])
+    }
+  })
+})
+
+test('carry-forward sensitivity still blocks when the last co-held mark is more than two minutes old', () => {
+  const date = '2026-11-27'
+  const lines = [
+    ...rows(date, 210, middayPrice),
+    ...rows(
+      date,
+      210,
+      (_symbol, minute) => (minute >= 118 && minute <= 120 ? null : 100 + Math.min(minute, 30) * 0.01),
+      ['QQQ'],
+    ),
+  ]
+  const report = withRows(lines, (path) => runReplay([path], calendar([date]), { evaluationStart: date }))
+  for (const scenario of report.results) {
+    expect(scenario.totalNet).toBeNull()
+    expect(scenario.diagnostics.carryForwardSensitivity.sessions).toMatchObject([
+      {
+        date,
+        completeWithCarry: false,
+        deltaModeledClosedNetUsd: 0,
+        gaps: [{ symbol: 'QQQ', expectedBarAt: `${date}T16:30:00.000Z`, ageMinutes: 3, carried: false }],
+      },
+    ])
+  }
+})
+
+test('unmatched L1 input cannot manufacture a complete zero-profit day', () => {
+  const date = '2026-11-27'
+  withRows(rows(date, 210, middayPrice), (path) => {
+    const quotes = join(dirname(path), 'quotes.tsv')
+    writeFileSync(quotes, [quoteHeader, ...quoteRows(rows('2026-11-25', 210, middayPrice))].join('\n'))
+    const report = runReplay([path], calendar([date]), { evaluationStart: date, quotes })
+    expect(report.l1?.diagnostics.sessionsWithoutDecisionL1Quotes).toEqual([date])
+    expect(report.l1?.totalNet).toBeNull()
+    expect(report.l1?.unavailableSessions).toBe(1)
+  })
 })
