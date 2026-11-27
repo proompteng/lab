@@ -62,8 +62,11 @@ export const sleeveWeights = (mode: Weight, active: readonly Engine[], dailyVol:
 // Only standalone, completed prior sessions may contribute to the next session's allocation.
 export const laggedVol = (days: readonly Ledger[]) =>
   days.map((_, index) => {
-    const previous = days.slice(Math.max(0, index - allocationLookback), index).map((day) => netAt(day, 10))
-    if (previous.length !== allocationLookback || previous.some((net) => net === null)) return null
+    const previous = days
+      .slice(Math.max(0, index - allocationLookback), index)
+      .map((day) => netAt(day, 10))
+      .filter((net) => net !== null)
+    if (previous.length !== allocationLookback) return null
     const center = mean(previous)
     return Math.sqrt(previous.reduce((sum, net) => sum + ((net - center) / equity) ** 2, 0) / (allocationLookback - 1))
   })
@@ -192,7 +195,7 @@ export const replayBook = (
     const orbVol = vols.get(trial.orb.id)
     const reversionVol = vols.get(trial.reversion.id)
     const noiseVol = trial.noise === null ? null : vols.get(trial.noise.id)
-    if (!orbVol || !reversionVol || noiseVol === undefined)
+    if (orbVol === undefined || reversionVol === undefined || noiseVol === undefined)
       throw new Error('Portfolio shadow ledger must precede portfolio')
     const active = trial.noise === null ? (['orb', 'reversion'] as const) : engines
     const staticMode = trial.weight === 'equal' || trial.weight === 'orb-tilt' || trial.weight === 'reversion-tilt'

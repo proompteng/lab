@@ -36,8 +36,13 @@ const get = (book: Book, id: string) => {
   return result
 }
 const complete = (daily: readonly Ledger[], cost: Cost) => {
-  const values = daily.map((day) => netAt(day, cost))
-  return values.some((value) => value === null) ? null : values
+  const values: number[] = []
+  for (const day of daily) {
+    const net = netAt(day, cost)
+    if (net === null) return null
+    values.push(net)
+  }
+  return values
 }
 const covered = <T extends { readonly date: string }>(days: readonly T[], window: Window) => {
   const [from, to, expected] = windows[window]

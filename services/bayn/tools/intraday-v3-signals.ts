@@ -197,7 +197,7 @@ export const prepareDays = (days: readonly TapeDay[]): readonly PreparedDay[] =>
       .flatMap((symbol) => {
         const data = bars.get(symbol)
         const feature = features.get(symbol)
-        if (!data || !feature || feature.atr <= 0 || feature.rvol < 2) return []
+        if (data === undefined || feature === undefined || feature.atr <= 0 || feature.rvol < 2) return []
         const first = at(data, 0, Field.Open)
         const close = at(data, 0, Field.Close)
         if (Math.abs(first - feature.prevClose) < 0.5 * feature.atr || first === close) return []
@@ -254,7 +254,7 @@ export const prepareDays = (days: readonly TapeDay[]): readonly PreparedDay[] =>
             include(
               cached(`orb/${symbol}/${trial.target}`, () => {
                 const data = bars.get(symbol)
-                if (!data) throw new Error(`Missing ranked OR5 symbol ${symbol}`)
+                if (data === undefined) throw new Error(`Missing ranked OR5 symbol ${symbol}`)
                 const edge = at(data, 0, side === 1 ? Field.High : Field.Low)
                 const stop = at(data, 0, side === 1 ? Field.Low : Field.High)
                 for (let slot = 1; slot < slots - 2; slot++) {
@@ -291,7 +291,7 @@ export const prepareDays = (days: readonly TapeDay[]): readonly PreparedDay[] =>
           const side = index < 2 ? 1 : -1
           const value = cached(`reversion/${symbol}/${trial.signalSlot}/${side}/${trial.exit}`, () => {
             const data = bars.get(symbol)
-            if (!data) throw new Error(`Missing ranked reversion symbol ${symbol}`)
+            if (data === undefined) throw new Error(`Missing ranked reversion symbol ${symbol}`)
             const reference = at(data, trial.signalSlot, Field.Close)
             return order(
               'reversion',
@@ -320,7 +320,7 @@ export const prepareDays = (days: readonly TapeDay[]): readonly PreparedDay[] =>
               cached(`${trial.id}/${symbol}`, () => {
                 const data = bars.get(symbol)
                 const feature = features.get(symbol)
-                if (!data || !feature || feature.atr <= 0) return null
+                if (data === undefined || feature === undefined || feature.atr <= 0) return null
                 const first = at(data, 0, Field.Open)
                 const sideAt = (slot: number) => {
                   const move = feature.moves[checkpoints.indexOf(slot)]

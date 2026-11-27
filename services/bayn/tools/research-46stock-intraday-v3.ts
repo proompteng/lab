@@ -33,7 +33,8 @@ export const parseArgs = (args: readonly string[]) => {
   const [mode, option, output] = args
   if (
     (mode !== '--freeze' && mode !== '--score') ||
-    (args.length !== 1 && (args.length !== 3 || option !== '--output' || !output || output.startsWith('--')))
+    (args.length !== 1 &&
+      (args.length !== 3 || option !== '--output' || output === undefined || output === '' || output.startsWith('--')))
   ) {
     throw new Error('Usage: bun services/bayn/tools/research-46stock-intraday-v3.ts --freeze|--score [--output path]')
   }
