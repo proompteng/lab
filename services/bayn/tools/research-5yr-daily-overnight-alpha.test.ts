@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test'
+import { Deferred, Effect, Exit, Fiber } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import { parseTape, readTape, seriesFor, universes } from './daily-alpha-data'
 import { economics, gates, measure } from './daily-alpha-metrics'
@@ -12,7 +14,7 @@ import {
   trialGrid,
   trialId,
 } from './daily-alpha-signals'
-import { verifyReproducedFreeze, verifyReproducedScore } from './research-5yr-daily-overnight-alpha'
+import { downloadTape, verifyReproducedFreeze, verifyReproducedScore } from './research-5yr-daily-overnight-alpha'
 
 const row = (symbol: string, date: string, open: number, close: number) =>
   [symbol, `${date}T05:00:00Z`, open, Math.max(open, close), Math.min(open, close), close, 100_000, close].join('\t')
@@ -207,4 +209,70 @@ test('only a committed scored ledger permits an engine-change audit, never chang
   )
   expect(() => verifyReproducedScore(archived.scoredLedger, 'scored')).not.toThrow()
   expect(() => verifyReproducedScore(archived.scoredLedger, 'revised Holdout')).toThrow('no artifacts written')
+})
+
+const artifact = { presign: () => 'https://example.invalid/?signature=not-for-logs' }
+
+test('S3 download returns exact bytes, releases an HTTP error body, and redacts signed URLs', async () => {
+  const bytes = await Effect.runPromise(downloadTape(artifact, async () => new Response(new Uint8Array([1, 2, 3]))))
+  expect(bytes).toEqual(new Uint8Array([1, 2, 3]))
+  let cancelled = 0
+  const response = new Response(
+    new ReadableStream({
+      cancel: () => {
+        cancelled++
+      },
+    }),
+    { status: 403 },
+  )
+  const error = await Effect.runPromise(Effect.flip(downloadTape(artifact, async () => response)))
+  expect(error).toMatchObject({ _tag: 'DailyAlphaResearchError', cause: 'HTTP 403' })
+  expect(cancelled).toBe(1)
+  const transport = await Effect.runPromise(
+    Effect.flip(
+      downloadTape(artifact, async (url) => {
+        throw new TypeError(url)
+      }),
+    ),
+  )
+  expect(transport).toMatchObject({ _tag: 'DailyAlphaResearchError', cause: 'TypeError' })
+  expect(String(transport)).not.toContain('not-for-logs')
+})
+
+test.each(['interrupted', 'timed out'])('a %s S3 read aborts the in-flight request exactly once', async (mode) => {
+  let aborted = 0
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<AbortSignal>()
+      const fiber = yield* Effect.forkChild(
+        downloadTape(
+          artifact,
+          (_url, options) =>
+            new Promise<Response>((_resolve, reject) => {
+              const signal = options.signal
+              if (signal == null) throw new Error('No transport cancellation signal')
+              signal.addEventListener(
+                'abort',
+                () => {
+                  aborted++
+                  reject(new Error('Download aborted'))
+                },
+                { once: true },
+              )
+              Deferred.doneUnsafe(started, Effect.succeed(signal))
+            }),
+        ),
+      )
+      const signal = yield* Deferred.await(started)
+      if (mode === 'interrupted') yield* Fiber.interrupt(fiber)
+      else yield* TestClock.adjust('60 seconds')
+      return { exit: yield* Fiber.await(fiber), signal }
+    }).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- the test owns its virtual clock
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  expect(Exit.isFailure(result.exit)).toBe(true)
+  expect(result.signal.aborted).toBe(true)
+  expect(aborted).toBe(1)
 })
