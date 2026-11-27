@@ -27,6 +27,10 @@ const observeRiskLimits = {
 
 const executionRiskLimits = (brokerEnvironment: BrokerEnvironment) => ({
   ...observeRiskLimits,
+  maxGrossExposureMicros:
+    brokerEnvironment === BrokerEnvironment.Sandbox
+      ? dollarsToMicros(180_000n)
+      : observeRiskLimits.maxGrossExposureMicros,
   maxDailyTradedNotionalMicros:
     brokerEnvironment === BrokerEnvironment.Sandbox ? null : observeRiskLimits.maxDailyTradedNotionalMicros,
   maxDrawdownMicros:
@@ -44,7 +48,7 @@ export const makeExecutionRiskPolicy = (
   )({
     schemaVersion:
       brokerEnvironment === BrokerEnvironment.Sandbox
-        ? 'bayn.execution-risk-policy.v5'
+        ? 'bayn.execution-risk-policy.v6'
         : executionRiskPolicySchemaVersion,
     accountId,
     brokerMode: BrokerMode.Execution,
@@ -55,7 +59,24 @@ export const makeExecutionRiskPolicy = (
     ...executionRiskLimits(brokerEnvironment),
   })
 
-/** Historical grants and evaluation evidence must still reproduce the exact former paper policy. */
+/** Historical grants and evaluation evidence must still reproduce the exact former paper policies. */
+const retainedUncappedPaperRiskPolicy = (accountId: string, allowedSymbols: readonly string[]) =>
+  Schema.decodeUnknownResult(
+    PolicySchema,
+    strictParseOptions,
+  )({
+    schemaVersion: 'bayn.execution-risk-policy.v5',
+    accountId,
+    brokerMode: BrokerMode.Execution,
+    allowedSymbols: [...allowedSymbols].sort(),
+    allowedOrderTypes: [OrderType.Limit, OrderType.StopLimit],
+    allowedTimeInForce: [TimeInForce.Day, TimeInForce.GoodUntilCanceled, TimeInForce.ImmediateOrCancel],
+    maxOpenOrders: allowedSymbols.length,
+    ...observeRiskLimits,
+    maxDailyTradedNotionalMicros: null,
+    maxDrawdownMicros: dollarsToMicros(10_000n),
+  })
+
 const retainedPaperRiskPolicy = (accountId: string, allowedSymbols: readonly string[]) =>
   Result.map(makeExecutionRiskPolicy(accountId, allowedSymbols), (policy) => ({
     ...policy,
@@ -69,6 +90,7 @@ export const approvedExecutionRiskPolicyHashes = (accountId: string, allowedSymb
     [
       makeExecutionRiskPolicy(accountId, allowedSymbols, BrokerEnvironment.Live),
       makeExecutionRiskPolicy(accountId, allowedSymbols, BrokerEnvironment.Sandbox),
+      retainedUncappedPaperRiskPolicy(accountId, allowedSymbols),
       retainedPaperRiskPolicy(accountId, allowedSymbols),
     ].map((policy) => Result.flatMap(policy, canonicalHashV1Result)),
   )
@@ -86,6 +108,8 @@ export const resolveExecutionRiskPolicy = (
     if (brokerEnvironment === BrokerEnvironment.Sandbox) {
       const paperPolicy = yield* makeExecutionRiskPolicy(accountId, symbols, BrokerEnvironment.Sandbox)
       if (riskPolicyHash === (yield* canonicalHashV1Result(paperPolicy))) return paperPolicy
+      const v5PaperPolicy = yield* retainedUncappedPaperRiskPolicy(accountId, symbols)
+      if (riskPolicyHash === (yield* canonicalHashV1Result(v5PaperPolicy))) return v5PaperPolicy
       const historicalPaperPolicy = yield* retainedPaperRiskPolicy(accountId, symbols)
       if (riskPolicyHash === (yield* canonicalHashV1Result(historicalPaperPolicy))) return historicalPaperPolicy
     }

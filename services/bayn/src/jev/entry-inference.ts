@@ -229,8 +229,13 @@ export const evaluateEntrySourceFeasibility = (
       protocol: input.protocol,
       bidMicros: BigInt(input.funding.bidMicros),
     })
+    const shortEnabled =
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v44'
     const shortFeasible =
-      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' && input.funding.equityShortEligibility !== undefined
+      shortEnabled && input.funding.equityShortEligibility !== undefined
         ? yield* mayHaveFundableShortSource({
             chart,
             protocol: input.protocol,
@@ -316,8 +321,13 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
             protocol: input.protocol,
             bidMicros: BigInt(input.funding.bidMicros),
           })
+    const symmetric =
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v44'
+    const shortEnabled = input.protocol.schemaVersion === 'bayn.jev.protocol.v41' || symmetric
     const shortProposals =
-      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' && input.funding.equityShortEligibility !== undefined
+      shortEnabled && input.funding.equityShortEligibility !== undefined
         ? yield* makeShortEntryProposals({
             chart,
             assessments,
@@ -334,8 +344,8 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
       chart,
       assessments,
     }
-    const jev = yield* input.protocol.schemaVersion === 'bayn.jev.protocol.v41'
-      ? makeNativeEntryJudgmentRequest({ ...requestInput, proposals: nativeEvaluation.proposals })
+    const jev = yield* shortEnabled
+      ? makeNativeEntryJudgmentRequest({ ...requestInput, symmetric, proposals: nativeEvaluation.proposals })
       : prepareJudgments({ ...requestInput, proposals: nativeEvaluation.proposals.filter(isLongEntryProposal) })
     return jev === null
       ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation: nativeEvaluation } as const)

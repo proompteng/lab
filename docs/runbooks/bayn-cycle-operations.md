@@ -305,9 +305,11 @@ Confirm the current Restate registration's label selector before comparing worke
   source rotates the controller epoch through the existing activation hook. Do not carry an old multi-hour
   recovery timer into the new epoch.
 
-- `BaynExecutionWindowUnready`: inspect the current ACTIVE cycle, its immutable `submissionOpenAt`, and
-  `executionSession.condition`. From ten minutes before submission opens until its cutoff, readiness
-  requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
+- `BaynExecutionWindowUnready`: inspect `executionSession.condition` and the active cycle or the opening projected
+  from the controller's retained broker calendar. With a verified opening and no cycle, failed prerequisites can
+  alert from ten minutes before submission opens. If prerequisites are ready, allow the first observation and the
+  configured decision-lag budget before treating a missing cycle as unready. The window ends at submission cutoff.
+  Readiness requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
   covering the latest mutation, zero unresolved mutations, an account-bound/readable broker, and an active readable
   Restate controller with a matching plan and a durable completion. No snapshot binding is required before the first
   full observation. After warmup, unavailable signal inputs or inference also close readiness; input-window failures

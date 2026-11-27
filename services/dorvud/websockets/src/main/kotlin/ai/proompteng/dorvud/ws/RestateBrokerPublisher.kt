@@ -18,6 +18,7 @@ import java.io.IOException
 
 private val brokerIdentityPattern = Regex("[a-f0-9]{64}")
 private val sourceRevisionPattern = Regex("[a-f0-9]{40}")
+private val publisherJson = Json { encodeDefaults = true }
 internal const val RESTATE_IDEMPOTENCY_HEADER = "idempotency-key"
 internal const val BROKER_SOURCE_PROJECTION_CONTRACT = "bayn.broker-source-projection.v1"
 
@@ -122,7 +123,7 @@ internal class RestateBrokerPublisher(
       client.post("$ingressUrl/BaynBrokerObservations/$key/notify") {
         contentType(ContentType.Application.Json)
         header(RESTATE_IDEMPOTENCY_HEADER, delivery.deliveryId)
-        setBody(Json.encodeToString(notification))
+        setBody(publisherJson.encodeToString(notification))
       }
     val responseBody = response.bodyAsText()
     if (response.status.value == 408 || response.status.value == 429 || response.status.value >= 500) {
@@ -163,7 +164,7 @@ internal class RestateBrokerPublisher(
       client.post("$ingressUrl/BaynBrokerActivities/$key/$handler") {
         contentType(ContentType.Application.Json)
         header(RESTATE_IDEMPOTENCY_HEADER, delivery.deliveryId)
-        setBody(Json.encodeToString(activity))
+        setBody(publisherJson.encodeToString(activity))
       }
     return activityReceipt(response.status.value, response.bodyAsText(), delivery.eventId)
   }

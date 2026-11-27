@@ -93,7 +93,11 @@ export const chartAssessmentsFromBoxes = (
     const candidates = makeChartSourceCandidates({
       chart,
       bidMicros: BigInt(funding.bidMicros),
-      allowShort: source.protocol.schemaVersion === 'bayn.jev.protocol.v41',
+      allowShort:
+        source.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+        source.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+        source.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        source.protocol.schemaVersion === 'bayn.jev.protocol.v44',
     })
     const absent = { status: 'NOT_IDENTIFIED' as const }
     const presence = (name: string) => {

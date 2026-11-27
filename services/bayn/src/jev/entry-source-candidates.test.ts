@@ -5,7 +5,7 @@ import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evide
 import { makeInitialChartStageRequest } from './staged-chart-questions'
 import { jevEntryEconomics } from './entry-economics'
 import { EntrySetup, ProposalRejection, makeEntryProposals, makeEntrySourceCandidates } from './entry-proposals'
-import { defaultJevProtocolDocument } from './protocol'
+import { defaultJevProtocolDocument, retainedJevProtocolV41Document } from './protocol'
 
 const source = {
   symbol: 'AAPL',
@@ -21,7 +21,12 @@ const source = {
     { minuteBeforeWindowEnd: 1, open: 105.2, high: 105.4, low: 105, close: 105.3, volume: 100 },
   ],
 }
-const context = (chart: NativeChartEvidence, bidMicros = 105_500_000n, askMicros = 105_550_000n) => {
+const context = (
+  chart: NativeChartEvidence,
+  bidMicros = 105_500_000n,
+  askMicros = 105_550_000n,
+  protocol: typeof defaultJevProtocolDocument | typeof retainedJevProtocolV41Document = defaultJevProtocolDocument,
+) => {
   const funding = {
     bidMicros: bidMicros.toString(),
     askMicros: askMicros.toString(),
@@ -31,7 +36,7 @@ const context = (chart: NativeChartEvidence, bidMicros = 105_500_000n, askMicros
   const economics = Result.getOrThrow(
     jevEntryEconomics({
       feeAt: '2026-09-04T14:15:00.000Z',
-      protocol: defaultJevProtocolDocument,
+      protocol,
       symbol: chart.symbol,
       bidMicros,
       askMicros,
@@ -40,7 +45,7 @@ const context = (chart: NativeChartEvidence, bidMicros = 105_500_000n, askMicros
     }),
   )
   if (economics === null) throw new Error('Expected funded fixture quantity')
-  return { chart, economics, protocol: defaultJevProtocolDocument, bidMicros, funding }
+  return { chart, economics, protocol, bidMicros, funding }
 }
 const assessments = (chart: NativeChartEvidence) => ({
   schemaVersion: 'bayn.chart-assessments.v4' as const,
@@ -61,13 +66,18 @@ const assessments = (chart: NativeChartEvidence) => ({
 })
 
 test('excludes resistance behind the current bounded entry even when it is above the last candle close', () => {
-  const chart = Result.getOrThrow(makeNativeChartEvidence(source))
+  const chart = Result.getOrThrow(
+    makeNativeChartEvidence({
+      ...source,
+      bars: source.bars.map((bar, index) => (index === 1 ? { ...bar, high: 112 } : bar)),
+    }),
+  )
   const input = context(chart)
-  const candidates = Result.getOrThrow(makeEntrySourceCandidates(input))
   const recent = chart.bars.at(-1)
   if (recent === undefined) throw new Error('Missing fixture candle')
   expect(recent.high).toBeGreaterThan(recent.close)
   expect(BigInt(Math.round(recent.high * 1_000_000))).toBeLessThan(input.bidMicros)
+  const candidates = Result.getOrThrow(makeEntrySourceCandidates(input))
   expect(candidates.resistanceBarIds).not.toContain(recent.id)
   expect(candidates.resistanceBarIds).toEqual([chart.bars[1]?.id])
   expect(candidates.supportBarIds.length).toBeGreaterThan(0)
@@ -83,7 +93,7 @@ test('chart anchor questions expose observed overhead sources and allow no match
 
 test('keeps observed resistance available when it obstructs a funded breakout but cannot itself cover crypto fees', () => {
   const chart = Result.getOrThrow(makeNativeChartEvidence({ ...source, symbol: 'ETH/USD' }))
-  const input = context(chart)
+  const input = context(chart, undefined, undefined, retainedJevProtocolV41Document)
   const candidates = Result.getOrThrow(makeEntrySourceCandidates(input))
   expect(candidates.baseWindows.length).toBeGreaterThan(0)
   expect(candidates.resistanceBarIds).toEqual([])
@@ -156,7 +166,9 @@ test('an unrepresentable unselected high cannot remove a usable support low', ()
   const chart = Result.getOrThrow(
     makeNativeChartEvidence({
       ...source,
-      bars: source.bars.map((bar, index) => (index === 0 ? { ...bar, high: 1e15 } : bar)),
+      bars: source.bars.map((bar, index) =>
+        index === 0 ? { ...bar, high: 1e15 } : index === 1 ? { ...bar, high: 113 } : bar,
+      ),
     }),
   )
   const input = context(chart)

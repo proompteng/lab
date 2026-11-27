@@ -13,6 +13,9 @@ import {
   retainedJevProtocolV38Document,
   retainedJevProtocolV39Document,
   retainedJevProtocolV40Document,
+  retainedJevProtocolV41Document,
+  retainedJevProtocolV42Document,
+  retainedJevProtocolV43Document,
   retainedJevProtocolV37ParameterHash,
   jevBehaviorHash,
 } from '../jev/protocol'
@@ -86,13 +89,19 @@ export const verifyStoredOperationalRegistration = (input: unknown) =>
       runtime.protocol.schemaVersion === 'bayn.jev.protocol.v37'
         ? retainedJevProtocolV37ParameterHash
         : yield* canonicalHashV1Result(
-            runtime.protocol.schemaVersion === 'bayn.jev.protocol.v41'
+            runtime.protocol.schemaVersion === 'bayn.jev.protocol.v44'
               ? defaultJevProtocolDocument
-              : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
-                ? retainedJevProtocolV40Document
-                : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
-                  ? retainedJevProtocolV39Document
-                  : retainedJevProtocolV38Document,
+              : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v43'
+                ? retainedJevProtocolV43Document
+                : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v42'
+                  ? retainedJevProtocolV42Document
+                  : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v41'
+                    ? retainedJevProtocolV41Document
+                    : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+                      ? retainedJevProtocolV40Document
+                      : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+                        ? retainedJevProtocolV39Document
+                        : retainedJevProtocolV38Document,
           )
     const protocolHash = yield* makeStrategyProtocolHashResult({
       name: 'jev',

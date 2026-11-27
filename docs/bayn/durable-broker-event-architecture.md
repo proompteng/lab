@@ -149,6 +149,18 @@ before the session proof, or any later invalid, unsupported, unbound or conflict
 session's fast lane; all subsequent updates in that session take canonical reconciliation. A new gap-free
 `SessionReady` session can re-enter the fast path only after its own boundary is financially reconciled.
 
+Alpaca can emit zero-fill `held` or `accepted` observations for a protective child before the submit response or
+canonical capture establishes its parent. These recognized lifecycle observations may defer projection until the
+original notification time plus the configured operation timeout. The ordered projector requests canonical
+reconciliation before waiting and releases the PostgreSQL writer fence between attempts. It writes no projection
+receipt while that bounded proof is pending. Canonical coverage ends the wait without replaying the event; otherwise
+the exact account, broker order, client order, inherited intent, root parent and immutable protection terms must
+match retained canonical evidence. Group metadata is only an eligibility check, never an identity lookup. The
+canonical child association proves identity independently of financial coverage: capture claim time precedes the
+provider's observation time, so comparing those clocks would incorrectly reject the newest valid association.
+Unbound expiry and invalid content retain the existing session-gap behavior, and new session boundaries still
+require completed financial reconciliation. No historical gap receipt is removed or reclassified.
+
 The WebSocket projector never posts money. A valid later fill can arrive before an unseen valid predecessor, so
 serialized delivery alone cannot prove an economic prefix. The projector retains order/fill evidence and wakes the
 controller immediately, while complete-history reconciliation remains the only TigerBeetle writer. Activity SSE can

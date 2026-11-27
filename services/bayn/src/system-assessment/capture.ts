@@ -2,9 +2,13 @@ import {
   readSystemCashObservations,
   readSystemFeeSettlementAnchors,
   readSystemBatchEvidence,
+  readSystemAlphaObservations,
+  readSystemAlphaBaselinePreparations,
   readSystemMutationEvidence,
   readSystemControllerPasses,
   readSystemDurableObservations,
+  readStrategyBoundSystemDurableObservations,
+  readPreparedAlphaSystemDurableObservations,
   readSystemDecisionAdmissions,
   systemDecisionQuery,
 } from './capture-queries'
@@ -22,19 +26,24 @@ import { readInferenceExpenseLedger } from '../inference-expense-journal'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { instrumentMarket } from '../instruments'
-import { UtcInstantSchema } from '../schemas'
+import { UtcInstantSchema, strictParseOptions } from '../schemas'
 import { readAssessmentRegistration } from './postgres'
 import { SystemAssessmentError } from './economics'
 import { captureForwardFinancialEvidence } from './forward-evidence'
-import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
-import { loadActiveStrategyProtocol } from '../strategy'
-import { captureQualificationRuntime, qualificationRuntime } from './configuration'
+import { RetainedSystemSourceCutSchema, SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
+import { captureQualificationRuntime, configuredQualificationRuntime } from './configuration'
 import { BrokerEnvironment } from '../broker/identity'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
-import { nativeBrokerRecoveryClose, registeredMarkIntervalMs, type SystemRegistration } from './policy'
+import {
+  nativeBrokerRecoveryClose,
+  registeredMarkIntervalMs,
+  isNativeSystemRegistration,
+  isStrategyBoundSystemRegistration,
+  type SystemRegistration,
+} from './policy'
 import { measureControllerLatency } from './controller-latency'
-import { measureFullBatchLatency } from './full-batch-latency'
+import { measureRegisteredDecisionLatency } from './native-decision-latency'
 import { decisionMarketScopeSupported } from './decision-work'
 import { prepareValuationInventory, requiredValuationTimes } from './valuation'
 import { executableValuationQuote, readValuationQuotes } from './valuation-quotes'
@@ -48,6 +57,7 @@ import { captureNativeBrokerStatements } from './broker-statements'
 import { incumbentTigerBeetle, openIncumbentPostgres } from './incumbent-store'
 import { requirePairedIncumbentWitness } from './paired-witness'
 import { forwardPerformanceSnapshot } from '../forward-performance/postgres/snapshot'
+import { derivePreparedAlphaBaselineSources } from './alpha-baseline-witness'
 
 const readSnapshotTime = (sql: PgClient.PgClient) =>
   Effect.gen(function* () {
@@ -69,7 +79,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         return yield* captureOperationalSourceCut(config, registrationHash, registration)
       const { runtimeConfiguration, runtimeConfigurationHash } = yield* Effect.fromResult(
         captureQualificationRuntime(
-          qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol())),
+          yield* Effect.fromResult(configuredQualificationRuntime(config, registration.obligations.configuration)),
           registration.obligations,
         ),
       )
@@ -111,15 +121,14 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               Effect.provide(alpacaHttpLayer(config.alpaca)),
             )
           : undefined
-      const settlementWindows =
-        registration.schemaVersion === 'bayn.system-registration.v5'
-          ? registration.calendar.sessions.flatMap((session) => {
-              const provider = registration.calendar.marketCalendar.providerSessions.find(
-                (row) => row.date === session.sessionDate,
-              )
-              return provider === undefined ? [] : [{ ...session, recoveryCloseAt: provider.sessionCloseAt }]
-            })
-          : []
+      const settlementWindows = isNativeSystemRegistration(registration)
+        ? registration.calendar.sessions.flatMap((session) => {
+            const provider = registration.calendar.marketCalendar.providerSessions.find(
+              (row) => row.date === session.sessionDate,
+            )
+            return provider === undefined ? [] : [{ ...session, recoveryCloseAt: provider.sessionCloseAt }]
+          })
+        : []
       if (brokerRecoveryClose !== undefined && settlementWindows.length !== registration.calendar.sessions.length)
         return yield* new SystemAssessmentError({ message: 'A native session is missing its settlement window' })
       const captureAccount = (
@@ -159,7 +168,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           const forward = yield* readForwardPerformanceInput(accountConfig, undefined, {
             authorityGenerationHash: definition.authorityGenerationHash,
           })
-          const decisions = yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.decisions)(
+          const decisions = yield* Schema.decodeUnknownEffect(RetainedSystemSourceCutSchema.fields.decisions)(
             yield* systemDecisionQuery(sql, {
               accountId: accountIdentity.accountId,
               generationHash: definition.authorityGenerationHash,
@@ -348,7 +357,25 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             last.closeAt,
             asOf,
           )
-          const durableObservations = yield* readSystemDurableObservations(registrationHash)
+          const durableObservations =
+            registration.schemaVersion === 'bayn.system-registration.v7'
+              ? yield* readPreparedAlphaSystemDurableObservations(registrationHash, asOf)
+              : registration.schemaVersion === 'bayn.system-registration.v6'
+                ? yield* readStrategyBoundSystemDurableObservations(registrationHash, asOf)
+                : yield* readSystemDurableObservations(registrationHash)
+          const alphaObservations = isStrategyBoundSystemRegistration(registration)
+            ? yield* readSystemAlphaObservations(
+                identity.accountId,
+                candidate.authorityGenerationHash,
+                registration.calendar,
+                asOf,
+                yield* Effect.fromResult(canonicalHashV1Result(registration.obligations.configuration.protocol)),
+              )
+            : []
+          const alphaBaselinePreparations =
+            registration.schemaVersion === 'bayn.system-registration.v7'
+              ? yield* readSystemAlphaBaselinePreparations(registration, asOf)
+              : []
           const decisionAdmissions = yield* readSystemDecisionAdmissions({
             accountId: identity.accountId,
             generationHash: candidate.authorityGenerationHash,
@@ -386,6 +413,8 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             durableObservations,
             decisionAdmissions,
             batches,
+            alphaObservations,
+            alphaBaselinePreparations,
             fills,
           }
         }),
@@ -413,6 +442,8 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         durableObservations,
         decisionAdmissions,
         batches,
+        alphaObservations,
+        alphaBaselinePreparations,
         fills,
       } = captured
       const candidateLedger = yield* makeTigerBeetleRequestClient(config)
@@ -464,9 +495,18 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         controllerPasses,
         durableObservations,
         decisionAdmissions,
+        ...(isStrategyBoundSystemRegistration(registration) ? { alphaObservations } : {}),
+        ...(registration.schemaVersion === 'bayn.system-registration.v7' ? { alphaBaselinePreparations } : {}),
       }
-      const cut = yield* Schema.decodeUnknownEffect(SystemSourceCutSchema)({
-        schemaVersion: 'bayn.system-source-cut.v4',
+      const cut = yield* Schema.decodeUnknownEffect(
+        SystemSourceCutSchema,
+        strictParseOptions,
+      )({
+        ...(registration.schemaVersion === 'bayn.system-registration.v7'
+          ? { schemaVersion: 'bayn.system-source-cut.v6', alphaObservations, alphaBaselinePreparations }
+          : registration.schemaVersion === 'bayn.system-registration.v6'
+            ? { schemaVersion: 'bayn.system-source-cut.v5', alphaObservations }
+            : { schemaVersion: 'bayn.system-source-cut.v4' }),
         decisionAdmissions,
         registrationHash,
         asOf,
@@ -495,11 +535,13 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
         sourceMaterial,
         sourceMaterialHash: yield* Effect.fromResult(canonicalHashV1Result(sourceMaterial)),
       })
+      if (cut.schemaVersion === 'bayn.system-source-cut.v6')
+        yield* Effect.fromResult(derivePreparedAlphaBaselineSources(cut))
       const saved = yield* persistSystemSourceCut(cut)
       return {
         sourceCutHash: saved.sourceCutHash,
         controllerLatency: yield* Effect.fromResult(measureControllerLatency(registration, cut, identity)),
-        fullBatchLatency: yield* Effect.fromResult(measureFullBatchLatency(registration, cut, identity)),
+        fullBatchLatency: yield* Effect.fromResult(measureRegisteredDecisionLatency(registration, cut, identity)),
       }
     }),
   ).pipe(Effect.mapError((cause) => new SystemAssessmentError({ message: 'System source capture failed', cause })))

@@ -221,11 +221,14 @@ test('hashes the report sidecar from one measurement pass without changing recei
     ),
   )
   assert.equal(reads, 1)
-  assert.equal(report.schemaVersion, 'bayn.forward-performance-report.v8')
+  assert.equal(report.schemaVersion, 'bayn.forward-performance-report.v9')
   assert.equal(report.receipt.receiptHash, cases[0]?.receiptHash)
   const { reportHash, ...material } = report
   assert.equal(Result.getOrThrow(canonicalHashV1Result(material)), reportHash)
   const persisted = Result.getOrThrow(recordForwardPerformancePersistence(report))
   assert.deepEqual(persisted.receipt, report.receipt)
   assert.deepEqual(persisted.executionDiagnostics, report.executionDiagnostics)
+  assert.deepEqual(persisted.nativeAlpha, report.nativeAlpha)
+  assert(!Object.hasOwn(persisted.receipt, 'nativeAlpha'))
+  assert.notEqual(Result.getOrThrow(canonicalHashV1Result({ ...material, nativeAlpha: null })), reportHash)
 })

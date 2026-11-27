@@ -331,7 +331,7 @@ failed or interrupted page fails the restore instead of displaying incomplete hi
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 History retains `control_codex` authorization and fresh policy checks, while reusing bounded observation audit receipts.
 
-The guest pins Codex 0.171.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
+The guest pins Codex 0.172.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
 `gpt-6.2-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
@@ -664,7 +664,7 @@ The [execution plan](../../docs/tengri/durable-agent-execution-plan.md) tracks e
 Run the native correlation and interruption contract with an isolated pinned binary:
 
 ```sh
-TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.171.0 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
+TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.172.0 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
 ```
 
 The test creates an isolated Codex home with an unauthenticated loopback fixture provider. It does not use a user's

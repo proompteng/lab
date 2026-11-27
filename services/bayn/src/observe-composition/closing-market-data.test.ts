@@ -7,7 +7,7 @@ import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import { beforeAll, describe, expect, test } from 'bun:test'
-import { Clock, Effect, Exit, Option, Result, Schema } from 'effect'
+import { Cause, Clock, Effect, Exit, Fiber, Option, Result, Schema } from 'effect'
 
 const runWithConstruction = <A, E>(program: Effect.Effect<A, E, DecisionConstruction>) =>
   Effect.runPromise(
@@ -312,6 +312,273 @@ describe('closing market-data fallback boundaries', () => {
     const { input, ...state } = defaultFixture
     return { input: { ...input }, ...structuredClone(state) }
   }
+
+  test.each([
+    'stop',
+    'target',
+    'wide-stop',
+    'inside',
+    'pending',
+    'typed-error',
+    'defect',
+    'interruption',
+    'timeout',
+    'near-expiry',
+    'expired',
+    'stale',
+    'missing-bid',
+    'missing-ask',
+    'malformed',
+    'partial',
+    'cancel-accepted',
+  ] as const)('pending entry preserves its original price boundaries: %s', async (scenario) => {
+    const request = await fixture()
+    const document = request.entryDocument
+    const entry = document.strategyDecision
+    if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected a Jev entry')
+    const plan = entry.exitPolicy.plans['AAPL']
+    const risk = document.deltaRisk[0]
+    const target = document.targetPlan.intentTargets[0]
+    if (plan === undefined || risk === undefined || target === undefined) throw new Error('Expected a funded entry')
+    const buildAt = document.createdAt
+    const checkAt =
+      scenario === 'expired'
+        ? risk.evaluation.decision.expiresAt
+        : scenario === 'near-expiry'
+          ? new Date(Date.parse(risk.evaluation.decision.expiresAt) - 1).toISOString()
+          : new Date(Date.parse(buildAt) + 1_499).toISOString()
+    expect(checkAt <= risk.evaluation.decision.expiresAt).toBe(true)
+    const initial = factsAt(checkAt)
+    const authority = initial.riskContext.authority
+    if (authority === null) throw new Error('Expected entry authority')
+    const intent = await runWithConstruction(
+      planExecutionIntent(
+        {
+          schemaVersion: 'bayn.intent-plan.v3',
+          ...target,
+          limitPriceMicros: risk.limitPriceMicros,
+          notionalLimitMicros: risk.notionalLimitMicros,
+          ...(risk.protection === undefined ? {} : { protection: risk.protection }),
+          createdAt: buildAt,
+        },
+        { authority },
+      ),
+    )
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(orderRequestBody(intent)))),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'unfilled-boundary-entry',
+      occurredAt: buildAt,
+    }
+    const open = Result.getOrThrow(decidePreparedMutationIntent(intent, accepted))
+    if (open._tag !== 'Pending') throw new Error('Expected acknowledged entry')
+    const record: StoredIntent = {
+      intent: { ...intent, state: IntentState.Acknowledged, riskDecisionId: risk.evaluation.decision.decisionId },
+      decision: risk.evaluation.decision,
+      stateVersion: 3,
+      updatedAt: buildAt,
+    }
+    const state = {
+      ...initial.brokerState,
+      positions: scenario === 'partial' ? factsAt(checkAt, true).brokerState.positions : initial.brokerState.positions,
+      orders: [
+        ...initial.brokerState.orders,
+        { ...open.order, status: OrderStatus.New, filledQuantityAtoms: '0', observedAt: checkAt },
+      ],
+    }
+    const hash = Result.getOrThrow(reconciledStateHash(state))
+    const exact = { ...state.reconciliation, expectedHash: hash, observedHash: hash }
+    const reconciliation = {
+      ...initial,
+      brokerState: { ...state, reconciliation: exact },
+      report: { ...initial.report, reconciliation: exact },
+    }
+    const stop = Number(plan.levels.stopPriceMicros) / 1_000_000
+    const profit = Number(plan.levels.profitLimitPriceMicros) / 1_000_000
+    const bid =
+      scenario === 'inside' || scenario === 'cancel-accepted'
+        ? (stop + profit) / 2
+        : scenario === 'target'
+          ? profit
+          : stop
+    let marketReads = 0
+    const finalizedAt: number[] = []
+    const defect = new Error('Pending entry source defect')
+    const typedFailure = new OperationalError({
+      component: 'market-data',
+      operation: 'snapshot',
+      message: 'Pending entry source contract failed',
+      retryable: false,
+    })
+    const market: IntradayMarketDataService = {
+      ...freshMarket,
+      loadSnapshot: (query) =>
+        Effect.suspend(() => {
+          marketReads += 1
+          if (scenario === 'pending') return Effect.fail(marketFailure)
+          if (scenario === 'typed-error') return Effect.fail(typedFailure)
+          if (scenario === 'defect') return Effect.die(defect)
+          if (scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption') return Effect.never
+          const raw = makeIntradayMomentumTestSnapshot(
+            native.protocol,
+            { ...query, archiveWatermarks: [] },
+            { AAPL: 0.02 },
+            10,
+          )
+          const snapshot = streamingFixtureFromRaw(
+            {
+              ...raw,
+              quotes: raw.quotes.map((quote) => ({
+                ...quote,
+                eventAt:
+                  scenario === 'stale'
+                    ? new Date(Date.parse(checkAt) - native.protocol.maximumQuoteAgeMs + 1).toISOString()
+                    : quote.eventAt,
+                bidPrice: bid,
+                askPrice: bid + (scenario === 'wide-stop' ? 1 : 0.001),
+                bidSize: scenario === 'missing-bid' ? 0 : quote.bidSize,
+                askSize: scenario === 'missing-ask' ? 0 : quote.askSize,
+              })),
+            },
+            query,
+          ).snapshot
+          return Effect.succeed(
+            scenario === 'malformed'
+              ? { ...snapshot, manifest: { ...snapshot.manifest, contentHash: '0'.repeat(64) } }
+              : snapshot,
+          )
+        }).pipe(
+          Effect.ensuring(
+            Clock.currentTimeMillis.pipe(
+              Effect.map((now) => {
+                finalizedAt.push(now)
+              }),
+            ),
+          ),
+        ),
+    }
+    const unused = () => Effect.die(new Error('Pending entry must retain its immutable commit and mutation owner'))
+    const cancel: MutationEvent = {
+      ...accepted,
+      sequence: 3,
+      operation: MutationOperation.Cancel,
+      eventType: MutationEventType.CancelAccepted,
+      occurredAt: checkAt,
+    }
+    const program = prepareMutationIntent(
+      { ...request.input, intradayMarketData: market },
+      request.preparation,
+      request.policy,
+      request.cycle,
+      document,
+      Effect.succeed(reconciliation),
+      true,
+      false,
+      {
+        now:
+          scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption'
+            ? currentUtcInstant
+            : Effect.sync(() =>
+                scenario === 'stale' && marketReads > 0 ? new Date(Date.parse(checkAt) + 2).toISOString() : checkAt,
+              ),
+        restrictAuthority: unused,
+        readFacts: () =>
+          Effect.succeed({
+            snapshot: {
+              contentHash: document.bindings.snapshotContentHash,
+              finalizedAt: document.bindings.snapshotFinalizedAt,
+            },
+            reconciliation,
+            authority,
+            evaluatedAt: checkAt,
+          }),
+      },
+    ).pipe(
+      Effect.provideService(IntentStore, {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: unused,
+        recordProtectionCancelAccepted: unused,
+        read: () => Effect.succeed(Option.some(record)),
+        commit: unused,
+        commitClosing: unused,
+      }),
+      Effect.provideService(MutationStore, {
+        latest: (_id: string, operation: MutationOperation) =>
+          Effect.succeed(
+            operation === MutationOperation.Submit ? accepted : scenario === 'cancel-accepted' ? cancel : undefined,
+          ),
+      } as unknown as MutationStoreShape),
+      Effect.result,
+    )
+    const exit = await runWithConstruction(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(checkAt))
+        const fiber = yield* program.pipe(Effect.forkChild({ startImmediately: true }))
+        if (scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption') {
+          yield* Effect.yieldNow
+          expect(marketReads).toBe(1)
+          expect(finalizedAt).toEqual([])
+          if (scenario === 'interruption') yield* Fiber.interrupt(fiber)
+          else {
+            const budget = Math.min(
+              native.protocol.maximumQuoteAgeMs,
+              Date.parse(risk.evaluation.decision.expiresAt) - Date.parse(checkAt),
+            )
+            yield* TestClock.adjust(budget - 1)
+            expect(finalizedAt).toEqual([])
+            yield* TestClock.adjust(1)
+            expect(finalizedAt).toEqual([Date.parse(checkAt) + budget])
+            expect(finalizedAt[0]).toBeLessThanOrEqual(Date.parse(risk.evaluation.decision.expiresAt))
+          }
+        }
+        return yield* Fiber.await(fiber)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(finalizedAt).toHaveLength(marketReads)
+    if (scenario === 'defect' || scenario === 'interruption') {
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        if (scenario === 'defect') expect(Cause.squash(exit.cause)).toBe(defect)
+        else expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+      }
+      expect(marketReads).toBe(1)
+      return
+    }
+    if (Exit.isFailure(exit)) throw Cause.squash(exit.cause)
+    const outcome = exit.value
+    if (scenario === 'malformed' || scenario === 'typed-error') {
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome))
+        expect(outcome.failure.message).toBe('Pending entry boundary evidence could not be verified')
+    } else {
+      expect(Result.getOrThrow(outcome)).toEqual(
+        scenario === 'cancel-accepted'
+          ? { _tag: 'Wait', observedAt: checkAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
+          : scenario === 'inside' ||
+              scenario === 'pending' ||
+              scenario === 'wide-stop' ||
+              scenario === 'stale' ||
+              scenario === 'missing-bid' ||
+              scenario === 'missing-ask'
+            ? { _tag: 'Wait', observedAt: checkAt, waitReason: 'intent-nonterminal' }
+            : {
+                _tag: 'Execute',
+                action: 'CANCEL',
+                intentId: intent.intentId,
+                observedAt:
+                  scenario === 'timeout' || scenario === 'near-expiry' ? risk.evaluation.decision.expiresAt : checkAt,
+              },
+      )
+    }
+    expect(marketReads).toBe(scenario === 'partial' || scenario === 'cancel-accepted' || scenario === 'expired' ? 0 : 1)
+  })
 
   test.each([
     'profit',

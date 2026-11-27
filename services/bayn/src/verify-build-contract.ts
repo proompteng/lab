@@ -76,7 +76,7 @@ const program = Effect.gen(function* () {
     ),
   )
   const riskPolicy = yield* Effect.fromResult(
-    makeExecutionRiskPolicy('build-contract', protocol.universe, BrokerEnvironment.Sandbox),
+    makeExecutionRiskPolicy('build-contract', protocol.sharedProtocol.universe, BrokerEnvironment.Sandbox),
   ).pipe(
     Effect.mapError((cause) =>
       operationalError({

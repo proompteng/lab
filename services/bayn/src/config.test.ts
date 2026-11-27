@@ -21,7 +21,7 @@ import { executionControllerPlanHash } from './execution/controller-plan'
 import { loadForwardPerformanceConfig } from './forward-performance/config'
 import { captureQualificationRuntime, qualificationRuntime } from './system-assessment/configuration'
 import { canonicalHashV1Result } from './hash'
-import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
+import { activeStrategyBehaviorHash, loadActiveStrategyProtocol, loadSharedJevProtocol } from './strategy'
 import { historicalSignalConfig } from './testing/historical-signal-fixture'
 import { MarketKind } from './instruments'
 import { captureSystemSourceCut } from './system-assessment/capture'
@@ -315,10 +315,6 @@ describe('pure runtime configuration resolution', () => {
       },
     )
     expectFailure(
-      { configuredAlpaca: alpaca(BrokerEnvironment.Sandbox), authorityGenerationHash: undefined },
-      { _tag: 'MissingAlpacaAuthorityGeneration' },
-    )
-    expectFailure(
       {
         configuredAlpaca: {
           ...baseParsedConfig.configuredAlpaca,
@@ -329,6 +325,18 @@ describe('pure runtime configuration resolution', () => {
       },
       { _tag: 'MissingAlpacaCredentials' },
     )
+  })
+
+  test('derives the read-only bootstrap generation from the configured account', () => {
+    const config = Result.getOrThrow(
+      resolveRuntimeConfig(
+        resolutionInput({
+          configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+          authorityGenerationHash: undefined,
+        }),
+      ),
+    )
+    expect(config.alpaca.authorityGenerationHash).toBe(config.alpaca.identity.identityHash)
   })
 
   test('rejects every authority mismatch before startup', () => {
@@ -454,7 +462,7 @@ describe('runtime configuration loading', () => {
     environment.delete('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')
     const config = await Effect.runPromise(provideEnvironment(loadForwardPerformanceConfig(buildMetadata), environment))
     expect(config.expectedExecutionControllerPlanHash).toBeUndefined()
-    const protocol = Result.getOrThrow(loadActiveStrategyProtocol())
+    const protocol = Result.getOrThrow(loadSharedJevProtocol())
     expect(qualificationRuntime(config, protocol).controllerPlanHash).toBe(executionControllerPlanHash)
     expect(
       qualificationRuntime({ ...config, expectedExecutionControllerPlanHash: '6'.repeat(64) }, protocol)
@@ -470,7 +478,7 @@ describe('runtime configuration loading', () => {
       const config = await Effect.runPromise(
         provideEnvironment(loadForwardPerformanceConfig(buildMetadata), environment),
       )
-      const protocol = Result.getOrThrow(loadActiveStrategyProtocol())
+      const protocol = Result.getOrThrow(loadSharedJevProtocol())
       const current = qualificationRuntime(config, protocol)
       const { entryMarkets: _scope, ...unscoped } = current
       const configuration = { ...(scoped ? current : unscoped), controllerPlanHash: null }
@@ -531,7 +539,7 @@ describe('runtime configuration loading', () => {
           ),
         },
       }
-      const current = qualificationRuntime(config, Result.getOrThrow(loadActiveStrategyProtocol()))
+      const current = qualificationRuntime(config, Result.getOrThrow(loadSharedJevProtocol()))
       const base = operationalRegistrationFixture(registrationFixture(undefined, 1, version))
       const configuration = { ...base.obligations.configuration, controllerPlanHash: null }
       const registration = {
@@ -600,7 +608,7 @@ describe('runtime configuration loading', () => {
     const config = await Effect.runPromise(
       provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment),
     )
-    const current = qualificationRuntime(config, Result.getOrThrow(loadActiveStrategyProtocol()))
+    const current = qualificationRuntime(config, Result.getOrThrow(loadSharedJevProtocol()))
     const registered = {
       configuration: current,
       runtimeConfigurationHash: Result.getOrThrow(canonicalHashV1Result(current)),

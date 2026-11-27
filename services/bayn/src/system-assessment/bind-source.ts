@@ -19,7 +19,7 @@ import { executionOrderPlans } from './execution-plans'
 import { bindExecutionEvidence } from './execution-evidence'
 import { controllerBuildMatchesRegistration } from './decision-work'
 import { earliestDurableWitnesses } from './obligation-witnesses'
-import { registeredAllocationMicros } from './policy'
+import { registeredAllocationMicros, isNativeSystemRegistration } from './policy'
 import { assessSession } from './session'
 import { costAttributionRule } from './cost-attribution'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
@@ -36,6 +36,14 @@ export const bindSystemSourceCut = (
   Result.gen(function* () {
     const data = yield* Schema.decodeUnknownResult(SystemAssessmentInputSchema)(input)
     const fail = (message: string) => Result.fail(new SystemAssessmentError({ message }))
+    const expectedCutVersion =
+      data.registration.schemaVersion === 'bayn.system-registration.v7'
+        ? 'bayn.system-source-cut.v6'
+        : data.registration.schemaVersion === 'bayn.system-registration.v6'
+          ? 'bayn.system-source-cut.v5'
+          : 'bayn.system-source-cut.v4'
+    if (cut.schemaVersion !== expectedCutVersion)
+      return yield* fail('Source cut version differs from the registered native engine contract')
     const cutHash = yield* canonicalHashV1Result(cut)
     if (
       data.sourceCutHash !== cutHash ||
@@ -51,13 +59,17 @@ export const bindSystemSourceCut = (
       candidate.authorityGenerationHash,
       indexDecisionAdmissionMutations(cut.mutations),
     )
-    const witnessedCut = { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
+    const witnessedCut: SystemSourceCut =
+      cut.schemaVersion === 'bayn.system-source-cut.v4'
+        ? { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
+        : cut.schemaVersion === 'bayn.system-source-cut.v5'
+          ? { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
+          : { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
     const definitionHash = yield* canonicalHashV1Result(candidate)
     const financialAccounts = yield* registeredFinancialAccounts(data.registration, cut.financial)
-    const nativeCalendar =
-      data.registration.schemaVersion === 'bayn.system-registration.v5'
-        ? data.registration.calendar.marketCalendar
-        : null
+    const nativeCalendar = isNativeSystemRegistration(data.registration)
+      ? data.registration.calendar.marketCalendar
+      : null
     if (nativeCalendar !== null && (yield* canonicalHashV1Result(cut.sourceMaterial)) !== cut.sourceMaterialHash)
       return yield* fail('Native cash witnesses differ from the retained source cut')
     const cashAccounts = nativeCalendar === null ? null : yield* registeredNativeCashAccounts(data.registration, cut)

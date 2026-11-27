@@ -7,6 +7,7 @@ import { Cause, Effect, Result } from 'effect'
 
 import {
   AccountStatus,
+  OrderClass as BrokerOrderClass,
   OrderSide as BrokerOrderSide,
   OrderType as BrokerOrderType,
   type Account,
@@ -334,9 +335,14 @@ const openOrderExposureIdentity = (orders: readonly Order[]) =>
     .map((order) => ({
       accountId: order.accountId,
       brokerOrderId: order.brokerOrderId,
+      clientOrderId: order.clientOrderId,
+      parentBrokerOrderId: order.parentBrokerOrderId ?? null,
+      orderClass: order.orderClass,
       symbol: order.symbol,
       side: order.side,
       orderType: order.orderType,
+      timeInForce: order.timeInForce,
+      extendedHours: order.extendedHours,
       quantityAtoms: order.quantityAtoms ?? null,
       notionalMicros: order.notionalMicros ?? null,
       filledQuantityAtoms: order.filledQuantityAtoms,
@@ -516,6 +522,33 @@ export const priceOpenOrders = (
   return Result.succeed(notionals)
 }
 
+const ocoOrderGroupKey = (
+  order: Pick<Order, 'brokerOrderId' | 'orderClass' | 'parentBrokerOrderId'>,
+): string | undefined =>
+  order.parentBrokerOrderId !== undefined
+    ? order.parentBrokerOrderId
+    : order.orderClass === BrokerOrderClass.OneCancelsOther
+      ? order.brokerOrderId
+      : undefined
+
+const sumGroupedWorstCase = (
+  entries: readonly { readonly group: string | undefined; readonly amount: bigint }[],
+): bigint => {
+  const byGroup = new Map<string, bigint>()
+  let ungrouped = 0n
+  for (const { group, amount } of entries) {
+    if (group === undefined) {
+      ungrouped += amount
+    } else {
+      const current = byGroup.get(group) ?? 0n
+      if (amount > current) byGroup.set(group, amount)
+    }
+  }
+  let total = ungrouped
+  for (const value of byGroup.values()) total += value
+  return total
+}
+
 const symbolQuantityEnvelopeAfterPendingOrders = (
   intent: Intent,
   snapshot: ExecutionCapitalSnapshot,
@@ -531,8 +564,8 @@ const symbolQuantityEnvelopeAfterPendingOrders = (
   const currentQuantityAtoms = snapshot.positions
     .filter((position) => position.symbol === intent.symbol)
     .reduce((total, position) => total + BigInt(position.quantityAtoms), 0n)
-  let beforeIntentMinimumMicros = currentQuantityAtoms
-  let beforeIntentMaximumMicros = currentQuantityAtoms
+  const pendingBuys: { readonly group: string | undefined; readonly amount: bigint }[] = []
+  const pendingSells: { readonly group: string | undefined; readonly amount: bigint }[] = []
   for (const order of snapshot.openOrders.filter((candidate) => candidate.symbol === intent.symbol)) {
     const remaining = unfilledOrderQuantity(order)
     if (Result.isFailure(remaining)) return Result.fail(remaining.failure)
@@ -543,13 +576,12 @@ const symbolQuantityEnvelopeAfterPendingOrders = (
         symbol: order.symbol,
       })
     }
-
-    if (order.side === BrokerOrderSide.Buy) {
-      beforeIntentMaximumMicros += remaining.success
-    } else {
-      beforeIntentMinimumMicros -= remaining.success
-    }
+    const entry = { group: ocoOrderGroupKey(order), amount: remaining.success }
+    if (order.side === BrokerOrderSide.Buy) pendingBuys.push(entry)
+    else pendingSells.push(entry)
   }
+  const beforeIntentMinimumMicros = currentQuantityAtoms - sumGroupedWorstCase(pendingSells)
+  const beforeIntentMaximumMicros = currentQuantityAtoms + sumGroupedWorstCase(pendingBuys)
   const signedIntentQuantityAtoms =
     intent.side === IntentOrderSide.Buy ? BigInt(intent.quantityAtoms) : -BigInt(intent.quantityAtoms)
   return Result.succeed({
@@ -575,7 +607,7 @@ export const validatePendingSellCoverage = (
   for (const position of snapshot.positions) {
     currentBySymbol.set(position.symbol, (currentBySymbol.get(position.symbol) ?? 0n) + BigInt(position.quantityAtoms))
   }
-  const pendingSellsBySymbol = new Map<string, bigint>()
+  const pendingSellsBySymbol = new Map<string, { readonly group: string | undefined; readonly amount: bigint }[]>()
   for (const order of snapshot.openOrders.filter((candidate) => candidate.side === BrokerOrderSide.Sell)) {
     const remaining = unfilledOrderQuantity(order)
     if (Result.isFailure(remaining)) return Result.fail(remaining.failure)
@@ -586,9 +618,12 @@ export const validatePendingSellCoverage = (
         symbol: order.symbol,
       })
     }
-    pendingSellsBySymbol.set(order.symbol, (pendingSellsBySymbol.get(order.symbol) ?? 0n) + remaining.success)
+    const entries = pendingSellsBySymbol.get(order.symbol) ?? []
+    entries.push({ group: ocoOrderGroupKey(order), amount: remaining.success })
+    pendingSellsBySymbol.set(order.symbol, entries)
   }
-  for (const [symbol, pendingSellQuantity] of pendingSellsBySymbol) {
+  for (const [symbol, entries] of pendingSellsBySymbol) {
+    const pendingSellQuantity = sumGroupedWorstCase(entries)
     const currentQuantity = currentBySymbol.get(symbol) ?? 0n
     if (pendingSellQuantity > currentQuantity) {
       return Result.fail({
@@ -751,7 +786,13 @@ export const validateExecutionCapitalLimits = (
       (currentBySymbol.get(position.symbol) ?? 0n) + BigInt(position.marketValueMicros),
     )
   }
-  const pendingBySymbol = new Map<string, PendingSymbolExposure>()
+  const pendingEntriesBySymbol = new Map<
+    string,
+    {
+      readonly buys: { readonly group: string | undefined; readonly amount: bigint }[]
+      readonly sells: { readonly group: string | undefined; readonly amount: bigint }[]
+    }
+  >()
   for (const order of snapshot.openOrders) {
     const notional = openOrderNotionals.get(order.brokerOrderId)
     if (notional === undefined) {
@@ -761,13 +802,18 @@ export const validateExecutionCapitalLimits = (
         symbol: order.symbol,
       })
     }
-    const pending = pendingBySymbol.get(order.symbol) ?? emptyPendingSymbolExposure
-    pendingBySymbol.set(
-      order.symbol,
-      notional > 0n
-        ? { ...pending, buyMicros: pending.buyMicros + notional }
-        : { ...pending, sellMicros: pending.sellMicros + absolute(notional) },
-    )
+    const bucket = pendingEntriesBySymbol.get(order.symbol) ?? { buys: [], sells: [] }
+    const entry = { group: ocoOrderGroupKey(order), amount: absolute(notional) }
+    if (notional > 0n) bucket.buys.push(entry)
+    else bucket.sells.push(entry)
+    pendingEntriesBySymbol.set(order.symbol, bucket)
+  }
+  const pendingBySymbol = new Map<string, PendingSymbolExposure>()
+  for (const [symbol, bucket] of pendingEntriesBySymbol) {
+    pendingBySymbol.set(symbol, {
+      buyMicros: sumGroupedWorstCase(bucket.buys),
+      sellMicros: sumGroupedWorstCase(bucket.sells),
+    })
   }
 
   const symbols = new Set([...currentBySymbol.keys(), ...pendingBySymbol.keys(), intent.symbol])
@@ -866,8 +912,7 @@ export const validateExecutionCapitalLimits = (
     !context.closeOnly &&
     intent.side === IntentOrderSide.Sell &&
     currentQuantityAtoms === 0n &&
-    snapshot.positions.every((position) => BigInt(position.quantityAtoms) === 0n) &&
-    snapshot.openOrders.length === 0 &&
+    snapshot.openOrders.every((order) => order.symbol !== intent.symbol) &&
     instrumentMarket(intent.symbol) === MarketKind.Equity
   const collateral = (proposedOrderNotional * 3n + 1n) / 2n
   if (openingShort && collateral > BigInt(snapshot.account.buyingPowerMicros))
@@ -1199,16 +1244,25 @@ export const validateExecutionBrokerSubmitSnapshot = (
     observedAt,
   )
   if (Result.isFailure(entryFees)) return entryFees
-  const cashBuyingPower = [
-    snapshot.account.cashMicros,
-    snapshot.account.buyingPowerMicros,
-    ...(snapshot.account.nonMarginableBuyingPowerMicros === null
-      ? []
-      : [snapshot.account.nonMarginableBuyingPowerMicros]),
-  ]
-    .map(BigInt)
-    .reduce((minimum, value) => (value < minimum ? value : minimum))
-  const cashSnapshot = { ...snapshot, account: { ...snapshot.account, buyingPowerMicros: cashBuyingPower.toString() } }
+  const marginEquityBuyingPower =
+    instrumentMarket(intent.symbol) === MarketKind.Equity &&
+    snapshot.account.shortingEnabled === true &&
+    asset.equityShort?.marginable === true
+  const effectiveBuyingPower = marginEquityBuyingPower
+    ? BigInt(snapshot.account.buyingPowerMicros)
+    : [
+        snapshot.account.cashMicros,
+        snapshot.account.buyingPowerMicros,
+        ...(snapshot.account.nonMarginableBuyingPowerMicros === null
+          ? []
+          : [snapshot.account.nonMarginableBuyingPowerMicros]),
+      ]
+        .map(BigInt)
+        .reduce((minimum, value) => (value < minimum ? value : minimum))
+  const cashSnapshot = {
+    ...snapshot,
+    account: { ...snapshot.account, buyingPowerMicros: effectiveBuyingPower.toString() },
+  }
   const requestedNotional = boundedBrokerOrderNotional(intent)
   if (Result.isFailure(requestedNotional)) return Result.fail(requestedNotional.failure)
   const openOrderNotionals = priceOpenOrders(snapshot.openOrders)

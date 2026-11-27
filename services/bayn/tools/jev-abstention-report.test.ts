@@ -560,7 +560,7 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   expect(report).toMatchObject({
     diagnosticOnly: true,
     schemaVersion: 'bayn.jev-abstention-report.v3',
-    protocol: 'bayn.jev.protocol.v41',
+    protocol: 'bayn.jev.protocol.v44',
     inputDefinition: 'bayn.jev-entry-state.v24',
     selectedSymbols: [],
     profitableEdgeProven: false,
@@ -599,8 +599,10 @@ test('diagnostics retain atomic judgments and source identities without inventin
   expect(Object.keys(candidate.judgments)).toEqual([
     'equity_support_recovery_confirmed',
     'equity_support_recovery_stop_invalidates',
+    'equity_support_recovery_target_obstructed',
     'equity_base_breakout_confirmed',
     'equity_base_breakout_stop_invalidates',
+    'equity_base_breakout_target_obstructed',
   ])
   expect(Object.values(candidate.judgments).every((judgment) => judgment.type === 'noul')).toBe(true)
   expect(candidate.plans.every((plan) => /^[a-f0-9]{64}$/.test(plan.proposalId))).toBe(true)
@@ -623,7 +625,7 @@ test('crypto economics and coverage are measured from sealed source rather than 
   if (candidate === undefined || !('plans' in candidate) || !('coverage' in candidate))
     throw new Error('Expected requested SOL candidate')
   expect(candidate.fees).toEqual({ maximumEntryFeeBps: 25, maximumExitFeeBps: 25, estimatedRoundTripFeesBps: 50 })
-  expect(candidate.entryEconomics?.holdingExitRequiredBidRiseBps).toBeGreaterThan(60)
+  expect(candidate.entryEconomics?.holdingExitRequiredBidRiseBps).toBeGreaterThan(55)
   expect(candidate.entryEconomics?.holdingExitRequiredBidRiseBps).toBeLessThan(61)
   expect(candidate.plans.length).toBeGreaterThan(0)
   expect(candidate.netRewardRisk).toEqual({

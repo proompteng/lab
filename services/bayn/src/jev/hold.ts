@@ -32,7 +32,7 @@ type JevPositionHoldEvidenceMaterial = Omit<typeof JevPositionHoldEvidenceSchema
 export const deriveJevPositionHoldMaterial = <Evidence extends JevPositionHoldEvidenceMaterial>(evidence: Evidence) =>
   Result.gen(function* () {
     const { portfolio, position, firstFill, entryPlan, now } = yield* validateJevPositionEvidence(evidence)
-    const holdDue = jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)
+    const holdDue = jevMaximumHoldDueAt(firstFill.occurredAt, entryPlan.levels.maximumHoldingMinutes)
     if (portfolio.exitRequestedAt !== null || now >= Date.parse(holdDue))
       return yield* Result.fail(
         new JevContractError({ message: 'An exit request or elapsed holding limit forbids a hold' }),
@@ -43,7 +43,10 @@ export const deriveJevPositionHoldMaterial = <Evidence extends JevPositionHoldEv
       evidence.source,
     )
     const exitPrice = short ? ask : bid
-    if (jevProtectiveStopCrossed(exitPrice, entryPlan.levels) || (yield* jevProfitTargetCrossed(portfolio, exitPrice)))
+    if (
+      jevProtectiveStopCrossed(exitPrice, entryPlan.levels) ||
+      (yield* jevProfitTargetCrossed(portfolio, exitPrice, position.symbol))
+    )
       return yield* Result.fail(new JevContractError({ message: 'An executable exit threshold forbids a hold' }))
     return {
       schemaVersion: 'bayn.jev-position-hold.v1' as const,

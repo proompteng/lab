@@ -62,13 +62,9 @@ execution, a stationary return distribution or future profitability.
 
 ## Reporting commands
 
-Use `bayn-system-assessment` from the research image with the existing explicit trading-target configuration; see the
-[system assessment guide](../../services/bayn/src/system-assessment/README.md#private-reporting-command):
-
-1. `--system-history <packet.json>` retains the audited attempt origin.
-2. `--system-register <packet.json>` prospectively binds the v4 registration and verified support-source artifacts.
-3. `--system-capture <registration-sha256>` persists the immutable evidence cut.
-4. `--system-assess <packet.json>` reproduces the complete financial, execution, reliability and statistical evidence.
+Use the [system assessment command guide](../../services/bayn/src/system-assessment/README.md#private-reporting-command)
+for registration, capture, replay and assessment. The [native registration contract](../../services/bayn/src/system-assessment/README.md#prospective-registration)
+requires the candidate and its independent PAPER incumbent to commit their paired registration before the first open.
 
 A statistical plan has method `CONDITIONAL_HOEFFDING_V1`. It explicitly binds `meanModel: DETERMINISTIC_CONDITIONAL_SESSION_MEANS`. Its `supports` array contains one entry per selected
 policy: `policy`, `lowerMicros`, `upperMicros`, `sourceHash`, and `assumption`. Bounds apply to fully costed session net
