@@ -91,9 +91,16 @@ const Bar = Schema.Struct({
   vw: Schema.optionalKey(PositiveFiniteSchema),
 })
 export type Bar = typeof Bar.Type
+export enum BarAdjustment {
+  All = 'all',
+  Raw = 'raw',
+}
 const Bars = Schema.Struct({
   bars: Schema.Record(SymbolSchema, Schema.Array(Bar)),
   next_page_token: Schema.NullOr(StrictNonEmptyStringSchema),
+  adjustment: Schema.optionalKey(Schema.Enum(BarAdjustment)),
+  feed: Schema.optionalKey(Schema.Literal('sip')),
+  timeframe: Schema.optionalKey(Schema.Literal('1Day')),
 })
 
 export type BarsPage = typeof Bars.Type
@@ -177,7 +184,7 @@ export const makeAlpaca = Effect.fn('macro-canary.alpaca')(function* (
       ),
     bars: (params: {
       symbols: string
-      adjustment: 'all' | 'raw'
+      adjustment: BarAdjustment
       start: string
       end: string
       pageToken: string | null
@@ -192,7 +199,12 @@ export const makeAlpaca = Effect.fn('macro-canary.alpaca')(function* (
         limit: '10000',
         ...(pageToken === null ? {} : { page_token: pageToken }),
       }).toString()
-      return request(`SIP daily bars (${params.adjustment})`, Bars, url)
+      return request(`SIP daily bars (${params.adjustment})`, Bars, url).pipe(
+        Effect.filterOrFail(
+          (page) => page.adjustment === undefined || page.adjustment === params.adjustment,
+          () => failure('bars', 'Alpaca bar adjustment does not match the request'),
+        ),
+      )
     },
     submit: (order: OrderRequest) =>
       request('paper-submit', Acknowledgement, new URL('/v2/orders', origin), order).pipe(
