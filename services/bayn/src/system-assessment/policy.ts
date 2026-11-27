@@ -40,8 +40,16 @@ import {
 import { BootstrapPlanSchema, validateBootstrapPlan, type NumericalAssessmentTerms } from '../jev/bootstrap-plan'
 import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
-import { QualificationRuntimeSchema, qualificationDeadlines } from './configuration'
-import { systemLatencyStressProtocolHash } from './latency-protocol'
+import {
+  RetainedQualificationRuntimeConfigurationSchema,
+  StrategyBoundQualificationRuntimeSchema,
+  qualificationDeadlines,
+} from './configuration'
+import {
+  systemLatencyStressProtocolHash,
+  strategyBoundSystemLatencyStressProtocolHash,
+  preparedAlphaSystemLatencyStressProtocolHash,
+} from './latency-protocol'
 import { costAttributionRule } from './cost-attribution'
 import { CostAllocationPlanSchema, validateCostAllocationPlans } from './cost-allocation'
 import {
@@ -51,6 +59,14 @@ import {
   frozenControlContinuation,
 } from './frozen-control-identity'
 import { qualificationCalendar } from './calendar'
+import {
+  ResearchStrategyBindingSchema,
+  researchStrategyEngineMatchesRole,
+  researchStrategyInferenceModels,
+  researchStrategyPolicyMaterial,
+  researchStrategyProtocol,
+  validateResearchStrategyBinding,
+} from './strategy-binding'
 
 export const systemQualificationPolicy = {
   schemaVersion: 'bayn.system-qualification-policy.v5',
@@ -103,6 +119,11 @@ export const PolicyDefinitionSchema = Schema.Struct({
   executionModelHash: Sha256Schema,
 })
 
+export const StrategyBoundPolicyDefinitionSchema = Schema.Struct({
+  ...PolicyDefinitionSchema.fields,
+  strategyBinding: ResearchStrategyBindingSchema,
+})
+
 const registrationFields = {
   program: Schema.Literal('BAYN_SYSTEM_QUALIFICATION'),
   environment: Schema.Literal('PAPER'),
@@ -125,7 +146,7 @@ const registrationFields = {
   policies: Schema.Array(PolicyDefinitionSchema).check(Schema.isMinLength(2), Schema.isMaxLength(4)),
   costAllocationPlans: Schema.Array(CostAllocationPlanSchema).check(Schema.isMaxLength(20000)),
   obligations: Schema.Struct({
-    configuration: QualificationRuntimeSchema,
+    configuration: RetainedQualificationRuntimeConfigurationSchema,
     decisionScheduleHash: Sha256Schema,
     reconciliationScheduleHash: Sha256Schema,
     decisionIntervalMs: Schema.Int.check(Schema.isBetween({ minimum: 1000, maximum: 86_400_000 })),
@@ -171,7 +192,22 @@ const NativeSystemRegistrationSchema = Schema.Struct({
     marketCalendar: MarketCalendarObservationSchema,
   }),
 })
+export const StrategyBoundSystemRegistrationSchema = Schema.Struct({
+  ...NativeSystemRegistrationSchema.fields,
+  schemaVersion: Schema.Literal('bayn.system-registration.v6'),
+  policies: Schema.Array(StrategyBoundPolicyDefinitionSchema).check(Schema.isMinLength(2), Schema.isMaxLength(4)),
+  obligations: Schema.Struct({
+    ...registrationFields.obligations.fields,
+    configuration: StrategyBoundQualificationRuntimeSchema,
+  }),
+})
+export const PreparedAlphaSystemRegistrationSchema = Schema.Struct({
+  ...StrategyBoundSystemRegistrationSchema.fields,
+  schemaVersion: Schema.Literal('bayn.system-registration.v7'),
+})
 export const SystemRegistrationSchema = Schema.Union([
+  PreparedAlphaSystemRegistrationSchema,
+  StrategyBoundSystemRegistrationSchema,
   NativeSystemRegistrationSchema,
   RetainedConditionalRegistrationSchema,
   RetainedResearchRegistrationSchema,
@@ -179,6 +215,20 @@ export const SystemRegistrationSchema = Schema.Union([
 ])
 
 export type SystemRegistration = typeof SystemRegistrationSchema.Type
+
+export const isStrategyBoundSystemRegistration = <Registration extends { readonly schemaVersion: string }>(
+  registration: Registration,
+): registration is Registration & {
+  readonly schemaVersion: 'bayn.system-registration.v6' | 'bayn.system-registration.v7'
+} =>
+  registration.schemaVersion === 'bayn.system-registration.v6' ||
+  registration.schemaVersion === 'bayn.system-registration.v7'
+
+export const isNativeSystemRegistration = <Registration extends { readonly schemaVersion: string }>(
+  registration: Registration,
+): registration is Registration & {
+  readonly schemaVersion: 'bayn.system-registration.v5' | 'bayn.system-registration.v6' | 'bayn.system-registration.v7'
+} => registration.schemaVersion === 'bayn.system-registration.v5' || isStrategyBoundSystemRegistration(registration)
 
 export type ScheduledEvaluation = Pick<SystemRegistration, 'obligations' | 'policies'> & {
   readonly program: string
@@ -224,6 +274,41 @@ export const systemQualificationPolicyHash = (
     })
   })
 
+export const strategyBoundSystemQualificationPolicyHash = () =>
+  Result.gen(function* () {
+    return yield* canonicalHashV1Result({
+      ...systemQualificationPolicy,
+      schemaVersion: 'bayn.system-qualification-policy.v7',
+      evaluationWindowRule: 'CANONICAL_NATIVE_EQUITY_WINDOWS_WITH_BROKER_RECOVERY_COVERAGE',
+      equityFeeRule: 'DATED_ACCOUNT_EQUITY_FEES_MATCH_POSTED_SCOPED_RECEIPTS',
+      comparisonRule: 'INDEPENDENT_PAPER_SERVING_ENGINE_WITH_FROZEN_POLICY_AND_IDENTICAL_ACCOUNT_NEUTRAL_RISK',
+      strategyBindingSchema: 'bayn.research-strategy-binding.v1',
+      runtimeConfigurationSchema: 'bayn.qualification-runtime.v3',
+      sourceCutVersion: 'bayn.system-source-cut.v5',
+      latencyStressProtocolHash: yield* strategyBoundSystemLatencyStressProtocolHash(),
+      acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(JevAcceptanceVersion.Current),
+    })
+  })
+
+export const preparedAlphaSystemQualificationPolicyHash = () =>
+  Result.gen(function* () {
+    return yield* canonicalHashV1Result({
+      ...systemQualificationPolicy,
+      schemaVersion: 'bayn.system-qualification-policy.v8',
+      evaluationWindowRule: 'CANONICAL_NATIVE_EQUITY_WINDOWS_WITH_BROKER_RECOVERY_COVERAGE',
+      equityFeeRule: 'DATED_ACCOUNT_EQUITY_FEES_MATCH_POSTED_SCOPED_RECEIPTS',
+      comparisonRule: 'INDEPENDENT_PAPER_SERVING_ENGINE_WITH_FROZEN_POLICY_AND_IDENTICAL_ACCOUNT_NEUTRAL_RISK',
+      strategyBindingSchema: 'bayn.research-strategy-binding.v1',
+      runtimeConfigurationSchema: 'bayn.qualification-runtime.v3',
+      sourceCutVersion: 'bayn.system-source-cut.v6',
+      alphaBaselinePreparationSchema: 'bayn.intraday-alpha-baseline-preparation.v1',
+      alphaBaselineAvailabilityRule:
+        'EXACT_PRODUCER_PREPARATION_WITH_INDEPENDENT_COMMIT_WITNESS_BEFORE_ORIGINAL_COMMAND',
+      latencyStressProtocolHash: yield* preparedAlphaSystemLatencyStressProtocolHash(),
+      acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(JevAcceptanceVersion.Current),
+    })
+  })
+
 export const validateSystemRegistration = (input: unknown, version = JevAcceptanceVersion.Current) =>
   Result.gen(function* () {
     const registration = yield* Schema.decodeUnknownResult(
@@ -234,7 +319,9 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     )
     const candidatePolicy = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
     const legacy = usesLegacyAcceptance(version)
-    const native = registration.schemaVersion === 'bayn.system-registration.v5'
+    const native = isNativeSystemRegistration(registration)
+    const strategyBound = isStrategyBoundSystemRegistration(registration)
+    const preparedAlpha = registration.schemaVersion === 'bayn.system-registration.v7'
     const conditional = 'statisticalPlan' in registration
     const invalid = (message: string) => Result.fail(new SystemAssessmentError({ message }))
     if (
@@ -244,11 +331,22 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       return yield* invalid('New registration requires the current execution protocol')
     if (
       registration.policyHash !==
-        (yield* systemQualificationPolicyHash(version, registration.calendar.operatingHours)) ||
+        (yield* preparedAlpha
+          ? preparedAlphaSystemQualificationPolicyHash()
+          : strategyBound
+            ? strategyBoundSystemQualificationPolicyHash()
+            : systemQualificationPolicyHash(version, registration.calendar.operatingHours)) ||
       registration.acceptanceProtocolHash !== (yield* jevAcceptanceProtocolHash(version)) ||
-      registration.latencyStressProtocolHash !== (yield* systemLatencyStressProtocolHash())
+      registration.latencyStressProtocolHash !==
+        (yield* preparedAlpha
+          ? preparedAlphaSystemLatencyStressProtocolHash()
+          : strategyBound
+            ? strategyBoundSystemLatencyStressProtocolHash()
+            : systemLatencyStressProtocolHash())
     )
       return yield* invalid('Registration must bind the current system and acceptance policies')
+    if (strategyBound && version !== JevAcceptanceVersion.Current)
+      return yield* invalid('Engine-bound registration cannot reinterpret a retained acceptance policy')
     if (version === JevAcceptanceVersion.RetainedV2 && registration.calendar.sessions.length !== 20)
       return yield* invalid('Retained v2 evidence must retain its original calendar length')
     if (
@@ -270,11 +368,11 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     const incumbent = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Incumbent)
     if (native) {
       if (incumbent === undefined || incumbent.authorityGenerationHash === candidatePolicy.authorityGenerationHash)
-        return yield* invalid('Native qualification requires its independently authorized serving Jev incumbent')
+        return yield* invalid('Native qualification requires its independently authorized serving incumbent')
       const { accountId: _incumbentAccount, ...incumbentRisk } = incumbent.riskPolicy
       const { accountId: _candidateAccount, ...candidateRisk } = candidatePolicy.riskPolicy
       if ((yield* canonicalHashV1Result(incumbentRisk)) !== (yield* canonicalHashV1Result(candidateRisk)))
-        return yield* invalid('The Jev incumbent and candidate must share the same execution risk policy')
+        return yield* invalid('The incumbent and candidate must share the same execution risk policy')
     } else if (incumbent !== undefined) {
       return yield* invalid('Retained qualification cannot substitute its original comparator')
     }
@@ -347,6 +445,22 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     const riskCeilings = jevAcceptanceExecutionRiskLimits(version)
     for (const policy of registration.policies) {
       yield* validateRegisteredPolicyIdentity(policy)
+      if (strategyBound) {
+        if (!('strategyBinding' in policy))
+          return yield* invalid('Every engine-bound policy must retain its complete strategy binding')
+        const binding = yield* validateResearchStrategyBinding(policy.strategyBinding)
+        const material = researchStrategyPolicyMaterial(binding)
+        if (
+          !researchStrategyEngineMatchesRole(policy.policy, binding.engine) ||
+          policy.strategyHash !== binding.strategy.behaviorHash ||
+          policy.parametersHash !== binding.strategy.parameterHash ||
+          policy.protocolHash !== binding.protocolHash ||
+          policy.promptsHash !== (yield* canonicalHashV1Result(material.prompts)) ||
+          policy.continuationAndExitsHash !== (yield* canonicalHashV1Result(material.continuationAndExits)) ||
+          policy.executionModelHash !== (yield* canonicalHashV1Result(material.executionModel))
+        )
+          return yield* invalid('Registered policy role and identities must derive from its complete engine binding')
+      }
       for (const key of [
         'maxOrderNotionalMicros',
         'maxSymbolExposureMicros',
@@ -367,6 +481,7 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       )
         return yield* invalid('Deployed control must preserve the frozen pre-Jev strategy, parameters and protocol')
       if (
+        !strategyBound &&
         policy.policy === JevResearchPolicy.Ablation &&
         (policy.strategyHash !== ablationIdentity.strategy.behaviorHash ||
           policy.parametersHash !== ablationIdentity.strategy.parameterHash ||
@@ -377,6 +492,7 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       )
         return yield* invalid('Ablation must bind its complete source-defined policy and the candidate execution model')
       if (
+        !strategyBound &&
         policy.policy === JevResearchPolicy.Momentum &&
         (policy.strategyHash !== momentumIdentity.strategy.behaviorHash ||
           policy.parametersHash !== momentumIdentity.strategy.parameterHash ||
@@ -393,18 +509,20 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       const { rates } = yield* prepareInferenceRateCard(policy.inferenceRateCard)
       const jevOnly = usesJevOnlyInference(registration.obligations.configuration.protocol)
       const requiredModels =
-        policy.policy === JevResearchPolicy.Candidate || policy.policy === JevResearchPolicy.Incumbent
-          ? [
-              { provider: 'typesafe', model: registration.obligations.configuration.protocol.model },
-              ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),
-            ]
-          : policy.policy === JevResearchPolicy.Ablation
+        strategyBound && 'strategyBinding' in policy
+          ? researchStrategyInferenceModels(policy.strategyBinding)
+          : policy.policy === JevResearchPolicy.Candidate || policy.policy === JevResearchPolicy.Incumbent
             ? [
-                jevOnly
-                  ? { provider: 'typesafe', model: registration.obligations.configuration.protocol.model }
-                  : { provider: 'openai', model: decisionsModel },
+                { provider: 'typesafe', model: registration.obligations.configuration.protocol.model },
+                ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),
               ]
-            : []
+            : policy.policy === JevResearchPolicy.Ablation
+              ? [
+                  jevOnly
+                    ? { provider: 'typesafe', model: registration.obligations.configuration.protocol.model }
+                    : { provider: 'openai', model: decisionsModel },
+                ]
+              : []
       const firstSession = registration.calendar.sessions[0]
       const lastSession = registration.calendar.sessions.at(-1)
       if (firstSession === undefined || lastSession === undefined)
@@ -450,7 +568,23 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       if (registration.obligations[key] !== expected[key])
         return yield* invalid('Registered deadlines must derive from the frozen runtime configuration and protocol')
     const candidate = registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
-    if (candidate?.parametersHash !== (yield* canonicalHashV1Result(registration.obligations.configuration.protocol)))
+    if (strategyBound) {
+      if (candidate === undefined || !('strategyBinding' in candidate))
+        return yield* invalid('Engine-bound deadlines require the complete candidate strategy')
+      const binding = yield* validateResearchStrategyBinding(registration.obligations.configuration.strategyBinding)
+      const protocol = researchStrategyProtocol(binding)
+      if (
+        (yield* canonicalHashV1Result(binding)) !== (yield* canonicalHashV1Result(candidate.strategyBinding)) ||
+        protocol === null ||
+        (yield* canonicalHashV1Result(protocol)) !==
+          (yield* canonicalHashV1Result(registration.obligations.configuration.protocol))
+      )
+        return yield* invalid(
+          'Scheduled decision deadlines must bind the candidate engine and its shared execution protocol',
+        )
+    } else if (
+      candidate?.parametersHash !== (yield* canonicalHashV1Result(registration.obligations.configuration.protocol))
+    )
       return yield* invalid('Scheduled decision deadlines must use the candidate protocol')
     let previousClose = Date.parse(registration.registeredAt)
     let previousDate = ''
@@ -529,7 +663,11 @@ export const verifyStoredSystemRegistration = (input: unknown) =>
           return {
             version,
             hash: yield* jevAcceptanceProtocolHash(version),
-            policyHash: yield* systemQualificationPolicyHash(version, decoded.calendar.operatingHours),
+            policyHash: yield* decoded.schemaVersion === 'bayn.system-registration.v7'
+              ? preparedAlphaSystemQualificationPolicyHash()
+              : decoded.schemaVersion === 'bayn.system-registration.v6'
+                ? strategyBoundSystemQualificationPolicyHash()
+                : systemQualificationPolicyHash(version, decoded.calendar.operatingHours),
           }
         }),
       ),
@@ -548,15 +686,17 @@ export const verifyStoredSystemRegistration = (input: unknown) =>
 export const validateProspectiveSystemRegistration = (input: unknown) =>
   Result.gen(function* () {
     const verified = yield* validateSystemRegistration(input)
-    if (verified.registration.schemaVersion !== 'bayn.system-registration.v5')
+    if (verified.registration.schemaVersion !== 'bayn.system-registration.v7')
       return yield* Result.fail(
-        new SystemAssessmentError({ message: 'New economic registration requires native equity hours' }),
+        new SystemAssessmentError({
+          message: 'New economic registration requires explicit native engines and prospective baseline preparation',
+        }),
       )
     return { ...verified, registration: verified.registration }
   })
 
 export const nativeBrokerRecoveryClose = (registration: ScheduledEvaluation) =>
-  registration.schemaVersion === 'bayn.system-registration.v5' && registration.calendar.operatingHours === 'NATIVE'
+  isNativeSystemRegistration(registration) && registration.calendar.operatingHours === 'NATIVE'
     ? registration.calendar.marketCalendar.providerSessions.at(-1)?.sessionCloseAt
     : undefined
 

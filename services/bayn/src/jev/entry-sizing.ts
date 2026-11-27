@@ -7,6 +7,10 @@ import { desiredQuantityAtoms } from '../strategy/execution-model/fixed-point'
 import type { FundedEntryExitPlan } from '../strategy/funded-exit-plan'
 import { JevContractError } from './contract'
 
+const isShortFundedExitPlan = (plan: FundedEntryExitPlan): boolean =>
+  plan.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1' ||
+  plan.schemaVersion === 'bayn.intraday-alpha-short-funded-exit-plan.v1'
+
 export const maximumAllocatedBuyQuantities = (input: {
   readonly askPriceMicros: Readonly<Record<string, string>>
   readonly targetWeights: Readonly<Record<string, number>>
@@ -74,6 +78,7 @@ export const maximumFundedSellQuantities = (input: {
   readonly capitalMicros: string
   readonly precision: ExecutionModel['precision']
   readonly plans: Readonly<Record<string, FundedEntryExitPlan>>
+  readonly ignoreDisplayedBidSize?: boolean
 }) =>
   Result.gen(function* () {
     const allocated = yield* maximumAllocatedBuyQuantities({
@@ -86,8 +91,11 @@ export const maximumFundedSellQuantities = (input: {
     const quantities: Record<string, string> = {}
     for (const [symbol, plan] of Object.entries(input.plans).sort(([a], [b]) => a.localeCompare(b))) {
       const quantity = BigInt(allocated[symbol] ?? '0')
-      const maximum =
-        plan.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1' ? BigInt(plan.maximumQuantityAtoms) : 0n
+      const maximum = isShortFundedExitPlan(plan) ? BigInt(plan.maximumQuantityAtoms) : 0n
+      if (input.ignoreDisplayedBidSize === true) {
+        quantities[symbol] = (quantity < maximum ? quantity : maximum).toString()
+        continue
+      }
       const displayed = yield* quantityFromNumber(input.bidSize[symbol] ?? 0).pipe(
         Result.mapError((cause) => new JevContractError({ message: 'Short displayed bid quantity is invalid', cause })),
       )

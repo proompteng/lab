@@ -1,13 +1,21 @@
 import { Result, Schema } from 'effect'
 import type { LoadedRuntimeConfig } from '../config/model'
 import { canonicalHashV1Result } from '../hash'
-import { HistoricalJevProtocolSchema, type JevProtocol } from '../jev/protocol'
+import { HistoricalJevProtocolSchema, JevProtocolSchema, type JevProtocol } from '../jev/protocol'
 import { jevSignalIntervalMs } from '../jev/observation-query'
-import { PositiveIntegerSchema, Sha256Schema } from '../schemas'
+import { PositiveIntegerSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { MarketKind } from '../instruments'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { SystemAssessmentError } from './economics'
 import { executionControllerPlanHash } from '../execution/controller-plan'
+import { loadActiveStrategyProtocol, loadSharedJevProtocol } from '../strategy'
+import {
+  ResearchStrategyEngine,
+  ServingResearchStrategyBindingSchema,
+  makeResearchStrategyBinding,
+  validateResearchStrategyBinding,
+  type ServingResearchStrategyBinding,
+} from './strategy-binding'
 
 const qualificationRuntimeFields = {
   controllerPlanHash: Schema.NullOr(Sha256Schema),
@@ -36,9 +44,20 @@ export const StreamingQualificationRuntimeSchema = Schema.Struct({
   ...qualificationRuntimeFields,
 })
 
-export const QualificationRuntimeSchema = Schema.Union([
+export const RetainedQualificationRuntimeConfigurationSchema = Schema.Union([
   RetainedQualificationRuntimeSchema,
   StreamingQualificationRuntimeSchema,
+])
+
+export const StrategyBoundQualificationRuntimeSchema = Schema.Struct({
+  ...StreamingQualificationRuntimeSchema.fields,
+  schemaVersion: Schema.Literal('bayn.qualification-runtime.v3'),
+  protocol: JevProtocolSchema,
+  strategyBinding: ServingResearchStrategyBindingSchema,
+})
+export const QualificationRuntimeSchema = Schema.Union([
+  RetainedQualificationRuntimeConfigurationSchema,
+  StrategyBoundQualificationRuntimeSchema,
 ])
 
 export const qualificationRuntime = (
@@ -55,6 +74,34 @@ export const qualificationRuntime = (
   protocol,
   entryMarkets: currentEntryMarkets,
 })
+
+export const strategyQualificationRuntime = (config: LoadedRuntimeConfig, binding: ServingResearchStrategyBinding) =>
+  Result.gen(function* () {
+    yield* validateResearchStrategyBinding(binding)
+    const protocol =
+      binding.engine === ResearchStrategyEngine.Jev ? binding.parameters : binding.parameters.sharedProtocol
+    return {
+      ...qualificationRuntime(config, protocol),
+      schemaVersion: 'bayn.qualification-runtime.v3' as const,
+      strategyBinding: binding,
+    }
+  })
+
+/** A new engine-bound period must match the actual composition root; retained periods keep their original shape. */
+export const configuredQualificationRuntime = (
+  config: LoadedRuntimeConfig,
+  registered: typeof QualificationRuntimeSchema.Type,
+) =>
+  Result.gen(function* () {
+    if (registered.schemaVersion !== 'bayn.qualification-runtime.v3')
+      return qualificationRuntime(config, yield* loadSharedJevProtocol())
+    const binding = yield* makeResearchStrategyBinding({
+      engine: ResearchStrategyEngine.IntradayAlpha,
+      parameters: yield* loadActiveStrategyProtocol(),
+    })
+    const serving = yield* Schema.decodeUnknownResult(ServingResearchStrategyBindingSchema, strictParseOptions)(binding)
+    return yield* strategyQualificationRuntime(config, serving)
+  })
 
 export const qualificationDeadlines = (runtime: typeof QualificationRuntimeSchema.Type) =>
   Result.gen(function* () {

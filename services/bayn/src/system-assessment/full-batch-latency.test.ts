@@ -10,7 +10,7 @@ import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { ControllerPassEvidenceSchema } from './decision-work'
 import { fullBatchClockDuration, measureFullBatchLatency } from './full-batch-latency'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema } from './source-cut'
 import { prepareSystemLatencyReplay } from './latency-replay'
 import { BacktestIssue } from '../intraday-replay/backtest'
 import { JevResearchPolicy } from '../jev/acceptance'
@@ -510,7 +510,7 @@ describe('source-bound full batch timing', () => {
       batches: [
         {
           plan: evidence.batchPlan,
-          observation: Schema.decodeUnknownSync(SystemSourceCutSchema.fields.batches.value.fields.observation)(
+          observation: Schema.decodeUnknownSync(RetainedSystemSourceCutSchema.fields.batches.value.fields.observation)(
             evidence.observation,
           ),
           result: evidence.batchResult,
