@@ -11,6 +11,7 @@ import { EquityCutFeed, sipTopics } from '../src/market-data/sip/provenance'
 import { sipUniverse } from '../src/market-data/sip/universe'
 import {
   ReportFormat,
+  ShadowParityError,
   compareShadowSnapshot,
   decodeShadowSnapshot,
   iexTopics,
@@ -346,6 +347,84 @@ const earlyCalendar = () =>
   ])
 const cliArgs = ['--session', early.date, '--format', 'json']
 
+const runFixtureEntryPoint = async (path: string) => {
+  const script = new URL('./verify-sip-vs-iex-shadow.ts', import.meta.url).pathname
+  const child = Bun.spawn([process.execPath, script, ...cliArgs, '--fixture', path], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  return await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()])
+}
+
+const assertSchemaFailure = (
+  exit: Awaited<ReturnType<ReturnType<typeof harness>['run']>>,
+  context: string,
+  issues: readonly { path: string; reason: string }[],
+  privateValues: readonly string[],
+) => {
+  if (!Exit.isFailure(exit)) throw new Error('unexpected successful decode')
+  const error = exit.cause.reasons.find(Cause.isFailReason)?.error
+  if (!(error instanceof ShadowParityError)) throw new Error('expected a typed shadow parity failure')
+  expect(error.cause).toEqual({ _tag: 'ShadowSchemaValidationError', issues })
+  const log = Cause.pretty(exit.cause)
+  expect(log).toContain(context)
+  for (const { path, reason } of issues) expect(log).toContain(`${path}: ${reason}`)
+  for (const value of [
+    'PRIVATE-ROW',
+    'shadow-reader',
+    'secret-password-marker',
+    'alpaca-key-marker',
+    'alpaca-secret-marker',
+    ...privateValues,
+  ]) {
+    expect(log).not.toContain(value)
+    expect(JSON.stringify(error)).not.toContain(value)
+  }
+}
+
+const invalidRows = (kind: keyof typeof iexTopics) => [
+  {
+    name: 'invalid timestamp',
+    fields: { event_at: 'secret-password-marker' },
+    issues: [{ path: '.event_at', reason: 'Expected a valid UTC source timestamp with up to nine fractional digits' }],
+    privateValues: [],
+  },
+  {
+    name: 'incompatible schema version',
+    fields: { schema_version: 8675309 },
+    issues: [{ path: '.schema_version', reason: 'Expected 1' }],
+    privateValues: ['8675309'],
+  },
+  {
+    name: 'inconsistent feed provenance',
+    fields: { source_topic: iexTopics[kind], delay_class: 'real_time_exchange_only' },
+    issues: [
+      { path: '.source_topic', reason: 'Archive source topic must match feed' },
+      { path: '.delay_class', reason: 'Archive delay class must match feed' },
+    ],
+    privateValues: [iexTopics[kind], 'real_time_exchange_only'],
+  },
+  {
+    name: 'unexpected payload key',
+    fields: { 'alpaca-secret-marker': 'PRIVATE-KEY-VALUE' },
+    issues: [{ path: '', reason: 'Unexpected property' }],
+    privateValues: ['PRIVATE-KEY-VALUE'],
+  },
+  ...(kind === 'quotes'
+    ? [
+        {
+          name: 'withdrawn sides with nonzero sizes',
+          fields: { bid_price: 0, ask_price: 0, bid_size: 43892, ask_size: 73268 },
+          issues: [
+            { path: '.bid_size', reason: 'Expected zero size on a withdrawn bid' },
+            { path: '.ask_size', reason: 'Expected zero size on a withdrawn ask' },
+          ],
+          privateValues: ['43892', '73268'],
+        },
+      ]
+    : []),
+]
+
 describe('SIP parity CLI boundary', () => {
   test('reads the provider calendar and issues only the two fixed archive GETs; live and fixture outputs agree', async () => {
     const fixture = qualified(early, 210)
@@ -414,12 +493,87 @@ describe('SIP parity CLI boundary', () => {
     expect(denied.output).toEqual([])
 
     const malformed = harness((url) =>
-      url.pathname === '/v2/calendar' ? earlyCalendar() : new Response('malformed-response'),
+      url.pathname === '/v2/calendar' ? earlyCalendar() : new Response('malformed-response secret-password-marker'),
     )
-    const malformedExit = await malformed.run(cliArgs)
-    if (!Exit.isFailure(malformedExit)) throw new Error('unexpected successful decode')
-    expect(Cause.pretty(malformedExit.cause)).toContain('invalid row at line 1')
+    assertSchemaFailure(
+      await malformed.run(cliArgs),
+      'ClickHouse bars: invalid row at line 1',
+      [{ path: '$', reason: 'Expected a valid JSON string' }],
+      ['malformed-response'],
+    )
     expect(malformed.output).toEqual([])
+  })
+
+  for (const kind of ['bars', 'quotes'] as const) {
+    const row = kind === 'bars' ? bar('PRIVATE-ROW', early) : quote('PRIVATE-ROW', early)
+    test.each(invalidRows(kind))(`reports $name in archived ${kind} without payload values`, async (invalid) => {
+      const http = harness((url) => {
+        if (url.pathname === '/v2/calendar') return earlyCalendar()
+        if (url.searchParams.get('param_sipTopic') === sipTopics[kind])
+          return new Response(jsonl([row, { ...row, ...invalid.fields }]))
+        return new Response(jsonl([bar('QQQ', early)]))
+      })
+      assertSchemaFailure(
+        await http.run(cliArgs),
+        `ClickHouse ${kind}: invalid row at line 2`,
+        invalid.issues.map(({ path, reason }) => ({ path: `$${path}`, reason })),
+        invalid.privateValues,
+      )
+      expect(http.output).toEqual([])
+    })
+
+    test.each(invalidRows(kind))(`reports $name in fixture ${kind} with the nested field path`, async (invalid) => {
+      const offline = harness(() => {
+        throw new Error('fixture attempted network I/O')
+      })
+      const dir = await mkdtemp(join(tmpdir(), 'bayn-sip-shadow-test-'))
+      try {
+        const path = join(dir, 'fixture.json')
+        await writeFile(
+          path,
+          JSON.stringify({ session: early, bars: [], quotes: [], [kind]: [{ ...row, ...invalid.fields }] }),
+        )
+        assertSchemaFailure(
+          await offline.run([...cliArgs, '--fixture', path]),
+          'Fixture does not match the session, bar and quote schemas',
+          invalid.issues.map(({ path, reason }) => ({ path: `$.${kind}[0]${path}`, reason })),
+          invalid.privateValues,
+        )
+        expect(offline.output).toEqual([])
+        expect(offline.calls).toEqual([])
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+  }
+
+  test('retains redacted fixture JSON syntax and session validation failures', async () => {
+    const offline = harness(() => {
+      throw new Error('fixture attempted network I/O')
+    })
+    const dir = await mkdtemp(join(tmpdir(), 'bayn-sip-shadow-test-'))
+    try {
+      const path = join(dir, 'fixture.json')
+      await writeFile(path, '{"alpaca-secret-marker": PRIVATE-ROW')
+      assertSchemaFailure(
+        await offline.run([...cliArgs, '--fixture', path]),
+        'Fixture is not valid JSON',
+        [{ path: '$', reason: 'Expected a valid JSON string' }],
+        [],
+      )
+      const openAt = '2026-11-27T14:32:00Z'
+      await writeFile(path, JSON.stringify({ session: { ...early, openAt }, bars: [], quotes: [] }))
+      assertSchemaFailure(
+        await offline.run([...cliArgs, '--fixture', path]),
+        'Fixture does not match the session, bar and quote schemas',
+        [{ path: '$.session.openAt', reason: 'Expected a 09:30 New York session open on date' }],
+        [openAt],
+      )
+      expect(offline.output).toEqual([])
+      expect(offline.calls).toEqual([])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   test('gate failure prints a machine-readable report before returning non-success', async () => {
@@ -434,21 +588,30 @@ describe('SIP parity CLI boundary', () => {
     try {
       const path = join(dir, 'fixture.json')
       await writeFile(path, JSON.stringify({ session: early, bars: [], quotes: [] }))
-      const script = new URL('./verify-sip-vs-iex-shadow.ts', import.meta.url).pathname
-      const child = Bun.spawn([process.execPath, script, ...cliArgs, '--fixture', path], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      const [code, stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ])
+      const [code, stdout, stderr] = await runFixtureEntryPoint(path)
       expect(code).toBe(1)
       expect(stdout.trim()).toBe(
         renderShadowReport(evaluate({ session: early, bars: [], quotes: [] }), ReportFormat.Json),
       )
       expect(stderr).toContain('SIP shadow promotion gate failed')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('entry point logs the redacted schema reason only to stderr', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bayn-sip-shadow-cli-'))
+    try {
+      const path = join(dir, 'fixture.json')
+      const row = { ...quote('PRIVATE-ROW', early), 'secret-password-marker': 'PRIVATE-KEY-VALUE' }
+      await writeFile(path, JSON.stringify({ session: early, bars: [], quotes: [row] }))
+      const [code, stdout, stderr] = await runFixtureEntryPoint(path)
+      expect(code).toBe(1)
+      expect(stdout).toBe('')
+      expect(stderr).toContain('$.quotes[0]: Unexpected property')
+      for (const value of ['PRIVATE-ROW', 'secret-password-marker', 'PRIVATE-KEY-VALUE']) {
+        expect(stderr).not.toContain(value)
+      }
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

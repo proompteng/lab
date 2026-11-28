@@ -48,14 +48,19 @@ const archiveIdentity = {
 }
 type ArchiveIdentity = Schema.Struct.Type<typeof archiveIdentity>
 
+const fieldIssue = (field: string, issue: string): Schema.FilterIssue => ({ path: [field], issue })
+
 const checkRoute = (kind: keyof typeof iexTopics) =>
-  Schema.makeFilter(
-    (row: ArchiveIdentity) =>
-      row.feed === Sip
-        ? row.source_topic === sipTopics[kind] && row.delay_class === SipDelayClass.RealTimeConsolidated
-        : row.source_topic === iexTopics[kind] && row.delay_class === IexDelayClass.RealTimeExchangeOnly,
-    { expected: 'consistent archive topic, feed and delay class' },
-  )
+  Schema.makeFilter((row: ArchiveIdentity) => {
+    const matchesTopic = row.source_topic === (row.feed === Sip ? sipTopics[kind] : iexTopics[kind])
+    const matchesDelay =
+      row.delay_class === (row.feed === Sip ? SipDelayClass.RealTimeConsolidated : IexDelayClass.RealTimeExchangeOnly)
+    if (matchesTopic && matchesDelay) return
+    const issues: Schema.FilterIssue[] = []
+    if (!matchesTopic) issues.push(fieldIssue('source_topic', 'Archive source topic must match feed'))
+    if (!matchesDelay) issues.push(fieldIssue('delay_class', 'Archive delay class must match feed'))
+    return issues
+  })
 
 const BarSchema = Schema.Struct({
   ...archiveIdentity,
@@ -76,8 +81,14 @@ const QuoteSchema = Schema.Struct({
   ask_size: NonNegativeFiniteSchema,
 }).check(
   checkRoute('quotes'),
-  Schema.makeFilter((row) => (row.bid_price > 0 || row.bid_size === 0) && (row.ask_price > 0 || row.ask_size === 0), {
-    expected: 'zero size on withdrawn quote sides',
+  Schema.makeFilter((row) => {
+    const validBid = row.bid_price > 0 || row.bid_size === 0
+    const validAsk = row.ask_price > 0 || row.ask_size === 0
+    if (validBid && validAsk) return
+    const issues: Schema.FilterIssue[] = []
+    if (!validBid) issues.push(fieldIssue('bid_size', 'Expected zero size on a withdrawn bid'))
+    if (!validAsk) issues.push(fieldIssue('ask_size', 'Expected zero size on a withdrawn ask'))
+    return issues
   }),
 )
 
@@ -86,23 +97,23 @@ export const ShadowSessionSchema = Schema.Struct({
   openAt: UtcSourceTimestampSchema,
   closeAt: UtcSourceTimestampSchema,
 }).check(
-  Schema.makeFilter(
-    ({ date, openAt, closeAt }) => {
-      const local = (timestamp: string) => {
-        const instant = DateTime.make(timestamp)
-        return Option.isSome(instant)
-          ? DateTime.formatIsoZoned(DateTime.setZoneNamedUnsafe(instant.value, 'America/New_York')).slice(0, 19)
-          : ''
-      }
-      return (
-        intradayInstantNanos(openAt) % minuteNs === 0n &&
-        intradayInstantNanos(closeAt) % minuteNs === 0n &&
-        local(openAt) === `${date}T09:30:00` &&
-        [`${date}T13:00:00`, `${date}T16:00:00`].includes(local(closeAt))
-      )
-    },
-    { expected: 'a 09:30–13:00 or 09:30–16:00 New York RTH session on date' },
-  ),
+  Schema.makeFilter(({ date, openAt, closeAt }) => {
+    const local = (timestamp: string) => {
+      const instant = DateTime.make(timestamp)
+      return Option.isSome(instant)
+        ? DateTime.formatIsoZoned(DateTime.setZoneNamedUnsafe(instant.value, 'America/New_York')).slice(0, 19)
+        : ''
+    }
+    const validOpen = intradayInstantNanos(openAt) % minuteNs === 0n && local(openAt) === `${date}T09:30:00`
+    const validClose =
+      intradayInstantNanos(closeAt) % minuteNs === 0n &&
+      [`${date}T13:00:00`, `${date}T16:00:00`].includes(local(closeAt))
+    if (validOpen && validClose) return
+    const issues: Schema.FilterIssue[] = []
+    if (!validOpen) issues.push(fieldIssue('openAt', 'Expected a 09:30 New York session open on date'))
+    if (!validClose) issues.push(fieldIssue('closeAt', 'Expected a 13:00 or 16:00 New York session close on date'))
+    return issues
+  }),
 )
 type ShadowSession = typeof ShadowSessionSchema.Type
 
@@ -111,16 +122,22 @@ const SnapshotSchema = Schema.Struct({
   bars: Schema.Array(BarSchema).check(Schema.isMaxLength(maxBars)),
   quotes: Schema.Array(QuoteSchema).check(Schema.isMaxLength(maxQuotes)),
 })
-export const decodeShadowSnapshot = Schema.decodeUnknownResult(SnapshotSchema, strictParseOptions)
-export const decodeBarLine = Schema.decodeUnknownResult(Schema.fromJsonString(BarSchema), strictParseOptions)
-export const decodeQuoteLine = Schema.decodeUnknownResult(Schema.fromJsonString(QuoteSchema), strictParseOptions)
+const shadowParseOptions = { ...strictParseOptions, reportInput: false } as const
+export const decodeShadowSnapshot = Schema.decodeUnknownResult(SnapshotSchema, shadowParseOptions)
+export const decodeBarLine = Schema.decodeUnknownResult(Schema.fromJsonString(BarSchema), shadowParseOptions)
+export const decodeQuoteLine = Schema.decodeUnknownResult(Schema.fromJsonString(QuoteSchema), shadowParseOptions)
 type ShadowSnapshot = typeof SnapshotSchema.Type
 type Bar = typeof BarSchema.Type
 type Quote = typeof QuoteSchema.Type
 
+type ShadowSchemaValidationError = {
+  readonly _tag: 'ShadowSchemaValidationError'
+  readonly issues: readonly { readonly path: string; readonly reason: string }[]
+}
+
 export class ShadowParityError extends Data.TaggedError('ShadowParityError')<{
   readonly message: string
-  readonly cause?: string
+  readonly cause?: string | ShadowSchemaValidationError
 }> {}
 
 interface FinalBar {

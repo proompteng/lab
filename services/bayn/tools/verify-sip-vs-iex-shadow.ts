@@ -1,5 +1,18 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Cause, Clock, Config, Effect, FileSystem, Layer, Logger, Redacted, Schema, Stdio, Stream } from 'effect'
+import {
+  Cause,
+  Clock,
+  Config,
+  Effect,
+  FileSystem,
+  Layer,
+  Logger,
+  Redacted,
+  Schema,
+  SchemaIssue,
+  Stdio,
+  Stream,
+} from 'effect'
 import { FetchHttpClient, Headers, HttpClient, HttpClientRequest } from 'effect/http'
 import { parseArgs } from 'node:util'
 
@@ -29,6 +42,28 @@ const usage =
   'Usage: bun services/bayn/tools/verify-sip-vs-iex-shadow.ts --session YYYY-MM-DD [--format markdown|json] [--fixture PATH]'
 const failure = (message: string, cause?: string) =>
   new ShadowParityError(cause === undefined ? { message } : { message, cause })
+
+const unexpectedProperty = 'Unexpected property'
+const formatSchemaIssues = SchemaIssue.makeFormatterStandardSchemaV1({
+  leafHook: (issue) => (issue._tag === 'UnexpectedKey' ? unexpectedProperty : SchemaIssue.defaultLeafHook(issue)),
+})
+const schemaFailure = (context: string, error: Schema.SchemaError) => {
+  // These decoders disable input reporting and use static schema messages, but an excess key is itself input.
+  const issues = formatSchemaIssues(error.issue).issues.map(({ path: segments = [], message: reason }) => {
+    const fields = reason === unexpectedProperty ? segments.slice(0, -1) : segments
+    let path = '$'
+    for (const key of fields) {
+      if (typeof key === 'number') path += `[${key}]`
+      else if (typeof key === 'string') path += `.${key}`
+      else path += '[?]'
+    }
+    return { path, reason }
+  })
+  return new ShadowParityError({
+    message: `${context}: ${issues.map(({ path, reason }) => `${path}: ${reason}`).join('; ')}`,
+    cause: { _tag: 'ShadowSchemaValidationError', issues },
+  })
+}
 
 const ArgsSchema = Schema.Struct({
   session: IsoDateSchema,
@@ -157,12 +192,12 @@ const readArchive = (session: typeof ShadowSessionSchema.Type) =>
                 if (count > limit) return yield* failure(`ClickHouse ${kind}: exceeded ${limit} rows`)
                 if (kind === 'bars') {
                   const row = yield* Effect.fromResult(decodeBarLine(line)).pipe(
-                    Effect.mapError(() => failure(`ClickHouse bars: invalid row at line ${count}`)),
+                    Effect.mapError((error) => schemaFailure(`ClickHouse bars: invalid row at line ${count}`, error)),
                   )
                   comparison.addBar(row)
                 } else {
                   const row = yield* Effect.fromResult(decodeQuoteLine(line)).pipe(
-                    Effect.mapError(() => failure(`ClickHouse quotes: invalid row at line ${count}`)),
+                    Effect.mapError((error) => schemaFailure(`ClickHouse quotes: invalid row at line ${count}`, error)),
                   )
                   comparison.addQuote(row)
                 }
@@ -182,7 +217,7 @@ const readArchive = (session: typeof ShadowSessionSchema.Type) =>
   })
 
 const maxFixtureBytes = 64 * 1024 * 1024
-const parseFixture = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))
+const parseFixture = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown), { reportInput: false })
 const readFixture = (path: string, sessionDate: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
@@ -191,10 +226,10 @@ const readFixture = (path: string, sessionDate: string) =>
       return yield* failure('Fixture must be a regular file no larger than 64 MiB')
     const text = yield* fs.readFileString(path)
     const json = yield* Effect.fromResult(parseFixture(text)).pipe(
-      Effect.mapError(() => failure('Fixture is not valid JSON')),
+      Effect.mapError((error) => schemaFailure('Fixture is not valid JSON', error)),
     )
     const snapshot = yield* Effect.fromResult(decodeShadowSnapshot(json)).pipe(
-      Effect.mapError(() => failure('Fixture does not match the session, bar and quote schemas')),
+      Effect.mapError((error) => schemaFailure('Fixture does not match the session, bar and quote schemas', error)),
     )
     if (snapshot.session.date !== sessionDate) return yield* failure('Fixture session does not match --session')
     return yield* Effect.fromResult(compareShadowSnapshot(snapshot))
