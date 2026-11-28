@@ -10,7 +10,7 @@ import v41ObserveCutover from '../../migrations/0212_risk_symmetry_observe_cutov
 import v42ObserveCutover from '../../migrations/0216_stop_floor_reward_risk_observe_cutover'
 import v43ObserveCutover from '../../migrations/0218_v43_paper_settlement'
 import v44ObserveCutover from '../../migrations/0221_v44_paper_settlement'
-import v2PaperSettlement from '../../migrations/0227_intraday_alpha_v2_paper_settlement'
+import v2PaperSettlement from '../../migrations/0229_intraday_alpha_v2_paper_settlement'
 import { loadSharedJevProtocol } from '../strategy'
 import { intradayAlphaStrategyIdentity, makeIntradayAlphaPolicy } from '../strategy/intraday-alpha/policy'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
@@ -100,7 +100,7 @@ for (const {
   },
   {
     schemaVersion: retainedV2.strategy.parameterSchemaVersion,
-    migrationId: 227,
+    migrationId: 229,
     effectiveEntryObserveCutover: v2PaperSettlement,
     behaviorHash: retainedV2.strategy.behaviorHash,
     parameterHash: retainedV2.strategy.parameterHash,

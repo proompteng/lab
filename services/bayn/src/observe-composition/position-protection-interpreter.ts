@@ -24,7 +24,11 @@ import {
 } from '../execution/contracts'
 import { IntentStore, planExecutionIntent } from '../execution/intents/domain'
 import { MutationStore } from '../execution/mutations/model'
-import { decidePositionProtection, type ProtectionOrderState } from '../execution/position-protection'
+import {
+  decidePositionProtection,
+  type PositionProtectionAction,
+  type ProtectionOrderState,
+} from '../execution/position-protection'
 import { canonicalHashV1Result } from '../hash'
 import { JevPositionStore, JevPurpose } from '../jev/portfolio'
 import type { JevProtocol } from '../jev/protocol'
@@ -55,6 +59,25 @@ import {
 } from './mutation-decisions'
 import { mutationRunnerError } from './mutation-interpreter'
 import type { ExecutionCapability, ObserveAutonomousCycleInput, PostMutationReconciliation } from './model'
+
+export const shouldReanchorProtectionCancel = (input: {
+  readonly fillAnchored: boolean
+  readonly closeDue: boolean
+  readonly exitRequested: boolean
+  readonly quantityAtoms: bigint
+  readonly action: PositionProtectionAction
+  readonly protection: ProtectionOrderState
+  readonly orderOwnerProtection: Parameters<typeof isBracketProtection>[0]
+}): boolean =>
+  input.fillAnchored &&
+  !input.closeDue &&
+  !input.exitRequested &&
+  input.quantityAtoms !== 0n &&
+  isBracketProtection(input.orderOwnerProtection) &&
+  ((input.protection._tag === 'Armed' &&
+    input.protection.method === 'BRACKET' &&
+    input.action._tag === 'CancelProtection') ||
+    (input.protection._tag === 'Absent' && (input.action._tag === 'Arm' || input.action._tag === 'Wait')))
 
 const terminal = (status: OrderStatus) =>
   [OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected].includes(status)
@@ -393,18 +416,21 @@ export const advancePositionProtection = (request: {
         const order = open[0]
         if (order?.intentId === undefined || capability._tag === 'RecoveryOnly')
           return wait('PROTECTION_CANCEL_PENDING')
+        const orderOwner = protective.find((record) => record.intent.intentId === order.intentId)
         const advanced = yield* capability.executionProgram
           .cancelProtectionOrder(
             order.intentId,
             order.brokerOrderId,
             management._tag === 'Exit' ? management.target : undefined,
-            fillAnchored &&
-              !request.closeDue &&
-              management._tag !== 'Exit' &&
-              protection._tag === 'Armed' &&
-              protection.method === 'BRACKET' &&
-              action._tag === 'CancelProtection' &&
-              quantityAtoms !== 0n,
+            shouldReanchorProtectionCancel({
+              fillAnchored,
+              closeDue: request.closeDue,
+              exitRequested: management._tag === 'Exit',
+              quantityAtoms,
+              action,
+              protection,
+              orderOwnerProtection: orderOwner?.intent.protection,
+            }),
           )
           .pipe(
             Effect.catch((cause) => {

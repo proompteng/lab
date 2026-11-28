@@ -449,7 +449,8 @@ export const makeClickhouseTrailingBaseline = (
         historySessions === undefined
           ? sql`count() >= 200`
           : sql`has(${sql.param('Array(Tuple(UInt32, UInt32))', regularSessions)},
-              tuple(toUnixTimestamp(min(ny_ts)), toUnixTimestamp(max(ny_ts)) + 60))`
+              tuple(toUnixTimestamp(min(ny_ts)), toUnixTimestamp(max(ny_ts)) + 60))
+            AND count() * 390 * 60 >= 200 * (toUnixTimestamp(max(ny_ts)) + 60 - toUnixTimestamp(min(ny_ts)))`
       const checkpointBar = pureEtf ? sql`m = cp - 1` : sql`m < cp`
       const preferredUniverse = universeId ?? ''
 
