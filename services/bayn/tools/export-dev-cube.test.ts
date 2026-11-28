@@ -6,11 +6,15 @@ import { join } from 'node:path'
 import { inspect } from 'node:util'
 import { gunzipSync } from 'node:zlib'
 
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 
 import { sha256 } from '../src/hash'
+import { IsoDateSchema } from '../src/schemas'
+import { universe as macroUniverse } from '../src/strategy/macro-etf-core/policy'
 import {
+  BaselineSeries,
   CANONICAL_DEV_CUTOFF,
+  computeDevBaselineReturns,
   CubeExportErrorReason,
   CubeFormat,
   CubeSchemaVersion,
@@ -21,6 +25,8 @@ import {
   parseCliArgs,
   prepareDevCubeExport,
   validateDevCutoff,
+  type CalendarRow,
+  type DailyBarRow,
   type DevCubeInputDataset,
 } from './export-dev-cube'
 import { receipts } from './pure-etf-dual-horizon-data'
@@ -215,6 +221,8 @@ test('exports deterministic gzipped JSONL and CSV dev cubes with verified SHA-25
       expect(manifestA.devCutoff).toBe(CANONICAL_DEV_CUTOFF)
       expect(manifestA.excludedHoldoutStart).toBe(EXCLUDED_HOLDOUT_START)
       expect(manifestA.sourceCommit).toBe(sampleCommit)
+      expect(manifestA.hasBaselines).toBe(true)
+      expect(manifestA.baselineSeries).toEqual([BaselineSeries.B0, BaselineSeries.F4, BaselineSeries.O1])
       expect(manifestA.symbols).toEqual(['QQQ', 'SPY'])
       expect(manifestA.rowCount).toBe(2 + 4 + 1 + 2)
       expect(manifestA.files.length).toBe(4)
@@ -308,4 +316,134 @@ test('loadDevSplitFromArchive never requests sealed holdout keys and drops post-
   // Confirm none of the canonical dev-accessible keys reference the holdout/recent archive prefix.
   expect(receipts.datasets.blind.prefix).not.toBe(receipts.datasets.recent.prefix)
   expect(receipts.calendars.blind.name).toBe('calendar_2016_2023.json')
+})
+
+test('records hasBaselines=false when absent and fails closed when requireBaselines is set', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'bayn-dev-cube-nobase-'))
+  const noBaseDir = join(scratch, 'no-base')
+  const reqBaseDir = join(scratch, 'req-base')
+  try {
+    const { baselineReturns: _omitted, ...withoutBaselines } = fixtureDataset()
+
+    const manifest = await Effect.runPromise(
+      exportDevCube(withoutBaselines, { outDir: noBaseDir, sourceCommit: sampleCommit }),
+    )
+    expect(manifest.hasBaselines).toBe(false)
+    expect(manifest.baselineSeries).toEqual([])
+    expect(manifest.files.some((f) => f.kind === 'baseline_returns')).toBe(false)
+
+    const failed = await Effect.runPromise(
+      Effect.result(
+        exportDevCube(withoutBaselines, {
+          outDir: reqBaseDir,
+          sourceCommit: sampleCommit,
+          requireBaselines: true,
+        }),
+      ),
+    )
+    expect(Result.isFailure(failed)).toBe(true)
+    if (Result.isFailure(failed)) {
+      expect(failed.failure).toBeInstanceOf(DevCubeExportError)
+      expect(failed.failure.reason).toBe(CubeExportErrorReason.MissingBaselines)
+    }
+    expect(existsSync(reqBaseDir)).toBe(false)
+
+    const cliParsed = parseCliArgs(['--out-dir', reqBaseDir, '--require-baselines'])
+    expect(Result.isSuccess(cliParsed)).toBe(true)
+    if (Result.isSuccess(cliParsed)) {
+      expect(cliParsed.success.requireBaselines).toBe(true)
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true })
+  }
+})
+
+const makeSyntheticFullUniverseDevSplit = (sessions: number, shockStart?: number) => {
+  const decodeIsoDate = Schema.decodeUnknownSync(IsoDateSchema)
+  const calendar: CalendarRow[] = []
+  const dailyBars: DailyBarRow[] = []
+  const cur = new Date('2016-01-04T00:00:00Z')
+  while (calendar.length < sessions) {
+    const day = cur.getUTCDay()
+    if (day !== 0 && day !== 6) {
+      const date = decodeIsoDate(cur.toISOString().slice(0, 10))
+      calendar.push({ date, openMs: Date.parse(`${date}T14:30:00Z`), minutes: 390 })
+    }
+    cur.setUTCDate(cur.getUTCDate() + 1)
+  }
+
+  const prices = new Map<string, number>(macroUniverse.map((sym, idx) => [sym, 50 + idx * 3]))
+  for (const [t, session] of calendar.entries()) {
+    for (const [idx, symbol] of macroUniverse.entries()) {
+      const prev = prices.get(symbol) ?? 100
+      const baseDrift = 0.0003 + ((idx % 7) - 3) * 0.00015
+      const wave = 0.004 * Math.sin((t + 1) * (0.11 + idx * 0.017))
+      const shock = shockStart !== undefined && t >= shockStart ? 0.03 * (idx % 2 === 0 ? 1 : -1) : 0
+      const open = Number((prev * (1 + 0.3 * wave)).toFixed(4))
+      const close = Number(Math.max(1, prev * (1 + baseDrift + wave + shock)).toFixed(4))
+      const high = Number((Math.max(open, close) * 1.003).toFixed(4))
+      const low = Number((Math.min(open, close) * 0.997).toFixed(4))
+      const vwap = Number(((open + close) / 2).toFixed(4))
+      prices.set(symbol, close)
+      dailyBars.push({
+        date: session.date,
+        symbol,
+        open,
+        high,
+        low,
+        close,
+        volume: 1_000_000,
+        vwap,
+      })
+    }
+  }
+  return { calendar, dailyBars }
+}
+
+test('computeDevBaselineReturns derives causal F4 and O1 dev baselines strictly <= devCutoff', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'bayn-dev-cube-causal-base-'))
+  try {
+    const baseData = makeSyntheticFullUniverseDevSplit(160)
+    const shockedData = makeSyntheticFullUniverseDevSplit(160, 130)
+
+    const baseResult = computeDevBaselineReturns(baseData)
+    const shockedResult = computeDevBaselineReturns(shockedData)
+    expect(Result.isSuccess(baseResult)).toBe(true)
+    expect(Result.isSuccess(shockedResult)).toBe(true)
+    if (Result.isFailure(baseResult) || Result.isFailure(shockedResult)) return
+
+    const baseRows = baseResult.success
+    const shockedRows = shockedResult.success
+    expect(baseRows.length).toBe(160)
+    expect(baseRows.every((row) => row.date <= CANONICAL_DEV_CUTOFF)).toBe(true)
+    // Daily-only frames produce causal F4 and O1 without fabricating intraday B0.
+    expect(baseRows.every((row) => row.B0 === undefined && Number.isFinite(row.F4) && Number.isFinite(row.O1))).toBe(
+      true,
+    )
+    // Verify strict causality: future shocks from day 130 onward do not alter prior baseline returns.
+    expect(baseRows.slice(0, 130)).toEqual(shockedRows.slice(0, 130))
+    expect(baseRows.slice(130)).not.toEqual(shockedRows.slice(130))
+
+    // Export cube with computed baselines and verify MANIFEST.json metadata & file contents.
+    const outDir = join(scratch, 'cube')
+    const manifest = await Effect.runPromise(
+      exportDevCube(
+        { ...baseData, baselineReturns: baseRows },
+        { outDir, sourceCommit: sampleCommit, requireBaselines: true },
+      ),
+    )
+    expect(manifest.hasBaselines).toBe(true)
+    expect(manifest.baselineSeries).toEqual([BaselineSeries.F4, BaselineSeries.O1])
+    const baselineFile = manifest.files.find((f) => f.kind === 'baseline_returns')
+    expect(baselineFile).toBeDefined()
+    if (baselineFile !== undefined) {
+      const text = gunzipSync(await readFile(join(outDir, baselineFile.path)))
+        .toString('utf8')
+        .trim()
+      const firstRow = JSON.parse(text.split('\n')[0] ?? '{}') as Record<string, unknown>
+      expect(Object.keys(firstRow)).toEqual(['date', 'F4', 'O1'])
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true })
+  }
 })

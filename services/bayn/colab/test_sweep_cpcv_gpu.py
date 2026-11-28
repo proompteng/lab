@@ -39,7 +39,9 @@ def _write_synthetic_cube(
     fmt: str = "jsonl.gz",
     dev_cutoff: str = "2023-12-29",
     extra_daily_rows: list[dict[str, object]] | None = None,
+    drop_daily_keys: set[tuple[str, str]] | None = None,
     include_baselines: bool = True,
+    baseline_cols: tuple[str, ...] = ("B0", "F4", "O1"),
     seed: int = 42,
 ) -> Path:
     rng = np.random.default_rng(seed)
@@ -58,6 +60,8 @@ def _write_synthetic_cube(
             ret = drifts[s] * (1.5 if s in ("QQQ", "GLD") else 1.0) * regime + vols[s] * float(rng.standard_normal())
             prices[s] = max(1.0, prices[s] * (1.0 + ret))
             p = round(prices[s], 4)
+            if drop_daily_keys is not None and (d, s) in drop_daily_keys:
+                continue
             daily_rows.append(
                 {
                     "date": d,
@@ -113,8 +117,9 @@ def _write_synthetic_cube(
             ["date", "symbol", "open", "high", "low", "close", "volume", "vwap"],
         )
     ]
-    if include_baselines:
-        files.append(write_gz(f"baseline_returns.{fmt}", baseline_rows, ["date", "B0", "F4", "O1"]))
+    active_baseline_cols = list(baseline_cols) if include_baselines else []
+    if include_baselines and active_baseline_cols:
+        files.append(write_gz(f"baseline_returns.{fmt}", baseline_rows, ["date", *active_baseline_cols]))
 
     manifest = {
         "schemaVersion": engine.SCHEMA_VERSION_CUBE,
@@ -123,6 +128,8 @@ def _write_synthetic_cube(
         "canonicalDevCutoff": engine.CANONICAL_DEV_CUTOFF,
         "excludedHoldoutStart": engine.CANONICAL_HOLDOUT_START,
         "sourceCommit": "b" * 40,
+        "hasBaselines": bool(include_baselines and active_baseline_cols),
+        "baselineSeries": active_baseline_cols,
         "splits": {
             "train": {"first": "2016-01-04", "last": "2021-12-31", "count": 1511},
             "validation": {"first": "2022-01-03", "last": "2023-12-29", "count": 501},
@@ -336,6 +343,9 @@ class SweepCpcvGpuTests(unittest.TestCase):
                 self.assertEqual(receipt["devCutoff"], engine.CANONICAL_DEV_CUTOFF)
                 self.assertEqual(receipt["excludedHoldoutStart"], engine.CANONICAL_HOLDOUT_START)
                 self.assertEqual(receipt["computeBackend"], "numpy-cpu")
+                self.assertTrue(receipt["hasBaselines"])
+                self.assertEqual(receipt["baselineSeries"], ["B0", "F4", "O1"])
+                self.assertEqual(receipt["scoringMode"], engine.SCORING_MODE_MARGINAL)
                 self.assertEqual(receipt["costSurfaceBps"], [2, 5, 10, 15])
                 self.assertEqual(receipt["gitSha"], "b" * 40)
                 self.assertEqual(len(receipt["devCubeSha256"]), 64)
@@ -600,6 +610,265 @@ class SweepCpcvGpuTests(unittest.TestCase):
         with mock.patch.object(engine, "torch", fake_torch_cuda):
             self.assertEqual(engine.resolve_device("cuda"), ("cuda", "device:cuda"))
             self.assertEqual(engine.resolve_device("auto"), ("cuda", "device:cuda"))
+
+    def test_missing_close_mark_on_held_asset_fails_closed(self) -> None:
+        # Asset 0 has closes [100, NaN, 50]; Asset 1 has valid closes [100, 101, 102].
+        closes = np.array(
+            [
+                [100.0, 100.0],
+                [np.nan, 101.0],
+                [50.0, 102.0],
+            ],
+            dtype=np.float64,
+        )
+        valid_close_mask = np.isfinite(closes) & (closes > 0.0)
+        nan_returns = np.array(
+            [
+                [0.0, 0.0],
+                [np.nan, 0.01],
+                [np.nan, 102.0 / 101.0 - 1.0],
+            ],
+            dtype=np.float64,
+        )
+        # Even if a caller passed zero-filled returns for missing bars, valid_close_mask must still fail closed.
+        zero_filled_returns = np.where(np.isfinite(nan_returns), nan_returns, 0.0)
+
+        targets = np.zeros((1, 3, 2), dtype=np.float64)
+        targets[0, 0] = [0.5, 0.5]
+        reb_masks = np.array([[True, False, False]], dtype=bool)
+
+        for candidate_returns in (nan_returns, zero_filled_returns):
+            with self.assertRaisesRegex(ValueError, "Missing close mark for held asset SPY on 2023-01-03"):
+                engine._evaluate_weights_vectorized(
+                    targets,
+                    reb_masks,
+                    candidate_returns,
+                    (5,),
+                    "numpy-cpu",
+                    None,
+                    valid_close_mask=valid_close_mask,
+                    dates=("2023-01-02", "2023-01-03", "2023-01-04"),
+                    symbols=("SPY", "QQQ"),
+                )
+
+        # Rebalancing into an asset on a day whose close mark is missing also fails closed.
+        bad_target = np.zeros((1, 3, 2), dtype=np.float64)
+        bad_target[0, 1] = [0.5, 0.5]
+        reb_day1 = np.array([[False, True, False]], dtype=bool)
+        with self.assertRaisesRegex(ValueError, "Missing close mark for targeted asset SPY on 2023-01-03"):
+            engine._evaluate_weights_vectorized(
+                bad_target,
+                reb_day1,
+                nan_returns,
+                (5,),
+                "numpy-cpu",
+                None,
+                valid_close_mask=valid_close_mask,
+                dates=("2023-01-02", "2023-01-03", "2023-01-04"),
+                symbols=("SPY", "QQQ"),
+            )
+
+        # Holding ONLY Asset 1 (weight 0 on the missing asset) succeeds with exact finite returns.
+        unheld_targets = np.zeros((1, 3, 2), dtype=np.float64)
+        unheld_targets[0, 0] = [0.0, 1.0]
+        net, _ = engine._evaluate_weights_vectorized(
+            unheld_targets,
+            reb_masks,
+            nan_returns,
+            (0,),
+            "numpy-cpu",
+            None,
+            valid_close_mask=valid_close_mask,
+            dates=("2023-01-02", "2023-01-03", "2023-01-04"),
+            symbols=("SPY", "QQQ"),
+        )
+        self.assertTrue(np.all(np.isfinite(net)))
+        self.assertAlmostEqual(float(net[0, 0, 1]), 0.01, places=12)
+        self.assertAlmostEqual(float(net[0, 0, 2]), 102.0 / 101.0 - 1.0, places=12)
+
+        # End-to-end: dropping a single daily bar on an actively held asset fails closed in run_cpcv_sweep.
+        with tempfile.TemporaryDirectory() as tmp:
+            dates = _make_business_dates(90)
+            # Rebalance happens at t=21 (cadence=21); drop QQQ close at t=25 while held.
+            dropped_date = dates[25]
+            cube_dir = _write_synthetic_cube(
+                Path(tmp),
+                n_sessions=90,
+                drop_daily_keys={(dropped_date, "QQQ")},
+                seed=7,
+            )
+            cube = engine.verify_and_load_dev_cube(cube_dir)
+            qqq_idx = cube.symbols.index("QQQ")
+            self.assertFalse(bool(cube.valid_close_mask[25, qqq_idx]))
+            self.assertTrue(np.isnan(cube.returns[25, qqq_idx]))
+            self.assertTrue(np.isnan(cube.returns[26, qqq_idx]))
+
+            candidate = engine.CandidateParams(
+                lookback_days=21,
+                vol_window_days=20,
+                entry_z_score=-5.0,
+                rebalance_cadence_days=21,
+                top_k=4,
+                target_vol=0.12,
+            )
+            with self.assertRaisesRegex(ValueError, f"Missing close mark for held asset QQQ on {dropped_date}"):
+                engine.run_cpcv_sweep(
+                    cube,
+                    candidates=[candidate],
+                    n_groups=4,
+                    k_test_groups=1,
+                    purge_sessions=5,
+                    embargo_sessions=2,
+                    device_request="cpu",
+                    top_n=1,
+                )
+
+    def test_long_only_false_is_rejected_explicitly(self) -> None:
+        with self.assertRaisesRegex(ValueError, "long_only=False is not implemented"):
+            engine.CandidateParams(
+                lookback_days=21,
+                vol_window_days=20,
+                entry_z_score=0.0,
+                rebalance_cadence_days=5,
+                top_k=2,
+                target_vol=0.12,
+                long_only=False,
+            )
+
+        # Defensive check even if CandidateParams.__post_init__ is bypassed.
+        spoofed = SimpleNamespace(
+            lookback_days=21,
+            vol_window_days=20,
+            entry_z_score=0.0,
+            rebalance_cadence_days=5,
+            top_k=2,
+            target_vol=0.12,
+            long_only=False,
+            candidate_id=lambda: "LS/spoofed",
+        )
+        with self.assertRaisesRegex(ValueError, "long_only=False is not implemented"):
+            engine._build_candidate_weights(
+                spoofed,  # type: ignore[arg-type]
+                np.zeros((30, 2), dtype=np.float64),
+                np.ones((30, 2), dtype=np.float64),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cube = engine.verify_and_load_dev_cube(_write_synthetic_cube(Path(tmp), n_sessions=90))
+            with self.assertRaisesRegex(ValueError, "long_only=False is not implemented"):
+                engine.run_cpcv_sweep(
+                    cube,
+                    candidates=[spoofed],  # type: ignore[list-item]
+                    n_groups=4,
+                    k_test_groups=1,
+                    purge_sessions=5,
+                    embargo_sessions=2,
+                    device_request="cpu",
+                    top_n=1,
+                )
+
+    def test_baseline_free_scoring_mode_and_require_baselines_fail_closed(self) -> None:
+        candidate = engine.CandidateParams(21, 20, 0.0, 5, 2, 0.12)
+
+        # Case 1: Cube without baselines labels scoringMode="standalone-no-baselines" honestly
+        # and fails closed when --require-baselines is requested.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cube_dir = _write_synthetic_cube(root, n_sessions=180, include_baselines=False)
+            cube = engine.verify_and_load_dev_cube(cube_dir)
+            self.assertEqual(cube.baselines, {})
+
+            receipt = engine.run_cpcv_sweep(
+                cube,
+                candidates=[candidate],
+                n_groups=5,
+                k_test_groups=2,
+                purge_sessions=10,
+                embargo_sessions=3,
+                device_request="cpu",
+                top_n=1,
+            )
+            self.assertFalse(receipt["hasBaselines"])
+            self.assertEqual(receipt["baselineSeries"], [])
+            self.assertEqual(receipt["scoringMode"], engine.SCORING_MODE_STANDALONE)
+            base_block = receipt["topCandidates"][0]["baselines"]
+            self.assertFalse(base_block["hasBaselines"])
+            self.assertEqual(base_block["baselineSeries"], [])
+            self.assertEqual(base_block["scoringMode"], engine.SCORING_MODE_STANDALONE)
+            self.assertIsNone(base_block["maxAbsCorrelation"])
+            self.assertIsNone(base_block["correlationPenalty"])
+            self.assertIsNone(base_block["marginalPortfolioSharpe"])
+
+            with self.assertRaisesRegex(ValueError, "Baselines are required"):
+                engine.run_cpcv_sweep(
+                    cube,
+                    candidates=[candidate],
+                    n_groups=5,
+                    k_test_groups=2,
+                    purge_sessions=10,
+                    embargo_sessions=3,
+                    device_request="cpu",
+                    top_n=1,
+                    require_baselines=True,
+                )
+
+            with self.assertRaisesRegex(ValueError, "Baselines are required"):
+                engine.main(
+                    [
+                        "--cube-dir",
+                        str(cube_dir),
+                        "--out",
+                        str(root / "out.json"),
+                        "--device",
+                        "cpu",
+                        "--groups",
+                        "5",
+                        "--test-groups",
+                        "2",
+                        "--purge",
+                        "10",
+                        "--embargo",
+                        "3",
+                        "--require-baselines",
+                    ]
+                )
+
+        # Case 2: Cube with daily-only causal baselines (F4, O1 without B0) succeeds with --require-baselines
+        # and accurately reports baselineSeries=["F4", "O1"] and scoringMode="marginal-portfolio".
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cube_dir = _write_synthetic_cube(root, n_sessions=180, include_baselines=True, baseline_cols=("F4", "O1"))
+            out_receipt = root / "receipt.json"
+            rc = engine.main(
+                [
+                    "--cube-dir",
+                    str(cube_dir),
+                    "--out",
+                    str(out_receipt),
+                    "--device",
+                    "cpu",
+                    "--groups",
+                    "5",
+                    "--test-groups",
+                    "2",
+                    "--purge",
+                    "10",
+                    "--embargo",
+                    "3",
+                    "--top-n",
+                    "2",
+                    "--require-baselines",
+                ]
+            )
+            self.assertEqual(rc, 0)
+            receipt = json.loads(out_receipt.read_text(encoding="utf-8"))
+            self.assertTrue(receipt["hasBaselines"])
+            self.assertEqual(receipt["baselineSeries"], ["F4", "O1"])
+            self.assertEqual(receipt["scoringMode"], engine.SCORING_MODE_MARGINAL)
+            corrs = receipt["topCandidates"][0]["baselines"]["correlations"]
+            self.assertIsNone(corrs["B0"])
+            self.assertIsNotNone(corrs["F4"])
+            self.assertIsNotNone(corrs["O1"])
 
 
 if __name__ == "__main__":

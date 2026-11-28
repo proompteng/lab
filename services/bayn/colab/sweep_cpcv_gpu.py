@@ -41,6 +41,8 @@ CANONICAL_DEV_CUTOFF = "2023-12-29"
 CANONICAL_HOLDOUT_START = "2024-01-02"
 COST_SURFACE_BPS: tuple[int, ...] = (2, 5, 10, 15)
 BASELINE_KEYS: tuple[str, ...] = ("B0", "F4", "O1")
+SCORING_MODE_MARGINAL = "marginal-portfolio"
+SCORING_MODE_STANDALONE = "standalone-no-baselines"
 MAX_RECEIPT_BYTES = 50_000
 ANNUAL_SESSIONS = 252
 EULER_GAMMA = 0.5772156649015329
@@ -67,6 +69,10 @@ class CandidateParams:
     top_k: int
     target_vol: float
     long_only: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.long_only:
+            raise ValueError("long_only=False is not implemented; only long-only candidates are supported")
 
     def candidate_id(self) -> str:
         mode = "L" if self.long_only else "LS"
@@ -108,7 +114,8 @@ class DevCubeData:
     dates: tuple[str, ...]
     symbols: tuple[str, ...]
     closes: np.ndarray  # shape (T, A), float64
-    returns: np.ndarray  # shape (T, A), float64
+    valid_close_mask: np.ndarray  # shape (T, A), bool
+    returns: np.ndarray  # shape (T, A), float64 (NaN where current or prior close is missing)
     baselines: dict[str, np.ndarray]  # optional B0/F4/O1 series of shape (T,)
 
 
@@ -238,20 +245,30 @@ def verify_and_load_dev_cube(cube_dir: Path) -> DevCubeData:
             if val is not None:
                 closes[ti, ai] = val
 
-    # Close-to-close simple returns (0.0 on first observation or missing prior bar).
-    returns = np.zeros((t_len, a_len), dtype=np.float64)
+    valid_close_mask = np.isfinite(closes) & (closes > 0.0)
+    # Close-to-close simple returns: NaN wherever current or prior close is missing
+    # so held assets can never silently receive fabricated 0.0% returns across missing bars.
+    returns = np.full((t_len, a_len), np.nan, dtype=np.float64)
+    if t_len > 0:
+        returns[0] = np.where(valid_close_mask[0], 0.0, np.nan)
     if t_len > 1:
         prev = closes[:-1]
         curr = closes[1:]
-        valid = np.isfinite(prev) & np.isfinite(curr) & (prev > 0.0)
-        returns[1:] = np.where(valid, curr / prev - 1.0, 0.0)
+        valid = valid_close_mask[:-1] & valid_close_mask[1:]
+        returns[1:] = np.where(valid, curr / prev - 1.0, np.nan)
+
+    manifest_has_baselines = manifest.get("hasBaselines")
+    if manifest_has_baselines is True and "baseline_returns" not in by_kind:
+        raise CubeIntegrityError("MANIFEST.json declares hasBaselines=true but omits 'baseline_returns' file")
+    if manifest_has_baselines is False and "baseline_returns" in by_kind:
+        raise CubeIntegrityError("MANIFEST.json declares hasBaselines=false but includes 'baseline_returns' file")
 
     baselines: dict[str, np.ndarray] = {}
     if "baseline_returns" in by_kind:
         date_to_idx = {d: i for i, d in enumerate(dates)}
         base_rows = iter_rows(by_kind["baseline_returns"])
-        for bkey in BASELINE_KEYS:
-            baselines[bkey] = np.zeros(t_len, dtype=np.float64)
+        raw_series = {bkey: np.full(t_len, np.nan, dtype=np.float64) for bkey in BASELINE_KEYS}
+        seen_keys: set[str] = set()
         for row in base_rows:
             date = str(row["date"])
             _assert_not_holdout(date, dev_cutoff, excluded_holdout_start, "baseline return row")
@@ -259,11 +276,21 @@ def verify_and_load_dev_cube(cube_dir: Path) -> DevCubeData:
             if idx is None:
                 continue
             for bkey in BASELINE_KEYS:
-                if bkey in row and row[bkey] != "":
-                    val = float(row[bkey])
+                raw_val = row.get(bkey)
+                if raw_val is not None and raw_val != "":
+                    val = float(raw_val)
                     if not math.isfinite(val):
                         raise CubeIntegrityError(f"Non-finite baseline return {bkey} on {date}")
-                    baselines[bkey][idx] = val
+                    raw_series[bkey][idx] = val
+                    seen_keys.add(bkey)
+        for bkey in BASELINE_KEYS:
+            if bkey in seen_keys:
+                missing_count = int(np.sum(~np.isfinite(raw_series[bkey])))
+                if missing_count > 0:
+                    raise CubeIntegrityError(
+                        f"Incomplete baseline return series {bkey}: missing {missing_count} of {t_len} sessions"
+                    )
+                baselines[bkey] = raw_series[bkey]
 
     return DevCubeData(
         manifest=manifest,
@@ -274,6 +301,7 @@ def verify_and_load_dev_cube(cube_dir: Path) -> DevCubeData:
         dates=dates,
         symbols=symbols,
         closes=closes,
+        valid_close_mask=valid_close_mask,
         returns=returns,
         baselines=baselines,
     )
@@ -467,14 +495,22 @@ def marginal_portfolio_metrics(
     """Compute correlation penalty and marginal Sharpe lift against reference B0/F4/O1 baselines."""
     corrs: dict[str, float | None] = {}
     per_base_marginal: dict[str, float | None] = {}
+    active_keys: list[str] = []
     active_series: list[np.ndarray] = []
 
     for key in BASELINE_KEYS:
         series = baselines.get(key)
-        if series is None or len(series) != len(candidate_returns) or float(np.std(series, ddof=1)) <= 0.0:
+        if (
+            series is None
+            or len(series) != len(candidate_returns)
+            or len(series) < 2
+            or not np.all(np.isfinite(series))
+            or float(np.std(series, ddof=1)) <= 0.0
+        ):
             corrs[key] = None
             per_base_marginal[key] = None
             continue
+        active_keys.append(key)
         active_series.append(series)
         corrs[key] = pearson_corr(candidate_returns, series)
         base_sr = compute_series_metrics(series, np.zeros_like(series))["sharpe"]
@@ -485,20 +521,35 @@ def marginal_portfolio_metrics(
         else:
             per_base_marginal[key] = None
 
+    has_baselines = len(active_series) > 0
+    if not has_baselines:
+        return {
+            "hasBaselines": False,
+            "baselineSeries": [],
+            "scoringMode": SCORING_MODE_STANDALONE,
+            "correlations": corrs,
+            "maxAbsCorrelation": None,
+            "correlationPenalty": None,
+            "marginalPortfolioSharpe": None,
+            "perBaselineMarginalSharpe": per_base_marginal,
+        }
+
     valid_corrs = [abs(v) for v in corrs.values() if v is not None]
     max_abs_corr = max(valid_corrs) if valid_corrs else 0.0
     corr_penalty = corr_penalty_weight * max(0.0, max_abs_corr - corr_free_threshold)
 
     marginal_sharpe = 0.0
-    if active_series:
-        composite_base = np.mean(np.stack(active_series, axis=0), axis=0)
-        base_sr = compute_series_metrics(composite_base, np.zeros_like(composite_base))["sharpe"]
-        blend = (1.0 - sleeve_weight) * composite_base + sleeve_weight * candidate_returns
-        blend_sr = compute_series_metrics(blend, np.zeros_like(blend))["sharpe"]
-        if base_sr is not None and blend_sr is not None:
-            marginal_sharpe = blend_sr - base_sr
+    composite_base = np.mean(np.stack(active_series, axis=0), axis=0)
+    base_sr = compute_series_metrics(composite_base, np.zeros_like(composite_base))["sharpe"]
+    blend = (1.0 - sleeve_weight) * composite_base + sleeve_weight * candidate_returns
+    blend_sr = compute_series_metrics(blend, np.zeros_like(blend))["sharpe"]
+    if base_sr is not None and blend_sr is not None:
+        marginal_sharpe = blend_sr - base_sr
 
     return {
+        "hasBaselines": True,
+        "baselineSeries": active_keys,
+        "scoringMode": SCORING_MODE_MARGINAL,
         "correlations": corrs,
         "maxAbsCorrelation": max_abs_corr,
         "correlationPenalty": corr_penalty,
@@ -558,6 +609,7 @@ def default_parameter_grid(n_assets: int) -> list[CandidateParams]:
 @dataclass(frozen=True)
 class PrecomputedFeatures:
     close_valid: np.ndarray  # shape (T, A), bool
+    ret_valid: np.ndarray  # shape (T, A), bool
     mom: dict[int, np.ndarray]
     mom_valid: dict[int, np.ndarray]
     vol: dict[int, np.ndarray]
@@ -575,7 +627,7 @@ def _precompute_features(
     close_valid = np.isfinite(closes) & (closes > 0.0)
     ret_valid = np.zeros((t_len, a_len), dtype=bool)
     if t_len > 1:
-        ret_valid[1:] = close_valid[:-1] & close_valid[1:]
+        ret_valid[1:] = close_valid[:-1] & close_valid[1:] & np.isfinite(returns[1:])
 
     csum_close = np.vstack([np.zeros((1, a_len), dtype=np.int64), np.cumsum(close_valid.astype(np.int64), axis=0)])
     csum_ret_valid = np.vstack([np.zeros((1, a_len), dtype=np.int64), np.cumsum(ret_valid.astype(np.int64), axis=0)])
@@ -619,6 +671,7 @@ def _precompute_features(
 
     return PrecomputedFeatures(
         close_valid=close_valid,
+        ret_valid=ret_valid,
         mom=mom_cache,
         mom_valid=mom_valid_cache,
         vol=vol_cache,
@@ -639,6 +692,8 @@ def _build_candidate_weights(
     Between rebalance dates, weights drift according to realized returns in
     _evaluate_weights_vectorized rather than being silently rebalanced daily.
     """
+    if not params.long_only:
+        raise ValueError("long_only=False is not implemented; only long-only candidates are supported")
     t_len, a_len = mom.shape
     target_weights = np.zeros((t_len, a_len), dtype=np.float64)
     rebalance_mask = np.zeros(t_len, dtype=bool)
@@ -688,6 +743,9 @@ def _evaluate_weights_vectorized(
     backend: str,
     device: Any,
     *,
+    valid_close_mask: np.ndarray | None = None,
+    dates: tuple[str, ...] | None = None,
+    symbols: tuple[str, ...] | None = None,
     return_realized_weights: bool = False,
 ) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Simulate drifted portfolio weights, one-way turnover, and net returns (M, C, T).
@@ -697,14 +755,53 @@ def _evaluate_weights_vectorized(
     with implied cash weight c_post = (1 - sum(w_t)) / (1 + sum(w_t * r_t)).
     On rebalance dates, one-way turnover is measured against the drifted end-of-day
     weights: 0.5 * sum(|w_target - w_drifted|), charging true drift restoration costs.
+
+    Fail-closed mark integrity: if any candidate holds a nonzero weight in an asset on a
+    date with a missing/non-positive close mark or uncomputable prior-bar return (or
+    rebalances into an asset lacking a valid close mark), raises ValueError immediately
+    rather than fabricating 0.0% returns across missing bars.
     """
     m_count, t_len, a_len = target_weights_stack.shape
     c_count = len(cost_bps)
+
+    if valid_close_mask is not None:
+        valid_close = np.asarray(valid_close_mask, dtype=bool)
+        if valid_close.shape != (t_len, a_len):
+            raise ValueError(
+                f"valid_close_mask shape {valid_close.shape} does not match returns shape {(t_len, a_len)}"
+            )
+        valid_ret = np.isfinite(asset_returns).copy()
+        if t_len > 0:
+            valid_ret[0] &= valid_close[0]
+        if t_len > 1:
+            valid_ret[1:] &= valid_close[:-1] & valid_close[1:]
+    else:
+        valid_ret = np.isfinite(asset_returns).copy()
+        valid_close = valid_ret
+
+    day_has_missing_ret = ~np.all(valid_ret, axis=1)
+    day_has_missing_close = ~np.all(valid_close, axis=1)
+
+    def _raise_missing_mark(t_idx: int, m_idx: int, a_idx: int, *, is_target: bool) -> None:
+        date_label = dates[t_idx] if dates is not None and t_idx < len(dates) else f"index {t_idx}"
+        sym_label = symbols[a_idx] if symbols is not None and a_idx < len(symbols) else f"asset {a_idx}"
+        if is_target:
+            raise ValueError(
+                f"Missing close mark for targeted asset {sym_label} on {date_label} (candidate index {m_idx})"
+            )
+        if not valid_close[t_idx, a_idx]:
+            raise ValueError(f"Missing close mark for held asset {sym_label} on {date_label} (candidate index {m_idx})")
+        raise ValueError(
+            f"Missing prior close mark or return for held asset {sym_label} on {date_label} (candidate index {m_idx})"
+        )
+
     if backend in ("cuda", "xla") and torch is not None and device is not None:  # pragma: no cover - GPU path
         with torch.no_grad():
             targets_t = torch.as_tensor(target_weights_stack, dtype=torch.float64, device=device)
             reb_t = torch.as_tensor(rebalance_masks, dtype=torch.bool, device=device)
             r_t = torch.as_tensor(asset_returns, dtype=torch.float64, device=device)
+            valid_ret_t = torch.as_tensor(valid_ret, dtype=torch.bool, device=device)
+            valid_close_t = torch.as_tensor(valid_close, dtype=torch.bool, device=device)
             w_curr = torch.zeros((m_count, a_len), dtype=torch.float64, device=device)
             gross = torch.zeros((m_count, t_len), dtype=torch.float64, device=device)
             turnover = torch.zeros((m_count, t_len), dtype=torch.float64, device=device)
@@ -714,7 +811,12 @@ def _evaluate_weights_vectorized(
                 else None
             )
             for t in range(t_len):
-                ret_day = r_t[t]
+                if bool(day_has_missing_ret[t]):
+                    held_missing = (torch.abs(w_curr) > 0.0) & (~valid_ret_t[t][None, :])
+                    if bool(torch.any(held_missing).item()):
+                        bad_m, bad_a = torch.nonzero(held_missing, as_tuple=False)[0].tolist()
+                        _raise_missing_mark(t, int(bad_m), int(bad_a), is_target=False)
+                ret_day = torch.where(valid_ret_t[t], r_t[t], torch.zeros_like(r_t[t]))
                 g_day = torch.sum(w_curr * ret_day[None, :], dim=-1)
                 gross[:, t] = g_day
                 denom = 1.0 + g_day
@@ -726,6 +828,11 @@ def _evaluate_weights_vectorized(
                 )
                 is_reb = reb_t[:, t]
                 target_day = targets_t[:, t, :]
+                if bool(day_has_missing_close[t]):
+                    target_missing = is_reb[:, None] & (torch.abs(target_day) > 0.0) & (~valid_close_t[t][None, :])
+                    if bool(torch.any(target_missing).item()):
+                        bad_m, bad_a = torch.nonzero(target_missing, as_tuple=False)[0].tolist()
+                        _raise_missing_mark(t, int(bad_m), int(bad_a), is_target=True)
                 day_turnover = 0.5 * torch.sum(torch.abs(target_day - w_drifted), dim=-1)
                 turnover[:, t] = torch.where(is_reb, day_turnover, torch.zeros_like(day_turnover))
                 w_curr = torch.where(is_reb[:, None], target_day, w_drifted)
@@ -743,7 +850,12 @@ def _evaluate_weights_vectorized(
     realized_np = np.zeros((m_count, t_len, a_len), dtype=np.float64) if return_realized_weights else None
 
     for t in range(t_len):
-        ret_day = asset_returns[t]
+        if bool(day_has_missing_ret[t]):
+            held_missing = (np.abs(w_curr) > 0.0) & (~valid_ret[t][None, :])
+            if np.any(held_missing):
+                bad_m, bad_a = np.argwhere(held_missing)[0].tolist()
+                _raise_missing_mark(t, int(bad_m), int(bad_a), is_target=False)
+        ret_day = np.where(valid_ret[t], asset_returns[t], 0.0)
         g_day = np.sum(w_curr * ret_day[None, :], axis=-1)
         gross[:, t] = g_day
         denom = 1.0 + g_day
@@ -755,6 +867,11 @@ def _evaluate_weights_vectorized(
         )
         is_reb = rebalance_masks[:, t]
         target_day = target_weights_stack[:, t, :]
+        if bool(day_has_missing_close[t]):
+            target_missing = is_reb[:, None] & (np.abs(target_day) > 0.0) & (~valid_close[t][None, :])
+            if np.any(target_missing):
+                bad_m, bad_a = np.argwhere(target_missing)[0].tolist()
+                _raise_missing_mark(t, int(bad_m), int(bad_a), is_target=True)
         day_turnover = 0.5 * np.sum(np.abs(target_day - w_drifted), axis=-1)
         turnover[:, t] = np.where(is_reb, day_turnover, 0.0)
         w_curr = np.where(is_reb[:, None], target_day, w_drifted)
@@ -839,6 +956,7 @@ def run_cpcv_sweep(
     cost_bps: tuple[int, ...] = COST_SURFACE_BPS,
     selection_cost_bp: int = 5,
     stress_cost_bp: int = 10,
+    require_baselines: bool = False,
 ) -> dict[str, Any]:
     """Run vectorized Purged CPCV sweep across all candidates and emit a compact receipt."""
     if selection_cost_bp not in cost_bps or stress_cost_bp not in cost_bps:
@@ -848,6 +966,27 @@ def run_cpcv_sweep(
     grid = candidates if candidates is not None else default_parameter_grid(len(cube.symbols))
     if not grid:
         raise ValueError("Parameter grid must not be empty")
+    for candidate in grid:
+        if not candidate.long_only:
+            raise ValueError("long_only=False is not implemented; only long-only candidates are supported")
+
+    active_baseline_series = [
+        key
+        for key in BASELINE_KEYS
+        if (
+            (series := cube.baselines.get(key)) is not None
+            and len(series) == len(cube.dates)
+            and len(series) >= 2
+            and np.all(np.isfinite(series))
+            and float(np.std(series, ddof=1)) > 0.0
+        )
+    ]
+    has_baselines = len(active_baseline_series) > 0
+    scoring_mode = SCORING_MODE_MARGINAL if has_baselines else SCORING_MODE_STANDALONE
+    if require_baselines and not has_baselines:
+        raise ValueError(
+            "Baselines are required (--require-baselines), but the dev cube contains no valid baseline return series"
+        )
 
     splits = generate_cpcv_splits(
         n_sessions=len(cube.dates),
@@ -886,6 +1025,9 @@ def run_cpcv_sweep(
         cost_bps,
         backend,
         device,
+        valid_close_mask=cube.valid_close_mask,
+        dates=cube.dates,
+        symbols=cube.symbols,
     )
 
     sel_idx = cost_bps.index(selection_cost_bp)
@@ -1072,13 +1214,19 @@ def run_cpcv_sweep(
         else:
             dsr_factor = float(dsr_val) if isinstance(dsr_val, float) and math.isfinite(dsr_val) else 0.0
             overfit_gap = max(0.0, train_med - sel_med) if math.isfinite(sel_med) else 0.0
+            marginal_term = (
+                0.35 * float(b_rec["marginalPortfolioSharpe"]) - float(b_rec["correlationPenalty"])
+                if has_baselines
+                and b_rec["marginalPortfolioSharpe"] is not None
+                and b_rec["correlationPenalty"] is not None
+                else 0.0
+            )
             score = (
                 0.45 * p_med
                 + 0.15 * train_med
                 + 0.25 * s_med
                 + 0.20 * dsr_factor
-                + 0.35 * float(b_rec["marginalPortfolioSharpe"])
-                - float(b_rec["correlationPenalty"])
+                + marginal_term
                 - 0.15 * overfit_gap
             )
         composite_scores.append(score)
@@ -1121,6 +1269,9 @@ def run_cpcv_sweep(
         "devCutoff": cube.dev_cutoff,
         "excludedHoldoutStart": cube.excluded_holdout_start,
         "computeBackend": backend,
+        "hasBaselines": has_baselines,
+        "baselineSeries": active_baseline_series,
+        "scoringMode": scoring_mode,
         "sessions": len(cube.dates),
         "symbols": list(cube.symbols),
         "cpcv": {
@@ -1194,6 +1345,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--embargo", type=int, default=5, help="Embargo sessions immediately after each test block")
     parser.add_argument("--top-n", type=int, default=5, help="Number of top plateau candidates in receipt")
     parser.add_argument("--git-sha", type=str, default=None, help="Override git commit SHA recorded in receipt")
+    parser.add_argument(
+        "--require-baselines",
+        action="store_true",
+        help="Fail closed if the dev cube contains no valid baseline return series",
+    )
     args = parser.parse_args(argv)
 
     cube = verify_and_load_dev_cube(args.cube_dir)
@@ -1206,6 +1362,7 @@ def main(argv: list[str] | None = None) -> int:
         device_request=args.device,
         top_n=args.top_n,
         git_sha=args.git_sha,
+        require_baselines=args.require_baselines,
     )
     byte_count = write_receipt(receipt, args.out)
     print(

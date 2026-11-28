@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib'
 import { NodeRuntime } from '@effect/platform-node'
 import { Console, Data, Effect, Redacted, Result, Schema } from 'effect'
 
-import { sha256 } from '../src/hash'
+import { canonicalHashV1Result, sha256 } from '../src/hash'
 import {
   type IsoDate,
   IsoDateSchema,
@@ -15,8 +15,25 @@ import {
   Sha256Schema,
   StrictNonEmptyStringSchema,
 } from '../src/schemas'
-import { universe as macroUniverse } from '../src/strategy/macro-etf-core/policy'
-import { splits as noiseSplits } from './noise-area-study-replay'
+import {
+  type Etf,
+  parameters as macroParameters,
+  Profile,
+  universe as macroUniverse,
+} from '../src/strategy/macro-etf-core/policy'
+import { closeSnapshotSchema, replayMacroEtfCoreSignals } from '../src/strategy/macro-etf-core/signals'
+import {
+  baskets,
+  capital as noiseCapital,
+  createReplay,
+  type Day,
+  netAt,
+  prepare,
+  selectionCost as noiseSelectionCost,
+  splits as noiseSplits,
+  type Symbol as NoiseSymbol,
+  type Trial as NoiseTrial,
+} from './noise-area-study-replay'
 import { receipts, tapeReceipt } from './pure-etf-dual-horizon-data'
 import { noiseRosters } from './pure-etf-dual-horizon-noise'
 import { normalizeResearchCalendar, requireCalendarCoverage, type Session } from './research-lib/calendar'
@@ -28,6 +45,9 @@ import {
   S3ArchiveError,
   withS3Archive,
 } from './research-lib/s3-archive'
+import type { Bar as DailyBar, DailyFrame } from './research/macro-etf-core-dual-horizon-data'
+import { wave5dTargets } from './research/macro-etf-core-wave5d'
+import { type DailySession, replayDaily, ShareSizing } from './three-account-capital-core'
 
 export const canonicalDevSplits = Object.freeze({
   train: noiseSplits.train,
@@ -53,6 +73,12 @@ export enum CubeFileKind {
   BaselineReturns = 'baseline_returns',
 }
 
+export enum BaselineSeries {
+  B0 = 'B0',
+  F4 = 'F4',
+  O1 = 'O1',
+}
+
 export enum CubeExportErrorReason {
   InvalidCliArgs = 'invalid-cli-args',
   InvalidCutoff = 'invalid-cutoff',
@@ -61,6 +87,7 @@ export enum CubeExportErrorReason {
   InvalidRowData = 'invalid-row-data',
   DuplicateRow = 'duplicate-row',
   EmptyDataset = 'empty-dataset',
+  MissingBaselines = 'missing-baselines',
   ArchiveReadFailed = 'archive-read-failed',
   WriteFailed = 'write-failed',
   GitRevisionFailed = 'git-revision-failed',
@@ -77,6 +104,7 @@ export class DevCubeExportError extends Data.TaggedError('DevCubeExportError')<{
 export const CubeSchemaVersionSchema = Schema.Enum(CubeSchemaVersion)
 export const CubeFormatSchema = Schema.Enum(CubeFormat)
 export const CubeFileKindSchema = Schema.Enum(CubeFileKind)
+export const BaselineSeriesSchema = Schema.Enum(BaselineSeries)
 export const CubeExportErrorReasonSchema = Schema.Enum(CubeExportErrorReason)
 
 const DailyBarRowSchema = Schema.Struct({
@@ -104,9 +132,9 @@ const IntradayBarRowSchema = Schema.Struct({
 
 const BaselineReturnRowSchema = Schema.Struct({
   date: IsoDateSchema,
-  B0: Schema.Finite,
-  F4: Schema.Finite,
-  O1: Schema.Finite,
+  B0: Schema.optionalKey(Schema.Finite),
+  F4: Schema.optionalKey(Schema.Finite),
+  O1: Schema.optionalKey(Schema.Finite),
 })
 
 const CalendarRowSchema = Schema.Struct({
@@ -141,6 +169,8 @@ export const DevCubeManifestSchema = Schema.Struct({
   canonicalDevCutoff: IsoDateSchema,
   excludedHoldoutStart: IsoDateSchema,
   sourceCommit: StrictNonEmptyStringSchema,
+  hasBaselines: Schema.Boolean,
+  baselineSeries: Schema.Array(BaselineSeriesSchema),
   splits: Schema.Struct({
     train: SplitWindowSchema,
     validation: SplitWindowSchema,
@@ -169,6 +199,7 @@ export interface ExportDevCubeOptions {
   readonly devCutoff?: string
   readonly format?: CubeFormat
   readonly sourceCommit: string
+  readonly requireBaselines?: boolean
 }
 
 const decodeIsoDate = Schema.decodeUnknownResult(IsoDateSchema)
@@ -252,7 +283,7 @@ const csvEscape = (value: string | number): string => {
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
 }
 
-const encodeRows = <T extends Record<string, string | number>>(
+const encodeRows = <T extends Record<string, string | number | undefined>>(
   rows: readonly T[],
   columns: readonly (keyof T & string)[],
   format: CubeFormat,
@@ -263,13 +294,23 @@ const encodeRows = <T extends Record<string, string | number>>(
       rows
         .map((row) => {
           const ordered: Record<string, string | number> = {}
-          for (const col of columns) ordered[col] = row[col]
+          for (const col of columns) {
+            const val = row[col]
+            if (val !== undefined) ordered[col] = val
+          }
           return JSON.stringify(ordered)
         })
         .join('\n') + (rows.length > 0 ? '\n' : '')
   } else {
     const header = columns.join(',')
-    const lines = rows.map((row) => columns.map((col) => csvEscape(row[col])).join(','))
+    const lines = rows.map((row) =>
+      columns
+        .map((col) => {
+          const val = row[col]
+          return val === undefined ? '' : csvEscape(val)
+        })
+        .join(','),
+    )
     payload = [header, ...lines].join('\n') + '\n'
   }
   // Pin mtime/OS-independent gzip output at level 9 for deterministic SHA-256 receipts.
@@ -411,6 +452,7 @@ export const prepareDevCubeExport = (
 
   // 4. Validate optional baseline return rows fail-closed
   const baselineRows: BaselineReturnRow[] = []
+  const seenBaselineSeries = new Set<BaselineSeries>()
   if (dataset.baselineReturns !== undefined && dataset.baselineReturns.length > 0) {
     const seenBaseline = new Set<string>()
     for (const raw of dataset.baselineReturns) {
@@ -430,15 +472,44 @@ export const prepareDevCubeExport = (
           }),
         )
       }
+      let rowHasAnySeries = false
+      for (const series of [BaselineSeries.B0, BaselineSeries.F4, BaselineSeries.O1] as const) {
+        if (row[series] !== undefined) {
+          seenBaselineSeries.add(series)
+          rowHasAnySeries = true
+        }
+      }
+      if (!rowHasAnySeries) {
+        return Result.fail(
+          exportError(
+            CubeExportErrorReason.InvalidRowData,
+            `Baseline return row on ${row.date} has no populated baseline series`,
+            { date: row.date },
+          ),
+        )
+      }
       seenBaseline.add(row.date)
       baselineRows.push(row)
     }
     baselineRows.sort((a, b) => a.date.localeCompare(b.date))
   }
 
+  const baselineSeries = ([BaselineSeries.B0, BaselineSeries.F4, BaselineSeries.O1] as const).filter((series) =>
+    seenBaselineSeries.has(series),
+  )
+  const hasBaselines = baselineRows.length > 0 && baselineSeries.length > 0
+  if (options.requireBaselines === true && !hasBaselines) {
+    return Result.fail(
+      exportError(
+        CubeExportErrorReason.MissingBaselines,
+        'Baselines are required (--require-baselines), but no baseline return series were provided or derived',
+      ),
+    )
+  }
+
   const ext = format
   const files: PreparedFile[] = []
-  const pushFile = <T extends Record<string, string | number>>(
+  const pushFile = <T extends Record<string, string | number | undefined>>(
     kind: CubeFileKind,
     rows: readonly T[],
     columns: readonly (keyof T & string)[],
@@ -471,8 +542,8 @@ export const prepareDevCubeExport = (
       'vwap',
     ])
   }
-  if (baselineRows.length > 0) {
-    pushFile(CubeFileKind.BaselineReturns, baselineRows, ['date', 'B0', 'F4', 'O1'])
+  if (hasBaselines) {
+    pushFile(CubeFileKind.BaselineReturns, baselineRows, ['date', ...baselineSeries])
   }
 
   const firstRow = dailyRows[0]
@@ -490,6 +561,8 @@ export const prepareDevCubeExport = (
     canonicalDevCutoff: CANONICAL_DEV_CUTOFF,
     excludedHoldoutStart: EXCLUDED_HOLDOUT_START,
     sourceCommit: options.sourceCommit,
+    hasBaselines,
+    baselineSeries,
     splits: {
       train: canonicalDevSplits.train,
       validation: canonicalDevSplits.validation,
@@ -552,6 +625,235 @@ export const exportDevCube = (dataset: DevCubeInputDataset, options: ExportDevCu
 
 const dailySymbols = new Set<string>(macroUniverse)
 const intradaySymbols = new Set<string>(noiseRosters.I1)
+const optionalMacroSymbols = new Set<Etf>(macroParameters.optionalCandidates)
+const requiredMacroSymbols = macroUniverse.filter((symbol) => !optionalMacroSymbols.has(symbol))
+const BASELINE_INITIAL_USD = 100_000
+const BASELINE_ONE_WAY_BPS = 5 as const
+const b0BaselineTrial: NoiseTrial = {
+  id: 'B0/30/1.4/opposite_band/inverse_vol_parity',
+  basket: 'B0',
+  minutes: 30,
+  band: 1.4,
+  exit: 'opposite_band',
+  sizing: 'inverse_vol_parity',
+}
+const b0Symbols = new Set<string>(baskets.B0)
+
+const equitiesToSimpleReturns = (equities: readonly number[], initialUsd: number): readonly number[] =>
+  equities.map((equity, i) => {
+    const prior = i === 0 ? initialUsd : (equities[i - 1] ?? initialUsd)
+    return equity / prior - 1
+  })
+
+/**
+ * Compute causal development-split baseline daily returns (F4, O1, and B0 when intraday
+ * bars are present) strictly from the already-cutoff-filtered dev frames (<= devCutoff).
+ */
+export const computeDevBaselineReturns = (
+  dataset: Pick<DevCubeInputDataset, 'calendar' | 'dailyBars' | 'intradayBars'>,
+): Result.Result<readonly BaselineReturnRow[], DevCubeExportError> => {
+  if (dataset.calendar.length < 2 || dataset.dailyBars.length === 0) {
+    return Result.succeed([])
+  }
+
+  const sortedCalendar = [...dataset.calendar].toSorted((a, b) => a.date.localeCompare(b.date))
+  const barsByDate = new Map<string, Map<Etf, DailyBar>>()
+  for (const session of sortedCalendar) {
+    barsByDate.set(session.date, new Map<Etf, DailyBar>())
+  }
+  for (const bar of dataset.dailyBars) {
+    if (!dailySymbols.has(bar.symbol)) continue
+    const bucket = barsByDate.get(bar.date)
+    if (bucket === undefined) continue
+    bucket.set(bar.symbol as Etf, { open: bar.open, high: bar.high, low: bar.low, close: bar.close })
+  }
+
+  const frames: DailyFrame[] = sortedCalendar.map((session) => ({
+    date: session.date,
+    openAt: session.openMs,
+    closeAt: session.openMs + session.minutes * 60_000,
+    bars: barsByDate.get(session.date) ?? new Map<Etf, DailyBar>(),
+  }))
+
+  const hasFullMacroUniverse = frames.every((frame) => requiredMacroSymbols.every((symbol) => frame.bars.has(symbol)))
+
+  let f4Returns: readonly number[] | undefined
+  if (
+    hasFullMacroUniverse &&
+    frames.length >= macroParameters.warmup + 1 &&
+    frames[0]?.date === macroParameters.epoch
+  ) {
+    const lastFrame = frames[frames.length - 1]
+    if (lastFrame !== undefined) {
+      const snapshotCalendar = frames.map(({ date, openAt, closeAt }) => ({ date, openAt, closeAt }))
+      const snapshot = {
+        schema: closeSnapshotSchema,
+        datasetVersion: 'bayn-dev-cube-causal-replay',
+        adjustment: 'all' as const,
+        calendar: snapshotCalendar,
+        bars: frames
+          .slice(0, -1)
+          .map(({ date, closeAt, bars }) =>
+            [...bars].map(([symbol, bar]) => ({ date, symbol, availableAt: closeAt, ...bar })),
+          ),
+      }
+      const snapshotHash = canonicalHashV1Result(snapshot)
+      if (Result.isFailure(snapshotHash)) {
+        return Result.fail(
+          exportError(CubeExportErrorReason.InvalidRowData, 'Failed to hash dev close snapshot for F4 baseline', {
+            cause: snapshotHash.failure,
+          }),
+        )
+      }
+      const f4Signals = replayMacroEtfCoreSignals(
+        { schema: 'bayn.macro-etf-core-policy.v1', profile: Profile.F4 },
+        { asOf: lastFrame.openAt, snapshot, snapshotHash: snapshotHash.success },
+      )
+      if (Result.isFailure(f4Signals)) {
+        return Result.fail(
+          exportError(CubeExportErrorReason.InvalidRowData, 'Failed to replay causal F4 dev baseline', {
+            cause: f4Signals.failure,
+          }),
+        )
+      }
+      const f4Targets = new Map(f4Signals.success.map(({ executionDate, weights }) => [executionDate, weights]))
+      const f4Sessions: DailySession[] = frames.map(({ date, bars }) => ({
+        date,
+        bars,
+        f4: f4Targets.get(date),
+        o1: undefined,
+      }))
+      const f4Equities = Result.try({
+        try: () => replayDaily(f4Sessions, BASELINE_INITIAL_USD, 'f4', ShareSizing.Fractional, BASELINE_ONE_WAY_BPS),
+        catch: (cause) =>
+          exportError(CubeExportErrorReason.InvalidRowData, 'Failed to simulate causal F4 dev baseline', { cause }),
+      })
+      if (Result.isFailure(f4Equities)) return Result.fail(f4Equities.failure)
+      f4Returns = equitiesToSimpleReturns(f4Equities.success, BASELINE_INITIAL_USD)
+    }
+  }
+
+  let o1Returns: readonly number[] | undefined
+  if (hasFullMacroUniverse && frames.length >= 2) {
+    const o1Equities = Result.try({
+      try: () => {
+        const o1 = wave5dTargets(frames)
+        const o1Sessions: DailySession[] = frames.map(({ date, bars }, i) => ({
+          date,
+          bars,
+          f4: undefined,
+          o1: i === 0 ? undefined : o1[i - 1],
+        }))
+        return replayDaily(o1Sessions, BASELINE_INITIAL_USD, 'o1', ShareSizing.Fractional, BASELINE_ONE_WAY_BPS)
+      },
+      catch: (cause) =>
+        exportError(CubeExportErrorReason.InvalidRowData, 'Failed to simulate causal O1 dev baseline', { cause }),
+    })
+    if (Result.isFailure(o1Equities)) return Result.fail(o1Equities.failure)
+    o1Returns = equitiesToSimpleReturns(o1Equities.success, BASELINE_INITIAL_USD)
+  }
+
+  let b0Returns: ReadonlyMap<string, number> | undefined
+  if (dataset.intradayBars !== undefined && dataset.intradayBars.length > 0 && sortedCalendar.length >= 15) {
+    const intradayByDate = new Map<
+      string,
+      {
+        readonly slots: number
+        readonly bars: Map<
+          NoiseSymbol,
+          ({ open: number; high: number; low: number; close: number; volume: number; vwap: number } | undefined)[]
+        >
+      }
+    >()
+    for (const session of sortedCalendar) {
+      intradayByDate.set(session.date, {
+        slots: Math.trunc(session.minutes / 5),
+        bars: new Map(),
+      })
+    }
+    for (const bar of dataset.intradayBars) {
+      if (!b0Symbols.has(bar.symbol)) continue
+      const entry = intradayByDate.get(bar.date)
+      if (entry === undefined || bar.slot < 0 || bar.slot >= entry.slots) continue
+      const sym = bar.symbol as NoiseSymbol
+      let series = entry.bars.get(sym)
+      if (series === undefined) {
+        series = Array.from({ length: entry.slots })
+        entry.bars.set(sym, series)
+      }
+      series[bar.slot] = {
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+        vwap: bar.vwap,
+      }
+    }
+
+    const hasAllB0Sessions = sortedCalendar.every((session) => {
+      const entry = intradayByDate.get(session.date)
+      return entry !== undefined && baskets.B0.every((symbol) => entry.bars.has(symbol))
+    })
+    if (hasAllB0Sessions) {
+      const days: Day[] = sortedCalendar.map((session) => {
+        const entry = intradayByDate.get(session.date)
+        return {
+          date: session.date,
+          slots: entry?.slots ?? Math.trunc(session.minutes / 5),
+          bars: entry?.bars ?? new Map(),
+        }
+      })
+      const b0Replay = Result.try({
+        try: () => {
+          const out = new Map<string, number>()
+          for (const day of prepare(days, baskets.B0)) {
+            const ledger = createReplay(day)(b0BaselineTrial)
+            const net = netAt(ledger, noiseSelectionCost)
+            if (net === null || !Number.isFinite(net)) {
+              throw new Error(`Unresolved causal B0 intraday exit on ${day.date}`)
+            }
+            out.set(day.date, net / noiseCapital)
+          }
+          return out
+        },
+        catch: (cause) =>
+          exportError(CubeExportErrorReason.InvalidRowData, 'Failed to simulate causal B0 dev baseline', { cause }),
+      })
+      if (Result.isFailure(b0Replay)) return Result.fail(b0Replay.failure)
+      b0Returns = b0Replay.success
+    }
+  }
+
+  if (f4Returns === undefined && o1Returns === undefined && b0Returns === undefined) {
+    return Result.succeed([])
+  }
+
+  const rows: BaselineReturnRow[] = []
+  for (const [i, session] of sortedCalendar.entries()) {
+    const b0 = b0Returns?.get(session.date)
+    const f4 = f4Returns?.[i]
+    const o1 = o1Returns?.[i]
+    if (
+      (b0 !== undefined && !Number.isFinite(b0)) ||
+      (f4 !== undefined && !Number.isFinite(f4)) ||
+      (o1 !== undefined && !Number.isFinite(o1))
+    ) {
+      return Result.fail(
+        exportError(CubeExportErrorReason.InvalidRowData, `Non-finite computed baseline return on ${session.date}`, {
+          date: session.date,
+        }),
+      )
+    }
+    rows.push({
+      date: session.date,
+      ...(b0 === undefined ? {} : { B0: b0 }),
+      ...(f4 === undefined ? {} : { F4: f4 }),
+      ...(o1 === undefined ? {} : { O1: o1 }),
+    })
+  }
+  return Result.succeed(rows)
+}
 const dailyStampPattern = /^\d{4}-\d{2}-\d{2}T0[45]:00:00(?:\.\d+)?Z$/
 const intradayStampPattern = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:00(?:\.0+)?(?:Z|\+00:00)$/
 
@@ -726,10 +1028,17 @@ export const loadDevSplitFromArchive = async (
     }
   }
 
-  return {
+  const baseDataset = {
     calendar: devCalendar,
     dailyBars,
     ...(intradayBars.length > 0 ? { intradayBars } : {}),
+  }
+  const computedBaselines = computeDevBaselineReturns(baseDataset)
+  if (Result.isFailure(computedBaselines)) throw computedBaselines.failure
+
+  return {
+    ...baseDataset,
+    ...(computedBaselines.success.length > 0 ? { baselineReturns: computedBaselines.success } : {}),
   }
 }
 
@@ -792,6 +1101,7 @@ interface CliArgs {
   readonly format: CubeFormat
   readonly mirrorDir?: string
   readonly includeIntraday: boolean
+  readonly requireBaselines: boolean
   readonly sourceCommit?: string
 }
 
@@ -806,6 +1116,7 @@ export const parseCliArgs = (argv: readonly string[]): Result.Result<CliArgs, De
           format: { type: 'string' },
           'mirror-dir': { type: 'string' },
           'include-intraday': { type: 'boolean', default: false },
+          'require-baselines': { type: 'boolean', default: false },
           'source-commit': { type: 'string' },
         },
         strict: true,
@@ -813,7 +1124,7 @@ export const parseCliArgs = (argv: readonly string[]): Result.Result<CliArgs, De
     catch: (cause) =>
       exportError(
         CubeExportErrorReason.InvalidCliArgs,
-        'Usage: bun tools/export-dev-cube.ts --out-dir <dir> [--dev-cutoff YYYY-MM-DD] [--format jsonl.gz|csv.gz] [--mirror-dir <dir>] [--include-intraday] [--source-commit <sha>]',
+        'Usage: bun tools/export-dev-cube.ts --out-dir <dir> [--dev-cutoff YYYY-MM-DD] [--format jsonl.gz|csv.gz] [--mirror-dir <dir>] [--include-intraday] [--require-baselines] [--source-commit <sha>]',
         { cause },
       ),
   })
@@ -841,6 +1152,7 @@ export const parseCliArgs = (argv: readonly string[]): Result.Result<CliArgs, De
     format: formatResult.success,
     ...(values['mirror-dir'] === undefined ? {} : { mirrorDir: values['mirror-dir'] }),
     includeIntraday: values['include-intraday'] === true,
+    requireBaselines: values['require-baselines'] === true,
     ...(values['source-commit'] === undefined ? {} : { sourceCommit: values['source-commit'] }),
   })
 }
@@ -861,6 +1173,7 @@ const main = Effect.gen(function* () {
     ...(cli.devCutoff === undefined ? {} : { devCutoff: cli.devCutoff }),
     format: cli.format,
     sourceCommit,
+    requireBaselines: cli.requireBaselines,
   })
   yield* Console.log(
     JSON.stringify({
@@ -868,6 +1181,8 @@ const main = Effect.gen(function* () {
       outDir: cli.outDir,
       devCutoff: manifest.devCutoff,
       excludedHoldoutStart: manifest.excludedHoldoutStart,
+      hasBaselines: manifest.hasBaselines,
+      baselineSeries: manifest.baselineSeries,
       rowCount: manifest.rowCount,
       files: manifest.files.length,
     }),
