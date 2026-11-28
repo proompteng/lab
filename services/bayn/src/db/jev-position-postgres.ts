@@ -76,7 +76,7 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
       WHERE decision.cycle_id = ${cycleId} AND decision.decision_hash = ${portfolio.entryDecisionHash}
         AND cycle.strategy_name = 'jev' AND cycle.account_id = ${state.account.accountId}
         AND decision.document #>> '{bindings,accountId}' = cycle.account_id
-        AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v7', 'bayn.entry-ablation-target.v1', 'bayn.repeated-momentum-target.v1', 'bayn.intraday-alpha-target.v1', 'bayn.intraday-alpha-target.v2')
+        AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v7', 'bayn.entry-ablation-target.v1', 'bayn.repeated-momentum-target.v1', 'bayn.intraday-alpha-target.v1', 'bayn.intraday-alpha-target.v2', 'bayn.intraday-alpha-target.v3')
         AND decision.document #> '{strategyDecision,exitPolicy}' = ${JSON.stringify(portfolio.exitPolicy)}::jsonb
         AND NOT EXISTS (
           SELECT 1 FROM intents AS intent WHERE intent.cycle_id = ${cycleId} AND decision.document -> 'orderedIntentIds' ? intent.intent_id
@@ -100,6 +100,7 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
       portfolio.entryDecisionHash,
       portfolio.protectionEvidenceVersion,
       r.reconciledAt,
+      portfolio.managedSymbol,
     )
     if (
       JSON.stringify(protection.protectionIntentIds) !== JSON.stringify(portfolio.protectionIntentIds) ||
@@ -180,6 +181,7 @@ export const readProtectionEvidence = (
   entryDecisionHash: string,
   version?: typeof currentProtectionEvidenceVersion,
   asOf?: string,
+  managedSymbol?: string,
 ) =>
   Effect.gen(function* () {
     const cutoff =
@@ -210,11 +212,13 @@ export const readProtectionEvidence = (
       yield* sql`
     WITH requests AS (
       SELECT c.requested_at AS at, true AS command, false AS stopped FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
-        WHERE i.cycle_id = ${cycleId}
+        WHERE i.cycle_id = ${cycleId} AND NOT c.reanchor
+          AND (${managedSymbol ?? null}::text IS NULL OR i.symbol = ${managedSymbol ?? null})
           AND (${cutoff}::timestamptz IS NULL OR c.requested_at < ${cutoff}::timestamptz)
       UNION ALL
       SELECT i.updated_at, false, false FROM intents i WHERE i.cycle_id = ${cycleId} AND i.protection ->> '_tag' IN ('Oco','StopLimit','EquityShortOco','EquityShortStopLimit')
         AND i.state = 'TERMINAL' AND i.terminal_outcome = 'REJECTED'
+        AND (${managedSymbol ?? null}::text IS NULL OR i.symbol = ${managedSymbol ?? null})
         AND (${cutoff}::timestamptz IS NULL OR i.updated_at <= ${cutoff}::timestamptz)
       UNION ALL
       SELECT t.occurred_at, false, ${version === currentProtectionEvidenceVersion} AND EXISTS (
@@ -248,6 +252,7 @@ export const readProtectionEvidence = (
         JOIN accounting_receipts r USING (broker_event_id)
         JOIN broker_events fill_event ON fill_event.event_id = t.broker_event_id
         WHERE i.cycle_id = ${cycleId} AND i.protection IS NOT NULL
+          AND (${managedSymbol ?? null}::text IS NULL OR i.symbol = ${managedSymbol ?? null})
           AND (${cutoff}::timestamptz IS NULL OR (t.occurred_at <= ${cutoff}::timestamptz
             AND r.recorded_at <= ${cutoff}::timestamptz AND fill_event.observed_at <= ${cutoff}::timestamptz))
           AND t.side = CASE WHEN i.protection ->> '_tag' IN ('EquityShortBracket','EquityShortOco','EquityShortStopLimit') THEN 'BUY' ELSE 'SELL' END
@@ -310,7 +315,8 @@ export const readProtectionEvidence = (
             AND d.decision_hash = c.exit_target ->> 'entryDecisionHash'
             AND d.document #> '{strategyDecision,exitPolicy}' = c.exit_target #> '{evidence,portfolio,exitPolicy}'))) AS bound
       FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
-      WHERE i.cycle_id = ${cycleId}
+      WHERE i.cycle_id = ${cycleId} AND NOT c.reanchor
+        AND (${managedSymbol ?? null}::text IS NULL OR i.symbol = ${managedSymbol ?? null})
         AND (${cutoff}::timestamptz IS NULL OR c.requested_at < ${cutoff}::timestamptz)
       ORDER BY c.requested_at, c.broker_order_id COLLATE "C" LIMIT 1
     `,
@@ -335,10 +341,19 @@ export const readProtectionEvidence = (
     SELECT COALESCE(sum(abs(t.quantity_delta_atoms)),0)::text AS "quantityAtoms", COALESCE(sum(abs(t.cost_basis_delta_micros)),0)::text AS "costBasisMicros"
     FROM accounting_transactions t JOIN accounting_receipts receipt ON receipt.broker_event_id = t.broker_event_id AND receipt.intent_id = t.intent_id JOIN intents i ON i.intent_id = t.intent_id
     JOIN broker_events fill_event ON fill_event.event_id = t.broker_event_id
-    WHERE i.cycle_id = ${cycleId} AND i.protection IS NOT NULL
+    WHERE i.cycle_id = ${cycleId}
       AND (${cutoff}::timestamptz IS NULL OR (t.occurred_at <= ${cutoff}::timestamptz
         AND receipt.recorded_at <= ${cutoff}::timestamptz AND fill_event.observed_at <= ${cutoff}::timestamptz))
-      AND t.side = CASE WHEN i.protection ->> '_tag' IN ('EquityShortBracket','EquityShortOco','EquityShortStopLimit') THEN 'BUY' ELSE 'SELL' END
+      AND ((i.protection IS NOT NULL AND
+        t.side = CASE WHEN i.protection ->> '_tag' IN ('EquityShortBracket','EquityShortOco','EquityShortStopLimit') THEN 'BUY' ELSE 'SELL' END)
+        OR (${managedSymbol ?? null}::text IS NOT NULL AND i.protection IS NULL AND EXISTS (
+          SELECT 1 FROM (
+            SELECT document FROM autonomous_cycle_paper_closures WHERE cycle_id=i.cycle_id
+            UNION ALL SELECT document FROM autonomous_cycle_paper_close_replans WHERE cycle_id=i.cycle_id
+          ) close_plan
+          WHERE close_plan.document->>'entryDecisionHash'=${entryDecisionHash}
+            AND close_plan.document #> '{document,orderedIntentIds}' ? i.intent_id
+        )))
   `,
     )
     return {
@@ -361,7 +376,7 @@ export const readProtectionEvidence = (
 export const makeJevPositionStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   return {
-    read: ({ cycleId, entryDecisionHash, brokerState }) =>
+    read: ({ cycleId, entryDecisionHash, brokerState, managedSymbol }) =>
       Effect.gen(function* () {
         const intents = yield* Schema.decodeUnknownEffect(
           Schema.Array(Schema.Struct({ intent_id: Sha256Schema })).check(Schema.isMinLength(1)),
@@ -411,12 +426,14 @@ export const makeJevPositionStore = Effect.gen(function* () {
             protectionEvidenceVersion: currentProtectionEvidenceVersion,
             brokerState,
             entryDecisionHash,
+            ...(managedSymbol === undefined ? {} : { managedSymbol }),
             ...(yield* readProtectionEvidence(
               sql,
               cycleId,
               entryDecisionHash,
               currentProtectionEvidenceVersion,
               brokerState.reconciliation.reconciledAt,
+              managedSymbol,
             )),
             exitPolicy: entry.exitPolicy,
             entryIntentIds: intents.map(({ intent_id }) => intent_id),

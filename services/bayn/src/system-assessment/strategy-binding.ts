@@ -12,7 +12,8 @@ import { JevProtocolSchema, jevBehaviorHash, usesJevOnlyInference, type JevProto
 import { stagedChartQuestionPolicy } from '../jev/staged-chart-questions'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import {
-  IntradayAlphaPolicySchema,
+  IntradayAlphaV2PolicySchema,
+  PureEtfPolicySchema,
   intradayAlphaPromptPolicy,
   intradayAlphaStrategyIdentity,
 } from '../strategy/intraday-alpha/policy'
@@ -33,6 +34,7 @@ import {
 export enum ResearchStrategyEngine {
   Jev = 'JEV_V44',
   IntradayAlpha = 'INTRADAY_ALPHA_V2',
+  PureEtf = 'INTRADAY_ALPHA_V3',
   EntryAblation = 'ENTRY_ABLATION_V1',
   RepeatedMomentum = 'REPEATED_MOMENTUM_V1',
   FrozenDeployed = 'FROZEN_DEPLOYED_V3',
@@ -44,8 +46,24 @@ const JevMaterialSchema = Schema.Struct({
 })
 const AlphaMaterialSchema = Schema.Struct({
   engine: Schema.Literal(ResearchStrategyEngine.IntradayAlpha),
-  parameters: IntradayAlphaPolicySchema,
+  parameters: IntradayAlphaV2PolicySchema,
 })
+const PureEtfMaterialSchema = Schema.Struct({
+  engine: Schema.Literal(ResearchStrategyEngine.PureEtf),
+  parameters: PureEtfPolicySchema,
+})
+export const isAlphaEngine = (
+  engine: ResearchStrategyEngine | undefined,
+): engine is ResearchStrategyEngine.IntradayAlpha | ResearchStrategyEngine.PureEtf =>
+  engine === ResearchStrategyEngine.IntradayAlpha || engine === ResearchStrategyEngine.PureEtf
+
+export const isAlphaBinding = (
+  binding: { readonly engine: ResearchStrategyEngine } | null | undefined,
+): binding is Extract<
+  ResearchStrategyBinding,
+  { readonly engine: ResearchStrategyEngine.IntradayAlpha | ResearchStrategyEngine.PureEtf }
+> => isAlphaEngine(binding?.engine)
+
 const AblationMaterialSchema = Schema.Struct({
   engine: Schema.Literal(ResearchStrategyEngine.EntryAblation),
   parameters: EntryAblationPolicySchema,
@@ -62,6 +80,7 @@ const FrozenMaterialSchema = Schema.Struct({
 const ResearchStrategyMaterialSchema = Schema.Union([
   JevMaterialSchema,
   AlphaMaterialSchema,
+  PureEtfMaterialSchema,
   AblationMaterialSchema,
   MomentumMaterialSchema,
   FrozenMaterialSchema,
@@ -76,6 +95,7 @@ const bindingFields = {
 export const ServingResearchStrategyBindingSchema = Schema.Union([
   Schema.Struct({ ...bindingFields, ...JevMaterialSchema.fields }),
   Schema.Struct({ ...bindingFields, ...AlphaMaterialSchema.fields }),
+  Schema.Struct({ ...bindingFields, ...PureEtfMaterialSchema.fields }),
 ])
 export type ServingResearchStrategyBinding = typeof ServingResearchStrategyBindingSchema.Type
 export const ResearchStrategyBindingSchema = Schema.Union([
@@ -99,6 +119,7 @@ const strategyIdentity = (material: ResearchStrategyMaterial) =>
         )
     }
     switch (material.engine) {
+      case ResearchStrategyEngine.PureEtf:
       case ResearchStrategyEngine.IntradayAlpha:
         return yield* intradayAlphaStrategyIdentity(material.parameters)
       case ResearchStrategyEngine.EntryAblation:
@@ -168,7 +189,7 @@ export const researchStrategyEngineMatchesRole = (role: JevResearchPolicy, engin
   switch (role) {
     case JevResearchPolicy.Candidate:
     case JevResearchPolicy.Incumbent:
-      return engine === ResearchStrategyEngine.Jev || engine === ResearchStrategyEngine.IntradayAlpha
+      return engine === ResearchStrategyEngine.Jev || isAlphaEngine(engine)
     case JevResearchPolicy.Ablation:
       return engine === ResearchStrategyEngine.EntryAblation
     case JevResearchPolicy.Momentum:
@@ -196,6 +217,7 @@ export const researchStrategyInferenceModels = (
   switch (binding.engine) {
     case ResearchStrategyEngine.FrozenDeployed:
     case ResearchStrategyEngine.RepeatedMomentum:
+    case ResearchStrategyEngine.PureEtf:
       return []
     case ResearchStrategyEngine.IntradayAlpha:
       return binding.parameters.catalystVeto.enabled
@@ -223,9 +245,9 @@ export const researchStrategyPolicyMaterial = (binding: ResearchStrategyBinding)
       continuationAndExits: frozenControlContinuation,
       executionModel: binding.parameters['executionModel'],
     }
-  if (binding.engine === ResearchStrategyEngine.IntradayAlpha)
+  if (isAlphaBinding(binding))
     return {
-      prompts: intradayAlphaPromptPolicy,
+      prompts: binding.engine === ResearchStrategyEngine.PureEtf ? { inference: false } : intradayAlphaPromptPolicy,
       continuationAndExits: {
         schemaVersion: 'bayn.native-alpha-continuation-policy.v1' as const,
         policy: binding.parameters,

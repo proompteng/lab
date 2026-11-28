@@ -1,26 +1,32 @@
 from __future__ import annotations
 
-from tests.order_feed.support import (
-    Decimal,
+from datetime import datetime, timezone
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from kafka import TopicPartition
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.models import (
     ExecutionOrderEvent,
-    FakeConsumer,
-    FakeManualConsumer,
+    OrderFeedConsumerCursor,
+    OrderFeedSourceWindow,
+)
+from app.trading.order_feed import (
     HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
     ORDER_FEED_SOURCE_REVISION,
-    OrderFeedConsumerCursor,
     OrderFeedIngestor,
-    OrderFeedSourceWindow,
-    OrderFeedTestCase,
-    Session,
-    SimpleNamespace,
-    TopicPartition,
     backfill_order_feed_source_windows,
-    datetime,
     link_order_events_to_execution,
-    patch,
-    select,
-    settings,
-    timezone,
+)
+from tests.order_feed.support import (
+    FakeConsumer,
+    FakeManualConsumer,
+    OrderFeedTestCase,
+    filled_order_event,
 )
 
 
@@ -285,21 +291,13 @@ class TestOrderFeedConsumerAndSourceWindows(OrderFeedTestCase):
 
         with Session(self.engine) as session:
             execution = self._seed_execution(session)
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="legacy-fill-with-source-offset",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=88,
-                alpaca_account_label="paper",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
                 execution_id=execution.id,
                 trade_decision_id=execution.trade_decision_id,
             )
@@ -378,19 +376,12 @@ class TestOrderFeedConsumerAndSourceWindows(OrderFeedTestCase):
             session.add(source_window)
             session.flush()
             source_window_id = source_window.id
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="legacy-fill-existing-source-window",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=89,
-                alpaca_account_label="paper",
                 event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
-                raw_event={"event": "fill"},
                 execution_id=execution.id,
                 trade_decision_id=execution.trade_decision_id,
             )
@@ -419,51 +410,30 @@ class TestOrderFeedConsumerAndSourceWindows(OrderFeedTestCase):
     def test_backfill_source_windows_filters_by_event_window(self) -> None:
         with Session(self.engine) as session:
             execution = self._seed_execution(session)
-            before_event = ExecutionOrderEvent(
+            before_event = filled_order_event(
                 event_fingerprint="legacy-fill-before-window",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=111,
-                alpaca_account_label="paper",
                 event_ts=datetime(2026, 2, 1, 9, 59, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
-                raw_event={"event": "fill"},
                 execution_id=execution.id,
                 trade_decision_id=execution.trade_decision_id,
             )
-            in_window_event = ExecutionOrderEvent(
+            in_window_event = filled_order_event(
                 event_fingerprint="legacy-fill-inside-window",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=112,
-                alpaca_account_label="paper",
                 event_ts=datetime(2026, 2, 1, 10, 5, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
-                raw_event={"event": "fill"},
                 execution_id=execution.id,
                 trade_decision_id=execution.trade_decision_id,
             )
-            after_event = ExecutionOrderEvent(
+            after_event = filled_order_event(
                 event_fingerprint="legacy-fill-after-window",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=113,
-                alpaca_account_label="paper",
                 event_ts=datetime(2026, 2, 1, 10, 30, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
-                raw_event={"event": "fill"},
                 execution_id=execution.id,
                 trade_decision_id=execution.trade_decision_id,
             )
@@ -522,38 +492,24 @@ class TestOrderFeedConsumerAndSourceWindows(OrderFeedTestCase):
             session.add(source_window)
             session.flush()
 
-            linkable_event = ExecutionOrderEvent(
+            linkable_event = filled_order_event(
                 event_fingerprint="legacy-fill-linkable-source-window",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=88,
-                alpaca_account_label="paper",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
                 source_window_id=source_window.id,
             )
-            still_unlinked_event = ExecutionOrderEvent(
+            still_unlinked_event = filled_order_event(
                 event_fingerprint="legacy-fill-still-unlinked-source-window",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=89,
-                alpaca_account_label="paper",
                 event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
                 symbol="MSFT",
                 alpaca_order_id="other-order",
                 client_order_id="other-client",
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("320.00"),
-                raw_event={"event": "fill"},
                 source_window_id=source_window.id,
             )
             session.add_all([linkable_event, still_unlinked_event])
@@ -581,21 +537,13 @@ class TestOrderFeedConsumerAndSourceWindows(OrderFeedTestCase):
             execution = self._seed_execution(session)
             execution_id = execution.id
             trade_decision_id = execution.trade_decision_id
-            linkable_event = ExecutionOrderEvent(
+            linkable_event = filled_order_event(
                 event_fingerprint="legacy-fill-linkable-missing-source-window",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=188,
-                alpaca_account_label="paper",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
             )
             session.add(linkable_event)
             session.commit()
@@ -674,21 +622,13 @@ class TestOrderFeedConsumerAndSourceWindows(OrderFeedTestCase):
             execution.trade_decision_id = None
             session.add(execution)
             session.flush()
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="legacy-fill-execution-missing-decision",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=238,
-                alpaca_account_label="paper",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
             )
             session.add(event)
             session.commit()
@@ -724,22 +664,15 @@ class TestOrderFeedConsumerAndSourceWindows(OrderFeedTestCase):
                 avg_fill_price=Decimal("311.01"),
                 raw_event={"event": "partial_fill"},
             )
-            fill_event = ExecutionOrderEvent(
+            fill_event = filled_order_event(
                 event_fingerprint="legacy-fill-earlier-event-ts-higher-feed-seq",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=66073,
                 feed_seq=183690,
-                alpaca_account_label="paper",
                 event_ts=datetime(2026, 2, 1, 10, 0, 0, 358000, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("311.01"),
-                raw_event={"event": "fill"},
             )
             session.add_all([partial_event, fill_event])
             session.commit()

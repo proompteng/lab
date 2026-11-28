@@ -10,7 +10,7 @@ import { afterAll, expect, mock, test } from 'bun:test'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { status as grpcStatus } from '@grpc/grpc-js'
 import AxeBuilder from '@axe-core/playwright'
-import { chromium, expect as browserExpect } from '@playwright/test'
+import { chromium, expect as browserExpect, type BrowserContext, type CDPSession, type Page } from '@playwright/test'
 import { Pool } from 'pg'
 import { z } from 'zod'
 import { accessCommandSchema, MAX_ACCESS_COMMAND_BYTES } from './access-schemas'
@@ -21,6 +21,57 @@ const identityTest = process.env.OFZ_IDENTITY_FIXTURE === '1' ? test : test.skip
 const root = path.resolve(import.meta.dir, '../../../../..')
 const processes: ReturnType<typeof spawn>[] = []
 const cleanups: (() => unknown)[] = []
+
+type Listener = ReturnType<typeof tcpServer>
+
+async function listenLocally(server: Listener) {
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Fixture port missing')
+  return address.port
+}
+
+function closeListener(server: Listener) {
+  return new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+}
+
+async function freePort() {
+  const server = tcpServer()
+  const port = await listenLocally(server)
+  await closeListener(server)
+  return port
+}
+
+function spawnFixture(command: string, args: string[], env: NodeJS.ProcessEnv, onOutput: (bytes: Buffer) => void) {
+  const child = spawn(command, args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  processes.push(child)
+  child.stdout.on('data', onOutput)
+  child.stderr.on('data', onOutput)
+  return child
+}
+
+function addPasskey(cdp: CDPSession, transport: 'usb' | 'internal') {
+  return cdp.send('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      transport,
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      automaticPresenceSimulation: true,
+    },
+  })
+}
+
+function chooseGitHubIdentity(page: Page, id: string) {
+  return page.getByRole('link', { name: `GitHub fixture ${id}`, exact: true }).click()
+}
+
+async function signInWithGitHub(page: Page, id: string) {
+  await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
+  await chooseGitHubIdentity(page, id)
+}
 
 async function routingEndpoint(port: number, firstBackend: number) {
   let backend = firstBackend
@@ -46,7 +97,7 @@ async function routingEndpoint(port: number, firstBackend: number) {
   }
   cleanups.push(() => {
     disconnect()
-    return new Promise<void>((resolve) => service.close(() => resolve()))
+    return closeListener(service)
   })
   return {
     route(nextBackend: number) {
@@ -94,45 +145,39 @@ identityTest(
         .match(/port=([0-9]+)/)?.[1],
     )
     const ca = readFileSync(z.string().parse(process.env.OFZ_TEST_CA_FILE), 'utf8')
-    const admin = new Pool({
-      host: 'localhost',
-      port,
-      user: 'postgres',
-      database: 'postgres',
-      ssl: { ca, rejectUnauthorized: true, servername: 'localhost' },
-      max: 2,
-    })
-    cleanups.push(() => admin.end())
+    const openDatabase = (database: string) => {
+      const pool = new Pool({
+        host: 'localhost',
+        port,
+        user: 'postgres',
+        database,
+        ssl: { ca, rejectUnauthorized: true, servername: 'localhost' },
+        max: 2,
+      })
+      cleanups.push(() => pool.end())
+      return pool
+    }
+    const admin = openDatabase('postgres')
     await admin.query(
       "CREATE ROLE ofz_api LOGIN PASSWORD 'fixture-api'; CREATE ROLE ofz_archiver NOLOGIN; CREATE ROLE tengri_bff LOGIN PASSWORD 'fixture-bff'; CREATE ROLE tengri_controller LOGIN PASSWORD 'fixture-controller'; CREATE ROLE tengri_supervisor NOLOGIN; CREATE ROLE tengri_migrator LOGIN PASSWORD 'fixture-migrator';",
     )
     await admin.query('CREATE DATABASE tengri_control OWNER tengri_migrator')
     await admin.query('CREATE DATABASE keycloak')
-    const control = new Pool({
-      host: 'localhost',
-      port,
-      user: 'postgres',
-      database: 'ofz_control',
-      ssl: { ca, rejectUnauthorized: true, servername: 'localhost' },
-      max: 2,
+    const control = openDatabase('ofz_control')
+    const bffAdmin = openDatabase('tengri_control')
+    const migrations = [
+      '0001_control',
+      '0002_replay_buckets',
+      '0003_replay_slots',
+      '0004_leadership_window',
+      '0005_capability_slots',
+      '0006_preview_lease_identity',
+      '0007_ephemeral_oauth',
+      '0008_platform_sign_in',
+    ].map((name, index) => {
+      const sql = readFileSync(path.join(root, 'services/tengri/migrations', name + '.sql'))
+      return { version: index + 1, sql: sql.toString(), checksum: createHash('sha256').update(sql).digest() }
     })
-    cleanups.push(() => control.end())
-    const bffAdmin = new Pool({
-      host: 'localhost',
-      port,
-      user: 'postgres',
-      database: 'tengri_control',
-      ssl: { ca, rejectUnauthorized: true, servername: 'localhost' },
-      max: 2,
-    })
-    cleanups.push(() => bffAdmin.end())
-    const migration = readFileSync(path.join(root, 'services/tengri/migrations/0001_control.sql'))
-    const replayMigration = readFileSync(path.join(root, 'services/tengri/migrations/0002_replay_buckets.sql'))
-    const replaySlotsMigration = readFileSync(path.join(root, 'services/tengri/migrations/0003_replay_slots.sql'))
-    const leadershipMigration = readFileSync(path.join(root, 'services/tengri/migrations/0004_leadership_window.sql'))
-    const capabilityMigration = readFileSync(path.join(root, 'services/tengri/migrations/0005_capability_slots.sql'))
-    const leaseMigration = readFileSync(path.join(root, 'services/tengri/migrations/0006_preview_lease_identity.sql'))
-    const oauthMigration = readFileSync(path.join(root, 'services/tengri/migrations/0007_ephemeral_oauth.sql'))
     const secret = (name: string, value: string) => {
       const file = path.join(fixture.directory, name)
       writeFileSync(file, value, { mode: 0o600 })
@@ -153,21 +198,11 @@ identityTest(
       OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=tengri_control user=tengri_migrator sslmode=require`,
       OFZ_DATABASE_PASSWORD_FILE: secret('runtime-owner-password', 'fixture-migrator'),
     }
-    const expectedChecksum = createHash('sha256').update(migration).digest()
-    const replayChecksum = createHash('sha256').update(replayMigration).digest()
-    const replaySlotsChecksum = createHash('sha256').update(replaySlotsMigration).digest()
-    const leadershipChecksum = createHash('sha256').update(leadershipMigration).digest()
-    const capabilityChecksum = createHash('sha256').update(capabilityMigration).digest()
-    const leaseChecksum = createHash('sha256').update(leaseMigration).digest()
-    const oauthChecksum = createHash('sha256').update(oauthMigration).digest()
-    const platformSignInChecksum = createHash('sha256')
-      .update(readFileSync(path.join(root, 'services/tengri/migrations/0008_platform_sign_in.sql')))
-      .digest()
     await bffAdmin.query('SET ROLE tengri_migrator')
-    await bffAdmin.query(migration.toString())
-    await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)', [expectedChecksum])
-    await bffAdmin.query(replayMigration.toString())
-    await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(2,$1)', [replayChecksum])
+    for (const { version, sql, checksum } of migrations.slice(0, 2)) {
+      await bffAdmin.query(sql)
+      await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES($1,$2)', [version, checksum])
+    }
     const retainedWorkspace = randomUUID()
     const retainedTicket = Buffer.alloc(32, 31)
     await bffAdmin.query(
@@ -199,23 +234,7 @@ identityTest(
     const versions = await bffAdmin.query<{ version: number; checksum: Buffer }>(
       'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
     )
-    expect(versions.rowCount).toBe(8)
-    expect(versions.rows[0]?.version).toBe(1)
-    expect(versions.rows[0]?.checksum.equals(expectedChecksum)).toBe(true)
-    expect(versions.rows[1]?.version).toBe(2)
-    expect(versions.rows[1]?.checksum.equals(replayChecksum)).toBe(true)
-    expect(versions.rows[2]?.version).toBe(3)
-    expect(versions.rows[2]?.checksum.equals(replaySlotsChecksum)).toBe(true)
-    expect(versions.rows[3]?.version).toBe(4)
-    expect(versions.rows[3]?.checksum.equals(leadershipChecksum)).toBe(true)
-    expect(versions.rows[4]?.version).toBe(5)
-    expect(versions.rows[4]?.checksum.equals(capabilityChecksum)).toBe(true)
-    expect(versions.rows[5]?.version).toBe(6)
-    expect(versions.rows[5]?.checksum.equals(leaseChecksum)).toBe(true)
-    expect(versions.rows[6]?.version).toBe(7)
-    expect(versions.rows[6]?.checksum.equals(oauthChecksum)).toBe(true)
-    expect(versions.rows[7]?.version).toBe(8)
-    expect(versions.rows[7]?.checksum.equals(platformSignInChecksum)).toBe(true)
+    expect(versions.rows).toEqual(migrations.map(({ version, checksum }) => ({ version, checksum })))
     expect(
       (await bffAdmin.query("SELECT to_regclass('tengri.oauth_attempts') AS old_attempts")).rows[0]?.old_attempts,
     ).toBeNull()
@@ -253,24 +272,12 @@ identityTest(
         stdio: 'pipe',
       }),
     ).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [Buffer.alloc(32)])
-    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [replayChecksum])
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=3', [Buffer.alloc(32)])
-    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=3', [replaySlotsChecksum])
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=4', [Buffer.alloc(32)])
-    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=4', [leadershipChecksum])
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=5', [Buffer.alloc(32)])
-    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=5', [capabilityChecksum])
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=6', [Buffer.alloc(32)])
-    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=6', [leaseChecksum])
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=7', [Buffer.alloc(32)])
-    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=7', [oauthChecksum])
+    const updateChecksum = 'UPDATE tengri.schema_version SET checksum=$1 WHERE version=$2'
+    for (const { version, checksum } of migrations.slice(1, 7)) {
+      await bffAdmin.query(updateChecksum, [Buffer.alloc(32), version])
+      expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
+      await bffAdmin.query(updateChecksum, [checksum, version])
+    }
     const native = z.string().url().parse(process.env.OFZ_TEST_NATIVE_ENDPOINT)
     const nativeCall = async (endpoint: string, body: unknown) => {
       const response = await fetch(native + endpoint, {
@@ -395,56 +402,9 @@ identityTest(
         ),
       )
     })
-    github.listen(0, '127.0.0.1')
-    await once(github, 'listening')
-    cleanups.push(() => new Promise<void>((resolve) => github.close(() => resolve())))
-    const githubAddress = github.address()
-    if (!githubAddress || typeof githubAddress === 'string') throw new Error('Fixture GitHub port missing')
-    const certPath = secret('issuer.pem', ''),
-      keyPath = secret('issuer.key', '')
-    execFileSync(
-      'openssl',
-      [
-        'req',
-        '-new',
-        '-newkey',
-        'rsa:2048',
-        '-nodes',
-        '-subj',
-        '/CN=auth.proompteng.ai',
-        '-keyout',
-        keyPath,
-        '-out',
-        path.join(fixture.directory, 'issuer.csr'),
-      ],
-      { stdio: 'ignore' },
-    )
-    const extension = secret(
-      'issuer.ext',
-      'basicConstraints=critical,CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:auth.proompteng.ai,DNS:proompteng.ai\n',
-    )
-    execFileSync(
-      'openssl',
-      [
-        'x509',
-        '-req',
-        '-in',
-        path.join(fixture.directory, 'issuer.csr'),
-        '-CA',
-        path.join(fixture.directory, 'ca.pem'),
-        '-CAkey',
-        path.join(fixture.directory, 'ca.key'),
-        '-CAcreateserial',
-        '-days',
-        '1',
-        '-sha256',
-        '-extfile',
-        extension,
-        '-out',
-        certPath,
-      ],
-      { stdio: 'ignore' },
-    )
+    const githubPort = await listenLocally(github)
+    cleanups.push(() => closeListener(github))
+    const { certPath, keyPath } = fixture.httpsCertificate('issuer', 'auth.proompteng.ai', 'proompteng.ai')
     // The HTTPS adapter executes the actual route functions. Only HTML and GitHub are fixtures.
     const { ofzCall: realOfzCall, OfzError, isOfzConfigured } = await import('../platform/ofz')
     let loseEstablishmentReply = true
@@ -472,6 +432,8 @@ identityTest(
     // Simulate one lost reply after the real Ofz transaction and RPC have succeeded.
     void mock.module('../platform/ofz', () => ({ ofzCall: withReplyLoss, OfzError, isOfzConfigured }))
     const { getPlatformIdentity } = await import('../platform/auth')
+    const inspectCookie = (credential: string | undefined) =>
+      getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${credential}` }))
     const authRoute = await import('@/app/api/auth/[...all]/route')
     const { verifyGithubIdentity } = await import('../platform/github-identity')
     let identityLookups = 0
@@ -557,27 +519,15 @@ identityTest(
         response.writeHead(503).end('Fixture request failed')
       }
     })
-    bff.listen(0, '127.0.0.1')
-    await once(bff, 'listening')
-    cleanups.push(() => new Promise<void>((resolve) => bff.close(() => resolve())))
-    const bffAddress = bff.address()
-    if (!bffAddress || typeof bffAddress === 'string') throw new Error('Fixture BFF port missing')
-    const freePort = async () => {
-      const server = httpServer()
-      server.listen(0, '127.0.0.1')
-      await once(server, 'listening')
-      const address = server.address()
-      if (!address || typeof address === 'string') throw new Error('Fixture port missing')
-      await new Promise<void>((resolve) => server.close(() => resolve()))
-      return address.port
-    }
+    const bffPort = await listenLocally(bff)
+    cleanups.push(() => closeListener(bff))
     const kcHttp = await freePort(),
       kcHttps = await freePort(),
       ofzPort = await freePort()
     const kcPrimaryHttps = await freePort(),
       kcSecondaryHttp = await freePort(),
       kcSecondaryHttps = await freePort()
-    const base = `https://proompteng.ai:${bffAddress.port}`,
+    const base = `https://proompteng.ai:${bffPort}`,
       issuer = `https://auth.proompteng.ai:${kcHttps}/realms/tengri`
     const gateways = z
       .object({
@@ -598,7 +548,7 @@ identityTest(
     if (!gateway?.session_gateway) throw new Error('Browser fixture gateway registration missing')
     gateway.session_gateway.origin = base
     gateway.proof_audience = base + '/api/platform/relay/agent'
-    const adminOrigin = `https://admin.proompteng.ai:${bffAddress.port}`
+    const adminOrigin = `https://admin.proompteng.ai:${bffPort}`
     const adminGateway = gateways.services.find((service) => service.id === 'platform-admin')
     if (!adminGateway?.session_gateway) throw new Error('Admin gateway registration missing')
     adminGateway.session_gateway.origin = adminOrigin
@@ -627,11 +577,7 @@ identityTest(
           return candidate
         } catch {
         } finally {
-          await Promise.all(
-            sockets
-              .filter((socket) => socket.listening)
-              .map((socket) => new Promise<void>((resolve) => socket.close(() => resolve()))),
-          )
+          await Promise.all(sockets.filter((socket) => socket.listening).map(closeListener))
         }
       }
       throw new Error('No isolated Keycloak transport and failure-detection port pair')
@@ -652,7 +598,7 @@ identityTest(
       optimized: boolean,
     ) => {
       const log = secret(`keycloak-${name}.log`, '')
-      const server = spawn(
+      const server = spawnFixture(
         path.join(home, 'bin/kc.sh'),
         [
           'start',
@@ -676,18 +622,13 @@ identityTest(
           `--https-certificate-key-file=${keyPath}`,
         ],
         {
-          env: {
-            ...process.env,
-            KC_BOOTSTRAP_ADMIN_USERNAME: 'fixture-admin',
-            KC_BOOTSTRAP_ADMIN_PASSWORD: 'fixture-only-password',
-            JAVA_OPTS_APPEND: '-Xms128m -Xmx768m',
-          },
-          stdio: ['ignore', 'pipe', 'pipe'],
+          ...process.env,
+          KC_BOOTSTRAP_ADMIN_USERNAME: 'fixture-admin',
+          KC_BOOTSTRAP_ADMIN_PASSWORD: 'fixture-only-password',
+          JAVA_OPTS_APPEND: '-Xms128m -Xmx768m',
         },
+        (chunk) => writeFileSync(log, chunk, { flag: 'a' }),
       )
-      processes.push(server)
-      server.stdout?.on('data', (chunk) => writeFileSync(log, chunk, { flag: 'a' }))
-      server.stderr?.on('data', (chunk) => writeFileSync(log, chunk, { flag: 'a' }))
       const startupDeadline = Date.now() + 120_000
       for (;;) {
         if (server.exitCode !== null || server.signalCode !== null || Date.now() >= startupDeadline)
@@ -728,8 +669,8 @@ identityTest(
         },
         stdio: 'pipe',
       })
-    const adminCall = async (endpoint: string, method = 'GET', body?: unknown) => {
-      const tokenResponse = await fetch(adminBase + '/realms/master/protocol/openid-connect/token', {
+    const readAdminToken = async () => {
+      const response = await fetch(adminBase + '/realms/master/protocol/openid-connect/token', {
         method: 'POST',
         body: new URLSearchParams({
           client_id: 'admin-cli',
@@ -738,8 +679,11 @@ identityTest(
           password: 'fixture-only-password',
         }),
       })
-      if (!tokenResponse.ok) throw new Error(`Fixture administrator authentication ${tokenResponse.status}`)
-      const token = z.object({ access_token: z.string() }).parse(await tokenResponse.json()).access_token
+      if (!response.ok) throw new Error(`Fixture administrator authentication ${response.status}`)
+      return z.object({ access_token: z.string() }).parse(await response.json()).access_token
+    }
+    const adminCall = async (endpoint: string, method = 'GET', body?: unknown) => {
+      const token = await readAdminToken()
       const response = await fetch(adminBase + '/admin/realms/tengri' + endpoint, {
         method,
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -783,17 +727,7 @@ identityTest(
     legacyRealm.clients = legacyRealm.clients.filter((client) => client.clientId !== 'platform-admin')
     legacyRealm.clients[0]!.secret = 'fixture-bff-secret-not-production-0000000'
     Object.assign(legacyRealm.identityProviders[0].config, { clientId: 'fixture-github', clientSecret: githubSecret })
-    const seedToken = await fetch(adminBase + '/realms/master/protocol/openid-connect/token', {
-      method: 'POST',
-      body: new URLSearchParams({
-        client_id: 'admin-cli',
-        grant_type: 'password',
-        username: 'fixture-admin',
-        password: 'fixture-only-password',
-      }),
-    })
-    if (!seedToken.ok) throw new Error('Legacy fixture administrator unavailable')
-    const token = z.object({ access_token: z.string() }).parse(await seedToken.json()).access_token
+    const token = await readAdminToken()
     const seeded = await fetch(adminBase + '/admin/realms', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -805,18 +739,22 @@ identityTest(
       'PUT',
       JSON.parse(readFileSync(path.join(root, 'argocd/applications/keycloak/tengri/user-profile.json'), 'utf8')),
     )
-    const provider = z
-      .object({ config: z.record(z.string(), z.string()) })
-      .passthrough()
-      .parse(await (await adminCall('/identity-provider/instances/github')).json())
-    provider.config = {
-      ...provider.config,
-      baseUrl: `http://127.0.0.1:${githubAddress.port}`,
-      apiUrl: `http://127.0.0.1:${githubAddress.port}`,
-      githubJsonFormat: 'true',
-      clientSecret: githubSecret,
+    const pointProviderAtFixture = async () => {
+      const provider = z
+        .object({ config: z.record(z.string(), z.string()) })
+        .passthrough()
+        .parse(await (await adminCall('/identity-provider/instances/github')).json())
+      const url = `http://127.0.0.1:${githubPort}`
+      Object.assign(provider.config, {
+        baseUrl: url,
+        apiUrl: url,
+        githubJsonFormat: 'true',
+        clientSecret: githubSecret,
+      })
+      await adminCall('/identity-provider/instances/github', 'PUT', provider)
+      return provider
     }
-    await adminCall('/identity-provider/instances/github', 'PUT', provider)
+    const provider = await pointProviderAtFixture()
     const clients = z
       .array(z.object({ id: z.string() }).passthrough())
       .parse(await (await adminCall('/clients?clientId=tengri-bff')).json())
@@ -829,8 +767,11 @@ identityTest(
     })
     let apiLogs = ''
     const startApi = async (listenPort: number) => {
-      const api = spawn(binary, ['serve'], {
-        env: {
+      let replicaLogs = ''
+      const api = spawnFixture(
+        binary,
+        ['serve'],
+        {
           ...common,
           RUST_LOG: 'ofz=debug',
           OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=ofz_control user=ofz_api sslmode=require`,
@@ -844,18 +785,11 @@ identityTest(
           OFZ_LISTEN: `127.0.0.1:${listenPort}`,
           SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
         },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-      processes.push(api)
-      let replicaLogs = ''
-      api.stdout?.on('data', (chunk) => {
-        replicaLogs = (replicaLogs + String(chunk)).slice(-16000)
-        apiLogs = (apiLogs + String(chunk)).slice(-16000)
-      })
-      api.stderr?.on('data', (chunk) => {
-        replicaLogs = (replicaLogs + String(chunk)).slice(-16000)
-        apiLogs = (apiLogs + String(chunk)).slice(-16000)
-      })
+        (chunk) => {
+          replicaLogs = (replicaLogs + String(chunk)).slice(-16000)
+          apiLogs = (apiLogs + String(chunk)).slice(-16000)
+        },
+      )
       for (let attempt = 0; !replicaLogs.includes('Ofz authorization API listening'); attempt++) {
         if (api.exitCode !== null || attempt > 350)
           throw new Error('Fixture Ofz startup failed: ' + apiLogs.slice(-2000))
@@ -983,6 +917,7 @@ identityTest(
     }
     await context.addInitScript(observeWebAuthn)
     const page = await context.newPage()
+    const verifyPasskey = page.locator('#authenticateWebAuthnButton')
     const themeScreenshots = process.env.TENGRI_IDENTITY_SCREENSHOTS
     if (themeScreenshots) mkdirSync(themeScreenshots, { recursive: true })
     const checkTheme = async (screen: string) => {
@@ -1027,19 +962,9 @@ identityTest(
     }
     const cdp = await context.newCDPSession(page)
     await cdp.send('WebAuthn.enable')
-    const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
-      options: {
-        protocol: 'ctap2',
-        transport: 'usb',
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        automaticPresenceSimulation: true,
-      },
-    })
+    const { authenticatorId } = await addPasskey(cdp, 'usb')
     await page.goto(base)
-    await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
-    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
+    await signInWithGitHub(page, '1')
     await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true }))
       .toBeVisible({ timeout: 20_000 })
       .catch(async () => {
@@ -1101,11 +1026,12 @@ identityTest(
     expect(sessions.rows[0]?.github_id).toBe('1')
     expect(Number(sessions.rows[0]?.mfa_at_ms)).toBeGreaterThan(0)
     // An independent handler invocation inspects the opaque cookie through Ofz, without browser state.
-    const cookies = await context.cookies(base)
-    const opaque = cookies.find((cookie) => cookie.name === '__Host-tengri-session')
+    const sessionCookie = async (browserContext: BrowserContext = context) =>
+      (await browserContext.cookies(base)).find((cookie) => cookie.name === '__Host-tengri-session')
+    const opaque = await sessionCookie()
     expect(opaque?.httpOnly).toBe(true)
     expect(opaque?.secure).toBe(true)
-    const inspected = await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
+    const inspected = await inspectCookie(opaque?.value)
     expect(inspected?.session.githubId).toBe('1')
     const retiredSessionRoute = await realOfzCall(
       { ...PlatformAuthorizationService.method.inspectSession, parent: TengriAuthorizationService },
@@ -1120,7 +1046,8 @@ identityTest(
 
     if (!inspected) throw new Error('Verified fixture session missing')
     await new Promise<void>((resolve, reject) => {
-      const runtime = spawn(
+      let output = ''
+      const runtime = spawnFixture(
         'cargo',
         [
           'test',
@@ -1135,26 +1062,19 @@ identityTest(
           '--nocapture',
         ],
         {
-          env: {
-            ...process.env,
-            TENGRI_OFZ_WIRE_FIXTURE: '1',
-            TENGRI_OFZ_FIXTURE_HUMAN: inspected.session.humanId,
-            TENGRI_OFZ_FIXTURE_SESSION: inspected.session.id,
-            TENGRI_RUNTIME_STATE_FIXTURE: '1',
-            TENGRI_DATABASE_DSN: `host=localhost port=${port} dbname=tengri_control user=tengri_controller sslmode=require`,
-            TENGRI_DATABASE_PASSWORD_FILE: secret('controller-password', 'fixture-controller'),
-            TENGRI_DATABASE_CA_FILE: process.env.OFZ_TEST_CA_FILE || '',
-          },
-          stdio: ['ignore', 'pipe', 'pipe'],
+          ...process.env,
+          TENGRI_OFZ_WIRE_FIXTURE: '1',
+          TENGRI_OFZ_FIXTURE_HUMAN: inspected.session.humanId,
+          TENGRI_OFZ_FIXTURE_SESSION: inspected.session.id,
+          TENGRI_RUNTIME_STATE_FIXTURE: '1',
+          TENGRI_DATABASE_DSN: `host=localhost port=${port} dbname=tengri_control user=tengri_controller sslmode=require`,
+          TENGRI_DATABASE_PASSWORD_FILE: secret('controller-password', 'fixture-controller'),
+          TENGRI_DATABASE_CA_FILE: process.env.OFZ_TEST_CA_FILE || '',
+        },
+        (bytes) => {
+          output = (output + bytes.toString()).slice(-16000)
         },
       )
-      processes.push(runtime)
-      let output = ''
-      const retain = (bytes: Buffer) => {
-        output = (output + bytes.toString()).slice(-16000)
-      }
-      runtime.stdout?.on('data', retain)
-      runtime.stderr?.on('data', retain)
       runtime.once('error', reject)
       runtime.once('exit', (code) => {
         if (code !== 0 || !output.includes('test result: ok. 1 passed; 0 failed')) {
@@ -1175,7 +1095,7 @@ identityTest(
     let failoverError: unknown
     while (Date.now() - failoverStarted < 30_000) {
       try {
-        survivingIdentity = await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
+        survivingIdentity = await inspectCookie(opaque?.value)
         break
       } catch (error) {
         failoverError = error
@@ -1241,18 +1161,7 @@ identityTest(
     })
     expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
     expect(await (await adminCall(`/users/${firstUser.id}/credentials`)).json()).toEqual(credentialsBefore)
-    const currentProvider = z
-      .object({ config: z.record(z.string(), z.string()) })
-      .passthrough()
-      .parse(await (await adminCall('/identity-provider/instances/github')).json())
-    currentProvider.config = {
-      ...currentProvider.config,
-      baseUrl: `http://127.0.0.1:${githubAddress.port}`,
-      apiUrl: `http://127.0.0.1:${githubAddress.port}`,
-      githubJsonFormat: 'true',
-      clientSecret: githubSecret,
-    }
-    await adminCall('/identity-provider/instances/github', 'PUT', currentProvider)
+    await pointProviderAtFixture()
     await adminCall(`/clients/${client.id}`, 'PUT', { redirectUris: [base + '/api/auth/callback'], webOrigins: [base] })
     writeFileSync(z.string().parse(process.env.PLATFORM_OIDC_CLIENT_SECRET_FILE), rotatedBffSecret)
     for (const [secretValue, status] of [
@@ -1275,15 +1184,16 @@ identityTest(
       )
     }
 
+    const saveAccess = page.getByRole('button', { name: 'Save changes', exact: true })
     const applyChange = async (status: number) => {
       const result = page.waitForResponse(
         (response) => response.url() === base + '/api/tengri/access' && response.request().method() === 'POST',
       )
-      await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+      await saveAccess.click()
       expect((await result).status()).toBe(status)
     }
-    const postAccess = (command: Record<string, unknown>) =>
-      page.evaluate(async (input) => {
+    const postAccess = (command: Record<string, unknown>, browserPage = page) =>
+      browserPage.evaluate(async (input) => {
         const response = await fetch('/api/tengri/access', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1345,26 +1255,24 @@ identityTest(
     const roots = page.getByLabel('File roots under /workspace', { exact: true })
     await roots.fill('/workspace/../private')
     const lookupsBeforeInvalidScope = identityLookups
-    const versionBeforeInvalidScope = (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+    const readPolicyVersion = async () =>
+      (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version
+    const versionBeforeInvalidScope = await readPolicyVersion()
+    await saveAccess.click()
     await browserExpect(roots).toHaveAttribute('aria-invalid', 'true')
     await browserExpect(page.getByRole('alert').filter({ hasText: 'canonical path under /workspace' })).toBeVisible()
     expect(identityLookups).toBe(lookupsBeforeInvalidScope)
-    expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
-      versionBeforeInvalidScope,
-    )
+    expect(await readPolicyVersion()).toBe(versionBeforeInvalidScope)
     await roots.fill(
       Array.from({ length: 16 }, (_, index) => {
         const prefix = `/workspace/project-${index}/`
         return prefix + 'x'.repeat(4096 - prefix.length)
       }).join('\n'),
     )
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+    await saveAccess.click()
     await browserExpect(page.getByRole('alert').filter({ hasText: 'Access request exceeds 64 KiB' })).toBeVisible()
     expect(identityLookups).toBe(lookupsBeforeInvalidScope)
-    expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
-      versionBeforeInvalidScope,
-    )
+    expect(await readPolicyVersion()).toBe(versionBeforeInvalidScope)
     expect(await storedViewer()).toEqual({ role: 3, scope: null })
     await roots.fill('/workspace/src ')
     await page.getByLabel('Codex thread IDs', { exact: true }).fill(' shared-id ')
@@ -1431,7 +1339,7 @@ identityTest(
     const boundaryCommand = {
       action: 'collaborator',
       operationId: randomUUID(),
-      expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+      expectedVersion: await readPolicyVersion(),
       reason: 'Maximum accepted Viewer command',
       workspaceUid: scopedWorkspace,
       recipient: { kind: 'github-login', login: 'fixture-3' },
@@ -1457,7 +1365,7 @@ identityTest(
         await postAccess({
           ...boundaryCommand,
           operationId: randomUUID(),
-          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          expectedVersion: await readPolicyVersion(),
           scope: undefined,
         })
       ).status,
@@ -1469,7 +1377,7 @@ identityTest(
         await postAccess({
           action: 'grant',
           operationId: randomUUID(),
-          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          expectedVersion: await readPolicyVersion(),
           reason: 'Verify metadata-only diagnostic scope display',
           workspaceUid: scopedWorkspace,
           grantId: metadataGrant,
@@ -1502,7 +1410,7 @@ identityTest(
         await postAccess({
           action: 'revoke',
           operationId: randomUUID(),
-          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          expectedVersion: await readPolicyVersion(),
           reason: 'Remove isolated metadata diagnostic',
           workspaceUid: scopedWorkspace,
           grantId: metadataGrant,
@@ -1530,8 +1438,8 @@ identityTest(
     await applyChange(428)
     await browserExpect(page.getByRole('alert').filter({ hasText: 'Verify your identity' })).toBeVisible()
     await page.getByRole('button', { name: 'Verify identity', exact: true }).click()
-    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
-    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await chooseGitHubIdentity(page, '1')
+    await browserExpect(verifyPasskey).toBeVisible()
     await page.waitForLoadState('domcontentloaded')
     await checkTheme('verify')
     await browserExpect(page.getByRole('heading', { name: 'Verify your passkey', exact: true })).toBeVisible()
@@ -1549,17 +1457,15 @@ identityTest(
     adminBase = `http://127.0.0.1:${kcSecondaryHttp}`
     kc.server.kill('SIGKILL')
     await once(kc.server, 'exit')
-    await page.locator('#authenticateWebAuthnButton').click()
+    await verifyPasskey.click()
     await page.waitForURL(base + '/?workspace=' + scopedWorkspace)
     await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=1"]')).toBeVisible()
-    expect(await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
-    let replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
+    expect(await inspectCookie(opaque?.value)).toBeNull()
+    let replacement = await sessionCookie()
     expect(replacement?.value).not.toBe(opaque?.value)
     expect(Date.now() - keycloakFailoverStarted).toBeLessThan(30_000)
     expect(await credentialIdentities()).toEqual(passkeysBeforeFailover)
-    const survivingSession = await getPlatformIdentity(
-      new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }),
-    )
+    const survivingSession = await inspectCookie(replacement?.value)
     expect(survivingSession?.session.humanId).toBe(inspected.session.humanId)
     expect(survivingSession?.session.id).toBe(inspected.session.id)
     expect(
@@ -1584,14 +1490,14 @@ identityTest(
     await page.goto(ssoUrl)
     await page.waitForURL(base + '/')
     expect(webAuthnRequests).toHaveLength(challengesBeforeSso)
-    const ssoCookie = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
-    const ssoIdentity = await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${ssoCookie?.value}` }))
+    const ssoCookie = await sessionCookie()
+    const ssoIdentity = await inspectCookie(ssoCookie?.value)
     expect(ssoIdentity?.session.id).toBe(survivingSession?.session.id)
     expect(ssoIdentity?.session.mfaAtUnixMs).toBe(survivingSession?.session.mfaAtUnixMs)
     expect(ssoIdentity?.session.expiresAtUnixMs).toBeLessThanOrEqual(
       (survivingSession?.session.mfaAtUnixMs || BigInt(0)) + BigInt(28_800_000),
     )
-    expect(await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }))).toBeNull()
+    expect(await inspectCookie(replacement?.value)).toBeNull()
     replacement = ssoCookie
     console.log(
       'PASS: broker-only realm upgrades with enrolled passkeys; repeated bootstrap converges, ordinary SSO preserves authority and assurance without a new challenge or a sliding expiry',
@@ -1695,20 +1601,10 @@ identityTest(
     const secondPage = await secondContext.newPage()
     const secondCdp = await secondContext.newCDPSession(secondPage)
     await secondCdp.send('WebAuthn.enable')
-    await secondCdp.send('WebAuthn.addVirtualAuthenticator', {
-      options: {
-        protocol: 'ctap2',
-        transport: 'internal',
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        automaticPresenceSimulation: true,
-      },
-    })
+    await addPasskey(secondCdp, 'internal')
     const enroll = async (id: string) => {
       await secondPage.goto(base)
-      await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
-      await secondPage.getByRole('link', { name: `GitHub fixture ${id}`, exact: true }).click()
+      await signInWithGitHub(secondPage, id)
       await browserExpect(secondPage.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
       await secondPage.waitForLoadState('domcontentloaded')
       await secondPage.getByRole('button', { name: 'Create passkey', exact: true }).click()
@@ -1736,10 +1632,8 @@ identityTest(
               { cause },
             )
           })
-        const credential = (await secondContext.cookies(base)).find((value) => value.name === '__Host-tengri-session')
-        const identity = await getPlatformIdentity(
-          new Headers({ cookie: `__Host-tengri-session=${credential?.value}` }),
-        )
+        const credential = await sessionCookie(secondContext)
+        const identity = await inspectCookie(credential?.value)
         expect(identity?.session.githubId).toBe(id)
       }
     }
@@ -1752,8 +1646,7 @@ identityTest(
     await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
     await secondContext.clearCookies({ domain: 'auth.proompteng.ai' })
     await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
-    await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
-    await secondPage.getByRole('link', { name: 'GitHub fixture 2', exact: true }).click()
+    await signInWithGitHub(secondPage, '2')
     await browserExpect(secondPage.locator('#authenticateWebAuthnButton')).toBeVisible()
     await secondPage.waitForLoadState('domcontentloaded')
     await secondPage.locator('#authenticateWebAuthnButton').click()
@@ -1768,25 +1661,18 @@ identityTest(
     await secondContext.clearCookies()
     await enroll('3')
     const lookupsBeforeDenial = identityLookups
-    const memberDenied = await secondPage.evaluate(
-      async ({ operationId, workspaceUid }) => {
-        const response = await fetch('/api/tengri/access', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'collaborator',
-            operationId,
-            workspaceUid,
-            expectedVersion: '3',
-            reason: 'Member must not consume external identity lookups',
-            recipient: { kind: 'github-login', login: 'fixture-2' },
-            role: 'developer',
-            enabled: true,
-          }),
-        })
-        return { status: response.status, body: await response.json() }
+    const memberDenied = await postAccess(
+      {
+        action: 'collaborator',
+        operationId: randomUUID(),
+        workspaceUid: scopedWorkspace,
+        expectedVersion: '3',
+        reason: 'Member must not consume external identity lookups',
+        recipient: { kind: 'github-login', login: 'fixture-2' },
+        role: 'developer',
+        enabled: true,
       },
-      { operationId: randomUUID(), workspaceUid: scopedWorkspace },
+      secondPage,
     )
     expect(memberDenied.status).toBe(403)
     expect(identityLookups).toBe(lookupsBeforeDenial)
@@ -1829,8 +1715,8 @@ identityTest(
       return response.json()
     })
     await page.goto(z.object({ url: z.url() }).parse(stepUp).url)
-    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
-    await page.locator('#authenticateWebAuthnButton').click()
+    await chooseGitHubIdentity(page, '1')
+    await verifyPasskey.click()
     await page.waitForURL((url) => url.origin === base)
     const assuranceDenied = z
       .object({ auditReceiptId: z.uuid() })
@@ -1859,7 +1745,7 @@ identityTest(
       action: 'collaborator',
       operationId: randomUUID(),
       workspaceUid: scopedWorkspace,
-      expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+      expectedVersion: await readPolicyVersion(),
       reason: 'Recover a committed access change after a lost response',
       recipient: { kind: 'github-login', login: 'fixture-3' },
       role: 'viewer',
@@ -1907,7 +1793,7 @@ identityTest(
     ).toBe(401)
     await page.getByRole('button', { name: 'Sign out', exact: true }).click()
     await browserExpect(page.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
-    expect(await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }))).toBeNull()
+    expect(await inspectCookie(replacement?.value)).toBeNull()
     expect(
       (
         await control.query(
@@ -1920,22 +1806,13 @@ identityTest(
       expect(request).toEqual({ hints: ['client-device', 'hybrid', 'security-key'], userVerification: 'discouraged' })
     const credentialsBeforeAddition = await credentialIdentities()
     await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
-    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
-    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await chooseGitHubIdentity(page, '1')
+    await browserExpect(verifyPasskey).toBeVisible()
     expect(await credentialIdentities()).toEqual(credentialsBeforeAddition)
-    await page.locator('#authenticateWebAuthnButton').click()
+    await verifyPasskey.click()
     await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
     await cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: false })
-    const { authenticatorId: platformAuthenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
-      options: {
-        protocol: 'ctap2',
-        transport: 'internal',
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        automaticPresenceSimulation: true,
-      },
-    })
+    const { authenticatorId: platformAuthenticatorId } = await addPasskey(cdp, 'internal')
     await page.getByRole('button', { name: 'Create passkey', exact: true }).click()
     await page.waitForURL(base + '/')
     expect(await credentialIdentities()).toHaveLength(credentialsBeforeAddition.length + 1)
@@ -1951,9 +1828,8 @@ identityTest(
     await page.getByRole('button', { name: 'Sign out', exact: true }).click()
     await context.clearCookies({ domain: 'auth.proompteng.ai' })
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
-    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
-    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await signInWithGitHub(page, '1')
+    await browserExpect(verifyPasskey).toBeVisible()
     await browserExpect(page.getByText('Available Passkeys', { exact: true })).toHaveCount(0)
     await browserExpect(page.getByText(/Passkey \(/)).toHaveCount(0)
     await browserExpect(page.getByText('Internal', { exact: true })).toHaveCount(0)
@@ -1966,7 +1842,7 @@ identityTest(
       authenticatorId: platformAuthenticatorId,
       enabled: false,
     })
-    await page.locator('#authenticateWebAuthnButton').click()
+    await verifyPasskey.click()
     await browserExpect(page.getByRole('button', { name: 'Check your passkey dialog', exact: true })).toBeDisabled()
     if (themeScreenshots)
       await page.screenshot({ path: path.join(themeScreenshots, 'verify-pending.png'), fullPage: true })
@@ -1976,19 +1852,17 @@ identityTest(
       authenticatorId: platformAuthenticatorId,
       enabled: true,
     })
-    await page.locator('#authenticateWebAuthnButton').click()
+    await verifyPasskey.click()
     await page.waitForURL(base + '/')
-    const phoneSession = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
-    const phoneIdentity = await getPlatformIdentity(
-      new Headers({ cookie: `__Host-tengri-session=${phoneSession?.value}` }),
-    )
+    const phoneSession = await sessionCookie()
+    const phoneIdentity = await inspectCookie(phoneSession?.value)
     expect(phoneIdentity?.session.githubId).toBe('1')
     expect(phoneIdentity?.session.humanId).toBe(humans[0]?.humanId)
     const credentialsBeforeCancellation = await credentialIdentities()
     await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
-    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
-    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
-    await page.locator('#authenticateWebAuthnButton').click()
+    await chooseGitHubIdentity(page, '1')
+    await browserExpect(verifyPasskey).toBeVisible()
+    await verifyPasskey.click()
     await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Cancel', exact: true }).click()
     await page.waitForURL(base + '/')

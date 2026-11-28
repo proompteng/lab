@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { MemoryStorage } from '@/lib/tengri/storage.fixture'
 
 import {
   CODE_DRAFT_STORAGE_PREFIX,
@@ -20,40 +21,6 @@ import {
   subscribeVolatileCodeDrafts,
   type CodeDraftIdentity,
 } from './code-editor-draft-storage'
-
-class MemoryStorage implements Storage {
-  private readonly values = new Map<string, string>()
-  failReads = false
-  failWrites = false
-
-  get length() {
-    return this.values.size
-  }
-
-  clear() {
-    this.values.clear()
-  }
-
-  getItem(key: string) {
-    if (this.failReads) throw new Error('storage read failed')
-    return this.values.get(key) ?? null
-  }
-
-  key(index: number) {
-    if (this.failReads) throw new Error('storage read failed')
-    return [...this.values.keys()][index] ?? null
-  }
-
-  removeItem(key: string) {
-    if (this.failWrites) throw new Error('storage write failed')
-    this.values.delete(key)
-  }
-
-  setItem(key: string, value: string) {
-    if (this.failWrites) throw new Error('storage write failed')
-    this.values.set(key, value)
-  }
-}
 
 const identity: CodeDraftIdentity = {
   ownerId: 'github:42',
@@ -144,14 +111,19 @@ describe('Code editor draft storage', () => {
   test('reports storage failures instead of pretending a draft was persisted', () => {
     const storage = new MemoryStorage()
     const store = createCodeDraftStore(storage)
-    storage.failWrites = true
+    const savedSetItem = storage.setItem.bind(storage)
+    storage.setItem = () => {
+      throw new Error('storage write failed')
+    }
     expect(store.write(createCodeDraft(identity, 'edit', revision, 'text/plain'))).toEqual({
       kind: 'unavailable',
       message: expect.stringContaining('could not save this draft for recovery'),
     })
-    storage.failWrites = false
+    storage.setItem = savedSetItem
     expect(store.write(createCodeDraft(identity, 'edit', revision, 'text/plain'))).toEqual({ kind: 'stored' })
-    storage.failReads = true
+    storage.getItem = () => {
+      throw new Error('storage read failed')
+    }
     expect(store.read(identity)).toEqual({
       kind: 'unavailable',
       message: expect.stringContaining('could not inspect the recovery draft'),

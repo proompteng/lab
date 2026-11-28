@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Base,
-    Decimal,
-    Mapping,
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Mapping, cast
+from unittest import TestCase
+from unittest.mock import patch
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.models import Base, StrategyRuntimeLedgerBucket
+from scripts import import_hypothesis_runtime_windows as runtime_import_cli
+from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_RUNTIME_LEDGER,
-    RuntimeWindowImportTestCaseBase,
-    StaticPool,
-    StrategyRuntimeLedgerBucket,
-    _SourceLedgerConnection,
-    _SourceLedgerCursor,
-    _complete_runtime_ledger_bucket,
     _first_bool,
     _runtime_ledger_bucket_profit_proof_present,
     _runtime_ledger_tca_rows_from_durable_buckets,
@@ -20,16 +23,16 @@ from tests.runtime_window_import.runtime_window_import_base import (
     _source_decision_rows_profit_proof_eligible,
     _source_row_matches_lineage,
     _source_runtime_ledger_payload_from_row,
-    cast,
-    create_engine,
-    datetime,
-    patch,
-    sessionmaker,
-    timezone,
+)
+from tests.runtime_window_import.ledger_fixtures import march_6_market_hour
+from tests.runtime_window_import.runtime_window_import_support import (
+    _complete_runtime_ledger_bucket,
+    _SourceLedgerConnection,
+    _SourceLedgerCursor,
 )
 
 
-class TestRuntimeWindowImportSourceDecisions(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportSourceDecisions(TestCase):
     def test_runtime_ledger_profit_proof_rejects_modeled_cost_basis(
         self,
     ) -> None:
@@ -270,7 +273,7 @@ class TestRuntimeWindowImportSourceDecisions(RuntimeWindowImportTestCaseBase):
                     candidate_id="H-TSMOM-LIQ-01",
                     hypothesis_id="H-TSMOM-LIQ-01",
                     observed_stage="paper",
-                    bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    bucket_started_at=march_6_market_hour(30),
                     bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     account_label="TORGHUT_SIM",
                     runtime_strategy_name="intraday-tsmom-profit-v3",
@@ -360,7 +363,7 @@ class TestRuntimeWindowImportSourceDecisions(RuntimeWindowImportTestCaseBase):
                     candidate_id="other-candidate",
                     hypothesis_id="H-TSMOM-LIQ-01",
                     observed_stage="paper",
-                    bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    bucket_started_at=march_6_market_hour(30),
                     bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     runtime_strategy_name="intraday-tsmom-profit-v3",
                     fill_count=2,
@@ -386,7 +389,7 @@ class TestRuntimeWindowImportSourceDecisions(RuntimeWindowImportTestCaseBase):
                 observed_stage="paper",
                 strategy_names=["intraday-tsmom-profit-v3"],
                 account_label="TORGHUT_SIM",
-                window_start=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                window_start=march_6_market_hour(30),
                 window_end=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
             )
 
@@ -427,7 +430,7 @@ class TestRuntimeWindowImportSourceDecisions(RuntimeWindowImportTestCaseBase):
                     candidate_id="H-TSMOM-LIQ-01",
                     hypothesis_id="H-TSMOM-LIQ-01",
                     observed_stage="paper",
-                    bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    bucket_started_at=march_6_market_hour(30),
                     bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     account_label="TORGHUT_SIM",
                     runtime_strategy_name="intraday-tsmom-profit-v3",
@@ -470,7 +473,7 @@ class TestRuntimeWindowImportSourceDecisions(RuntimeWindowImportTestCaseBase):
                 observed_stage="paper",
                 strategy_names=["intraday-tsmom-profit-v3"],
                 account_label="TORGHUT_SIM",
-                window_start=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                window_start=march_6_market_hour(30),
                 window_end=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
             )
 
@@ -499,12 +502,11 @@ class TestRuntimeWindowImportSourceDecisions(RuntimeWindowImportTestCaseBase):
     ) -> None:
         cursor = _SourceLedgerCursor()
         connection = _SourceLedgerConnection(cursor)
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
 
-        with patch(
-            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
-            return_value=connection,
+        with patch.object(
+            runtime_import_cli.psycopg, "connect", return_value=connection
         ):
             rows, metadata = _runtime_ledger_tca_rows_from_source_dsn(
                 dsn="postgresql://source",
@@ -641,12 +643,11 @@ class TestRuntimeWindowImportSourceDecisions(RuntimeWindowImportTestCaseBase):
         row[-1] = payload
         cursor._results[0] = [tuple(row)]
         connection = _SourceLedgerConnection(cursor)
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
 
-        with patch(
-            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
-            return_value=connection,
+        with patch.object(
+            runtime_import_cli.psycopg, "connect", return_value=connection
         ):
             rows, metadata = _runtime_ledger_tca_rows_from_source_dsn(
                 dsn="postgresql://source",

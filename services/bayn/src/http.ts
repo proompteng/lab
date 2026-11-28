@@ -681,6 +681,7 @@ const executionSessionReadiness = (
     firstObservationAt: Number.isFinite(firstObservationMs) ? new Date(firstObservationMs).toISOString() : null,
     decisionDeadlineAt: Number.isFinite(deadlineMs) ? new Date(deadlineMs).toISOString() : null,
   })
+  if (state.broker?.observationFailure === 'CASH_FEES_PENDING') return result(ExecutionSessionCondition.Blocked)
   if (state.capitalActivation?._tag === 'Realized' && state.cycle.authority?.kill === KillState.Active) {
     return result(ExecutionSessionCondition.RecoveryOnly)
   }

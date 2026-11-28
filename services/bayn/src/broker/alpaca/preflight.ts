@@ -38,6 +38,9 @@ export type BrokerAccountPreflightFailure =
       readonly _tag: 'BrokerTradingBlocked'
     }
   | {
+      readonly _tag: 'BrokerTransfersBlocked'
+    }
+  | {
       readonly _tag: 'BrokerTradingSuspendedByUser'
     }
   | {
@@ -90,6 +93,7 @@ export const verifyBrokerAccountPermissions = (
 ): Result.Result<VerifiedBrokerAccountPermissions, BrokerAccountPreflightFailure> => {
   const readPermissions = verifyBrokerReadPermissions(account)
   if (Result.isFailure(readPermissions)) return Result.fail(readPermissions.failure)
+  if (account.transfersBlocked === true) return Result.fail({ _tag: 'BrokerTransfersBlocked' })
   if (!configuration.fractionalTrading) return Result.fail({ _tag: 'BrokerFractionalTradingDisabled' })
   return Result.succeed({
     ...readPermissions.success,

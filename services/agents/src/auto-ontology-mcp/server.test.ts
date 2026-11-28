@@ -18,7 +18,11 @@ const fixture = (overrides: Partial<Parameters<typeof createAutoOntologyUpstream
     const method = init?.method ?? 'GET'
     const headers = new Headers(init?.headers)
     expect(url.origin).toBe(apiUrl.origin)
-    expect(headers.get('x-api-key')).toBe(apiToken)
+    if (url.pathname === '/api/health') {
+      expect(headers.has('x-api-key')).toBe(false)
+    } else {
+      expect(headers.get('x-api-key')).toBe(apiToken)
+    }
     expect(headers.has('authorization')).toBe(false)
     expect(init?.redirect).toBe('error')
     calls.push({
@@ -26,6 +30,7 @@ const fixture = (overrides: Partial<Parameters<typeof createAutoOntologyUpstream
       path: url.pathname + url.search,
       ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
     })
+    if (url.pathname === '/api/health') return Response.json({ status: 'ok', postgres: { status: 'ok' } })
     if (url.pathname === '/api/semantic-compilation/status') return Response.json({ calculated: true })
     if (url.pathname === '/api/datasources/dbs') return Response.json({ data: [{ id: 'db-1', name: 'warehouse' }] })
     if (url.pathname === '/api/chat/completions') {
@@ -203,13 +208,22 @@ describe('Auto Ontology Streamable HTTP gateway', () => {
     expect(await response.json()).toEqual({ error: 'identity_unavailable' })
   })
 
-  it('distinguishes upstream access failures from an available but uncompiled catalog', async () => {
+  it('probes unauthenticated upstream /api/health for /readyz and reports uncompiled catalog via check_readiness', async () => {
     const { handler, fetch, upstream } = fixture()
-    fetch.mockImplementation(async (input) =>
-      Response.json(String(input).endsWith('/status') ? { calculated: false } : { data: [] }),
-    )
+    fetch.mockImplementation(async (input, init) => {
+      const url = new URL(String(input))
+      const headers = new Headers(init?.headers)
+      if (url.pathname === '/api/health') {
+        expect(headers.has('x-api-key')).toBe(false)
+        return Response.json({ status: 'ok', postgres: { status: 'ok' } })
+      }
+      expect(headers.get('x-api-key')).toBe(apiToken)
+      return Response.json(url.pathname.endsWith('/status') ? { calculated: false } : { data: [] })
+    })
     expect(await upstream.checkReadiness()).toMatchObject({ ready: false, catalog_present: false })
     expect((await handler(new Request(new URL('/readyz', gatewayUrl)))).status).toBe(200)
+    fetch.mockImplementation(async () => Response.json({ status: 'degraded' }))
+    expect((await handler(new Request(new URL('/readyz', gatewayUrl)))).status).toBe(503)
     fetch.mockImplementation(async () => new Response('private upstream response', { status: 401 }))
     expect((await handler(new Request(new URL('/readyz', gatewayUrl)))).status).toBe(503)
     expect((await handler(new Request(new URL('/healthz', gatewayUrl)))).status).toBe(200)

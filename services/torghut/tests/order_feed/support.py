@@ -1,91 +1,21 @@
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from types import SimpleNamespace
-
-from sqlalchemy import create_engine, func, select
-from sqlalchemy.orm import Session
 from unittest import TestCase
-from unittest.mock import patch
 
 from kafka import TopicPartition
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import (
     Base,
     Execution,
     ExecutionOrderEvent,
-    ExecutionTCAMetric,
-    OrderFeedConsumerCursor,
-    OrderFeedSourceWindow,
-    RejectedSignalOutcomeEvent,
     Strategy,
-    TigerBeetleReconciliationRun,
-    TigerBeetleTransferRef,
     TradeDecision,
-)
-from app.trading.tigerbeetle_client import FakeTigerBeetleClient
-from app.trading.tigerbeetle_journal import (
-    SOURCE_TYPE_EXECUTION,
-    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-)
-from app.trading.tigerbeetle_ledger_model import (
-    TRANSFER_KIND_EXECUTION_FILL,
-    TRANSFER_KIND_FILL_POST,
-)
-from app.trading.order_feed.classify_source_window_drop import (
-    dedupe,
-    mark_order_event_account_alias,
-    order_event_account_label_alias,
-    order_event_client_identity,
-    order_event_linkage_blockers,
-    raw_event_with_linkage_blockers,
-)
-from app.trading.order_feed.normalize_order_feed_record import (
-    fill_delta_fields,
-    order_identity_matches_account_scope,
-)
-from app.trading.order_feed.resolve_execution_linkage_for_identity import (
-    create_historical_source_window_for_event,
-    cross_dsn_linkage_counts_for_source_window,
-    ensure_aware_utc,
-    event_timestamp_for_source_window,
-    execution_backfill_event_type,
-    find_existing_source_window_for_event,
-    isoformat_datetime,
-    order_event_has_failed_unhandled_source_window,
-    refresh_source_window_linkage_counts,
-    resolve_execution_linkage_for_identity,
-    resolve_trade_decision_linkage_for_identity,
-    retry_failed_duplicate_order_event_application,
-    stable_execution_source_offset,
-)
-from app.trading.order_feed.shared_context import (
-    EXECUTION_RAW_ORDER_SOURCE_PARTITION,
-    EXECUTION_RAW_ORDER_SOURCE_TOPIC,
-    ExecutionLinkageResolution,
-    logger,
-)
-from app.trading.order_feed import (
-    EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
-    HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
-    ORDER_FEED_SOURCE_REVISION,
-    NormalizedOrderEvent,
-    OrderFeedIngestor,
-    apply_order_event_to_execution,
-    backfill_order_feed_events_from_executions,
-    backfill_order_feed_source_windows,
-    latest_order_event_for_execution,
-    link_order_events_to_execution,
-    merge_execution_raw_order_update,
-    normalize_order_feed_record,
-    persist_order_event,
-    repair_order_feed_execution_links,
-    repair_order_feed_execution_states,
-    repair_order_feed_fill_deltas,
 )
 
 
@@ -162,6 +92,20 @@ class FakeManualConsumerWithoutEndSeek(FakeConsumer):
 
     def seek(self, partition: TopicPartition, offset: int) -> None:
         self.seek_calls.append((partition, offset))
+
+
+def filled_order_event(**overrides: object) -> ExecutionOrderEvent:
+    defaults = {
+        "source_topic": "torghut.trade-updates.v1",
+        "source_partition": 0,
+        "alpaca_account_label": "paper",
+        "event_ts": datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+        "symbol": "AAPL",
+        "event_type": "fill",
+        "status": "filled",
+        "raw_event": {"event": "fill"},
+    }
+    return ExecutionOrderEvent(**(defaults | overrides))
 
 
 class OrderFeedTestCase(TestCase):
@@ -264,84 +208,3 @@ class OrderFeedTestCase(TestCase):
         session.commit()
         session.refresh(execution)
         return execution
-
-
-__all__ = [
-    "Base",
-    "Decimal",
-    "EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION",
-    "Execution",
-    "ExecutionOrderEvent",
-    "ExecutionTCAMetric",
-    "FakeConsumer",
-    "FakeManualConsumer",
-    "FakeManualConsumerWithoutEndSeek",
-    "FakeRecord",
-    "FakeTigerBeetleClient",
-    "HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION",
-    "NormalizedOrderEvent",
-    "ORDER_FEED_SOURCE_REVISION",
-    "OrderFeedConsumerCursor",
-    "OrderFeedIngestor",
-    "OrderFeedSourceWindow",
-    "OrderFeedTestCase",
-    "RejectedSignalOutcomeEvent",
-    "SOURCE_TYPE_EXECUTION",
-    "SOURCE_TYPE_EXECUTION_ORDER_EVENT",
-    "Session",
-    "SimpleNamespace",
-    "Strategy",
-    "TRANSFER_KIND_EXECUTION_FILL",
-    "TRANSFER_KIND_FILL_POST",
-    "TestCase",
-    "TigerBeetleReconciliationRun",
-    "TigerBeetleTransferRef",
-    "TopicPartition",
-    "TradeDecision",
-    "apply_order_event_to_execution",
-    "backfill_order_feed_events_from_executions",
-    "backfill_order_feed_source_windows",
-    "create_engine",
-    "create_historical_source_window_for_event",
-    "cross_dsn_linkage_counts_for_source_window",
-    "dataclass",
-    "dedupe",
-    "datetime",
-    "ensure_aware_utc",
-    "event_timestamp_for_source_window",
-    "execution_backfill_event_type",
-    "ExecutionLinkageResolution",
-    "EXECUTION_RAW_ORDER_SOURCE_PARTITION",
-    "EXECUTION_RAW_ORDER_SOURCE_TOPIC",
-    "fill_delta_fields",
-    "find_existing_source_window_for_event",
-    "func",
-    "isoformat_datetime",
-    "latest_order_event_for_execution",
-    "link_order_events_to_execution",
-    "logger",
-    "mark_order_event_account_alias",
-    "merge_execution_raw_order_update",
-    "normalize_order_feed_record",
-    "order_event_account_label_alias",
-    "order_event_client_identity",
-    "order_event_has_failed_unhandled_source_window",
-    "order_event_linkage_blockers",
-    "order_identity_matches_account_scope",
-    "patch",
-    "persist_order_event",
-    "raw_event_with_linkage_blockers",
-    "refresh_source_window_linkage_counts",
-    "repair_order_feed_execution_links",
-    "repair_order_feed_execution_states",
-    "repair_order_feed_fill_deltas",
-    "resolve_execution_linkage_for_identity",
-    "resolve_trade_decision_linkage_for_identity",
-    "retry_failed_duplicate_order_event_application",
-    "select",
-    "settings",
-    "stable_execution_source_offset",
-    "timedelta",
-    "timezone",
-    "uuid",
-]

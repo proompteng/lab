@@ -1,4 +1,4 @@
-// Exact public.* relations granted SELECT to bayn_audit_ro by migrations 0226 and 0227,
+// Exact public.* relations granted SELECT to bayn_audit_ro by migrations 0226, 0227 and 0230,
 // verified against PostgreSQL pg_class privileges in audit-reader-grants.integration.test.ts.
 export const auditReaderGrantedRelnames = [
   'account_snapshots',
@@ -16,6 +16,8 @@ export const auditReaderGrantedRelnames = [
   'broker_inventory_debits',
   'broker_observations',
   'execution_controller_observations',
+  'execution_fill_slippage_daily',
+  'execution_order_churn_daily',
   'fills',
   'intents',
   'intraday_alpha_baseline_preparations',

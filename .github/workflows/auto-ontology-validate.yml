@@ -9,8 +9,11 @@ on:
       - 'packages/scripts/src/agents/validate-ontology-bundles.ts'
       - 'packages/scripts/src/agents/ontology-*.ts'
       - 'packages/scripts/src/agents/__tests__/validate-ontology-bundles.test.ts'
-      - 'packages/scripts/package.json'
+      - '**/package.json'
       - 'bun.lock'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
       - '.oxfmtrc.json'
       - '.github/workflows/auto-ontology-validate.yml'
 
@@ -18,7 +21,25 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).ontology }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/auto-ontology-validate.yml
+          workspaces: |
+            ontology: ['packages/scripts']
+
   validate:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     name: Validate knowledge bundles
     runs-on: ubuntu-latest
     timeout-minutes: 2

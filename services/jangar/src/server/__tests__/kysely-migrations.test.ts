@@ -1,8 +1,11 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } from 'kysely'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { Database } from '../db'
 import { __test__ } from '../kysely-migrations'
+import { up as grantAuditReader } from '../migrations/20261128_jangar_audit_reader_grants'
 
 describe('migration registration', () => {
   it('keeps the migration provider registry in lockstep with migration files', () => {
@@ -162,6 +165,68 @@ describe('migration registration', () => {
     expect(normalized).toContain("check (jsonb_typeof(metadata) = 'object')")
     expect(normalized).not.toContain('backup')
     expect(normalized).not.toContain('create table')
+  })
+})
+
+describe('Jangar audit reader migration', () => {
+  it('replays a guarded, replaceable projection with only the approved read grants', async () => {
+    const statements: string[] = []
+    const db = new Kysely<Database>({
+      dialect: {
+        createDriver: () => new DummyDriver(),
+        createAdapter: () => new PostgresAdapter(),
+        createIntrospector: (db) => new PostgresIntrospector(db),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+      log: ({ level, query }) => {
+        if (level === 'query')
+          statements.push(
+            query.sql
+              .replace(/^\s*--.*$/gm, '')
+              .replace(/\s+/g, ' ')
+              .trim(),
+          )
+      },
+    })
+    try {
+      await grantAuditReader(db)
+      await grantAuditReader(db)
+    } finally {
+      await db.destroy()
+    }
+
+    const views = [
+      'jangar_audit.atlas_repositories',
+      'jangar_audit.atlas_ingestions',
+      'jangar_audit.atlas_file_versions',
+      'jangar_audit.atlas_chunk_coverage',
+      'jangar_audit.atlas_github_events',
+      'jangar_audit.atlas_symbols',
+      'jangar_audit.atlas_file_edges',
+    ]
+    const [statement] = statements
+    expect(statements).toEqual([statement, statement])
+    expect(statement).toMatch(
+      /^DO \$migration\$ BEGIN IF NOT EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'jangar_audit_ro'\) THEN/,
+    )
+    expect(statement).toContain('rolname = current_user AND (rolcreaterole OR rolsuper)')
+    expect(statement).toContain('CREATE ROLE jangar_audit_ro NOLOGIN NOINHERIT;')
+    expect(statement).toContain('CREATE SCHEMA IF NOT EXISTS jangar_audit;')
+    expect(statement?.match(/CREATE OR REPLACE VIEW \S+ AS/g)).toEqual(
+      views.map((view) => `CREATE OR REPLACE VIEW ${view} AS`),
+    )
+    expect(statement).toContain('REVOKE ALL PRIVILEGES ON SCHEMA')
+    expect(statement).toContain('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA')
+    expect(statement).toContain('REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA')
+    expect(statement).toContain('REVOKE CREATE ON SCHEMA public')
+    expect(statement).toContain('REVOKE CREATE, TEMPORARY ON DATABASE %I FROM PUBLIC, jangar_audit_ro')
+    expect(statement?.match(/\bGRANT [^;]+/g)).toEqual([
+      'GRANT USAGE ON SCHEMA jangar_audit TO jangar_audit_ro',
+      `GRANT SELECT ON TABLE ${views.join(', ')} TO jangar_audit_ro`,
+    ])
+    expect(statement).not.toMatch(
+      /\b(content|embedding|payload|sender_login|signature|error|workflow_id|delivery_id|installation_id|path)\b|SELECT \*|(?:FROM|JOIN) public\./,
+    )
   })
 })
 

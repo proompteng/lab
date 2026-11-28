@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-from app.trading.models import ExecutionRequest
+from datetime import datetime, timezone
+from decimal import Decimal
 
+from app.config import settings
+from app.models import Execution
+from app.trading.execution import OrderExecutor
+from app.trading.models import ExecutionRequest, StrategyDecision
 from tests.order_idempotency.support import (
-    Decimal,
-    Execution,
     FakeAlpacaClient,
-    OrderExecutor,
     PositionLookupNoneClient,
-    Strategy,
-    StrategyDecision,
     _TestOrderIdempotencyBase,
-    datetime,
-    settings,
-    timezone,
 )
+from tests.trading_fixtures import make_strategy
 
 
 class TestDurableInventoryFallback(_TestOrderIdempotencyBase):
@@ -96,13 +94,9 @@ class TestDurableInventoryFallback(_TestOrderIdempotencyBase):
                     raw_order={},
                 )
             )
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()

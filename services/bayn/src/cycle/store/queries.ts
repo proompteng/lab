@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../../strategy/runtime-decision'
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 import { postgresWallClock, type DatabaseClock } from '../../db/clock'
@@ -450,7 +451,7 @@ export const makeCycleQueries = (
     const momentum =
       document.mode === legacyExecutionAuthorityToken &&
       (document.strategyDecision?.schemaVersion === 'bayn.repeated-momentum-target.v1' ||
-        document.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2')
+        isIntradayAlphaTarget(document.strategyDecision))
         ? document.strategyDecision.evidence.observation
         : undefined
     const momentumEvidence =

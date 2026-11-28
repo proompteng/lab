@@ -2,7 +2,12 @@ import { Effect, Result } from 'effect'
 import { entryAblationBehaviorHash, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { jevBehaviorHash } from '../jev/protocol'
 import { makeRepeatedMomentumPolicy, repeatedMomentumBehaviorHash } from '../strategy/repeated-momentum/policy'
-import { intradayAlphaBehaviorHash, makeIntradayAlphaPolicy } from '../strategy/intraday-alpha/policy'
+import {
+  intradayAlphaBehaviorHash,
+  intradayAlphaV2BehaviorHash,
+  makeIntradayAlphaPolicy,
+  makePureEtfPolicy,
+} from '../strategy/intraday-alpha/policy'
 import type { AutonomousCycleDriverStartup } from '../app'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { AuthorityGenerationStore } from '../db/execution-store/contract'
@@ -52,16 +57,19 @@ export const prepareObserveStartup = (
   const ablation = parameterSchemaVersion === 'bayn.entry-ablation-policy.v1'
   const momentum = parameterSchemaVersion === 'bayn.repeated-momentum-policy.v1'
   const alpha = parameterSchemaVersion === 'bayn.intraday-alpha-policy.v2'
+  const pureEtf = parameterSchemaVersion === 'bayn.intraday-alpha-policy.v3'
   if (
     definition.name !== input.strategy.provenance.strategy.name ||
     input.strategy.provenance.strategy.behaviorHash !==
-      (alpha
+      (pureEtf
         ? intradayAlphaBehaviorHash
-        : momentum
-          ? repeatedMomentumBehaviorHash
-          : ablation
-            ? entryAblationBehaviorHash
-            : jevBehaviorHash) ||
+        : alpha
+          ? intradayAlphaV2BehaviorHash
+          : momentum
+            ? repeatedMomentumBehaviorHash
+            : ablation
+              ? entryAblationBehaviorHash
+              : jevBehaviorHash) ||
     parameterSchemaVersion !== input.strategy.provenance.strategy.parameterSchemaVersion ||
     parameterHash.success !== input.strategy.provenance.strategy.parameterHash
   ) {
@@ -76,13 +84,15 @@ export const prepareObserveStartup = (
   const sourceProtocolHash = loadSharedJevProtocol().pipe(
     Result.flatMap((protocol) =>
       canonicalHashV1Result(
-        alpha
-          ? makeIntradayAlphaPolicy(protocol)
-          : momentum
-            ? makeRepeatedMomentumPolicy(protocol)
-            : ablation
-              ? makeEntryAblationPolicy(protocol)
-              : protocol,
+        pureEtf
+          ? makePureEtfPolicy(protocol)
+          : alpha
+            ? makeIntradayAlphaPolicy(protocol)
+            : momentum
+              ? makeRepeatedMomentumPolicy(protocol)
+              : ablation
+                ? makeEntryAblationPolicy(protocol)
+                : protocol,
       ),
     ),
   )

@@ -5,6 +5,14 @@
       "name": "Attic"
     },
     {
+      "description": "The read-only CI metadata projection in the agents database. ci_audit.workflow_runs has the latest collected completed attempt per run_id; ci_audit.job_runs retains individual job_id values across attempts and joins to workflow_runs by run_id.",
+      "name": "CI Audit"
+    },
+    {
+      "description": "A group of recent job failures by workflow_name, job_name, and failure_category in ci_audit.failure_clusters. occurrences_24h is measured at synced_at; sample_run_id points to the latest observed failure in the group.",
+      "name": "CI Failure Cluster"
+    },
+    {
       "description": "GitHub's merge queue, which validates queued changes against the target branch before merging them.",
       "name": "MergeQueue"
     },
@@ -37,8 +45,26 @@
       "name": "Warehouse"
     }
   ],
-  "customAnalyses": [],
-  "dataSource": "ci-release",
+  "customAnalyses": [
+    {
+      "description": "Shows the latest collected completed attempt for recent main workflow runs. A workflow conclusion does not prove image publication, Kargo promotion, or deployment.",
+      "name": "CI release: Recent main workflow runs",
+      "sql": "SELECT run_id, workflow_name, head_sha, event, conclusion, updated_at, duration_seconds, synced_at\nFROM ci_audit.workflow_runs\nWHERE head_branch = 'main' AND status = 'completed' AND updated_at >= now() - interval '7 days'\nORDER BY updated_at DESC, run_id DESC\nLIMIT 100"
+    },
+    {
+      "description": "Shows recent classified job failures with the parent run's branch and revision. A job's duration is runner execution time when available, not queue time.",
+      "name": "CI release: Recent failed jobs",
+      "sql": "SELECT j.job_id, j.run_id, j.workflow_name, j.job_name, j.runner_name, r.head_branch, r.head_sha,\n  j.conclusion, j.failure_category, j.completed_at, j.duration_seconds, j.synced_at\nFROM ci_audit.job_runs AS j JOIN ci_audit.workflow_runs AS r ON r.run_id = j.run_id\nWHERE j.failure_category IS NOT NULL AND j.completed_at >= now() - interval '7 days'\nORDER BY j.completed_at DESC, j.job_id DESC\nLIMIT 100"
+    },
+    {
+      "description": "Ranks observed job failure clusters in the 24-hour window ending at synced_at. Hides snapshots more than 15 minutes old; empty results are not proof that nothing failed.",
+      "name": "CI release: Top 24-hour failure clusters",
+      "sql": "SELECT workflow_name, job_name, failure_category, occurrences_24h, sample_run_id, last_seen_at, synced_at\nFROM ci_audit.failure_clusters\nWHERE synced_at >= now() - interval '15 minutes'\nORDER BY occurrences_24h DESC, last_seen_at DESC, cluster_key\nLIMIT 50"
+    }
+  ],
+  "dataSource": "agents-db-next",
+  "database": "agents",
+  "ruleTag": "ci-release canonical rule",
   "rules": [
     {
       "description": "For changes limited to CI orchestration, publishing, caching, timing reports, or Kargo controls, run workflow and script validation instead of rebuilding service images or starting unrelated test matrices. Rebuild the ARC self-hosted runner image when its embedded CI tools change.",
@@ -95,6 +121,16 @@
         "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
         "verificationNote": "AGENTS.md, Make the responsible change: useful error context without secrets or personal data. docs/release-automation.md, Normal production path: failing-phase evidence."
       }
+    },
+    {
+      "description": "Use ci_audit.workflow_runs.conclusion for the completed workflow outcome, not a job's outcome. Join ci_audit.job_runs to ci_audit.workflow_runs on run_id for branch and revision; do not treat matching jobs as part of the latest attempt.",
+      "name": "CI release: Workflow and job outcomes",
+      "searchTerm": "CI workflow outcome and job failures"
+    },
+    {
+      "description": "Read ci_audit.failure_clusters.occurrences_24h as of synced_at, not as a lifetime count or proof of release health. Use sample_run_id and the job's failure_category to investigate the underlying ci_audit.job_runs evidence.",
+      "name": "CI release: Failure cluster freshness",
+      "searchTerm": "CI recurring job failures in the last 24 hours"
     }
   ],
   "version": 1

@@ -219,6 +219,7 @@ export enum CycleOperationsReason {
   ReconciliationDiscrepancy = 'RECONCILIATION_DISCREPANCY',
   ReconciliationPredatesMutation = 'RECONCILIATION_PREDATES_MUTATION',
   ReconciliationStale = 'RECONCILIATION_STALE',
+  CashFeesPending = 'CASH_FEES_PENDING',
   ResearchCapitalBootstrapRecovered = 'RESEARCH_CAPITAL_BOOTSTRAP_RECOVERED',
 }
 
@@ -387,6 +388,7 @@ interface CycleOperationsDecisionFacts {
   readonly reconciliationDiscrepancy: boolean
   readonly reconciliationPredatesMutation: boolean
   readonly reconciliationStale: boolean
+  readonly awaitingCashFees: boolean
 }
 
 const decideCycleOperationsCondition = (
@@ -423,10 +425,16 @@ const decideCycleOperationsCondition = (
   if (facts.reconciliationPredatesMutation) {
     return [CycleOperationsCondition.Failed, CycleOperationsReason.ReconciliationPredatesMutation]
   }
+  const lifecycle = lifecycleCondition(projection, nowMs, cycleStallThresholdMs, maximumAuthority)
+  if (facts.awaitingCashFees) {
+    return lifecycle[0] === CycleOperationsCondition.Stalled || lifecycle[0] === CycleOperationsCondition.Failed
+      ? lifecycle
+      : [CycleOperationsCondition.Waiting, CycleOperationsReason.CashFeesPending]
+  }
   if (facts.reconciliationStale) {
     return [CycleOperationsCondition.Failed, CycleOperationsReason.ReconciliationStale]
   }
-  return lifecycleCondition(projection, nowMs, cycleStallThresholdMs, maximumAuthority)
+  return lifecycle
 }
 
 const deriveCycleOperationsStatusWithCheckedAt = (
@@ -435,6 +443,7 @@ const deriveCycleOperationsStatusWithCheckedAt = (
   maximumAuthority: Authority,
   thresholds: CycleOperationsThresholds,
   checkedAt: string,
+  awaitingCashFees: boolean,
 ): CycleOperationsStatus => {
   const attemptAgeMs = ageAt(projection.current?.updatedAt ?? null, nowMs)
   const oldestUnresolvedMutationAgeMs = ageAt(projection.mutations.oldestUnresolvedAt, nowMs)
@@ -453,7 +462,11 @@ const deriveCycleOperationsStatusWithCheckedAt = (
     reconciliationAgeMs !== null &&
     reconciliationAgeMs >= thresholds.reconciliationStaleThresholdMs
   const reconciliationBlocked =
-    reconciliationMissing || reconciliationDiscrepancy || reconciliationPredatesMutation || reconciliationStale
+    awaitingCashFees ||
+    reconciliationMissing ||
+    reconciliationDiscrepancy ||
+    reconciliationPredatesMutation ||
+    reconciliationStale
   const unknownMutationStale =
     projection.mutations.unresolvedCount > 0 &&
     oldestUnresolvedMutationAgeMs !== null &&
@@ -471,6 +484,7 @@ const deriveCycleOperationsStatusWithCheckedAt = (
       reconciliationDiscrepancy,
       reconciliationPredatesMutation,
       reconciliationStale,
+      awaitingCashFees,
     },
   )
 
@@ -502,11 +516,20 @@ export const deriveCycleOperationsStatusResult = (
   nowMs: number,
   maximumAuthority: Authority,
   thresholds: CycleOperationsThresholds,
+  awaitingCashFees = false,
 ): Result.Result<CycleOperationsStatus, CycleOperationsStatusFailure> =>
   Result.map(
     Result.mapError(
       utcInstantFromEpochMillisResult(nowMs),
       (cause): CycleOperationsStatusFailure => ({ _tag: 'CycleOperationsClockInvalid', nowMs, cause }),
     ),
-    (checkedAt) => deriveCycleOperationsStatusWithCheckedAt(projection, nowMs, maximumAuthority, thresholds, checkedAt),
+    (checkedAt) =>
+      deriveCycleOperationsStatusWithCheckedAt(
+        projection,
+        nowMs,
+        maximumAuthority,
+        thresholds,
+        checkedAt,
+        awaitingCashFees,
+      ),
   )

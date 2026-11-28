@@ -10,7 +10,7 @@ The [preregistered protocol](PROTOCOL.md) defines trade timing, sizing, costs an
 [development receipt](freeze.json) was [pushed before Holdout scoring](https://github.com/proompteng/lab/commit/e694f03d704e5a8fa787d740a838ac3cf94869b7).
 The subsequent formatter-only commit preserved the receipt's canonical JSON. A second score produced identical
 results except for that Git revision. Neither sleeve passed the Train gate, so highest-Train-Sharpe diagnostics were frozen; neither was replaced
-after seeing Validation or Holdout. [Results](results.json) include every variant, all splits and half-years,
+after seeing Validation or Holdout. [Results][archived-results] include every variant, all splits and half-years,
 the three costs, and the audit details. Wave 1B used a different tape and different fill rules; this study
 does not isolate a causal effect of switching from IEX to SIP.
 
@@ -80,7 +80,7 @@ for the combination. None passed a plateau in any split. At 10 bp in Holdout:
 
 ## Reproduce
 
-Run from an artifact-enabled checkout with the committed receipt. No archive or credentials are checked in.
+Run from the [archived checkout][study-revision] with authorized artifact access and the committed receipt. No archive or credentials are checked in.
 
 ```sh
 cli=services/bayn/tools/research-3yr-sip-62sym-rvol-orb-etf.ts
@@ -98,3 +98,6 @@ cmp "$evidence/results.json" "$scratch/results.json"
 In the JSON, `rows` and `loso.worst` follow `windowOrder` then `costOrder`; use `metricColumns`,
 `coverageColumns` and `losoColumns` to label values. `loso.bySymbol` supplies each omission for the frozen
 evaluations. `null` denotes unknown full-window results or undefined inference, not a zero.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-3yr-sip-62sym-rvol-orb-etf/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

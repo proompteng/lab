@@ -48,7 +48,7 @@ const stableStringify = (value: unknown): string => {
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`
 }
 
-export const normalizeStatusForCompare = (status: Record<string, unknown> | null | undefined) => {
+const normalizeStatusForCompare = (status: Record<string, unknown> | null | undefined) => {
   const record = asRecord(status) ?? {}
   const next: Record<string, unknown> = { ...record }
   delete next.updatedAt

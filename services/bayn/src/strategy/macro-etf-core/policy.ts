@@ -1,6 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../../hash'
+import { MacroRiskConfig, macroRiskRules } from '../macro-portfolio/risk'
 
 export class MacroEtfCoreEvidenceError extends Data.TaggedError('MacroEtfCoreEvidenceError')<{
   readonly message: string
@@ -138,5 +139,28 @@ export const decodeMacroEtfCorePolicy = (input: unknown) => {
   const policy = Object.freeze({ schema, profile, universe, parameters, settings: profiles[profile] })
   const hash = canonicalHashV1Result(policy)
   if (Result.isFailure(hash)) return evidenceFailure('Invalid canonical macro ETF policy', hash.failure)
+  return Result.succeed(Object.freeze({ ...policy, hash: hash.success }))
+}
+
+export const corePolicyV2 = 'bayn.macro-etf-core-policy.v2'
+const PolicyV2Schema = Schema.Struct({
+  schema: Schema.Literal(corePolicyV2),
+  profile: Schema.Enum(Profile).check(Schema.makeFilter((profile) => profile === Profile.F4)),
+  risk: MacroRiskConfig,
+})
+
+export const decodeMacroEtfCorePolicyV2 = (input: unknown) => {
+  const decoded = Schema.decodeUnknownResult(PolicyV2Schema, strict)(input)
+  if (Result.isFailure(decoded)) return evidenceFailure('Invalid F4 v2 policy', decoded.failure)
+  const policy = Object.freeze({
+    ...decoded.success,
+    risk: Object.freeze(decoded.success.risk),
+    universe,
+    parameters,
+    settings: profiles[Profile.F4],
+    governor: macroRiskRules,
+  })
+  const hash = canonicalHashV1Result(policy)
+  if (Result.isFailure(hash)) return evidenceFailure('Invalid canonical F4 v2 policy', hash.failure)
   return Result.succeed(Object.freeze({ ...policy, hash: hash.success }))
 }

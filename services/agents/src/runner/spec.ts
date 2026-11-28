@@ -55,10 +55,37 @@ export type CodexAppServerAdapterConfig = {
   systemPromptExpectedHash?: string
 }
 
+export type AgyCliEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export type AgyCliAdapterConfig = {
+  binaryPath?: string
+  cwd?: string
+  model?: string
+  effort?: AgyCliEffort
+  agent?: string
+  mode?: 'accept-edits' | 'auto' | 'plan'
+  printTimeout?: string
+  dangerouslySkipPermissions?: boolean
+  disableSlashCommands?: boolean
+  settings?: Record<string, unknown> | string
+  prompt?: string
+  baseInstructions?: string
+  systemPromptPath?: string
+  systemPromptExpectedHash?: string
+  adcAuth?: boolean
+  quotaProject?: string
+  location?: string
+  credentialsEnvVar?: string
+}
+
 export type AgentRunnerAdapter =
   | {
       type: 'codex-app-server'
       codex?: CodexAppServerAdapterConfig
+    }
+  | {
+      type: 'agy-cli'
+      agy?: AgyCliAdapterConfig
     }
   | {
       type: 'exec'
@@ -96,7 +123,12 @@ export type ResolvedCodexAppServerAdapter = {
   codex: CodexAppServerAdapterConfig
 }
 
-export type ResolvedAgentRunnerAdapter = ResolvedExecAdapter | ResolvedCodexAppServerAdapter
+export type ResolvedAgyCliAdapter = {
+  type: 'agy-cli'
+  agy: AgyCliAdapterConfig
+}
+
+export type ResolvedAgentRunnerAdapter = ResolvedExecAdapter | ResolvedCodexAppServerAdapter | ResolvedAgyCliAdapter
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -224,6 +256,13 @@ export const resolveAdapter = (rawSpec: AgentRunnerSpec): ResolvedAgentRunnerAda
     return {
       type: 'codex-app-server',
       codex: spec.adapter.codex ?? {},
+    }
+  }
+
+  if (spec.adapter?.type === 'agy-cli') {
+    return {
+      type: 'agy-cli',
+      agy: spec.adapter.agy ?? {},
     }
   }
 

@@ -7,7 +7,7 @@ import { repoRoot } from '../../shared/cli'
 import { resolvePublishedAgentsImages } from '../resolve-published-agents-images'
 
 describe('resolvePublishedAgentsImages', () => {
-  it('uses immutable Agents image pins from the GitOps values file', () => {
+  it('uses immutable deployment image pins without selecting the production runner', () => {
     const dir = mkdtempSync(join(tmpdir(), 'resolve-published-agents-images-'))
     const valuesPath = join(dir, 'values.yaml')
 
@@ -54,12 +54,6 @@ runner:
         digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
         ref: 'registry.example/lab/agents-controller:controller12@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
       },
-      runner: {
-        repository: 'registry.example/lab/agents-codex-runner',
-        tag: 'runner12',
-        digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-        ref: 'registry.example/lab/agents-codex-runner:runner12@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-      },
     })
 
     rmSync(dir, { recursive: true, force: true })
@@ -80,9 +74,6 @@ controlPlane: {}
 controllers:
   image:
     repository: registry.example/lab/agents-controller
-runner:
-  image:
-    repository: registry.example/lab/agents-codex-runner
 `,
       'utf8',
     )
@@ -100,12 +91,6 @@ runner:
         tag: 'abcdef12',
         digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         ref: 'registry.example/lab/agents-controller:abcdef12@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      },
-      runner: {
-        repository: 'registry.example/lab/agents-codex-runner',
-        tag: 'abcdef12',
-        digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        ref: 'registry.example/lab/agents-codex-runner:abcdef12@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       },
     })
 

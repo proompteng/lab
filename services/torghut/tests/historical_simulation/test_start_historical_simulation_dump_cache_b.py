@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
-    Any,
+import gzip
+import json
+from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import historical_simulation_startup
+from scripts.historical_simulation_startup import (
     KafkaRuntimeConfig,
-    Path,
     PostgresRuntimeConfig,
-    SimpleNamespace,
-    StartHistoricalSimulationTestCaseBase,
-    TemporaryDirectory,
     _build_resources,
     _dump_sha256_for_replay,
     _dump_topics,
@@ -17,15 +22,18 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _restore_ta_configuration,
     _restore_torghut_env,
     _verify_isolation_guards,
-    gzip,
-    json,
-    patch,
-    replace,
-    historical_simulation_startup,
+    replay_execution,
+    runtime_migrations,
+    topic_dumping,
+)
+from tests.historical_simulation.fixtures import (
+    make_kafka_config,
+    make_postgres_config,
+    simulation_resources,
 )
 
 
-class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseBase):
+class TestStartHistoricalSimulationDumpCacheB(TestCase):
     def test_materialize_deterministic_dump_bounds_sort_memory_and_uses_stage_tmpdir(
         self,
     ) -> None:
@@ -43,9 +51,9 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                 encoding="utf-8",
             )
 
-            captured: dict[str, Any] = {}
+            captured: dict[str, object] = {}
 
-            def _fake_run(*args: Any, **kwargs: Any) -> SimpleNamespace:
+            def _fake_run(*args: object, **kwargs: object) -> SimpleNamespace:
                 command = args[0]
                 stdout = kwargs["stdout"]
                 captured["command"] = command
@@ -87,23 +95,12 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
             )
 
     def test_dump_topics_cleans_compressed_sort_temps(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
+        resources = simulation_resources()
         resources = replace(
             resources,
             replay_topic_by_source_topic={"torghut.trades.v1": "torghut.sim.trades.v1"},
         )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        kafka_config = make_kafka_config()
 
         class _OffsetMeta:
             def __init__(self, offset: int) -> None:
@@ -201,8 +198,9 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                         )
                     },
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
+                patch.object(
+                    topic_dumping,
+                    "_consumer_for_dump",
                     return_value=_FakeConsumer(),
                 ),
             ):
@@ -225,23 +223,12 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
             self.assertEqual(lines[0]["source_timestamp_ms"], 1735693200100)
 
     def test_dump_topics_completes_when_last_record_reaches_stop_offset(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
+        resources = simulation_resources()
         resources = replace(
             resources,
             replay_topic_by_source_topic={"torghut.trades.v1": "torghut.sim.trades.v1"},
         )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        kafka_config = make_kafka_config()
 
         class _OffsetMeta:
             def __init__(self, offset: int) -> None:
@@ -334,8 +321,9 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                         )
                     },
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
+                patch.object(
+                    topic_dumping,
+                    "_consumer_for_dump",
                     return_value=fake_consumer,
                 ),
             ):
@@ -359,12 +347,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
     def test_dump_topics_completes_when_global_expected_record_count_is_reached(
         self,
     ) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
+        resources = simulation_resources()
         resources = replace(
             resources,
             replay_topic_by_source_topic={
@@ -372,13 +355,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                 "torghut.trades.v1": "torghut.sim.trades.v1",
             },
         )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        kafka_config = make_kafka_config()
 
         class _OffsetMeta:
             def __init__(self, offset: int) -> None:
@@ -481,8 +458,9 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                         )
                     },
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
+                patch.object(
+                    topic_dumping,
+                    "_consumer_for_dump",
                     return_value=fake_consumer,
                 ),
             ):
@@ -514,10 +492,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                 },
             },
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
+        postgres_config = make_postgres_config(
             migrations_command="uv run --frozen alembic upgrade heads",
         )
 
@@ -563,19 +538,8 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
         self.assertTrue(report["auxiliary_tables_isolated"])
 
     def test_replay_dump_ignores_stale_marker_when_dump_changes(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
 
         class _FakeProducer:
             def __init__(self) -> None:
@@ -625,8 +589,9 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
             )
 
             producer = _FakeProducer()
-            with patch(
-                "scripts.historical_simulation_startup.replay_execution._producer_for_replay",
+            with patch.object(
+                replay_execution,
+                "_producer_for_replay",
                 return_value=producer,
             ):
                 report = _replay_dump(
@@ -649,19 +614,8 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
             )
 
     def test_replay_dump_prefers_current_mapping_over_dump_replay_topic(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
 
         class _FakeProducer:
             def __init__(self) -> None:
@@ -699,8 +653,9 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
             dump_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
             producer = _FakeProducer()
-            with patch(
-                "scripts.historical_simulation_startup.replay_execution._producer_for_replay",
+            with patch.object(
+                replay_execution,
+                "_producer_for_replay",
                 return_value=producer,
             ):
                 report = _replay_dump(
@@ -767,12 +722,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
         self.assertEqual(captured.get("sasl_plain_password"), "runtime-secret")
 
     def test_restore_ta_configuration_removes_simulation_only_keys(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
+        resources = simulation_resources()
         state = {
             "ta_data": {
                 "TA_GROUP_ID": "torghut-ta-main",
@@ -788,13 +738,12 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
         }
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_json",
+            patch.object(
+                runtime_migrations,
+                "_kubectl_json",
                 return_value=current_configmap,
             ),
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_patch"
-            ) as patch_mock,
+            patch.object(runtime_migrations, "_kubectl_patch") as patch_mock,
         ):
             _restore_ta_configuration(resources, state)
 
@@ -814,12 +763,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
     def test_restore_torghut_env_reverts_runtime_overrides_and_trading_enabled(
         self,
     ) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
+        resources = simulation_resources()
         state = {
             "torghut_env_snapshot": {
                 "TRADING_ENABLED": {
@@ -856,12 +800,14 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
         captured_patch: dict[str, object] = {}
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_json",
+            patch.object(
+                runtime_migrations,
+                "_kubectl_json",
                 return_value=service_payload,
             ),
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_patch",
+            patch.object(
+                runtime_migrations,
+                "_kubectl_patch",
                 side_effect=lambda namespace, kind, name, patch: captured_patch.update(
                     {"namespace": namespace, "kind": kind, "name": name, "patch": patch}
                 ),

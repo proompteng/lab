@@ -1,25 +1,21 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
 from sqlalchemy.exc import SQLAlchemyError
 
-from tests.pipeline.trading_pipeline_base import (
-    Any,
-    Decimal,
-    Execution,
-    Mock,
-    SimpleNamespace,
-    Strategy,
-    StrategyDecision,
-    TradeDecision,
-    TradingPipeline,
-    TradingPipelineTestCaseBase,
+from app.models import Execution, TradeDecision
+from app.trading.models import StrategyDecision
+from app.trading.scheduler.pipeline import TradingPipeline
+from app.trading.scheduler.pipeline_helpers import (
     _apply_projected_position_decision,
     _project_open_orders_onto_positions,
-    datetime,
-    patch,
-    timedelta,
-    timezone,
 )
+from tests.pipeline.trading_pipeline_base import TradingPipelineTestCaseBase
+from tests.trading_fixtures import make_strategy
 
 
 class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
@@ -45,7 +41,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
         self.assertEqual(positions[0]["market_value"], "700")
 
     def test_project_open_orders_onto_positions_projects_buy_exposure(self) -> None:
-        positions: list[dict[str, Any]] = []
+        positions: list[dict[str, object]] = []
 
         projected = _project_open_orders_onto_positions(
             positions,
@@ -84,7 +80,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
     def test_project_open_orders_onto_positions_projects_sell_against_existing_long(
         self,
     ) -> None:
-        positions: list[dict[str, Any]] = [
+        positions: list[dict[str, object]] = [
             {"symbol": "AAPL", "qty": "5", "side": "long", "market_value": "500"}
         ]
 
@@ -122,7 +118,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
     def test_project_open_orders_onto_positions_preserves_projection_client_ids(
         self,
     ) -> None:
-        positions: list[dict[str, Any]] = [
+        positions: list[dict[str, object]] = [
             {"symbol": "MSFT", "qty": "1", "side": "long"},
             {
                 "symbol": "AAPL",
@@ -222,13 +218,11 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
     ) -> None:
         session_open = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="microbar-cross-sectional-pairs-v1",
                 description="runtime isolated paper proof",
-                enabled=True,
                 base_timeframe="1Sec",
                 universe_type="microbar_cross_sectional_pairs_v1",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -310,13 +304,11 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
         session_open = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
         prior_session_open = session_open - timedelta(days=1)
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="microbar-cross-sectional-pairs-v1",
                 description="runtime isolated paper proof",
-                enabled=True,
                 base_timeframe="1Sec",
                 universe_type="microbar_cross_sectional_pairs_v1",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -399,13 +391,11 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
         session_open = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
         prior_session_open = session_open - timedelta(days=1)
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="microbar-cross-sectional-pairs-v1",
                 description="runtime isolated paper proof",
-                enabled=True,
                 base_timeframe="1Sec",
                 universe_type="microbar_cross_sectional_pairs_v1",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -477,13 +467,11 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
     ) -> None:
         session_open = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="microbar-cross-sectional-pairs-v1",
                 description="runtime isolated paper proof",
-                enabled=True,
                 base_timeframe="1Sec",
                 universe_type="microbar_cross_sectional_pairs_v1",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -550,21 +538,17 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
         session_open = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
         with self.session_local() as session:
             strategies = [
-                Strategy(
+                make_strategy(
                     name="microbar-cross-sectional-pairs-v1",
                     description="runtime isolated paper proof",
-                    enabled=True,
                     base_timeframe="1Sec",
                     universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["AAPL"],
                 ),
-                Strategy(
+                make_strategy(
                     name="microbar-volume-continuation-long-top2-chip-v1",
                     description="runtime isolated paper proof",
-                    enabled=True,
                     base_timeframe="1Sec",
                     universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["AAPL"],
                 ),
             ]
             session.add_all(strategies)
