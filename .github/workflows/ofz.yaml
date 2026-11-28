@@ -139,6 +139,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Cache Keycloak 26.8.2 fixture archive
+        if: steps.selection.outputs.run != 'false'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ofz-keycloak/keycloak-26.8.2.tar.gz
+          key: keycloak-26.8.2-dd124787283918bc597628887168333465ee2a811a389e0003569e52be7e487f
       - name: Install identity fixture dependencies
         run: |
           set -euo pipefail
