@@ -81,27 +81,29 @@ const toRelativePath = (root: string, absolutePath: string) => relative(root, ab
 export const extractFileRoutePath = (source: string): string | null => FILE_ROUTE_PATTERN.exec(source)?.[2] ?? null
 
 export const extractRegisteredAgentsRouteFiles = (source: string): string[] => {
-  const declaration = 'const routeSources: RouteSourceSpec[] = ['
+  const declaration = 'const routeModules: AgentsServerRouteLoader[] = ['
   const start = source.indexOf(declaration)
-  if (start < 0) throw new Error('Agents control-plane routeSources declaration not found')
+  if (start < 0) throw new Error('Agents control-plane routeModules declaration not found')
 
   const end = source.indexOf('\n]\n\nconst assessAgentRunIngestion', start)
-  if (end < 0) throw new Error('Agents control-plane routeSources declaration is not terminated as expected')
+  if (end < 0) throw new Error('Agents control-plane routeModules declaration is not terminated as expected')
 
   const block = source.slice(start + declaration.length, end)
-  const files = [...block.matchAll(/\bfile:\s*(['"`])([^'"`]+)\1/g)].map((match) => match[2]!)
-  if (files.length === 0) throw new Error('Agents control-plane routeSources declaration has no route files')
+  const specifiers = [...block.matchAll(/\bimport\(\s*(['"`])([^'"`]+)\1\s*\)/g)].map((match) => match[2]!)
+  if (specifiers.length === 0) throw new Error('Agents control-plane routeModules declaration has no route files')
 
-  for (const file of files) {
-    if (!file.startsWith('src/routes/')) {
-      throw new Error(`Agents control-plane routeSources entry is outside src/routes: ${file}`)
+  const files = specifiers.map((specifier) => {
+    if (!specifier.startsWith('../routes/')) {
+      throw new Error(`Agents control-plane routeModules entry is outside src/routes: ${specifier}`)
     }
-  }
+    const routePath = `src/${specifier.slice('../'.length)}`
+    return /\.(?:ts|tsx)$/.test(routePath) ? routePath : `${routePath}.ts`
+  })
 
   const duplicates = files.filter((file, index) => files.indexOf(file) !== index)
   if (duplicates.length > 0) {
     throw new Error(
-      `Agents control-plane routeSources contains duplicate files: ${[...new Set(duplicates)].join(', ')}`,
+      `Agents control-plane routeModules contains duplicate files: ${[...new Set(duplicates)].join(', ')}`,
     )
   }
 
@@ -167,7 +169,7 @@ const routeBoundaries: RouteBoundary[] = [
   {
     name: 'Agents HTTP',
     root: resolve(agentsSrcRoot, 'routes'),
-    description: '`services/agents/src/server/control-plane.ts` routeSources under `services/agents/src/routes/**`',
+    description: '`services/agents/src/server/control-plane.ts` routeModules under `services/agents/src/routes/**`',
     include: () => true,
   },
   {
