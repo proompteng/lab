@@ -88,7 +88,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: tengri-images-${{ github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}
+  group: tengri-images-${{ github.event_name == 'push' && github.run_id || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -99,13 +99,37 @@ env:
   TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri
 
 jobs:
+  changes:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).desktop }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/tengri-images.yml
+          dependency-aware-push: 'true'
+          workspaces: |
+            desktop: ['', 'apps/landing', 'packages/backend', 'packages/design']
+
   validate:
     name: Validate Tengri and Nanoagent
-    if: github.event.action != 'edited' || github.event.changes.base
+    needs: changes
+    if: >-
+      !cancelled() && (github.event.action != 'edited' || github.event.changes.base) &&
+      (github.event_name == 'pull_request' || (needs.changes.result == 'success' && needs.changes.outputs.changed == 'true'))
     uses: ./.github/workflows/tengri-validation.yml
 
   build:
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: changes
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.changed == 'true'
     name: Build native (${{ format('{0}, {1}', matrix.image, matrix.architecture) }})
     timeout-minutes: 90
     strategy:
@@ -167,6 +191,9 @@ jobs:
     needs:
       - build
       - validate
+    concurrency:
+      group: tengri-publish-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: arc-amd64
     timeout-minutes: 45
     permissions:

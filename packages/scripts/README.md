@@ -70,7 +70,7 @@ syncs that branch; no script, SHA bump, deployment PR, release branch, Image Upd
 of the normal path. See
 [`docs/release-automation.md`](../../docs/release-automation.md) for enrollment, evidence, and recovery.
 
-## PR input selection
+## CI input selection
 
 `src/ci/affected-inputs.ts` runs through `.github/actions/affected-inputs` before expensive Bun service and image jobs.
 Each target declares its installed workspaces and source paths. The planner compares PR merge-base and head lockfiles,
@@ -86,10 +86,12 @@ rejects missing decisions or unsuccessful selected checks. Merge groups still ru
 The separate product image workflow starts on PRs only for candidate App dependency-closure inputs; source-only
 changes stay with the owning application validators.
 
-Push events retain path-based selection because Kargo requires groups of published images at one source revision.
-Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs
-and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
-use the root Bun lockfile.
+Main push workflows that watch the root lockfile use `dependency-aware-push` to compare the before and head revisions.
+GitHub's path filters still wake the planner for `bun.lock`, but unrelated changes do not schedule tests, native builds,
+or publishes. Co-built images use the same source paths and Bun workspace union even when only one member
+uses Bun: Landing drives the Ofz/Tengri/Nanoagent/Proompteng cohort, and Signal Publisher drives the Torghut cohort.
+Publication slots are shared only after selection so unrelated pushes cannot displace a pending publish.
+Bayn retains its comparison against the last verified cohort. Manual selection retains each workflow's existing controls.
 
 The Agents Kind smoke test resolves unaffected image defaults from one fetched `kargo/agents` commit, records that
 commit as `gitops_revision`, and reads its values without changing the source checkout. Kargo owns the promoted

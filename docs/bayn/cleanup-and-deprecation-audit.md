@@ -58,6 +58,10 @@ confirmation that any account is flat.
 
 ### Frozen evidence and tools
 
+This inventory describes the Wave 13F checkout. For subsequently pruned rejected studies, use the historical
+checkout linked in each study report to resolve archived source paths and full results. Active evidence and
+its source locks remain in place.
+
 The 40 committed `freeze.json` and `results.json` under [evidence](evidence/) were checked before editing tools.
 They and the crypto correction identify 73 protected tool paths, including aggregate source locks. No protected
 path, its tool imports, or evidence receipt changed in this wave.
