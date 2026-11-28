@@ -187,6 +187,8 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                   kargo.akuity.io/authorized-stage: agents-release:agents
+                  # Disable ServerSideDiff for atomic CRD + CR schema upgrades (includeCRDs: true, sync-wave: "-10").
+                  argocd.argoproj.io/compare-options: ServerSideDiff=false
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"

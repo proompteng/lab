@@ -764,6 +764,13 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
+  it('disables ServerSideDiff on agents while keeping Kargo stage authorization for atomic CRD + CR upgrades', () => {
+    const agentsApplication = applicationSetElements.find((element) => element.name === 'agents')
+    expect(agentsApplication?.targetRevision).toBe('kargo/agents')
+    expect(agentsApplication?.annotations?.['argocd.argoproj.io/compare-options']).toBe('ServerSideDiff=false')
+    expect(agentsApplication?.annotations?.['kargo.akuity.io/authorized-stage']).toBe('agents-release:agents')
+  })
+
   it('defines automatic Warehouses with a shared Ofz release cohort', () => {
     expect(projects.map((project) => project.metadata?.name).sort()).toEqual(
       [...new Set(expectedStageNames.map(projectForStage))].sort(),
