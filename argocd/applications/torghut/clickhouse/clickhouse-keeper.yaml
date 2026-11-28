@@ -20,19 +20,7 @@ spec:
     clusters:
       - name: default
         layout:
-          replicas:
-            - name: "0"
-            - name: "1"
-              templates:
-                podTemplate: chk-nvme
-                volumeClaimTemplate: chk-nvme-data
-            - name: "2"
-              templates:
-                podTemplate: chk-nvme
-                volumeClaimTemplate: chk-nvme-data
-        templates:
-          podTemplate: chk-default
-          volumeClaimTemplate: chk-data
+          replicasCount: 3
   templates:
     podTemplates:
       - name: chk-nvme
@@ -59,20 +47,6 @@ spec:
                 limits:
                   cpu: 500m
                   memory: 512Mi
-      - name: chk-default
-        spec:
-          nodeSelector:
-            kubernetes.io/arch: arm64
-          containers:
-            - name: clickhouse-keeper
-              image: mirror.gcr.io/clickhouse/clickhouse-keeper:26.8.2.7@sha256:0fbe266b275a23b53508a7a3dac2e6fe149d63cddf242897a5c5c3d7b5350568
-              resources:
-                requests:
-                  cpu: 250m
-                  memory: 256Mi
-                limits:
-                  cpu: 500m
-                  memory: 512Mi
     volumeClaimTemplates:
       - name: chk-nvme-data
         spec:
@@ -82,17 +56,9 @@ spec:
             requests:
               storage: 1Gi
           storageClassName: local-path-keeper
-      - name: chk-data
-        spec:
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 1Gi
-          storageClassName: rook-ceph-block
   defaults:
     storageManagement:
       reclaimPolicy: Retain
     templates:
-      podTemplate: chk-default
-      volumeClaimTemplate: chk-data
+      podTemplate: chk-nvme
+      volumeClaimTemplate: chk-nvme-data

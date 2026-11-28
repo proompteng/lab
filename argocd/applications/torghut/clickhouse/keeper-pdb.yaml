@@ -9,7 +9,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  maxUnavailable: 0
+  maxUnavailable: 1
   selector:
     matchLabels:
       clickhouse-keeper.altinity.com/chk: torghut-keeper
