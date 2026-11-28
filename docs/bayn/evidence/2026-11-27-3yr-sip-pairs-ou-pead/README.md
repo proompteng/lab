@@ -49,7 +49,7 @@ rejection of event-labelled PEAD.
 
 ## Reproduce
 
-Run from the repository root with the existing `agents-artifacts` credentials. Both commands require a new output
+Run from the repository root in the [archived checkout][study-revision], with the existing `agents-artifacts` credentials. Both commands require a new output
 path; `--score` requires the exact committed receipt and verifies it before loading holdout bars.
 
 ```sh
@@ -63,7 +63,7 @@ cmp /tmp/wave2f-score-reproduction.json "$evidence/results.json"
 
 - [Pre-registered protocol](PROTOCOL.md)
 - [Development-only freeze](freeze.json), committed at `31dd7d0c219d7a7dd37159d3ff80e39088e55542`
-- [Complete results](results.json): each panel's `ranges` and `metricColumns` index the result arrays; omitted
+- [Complete results][archived-results]: each panel's `ranges` and `metricColumns` index the result arrays; omitted
   symbol/pair entries use `leaveOutColumns`. SHA-256:
   `4cea00674f453b8620b87b562af43c0728ab647db6904745b6194fe09795e352`.
 
@@ -72,3 +72,6 @@ The initial holdout was scored only after the original development receipt was c
 candidate bar could hide a protective stop. The fix invalidates the affected session and liquidates at the
 next synchronized open. The corrected receipt was committed before rescoring; no parameters, candidate IDs,
 development metrics, or holdout trial outcomes changed.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-3yr-sip-pairs-ou-pead/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

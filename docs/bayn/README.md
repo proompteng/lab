@@ -30,7 +30,8 @@ account, and reconciliation state before operating. Runbooks and research eviden
 
 ## Research Evidence
 
-- [Retained evidence bundles](evidence/) — replay inputs, manifests, and results; preserve their paths and contents.
+- [Retained evidence bundles](evidence/) — study reports, frozen receipts, and active replay inputs. Large trial
+  outputs and one-off runners pruned from rejected studies remain available at the historical revisions linked in the reports.
 - [Prospective registrations](prospective/) and [read-only SQL](sql/) — declared controls and audit queries.
 - [Jev study export](study-evidence-export.md) and [migration validation](jev-migration-validation.md) — retained decision
   evidence and qualification rules.
