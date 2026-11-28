@@ -7,6 +7,8 @@ resources:
   - email-externalsecret.yaml
   - tailscale-ingress.yaml
   - server-upgrade-backup.yaml
+  - auto-ontology-db-networkpolicy.yaml
+  - glitchtip-audit-views-job.yaml
 
 configMapGenerator:
   - name: glitchtip-scheduler-health
@@ -38,6 +40,19 @@ patches:
           argocd.argoproj.io/sync-options: Prune=false,Delete=false
       spec:
         imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
+        # The pinned chart renders only instances, storage, and bootstrap.
+        managed:
+          roles:
+            - name: glitchtip_audit_ro
+              login: true
+              inherit: false
+              superuser: false
+              createdb: false
+              createrole: false
+              replication: false
+              bypassrls: false
+              passwordSecret:
+                name: glitchtip-audit-ro-db
         backup:
           volumeSnapshot:
             className: rook-ceph-block

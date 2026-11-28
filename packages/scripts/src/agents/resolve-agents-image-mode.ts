@@ -79,6 +79,7 @@ const ALL_IMAGE_EXACT_PATHS = new Set([
 ])
 
 const RUNNER_IMAGE_EXACT_PATHS = new Set([
+  'nix/images/antigravity-cli.nix',
   'nix/images/openai-codex-cli.nix',
   'nix/images/agentrun-tools.nix',
   'services/agents/scripts/runner-acceptance.sh',

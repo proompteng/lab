@@ -76,6 +76,8 @@ targets:
       - argocd/applications/buzz/networkpolicy.yaml
       - argocd/applications/devbox/network-policy.yaml
       - argocd/applications/froussard/approval-networkpolicy.yaml
+      - argocd/applications/glitchtip/auto-ontology-db-networkpolicy.yaml
+      - argocd/applications/jangar/auto-ontology-db-networkpolicy.yaml
       - argocd/applications/kargo/smoke-access.yaml
       - argocd/applications/keycloak/network-policy.yaml
       - argocd/applications/ofz/control-plane/network-policy.yaml
@@ -253,6 +255,7 @@ targets:
       - nix/images/bun-workspace-service.nix
       - nix/images/relativize-bun-cache.sh
       - patches/effect@4.1.4.patch
+      - nix/images/antigravity-cli.nix
       - nix/images/openai-codex-cli.nix
       - nix/images/agentrun-tools.nix
       - nix/packages.nix

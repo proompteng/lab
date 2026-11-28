@@ -95,7 +95,11 @@ describe('classifyAgentsImageMode', () => {
   })
 
   it('rebuilds the runner when its toolchain or acceptance command changes', () => {
-    for (const path of ['nix/images/agentrun-tools.nix', 'services/agents/scripts/runner-acceptance.sh']) {
+    for (const path of [
+      'nix/images/agentrun-tools.nix',
+      'nix/images/antigravity-cli.nix',
+      'services/agents/scripts/runner-acceptance.sh',
+    ]) {
       expect(classifyAgentsImageMode([path]).imageTargets).toEqual(['runner'])
     }
   })

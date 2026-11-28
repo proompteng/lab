@@ -766,7 +766,7 @@ worker build cannot establish correctly completed controller work or supported r
 uses `bayn.qualification-runtime.v3` with `decisionTrigger: streaming` and an explicit complete strategy binding.
 Retained v1/v2 registrations remain readable. Old polling latency/replay studies cannot qualify this runtime;
 a new prospective v6 registration and independently witnessed live evidence are required. Candidate and incumbent
-are comparison roles; either can bind the native Jev v44 or intraday alpha v2 engine. The incumbent must still match
+are comparison roles; either can bind the native Jev v44 or a versioned intraday alpha engine. The incumbent must still match
 its independently witnessed serving generation and retain separate account, store and authority identity.
 
 This hard migration changes handler and journal shapes. Roll out immutable `RestateDeployment` revisions so in-flight
@@ -858,7 +858,15 @@ for interpreting and persisting broker history.
 
 ## Active strategy
 
-Entry observations use the native Jev reader. New entries must meet the cycle's submission deadline. Management
+The source-selected v3 policy trades only QQQ and SMH from the existing 22-symbol IEX market profile. It uses
+completed SPY benchmark bars, 30-minute 1.4× Noise Area breakouts and inverse-volatility parity from the prior
+14 regular sessions. No paid inference runs in this policy. It uses whole shares, a 25 bp entry limit collar,
+fill-anchored protection, opposite-band exits and forced flattening two minutes before the provider regular close.
+See the [v3 PAPER cutover and activation runbook](../../docs/bayn/intraday-v3-pure-etf-cutover.md).
+
+### Retained Jev v44 entry and inference
+
+Historical and research Jev entry observations use the native Jev reader. New entries must meet the cycle's submission deadline. Management
 of an already filled position remains valid after that deadline within the execution session, using liquidation quotes
 and accounted position evidence. It retains the original first-fill holding deadline and forced-close window,
 including continuous crypto cycles whose entry lease lasts one minute.
@@ -920,12 +928,11 @@ failure, defect or interruption during atomic persistence rolls back the receipt
 the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
-The equity submission window follows the broker's regular calendar, not extended IEX capture hours. The first
-eligible observation is one minute and two seconds after regular open, subject to the active sleeve's signal window.
-Equity entries use actual completed history and stop no later than five minutes before the regular close, including
+The equity submission window follows the broker's regular calendar, not extended IEX capture hours. Retained Jev
+equity entries use actual completed history and stop no later than five minutes before the regular close, including
 early closes. The retained protocol also defines 120-minute crypto context for historical evidence
 and position recovery. The [compiled market profiles](src/jev/protocol.ts) bind the entry spread and positioning
-limits. The current protocol permits one equity long or short position with a gross weight capped at 20% of account
+limits. The retained Jev v44 policy permits one equity long or short position with a gross weight capped at 20% of account
 equity. Allocation reduces the target when required by order, symbol, exposure or remaining daily turnover limits.
 The daily counter includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.

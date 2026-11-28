@@ -8,6 +8,7 @@ resources:
   - codex-auth-master-externalsecret.yaml
   - codex-auth-externalsecret.yaml
   - codex-auth-refresher.yaml
+  - google-adc-externalsecret.yaml
   - workspace-cache-daemonset.yaml
   - hf-router-token-sealedsecret.yaml
   - agents-shell-tunnel-runtime-sealedsecret.yaml
@@ -24,6 +25,9 @@ resources:
   - codex-smoke-implspec.yaml
   - anypi-agentprovider.yaml
   - anypi-agent.yaml
+  - google-secretbinding.yaml
+  - google-agentprovider.yaml
+  - google-agent.yaml
   - codex-agentprovider.yaml
   - codex-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml

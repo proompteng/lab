@@ -1,27 +1,27 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import patch
 
-from tests.historical_simulation.start_historical_simulation_base import (
-    Any,
-    KafkaRuntimeConfig,
-    Path,
-    SimpleNamespace,
-    StartHistoricalSimulationTestCaseBase,
-    TemporaryDirectory,
-    _build_resources,
+from scripts import historical_simulation_startup
+from scripts.historical_simulation_startup import (
     _dump_topics,
     _file_sha256,
     _offset_for_time_lookup,
-    json,
-    patch,
-    replace,
-    historical_simulation_startup,
+    state_and_cache,
+    topic_dumping,
 )
+from tests.historical_simulation.fixtures import make_kafka_config, simulation_resources
 
 
-class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseBase):
+class TestStartHistoricalSimulationDumpCacheA(TestCase):
     def test_offset_for_time_lookup_falls_back_for_missing_or_invalid_offset(
         self,
     ) -> None:
@@ -41,19 +41,8 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
         )
 
     def test_dump_topics_reuses_existing_dump_with_valid_marker(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
 
         with TemporaryDirectory() as tmp_dir:
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
@@ -77,8 +66,9 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                 encoding="utf-8",
             )
 
-            with patch(
-                "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
+            with patch.object(
+                topic_dumping,
+                "_consumer_for_dump",
                 side_effect=AssertionError(
                     "expected dump reuse; consumer should not be constructed"
                 ),
@@ -109,19 +99,8 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             )
 
     def test_dump_topics_redumps_when_marker_missing(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
 
         with TemporaryDirectory() as tmp_dir:
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
@@ -136,8 +115,9 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                         )
                     },
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
+                patch.object(
+                    topic_dumping,
+                    "_consumer_for_dump",
                     side_effect=RuntimeError("dump_invoked"),
                 ),
                 self.assertRaisesRegex(RuntimeError, "dump_invoked"),
@@ -158,19 +138,8 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
     def test_dump_topics_restores_durable_cache_hit_without_repolling_kafka(
         self,
     ) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
         dump_line = json.dumps(
             {
                 "source_topic": resources.source_topic_by_role["trades"],
@@ -239,14 +208,16 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
         with TemporaryDirectory() as tmp_dir:
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
             with (
-                patch(
-                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
+                patch.object(
+                    topic_dumping,
+                    "_consumer_for_dump",
                     side_effect=AssertionError(
                         "expected durable cache restore; consumer should not be constructed"
                     ),
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
+                patch.object(
+                    state_and_cache,
+                    "_simulation_cache_client_from_env",
                     return_value=(_FakeCephClient(), "argo-workflows"),
                 ),
             ):
@@ -271,19 +242,8 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
     def test_dump_topics_derives_durable_cache_metadata_for_local_manifests(
         self,
     ) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
         dump_line = json.dumps(
             {
                 "source_topic": resources.source_topic_by_role["trades"],
@@ -349,14 +309,16 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
 
             with (
-                patch(
-                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
+                patch.object(
+                    topic_dumping,
+                    "_consumer_for_dump",
                     side_effect=AssertionError(
                         "expected durable cache restore; consumer should not be constructed"
                     ),
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
+                patch.object(
+                    state_and_cache,
+                    "_simulation_cache_client_from_env",
                     return_value=(_FakeCephClient(), "argo-workflows"),
                 ),
             ):
@@ -454,8 +416,9 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
 
         with TemporaryDirectory() as tmp_dir:
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
-            with patch(
-                "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
+            with patch.object(
+                state_and_cache,
+                "_simulation_cache_client_from_env",
                 return_value=(_FakeCephClient(), "argo-workflows"),
             ):
                 report = (
@@ -487,8 +450,9 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
         with TemporaryDirectory() as tmp_dir:
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
 
-            with patch(
-                "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
+            with patch.object(
+                state_and_cache,
+                "_simulation_cache_client_from_env",
                 side_effect=AssertionError(
                     "non-hit cache decisions must not attempt restore"
                 ),
@@ -549,7 +513,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                 key: str,
                 body: bytes,
                 content_type: str,
-            ) -> dict[str, Any]:
+            ) -> dict[str, object]:
                 _ = (body, content_type)
                 put_attempts.append((bucket, key))
                 self._attempt += 1
@@ -557,7 +521,9 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                     raise TimeoutError("timed out")
                 return {"etag": f"etag-{self._attempt}"}
 
-        def _fake_cache_client(timeout_seconds: int | None = None) -> tuple[Any, str]:
+        def _fake_cache_client(
+            timeout_seconds: int | None = None,
+        ) -> tuple[object, str]:
             client_timeouts.append(timeout_seconds)
             return _FakeCephClient(timeout_seconds), "argo-workflows"
 
@@ -593,8 +559,9 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             )
 
             with (
-                patch(
-                    "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
+                patch.object(
+                    state_and_cache,
+                    "_simulation_cache_client_from_env",
                     side_effect=_fake_cache_client,
                 ),
                 patch(
@@ -616,23 +583,12 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
     def test_dump_topics_records_cache_upload_error_without_failing_fresh_dump(
         self,
     ) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
+        resources = simulation_resources()
         resources = replace(
             resources,
             replay_topic_by_source_topic={"torghut.trades.v1": "torghut.sim.trades.v1"},
         )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        kafka_config = make_kafka_config()
 
         class _OffsetMeta:
             def __init__(self, offset: int) -> None:
@@ -731,12 +687,14 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                         )
                     },
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
+                patch.object(
+                    topic_dumping,
+                    "_consumer_for_dump",
                     return_value=_FakeConsumer(),
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.topic_dumping._upload_dump_to_cache",
+                patch.object(
+                    topic_dumping,
+                    "_upload_dump_to_cache",
                     side_effect=TimeoutError("timed out"),
                 ),
             ):
@@ -755,23 +713,12 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
     def test_dump_topics_orders_output_deterministically_across_partitions(
         self,
     ) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
+        resources = simulation_resources()
         resources = replace(
             resources,
             replay_topic_by_source_topic={"torghut.trades.v1": "torghut.sim.trades.v1"},
         )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        kafka_config = make_kafka_config()
 
         class _OffsetMeta:
             def __init__(self, offset: int) -> None:
@@ -860,8 +807,9 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                         )
                     },
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
+                patch.object(
+                    topic_dumping,
+                    "_consumer_for_dump",
                     return_value=fake_consumer,
                 ),
             ):

@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: froussard-${{ github.event.pull_request.number || github.ref }}
+  group: froussard-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -35,12 +35,14 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          filter: blob:none
       - uses: ./.github/actions/affected-inputs
         id: filter
         with:
           workflow: .github/workflows/froussard-ci.yml
+          dependency-aware-push: 'true'
           workspaces: |
-            service: ['', 'apps/froussard']
+            service: ['', 'apps/froussard', 'packages/agent-contracts']
 
   test:
     needs: changes
@@ -69,6 +71,9 @@ jobs:
   nix-image:
     needs: [dependency-closure, test]
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    concurrency:
+      group: froussard-publish-${{ github.ref }}
+      cancel-in-progress: false
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: froussard

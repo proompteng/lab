@@ -1,27 +1,29 @@
 from __future__ import annotations
 
-from tests.strategy_runtime.support import (
-    Decimal,
+from decimal import Decimal
+from unittest import TestCase
+
+from app.trading.strategy_runtime import (
     MicrobarCrossSectionalLongPlugin,
     MicrobarCrossSectionalPairsPlugin,
     MicrobarCrossSectionalShortPlugin,
-    Strategy,
-    StrategyConfig,
     StrategyContext,
     StrategyDefinition,
     StrategyRegistry,
     StrategyRuntime,
-    TestCase,
-    _compose_strategy_description,
-    evaluate_microbar_cross_sectional,
+)
+from app.trading.strategy_runtime.empty_meta import (
     microbar_entry_window_minutes,
     microbar_exit_minute_after_open,
     microbar_minutes_elapsed,
     microbar_rank_thresholds,
     microbar_universe_size,
-    _test_feature_vector,
-    uuid,
 )
+from app.trading.strategy_runtime.evaluate_microbar_cross_sectional import (
+    evaluate_microbar_cross_sectional,
+)
+from tests.strategy_runtime.support import _test_feature_vector
+from tests.trading_fixtures import make_catalog_strategy
 
 
 class TestStrategyRuntimeMicrobarCoverage(TestCase):
@@ -732,34 +734,21 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
     def test_microbar_pairs_missing_rank_records_actionable_suppression(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="microbar-cross-sectional-pairs-v1",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-cross-sectional-pairs-v1",
-                    strategy_id="microbar_cross_sectional_pairs_v1@research",
-                    strategy_type="microbar_cross_sectional_pairs_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["AAPL", "AMZN"],
-                    max_position_pct_equity=Decimal("6.0"),
-                    max_notional_per_trade=Decimal("75000"),
-                    params={
-                        "entry_minute_after_open": "60",
-                        "rank_feature": "cross_section_vwap_w5m_rank",
-                        "selection_mode": "continuation",
-                        "max_pair_legs": "2",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_pairs_v1",
             universe_symbols=["AAPL", "AMZN"],
             max_position_pct_equity=Decimal("6.0"),
             max_notional_per_trade=Decimal("75000"),
+            params={
+                "entry_minute_after_open": "60",
+                "rank_feature": "cross_section_vwap_w5m_rank",
+                "selection_mode": "continuation",
+                "max_pair_legs": "2",
+            },
         )
         runtime = StrategyRuntime(trace_enabled=True)
 

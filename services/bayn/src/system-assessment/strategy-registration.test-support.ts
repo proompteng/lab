@@ -3,7 +3,7 @@ import { Result, Schema } from 'effect'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevProtocolSchema } from '../jev/protocol'
-import { makeIntradayAlphaPolicy } from '../strategy/intraday-alpha/policy'
+import { makeIntradayAlphaPolicy, makePureEtfPolicy } from '../strategy/intraday-alpha/policy'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
 import { executionControllerPlanHash } from '../execution/controller-plan'
 import { MarketKind } from '../instruments'
@@ -29,8 +29,14 @@ import {
 export const strategyBoundRegistrationFixture = (
   base = nativeRegistrationFixture(registrationFixture(undefined, 2)),
   engines: {
-    readonly candidate?: ResearchStrategyEngine.Jev | ResearchStrategyEngine.IntradayAlpha
-    readonly incumbent?: ResearchStrategyEngine.Jev | ResearchStrategyEngine.IntradayAlpha
+    readonly candidate?:
+      | ResearchStrategyEngine.Jev
+      | ResearchStrategyEngine.IntradayAlpha
+      | ResearchStrategyEngine.PureEtf
+    readonly incumbent?:
+      | ResearchStrategyEngine.Jev
+      | ResearchStrategyEngine.IntradayAlpha
+      | ResearchStrategyEngine.PureEtf
   } = {},
 ) => {
   const protocol = Schema.decodeUnknownSync(
@@ -51,13 +57,15 @@ export const strategyBoundRegistrationFixture = (
     const material: ResearchStrategyMaterial =
       engine === ResearchStrategyEngine.IntradayAlpha
         ? { engine, parameters: makeIntradayAlphaPolicy(protocol) }
-        : engine === ResearchStrategyEngine.Jev
-          ? { engine, parameters: protocol }
-          : engine === ResearchStrategyEngine.EntryAblation
-            ? { engine, parameters: makeEntryAblationPolicy(protocol) }
-            : engine === ResearchStrategyEngine.RepeatedMomentum
-              ? { engine, parameters: makeRepeatedMomentumPolicy(protocol) }
-              : { engine, parameters: frozenProtocol }
+        : engine === ResearchStrategyEngine.PureEtf
+          ? { engine, parameters: makePureEtfPolicy(protocol) }
+          : engine === ResearchStrategyEngine.Jev
+            ? { engine, parameters: protocol }
+            : engine === ResearchStrategyEngine.EntryAblation
+              ? { engine, parameters: makeEntryAblationPolicy(protocol) }
+              : engine === ResearchStrategyEngine.RepeatedMomentum
+                ? { engine, parameters: makeRepeatedMomentumPolicy(protocol) }
+                : { engine, parameters: frozenProtocol }
     const strategyBinding = Result.getOrThrow(makeResearchStrategyBinding(material))
     const policyMaterial = researchStrategyPolicyMaterial(strategyBinding)
     return {

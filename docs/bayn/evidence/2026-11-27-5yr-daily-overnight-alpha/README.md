@@ -23,7 +23,7 @@ were flattened at the last close before its SanDisk distribution, and return win
 - The [development-only commit](https://github.com/proompteng/lab/commit/5cb855efb189ce62eecb04453d2cbddbabb281c5)
   contains [the freeze receipt](freeze.json) and the ledger before any Holdout scoring. It pins two Train-ranked,
   Validation-vetoed diagnostics and exactly 24 Holdout evaluations, including cohort and one-step plateau
-  probes. The [final ledger](results.json) retains all variants and failures. Null Holdout entries were not scored.
+  probes. The [final ledger][archived-results] retains all variants and failures. Null Holdout entries were not scored.
 
 ### Execution and family comparison
 
@@ -110,7 +110,7 @@ parameters, not the best configuration re-selected on each cohort.
 
 ## Reproduce
 
-From the repository root with Bun 1.4.2 and the existing `agents-artifacts` S3 credentials (or add
+From the repository root in the [archived checkout][study-revision], with Bun 1.4.2 and the existing `agents-artifacts` S3 credentials (or add
 `--input /path/to/pinned.tsv.gz`):
 
 ```sh
@@ -130,3 +130,6 @@ byte-for-byte. The input gzip is not committed.
 or short liabilities, auction execution, liquidation capacity, or borrow availability. Do not treat any
 Holdout row as prospective evidence from here on. Testing a new hypothesis requires a separately registered,
 untouched sample rather than another selection on this one.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-5yr-daily-overnight-alpha/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

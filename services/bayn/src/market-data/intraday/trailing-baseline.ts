@@ -11,6 +11,7 @@ import {
   type IsoDate,
 } from '../../schemas'
 import { currentUtcInstant } from '../../time'
+import { MarketCalendarObservationSchema } from '../../broker/alpaca/model'
 import type { TrailingBaselineAcquisition } from './baseline-acquisition'
 
 export const intradayAlphaTrailingBaselineSchemaVersion = 'bayn.intraday-alpha-trailing-baseline.v1' as const
@@ -20,12 +21,18 @@ export const intradayAlphaTrailingBaselineSchemaVersion = 'bayn.intraday-alpha-t
 // require retained, reproducible validation with documented model-selection chronology.
 export const noiseAreaCheckpointMinutes = Object.freeze([31, 91, 151, 211, 271, 331] as const)
 
+export const pureEtfCheckpointMinutes = Object.freeze([30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330] as const)
+
 export const SymbolTrailingBaselineSchema = Schema.Struct({
   priorSessions: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60)),
   prevClose: Schema.Finite.check(Schema.isGreaterThan(0)),
   atr14Ratio: Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(0.5)),
+  sessionVolatility: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
   avgSwingByCheckpoint: Schema.optionalKey(
-    Schema.Record(Schema.String, Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(0.5))),
+    Schema.Record(
+      Schema.String,
+      Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(0.5)),
+    ),
   ),
 })
 export type SymbolTrailingBaseline = typeof SymbolTrailingBaselineSchema.Type
@@ -79,11 +86,16 @@ export interface TrailingBaselineQuery {
   readonly noiseAreaSymbols: readonly string[]
   readonly lookbackSessions: number
   readonly minimumSessions: number
+  readonly checkpointMinutesFromOpen?: readonly number[]
   readonly sourceContract: TrailingBaselineSourceContract
 }
 
 export interface TrailingBaselinePreparationWindow {
   readonly regularOpenAt: string
+  readonly loadHistorySessions?: Effect.Effect<
+    typeof MarketCalendarObservationSchema.fields.sessions.Type,
+    OperationalError
+  >
 }
 
 export class TrailingBaselinePendingCoverage extends Data.TaggedError('TrailingBaselinePendingCoverage')<{
@@ -107,13 +119,19 @@ export const trailingBaselineCoversQuery = (query: TrailingBaselineQuery, baseli
       value.prevClose > 0 &&
       Number.isFinite(value.atr14Ratio) &&
       value.atr14Ratio > 0 &&
-      value.atr14Ratio <= 0.5
+      value.atr14Ratio <= 0.5 &&
+      (query.checkpointMinutesFromOpen === undefined || value.sessionVolatility !== undefined)
     )
   }) &&
   query.noiseAreaSymbols.every((symbol) =>
-    noiseAreaCheckpointMinutes.every((minute) => {
+    (query.checkpointMinutesFromOpen ?? noiseAreaCheckpointMinutes).every((minute) => {
       const swing = baseline.symbols[symbol]?.avgSwingByCheckpoint?.[String(minute)]
-      return swing !== undefined && Number.isFinite(swing) && swing > 0 && swing <= 0.5
+      return (
+        swing !== undefined &&
+        Number.isFinite(swing) &&
+        (query.checkpointMinutesFromOpen === undefined ? swing > 0 : swing >= 0) &&
+        swing <= 0.5
+      )
     }),
   )
 
@@ -143,10 +161,34 @@ export const buildTrailingBaseline = (input: {
   readonly noiseAreaSymbols: readonly string[]
   readonly lookbackSessions: number
   readonly minimumSessions: number
+  readonly checkpointMinutesFromOpen?: readonly number[]
+  readonly historySessions?: typeof MarketCalendarObservationSchema.fields.sessions.Type
   readonly dailyRows: readonly PriorSessionDailySummary[]
   readonly checkpointRows: readonly PriorSessionCheckpointSummary[]
 }): Result.Result<IntradayAlphaTrailingBaseline, OperationalError> => {
-  const { sessionDate, lookbackSessions, minimumSessions } = input
+  const { sessionDate, lookbackSessions, minimumSessions, historySessions } = input
+  const pureEtf = input.checkpointMinutesFromOpen !== undefined
+  const history = historySessions ?? []
+  const sessions = new Map(
+    history.map((session) => [session.date, (Date.parse(session.closeAt) - Date.parse(session.openAt)) / 60_000]),
+  )
+  if (
+    pureEtf &&
+    (history.length < lookbackSessions + 1 ||
+      history.some(
+        (session, index) =>
+          session.date >= sessionDate ||
+          (index > 0 && (history[index - 1]?.date ?? '') >= session.date) ||
+          ![210, 390].includes(sessions.get(session.date) ?? 0),
+      ))
+  )
+    return Result.fail(
+      operationalError({
+        component: 'market-data',
+        operation: 'trailing-baseline',
+        message: 'Pure ETF baseline requires ordered prior regular sessions',
+      }),
+    )
   if (
     input.dailyRows.some((row) => row.sessionDate >= sessionDate) ||
     input.checkpointRows.some((row) => row.sessionDate >= sessionDate)
@@ -194,6 +236,14 @@ export const buildTrailingBaseline = (input: {
 
   for (const symbol of [...new Set(input.symbols)].sort()) {
     const rows = (dailyBySymbol.get(symbol) ?? []).toSorted((a, b) => a.sessionDate.localeCompare(b.sessionDate))
+    const byDate = new Map(rows.map((row) => [row.sessionDate, row]))
+    if (
+      pureEtf &&
+      (byDate.size !== rows.length ||
+        rows.some((row) => !sessions.has(row.sessionDate)) ||
+        history.slice(-(lookbackSessions + 1)).some((session) => !byDate.has(session.date)))
+    )
+      continue
     if (rows.length < minimumSessions) continue
     // Keep lookbackSessions + 1 days so the first lookback day has a causal prior close for True Range.
     const window = rows.slice(-(lookbackSessions + 1))
@@ -216,12 +266,17 @@ export const buildTrailingBaseline = (input: {
               Math.abs(current.low - prev.close),
             )
       const denom = prev === undefined ? current.open : prev.close
-      if (denom > 0 && Number.isFinite(tr / denom) && tr / denom > 0) {
+      if (denom > 0 && Number.isFinite(tr / denom) && (pureEtf ? tr / denom >= 0 : tr / denom > 0)) {
         trRatios.push(tr / denom)
       }
     }
     if (trRatios.length < minimumSessions) continue
     const atr14Ratio = round6(trRatios.reduce((sum, value) => sum + value, 0) / trRatios.length)
+    const returns = rows.slice(-lookbackSessions).map((day) => day.close / day.open - 1)
+    const meanReturn = returns.reduce((sum, value) => sum + value, 0) / returns.length
+    const sessionVolatility = pureEtf
+      ? Math.sqrt(returns.reduce((sum, value) => sum + (value - meanReturn) ** 2, 0) / (returns.length - 1))
+      : undefined
     const prevClose = round6(latest.close)
     if (atr14Ratio <= 0 || atr14Ratio > 0.5 || prevClose <= 0) continue
 
@@ -229,9 +284,18 @@ export const buildTrailingBaseline = (input: {
     if (noiseSet.has(symbol)) {
       const swingWindow = rows.slice(-lookbackSessions)
       const swings: Record<string, number> = {}
-      for (const minute of noiseAreaCheckpointMinutes) {
+      for (const minute of input.checkpointMinutesFromOpen ?? noiseAreaCheckpointMinutes) {
+        const eligible = pureEtf
+          ? history
+              .filter((session) => (sessions.get(session.date) ?? 0) >= minute)
+              .slice(-lookbackSessions)
+              .flatMap((session) => {
+                const row = byDate.get(session.date)
+                return row === undefined ? [] : [row]
+              })
+          : swingWindow
         const samples: number[] = []
-        for (const day of swingWindow) {
+        for (const day of eligible) {
           const cpClose = checkpointsBySymbolDate.get(`${symbol}|${day.sessionDate}`)?.get(minute)
           if (cpClose !== undefined && day.open > 0) {
             const move = Math.abs(cpClose / day.open - 1)
@@ -240,7 +304,7 @@ export const buildTrailingBaseline = (input: {
         }
         if (samples.length >= minimumSessions) {
           const mean = round6(samples.reduce((sum, value) => sum + value, 0) / samples.length)
-          if (mean > 0 && mean <= 0.5) swings[String(minute)] = mean
+          if ((pureEtf ? mean >= 0 : mean > 0) && mean <= 0.5) swings[String(minute)] = mean
         }
       }
       if (Object.keys(swings).length > 0) avgSwingByCheckpoint = swings
@@ -250,6 +314,7 @@ export const buildTrailingBaseline = (input: {
       priorSessions: Math.min(lookbackSessions, trRatios.length),
       prevClose,
       atr14Ratio,
+      ...(sessionVolatility === undefined ? {} : { sessionVolatility }),
       ...(avgSwingByCheckpoint === undefined ? {} : { avgSwingByCheckpoint }),
     }
   }
@@ -336,7 +401,7 @@ export const makeClickhouseTrailingBaseline = (
       const sortedSymbols = [...new Set(query.symbols)].sort()
       const sortedNoise = [...new Set(query.noiseAreaSymbols)].sort()
       const { provider, feed, sourceTopic, universeId } = query.sourceContract
-      const cacheKey = `${query.sessionDate}|${query.lookbackSessions}|${query.minimumSessions}|${provider}|${feed}|${sourceTopic}|${universeId ?? ''}|${sortedSymbols.join(',')}|${sortedNoise.join(',')}`
+      const cacheKey = `${query.sessionDate}|${query.lookbackSessions}|${query.minimumSessions}|${provider}|${feed}|${sourceTopic}|${universeId ?? ''}|${sortedSymbols.join(',')}|${sortedNoise.join(',')}|${query.checkpointMinutesFromOpen?.join(',') ?? ''}`
       const cached = cache.get(cacheKey)
       if (cached !== undefined) {
         if (
@@ -356,8 +421,37 @@ export const makeClickhouseTrailingBaseline = (
         })
       const startedAt = yield* currentUtcInstant
 
+      const pureEtf = query.checkpointMinutesFromOpen !== undefined
+      const historySessions =
+        pureEtf && preparationWindow?.loadHistorySessions !== undefined
+          ? yield* preparationWindow.loadHistorySessions
+          : undefined
+      if (pureEtf && historySessions === undefined)
+        return yield* operationalError({
+          component: 'market-data',
+          operation: 'trailing-baseline',
+          message: 'Pure ETF history requires the provider regular-session calendar',
+        })
       const lookbackCalendarDays = Math.max(35, query.lookbackSessions * 3)
-      const checkpointMins = [...noiseAreaCheckpointMinutes]
+      const checkpointMins =
+        query.checkpointMinutesFromOpen === undefined ? [...noiseAreaCheckpointMinutes] : [...pureEtfCheckpointMinutes]
+      const regularSessions = (historySessions ?? []).map((session) => [
+        Date.parse(session.openAt) / 1000,
+        Date.parse(session.closeAt) / 1000,
+      ])
+      const regularBar =
+        historySessions === undefined
+          ? sql`(toHour(ny_ts) * 60 + toMinute(ny_ts)) >= 570 AND (toHour(ny_ts) * 60 + toMinute(ny_ts)) < 960`
+          : sql`arrayExists(s -> toUnixTimestamp(ny_ts) >= s.1 AND toUnixTimestamp(ny_ts) < s.2,
+                ${sql.param('Array(Tuple(UInt32, UInt32))', regularSessions)})`
+      const exactUniverse = pureEtf ? sql`AND universe_id = ${sql.param('String', universeId)}` : sql``
+      const dailyCoverage =
+        historySessions === undefined
+          ? sql`count() >= 200`
+          : sql`has(${sql.param('Array(Tuple(UInt32, UInt32))', regularSessions)},
+              tuple(toUnixTimestamp(min(ny_ts)), toUnixTimestamp(max(ny_ts)) + 60))
+            AND count() * 390 * 60 >= 200 * (toUnixTimestamp(max(ny_ts)) + 60 - toUnixTimestamp(min(ny_ts)))`
+      const checkpointBar = pureEtf ? sql`m = cp - 1` : sql`m < cp`
       const preferredUniverse = universeId ?? ''
 
       const intradayDailyRaw = yield* sql`
@@ -373,6 +467,7 @@ export const makeClickhouseTrailingBaseline = (
           WHERE provider = ${sql.param('String', provider)}
             AND feed = ${sql.param('String', feed)}
             AND source_topic = ${sql.param('String', sourceTopic)}
+            ${exactUniverse}
             AND is_final = 1
             AND has(${sql.param('Array(String)', sortedSymbols)}, symbol)
             AND event_ts >= parseDateTime64BestEffort(${sql.param('String', `${query.sessionDate}T00:00:00Z`)}, 3, 'UTC') - toIntervalDay(${sql.param('UInt32', lookbackCalendarDays)})
@@ -387,11 +482,10 @@ export const makeClickhouseTrailingBaseline = (
           min(low) AS low,
           argMax(close, ny_ts) AS close
         FROM dedup
-        WHERE (toHour(ny_ts) * 60 + toMinute(ny_ts)) >= 570
-          AND (toHour(ny_ts) * 60 + toMinute(ny_ts)) < 960
+        WHERE ${regularBar}
           AND toDate(ny_ts) < toDate(${sql.param('String', query.sessionDate)})
         GROUP BY symbol, session_date
-        HAVING count() >= 200
+        HAVING ${dailyCoverage}
         ORDER BY symbol, session_date
       `
 
@@ -408,6 +502,7 @@ export const makeClickhouseTrailingBaseline = (
                 WHERE provider = ${sql.param('String', provider)}
                   AND feed = ${sql.param('String', feed)}
                   AND source_topic = ${sql.param('String', sourceTopic)}
+                  ${exactUniverse}
                   AND is_final = 1
                   AND has(${sql.param('Array(String)', sortedNoise)}, symbol)
                   AND event_ts >= parseDateTime64BestEffort(${sql.param('String', `${query.sessionDate}T00:00:00Z`)}, 3, 'UTC') - toIntervalDay(${sql.param('UInt32', lookbackCalendarDays)})
@@ -421,19 +516,18 @@ export const makeClickhouseTrailingBaseline = (
                   (toHour(ny_ts) * 60 + toMinute(ny_ts)) - 570 AS m,
                   close
                 FROM dedup
-                WHERE (toHour(ny_ts) * 60 + toMinute(ny_ts)) >= 570
-                  AND (toHour(ny_ts) * 60 + toMinute(ny_ts)) < 960
+                WHERE ${regularBar}
                   AND toDate(ny_ts) < toDate(${sql.param('String', query.sessionDate)})
               )
               SELECT
                 symbol,
                 session_date,
                 cp AS minute_from_open,
-                argMaxIf(close, m, m < cp) AS close
+                argMaxIf(close, m, ${checkpointBar}) AS close
               FROM rth
               ARRAY JOIN ${sql.param('Array(Int32)', checkpointMins)} AS cp
               GROUP BY symbol, session_date, cp
-              HAVING countIf(m < cp) > 0
+              HAVING countIf(${checkpointBar}) > 0
               ORDER BY symbol, session_date, cp
             `
 
@@ -452,9 +546,7 @@ export const makeClickhouseTrailingBaseline = (
         decodedCheckpoints,
         (row) =>
           Effect.gen(function* () {
-            const minuteFromOpen = noiseAreaCheckpointMinutes.find(
-              (minute) => minute === toFiniteNumber(row.minute_from_open),
-            )
+            const minuteFromOpen = checkpointMins.find((minute) => minute === toFiniteNumber(row.minute_from_open))
             if (minuteFromOpen === undefined)
               return yield* operationalError({
                 component: 'market-data',
@@ -477,7 +569,7 @@ export const makeClickhouseTrailingBaseline = (
       const counts = new Map<string, number>()
       for (const row of dailyRows) counts.set(row.symbol, (counts.get(row.symbol) ?? 0) + 1)
       const sparseSymbols = sortedSymbols.filter((symbol) => (counts.get(symbol) ?? 0) < query.minimumSessions)
-      if (sparseSymbols.length > 0) {
+      if (!pureEtf && sparseSymbols.length > 0) {
         const manifestRaw = yield* sql`
           SELECT snapshot_id
           FROM signal.snapshot_manifests_v2
@@ -555,6 +647,10 @@ export const makeClickhouseTrailingBaseline = (
         noiseAreaSymbols: sortedNoise,
         lookbackSessions: query.lookbackSessions,
         minimumSessions: query.minimumSessions,
+        ...(query.checkpointMinutesFromOpen === undefined
+          ? {}
+          : { checkpointMinutesFromOpen: query.checkpointMinutesFromOpen }),
+        ...(historySessions === undefined ? {} : { historySessions }),
         dailyRows,
         checkpointRows,
       })
@@ -582,11 +678,15 @@ export const makeClickhouseTrailingBaseline = (
           noiseAreaSymbols: sortedNoise,
           lookbackSessions: query.lookbackSessions,
           minimumSessions: query.minimumSessions,
+          ...(query.checkpointMinutesFromOpen === undefined
+            ? {}
+            : { checkpointMinutesFromOpen: pureEtfCheckpointMinutes }),
           sourceContract: { provider, feed, sourceTopic, universeId },
         },
         startedAt,
         completedAt: yield* currentUtcInstant,
         inputs: {
+          ...(historySessions === undefined ? {} : { historySessions }),
           intradayDailyRows,
           checkpointRows,
           adjustedDailyFallback,

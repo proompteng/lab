@@ -85,8 +85,10 @@ describePostgres('Native partial take-profit evidence', () => {
               state text, terminal_outcome text, updated_at timestamptz, created_at timestamptz
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE native_protection_cancel_commands (
-              intent_id text, account_id text, broker_order_id text, requested_at timestamptz, exit_target jsonb
+              intent_id text, account_id text, broker_order_id text, requested_at timestamptz, exit_target jsonb, reanchor boolean NOT NULL DEFAULT false
             ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_closures (cycle_id text, document jsonb) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_close_replans (cycle_id text, document jsonb) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
               cycle_id text, decision_hash text, document jsonb
             ) ON COMMIT DROP`

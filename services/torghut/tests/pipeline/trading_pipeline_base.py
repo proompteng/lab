@@ -1,11 +1,35 @@
 from __future__ import annotations
 
-from datetime import time
+from datetime import datetime, time, timedelta, timezone
+from decimal import Decimal
+from typing import Callable, Literal, Sequence
+from unittest import TestCase
+from unittest.mock import patch
+from uuid import uuid4
 
-from typing import Literal
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 
-from app.models import EvidenceEpochRecord
+from app import config
+from app.models import (
+    Base,
+    EvidenceEpochRecord,
+    Strategy,
+    StrategyHypothesis,
+    StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
+    VNextDatasetSnapshot,
+)
 from app.strategies.catalog import extract_catalog_metadata
+from app.trading.decisions import DecisionEngine
+from app.trading.execution import OrderExecutor
+from app.trading.firewall import OrderFirewall
+from app.trading.prices import PriceFetcher
+from app.trading.reconcile import Reconciler
+from app.trading.risk import RiskEngine
+from app.trading.scheduler.pipeline import TradingPipeline
+from app.trading.scheduler.state import TradingState
 from app.trading.strategy_capital_authority import (
     AuthorityProofBindings,
     CapitalAccountMode,
@@ -18,192 +42,82 @@ from app.trading.strategy_capital_authority import (
 from app.trading.strategy_capital_authority_store import (
     activate_strategy_capital_authority,
 )
-
+from app.trading.universe import UniverseResolver
 from tests.pipeline.trading_pipeline_support import (
-    AdaptiveExecutionPolicyDecision,
-    Any,
-    Base,
-    Callable,
-    CountingAlpacaClient,
-    CountingLLMReviewEngine,
-    CursorAdvancingFakeIngestor,
-    CursorErrorWarmupIngestor,
-    DSPyReviewRuntime,
-    DSPyRuntimeUnsupportedStateError,
-    Decimal,
-    DecisionEngine,
-    Execution,
     FakeAlpacaClient,
-    FakeCircuitBreaker,
     FakeIngestor,
-    FakeLLMReviewEngine,
     FakePriceFetcher,
-    FetchErrorWarmupIngestor,
-    LLMDecisionContext,
-    LLMDecisionReview,
-    LLMPolicyContext,
-    LLMReviewOutcome,
-    LLMReviewRequest,
-    LLMReviewResponse,
-    Mapping,
-    MarketContextBundle,
-    MarketSnapshot,
-    Mock,
-    NoSignalReasonIngestor,
-    OpenOrderAlpacaClient,
-    OrderExecutor,
-    OrderFirewall,
-    Path,
-    PortfolioSnapshot,
-    PositionSnapshot,
-    PositionedAlpacaClient,
-    PriceFetcher,
-    QuoteQualityStatus,
-    RaisingObserveDecisionEngine,
-    RecentDecisionSummary,
-    Reconciler,
-    RecordingDecisionEngine,
-    RejectedSignalOutcomeEvent,
-    RejectingAlpacaClient,
-    RiskEngine,
-    SQLAlchemyError,
-    SellInventoryConflictAlpacaClient,
-    SellInventoryConflictRetryClient,
-    Sequence,
-    Session,
-    SignalBatch,
-    SignalEnvelope,
-    SimpleNamespace,
-    SimulationExecutionAdapter,
-    Strategy,
-    StrategyDecision,
-    StrategyHypothesis,
-    StrategyHypothesisMetricWindow,
-    StrategyPromotionDecision,
-    StrategyRuntimeLedgerBucket,
-    TestCase,
-    TimelinePriceFetcher,
-    TradeDecision,
-    TradingPipeline,
-    TradingState,
-    TransactionAwareWarmupIngestor,
-    UniverseResolver,
-    VNextDatasetSnapshot,
     WarmupIngestor,
-    _apply_projected_position_decision,
-    _build_dspy_lineage,
-    _committee_trace_has_veto,
-    _default_probabilities,
-    is_entry_action_for_strategies,
-    is_exit_action_for_strategies,
-    _market_context_bundle,
-    _project_open_orders_onto_positions,
-    _set_llm_guardrails,
-    strategy_uses_position_isolation,
-    _with_default_executable_quote,
-    build_hypothesis_runtime_summary,
-    cast,
-    create_engine,
-    date,
-    datetime,
-    json,
-    os,
-    patch,
-    select,
-    sessionmaker,
-    tempfile,
-    timedelta,
-    timezone,
-    uuid4,
 )
+from tests.trading_fixtures import make_strategy
 
 
 class TradingPipelineTestCaseBase(TestCase):
     def setUp(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        self.addCleanup(engine.dispose)
         Base.metadata.create_all(engine)
         self.session_local = sessionmaker(
             bind=engine, expire_on_commit=False, future=True
         )
-        from app import config
-
-        self._settings_snapshot = {
-            name: getattr(config.settings, name)
-            for name in (
-                "trading_enabled",
-                "trading_mode",
-                "trading_autonomy_allow_live_promotion",
-                "trading_kill_switch_enabled",
-                "trading_universe_source",
-                "trading_static_symbols_raw",
-                "trading_session_context_warmup_signal_limit",
-                "trading_session_context_warmup_max_seconds",
-                "trading_session_context_warmup_max_signals",
-                "trading_feature_quality_enabled",
-                "trading_feature_max_staleness_ms",
-                "trading_allow_shorts",
-                "trading_fractional_equities_enabled",
-                "trading_pipeline_mode",
-                "trading_simple_submit_enabled",
-                "trading_simple_order_feed_telemetry_enabled",
-                "trading_order_feed_enabled",
-                "trading_order_feed_bootstrap_servers",
-                "trading_order_feed_topic",
-                "trading_order_feed_topic_v2",
-                "trading_order_feed_assignment_mode",
-                "trading_order_feed_auto_offset_reset",
-                "trading_new_exposure_cutoff_time_et",
-                "trading_flatten_start_time_et",
-                "trading_flat_confirmation_time_et",
-                "trading_universe_static_fallback_enabled",
-                "trading_universe_static_fallback_symbols_raw",
-                "trading_market_context_url",
-                "trading_market_context_timeout_seconds",
-                "trading_market_context_required",
-                "trading_market_context_fail_mode",
-                "trading_market_context_min_quality",
-                "trading_market_context_max_staleness_seconds",
-                "llm_enabled",
-                "llm_min_confidence",
-                "llm_adjustment_allowed",
-                "llm_fail_mode",
-                "llm_fail_mode_enforcement",
-                "llm_abstain_fail_mode",
-                "llm_escalate_fail_mode",
-                "llm_quality_fail_mode",
-                "llm_fail_open_live_approved",
-                "llm_shadow_mode",
-                "llm_allowed_models_raw",
-                "llm_evaluation_report",
-                "llm_effective_challenge_id",
-                "llm_shadow_completed_at",
-                "llm_model_version_lock",
-                "llm_adjustment_approved",
-                "llm_dspy_runtime_mode",
-                "llm_dspy_artifact_hash",
-                "llm_dspy_program_name",
-                "llm_dspy_signature_version",
-                "llm_rollout_stage",
-                "llm_dspy_live_runtime_block_fail_mode",
-                "llm_dspy_live_runtime_block_qty_multiplier",
-                "jangar_base_url",
+        self.configure_settings(
+            llm_enabled=False,
+            trading_kill_switch_enabled=False,
+            trading_new_exposure_cutoff_time_et=time(23, 57),
+            trading_flatten_start_time_et=time(23, 58),
+            trading_flat_confirmation_time_et=time(23, 59),
+        )
+        self.enterContext(
+            patch.multiple(
+                "app.trading.strategy_capital_runtime",
+                BUILD_COMMIT="a" * 40,
+                BUILD_IMAGE_DIGEST="sha256:" + "a" * 64,
             )
+        )
+
+    def configure_settings(self, **overrides: object) -> None:
+        self.enterContext(patch.multiple(config.settings, **overrides))
+
+    def configure_llm_guardrails(self, *, adjustment_approved: bool = False) -> None:
+        self.configure_settings(
+            llm_allowed_models_raw=config.settings.llm_model,
+            llm_evaluation_report="eval-2026-02-08",
+            llm_effective_challenge_id="mrm-review-2026-02-08",
+            llm_shadow_completed_at="2026-02-08T00:00:00Z",
+            llm_model_version_lock=config.settings.llm_model,
+            llm_adjustment_approved=adjustment_approved,
+        )
+
+    def seed_demo_strategy(self, **overrides: object) -> None:
+        fields = {
+            "description": "demo",
+            "max_notional_per_trade": Decimal("1000"),
         }
-        config.settings.llm_enabled = False
-        config.settings.trading_kill_switch_enabled = False
-        config.settings.trading_new_exposure_cutoff_time_et = time(23, 57)
-        config.settings.trading_flatten_start_time_et = time(23, 58)
-        config.settings.trading_flat_confirmation_time_et = time(23, 59)
-        self._capital_commit_patcher = patch(
-            "app.trading.strategy_capital_runtime.BUILD_COMMIT",
-            "a" * 40,
+        with self.session_local() as session:
+            session.add(make_strategy(name="demo", **(fields | overrides)))
+            session.commit()
+
+    def make_pipeline(self, **overrides: object) -> TradingPipeline:
+        # Build a fresh set of collaborators for each pipeline. Do not
+        # share fake client state between the read, firewall and submit paths.
+        defaults = dict(
+            alpaca_client=FakeAlpacaClient,
+            order_firewall=lambda: OrderFirewall(FakeAlpacaClient()),
+            ingestor=lambda: FakeIngestor([]),
+            decision_engine=DecisionEngine,
+            risk_engine=RiskEngine,
+            executor=OrderExecutor,
+            execution_adapter=FakeAlpacaClient,
+            reconciler=Reconciler,
+            universe_resolver=UniverseResolver,
+            state=TradingState,
+            account_label=lambda: "paper",
+            session_factory=lambda: self.session_local,
         )
-        self._capital_image_patcher = patch(
-            "app.trading.strategy_capital_runtime.BUILD_IMAGE_DIGEST",
-            "sha256:" + "a" * 64,
-        )
-        self._capital_commit_patcher.start()
-        self._capital_image_patcher.start()
+        collaborators = {
+            key: factory() for key, factory in defaults.items() if key not in overrides
+        }
+        return TradingPipeline(**collaborators, **overrides)
 
     def _activate_test_capital_authority(
         self,
@@ -304,14 +218,6 @@ class TradingPipelineTestCaseBase(TestCase):
         state.capital_daily_start_equity = Decimal("100000")
         state.capital_current_equity = Decimal("100000")
 
-    def tearDown(self) -> None:
-        self._capital_image_patcher.stop()
-        self._capital_commit_patcher.stop()
-        from app import config
-
-        for name, value in self._settings_snapshot.items():
-            setattr(config.settings, name, value)
-
     def _build_rejected_outcome_pipeline(
         self,
         *,
@@ -320,18 +226,11 @@ class TradingPipelineTestCaseBase(TestCase):
         price_fetcher: PriceFetcher | None = None,
     ) -> TradingPipeline:
         alpaca_client = FakeAlpacaClient()
-        return TradingPipeline(
+        return self.make_pipeline(
             alpaca_client=alpaca_client,
             order_firewall=OrderFirewall(alpaca_client),
-            ingestor=FakeIngestor([]),
-            decision_engine=DecisionEngine(),
-            risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
             execution_adapter=alpaca_client,
-            reconciler=Reconciler(),
-            universe_resolver=UniverseResolver(),
             state=state or TradingState(),
-            account_label="paper",
             session_factory=session_factory or self.session_local,
             price_fetcher=price_fetcher or FakePriceFetcher(Decimal("101.50")),
         )
@@ -492,19 +391,9 @@ class TradingPipelineTestCaseBase(TestCase):
         ingestor: WarmupIngestor,
         decision_engine: DecisionEngine | None = None,
     ) -> TradingPipeline:
-        return TradingPipeline(
-            alpaca_client=FakeAlpacaClient(),
-            order_firewall=OrderFirewall(FakeAlpacaClient()),
+        return self.make_pipeline(
             ingestor=ingestor,
             decision_engine=decision_engine or DecisionEngine(),
-            risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
-            execution_adapter=FakeAlpacaClient(),
-            reconciler=Reconciler(),
-            universe_resolver=UniverseResolver(),
-            state=TradingState(),
-            account_label="paper",
-            session_factory=self.session_local,
         )
 
     def _healthy_quant_status(
@@ -528,105 +417,3 @@ class TradingPipelineTestCaseBase(TestCase):
 
     def _healthy_live_quant_status(self) -> dict[str, object]:
         return self._healthy_quant_status(account_label="live")
-
-
-__all__ = (
-    "annotations",
-    "Literal",
-    "AdaptiveExecutionPolicyDecision",
-    "Any",
-    "Base",
-    "Callable",
-    "CountingAlpacaClient",
-    "CountingLLMReviewEngine",
-    "CursorAdvancingFakeIngestor",
-    "CursorErrorWarmupIngestor",
-    "DSPyReviewRuntime",
-    "DSPyRuntimeUnsupportedStateError",
-    "Decimal",
-    "DecisionEngine",
-    "Execution",
-    "FakeAlpacaClient",
-    "FakeCircuitBreaker",
-    "FakeIngestor",
-    "FakeLLMReviewEngine",
-    "FakePriceFetcher",
-    "FetchErrorWarmupIngestor",
-    "LLMDecisionContext",
-    "LLMDecisionReview",
-    "LLMPolicyContext",
-    "LLMReviewOutcome",
-    "LLMReviewRequest",
-    "LLMReviewResponse",
-    "Mapping",
-    "MarketContextBundle",
-    "MarketSnapshot",
-    "Mock",
-    "NoSignalReasonIngestor",
-    "OpenOrderAlpacaClient",
-    "OrderExecutor",
-    "OrderFirewall",
-    "Path",
-    "PortfolioSnapshot",
-    "PositionSnapshot",
-    "PositionedAlpacaClient",
-    "PriceFetcher",
-    "QuoteQualityStatus",
-    "RaisingObserveDecisionEngine",
-    "RecentDecisionSummary",
-    "Reconciler",
-    "RecordingDecisionEngine",
-    "RejectedSignalOutcomeEvent",
-    "RejectingAlpacaClient",
-    "RiskEngine",
-    "SQLAlchemyError",
-    "SellInventoryConflictAlpacaClient",
-    "SellInventoryConflictRetryClient",
-    "Sequence",
-    "Session",
-    "SignalBatch",
-    "SignalEnvelope",
-    "SimpleNamespace",
-    "SimulationExecutionAdapter",
-    "Strategy",
-    "StrategyDecision",
-    "StrategyHypothesis",
-    "StrategyHypothesisMetricWindow",
-    "StrategyPromotionDecision",
-    "StrategyRuntimeLedgerBucket",
-    "TestCase",
-    "TimelinePriceFetcher",
-    "TradeDecision",
-    "TradingPipeline",
-    "TradingState",
-    "TransactionAwareWarmupIngestor",
-    "UniverseResolver",
-    "VNextDatasetSnapshot",
-    "WarmupIngestor",
-    "_apply_projected_position_decision",
-    "_build_dspy_lineage",
-    "_committee_trace_has_veto",
-    "_default_probabilities",
-    "is_entry_action_for_strategies",
-    "is_exit_action_for_strategies",
-    "_market_context_bundle",
-    "_project_open_orders_onto_positions",
-    "_set_llm_guardrails",
-    "strategy_uses_position_isolation",
-    "_with_default_executable_quote",
-    "build_hypothesis_runtime_summary",
-    "cast",
-    "create_engine",
-    "date",
-    "datetime",
-    "json",
-    "os",
-    "patch",
-    "select",
-    "sessionmaker",
-    "tempfile",
-    "timedelta",
-    "timezone",
-    "uuid4",
-    "TradingPipelineTestCaseBase",
-)

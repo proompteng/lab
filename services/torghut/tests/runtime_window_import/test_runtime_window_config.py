@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Decimal,
+from datetime import datetime, timezone
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import patch
+
+from app.trading.runtime_window_import import resolve_hypothesis_manifest
+from scripts.hypothesis_runtime_window_import import cli_parsing as runtime_import_args
+from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_RUNTIME_LEDGER,
-    RuntimeWindowImportTestCaseBase,
-    SimpleNamespace,
-    _FakeSession,
-    _complete_runtime_ledger_bucket,
+    _manifest_strategy_family_for_resolution,
     _parse_args,
     _persistence_session,
     _runtime_ledger_bucket_profit_proof_blockers,
@@ -17,17 +21,15 @@ from tests.runtime_window_import.runtime_window_import_base import (
     _sqlalchemy_dsn,
     _target_persistence_dsn,
     _with_runtime_ledger_source_authority_context,
-    datetime,
-    patch,
-    timezone,
 )
-from app.trading.runtime_window_import import resolve_hypothesis_manifest
-from scripts.import_hypothesis_runtime_windows import (
-    _manifest_strategy_family_for_resolution,
+from tests.runtime_window_import.ledger_fixtures import march_6_market_hour
+from tests.runtime_window_import.runtime_window_import_support import (
+    _complete_runtime_ledger_bucket,
+    _FakeSession,
 )
 
 
-class TestRuntimeWindowImportConfig(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportConfig(TestCase):
     def test_sqlalchemy_dsn_normalizes_postgres_urls(self) -> None:
         self.assertEqual(
             _sqlalchemy_dsn("postgresql://user:pass@postgres:5432/torghut_sim_default"),
@@ -77,13 +79,11 @@ class TestRuntimeWindowImportConfig(RuntimeWindowImportTestCaseBase):
                 },
                 clear=True,
             ),
-            patch(
-                "scripts.hypothesis_runtime_window_import.cli_parsing.create_engine",
-                return_value=fake_engine,
+            patch.object(
+                runtime_import_args, "create_engine", return_value=fake_engine
             ) as create_engine_mock,
-            patch(
-                "scripts.hypothesis_runtime_window_import.cli_parsing.sessionmaker",
-                side_effect=fake_sessionmaker,
+            patch.object(
+                runtime_import_args, "sessionmaker", side_effect=fake_sessionmaker
             ),
         ):
             with _persistence_session(args) as session:
@@ -104,7 +104,7 @@ class TestRuntimeWindowImportConfig(RuntimeWindowImportTestCaseBase):
             source_kind="live_runtime_observed",
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("12"),
                     "post_cost_expectancy_basis": "broker_tca_shortfall_estimate",
@@ -128,7 +128,7 @@ class TestRuntimeWindowImportConfig(RuntimeWindowImportTestCaseBase):
             source_kind="live_runtime_observed",
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "post_cost_expectancy_bps": Decimal("40"),
                     "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
                     "post_cost_promotion_eligible": True,
@@ -149,7 +149,7 @@ class TestRuntimeWindowImportConfig(RuntimeWindowImportTestCaseBase):
             source_kind="simulation_paper_runtime",
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "post_cost_expectancy_bps": Decimal("40"),
                     "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
                     "post_cost_promotion_eligible": True,
@@ -170,7 +170,7 @@ class TestRuntimeWindowImportConfig(RuntimeWindowImportTestCaseBase):
             source_kind="simulation_paper_runtime",
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "post_cost_expectancy_bps": Decimal("40"),
                     "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
                     "post_cost_promotion_eligible": True,

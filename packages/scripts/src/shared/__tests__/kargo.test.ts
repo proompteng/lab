@@ -521,6 +521,7 @@ const expected = {
       'charts/agents/crds',
       'nix/images/agents.nix',
       'patches/effect@4.1.4.patch',
+      'nix/images/antigravity-cli.nix',
       'nix/images/openai-codex-cli.nix',
       'nix/images/agentrun-tools.nix',
       'argocd/applications/agents',

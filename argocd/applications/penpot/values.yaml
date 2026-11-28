@@ -70,6 +70,10 @@ frontend:
     limits:
       memory: 2Gi
 exporter:
+  extraEnvs:
+    # Limit peak memory from concurrent WASM renders.
+    - name: PENPOT_WASM_WORKER_POOL_MAX
+      value: "1"
   podSecurityContext:
     fsGroup: 1001
     seccompProfile:
@@ -80,9 +84,9 @@ exporter:
   resources:
     requests:
       cpu: 50m
-      memory: 128Mi
+      memory: 256Mi
     limits:
-      memory: 512Mi
+      memory: 2Gi
 mcp:
   podSecurityContext:
     fsGroup: 1001

@@ -81,7 +81,8 @@ They do not create unused product image archives or PR registry caches.
 Ofz, Tengri, Nanoagent and Proompteng form one release cohort in the `ofz` Warehouse. All four immutable images
 must name the same source commit and publish the same `ai.proompteng.tengri-schema` fingerprint. Ofz retains its
 successful run-qualified build receipt; Tengri and Nanoagent retain their paired native qualification gate. The three
-production workflows watch the same cohort inputs so a component change cannot strand a partially built release.
+production workflows watch the same cohort inputs, including Landing's resolved Bun dependencies, so a component
+change cannot strand a partially built release. An unrelated Bun lockfile edit only runs input planning.
 The four component READMEs are excluded from publication triggers. A push with a changed runtime input still
 publishes the full cohort.
 

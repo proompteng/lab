@@ -24,6 +24,34 @@ inspected sessions. These results qualify the signal hypothesis for prospective 
 capital sizing, or fills: the frozen replay used different sizing, no protective stop for standalone C5, and a 5-minute
 execution grid.
 
+## Opt-in passive execution for QQQ/SMH
+
+The [ETF order planner](../../services/bayn/src/strategy/etf-noise-area/exit-plan.ts) accepts a separate,
+decoded `bayn.passive-entry-execution.v1` policy with mode `PASSIVE_NBBO`. Omitting it retains the existing
+collar. The policy does not change the signal, strategy identity, frozen evidence, or active controller. The
+current IEX lane cannot supply NBBO; do not enable this path with IEX or delayed SIP evidence. Pin the execution
+policy and exact SIP quote cut separately from the strategy in any future SHADOW or PAPER activation.
+
+- Price exposure increases at a depth-weighted midpoint, rounded toward the passive side and bounded by the
+  original buy ceiling or short-sale floor. A one-tick spread may join the same-side quote; a locked quote or a
+  collar with no nonmarketable tick defers. Missing evidence never falls back to crossing.
+- Require the last quote available by the end of each of the five regular-session minutes preceding the
+  pricing quote's minute, for the same symbol and SIP feed. Defer during open warmup or when the current spread
+  relative to the midpoint exceeds 2.5× the historical median. No later data can supply a missing sample.
+- The discretionary reanchor decision applies only to a reconciled, working, zero-fill simple entry within
+  its original checkpoint. Keep it until the minimum dwell has elapsed and the new tick differs by more than
+  both one tick and the configured fraction of the current spread. A cancel recommendation is not permission
+  to replace: confirm the terminal order and residual, then replan with fresh pricing and risk. Never apply
+  this guard to mandatory expiry, risk stops, native protection, or liquidation.
+
+The [deterministic replay](../../services/bayn/src/strategy/execution-model/passive-entry.test.ts) uses a 2 s quote
+age limit, 8 s dwell and half-spread deadband. Against a synthetic take-the-touch, reanchor-on-change control
+using the same adverse collars, it saves **4.67 bp per matched fill** versus arrival midpoint (three paired
+fills). Total cancellations fall from **9/14 (64.3%) to 2/5 (40.0%)** of terminal orders; discretionary cancels fall
+from nine to one. Opportunity fill rate falls from **5/5 to 3/5**: one spread blowout is skipped and one passive
+order doesn't fill. These five deliberately varied opportunities test policy behavior, not queue priority, actual
+broker fills, live slippage, or PnL. Measure all opportunities and reconcile actual fills before any graduation.
+
 ## Gate 1: SHADOW after Wave 4B
 
 - Verify the running Wave 4B image and replay the half-day close and cancel/reconcile path. Pin the new commit, policy

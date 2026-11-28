@@ -1,31 +1,38 @@
 from __future__ import annotations
 
-from tests.order_feed.support import (
-    Decimal,
+import uuid
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.models import (
     ExecutionOrderEvent,
-    FakeConsumer,
-    FakeRecord,
-    NormalizedOrderEvent,
-    ORDER_FEED_SOURCE_REVISION,
     OrderFeedConsumerCursor,
-    OrderFeedIngestor,
     OrderFeedSourceWindow,
-    OrderFeedTestCase,
-    Session,
-    SimpleNamespace,
-    datetime,
-    fill_delta_fields,
+)
+from app.trading.order_feed import (
+    ORDER_FEED_SOURCE_REVISION,
+    NormalizedOrderEvent,
+    OrderFeedIngestor,
     normalize_order_feed_record,
-    order_event_has_failed_unhandled_source_window,
-    patch,
     persist_order_event,
     repair_order_feed_fill_deltas,
+)
+from app.trading.order_feed.normalize_order_feed_record import fill_delta_fields
+from app.trading.order_feed.resolve_execution_linkage_for_identity import (
+    order_event_has_failed_unhandled_source_window,
     retry_failed_duplicate_order_event_application,
-    select,
-    settings,
-    timedelta,
-    timezone,
-    uuid,
+)
+from tests.order_feed.support import (
+    FakeConsumer,
+    FakeRecord,
+    OrderFeedTestCase,
+    filled_order_event,
 )
 
 
@@ -203,19 +210,12 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
             )
             session.add_all([execution, failed_source_window, retry_source_window])
             session.flush()
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="failed-out-of-order-retry",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=30,
-                alpaca_account_label="paper",
                 feed_seq=10,
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id="order-1",
                 client_order_id="client-1",
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("190.2"),
                 raw_event={},
@@ -576,37 +576,25 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
                         avg_fill_price=Decimal("190.20"),
                         raw_event={},
                     ),
-                    ExecutionOrderEvent(
+                    filled_order_event(
                         event_fingerprint="legacy-fill-2",
-                        source_topic="torghut.trade-updates.v1",
-                        source_partition=0,
                         source_offset=102,
-                        alpaca_account_label="paper",
                         feed_seq=11,
                         event_ts=base_ts + timedelta(seconds=1),
-                        symbol="AAPL",
                         alpaca_order_id="order-1",
                         client_order_id="client-1",
-                        event_type="fill",
-                        status="filled",
                         qty=Decimal("2"),
                         filled_qty=Decimal("2"),
                         avg_fill_price=Decimal("190.40"),
                         raw_event={},
                     ),
-                    ExecutionOrderEvent(
+                    filled_order_event(
                         event_fingerprint="legacy-fill-repeat",
-                        source_topic="torghut.trade-updates.v1",
-                        source_partition=0,
                         source_offset=103,
-                        alpaca_account_label="paper",
                         feed_seq=12,
                         event_ts=base_ts + timedelta(seconds=2),
-                        symbol="AAPL",
                         alpaca_order_id="order-1",
                         client_order_id="client-1",
-                        event_type="fill",
-                        status="filled",
                         qty=Decimal("2"),
                         filled_qty=Decimal("2"),
                         avg_fill_price=Decimal("190.50"),
@@ -658,17 +646,10 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
     ) -> None:
         with Session(self.engine) as session:
             session.add(
-                ExecutionOrderEvent(
+                filled_order_event(
                     event_fingerprint="legacy-fill-no-identity",
-                    source_topic="torghut.trade-updates.v1",
-                    source_partition=0,
                     source_offset=201,
-                    alpaca_account_label="paper",
                     feed_seq=20,
-                    event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                    symbol="AAPL",
-                    event_type="fill",
-                    status="filled",
                     qty=Decimal("1"),
                     filled_qty=Decimal("1"),
                     avg_fill_price=Decimal("190.20"),
