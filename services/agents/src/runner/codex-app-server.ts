@@ -1428,8 +1428,26 @@ export const runCodexAppServerAdapter = async (
       process.stdout.write(line)
     }
     const logger: NonNullable<CodexAppServerOptions['logger']> = (level, message, meta) => {
+      // Notification payloads must go through telemetry, which redacts across chunks.
       write(
-        `${stringifyRunnerOutput({ ts: now().toISOString(), level, message, component: 'codex-app-server-client', ...meta })}\n`,
+        `${stringifyRunnerOutput({
+          ts: now().toISOString(),
+          level,
+          message,
+          component: 'codex-app-server-client',
+          method: meta?.method,
+          id: meta?.id,
+          threadId: meta?.threadId,
+          turnId: meta?.turnId,
+          activeTurnIds: meta?.activeTurnIds,
+          inferredTurnId: meta?.inferredTurnId,
+          previousTurnId: meta?.previousTurnId,
+          status: meta?.status,
+          code: meta?.code,
+          signal: meta?.signal,
+          latencyMs: meta?.latencyMs,
+          deltaBytes: meta?.deltaBytes,
+        })}\n`,
       )
     }
     const reportStartupPhase: ReportStartupPhase = (phase, started, outcome = 'ok') => {

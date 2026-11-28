@@ -927,6 +927,50 @@ describe('codex app-server runner adapter', () => {
     })
   })
 
+  it('keeps credentials split across reasoning notifications out of retained logs and stdout', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    const logPath = join(dir, 'runner.log')
+    await writeFile(runPath, '{}')
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    onTestFinished(() => stdout.mockRestore())
+    const publishTelemetry = vi.fn(async () => {})
+    const method = 'item/reasoning/summaryTextDelta'
+
+    await expect(
+      runCodexAppServerAdapter(
+        { provider: 'codex', payloads: { eventFilePath: runPath }, artifacts: { logPath } },
+        { prompt: NORMALIZED_PROMPT },
+        {
+          createClient: ({ logger, onNotification }) => ({
+            runTurnStream: async () => {
+              for (const delta of ['https://private-user:private-password', '@github.com/org/repo']) {
+                const params = { threadId: 'thread-1', turnId: 'turn-1', itemId: 'reasoning-1', delta }
+                onNotification?.({ method, params })
+                logger?.('info', 'agent reasoning delta', { method, params })
+              }
+              return { stream: makeStream(), threadId: 'thread-1', turnId: 'turn-1' }
+            },
+          }),
+          publishTelemetry,
+        },
+      ),
+    ).resolves.toBe(0)
+
+    for (const output of [await readFile(logPath, 'utf8'), stdout.mock.calls.map(([line]) => String(line)).join('')]) {
+      expect(output).not.toMatch(/private-user|private-password/)
+      expect(output).toContain('"type":"reasoning","delta":"https://[REDACTED]@github.com/org/repo"')
+      expect(output).toContain(`"method":"${method}"`)
+      expect(output).not.toContain('"params":')
+    }
+    expect(publishTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'finished' }),
+      expect.any(AbortSignal),
+    )
+    expect(JSON.stringify(publishTelemetry.mock.calls)).not.toMatch(/private-user|private-password/)
+  })
+
   it('requires the versioned payload eventFilePath contract', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
     const statusPath = join(dir, 'status.json')
