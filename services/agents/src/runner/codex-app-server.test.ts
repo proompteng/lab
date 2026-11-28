@@ -5,7 +5,13 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Turn } from '@proompteng/codex'
+import {
+  CodexAppServerBootstrapTimeoutError,
+  type CodexAppServerOptions,
+  type CodexAppServerTurnOptions,
+  type StreamDelta,
+  type Turn,
+} from '@proompteng/codex'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { extractRunnerStatusFromJobPods } from '../server/agents-controller/runner-status'
 import { RUNNER_STATUS_EVENT, RUNNER_TERMINATION_BYTES } from '../runner-status'
@@ -21,6 +27,7 @@ import {
   resolveCodexBinaryPath,
   runCodexAppServerAdapter,
   type CodexAppServerRunnerClient,
+  type RunCodexAppServerAdapterOptions,
 } from './codex-app-server'
 
 const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
@@ -53,21 +60,23 @@ const deferred = <T = void>() => {
 }
 
 const NORMALIZED_PROMPT = 'run the normalized Codex adapter contract'
-const systemPromptEnvKeys = [
+const runnerEnvKeys = [
+  'AGENT_RUN_UID', // Unit tests must not write telemetry to the enclosing AgentRun's object.
+  'AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT',
   'CODEX_SYSTEM_PROMPT_PATH',
   'CODEX_SYSTEM_PROMPT_EXPECTED_HASH',
   'CODEX_SYSTEM_PROMPT_REQUIRED',
 ]
-const originalSystemPromptEnv = Object.fromEntries(systemPromptEnvKeys.map((key) => [key, process.env[key]]))
+const originalRunnerEnv = Object.fromEntries(runnerEnvKeys.map((key) => [key, process.env[key]]))
 
 describe('codex app-server runner adapter', () => {
   beforeEach(() => {
-    for (const key of systemPromptEnvKeys) delete process.env[key]
+    for (const key of runnerEnvKeys) delete process.env[key]
   })
 
   afterEach(() => {
-    for (const key of systemPromptEnvKeys) {
-      const value = originalSystemPromptEnv[key]
+    for (const key of runnerEnvKeys) {
+      const value = originalRunnerEnv[key]
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
     }
@@ -205,6 +214,134 @@ describe('codex app-server runner adapter', () => {
     expect(resolveCodexBinaryPath({ binaryPath: '/adapter/codex' }, { AGENTS_CODEX_BINARY: '/env/codex' })).toBe(
       '/adapter/codex',
     )
+  })
+
+  describe('app-server bootstrap', () => {
+    let runPath: string
+    beforeEach(async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'agents-codex-bootstrap-'))
+      onTestFinished(() => rm(dir, { recursive: true, force: true }))
+      runPath = join(dir, 'run.json')
+      await writeFile(runPath, '{}')
+    })
+
+    const run = (options: RunCodexAppServerAdapterOptions) =>
+      runCodexAppServerAdapter(
+        { provider: 'codex', payloads: { eventFilePath: runPath } },
+        { prompt: NORMALIZED_PROMPT, bootstrapTimeoutMs: 123 },
+        options,
+      )
+
+    it('stops the timed-out child before creating a replacement and starts exactly one turn', async () => {
+      const stopStarted = deferred()
+      const shutdown = deferred()
+      const runUnreadyTurn = vi.fn()
+      const runTurnStream = vi.fn(async () => ({ stream: makeStream(), threadId: 'thread-1', turnId: 'turn-1' }))
+      const stopAndWait = vi.fn(async () => {
+        stopStarted.resolve()
+        await shutdown.promise
+      })
+      const stop = vi.fn()
+      const createClient = vi
+        .fn()
+        .mockReturnValueOnce({
+          ensureReady: async () => {
+            throw new CodexAppServerBootstrapTimeoutError(123)
+          },
+          stopAndWait,
+          runTurnStream: runUnreadyTurn,
+        })
+        .mockReturnValueOnce({ ensureReady: async () => {}, runTurnStream, stop })
+
+      const result = run({ createClient })
+      await stopStarted.promise
+      expect(createClient).toHaveBeenCalledTimes(1)
+      expect(createClient).toHaveBeenCalledWith(expect.objectContaining({ bootstrapTimeoutMs: 123 }))
+      shutdown.resolve()
+
+      await expect(result).resolves.toBe(0)
+      expect(createClient).toHaveBeenCalledTimes(2)
+      expect(stopAndWait).toHaveBeenCalledTimes(1)
+      expect(runUnreadyTurn).not.toHaveBeenCalled()
+      expect(runTurnStream).toHaveBeenCalledTimes(1)
+      expect(stop).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      { description: 'two initialize timeouts', cause: new CodexAppServerBootstrapTimeoutError(123), attempts: 2 },
+      { description: 'a non-timeout initialize failure', cause: new Error('initialize request rejected'), attempts: 1 },
+    ])('fails after $description without starting a turn', async ({ cause, attempts }) => {
+      const stop = vi.fn()
+      const runTurnStream = vi.fn()
+      const createClient = vi.fn(() => ({
+        ensureReady: async () => {
+          throw cause
+        },
+        runTurnStream,
+        stop,
+      }))
+
+      await expect(run({ createClient })).rejects.toMatchObject({ operation: 'create-client', cause })
+      expect(createClient).toHaveBeenCalledTimes(attempts)
+      expect(stop).toHaveBeenCalledTimes(attempts)
+      expect(runTurnStream).not.toHaveBeenCalled()
+    })
+
+    it('never retries a turn request after successful initialization', async () => {
+      const cause = new CodexAppServerBootstrapTimeoutError(123)
+      const stop = vi.fn()
+      const runTurnStream = vi.fn().mockRejectedValue(cause)
+      const createClient = vi.fn(() => ({ ensureReady: async () => {}, runTurnStream, stop }))
+
+      await expect(run({ createClient })).rejects.toMatchObject({ operation: 'start-turn', cause })
+      expect(createClient).toHaveBeenCalledTimes(1)
+      expect(runTurnStream).toHaveBeenCalledTimes(1)
+      expect(stop).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops the unready child on cancellation without waiting for the bootstrap deadline', async () => {
+      const controller = new AbortController()
+      const initializing = deferred()
+      const handshake = deferred()
+      const stop = vi.fn(() => handshake.reject(new Error('child stopped')))
+      const runTurnStream = vi.fn()
+      const createClient = vi.fn(() => ({
+        ensureReady: () => {
+          initializing.resolve()
+          return handshake.promise
+        },
+        runTurnStream,
+        stop,
+      }))
+
+      const result = run({ createClient, abortSignal: controller.signal })
+      await initializing.promise
+      controller.abort('SIGTERM')
+      await expect(result).rejects.toBeInstanceOf(CodexRunnerCancellationError)
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect(createClient).toHaveBeenCalledTimes(1)
+      expect(runTurnStream).not.toHaveBeenCalled()
+    })
+
+    it('honors cancellation during retry backoff without launching a replacement', async () => {
+      const controller = new AbortController()
+      const stop = vi.fn(() => setImmediate(() => controller.abort('SIGTERM')))
+      const runTurnStream = vi.fn()
+      const createClient = vi.fn(() => ({
+        ensureReady: async () => {
+          throw new CodexAppServerBootstrapTimeoutError(123)
+        },
+        runTurnStream,
+        stop,
+      }))
+
+      await expect(run({ createClient, abortSignal: controller.signal })).rejects.toBeInstanceOf(
+        CodexRunnerCancellationError,
+      )
+      expect(createClient).toHaveBeenCalledTimes(1)
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect(runTurnStream).not.toHaveBeenCalled()
+    })
   })
 
   it('maps run.json and runner adapter config into a Codex app-server turn', async () => {

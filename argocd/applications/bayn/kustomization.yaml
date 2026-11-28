@@ -33,6 +33,7 @@ resources:
   - networkpolicy.yaml
   - jev-sealedsecret.yaml
   - bayn-research-db-sealedsecret.yaml
+  - bayn-audit-ro-db-sealedsecret.yaml
   - bayn-research-authority-sealedsecret.yaml
   - research-worker.yaml
   - opencode-retained-state.yaml

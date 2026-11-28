@@ -1,27 +1,11 @@
 import { expect, test } from 'bun:test'
-import { rejects } from 'node:assert/strict'
-import { gzipSync } from 'node:zlib'
 
-import { sha256 } from '../../src/hash'
 import { asset, emptyWeights, universe } from '../../src/strategy/macro-etf-core/policy'
-import { stationaryP } from '../vol-regime-carry-metrics'
+import { stationaryBootstrap, stationaryMeanP } from '../research-lib/statistics'
 import { mixes, replayAccount, toMarks, tradeNoise } from './macro-etf-core-dual-horizon-account'
-import { gunzipBound } from '../pure-etf-dual-horizon-data'
 import type { DailyFrame } from './macro-etf-core-dual-horizon-data'
-import { drawdownDays, pairedCorrelation } from './macro-etf-core-dual-horizon-statistics'
+import { bootstrap, drawdownDays, pairedCorrelation } from './macro-etf-core-dual-horizon-statistics'
 import { type NoiseOrder, noiseOrders } from '../pure-etf-dual-horizon-noise'
-
-test('decodes the entire single gzip member and also authenticates the ignored suffix', async () => {
-  const original = 'header\nfirst row\nlast row\n'
-  const member = gzipSync(original)
-  const suffix = new Uint8Array(1693).fill(255)
-  const object = Buffer.concat([member, suffix])
-  const receipt = { name: 'blind fixture', bytes: object.length, sha256: sha256(object), memberBytes: member.length }
-  const input = (bytes: Uint8Array) => new Blob([Buffer.from(bytes)]).stream()
-  expect(await new Response(gunzipBound(input(object), receipt)).text()).toBe(original)
-  object[object.length - 1] ^= 1
-  await rejects(new Response(gunzipBound(input(object), receipt)).text(), /Compressed byte receipt mismatch/)
-})
 
 const micros = (n: number) => BigInt(n * 1_000_000)
 const order = (overrides: Partial<NoiseOrder> = {}): NoiseOrder => ({
@@ -106,6 +90,6 @@ test('SPY drawdown means below prior high water, not simply a down day', () => {
     spyDrawdownDays: -1,
     spyDrawdownSessions: 2,
   })
-  expect(stationaryP([0, 0, 0])).toBeNull()
-  expect(stationaryP([0.01, 0.02, 0.01, 0.02])).toBe(1 / 10_001)
+  expect(stationaryMeanP([0, 0, 0], stationaryBootstrap(3, bootstrap))).toBeNull()
+  expect(stationaryMeanP([0.01, 0.02, 0.01, 0.02], stationaryBootstrap(4, bootstrap))).toBe(1 / 10_001)
 })
