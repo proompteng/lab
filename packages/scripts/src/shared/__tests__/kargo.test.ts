@@ -1062,7 +1062,7 @@ describe('Kargo direct-push GitOps contract', () => {
   it('retains post-deploy verification for the core Torghut application', () => {
     expect(torghutVerifierWorkflow).toContain('for app in torghut; do')
     expect(torghutVerifierWorkflow).toContain('torghut-ta \\')
-    expect(torghutVerifierWorkflow).toContain('torghut-ws; do')
+    expect(torghutVerifierWorkflow).toContain('kubectl rollout status deployment/torghut-ws -n bayn --timeout=10m')
     expect(torghutVerifierWorkflow).not.toContain('torghut-options')
     expect(torghutVerifierWorkflow).not.toContain('torghut-hyperliquid-runtime')
   })
