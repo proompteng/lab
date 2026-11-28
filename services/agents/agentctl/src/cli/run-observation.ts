@@ -266,25 +266,23 @@ export const readVerificationIdentity = (backend: KubeBackend, namespace: string
     const provider = yield* kubeCall((signal) =>
       backend.getCustomObject(RESOURCE_SPECS.provider, namespace, providerName, signal),
     )
-    const serviceAccountName = readNestedValue(provider, ['spec', 'workload', 'serviceAccountName'])
-    const audience = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'audience'])
-    const mountPath = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'mountPath'])
-    if (
-      typeof serviceAccountName !== 'string' ||
-      !serviceAccountName ||
-      typeof audience !== 'string' ||
-      !audience ||
-      typeof mountPath !== 'string' ||
-      !mountPath
-    ) {
+    const rawServiceAccount = readNestedValue(provider, ['spec', 'workload', 'serviceAccountName'])
+    const serviceAccountName =
+      typeof rawServiceAccount === 'string' && rawServiceAccount ? rawServiceAccount : undefined
+    const rawToken = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken'])
+    const rawAudience = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'audience'])
+    const rawMountPath = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'mountPath'])
+    const audience = typeof rawAudience === 'string' && rawAudience ? rawAudience : undefined
+    const mountPath = typeof rawMountPath === 'string' && rawMountPath ? rawMountPath : undefined
+    if (rawToken !== null && rawToken !== undefined && (!audience || !mountPath)) {
       return yield* Effect.fail(
-        validationError('--verify requires an AgentProvider with a service account and MCP token projection.'),
+        validationError('--verify found an AgentProvider with an incomplete MCP token projection configuration.'),
       )
     }
     return { serviceAccountName, audience, mountPath }
   })
 
-export type Verification = { serviceAccountName: string; audience: string; mountPath: string } & (
+export type Verification = { serviceAccountName?: string; audience?: string; mountPath?: string } & (
   | { prompt: string }
   | { stepPrompts: readonly string[] }
   | { jobTask: { implementation: Record<string, unknown>; parameters: Record<string, string> } }
@@ -319,16 +317,18 @@ export const verifyRun = (
       // The Job and Pod can appear before the controller publishes the resolved VCS status.
       if (spec && (!('jobTask' in expected) || observation.phase !== 'Pending')) {
         const account = spec.serviceAccountName
-        if (account !== expected.serviceAccountName) {
+        if (expected.serviceAccountName && account !== expected.serviceAccountName) {
           return yield* Effect.fail(
             kubeError(`AgentRun ${name}: Pod did not inherit service account ${expected.serviceAccountName}.`),
           )
         }
-        const projection = projectedMcpToken(spec)
-        if (projection?.audience !== expected.audience || projection.mountPath !== expected.mountPath) {
-          return yield* Effect.fail(
-            kubeError(`AgentRun ${name}: projected MCP token is not correctly mounted in agent-runner.`),
-          )
+        if (expected.audience && expected.mountPath) {
+          const projection = projectedMcpToken(spec)
+          if (projection?.audience !== expected.audience || projection.mountPath !== expected.mountPath) {
+            return yield* Effect.fail(
+              kubeError(`AgentRun ${name}: projected MCP token is not correctly mounted in agent-runner.`),
+            )
+          }
         }
         const payload = yield* kubeCall((signal) => readPrompt(backend, namespace, observation, signal, true))
         if (payload) {

@@ -132,4 +132,223 @@ describe('runner log summary', () => {
     expect(result.assistantMessage).toContain('Done. [redacted token]')
     expect(result.prUrls).toEqual(['https://github.com/owner/repo/pull/5'])
   })
+
+  it('parses agy-cli runner telemetry logs and status.json without blank fields', () => {
+    const commentary = 'Inspecting repository files before editing.'
+    const finalBody = `Implemented Google run dispatch. ${'All agentctl unit checks passed. '.repeat(8)}Opened https://github.com/proompteng/lab/pull/401.`
+    const combined = `${commentary}${finalBody}`
+    const usage = {
+      inputTokens: 1200,
+      cachedInputTokens: 400,
+      cacheWriteInputTokens: 0,
+      outputTokens: 150,
+      reasoningOutputTokens: 30,
+      totalTokens: 1350,
+    }
+    const logs = [
+      JSON.stringify({
+        ts: '2026-11-28T10:00:00Z',
+        event: {
+          type: 'heartbeat',
+          telemetry: {
+            version: 1,
+            state: 'starting',
+            startedAt: '2026-11-28T10:00:00Z',
+            heartbeatAt: '2026-11-28T10:00:00Z',
+            model: 'gemini-4-neon',
+            effort: 'high',
+          },
+        },
+      }),
+      JSON.stringify({
+        ts: '2026-11-28T10:00:01Z',
+        event: { type: 'turn_started', threadId: 'conv-1', turnId: 'turn-1' },
+      }),
+      JSON.stringify({ ts: '2026-11-28T10:00:02Z', event: { type: 'message', delta: commentary, truncated: false } }),
+      JSON.stringify({
+        ts: '2026-11-28T10:00:03Z',
+        event: { type: 'tool', id: 'step-1', kind: 'commandExecution', title: 'gh pr create', status: 'started' },
+      }),
+      JSON.stringify({
+        ts: '2026-11-28T10:00:04Z',
+        event: {
+          type: 'tool',
+          id: 'step-1',
+          kind: 'commandExecution',
+          title: 'gh pr create',
+          status: 'completed',
+          output: 'https://github.com/proompteng/lab/pull/401\n',
+        },
+      }),
+      JSON.stringify({ ts: '2026-11-28T10:00:05Z', event: { type: 'message', delta: finalBody, truncated: false } }),
+      JSON.stringify({ ts: '2026-11-28T10:00:06Z', event: { type: 'usage', usage } }),
+      JSON.stringify({
+        ts: '2026-11-28T10:00:07Z',
+        event: { type: 'turn_completed', threadId: 'conv-1', turnId: 'turn-1', status: 'completed' },
+      }),
+    ].join('\n')
+
+    const agyStatus = {
+      provider: 'google',
+      adapter: 'agy-cli',
+      binary: '/usr/local/bin/agy',
+      exitCode: 0,
+      status: 'succeeded',
+      startedAt: '2026-11-28T10:00:00Z',
+      finishedAt: '2026-11-28T10:00:12Z',
+      threadId: 'conv-1',
+      model: 'gemini-4-neon',
+      effort: 'high',
+      result: { text: combined.slice(0, 256), truncated: true },
+      telemetry: {
+        version: 1,
+        state: 'finished',
+        startedAt: '2026-11-28T10:00:00Z',
+        heartbeatAt: '2026-11-28T10:00:12Z',
+        model: 'gemini-4-neon',
+        effort: 'high',
+        usage,
+      },
+    }
+
+    const result = parseRunLogs(logs, agyStatus)
+    expect(result).toMatchObject({
+      startedAt: '2026-11-28T10:00:00Z',
+      finishedAt: '2026-11-28T10:00:12Z',
+      model: 'gemini-4-neon',
+      effort: 'high',
+      usage: { input: 1200, cached: 400, output: 150, reasoning: 30 },
+      prUrls: ['https://github.com/proompteng/lab/pull/401'],
+      assistantMessage: combined,
+      assistantMessageComplete: true,
+    })
+  })
+
+  it('parses raw agy-cli stream-json NDJSON events and result.json output', () => {
+    const rawAgyLogs = [
+      JSON.stringify({
+        event: 'init',
+        conversation_id: 'conv-neon-1',
+        init: { cwd: '/workspace/lab', tools: ['run_command'], model: 'gemini-4-neon', effort: 'high' },
+      }),
+      JSON.stringify({
+        event: 'step_update',
+        step_update: {
+          conversation_id: 'conv-neon-1',
+          step_index: 1,
+          state: 'ACTIVE',
+          step_type: 'tool',
+          tool_name: 'run_command',
+          tool_info: { name: 'run_command', parameters: { CommandLine: 'gh pr create' } },
+        },
+      }),
+      JSON.stringify({
+        event: 'step_update',
+        step_update: {
+          conversation_id: 'conv-neon-1',
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'tool',
+          tool_name: 'run_command',
+          duration_seconds: 0.4,
+          tool_info: {
+            name: 'run_command',
+            output: 'Created PR https://github.com/proompteng/lab/pull/512?token=secret-query\n',
+          },
+        },
+      }),
+      JSON.stringify({
+        event: 'step_update',
+        step_update: {
+          conversation_id: 'conv-neon-1',
+          step_index: 2,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: 'Completed fix in https://github.com/proompteng/lab/pull/512.',
+          usage: {
+            input_tokens: 320,
+            cache_read_tokens: 80,
+            output_tokens: 45,
+            thinking_tokens: 12,
+            total_tokens: 365,
+          },
+        },
+      }),
+      JSON.stringify({
+        event: 'result',
+        result: {
+          conversation_id: 'conv-neon-1',
+          status: 'SUCCESS',
+          response: 'Completed fix in https://github.com/proompteng/lab/pull/512.',
+          duration_seconds: 4.25,
+          num_turns: 1,
+          usage: {
+            input_tokens: 320,
+            cache_read_tokens: 80,
+            output_tokens: 45,
+            thinking_tokens: 12,
+            total_tokens: 365,
+          },
+        },
+      }),
+    ].join('\n')
+
+    const parsed = parseRunLogs(rawAgyLogs)
+    expect(parsed).toMatchObject({
+      events: 5,
+      durationMs: 4250,
+      model: 'gemini-4-neon',
+      effort: 'high',
+      usage: { input: 320, cached: 80, output: 45, reasoning: 12 },
+      prUrls: ['https://github.com/proompteng/lab/pull/512'],
+      assistantMessage: 'Completed fix in https://github.com/proompteng/lab/pull/512.',
+      assistantMessageComplete: true,
+    })
+
+    const resultJson = {
+      schemaVersion: 'agents.proompteng.ai/result/v1',
+      threadId: 'conv-neon-1',
+      responseText: 'Full response from result.json with https://github.com/proompteng/lab/pull/513.',
+      responseTruncated: false,
+    }
+    const fromResultFile = parseRunLogs('', resultJson)
+    expect(fromResultFile).toMatchObject({
+      prUrls: ['https://github.com/proompteng/lab/pull/513'],
+      assistantMessage: 'Full response from result.json with https://github.com/proompteng/lab/pull/513.',
+      assistantMessageComplete: true,
+    })
+  })
+
+  it('handles failed agy-cli runs safely without throwing or leaking error payloads', () => {
+    const failedStatus = {
+      provider: 'google',
+      adapter: 'agy-cli',
+      exitCode: 1,
+      status: 'failed',
+      startedAt: '2026-11-28T10:00:00Z',
+      finishedAt: '2026-11-28T10:00:05Z',
+      model: 'gemini-4-neon',
+      error: 'permission denied with opaque-adc-error',
+    }
+    const result = parseRunLogs(
+      JSON.stringify({
+        ts: '2026-11-28T10:00:05Z',
+        component: 'agy-cli',
+        event: { type: 'stderr', line: 'opaque-stderr-secret' },
+      }),
+      failedStatus,
+    )
+    expect(result).toMatchObject({
+      startedAt: '2026-11-28T10:00:00Z',
+      finishedAt: '2026-11-28T10:00:05Z',
+      model: 'gemini-4-neon',
+      effort: null,
+      usage: null,
+      prUrls: [],
+      assistantMessage: null,
+      assistantMessageComplete: false,
+    })
+    expect(JSON.stringify(result)).not.toContain('opaque-adc-error')
+    expect(JSON.stringify(result)).not.toContain('opaque-stderr-secret')
+  })
 })
