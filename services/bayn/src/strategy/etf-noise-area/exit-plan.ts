@@ -8,11 +8,16 @@ import { quantityScale } from '../../quantity'
 import { UtcSourceTimestampSchema } from '../../schemas'
 import { BPS, MICROS } from '../execution-model/model'
 import {
+  type ExecutionPricingStage,
   type PassiveEntryExecutionError,
   type PassiveEntryMarket,
   type PassiveEntryPolicy,
+  type PassiveExitPolicy,
+  type PassiveReanchorDecision,
   planPassiveEntryReanchor,
+  planPassiveExitReanchor,
   pricePassiveEntry,
+  pricePassiveExit,
 } from '../execution-model/passive-entry'
 import { type EtfNoiseAreaPolicy, type EtfNoiseAreaSymbol, liveEtfNoiseAreaSymbols } from './policy'
 import {
@@ -157,7 +162,14 @@ export const planNoiseAreaEntries = (input: {
       if (execution !== undefined) {
         const market = execution.marketBySymbol[symbol]
         if (market === undefined || !inEntryCheckpoint(signal, market.cut.observedAt)) continue
-        const price = yield* pricePassiveEntry({ policy: execution.policy, symbol, side, adverseLimitMicros, market })
+        const price = yield* pricePassiveEntry({
+          policy: execution.policy,
+          symbol,
+          side,
+          adverseLimitMicros,
+          market,
+          windowStartedAt: signal.checkpointAt,
+        })
         if (price._tag === 'Defer') continue
         limitPriceMicros = price.limitPriceMicros
       }
@@ -194,8 +206,9 @@ export const planNoiseAreaEntryReanchor = (input: {
   readonly executionPolicy: PassiveEntryPolicy
   readonly market: PassiveEntryMarket
   readonly order: BrokerOrder
-}) => {
-  const { policy, signal, executionPolicy, market, order } = input
+  readonly reanchorCount?: number
+}): Result.Result<PassiveReanchorDecision, PassiveEntryExecutionError> => {
+  const { policy, signal, executionPolicy, market, order, reanchorCount } = input
   if (
     !passiveCohort(policy) ||
     !policy.symbols.some((symbol) => symbol === signal.symbol) ||
@@ -213,6 +226,8 @@ export const planNoiseAreaEntryReanchor = (input: {
     adverseLimitMicros,
     market,
     order,
+    windowStartedAt: signal.checkpointAt,
+    ...(reanchorCount === undefined ? {} : { reanchorCount }),
   })
 }
 
@@ -263,3 +278,72 @@ export const planNoiseAreaExit = (signal: NoiseAreaExitSignal) =>
     reduceOnly: true,
     flattenAt: signal.flattenAt,
   }) as const
+
+export interface NoiseAreaPricedExitPlan {
+  readonly symbol: EtfNoiseAreaSymbol
+  readonly side: OrderSide
+  readonly orderType: OrderType.Limit
+  readonly limitPriceMicros: bigint
+  readonly stage: ExecutionPricingStage
+  readonly reason: NoiseAreaExitSignal['_tag']
+  readonly reduceOnly: true
+  readonly flattenAt: string
+}
+
+/** Prices a QQQ/SMH reduce-only exit via passive NBBO microprice with guaranteed pre-deadline marketable escalation. */
+export const planNoiseAreaExitPricing = (input: {
+  readonly policy: EtfNoiseAreaPolicy
+  readonly signal: NoiseAreaExitSignal
+  readonly executionPolicy: PassiveExitPolicy
+  readonly market: Pick<PassiveEntryMarket, 'cut' | 'quote'>
+  readonly windowStartedAt: string
+  readonly deadlineAt: string
+}): Result.Result<NoiseAreaPricedExitPlan, NoiseAreaInputError | PassiveEntryExecutionError> =>
+  Result.gen(function* () {
+    const { policy, signal, executionPolicy, market, windowStartedAt, deadlineAt } = input
+    if (!passiveCohort(policy) || !policy.symbols.some((symbol) => symbol === signal.symbol)) {
+      return yield* invalid('Passive ETF exit execution requires the QQQ/SMH cohort')
+    }
+    const base = planNoiseAreaExit(signal)
+    const priced = yield* pricePassiveExit({
+      policy: executionPolicy,
+      symbol: base.symbol,
+      side: base.side,
+      market,
+      windowStartedAt,
+      deadlineAt,
+    })
+    return {
+      ...base,
+      orderType: OrderType.Limit,
+      limitPriceMicros: priced.limitPriceMicros,
+      stage: priced.stage,
+    }
+  })
+
+/** Reanchor or escalate a working QQQ/SMH reduce-only exit order within its bounded exit window. */
+export const planNoiseAreaExitReanchor = (input: {
+  readonly policy: EtfNoiseAreaPolicy
+  readonly signal: NoiseAreaExitSignal
+  readonly executionPolicy: PassiveExitPolicy
+  readonly market: Pick<PassiveEntryMarket, 'cut' | 'quote'>
+  readonly windowStartedAt: string
+  readonly deadlineAt: string
+  readonly order: BrokerOrder
+  readonly reanchorCount?: number
+}): Result.Result<PassiveReanchorDecision, PassiveEntryExecutionError> => {
+  const { policy, signal, executionPolicy, market, windowStartedAt, deadlineAt, order, reanchorCount } = input
+  if (!passiveCohort(policy) || !policy.symbols.some((symbol) => symbol === signal.symbol)) {
+    return Result.succeed({ _tag: 'Keep' } as const)
+  }
+  return planPassiveExitReanchor({
+    policy: executionPolicy,
+    symbol: signal.symbol,
+    side: exitSide(signal.side),
+    market,
+    windowStartedAt,
+    deadlineAt,
+    order,
+    ...(reanchorCount === undefined ? {} : { reanchorCount }),
+  })
+}

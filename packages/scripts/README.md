@@ -148,8 +148,9 @@ We keep lightweight unit tests alongside scripts where feasible (see `src/codex/
 # Lint scripts
 bun run --filter @proompteng/scripts lint
 
-# Execute Bun tests
-bun test packages/scripts/src/**/__tests__/*.test.ts
+# Execute the full suite locally
+bun test packages/scripts/
 ```
 
-These commands are also executed in CI (see `.github/workflows/scripts-ci.yml`).
+[Scripts CI](../../.github/workflows/scripts-ci.yml) uses Bun 1.4.3 for four isolated file workers in the existing
+`lint-and-test / run` check: `bun test --isolate --randomize --parallel=4 packages/scripts/src`.

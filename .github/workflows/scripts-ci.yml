@@ -147,7 +147,8 @@ jobs:
   lint-and-test:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.4.2
+      # 1.4.3 fixes callbacks outliving isolated file globals under --parallel.
+      bun-version: 1.4.3
       node-version: 24.11.1
       install-command: |
         set -euo pipefail
@@ -169,5 +170,5 @@ jobs:
       test-command: >-
         bunx tsc --noEmit --project packages/scripts/tsconfig.atlas.json &&
         bun run --filter @proompteng/scripts typecheck:ontology &&
-        bun test --isolate --randomize packages/scripts/src &&
+        bun test --isolate --randomize --parallel=4 packages/scripts/src &&
         bun test scripts/jangar/validate-primitives.test.ts

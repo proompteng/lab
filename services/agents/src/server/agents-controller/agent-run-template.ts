@@ -25,6 +25,7 @@ type RuntimeCleanupContext = {
   status: Record<string, unknown>
   finalizer: string
   finalizers: string[]
+  resourceVersion: string | null
   logContext: Record<string, unknown>
   isKubeNotFoundError: (error: unknown) => boolean
   getTemporalClient: () => Promise<unknown>
@@ -57,7 +58,10 @@ const cancelReferencedRuntime = async (input: RuntimeCleanupContext, eventName: 
 const removeRuntimeFinalizer = async (input: RuntimeCleanupContext) => {
   try {
     await input.kube.patch(RESOURCE_MAP.AgentRun, input.name, input.namespace, {
-      metadata: { finalizers: input.finalizers.filter((item) => item !== input.finalizer) },
+      metadata: {
+        finalizers: input.finalizers.filter((item) => item !== input.finalizer),
+        ...(input.resourceVersion ? { resourceVersion: input.resourceVersion } : {}),
+      },
     })
     return true
   } catch (error) {
@@ -84,7 +88,7 @@ export const reconcileAgentRunTemplate = async (
   await cancelReferencedRuntime(input, 'template_runtime_cleanup_failed')
   if (input.hasFinalizer) {
     const patched = await removeRuntimeFinalizer(input)
-    if (!patched) return
+    if (!patched || input.resourceVersion) return
   }
 
   await input.setStatus(input.kube, input.agentRun, {

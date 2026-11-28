@@ -97,7 +97,7 @@ let kubeRouter: Manifest[]
 beforeAll(() => {
   agents = render('agents', '--enable-helm')
   kubeRouter = render('kube-router')
-})
+}, 30_000)
 
 test('renders only the exact read-only cluster grants for both standard runner accounts', () => {
   for (const [provider, serviceAccountName] of Object.entries(providers)) {
