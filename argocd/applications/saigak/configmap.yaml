@@ -18,7 +18,7 @@ data:
 
     upstream = os.environ.get('SAIGAK_UPSTREAM_URL', 'http://127.0.0.1:11435').rstrip('/')
     embedding_model = os.environ.get('SAIGAK_EMBEDDING_MODEL', 'qwen3-embedding-saigak:8b')
-    embedding_dimension = int(os.environ.get('SAIGAK_EMBEDDING_DIMENSION', '4096'))
+    embedding_dimension = int(os.environ.get('SAIGAK_EMBEDDING_DIMENSION', '2048'))
     timeout_seconds = float(os.environ.get('SAIGAK_PROXY_TIMEOUT_SECONDS', '60'))
     require_gpu_residency = os.environ.get('SAIGAK_REQUIRE_GPU_RESIDENCY', 'false').lower() == 'true'
 
@@ -143,6 +143,17 @@ data:
 
         length = int(self.headers.get('content-length', '0'))
         body = self.rfile.read(length) if length > 0 else None
+        if self.command == 'POST' and path.partition('?')[0] == '/v1/embeddings':
+          try:
+            payload = json.loads(body or b'')
+          except (ValueError, UnicodeDecodeError):
+            self.write_json(400, {'error': {'message': 'expected a JSON object'}})
+            return
+          if not isinstance(payload, dict):
+            self.write_json(400, {'error': {'message': 'expected a JSON object'}})
+            return
+          payload.setdefault('dimensions', embedding_dimension)
+          body = json.dumps(payload).encode()
         headers = {
           key: value
           for key, value in self.headers.items()
@@ -153,7 +164,7 @@ data:
           raw = response.read()
           self.send_response(response.status)
           for key, value in response.headers.items():
-            if key.lower() not in {'transfer-encoding', 'connection'}:
+            if key.lower() not in {'transfer-encoding', 'connection', 'content-length'}:
               self.send_header(key, value)
           self.send_header('content-length', str(len(raw)))
           self.end_headers()

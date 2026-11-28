@@ -335,6 +335,10 @@ Resource resolution order for Job containers (lowest to highest precedence):
 Use `spec.workload.resources` for normal per-run sizing. `spec.runtime.config.resources` is accepted for runtime-level
 submissions and is overridden by explicit workload resources.
 
+Jobs using the standard runner image use memory-backed scratch for `/workspace`, `/tmp`, the Bun cache, and any
+controller-created Codex home. Written data counts toward the Job container's memory limit. Use an explicit
+`spec.workload.volumes` mount for workspace data that must persist across Jobs.
+
 ## Verify The Run Is Using The Spec Text
 
 After `kubectl apply`:
