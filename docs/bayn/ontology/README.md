@@ -63,7 +63,8 @@ In 1.3.0 a rule is a saved search and tag, not an execution policy. The `Bayn [k
 invariant and sources; the search targets only the onboarded Bayn `public` schema. The rules API only lets sync
 rename, not change the search or tags. If one of those drifts, apply stops before any writes. Have a catalog operator
 review and reconcile that rule, including the tags it applied; the CLI intentionally does not delete/recreate it.
-Seed acronym names and `Bayn:` analysis names are reserved keys for this sync. Unrelated entries are left alone.
+Acronym names are global. The Agents bundle publishes `CNPG`. Bayn's `standby-only` rule describes its PostgreSQL
+replica. The Bayn publisher owns the acronym names in its seed and its `Bayn:` analysis names.
 
 ### SQL parameters and limits
 

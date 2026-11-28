@@ -85,14 +85,6 @@
       "sources": ["https://github.com/proompteng/lab/pull/16358", "https://github.com/proompteng/lab/pull/16394"]
     },
     {
-      "name": "CNPG",
-      "description": "CloudNativePG manages bayn-db PostgreSQL. The reviewed cluster specifies 2 instances and requires 1 synchronous standby. bayn-db-ro selects replicas only; do not substitute the primary-only bayn-db-rw service for an evidence read.",
-      "sources": [
-        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/argocd/applications/bayn/postgres-cluster.yaml",
-        "https://github.com/proompteng/lab/pull/16392"
-      ]
-    },
-    {
       "name": "OrderChurn",
       "description": "Counts distinct broker orders at their latest retained status, grouped by the New York date of their first retained update. Cancel ratio is canceled divided by filled plus canceled. Orders per filled intent divides intent-bound orders by distinct bound intents with any broker-reported execution. No eligible denominator means unknown.",
       "sources": [
@@ -166,7 +158,7 @@
     },
     {
       "key": "standby-only",
-      "description": "Auto Ontology may read only bayn-db-ro on TCP 5432 with an approved SELECT-only audit identity. Require pg_is_in_recovery() = true. Never fall back to bayn-db-rw, reuse the execution secret, or write Bayn data.",
+      "description": "CloudNativePG runs bayn-db with two instances and requires one synchronous standby. Auto Ontology may read only bayn-db-ro on TCP 5432 with an approved SELECT-only audit identity. Require pg_is_in_recovery() = true. Never fall back to bayn-db-rw, reuse the execution secret, or write Bayn data.",
       "searchTerm": "position_snapshots",
       "sources": [
         "https://github.com/proompteng/lab/pull/16392",

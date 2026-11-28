@@ -55,7 +55,6 @@ test('the checked-in seed decodes strictly and every analysis uses the shared bi
     'VWAP',
     'MOO',
     'MOC',
-    'CNPG',
     'OrderChurn',
     'ExecutionSlippage',
     'FillFeeDrag',
@@ -137,6 +136,17 @@ test('relation allowlist is exact: nonexistent, omitted, or extraneous dependenc
   expect(Result.isFailure(verifyReferences(prepared, tables.slice(1)))).toBe(true)
   expect(Result.isFailure(verifyReferences(prepared, ['public.nonexistent', ...tables.slice(1)]))).toBe(true)
   expect(Result.isFailure(verifyReferences(prepared, ['pg_catalog.pg_class', ...tables]))).toBe(true)
+})
+
+test('publishing Bayn preserves the published Agents glossary', async () => {
+  const agentsSeed = new URL('../../../docs/agents/ontology/agents-knowledge.json', import.meta.url)
+  const entry = Schema.Struct({ name: Schema.String, description: Schema.String })
+  const { acronyms } = Schema.decodeUnknownSync(Schema.Struct({ acronyms: Schema.Array(entry) }))(
+    await Bun.file(agentsSeed).json(),
+  )
+  const catalog = { ...empty, acronyms: acronyms.map((row) => ({ ...row, id: row.name })) }
+  const writes = Result.getOrThrow(planUpserts(seed, catalog))
+  expect(writes.filter((write) => write.method !== 'POST')).toEqual([])
 })
 
 test('plans creates, minimal updates, and no writes for the same catalog without removing unrelated records', () => {
