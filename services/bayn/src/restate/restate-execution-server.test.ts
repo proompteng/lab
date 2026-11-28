@@ -4,6 +4,7 @@ import { connect, createServer as createHttp2Server, type ClientHttp2Session } f
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect, Redacted, Result } from 'effect'
 
+import { restateServicePrefixConfig } from './execution-service-names'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import {
   makeRestateExecutionEndpointHandler,
@@ -83,7 +84,7 @@ test.each([400, 403, 404, 408, 412, 429, 503])(
   },
 )
 
-test('market hint transport preserves exact payload without caching a rejected source registration', async () => {
+test.each(['', 'sleeve-4'])('market hint transport preserves its payload for prefix %j', async (servicePrefix) => {
   const producerId = '11111111-1111-4111-8111-111111111111'
   const event = {
     schemaVersion: 'bayn.execution-wakeup.v1' as const,
@@ -116,13 +117,13 @@ test('market hint transport preserves exact payload without caching a rejected s
         )
         yield* publishMarketChange(
           receiver.url.origin,
-          { controllerKey, sourceRevision, operationTimeoutMs: 1_000 },
+          { controllerKey, sourceRevision, servicePrefix, operationTimeoutMs: 1_000 },
           event,
           Redacted.make('fixture-token'),
         )
         yield* publishMarketChange(
           receiver.url.origin,
-          { controllerKey, sourceRevision, operationTimeoutMs: 1_000 },
+          { controllerKey, sourceRevision, servicePrefix, operationTimeoutMs: 1_000 },
           event,
           Redacted.make('fixture-token'),
         )
@@ -131,7 +132,7 @@ test('market hint transport preserves exact payload without caching a rejected s
   )
   expect(received).toEqual(
     Array.from({ length: 2 }, () => ({
-      path: `/BaynExecutionController/${controllerKey}/marketChanged`,
+      path: `/${servicePrefix === '' ? '' : `${servicePrefix}-`}BaynExecutionController/${controllerKey}/marketChanged`,
       key: `bayn-market-hint-${event.eventId}`,
       body: JSON.stringify(event),
     })),
@@ -265,58 +266,82 @@ describe('native Restate execution server', () => {
   })
 
   test('discovers separate execution, observation and projection owners with seven-day receipts', async () => {
-    const handler = makeRestateExecutionEndpointHandler(
-      { controllerKey, operationTimeoutMs: 30_000, planHash, sourceRevision },
-      {
-        advance: () => Promise.reject(new Error('discovery must not advance execution')),
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      },
-      'd'.repeat(64),
-      [],
-      { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
-      {
-        activityRuntime: inactiveActivityRuntime,
-        runtime: {
-          probeProtection: async () => undefined,
-          recordNotification: async () => ({ covered: false }),
-          isNotificationCovered: async () => false,
-          project: async () => {
-            throw new Error('endpoint discovery does not project broker source events')
-          },
-          verifyNotification: () => {
-            throw new Error('discovery does not verify notifications')
-          },
-          invalidate: async () => undefined,
-          activate: () => Promise.resolve(),
-          poll: () =>
-            Promise.resolve({
-              poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
-              startedAtMs: 0,
-              completedAtMs: 0,
-            }),
+    const makeHandler = (prefix?: string) =>
+      makeRestateExecutionEndpointHandler(
+        {
+          controllerKey,
+          operationTimeoutMs: 30_000,
+          planHash,
+          sourceRevision,
+          ...(prefix === undefined ? {} : { servicePrefix: prefix }),
         },
-        maxAgeMs: 60_000,
-        freshnessLeadMs: 30_000,
-      },
-    )
+        {
+          advance: () => Promise.reject(new Error('discovery must not advance execution')),
+          log: () => Promise.resolve(),
+          prepareActivation: () => Promise.resolve(),
+          projectState: () => Promise.resolve(),
+        },
+        'd'.repeat(64),
+        [],
+        { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
+        {
+          activityRuntime: inactiveActivityRuntime,
+          runtime: {
+            probeProtection: async () => undefined,
+            recordNotification: async () => ({ covered: false }),
+            isNotificationCovered: async () => false,
+            project: async () => {
+              throw new Error('endpoint discovery does not project broker source events')
+            },
+            verifyNotification: () => {
+              throw new Error('discovery does not verify notifications')
+            },
+            invalidate: async () => undefined,
+            activate: () => Promise.resolve(),
+            poll: () =>
+              Promise.resolve({
+                poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+                startedAtMs: 0,
+                completedAtMs: 0,
+              }),
+          },
+          maxAgeMs: 60_000,
+          freshnessLeadMs: 30_000,
+        },
+      )
 
-    const discovery = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const server = createHttp2Server(handler)
-          yield* acquireRestateHttp2Server(server, 0)
-          const address = server.address()
-          if (address === null || typeof address === 'string') throw new Error('Restate test server did not bind TCP')
-          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`))
-          const manifest = yield* Effect.promise(() => readDiscovery(client))
-          client.close()
-          return manifest
-        }),
+    const discover = (prefix?: string) =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const server = createHttp2Server(makeHandler(prefix))
+            yield* acquireRestateHttp2Server(server, 0)
+            const address = server.address()
+            if (address === null || typeof address === 'string') throw new Error('Restate test server did not bind TCP')
+            const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`))
+            const manifest = yield* Effect.promise(() => readDiscovery(client))
+            client.close()
+            return manifest
+          }),
+        ),
+      )
+
+    const discovery = await discover()
+    expect(JSON.stringify(await discover(''))).toBe(JSON.stringify(discovery))
+    const prefixed = JSON.stringify(await discover('sleeve-4'))
+    const names = [
+      'BaynExecutionController',
+      'BaynBrokerObservations',
+      'BaynBrokerSourceProjector',
+      'BaynBrokerActivities',
+      'BaynEntryInference',
+    ]
+    expect(prefixed).toBe(
+      names.reduce(
+        (manifest, name) => manifest.replace(`"name":"${name}"`, `"name":"sleeve-4-${name}"`),
+        JSON.stringify(discovery),
       ),
     )
-
     const services =
       (
         discovery as {
@@ -446,7 +471,13 @@ describe('native Restate execution server', () => {
       port: 9080,
       requestIdentityKeys: requestIdentityKey,
     })
-    expect(Object.keys(configured).sort()).toEqual(['activationToken', 'ingressOrigin', 'port', 'requestIdentityKeys'])
+    expect(Object.keys(configured).sort()).toEqual([
+      'activationToken',
+      'ingressOrigin',
+      'port',
+      'requestIdentityKeys',
+      'servicePrefix',
+    ])
   })
 
   test('rejects an unsigned discovery request when request identity is configured', async () => {
@@ -504,4 +535,18 @@ describe('native Restate execution server', () => {
 
     expect(status).toBe(401)
   })
+})
+
+test('service prefix defaults to empty and rejects malformed path segments', async () => {
+  const read = (environment: Record<string, string>) =>
+    Effect.runPromise(
+      Effect.result(restateServicePrefixConfig).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+      ),
+    )
+  expect(Result.getOrThrow(await read({}))).toBe('')
+  expect(Result.getOrThrow(await read({ BAYN_RESTATE_SERVICE_PREFIX: '' }))).toBe('')
+  expect(Result.getOrThrow(await read({ BAYN_RESTATE_SERVICE_PREFIX: 'sleeve-4' }))).toBe('sleeve-4')
+  for (const malformed of ['a/b', ' a', 'UPPER', 'é', 'x'.repeat(33)])
+    expect(Result.isFailure(await read({ BAYN_RESTATE_SERVICE_PREFIX: malformed }))).toBe(true)
 })
