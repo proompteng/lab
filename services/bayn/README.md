@@ -766,7 +766,7 @@ worker build cannot establish correctly completed controller work or supported r
 uses `bayn.qualification-runtime.v3` with `decisionTrigger: streaming` and an explicit complete strategy binding.
 Retained v1/v2 registrations remain readable. Old polling latency/replay studies cannot qualify this runtime;
 a new prospective v6 registration and independently witnessed live evidence are required. Candidate and incumbent
-are comparison roles; either can bind the native Jev v44 or intraday alpha v2 engine. The incumbent must still match
+are comparison roles; either can bind the native Jev v44 or a versioned intraday alpha engine. The incumbent must still match
 its independently witnessed serving generation and retain separate account, store and authority identity.
 
 This hard migration changes handler and journal shapes. Roll out immutable `RestateDeployment` revisions so in-flight
@@ -858,7 +858,15 @@ for interpreting and persisting broker history.
 
 ## Active strategy
 
-Entry observations use the native Jev reader. New entries must meet the cycle's submission deadline. Management
+The source-selected v3 policy trades only QQQ and SMH from the existing 22-symbol IEX market profile. It uses
+completed SPY benchmark bars, 30-minute 1.4× Noise Area breakouts and inverse-volatility parity from the prior
+14 regular sessions. No paid inference runs in this policy. It uses whole shares, a 25 bp entry limit collar,
+fill-anchored protection, opposite-band exits and forced flattening two minutes before the provider regular close.
+See the [v3 PAPER cutover and activation runbook](../../docs/bayn/intraday-v3-pure-etf-cutover.md).
+
+### Retained Jev v44 entry and inference
+
+Historical and research Jev entry observations use the native Jev reader. New entries must meet the cycle's submission deadline. Management
 of an already filled position remains valid after that deadline within the execution session, using liquidation quotes
 and accounted position evidence. It retains the original first-fill holding deadline and forced-close window,
 including continuous crypto cycles whose entry lease lasts one minute.
@@ -920,12 +928,11 @@ failure, defect or interruption during atomic persistence rolls back the receipt
 the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
-The equity submission window follows the broker's regular calendar, not extended IEX capture hours. The first
-eligible observation is one minute and two seconds after regular open, subject to the active sleeve's signal window.
-Equity entries use actual completed history and stop no later than five minutes before the regular close, including
+The equity submission window follows the broker's regular calendar, not extended IEX capture hours. Retained Jev
+equity entries use actual completed history and stop no later than five minutes before the regular close, including
 early closes. The retained protocol also defines 120-minute crypto context for historical evidence
 and position recovery. The [compiled market profiles](src/jev/protocol.ts) bind the entry spread and positioning
-limits. The current protocol permits one equity long or short position with a gross weight capped at 20% of account
+limits. The retained Jev v44 policy permits one equity long or short position with a gross weight capped at 20% of account
 equity. Allocation reduces the target when required by order, symbol, exposure or remaining daily turnover limits.
 The daily counter includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
@@ -2565,6 +2572,45 @@ fractional liquidation with fresh, sufficient arrival
 liquidity; an unsupported market remainder fails the simulation. See the streaming guide's
 [close and coverage acceptance](src/market-data/streaming/README.md#replay-close-and-coverage-acceptance). Negative
 returns are valid measurements. Reconciled simulated results do not establish profitability or calibrate broker fills.
+
+### ETF Noise Area v4 research
+
+[The v4 walk-forward command](tools/research-noise-area-v4.ts) tests three fixed changes and their combinations
+against exact [Wave 6A B0](../../docs/bayn/evidence/2026-11-27-10yr-16etf-noise-area/README.md), not a new live
+default. It trades only QQQ and SMH in replay; XLK, SPY and IWM supply breadth. Use the existing read-only
+`agents-artifacts` credentials for the [pinned 5m SIP tape](../../docs/bayn/evidence/2026-11-27-10yr-qqq-smh-conditioning/protocol.md)
+and the [F4/O1 daily inputs](tools/vol-regime-carry-data.ts).
+
+1. At the committed research revision, run `bun services/bayn/tools/research-noise-area-v4.ts --develop`. Record the
+   source SHA and development receipt before accessing Holdout. The annual forward folds (2019–23) choose on
+   expanding prior history with 20 official sessions purged before each test. The 2024–26 arms are frozen to the
+   final development choice with the same purge. Prior bars may warm features across the seam, never positions.
+2. From that same revision, run `bun services/bayn/tools/research-noise-area-v4.ts --score <receipt-sha256>`. The
+   command checks the source, development replay and B0 parity before opening Holdout. It emits only a Markdown
+   summary; no per-bar, per-trade, or per-day reports.
+
+- **Sizing:** scale each B0 reservation by at most one, inversely to realized noise (overnight log gap plus
+  completed intraday log returns in quadrature), relative to the prior 14 same-clock observations. An inactive
+  name never transfers its reservation to another name.
+- **Regime:** the candidate must close beyond its first 15-minute range and VWAP. Require all four peer snapshots
+  and at least three peers on the same side of their open and VWAP. From 11:30 to 13:30 ET, also require
+  directional net progress of at least 35% of the last hour's absolute path.
+- **Exit:** instead of the opposite band, initialize a fill-anchored 4× five-minute ATR stop. Only a completed
+  close showing strictly more than 1.2R activates breakeven and the one-way Chandelier ratchet. An already-active
+  stop wins on an ambiguous bar. Exits use the next observed open, or flatten 15 minutes before the scheduled
+  close. There is no re-entry; the exit change alone cannot reduce the number of round trips.
+
+All arms use a fixed $100k B0 sizing base, whole shares, a $180k marked-gross ceiling, 2/5/10 bp **round-trip**
+costs and 0.21 bp on sells. CAGR and drawdown use starting capital plus cumulative net P&L, with no reinvestment.
+Turnover is mean daily two-sided raw traded value over starting capital. At **both** stress costs the locked arm
+must be profitable, exceed B0 by >1 CAGR percentage point and >0.15 Sharpe, clear DSR ≥0.95 and a paired
+stationary-block p <0.05, and improve both metrics in at least two of the three Holdout years. Each retained
+part must lift both metrics standalone and against the locked arm without that part. An incomplete Holdout
+execution path vetoes promotion. Descriptive arms cannot replace a failed lock.
+
+[DSR](https://doi.org/10.3905/jpm.2014.40.5.094) deflates for this eight-arm grid, not earlier research on
+the same years. The archive does not establish executable quotes, arrival latency, market impact or borrow.
+These results cannot authorize a switch from the frozen live v2/v3 configurations.
 
 ## Historical data workflow
 

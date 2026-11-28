@@ -34,6 +34,7 @@ describe('AnalysisChart', () => {
           labels: { app: 'analysis' },
         },
         spec: {
+          revisionHistoryLimit: 2,
           strategy: {
             type: 'RollingUpdate',
             rollingUpdate: {

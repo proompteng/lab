@@ -350,6 +350,12 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynRuntimeDegraded`: inspect `operational`, all `dependencies` (including `cycleRunner`), `autonomousCycleLoop`,
   and the broker read/account-binding facts in `GET /v1/status`. Restore the failed dependency or the existing scoped
   loop; do not bypass OBSERVE or create a replacement scheduler.
+- `CASH_FEES_PENDING`: Alpaca's stream can report cash fees before REST provides the authoritative records.
+  When this is the only blocker, Bayn reports `cycle.condition=WAITING` and `executionSession.condition=BLOCKED`
+  without a cycle-failed or runtime-degraded page. A fresh broker cut with settled fees and exact reconciliation
+  are still required to resume submissions. The execution-window alert still checks readiness for a verified
+  submission window. If the wait persists, inspect the broker observation and the account activities; never
+  bypass the fee gate. A broker-snapshot wait is recorded as `outcome="pending"`, not a failure.
 - `BaynRepeatedEntryExpiry`: inspect the last ten minutes of durable cycle outcomes and their original deadlines.
   This alert observes at least five changes to a replica's latest terminal timestamp while all sampled terminal
   reasons remain `BLOCKED_UNUSED_ENTRY_EXPIRED`, within its current submission window and with fresh projection

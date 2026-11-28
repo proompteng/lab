@@ -6,9 +6,11 @@ import { assertSafeOntologyText, disclosureProblem, findOntologyDisclosure } fro
 import { formatOntologyJson, isJsonObject as isObject } from './ontology-json'
 import { readMigrationRelations } from './ontology-migration-relations'
 
+const agentsMigrations = 'services/agents/src/server/migrations'
 const migrations = new Map([
-  ['agents', 'services/agents/src/server/migrations'],
+  ['agents', agentsMigrations],
   ['bayn', 'services/bayn/migrations'],
+  ['ci', agentsMigrations],
 ])
 const maxRuleTagLength = 25
 const bundleFiles = new Bun.Glob('docs/*/ontology/*knowledge*.json')
@@ -284,10 +286,10 @@ export const validateOntologyBundles = async (root: string) => {
       await checkBundle(source, basename(file), owner, async () => {
         const directory = migrations.get(owner)
         if (!directory) return undefined
-        let catalog = catalogs.get(owner)
+        let catalog = catalogs.get(directory)
         if (!catalog) {
           catalog = readMigrationRelations(join(root, directory))
-          catalogs.set(owner, catalog)
+          catalogs.set(directory, catalog)
         }
         return catalog
       })

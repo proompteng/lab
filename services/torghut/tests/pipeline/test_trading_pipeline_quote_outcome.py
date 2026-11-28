@@ -1,33 +1,26 @@
 from __future__ import annotations
 
-from tests.pipeline.trading_pipeline_base import (
-    Decimal,
-    DecisionEngine,
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from typing import Mapping, cast
+
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.models import RejectedSignalOutcomeEvent
+from app.trading.firewall import OrderFirewall
+from app.trading.models import SignalEnvelope
+from app.trading.prices import MarketSnapshot
+from app.trading.scheduler.state import TradingState
+from app.trading.submission_council import build_hypothesis_runtime_summary
+from tests.pipeline.trading_pipeline_base import TradingPipelineTestCaseBase
+from tests.pipeline.trading_pipeline_support import (
     FakeAlpacaClient,
-    FakeIngestor,
     FakePriceFetcher,
-    Mapping,
-    MarketSnapshot,
-    OrderExecutor,
-    OrderFirewall,
-    Reconciler,
-    RejectedSignalOutcomeEvent,
-    RiskEngine,
-    SQLAlchemyError,
-    Session,
-    SignalEnvelope,
     TimelinePriceFetcher,
-    TradingPipeline,
-    TradingPipelineTestCaseBase,
-    TradingState,
-    UniverseResolver,
-    build_hypothesis_runtime_summary,
-    cast,
-    datetime,
-    select,
-    timedelta,
-    timezone,
 )
+from tests.trading_fixtures import make_signal
 
 
 class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
@@ -35,19 +28,10 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
         self,
     ) -> None:
         alpaca_client = FakeAlpacaClient()
-        pipeline = TradingPipeline(
+        pipeline = self.make_pipeline(
             alpaca_client=alpaca_client,
             order_firewall=OrderFirewall(alpaca_client),
-            ingestor=FakeIngestor([]),
-            decision_engine=DecisionEngine(),
-            risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
             execution_adapter=alpaca_client,
-            reconciler=Reconciler(),
-            universe_resolver=UniverseResolver(),
-            state=TradingState(),
-            account_label="paper",
-            session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(
                 Decimal("101.50"),
                 spread=Decimal("0.02"),
@@ -55,14 +39,12 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
                 ask=Decimal("101.51"),
             ),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
             payload={
                 "price": Decimal("101.50"),
                 "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
             },
-            timeframe="1Min",
         )
 
         enriched = pipeline._ensure_signal_executable_price(signal)
@@ -77,19 +59,10 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
         self,
     ) -> None:
         alpaca_client = FakeAlpacaClient()
-        pipeline = TradingPipeline(
+        pipeline = self.make_pipeline(
             alpaca_client=alpaca_client,
             order_firewall=OrderFirewall(alpaca_client),
-            ingestor=FakeIngestor([]),
-            decision_engine=DecisionEngine(),
-            risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
             execution_adapter=alpaca_client,
-            reconciler=Reconciler(),
-            universe_resolver=UniverseResolver(),
-            state=TradingState(),
-            account_label="paper",
-            session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(
                 Decimal("117.36"),
                 spread=Decimal("0.40"),
@@ -131,19 +104,10 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
         self,
     ) -> None:
         alpaca_client = FakeAlpacaClient()
-        pipeline = TradingPipeline(
+        pipeline = self.make_pipeline(
             alpaca_client=alpaca_client,
             order_firewall=OrderFirewall(alpaca_client),
-            ingestor=FakeIngestor([]),
-            decision_engine=DecisionEngine(),
-            risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
             execution_adapter=alpaca_client,
-            reconciler=Reconciler(),
-            universe_resolver=UniverseResolver(),
-            state=TradingState(),
-            account_label="paper",
-            session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(
                 Decimal("100.00"),
                 spread=Decimal("0.02"),
@@ -176,19 +140,10 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
         self,
     ) -> None:
         alpaca_client = FakeAlpacaClient()
-        pipeline = TradingPipeline(
+        pipeline = self.make_pipeline(
             alpaca_client=alpaca_client,
             order_firewall=OrderFirewall(alpaca_client),
-            ingestor=FakeIngestor([]),
-            decision_engine=DecisionEngine(),
-            risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
             execution_adapter=alpaca_client,
-            reconciler=Reconciler(),
-            universe_resolver=UniverseResolver(),
-            state=TradingState(),
-            account_label="paper",
-            session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(
                 Decimal("308.20"),
                 spread=Decimal("0.02"),
@@ -196,9 +151,8 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
                 ask=Decimal("308.21"),
             ),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
             payload={
                 "price": Decimal("308.21"),
                 "spread": Decimal("5.98"),
@@ -228,28 +182,17 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
         self,
     ) -> None:
         alpaca_client = FakeAlpacaClient()
-        pipeline = TradingPipeline(
+        pipeline = self.make_pipeline(
             alpaca_client=alpaca_client,
             order_firewall=OrderFirewall(alpaca_client),
-            ingestor=FakeIngestor([]),
-            decision_engine=DecisionEngine(),
-            risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
             execution_adapter=alpaca_client,
-            reconciler=Reconciler(),
-            universe_resolver=UniverseResolver(),
-            state=TradingState(),
-            account_label="paper",
-            session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(Decimal("101.50")),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
             },
-            timeframe="1Min",
         )
 
         enriched = pipeline._ensure_signal_executable_price(signal)
@@ -260,29 +203,18 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
         self,
     ) -> None:
         alpaca_client = FakeAlpacaClient()
-        pipeline = TradingPipeline(
+        pipeline = self.make_pipeline(
             alpaca_client=alpaca_client,
             order_firewall=OrderFirewall(alpaca_client),
-            ingestor=FakeIngestor([]),
-            decision_engine=DecisionEngine(),
-            risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
             execution_adapter=alpaca_client,
-            reconciler=Reconciler(),
-            universe_resolver=UniverseResolver(),
-            state=TradingState(),
-            account_label="paper",
-            session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(Decimal("101.50")),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
             payload={
                 "price": Decimal("101.50"),
                 "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
             },
-            timeframe="1Min",
         )
 
         enriched = pipeline._ensure_signal_executable_price(signal)
@@ -292,15 +224,13 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
     def test_quote_quality_rejection_records_outcome_learning_event(self) -> None:
         state = TradingState()
         pipeline = self._build_rejected_outcome_pipeline(state=state)
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
             payload={
                 "price": Decimal("101.50"),
                 "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
             },
             seq=42,
-            timeframe="1Min",
         )
 
         decisions = pipeline._evaluate_signal_decisions(

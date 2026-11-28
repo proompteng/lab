@@ -114,11 +114,13 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
     }
     for (const symbol of symbols) {
       const quote = observedQuoteAt(state, symbol, observedAtMs)
-      if (request.purpose !== undefined) {
+      if (request.purpose !== undefined && request.purpose !== IntradaySnapshotPurpose.PositionCheckpoint) {
         if (quote !== undefined && intradayInstantNanos(quote.value.eventAt) >= start) entries.push(quote)
         continue
       }
       const bars = observedBarsAt(state, symbol, start, end, observedAtMs)
+      if (request.purpose === IntradaySnapshotPurpose.PositionCheckpoint && bars.length !== 1)
+        return yield* Result.fail(failure('not-ready', 'Position checkpoint awaits the completed minute'))
       entries.push(...bars)
       for (const bar of bars) {
         const publication = bar.firstPublication
@@ -130,6 +132,7 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
         }
       }
       if (quote !== undefined && intradayInstantNanos(quote.value.eventAt) >= start) entries.push(quote)
+      if (request.purpose !== undefined) continue
       const trade = state.tradeHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
       if (trade !== undefined && intradayInstantNanos(trade.value.eventAt) >= start) entries.push(trade)
       if (technicalTopic !== undefined) {

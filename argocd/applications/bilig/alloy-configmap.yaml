@@ -21,9 +21,10 @@ data:
     discovery.relabel "bilig_metrics" {
       targets = discovery.kubernetes.bilig_endpoints.targets
 
+      // Application HTTP ports do not expose Prometheus metrics.
       rule {
         source_labels = ["__meta_kubernetes_endpoint_port_name"]
-        regex         = "(?i)http|metrics"
+        regex         = "metrics"
         action        = "keep"
       }
 

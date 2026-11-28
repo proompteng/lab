@@ -46,14 +46,14 @@ describe('architecture inventory route classification', () => {
 
   it('rejects duplicate or out-of-bound Agents route registrations', () => {
     const wrap = (entries: string) =>
-      `const routeSources: RouteSourceSpec[] = [\n${entries}\n]\n\nconst assessAgentRunIngestion = () => {}`
+      `const routeModules: AgentsServerRouteLoader[] = [\n${entries}\n]\n\nconst assessAgentRunIngestion = () => {}`
 
     expect(() =>
       extractRegisteredAgentsRouteFiles(
-        wrap("{ file: 'src/routes/v1/status.ts' },\n{ file: 'src/routes/v1/status.ts' },"),
+        wrap("() => import('../routes/v1/status'),\n() => import('../routes/v1/status'),"),
       ),
     ).toThrow(/duplicate files/)
-    expect(() => extractRegisteredAgentsRouteFiles(wrap("{ file: 'src/server/health.ts' },"))).toThrow(
+    expect(() => extractRegisteredAgentsRouteFiles(wrap("() => import('../server/health'),"))).toThrow(
       /outside src\/routes/,
     )
   })

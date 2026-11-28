@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.whitepaper_workflow.support import (
     Any,
     CephS3Client,
@@ -20,9 +22,9 @@ from tests.whitepaper_workflow.support import (
     WhitepaperWorkflowService,
     _FakeCephClient,
     _FakeInngestClient,
+    _profile_ids_for_family,
     _TestWhitepaperWorkflowBase,
     _TestWhitepaperWorkflowService,
-    _profile_ids_for_family,
     build_whitepaper_run_id,
     candidate_specs_module,
     cast,
@@ -35,6 +37,8 @@ from tests.whitepaper_workflow.support import (
     select,
     tempfile,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestMarkerAndAttachmentParsing(_TestWhitepaperWorkflowBase):

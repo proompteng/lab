@@ -1,3 +1,4 @@
+import { isIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { Effect, Option } from 'effect'
 import { ReplayAlphaObservationCommit } from './alpha-baseline-use'
 
@@ -160,7 +161,7 @@ export const makeReplayDecisionLatency = (
                   // Admit only after the authoritative PostgreSQL transaction commits; failed writes remain failed passes.
                   yield* store.record(observation, momentumPolicy)
                   if (stress !== null) admittedObservations.set(observation.contentHash, issuedAt)
-                  if (observation.payload.schemaVersion === 'bayn.intraday-alpha-observation.v2') {
+                  if (isIntradayAlphaObservation(observation.payload)) {
                     const commit = yield* Effect.serviceOption(ReplayAlphaObservationCommit)
                     if (Option.isSome(commit)) yield* commit.value.record(observation)
                   }

@@ -251,6 +251,14 @@ samples. `MimirSeriesCapacityHigh` warns above 80% of the actual allowance for t
 `MimirSeriesLimitExceeded` pages on continuing new series rejections; `MimirIngestionObservationUnavailable` pages
 when fewer than three ingesters have recent head telemetry. A local successful scrape does not prove admission.
 
-The shared `anonymous` tenant has a 300,000-series runtime allowance. Inspect metric families and deployment churn
-before changing it. CI phase, BuildKit and workflow histograms are retired; completion-window gauges and retained
-records supply timing evidence. See the [October 26 RCA](../incidents/2026-10-26-alert-delivery-and-bayn-projection.md).
+The shared `anonymous` tenant's runtime ceiling is 600,000 series. With all three ingest partitions active, the
+local allowance is 200,000 per ingester. Mimir drops `ci_job_collection_delay_seconds_bucket` only for the
+`ci-observability` job before writing samples to Kafka. These unused cumulative buckets stay active as long as the
+exporter serves them. The count, sum, completion-window gauges, and retained per-job records are unchanged.
+Existing buckets leave the head through normal compaction; the filter does not delete historical samples.
+
+After GitOps reconciliation, verify all three ingesters report the new local allowance and that
+`sum(rate(cortex_discarded_samples_total{job="mimir-ingester",reason="per_user_series_limit"}[15m]))` returns zero
+with fresh ingester telemetry. Check that both series alerts clear and compare any remaining stale metrics with
+their source exporters before calling the incident closed. Inspect metric families and deployment churn before
+changing the limit again. Lowering it below current head usage can restart rejections.

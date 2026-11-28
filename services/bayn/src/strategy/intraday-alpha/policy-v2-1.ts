@@ -4,13 +4,13 @@ import { quantizeInstrumentPriceMicros } from '../../broker/alpaca-price'
 import type { JevProtocol } from '../../jev/protocol'
 import { strictParseOptions } from '../../schemas'
 import { adaptiveStopAtr14Multiplier, adaptiveStopBufferBps } from '../execution-model/adaptive-collars'
-import { IntradayAlphaPolicySchema, makeIntradayAlphaPolicy } from './policy'
+import { IntradayAlphaV2PolicySchema, makeIntradayAlphaPolicy } from './policy'
 
 const entryLimitSlippageBps = 30
 const minimumStopLimitBps = 50
 const maximumStopLimitBps = 150
 
-export const IntradayAlphaPolicyV21Schema = IntradayAlphaPolicySchema.mapFields(
+export const IntradayAlphaPolicyV21Schema = IntradayAlphaV2PolicySchema.mapFields(
   (fields) => ({
     ...fields,
     schemaVersion: Schema.Literal('bayn.intraday-alpha-policy.v2_1'),

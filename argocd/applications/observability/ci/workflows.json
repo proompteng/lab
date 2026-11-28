@@ -17,6 +17,10 @@
       "pattern": "^runner-image(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "smoke-runner-image",
+      "pattern": "^smoke-runner-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "write-values",
       "pattern": "^write-values(?: \\(.*\\))?$"
     }
@@ -315,6 +319,10 @@
   ],
   "ofz.yaml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "validate",
       "pattern": "^validate(?: \\(.*\\))?$"
     },
@@ -342,6 +350,10 @@
     }
   ],
   "opencode-build-push.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
@@ -407,6 +419,26 @@
     {
       "id": "jangar",
       "pattern": "^Jangar CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "bumba",
+      "pattern": "^Bumba CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "froussard",
+      "pattern": "^Froussard CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "oirat",
+      "pattern": "^Oirat CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "signal-publisher",
+      "pattern": "^Signal publisher CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ofz-pr",
+      "pattern": "^Ofz PR authorization(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "bayn",
@@ -519,6 +551,10 @@
   ],
   "tengri-images.yml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "validate",
       "pattern": "^Validate Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
     },
@@ -533,6 +569,10 @@
   ],
   "torghut-build-push.yaml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
@@ -545,11 +585,19 @@
   ],
   "torghut-notebook-build-push.yaml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
   "torghut-ta-build-push.yaml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
@@ -562,6 +610,10 @@
     }
   ],
   "torghut-ws-build-push.yaml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"

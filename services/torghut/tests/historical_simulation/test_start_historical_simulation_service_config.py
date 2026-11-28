@@ -1,19 +1,25 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
+import json
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts.historical_simulation_startup import (
     ClickHouseRuntimeConfig,
     KafkaRuntimeConfig,
-    PostgresRuntimeConfig,
-    StartHistoricalSimulationTestCaseBase,
     _build_resources,
     _configure_torghut_service_for_simulation,
     _ensure_simulation_schema_subjects,
-    json,
-    patch,
+    kafka_runtime,
+    runtime_migrations,
+)
+from tests.historical_simulation.fixtures import (
+    make_clickhouse_config,
+    make_postgres_config,
 )
 
 
-class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCaseBase):
+class TestStartHistoricalSimulationServiceConfig(TestCase):
     def test_ensure_simulation_schema_subjects_registers_equity_ta_subjects_only(
         self,
     ) -> None:
@@ -59,8 +65,9 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
                 return 200, '{"id": 2}'
             raise AssertionError(f"unexpected request path: {path}")
 
-        with patch(
-            "scripts.historical_simulation_startup.kafka_runtime._http_request",
+        with patch.object(
+            kafka_runtime,
+            "_http_request",
             side_effect=_fake_http_request,
         ):
             report = _ensure_simulation_schema_subjects(
@@ -99,12 +106,7 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
                 "dataset_id": "dataset-a",
             },
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         kafka_config = KafkaRuntimeConfig(
             bootstrap_servers="kafka:9092",
             security_protocol="SASL_PLAINTEXT",
@@ -139,12 +141,14 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
         captured_patch: dict[str, object] = {}
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_json",
+            patch.object(
+                runtime_migrations,
+                "_kubectl_json",
                 return_value=service_payload,
             ),
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_patch",
+            patch.object(
+                runtime_migrations,
+                "_kubectl_patch",
                 side_effect=lambda namespace, kind, name, patch: captured_patch.update(
                     {"namespace": namespace, "kind": kind, "name": name, "patch": patch}
                 ),
@@ -273,11 +277,9 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
                 "dataset_id": "dataset-a",
             },
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
+        postgres_config = make_postgres_config(
             simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_override",
             simulation_db="torghut_sim_sim_override",
-            migrations_command="true",
         )
         kafka_config = KafkaRuntimeConfig(
             bootstrap_servers="kafka:9092",
@@ -309,12 +311,14 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
         captured_patch: dict[str, object] = {}
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_json",
+            patch.object(
+                runtime_migrations,
+                "_kubectl_json",
                 return_value=service_payload,
             ),
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_patch",
+            patch.object(
+                runtime_migrations,
+                "_kubectl_patch",
                 side_effect=lambda namespace, kind, name, patch: captured_patch.update(
                     {"namespace": namespace, "kind": kind, "name": name, "patch": patch}
                 ),
@@ -329,9 +333,7 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
                     }
                 },
                 postgres_config=postgres_config,
-                clickhouse_config=ClickHouseRuntimeConfig(
-                    http_url="http://clickhouse:8123",
-                    username="torghut",
+                clickhouse_config=make_clickhouse_config(
                     password="secret",
                 ),
                 kafka_config=kafka_config,
@@ -385,11 +387,9 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
                 "dataset_id": "dataset-a",
             },
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
+        postgres_config = make_postgres_config(
             simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_runtime_override",
             simulation_db="torghut_sim_sim_runtime_override",
-            migrations_command="true",
         )
         kafka_config = KafkaRuntimeConfig(
             bootstrap_servers="kafka:9092",
@@ -414,12 +414,14 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
             }
         }
         with (
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_json",
+            patch.object(
+                runtime_migrations,
+                "_kubectl_json",
                 return_value=service_payload,
             ),
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._kubectl_patch",
+            patch.object(
+                runtime_migrations,
+                "_kubectl_patch",
             ),
         ):
             with self.assertRaisesRegex(ValueError, "TRADING_STRATEGY_RUNTIME_MODE"):
@@ -432,9 +434,7 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
                         }
                     },
                     postgres_config=postgres_config,
-                    clickhouse_config=ClickHouseRuntimeConfig(
-                        http_url="http://clickhouse:8123",
-                        username="torghut",
+                    clickhouse_config=make_clickhouse_config(
                         password="secret",
                     ),
                     kafka_config=kafka_config,

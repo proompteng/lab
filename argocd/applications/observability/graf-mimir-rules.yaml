@@ -708,6 +708,65 @@ data:
               summary: Agents reconcile latency is elevated
               description: The 10-minute p95 for AgentRun reconciliation in {{ $labels.namespace }} has exceeded five seconds for five minutes.
               runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
+      - name: agents-auto-ontology.rules
+        rules:
+          - alert: AgentsAutoOntologyMcpGatewayUnavailable
+            expr: |
+              max by (namespace, deployment) (
+                kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="agents",deployment="agents-auto-ontology-mcp-gateway"}
+              ) == 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: agents
+              notify: email
+            annotations:
+              summary: Agents Auto Ontology MCP gateway has no available replicas
+              description: The gateway has had zero available replicas for five minutes. Inspect the Deployment, pod events and gateway logs.
+              runbook_url: docs/agents/ontology/README.md#nightly-sync-and-alerts
+          - alert: AgentsAutoOntologySyncFailed
+            expr: |
+              max by (namespace) (
+                kube_job_created{job="kube-state-metrics",namespace="agents"}
+                and on (namespace, job_name)
+                (kube_job_failed{job="kube-state-metrics",namespace="agents",condition="true"} == 1)
+                and on (namespace, job_name)
+                kube_job_owner{job="kube-state-metrics",namespace="agents",owner_kind="CronJob",owner_name="auto-ontology-sync",owner_is_controller="true"}
+              ) > scalar(
+                max(kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"})
+                or vector(0)
+              )
+            labels:
+              severity: warning
+              team: platform
+              service: agents
+              notify: email
+              cronjob: auto-ontology-sync
+            annotations:
+              summary: Agents Auto Ontology catalog sync failed
+              description: An owned Job reached terminal failure and has not been followed by a successful sync. Inspect the Job condition and pod logs.
+              runbook_url: docs/agents/ontology/README.md#nightly-sync-and-alerts
+          - alert: AgentsAutoOntologySyncStale
+            expr: |
+              time() - (
+                max by (namespace, cronjob) (
+                  kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"} > 0
+                )
+                or on (namespace, cronjob)
+                max by (namespace, cronjob) (
+                  kube_cronjob_created{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"}
+                )
+              ) >= 129600
+            labels:
+              severity: warning
+              team: platform
+              service: agents
+              notify: email
+            annotations:
+              summary: Agents Auto Ontology catalog sync is stale
+              description: No successful sync has been observed for 36 hours since the last success or CronJob creation. Inspect the schedule, Jobs and pod logs.
+              runbook_url: docs/agents/ontology/README.md#nightly-sync-and-alerts
       - name: mimir-ingestion.rules
         rules:
           - alert: MimirSeriesCapacityHigh
@@ -822,7 +881,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI observability metrics are unavailable
               description: Alloy cannot scrape the central CI collector. Existing build runners are independent of this collector.
@@ -836,7 +894,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI timing collection is stale
               description: No successful GitHub poll has completed for at least five minutes. Check API authorization, rate-limit headroom and collector logs.
@@ -849,7 +906,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI historical rerun discovery is stale
               description: Historical run-index discovery has made no progress for 15 minutes. Check API errors, rate-limit headroom and collector logs.
@@ -862,7 +918,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: New build attempts are waiting for telemetry collection
               description: A newly completed attempt has waited at least five minutes for collection. Historical bootstrap samples are excluded from this gate.
@@ -875,7 +930,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI build records are not reaching Loki
               description: A durable build record has waited at least ten minutes for Loki acknowledgement. Metrics remain independent of the record outbox.
@@ -888,7 +942,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI records need delivery recovery
               description: Expired or permanently rejected records are retained in SQLite loki_rejections. Newer records continue shipping. Inspect and recover these records without clearing their evidence.
@@ -3947,6 +4000,16 @@ data:
                     service="bayn",
                     condition="failed"
                   } == 0
+                )
+                unless on(job, namespace, service, instance)
+                (
+                  (bayn_cycle_reason{job="bayn",namespace="bayn",service="bayn",reason="cash_fees_pending"} == 1)
+                  and on(job, namespace, service, instance)
+                  (
+                    (time() - bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"} < 90)
+                    and
+                    (time() - bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"} >= -5)
+                  )
                 )
               )
             for: 1m

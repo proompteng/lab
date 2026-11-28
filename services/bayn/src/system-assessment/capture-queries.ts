@@ -23,7 +23,7 @@ import {
 } from './alpha-baseline-capture'
 import { RecordedAlphaBaselinePreparationSchema } from '../observe-composition/alpha-baseline-preparation'
 import type { SystemRegistration } from './policy'
-import { ResearchStrategyEngine } from './strategy-binding'
+import { isAlphaBinding } from './strategy-binding'
 
 export const readSystemCashObservations = (
   accountId: string,
@@ -172,7 +172,7 @@ export const readSystemAlphaObservations = (
       SELECT observation.content_hash AS "contentHash", observation.payload,
         to_char(observation.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
       FROM intraday_candidate_observations AS observation
-      WHERE observation.payload->>'schemaVersion' = 'bayn.intraday-alpha-observation.v2'
+      WHERE observation.payload->>'schemaVersion' IN ('bayn.intraday-alpha-observation.v2', 'bayn.intraday-alpha-observation.v3')
         AND observation.payload->>'authorityGenerationHash' = ${generationHash}
         AND observation.payload #>> '{portfolio,brokerState,account,accountId}' = ${accountId}
         AND observation.observed_at <= ${asOf}::timestamptz
@@ -220,7 +220,7 @@ export const readSystemAlphaObservations = (
 export const readSystemAlphaBaselinePreparations = (registration: SystemRegistration, asOf: string) =>
   Effect.gen(function* () {
     const scope = yield* Effect.fromResult(registeredAlphaBaselineCaptureScope(registration))
-    if (scope.binding.engine !== ResearchStrategyEngine.IntradayAlpha) return []
+    if (!isAlphaBinding(scope.binding)) return []
     const sql = yield* PgClient.PgClient
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.Array(RecordedAlphaBaselinePreparationSchema),

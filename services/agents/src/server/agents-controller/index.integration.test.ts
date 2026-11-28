@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 const metricsMocks = vi.hoisted(() => ({
   clearAgentsControllerGauges: vi.fn(),
@@ -3166,13 +3166,25 @@ describe('agents controller reconcileAgentRun', () => {
     expect(requiredVar?.value).toBe('true')
   })
 
-  it('advances workflow steps and completes', async () => {
+  it.each([
+    'registry.ide-newton.ts.net/lab/agents-smoke-runner:nix',
+    `registry.ide-newton.ts.net/lab/agents-smoke-runner:sha-${'a'.repeat(40)}@sha256:${'b'.repeat(64)}`,
+  ])('advances workflow steps on the configured smoke runner (%s) and completes', async (runnerImage) => {
+    vi.stubEnv('AGENTS_AGENT_RUNNER_IMAGE', runnerImage)
+    onTestFinished(() => {
+      vi.unstubAllEnvs()
+    })
     const jobStatuses = new Map<string, Record<string, unknown>>()
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
       const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
       const applied = { ...resource, metadata: { ...metadata, uid } }
       if (resource.kind === 'Job') {
+        expect(resource).toMatchObject({
+          spec: {
+            template: { spec: { containers: [{ image: runnerImage, command: ['/usr/local/bin/agent-runner'] }] } },
+          },
+        })
         const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
         if (name) {
           jobStatuses.set(name, applied)
@@ -3210,7 +3222,6 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'step-one' }, { name: 'step-two' }],
         },

@@ -1,12 +1,14 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { rejects } from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { repoRoot } from '../../shared/cli'
+import { createAgentsOntologySchema, describeAgentsOntologySchema } from '../agents-ontology-schema'
 import { prepareKnowledgeDelta } from '../emit-knowledge-delta-core'
 import { mergeKnowledgeDeltas } from '../ontology-deltas'
+import type { OntologySqlSchema } from '../ontology-sql'
 import { validateOntologyBundles } from '../validate-ontology-bundles'
 
 const headCommit = 'ab01cd23'.repeat(5)
@@ -14,10 +16,6 @@ const note = 'Checked the registered migration and confirmed the terminal phase 
 const acronym = { name: 'Terminal phase', description: 'The observed end state of an AgentRun.' }
 const draft = { verificationNote: note, acronyms: [acronym] }
 const prepare = (value: unknown) => prepareKnowledgeDelta(JSON.stringify(value), { headCommit })
-const select = (sql: string) => ({
-  ...draft,
-  customAnalyses: [{ name: 'Retained runs', description: 'Counts runs.', sql }],
-})
 const rejectsWith = (result: Promise<unknown>, reason: string, hidden?: string) =>
   rejects(result, (error) => {
     if (!(error instanceof Error)) return false
@@ -114,9 +112,28 @@ describe('knowledge delta preflight', () => {
 })
 
 describe('knowledge delta saved SQL', () => {
+  let postgres: Awaited<ReturnType<typeof createAgentsOntologySchema>> | undefined
+  let sqlSchema: OntologySqlSchema | undefined
+  beforeAll(async () => {
+    postgres = await createAgentsOntologySchema()
+    await postgres.exec('SET default_transaction_read_only = on')
+    sqlSchema = await describeAgentsOntologySchema(postgres)
+  })
+  afterAll(async () => {
+    await postgres?.close()
+  })
+
+  const prepare = (sql: string) => {
+    if (!sqlSchema) throw new Error('Missing migrated SQL fixture')
+    return prepareKnowledgeDelta(
+      JSON.stringify({ ...draft, customAnalyses: [{ name: 'Retained runs', description: 'Counts runs.', sql }] }),
+      { headCommit, sqlSchema },
+    )
+  }
+
   test('binds an offline, read-only CTE query against the Agents migrations', async () => {
     const sql = 'WITH retained AS (SELECT id FROM public.agent_runs) SELECT count(id) FROM retained'
-    expect(JSON.parse(await prepare(select(sql))).customAnalyses[0].sql).toBe(sql)
+    expect(JSON.parse(await prepare(sql)).customAnalyses[0].sql).toBe(sql)
   })
 
   test.each([
@@ -139,7 +156,7 @@ describe('knowledge delta saved SQL', () => {
       'Possible credential or personal data',
     ],
   ])('rejects %s', async (_, sql, reason) => {
-    await rejectsWith(prepare(select(sql)), reason, sql)
+    await rejectsWith(prepare(sql), reason, sql)
   })
 })
 

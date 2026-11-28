@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
+import * as Effect from 'effect/Effect'
 
-import { projectedMcpToken } from '../cli/run-observation'
+import { projectedMcpToken, verifyRun } from '../cli/run-observation'
+import { createKubectlBackend } from '../kube/backend'
 import type { Job, Pod, PodSpec } from '../kube/resources'
 import { observeRuns, RUN_LABEL } from '../kube/runs'
 
@@ -235,4 +237,69 @@ describe('MCP identity', () => {
       }),
     ).toBeUndefined()
   })
+})
+
+it.each([
+  { conditions: [], prompt: 'Work on codex/generated from release.' },
+  { conditions: [{ type: 'VcsSkipped', status: 'True' }], prompt: 'Work on ${head} from ${base}.' },
+])('waits for the job’s reconciled VCS status before verifying $prompt', async ({ conditions, prompt }) => {
+  const identity = {
+    audience: 'agents.proompteng.ai/auto-ontology-mcp',
+    mountPath: '/run/mcp',
+    serviceAccountName: 'codex-auto-ontology-runner',
+  }
+  const parameters = { repository: 'owner/project' }
+  const submitted = { ...run, spec: { ...run.spec, parameters } }
+  const running = {
+    ...submitted,
+    status: { phase: 'Running', conditions, vcs: { baseBranch: 'release', headBranch: 'codex/generated' } },
+  }
+  let reads = 0
+  const backend = {
+    ...createKubectlBackend({ namespace }),
+    getCustomObject: async () => (reads++ === 0 ? submitted : running),
+    listJobs: async () => [job],
+    listPods: async () => [
+      {
+        ...pod,
+        spec: {
+          ...pod.spec,
+          serviceAccountName: identity.serviceAccountName,
+          containers: [
+            {
+              name: 'agent-runner',
+              env: [{ name: 'AGENTS_MCP_IDENTITY_TOKEN_PATH', value: '/run/mcp/token' }],
+              volumeMounts: [
+                { name: 'mcp', mountPath: identity.mountPath, readOnly: true },
+                { name: 'spec', mountPath: '/workspace/run.json', subPath: 'run.json' },
+              ],
+            },
+          ],
+          volumes: [
+            {
+              name: 'mcp',
+              projected: { sources: [{ serviceAccountToken: { audience: identity.audience, path: 'token' } }] },
+            },
+            { name: 'spec', configMap: { name: 'run-spec' } },
+          ],
+        },
+      },
+    ],
+    getConfigMap: async () => ({ metadata: { name: 'run-spec' }, data: { 'run.json': JSON.stringify({ prompt }) } }),
+  }
+  const result = await Effect.runPromise(
+    verifyRun(
+      backend,
+      namespace,
+      name,
+      {
+        ...identity,
+        jobTask: { implementation: { text: 'Work on ${head} from ${base}.' }, parameters },
+      },
+      1000,
+      1,
+    ),
+  )
+  expect(result.configMap).toBe('run-spec')
+  expect(reads).toBe(2)
 })

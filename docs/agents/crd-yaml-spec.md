@@ -41,6 +41,9 @@ Docs index: [README](README.md)
 
 ### AgentRun
 
+`kubectl get agentrun` shows phase, agent, age, backing Job (or other runtime reference), resolved head branch, and
+the reason from the `Blocked` condition. Use `-o wide` to also see:
+
 - Succeeded: `.status.conditions[?(@.type=="Succeeded")].status`
 - Reason: `.status.conditions[?(@.type=="Succeeded")].reason`
 - StartTime: `.status.startedAt`

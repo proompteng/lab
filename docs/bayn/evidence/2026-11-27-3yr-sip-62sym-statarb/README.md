@@ -1,6 +1,6 @@
 # Wave 2C — SIP breadth did not clear execution costs
 
-**No promotion.** Across 729 sessions, none of the 347 registered trials was net positive at 10 bp round trip plus the 0.21 bp sell fee in Train, Validation, or the full sample. At 5 bp, **no** trial had positive Validation net after removing its five best days. The development [freeze](freeze.json) nominated no trial. The holdout in [results.json](results.json) is therefore descriptive, not a new selection round. No v3 candidate, live-policy change, or migration is warranted.
+**No promotion.** Across 729 sessions, none of the 347 registered trials was net positive at 10 bp round trip plus the 0.21 bp sell fee in Train, Validation, or the full sample. At 5 bp, **no** trial had positive Validation net after removing its five best days. The development [freeze](freeze.json) nominated no trial. The holdout in [results.json][archived-results] is therefore descriptive, not a new selection round. No v3 candidate, live-policy change, or migration is warranted.
 
 The exact 18-vs-50 **stock-only** experiment cannot be run on the supplied tape. Bayn's 18-name Midday control includes IWM. The manifest's 50-name comparison also includes QQQ, SMH and SPY, for **46 stocks total**. The 17-vs-46 comparison below keeps ETFs out of orders; the separately labeled 18-vs-50 control retains the manifest names. Closing the stock-only evidence gap requires an amended, checksummed tape with at least four more predeclared equities and an explicit 18-stock baseline (including an equity replacement for IWM).
 
@@ -83,3 +83,5 @@ bun services/bayn/tools/research-3yr-sip-62sym-statarb.ts --score --output /tmp/
 ```
 
 See the [pre-registered protocol](protocol.md) for signal, eligibility, allocation and test definitions. The bar-cost study has no observed NBBO, locates, market-impact, or queue evidence. The supplied dates end November 25, 2026; the closing half-year is partial. Neither a cluster deployment nor a change to policy v2 or migrations 0222/0223 is part of this evidence.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-3yr-sip-62sym-statarb/results.json

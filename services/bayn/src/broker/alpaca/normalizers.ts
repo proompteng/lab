@@ -262,6 +262,7 @@ export const normalizeAccountResult = (
       buyingPowerMicros,
       accountBlocked: raw.account_blocked,
       tradingBlocked: raw.trading_blocked,
+      ...(raw.transfers_blocked === undefined ? {} : { transfersBlocked: raw.transfers_blocked }),
       tradeSuspendedByUser: raw.trade_suspended_by_user,
       ...(raw.shorting_enabled === undefined ? {} : { shortingEnabled: raw.shorting_enabled }),
       observedAt,

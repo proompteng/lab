@@ -13,19 +13,42 @@ on:
       - 'services/ofz/Cargo.lock'
       - 'services/ofz/Cargo.toml'
       - 'bun.lock'
+      - 'package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
+      - 'tsconfig.base.json'
       - '.github/workflows/tengri.yaml'
       - '.github/scripts/install-tengri-chromium.mjs'
   workflow_dispatch:
-
-concurrency:
-  group: tengri-desktop-browser-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).desktop }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/tengri.yaml
+          dependency-aware-push: 'true'
+          workspaces: |
+            desktop: ['', 'apps/landing', 'packages/backend', 'packages/design']
+
   browser:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
+    concurrency:
+      group: tengri-desktop-browser-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

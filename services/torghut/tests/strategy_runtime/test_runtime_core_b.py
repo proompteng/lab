@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from tests.strategy_runtime.support import (
-    Decimal,
-    SignalEnvelope,
-    Strategy,
-    StrategyConfig,
-    StrategyRuntime,
-    TestCase,
-    _compose_strategy_description,
-    datetime,
-    normalize_feature_vector_v3,
-    timezone,
-    uuid,
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest import TestCase
+
+from app.trading.features import normalize_feature_vector_v3
+from app.trading.models import SignalEnvelope
+from app.trading.strategy_runtime import StrategyRuntime
+from tests.trading_fixtures import (
+    make_catalog_strategy,
+    make_runtime_strategy,
+    make_signal,
 )
 
 
@@ -19,43 +18,29 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_intraday_tsmom_plugin_allows_late_isolated_leader_above_ema12(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-isolated-extension",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-isolated-extension",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("3.0"),
-                    max_notional_per_trade=Decimal("94770"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "entry_end_minute_utc": "1160",
-                        "max_price_above_ema12_bps": "0",
-                        "min_price_below_ema12_bps": "2",
-                        "min_session_open_drive_bps": "45",
-                        "min_opening_window_return_bps": "20",
-                        "min_cross_section_opening_window_return_rank": "0.70",
-                        "min_cross_section_continuation_rank": "0.75",
-                        "min_cross_section_continuation_breadth": "0.55",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("3.0"),
             max_notional_per_trade=Decimal("94770"),
+            params={
+                "entry_start_minute_utc": "845",
+                "entry_end_minute_utc": "1160",
+                "max_price_above_ema12_bps": "0",
+                "min_price_below_ema12_bps": "2",
+                "min_session_open_drive_bps": "45",
+                "min_opening_window_return_bps": "20",
+                "min_cross_section_opening_window_return_rank": "0.70",
+                "min_cross_section_continuation_rank": "0.75",
+                "min_cross_section_continuation_breadth": "0.55",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 18, 16, 44, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 18, 16, 44, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -99,46 +84,32 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_intraday_tsmom_plugin_allows_isolated_leader_with_hot_hist_and_vol(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-isolated-hot",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-isolated-hot",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("3.0"),
-                    max_notional_per_trade=Decimal("94770"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "entry_end_minute_utc": "1160",
-                        "bullish_hist_min": "0.04",
-                        "bullish_hist_cap": "0.055",
-                        "vol_ceil": "0.00019",
-                        "max_price_above_ema12_bps": "0",
-                        "min_price_below_ema12_bps": "2",
-                        "min_session_open_drive_bps": "45",
-                        "min_opening_window_return_bps": "20",
-                        "min_cross_section_opening_window_return_rank": "0.70",
-                        "min_cross_section_continuation_rank": "0.75",
-                        "min_cross_section_continuation_breadth": "0.55",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("3.0"),
             max_notional_per_trade=Decimal("94770"),
+            params={
+                "entry_start_minute_utc": "845",
+                "entry_end_minute_utc": "1160",
+                "bullish_hist_min": "0.04",
+                "bullish_hist_cap": "0.055",
+                "vol_ceil": "0.00019",
+                "max_price_above_ema12_bps": "0",
+                "min_price_below_ema12_bps": "2",
+                "min_session_open_drive_bps": "45",
+                "min_opening_window_return_bps": "20",
+                "min_cross_section_opening_window_return_rank": "0.70",
+                "min_cross_section_continuation_rank": "0.75",
+                "min_cross_section_continuation_breadth": "0.55",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 18, 18, 44, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 18, 18, 44, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -180,11 +151,9 @@ class TestStrategyRuntimeCoreB(TestCase):
         self.assertEqual(decision.intent.action, "buy")
 
     def test_intraday_tsmom_plugin_emits_sell_for_one_second_profile(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="intraday-tsmom-1sec",
             description="version=1.1.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["PLTR"],
@@ -217,11 +186,9 @@ class TestStrategyRuntimeCoreB(TestCase):
         self.assertIn("tsmom_trend_down", decision.intent.rationale)
 
     def test_momentum_pullback_plugin_emits_buy_for_controlled_pullback(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="momentum-pullback",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="momentum_pullback_long_v1",
             universe_symbols=["META"],
@@ -263,11 +230,9 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_momentum_pullback_plugin_emits_sell_outside_entry_window_when_exit_triggers(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="momentum-pullback",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="momentum_pullback_long_v1",
             universe_symbols=["META"],
@@ -309,11 +274,9 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_momentum_pullback_plugin_skips_outside_entry_window_without_exit_trigger(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="momentum-pullback",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="momentum_pullback_long_v1",
             universe_symbols=["META"],
@@ -351,11 +314,9 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_breakout_continuation_plugin_emits_buy_with_vwap_and_imbalance_confirmation(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="breakout-continuation",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
@@ -408,40 +369,27 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_breakout_continuation_plugin_skips_early_breakout_without_elite_rank_or_microstructure(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["INTC"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "max_spread_bps": "20",
-                        "max_recent_spread_bps": "18",
-                        "max_recent_spread_bps_max": "60",
-                        "min_recent_imbalance_pressure": "-0.12",
-                        "min_cross_section_continuation_rank": "0.72",
-                        "min_cross_section_opening_window_return_rank": "0.60",
-                        "early_breakout_elite_continuation_rank": "0.90",
-                        "min_early_breakout_continuation_breadth": "0.75",
-                        "min_early_breakout_microprice_bias_bps": "0.60",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["INTC"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "entry_start_minute_utc": "845",
+                "max_spread_bps": "20",
+                "max_recent_spread_bps": "18",
+                "max_recent_spread_bps_max": "60",
+                "min_recent_imbalance_pressure": "-0.12",
+                "min_cross_section_continuation_rank": "0.72",
+                "min_cross_section_opening_window_return_rank": "0.60",
+                "early_breakout_elite_continuation_rank": "0.90",
+                "min_early_breakout_continuation_breadth": "0.75",
+                "min_early_breakout_microprice_bias_bps": "0.60",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 23, 14, 47, 24, tzinfo=timezone.utc),
@@ -496,37 +444,22 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_breakout_continuation_plugin_accepts_open_close_hold_when_orh_hold_is_weak(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_recent_above_opening_range_high_ratio": "0.45",
-                        "min_recent_above_opening_window_close_ratio": "0.75",
-                        "min_recent_above_vwap_w5m_ratio": "0.60",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_recent_above_opening_range_high_ratio": "0.45",
+                "min_recent_above_opening_window_close_ratio": "0.75",
+                "min_recent_above_vwap_w5m_ratio": "0.60",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 15, 12, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 15, 12, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=18,
             payload={
@@ -578,44 +511,29 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_breakout_continuation_plugin_allows_early_breakout_with_strong_microstructure_confirmation(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "max_spread_bps": "20",
-                        "max_recent_spread_bps": "18",
-                        "max_recent_spread_bps_max": "60",
-                        "min_recent_imbalance_pressure": "-0.12",
-                        "min_cross_section_continuation_rank": "0.72",
-                        "min_cross_section_opening_window_return_rank": "0.60",
-                        "early_breakout_elite_continuation_rank": "0.90",
-                        "min_early_breakout_continuation_breadth": "0.75",
-                        "min_early_breakout_microprice_bias_bps": "0.60",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "entry_start_minute_utc": "845",
+                "max_spread_bps": "20",
+                "max_recent_spread_bps": "18",
+                "max_recent_spread_bps_max": "60",
+                "min_recent_imbalance_pressure": "-0.12",
+                "min_cross_section_continuation_rank": "0.72",
+                "min_cross_section_opening_window_return_rank": "0.60",
+                "early_breakout_elite_continuation_rank": "0.90",
+                "min_early_breakout_continuation_breadth": "0.75",
+                "min_early_breakout_microprice_bias_bps": "0.60",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 14, 13, 8, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 14, 13, 8, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -669,34 +587,21 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_breakout_continuation_plugin_scales_target_notional_by_cross_section_rank(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_cross_section_continuation_rank": "0.70",
-                        "entry_notional_min_multiplier": "0.15",
-                        "entry_notional_rank_floor": "0.70",
-                        "entry_notional_rank_ceiling": "0.95",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_cross_section_continuation_rank": "0.70",
+                "entry_notional_min_multiplier": "0.15",
+                "entry_notional_rank_floor": "0.70",
+                "entry_notional_rank_ceiling": "0.95",
+            },
         )
         signal_payload = {
             "price": 523.25,
@@ -760,29 +665,16 @@ class TestStrategyRuntimeCoreB(TestCase):
     def test_breakout_continuation_plugin_respects_cross_section_rank_floor(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={"min_cross_section_continuation_rank": "0.90"},
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={"min_cross_section_continuation_rank": "0.90"},
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
