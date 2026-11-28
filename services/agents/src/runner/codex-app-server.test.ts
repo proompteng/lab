@@ -1,6 +1,7 @@
+import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -143,7 +144,9 @@ describe('codex app-server runner adapter', () => {
         ],
       },
     })
-    expect(await readFile(logPath, 'utf8')).toContain('checkout unavailable')
+    const log = await readFile(logPath, 'utf8')
+    expect(log).toContain('checkout unavailable')
+    expect(log).toContain('"phase":"git_checkout","outcome":"failed"')
   })
 
   it('keeps long artifact references and Unicode previews within the termination byte limit', async () => {
@@ -1010,6 +1013,7 @@ describe('codex app-server runner adapter', () => {
       const cwd = join(dir, 'lab')
       const cacheRoot = join(dir, 'shared-cache')
       const mirror = join(cacheRoot, 'git/proompteng/lab.git')
+      const slot = `${mirror}.0`
       if (mirrorState !== 'missing') {
         // A ready stamp does not override a stale snapshot, invalid Git repo, or escaped symlink.
         if (mirrorState === 'escaped') {
@@ -1018,7 +1022,8 @@ describe('codex app-server runner adapter', () => {
           await mkdir(join(cacheRoot, 'git/proompteng'), { recursive: true })
           await symlink(outside, mirror)
         } else {
-          await mkdir(mirror, { recursive: true })
+          await mkdir(slot, { recursive: true })
+          await symlink('lab.git.0', mirror)
         }
         const stamp = join(mirror, '.refreshed')
         await writeFile(stamp, '')
@@ -1065,7 +1070,7 @@ describe('codex app-server runner adapter', () => {
               cloneArgs.push(args)
               freshCloneDestination &&= !existsSync(join(cwd, '.git'))
               await mkdir(join(cwd, '.git'), { recursive: true })
-              if (mirrorState === 'clone failure' && args.includes('--reference-if-able')) {
+              if (mirrorState === 'clone failure' && args.includes('--reference')) {
                 return { exitCode: 128, stdout: '', stderr: 'missing alternate object' }
               }
             }
@@ -1088,8 +1093,8 @@ describe('codex app-server runner adapter', () => {
         '--depth=1',
         '--branch',
         'main',
-        '--reference-if-able',
-        mirror,
+        '--reference',
+        mirrorState === 'current' || mirrorState === 'clone failure' ? await realpath(slot) : slot,
         '--dissociate',
         ...normalClone.slice(3),
       ]
@@ -1100,13 +1105,99 @@ describe('codex app-server runner adapter', () => {
             ? [cachedClone, normalClone]
             : [normalClone],
       )
-      expect(commands).toContain('git fetch --prune --depth=1 origin +refs/heads/main:refs/remotes/origin/main')
-      expect(commands).toContain(
-        'git fetch --prune --depth=1 origin +refs/heads/codex/test:refs/remotes/origin/codex/test',
+      expect(commands.filter((command) => command.startsWith('git fetch '))).toEqual(
+        mirrorState === 'current'
+          ? ['git fetch --prune --depth=1 origin +refs/heads/codex/test:refs/remotes/origin/codex/test']
+          : [],
       )
       expect(commands).toContain('git checkout -B codex/test refs/remotes/origin/codex/test')
     },
   )
+
+  it.each([
+    { name: 'warm with a stale upstream tip in the mirror', warm: true, head: 'codex/existing', fetches: 1 },
+    { name: 'cold with an existing head', warm: false, head: 'codex/existing', fetches: 0 },
+    { name: 'cold with a new head', warm: false, head: 'codex/new', fetches: 0 },
+    { name: 'cold with only a symbolic origin/HEAD', warm: false, head: 'HEAD', readOnly: true, fetches: 0 },
+    { name: 'reused checkout with an updated head', warm: false, head: 'codex/existing', reused: true, fetches: 2 },
+  ])('uses authoritative Git refs and an independent checkout when $name', async (testCase) => {
+    const { warm, head, reused, readOnly, fetches } = testCase
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-git-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const upstream = join(dir, 'upstream')
+    const cwd = join(dir, 'lab')
+    const cacheRoot = join(dir, 'shared')
+    const mirror = join(cacheRoot, 'git/proompteng/lab.git')
+    const env = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }
+    const git = (args: string[], path = dir) =>
+      spawnSync('git', ['-c', `url.file://${upstream}.insteadOf=https://github.com/proompteng/lab.git`, ...args], {
+        cwd: path,
+        env,
+        encoding: 'utf8',
+      })
+    const ok = (args: string[], path?: string) => {
+      const result = git(args, path)
+      expect(result.status, result.stderr).toBe(0)
+      return result.stdout.trim()
+    }
+    ok(['init', '-b', 'main', upstream])
+    ok(['config', 'uploadpack.allowFilter', 'true'], upstream)
+    const commit = async (value: string) => {
+      await writeFile(join(upstream, 'tip.txt'), value)
+      ok(['add', 'tip.txt'], upstream)
+      ok(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', value], upstream)
+      return ok(['rev-parse', 'HEAD'], upstream)
+    }
+    await writeFile(join(upstream, 'stable.txt'), 'present in the mirror')
+    ok(['add', 'stable.txt'], upstream)
+    await commit('old base')
+    if (warm) {
+      await mkdir(join(cacheRoot, 'git/proompteng'), { recursive: true })
+      ok(['clone', '--mirror', upstream, `${mirror}.0`])
+      await writeFile(join(`${mirror}.0`, '.refreshed'), '')
+      await symlink('lab.git.0', mirror)
+    }
+    if (reused) ok(['clone', `file://${upstream}`, cwd])
+    const base = await commit('new base')
+    ok(['switch', '-c', 'codex/existing'], upstream)
+    const existing = await commit('existing head')
+
+    const runPath = join(dir, 'run.json')
+    await writeFile(
+      runPath,
+      JSON.stringify({ vcs: { repository: 'proompteng/lab', headBranch: head, writeEnabled: !readOnly } }),
+    )
+    const commands: string[] = []
+    expect(
+      await runCodexAppServerAdapter(
+        { provider: 'codex', payloads: { eventFilePath: runPath } },
+        { cwd, prompt: NORMALIZED_PROMPT },
+        {
+          sharedCachePath: cacheRoot,
+          runCommand: async (command, args, options) => {
+            expect(command).toBe('git')
+            commands.push(args[0])
+            const result = git(args, options?.cwd)
+            return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr }
+          },
+          createClient: () => ({
+            runTurnStream: async () => ({ stream: makeStream(), turnId: 'turn-1', threadId: 'thread-1' }),
+          }),
+        },
+      ),
+    ).toBe(0)
+    await rm(`${mirror}.0`, { recursive: true, force: true })
+    expect(existsSync(join(cwd, '.git/objects/info/alternates'))).toBe(false)
+    expect(ok(['rev-parse', 'refs/remotes/origin/main'], cwd)).toBe(base)
+    expect(ok(['rev-parse', 'HEAD'], cwd)).toBe(head === 'codex/existing' ? existing : base)
+    expect(ok(['branch', '--show-current'], cwd)).toBe(readOnly ? '' : head)
+    expect(await readFile(join(cwd, 'tip.txt'), 'utf8')).toBe(head === 'codex/existing' ? 'existing head' : 'new base')
+    expect(ok(['-c', 'protocol.file.allow=never', 'show', 'HEAD:tip.txt'], cwd)).toBe(
+      head === 'codex/existing' ? 'existing head' : 'new base',
+    )
+    expect(ok(['-c', 'protocol.file.allow=never', 'show', 'HEAD:stable.txt'], cwd)).toBe('present in the mirror')
+    expect(commands.filter((command) => command === 'fetch')).toHaveLength(fetches)
+  })
 
   it.each(['hit', 'miss', 'cold', 'timeout', 'already installed'] as const)(
     'bootstraps the memories workspace before turn one on a Bun cache %s',
@@ -1115,6 +1206,7 @@ describe('codex app-server runner adapter', () => {
       onTestFinished(() => rm(dir, { recursive: true, force: true }))
       const cwd = join(dir, 'lab')
       const runPath = join(dir, 'run.json')
+      const logPath = join(dir, 'runner.log')
       const cacheRoot = join(dir, 'shared')
       const bunCache = join(cacheRoot, 'bun-cache')
       await mkdir(cacheState === 'cold' ? cacheRoot : bunCache, { recursive: true })
@@ -1132,7 +1224,7 @@ describe('codex app-server runner adapter', () => {
       let linkedTmpDir = false
       let installsBeforeClient = -1
       await runCodexAppServerAdapter(
-        { provider: 'codex-runner', payloads: { eventFilePath: runPath } },
+        { provider: 'codex-runner', payloads: { eventFilePath: runPath }, artifacts: { logPath } },
         { cwd, prompt: NORMALIZED_PROMPT },
         {
           sharedCachePath: cacheRoot,
@@ -1196,6 +1288,28 @@ describe('codex app-server runner adapter', () => {
         expect(existsSync(installs[0]?.cacheDir ?? '')).toBe(false)
       }
       expect(installsBeforeClient).toBe(installs.length)
+      const phases = (await readFile(logPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line).event)
+        .filter((event) => event.type === 'startup_phase')
+      const bunOutcome = {
+        hit: 'shared',
+        miss: 'local',
+        cold: 'local',
+        timeout: 'failed',
+        'already installed': 'skipped',
+      }
+      expect(phases.map(({ phase, outcome }) => [phase, outcome])).toEqual([
+        ['git_checkout', 'origin'],
+        ['bun_bootstrap', bunOutcome[cacheState]],
+        ['app_server_ready', 'ok'],
+        ['first_turn_started', 'ok'],
+      ])
+      for (const { durationMs, elapsedMs } of phases) {
+        expect(durationMs).toBeGreaterThanOrEqual(0)
+        expect(elapsedMs).toBeGreaterThanOrEqual(durationMs)
+      }
     },
   )
 
@@ -1462,7 +1576,7 @@ describe('codex app-server runner adapter', () => {
     const stop = vi.fn()
     const stream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
       streamEntered.resolve()
-      await new Promise<never>(() => undefined)
+      yield await new Promise<StreamDelta>(() => undefined)
       return null
     }
 

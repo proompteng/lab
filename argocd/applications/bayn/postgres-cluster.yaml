@@ -84,11 +84,16 @@ spec:
     parameters:
       jit: "off"
       shared_buffers: 512MB
-      effective_cache_size: 1536MB
+      effective_cache_size: 4GB
+      work_mem: 8MB
+      random_page_cost: "1.5"
       wal_buffers: 16MB
       wal_compression: lz4
       max_wal_size: 4GB
       checkpoint_timeout: 15min
+      checkpoint_completion_target: "0.9"
+      autovacuum_vacuum_scale_factor: "0.1"
+      autovacuum_analyze_scale_factor: "0.05"
       password_encryption: scram-sha-256
       ssl_min_protocol_version: TLSv1.3
       log_lock_waits: "on"

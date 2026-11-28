@@ -1,4 +1,4 @@
-export type IsolatedCommandResult = {
+type IsolatedCommandResult = {
   exitCode: number | null
   stdout: string
   stderr: string

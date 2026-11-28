@@ -96,7 +96,6 @@ export const JevEconomicRegistrationSchema = Schema.Struct({
   sessionDates: Schema.Array(IsoDateSchema).check(Schema.isMinLength(1), Schema.isMaxLength(366), Schema.isUnique()),
   maximumDrawdownMicros: PositiveMicrosSchema,
 })
-export type JevEconomicRegistration = typeof JevEconomicRegistrationSchema.Type
 export const JevOperatingAllocationsSchema = Schema.Array(
   Schema.Struct({
     sessionDate: IsoDateSchema,

@@ -13,6 +13,7 @@ import { canonicalHashV1Result } from '../../hash'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { reconciliationIncompleteRestrictionReason } from '../authority'
+import { IntentState } from '../contracts'
 import { legacyMutationEventSchemaVersion } from '../legacy-wire'
 import { WriterFence, WriterFenceLive } from '../writer-fence'
 import { mutationIdResult } from './decisions'
@@ -192,7 +193,7 @@ const expectAdmissionRejected = (result: unknown) =>
     failure: { _tag: 'MutationStoreError', failure: 'authority' },
   })
 
-describePostgres('PostgreSQL expired-entry cancellation admission', () => {
+describePostgres('PostgreSQL mutation admission', () => {
   let owner: ReturnType<typeof makeRuntime>
   let contender: ReturnType<typeof makeRuntime>
   beforeAll(() => {
@@ -208,6 +209,69 @@ describePostgres('PostgreSQL expired-entry cancellation admission', () => {
   afterAll(async () => {
     await owner?.dispose()
     await contender?.dispose()
+  })
+
+  test.each([
+    ['terminal intent', IntentState.Terminal, MutationEventType.SubmitUnknown, null, false],
+    ['unknown submit', IntentState.Unknown, MutationEventType.SubmitUnknown, null, true],
+    ['accepted submit', IntentState.Acknowledged, MutationEventType.SubmitAccepted, null, false],
+    ['recovered submit', IntentState.Acknowledged, MutationEventType.RecoveryFound, null, false],
+    [
+      'accepted cancel',
+      IntentState.Acknowledged,
+      MutationEventType.SubmitAccepted,
+      MutationEventType.CancelAccepted,
+      true,
+    ],
+    [
+      'recovered cancel',
+      IntentState.Acknowledged,
+      MutationEventType.SubmitAccepted,
+      MutationEventType.RecoveryFound,
+      true,
+    ],
+  ] as const)('preserves submit containment for %s', async (_name, state, submit, cancel, blocked) => {
+    await owner.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* MutationStore
+        yield* sql`UPDATE authority_state SET effective = 'PAPER', kill_state = 'CLEAR', reason = NULL`
+        yield* sql`UPDATE intents SET state = ${state}`
+        yield* sql`UPDATE mutation_events SET event_type = ${submit}`
+        yield* sql`
+          INSERT INTO mutation_events (event_id, schema_version, mutation_id, intent_id, sequence,
+            operation, event_type, request_hash, consistency_delay_ms, occurred_at)
+          SELECT ${'2'.repeat(64)}, schema_version, mutation_id, intent_id, 1, operation, 'SUBMIT_STARTED',
+            request_hash, consistency_delay_ms, occurred_at FROM mutation_events
+        `
+        if (cancel !== null) {
+          const cancelId = Result.getOrThrow(mutationIdResult(intentId, MutationOperation.Cancel))
+          yield* sql`
+            INSERT INTO mutation_events (event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms, occurred_at, broker_order_id)
+            VALUES
+              (${'3'.repeat(64)}, ${legacyMutationEventSchemaVersion}, ${cancelId}, ${intentId}, 1,
+                'CANCEL', 'CANCEL_STARTED', ${cancelRequestHash}, 1000, '2026-01-01T00:00:00Z', ${brokerOrderId}),
+              (${'4'.repeat(64)}, ${legacyMutationEventSchemaVersion}, ${cancelId}, ${intentId}, 2,
+                'CANCEL', ${cancel}, ${cancelRequestHash}, 1000, '2026-01-01T00:00:01Z', ${brokerOrderId})
+          `
+        }
+        const before = yield* sql`SELECT event_id, event_type FROM mutation_events ORDER BY event_id`
+        const result = yield* store
+          .beginSubmit('9'.repeat(64), '8'.repeat(64), 1000, '2026-01-01T00:01:00.000Z')
+          .pipe(Effect.result)
+        // A missing new intent distinguishes passing containment from an unresolved predecessor without adding a start.
+        expect(result).toMatchObject({
+          _tag: 'Failure',
+          failure: {
+            _tag: 'MutationStoreError',
+            failure: 'invariant',
+            message: blocked ? 'another broker mutation has an unresolved outcome' : 'intent does not exist',
+          },
+        })
+        expect(yield* sql`SELECT event_id, event_type FROM mutation_events ORDER BY event_id`).toEqual(before)
+      }),
+    )
   })
 
   test.each(['clear', 'restricted', 'short-clear', 'short-restricted'] as const)(

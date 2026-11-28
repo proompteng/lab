@@ -19,6 +19,7 @@ import { resolveAgentRunnerDefaultsConfig } from './runtime-config'
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_CODEX_HOME = '/root/.codex'
+const GIB_BYTES = 1024 ** 3
 
 const normalizeRunnerJobTtlSeconds = (value: number, source: string) => {
   if (!Number.isFinite(value)) return null
@@ -147,7 +148,8 @@ const normalizeResourceQuantityMap = (value: unknown) => {
   )
 }
 
-const memoryQuantityBytes = (quantity: string) => {
+const resourceQuantityBytes = (quantity: string | undefined) => {
+  if (!quantity) return 0
   // The client only accepts integer magnitudes with a suffix (e.g. 1Gi, not 1.5Gi).
   const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))([a-zA-Z]+)$/.exec(quantity)
   return match ? Number(match[1]) * Number(quantityToScalar(`1${match[2]}`)) : Number(quantityToScalar(quantity))
@@ -780,6 +782,11 @@ export const submitJobRun = async (
   const serviceAccountToken = resolveProviderServiceAccountToken(provider)
   const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)
   const usesStandardRunner = workloadImage === runnerDefaultsConfig.defaultRunnerImage
+  const usesStandardLabRunner =
+    usesStandardRunner &&
+    agentRunnerSpec?.adapter?.type === 'codex-app-server' &&
+    vcsContext?.repository === LAB_REPOSITORY &&
+    isGitHubCloneBaseUrl(asString(vcsContext.cloneBaseUrl))
   const nodeSelector =
     asRecord(runtimeConfig.nodeSelector) ??
     runnerDefaultsConfig.nodeSelector ??
@@ -862,12 +869,18 @@ export const submitJobRun = async (
 
   const resources = buildJobResources(workload, provider, runtimeConfig)
   const memoryLimit = resources.limits?.memory
-  const memoryLimitBytes = usesStandardRunner && memoryLimit ? memoryQuantityBytes(memoryLimit) : 0
+  const memoryLimitBytes = usesStandardRunner ? resourceQuantityBytes(memoryLimit) : 0
   const tmpfs = (sizeGiB: number) => ({
     medium: 'Memory',
     sizeLimit:
-      memoryLimit && memoryLimitBytes > 0 && memoryLimitBytes < sizeGiB * 1024 ** 3 ? memoryLimit : `${sizeGiB}Gi`,
+      memoryLimit && memoryLimitBytes > 0 && memoryLimitBytes < sizeGiB * GIB_BYTES ? memoryLimit : `${sizeGiB}Gi`,
   })
+  // Only shift the large checkout and package data to disk when the Job has the
+  // production Lab disk budget. An absent cache or a different node does not change it.
+  const useDiskScratch =
+    usesStandardLabRunner &&
+    resourceQuantityBytes(resources.requests?.['ephemeral-storage']) >= 8 * GIB_BYTES &&
+    resourceQuantityBytes(resources.limits?.['ephemeral-storage']) >= 16 * GIB_BYTES
 
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
@@ -891,7 +904,8 @@ export const submitJobRun = async (
       ) {
         continue
       }
-      volumes.push({ name, spec: { emptyDir: tmpfs(sizeGiB) } })
+      const emptyDir = useDiskScratch && mountPath !== '/tmp' ? { sizeLimit: `${sizeGiB}Gi` } : tmpfs(sizeGiB)
+      volumes.push({ name, spec: { emptyDir } })
       volumeMounts.push({ name, mountPath })
     }
   }
@@ -1039,13 +1053,7 @@ export const submitJobRun = async (
   }
 
   const sharedCacheHostPath = runnerDefaultsConfig.sharedCacheHostPath
-  if (
-    sharedCacheHostPath &&
-    usesStandardRunner &&
-    agentRunnerSpec?.adapter?.type === 'codex-app-server' &&
-    vcsContext?.repository === LAB_REPOSITORY &&
-    isGitHubCloneBaseUrl(asString(vcsContext.cloneBaseUrl))
-  ) {
+  if (sharedCacheHostPath && usesStandardLabRunner) {
     const name = makeName(runName, 'shared-workspace-cache')
     if (
       !volumes.some((volume) => volume.name === name) &&

@@ -36,10 +36,17 @@ export const validateBaynEgressProxy = (source: string): BaynEgressProxyContract
 
   exactlyOne(lines, (line) => line === 'http_port 3128 name=trading', 'trading listener')
   exactlyOne(lines, (line) => line === 'http_port 3129 name=opencode', 'OpenCode listener')
-  if (lines.filter((line) => line.startsWith('http_port ')).length !== 2) throw new Error('Unexpected proxy listener')
+  exactlyOne(lines, (line) => line === 'http_port 3130 name=marketdata', 'market data listener')
+  exactlyOne(lines, (line) => line === 'acl marketdata_listener myportname marketdata', 'market data listener ACL')
+  exactlyOne(
+    lines,
+    (line) => line === 'acl marketdata_api dstdomain data.alpaca.markets stream.data.alpaca.markets',
+    'market data destination ACL',
+  )
+  if (lines.filter((line) => line.startsWith('http_port ')).length !== 3) throw new Error('Unexpected proxy listener')
   exactlyOne(lines, (line) => line === 'acl opencode_listener myportname opencode', 'OpenCode listener ACL')
   exactlyOne(lines, (line) => line === 'acl opencode_api dstdomain opencode.ai', 'OpenCode destination ACL')
-  if (lines.filter((line) => /^acl\s+\S+\s+dstdomain\s+/.test(line)).length !== 2)
+  if (lines.filter((line) => /^acl\s+\S+\s+dstdomain\s+/.test(line)).length !== 3)
     throw new Error('Unexpected destination ACL')
   const domainLine = exactlyOne(
     lines,
@@ -64,11 +71,13 @@ export const validateBaynEgressProxy = (source: string): BaynEgressProxyContract
     'http_access deny !CONNECT',
     'http_access deny CONNECT !SSL_ports',
     'http_access deny opencode_listener !opencode_api',
-    `http_access deny !opencode_listener !${aclName}`,
+    'http_access deny marketdata_listener !marketdata_api',
+    `http_access deny !marketdata_listener !opencode_listener !${aclName}`,
     'http_access deny blocked_private_v4',
     'http_access deny blocked_private_v6',
     'http_access allow CONNECT opencode_listener opencode_api',
-    `http_access allow CONNECT !opencode_listener ${aclName}`,
+    'http_access allow CONNECT marketdata_listener marketdata_api',
+    `http_access allow CONNECT !marketdata_listener !opencode_listener ${aclName}`,
     'http_access deny all',
   ]
   const actualRules = lines.filter((line) => line.startsWith('http_access '))

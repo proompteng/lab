@@ -21,9 +21,11 @@ const transportErrorTag = (error: unknown) => {
 }
 
 const makeCreateImplCommand = () => {
-  const text = Flag.String('text')
-  const summary = Flag.optional(Flag.String('summary'))
-  const source = Flag.optional(Flag.String('source'))
+  const text = Flag.String('text').pipe(Flag.withDescription('Task text, @file, or - for stdin.'))
+  const summary = Flag.optional(Flag.String('summary').pipe(Flag.withDescription('Set a short task summary.')))
+  const source = Flag.optional(
+    Flag.String('source').pipe(Flag.withDescription('Set source provenance as provider=...,externalId=...,url=....')),
+  )
   return Command.make('impl', { text, summary, source }, ({ text, summary, source }) =>
     Effect.gen(function* () {
       const { resolved } = yield* AgentctlContext
@@ -80,7 +82,7 @@ const makeCreateImplCommand = () => {
       const resource = parseJson(response.json)
       if (resource) outputResource(resource, resolved.output)
     }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
+  ).pipe(Command.withDescription('Create an ImplementationSpec from task text.'))
 }
 
 export const makeCreateCommand = () => {
@@ -88,6 +90,6 @@ export const makeCreateCommand = () => {
     Effect.sync(() => {
       console.log('Usage: agentctl create <impl>')
     }),
-  )
+  ).pipe(Command.withDescription('Create an Agents resource.'))
   return Command.withSubcommands(base, [makeCreateImplCommand()])
 }

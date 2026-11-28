@@ -1,0 +1,50 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: torghut-market-data
+  namespace: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [torghut-ws, torghut-ws-sip]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-egress-proxy
+      ports:
+        - {port: 3130, protocol: TCP}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kafka
+          podSelector:
+            matchLabels:
+              strimzi.io/name: kafka-kafka
+      ports:
+        - {port: 9092, protocol: TCP}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - {port: 8000, protocol: TCP}
