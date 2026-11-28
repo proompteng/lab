@@ -4,6 +4,7 @@ metadata:
   name: synthesis
   namespace: synthesis
 spec:
+  revisionHistoryLimit: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
