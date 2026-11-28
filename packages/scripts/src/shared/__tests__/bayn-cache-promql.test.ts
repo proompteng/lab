@@ -5,6 +5,9 @@ import { join } from 'node:path'
 
 import { test } from 'bun:test'
 import YAML from 'yaml'
+import { mimirRuleGroup, observabilityDirectory } from './mimir-rules'
+
+const cacheRules = mimirRuleGroup('bayn-cache-performance.rules')
 
 const runPromtool = (files: Readonly<Record<string, string>>) => {
   const directory = mkdtempSync(join(tmpdir(), 'bayn-cache-promql-'))
@@ -23,34 +26,14 @@ const runPromtool = (files: Readonly<Record<string, string>>) => {
 }
 
 test('Bayn cache alerts evaluate healthy, missing, failed and low-traffic observations with native PromQL', () => {
-  const manifest = YAML.parse(
-    readFileSync(
-      new URL('../../../../../argocd/applications/observability/graf-mimir-rules.yaml', import.meta.url),
-      'utf8',
-    ),
-  )
   runPromtool({
-    'rules.yaml': manifest.data['graf-rules.yaml'],
-    'tests.yaml': readFileSync(
-      new URL('../../../../../argocd/applications/observability/tests/bayn-cache-alerts.yaml', import.meta.url),
-      'utf8',
-    ),
+    'rules.yaml': YAML.stringify({ groups: [cacheRules] }),
+    'tests.yaml': readFileSync(new URL('tests/bayn-cache-alerts.yaml', observabilityDirectory), 'utf8'),
   })
 }, 30_000)
 
 test('Bayn operation telemetry alerts reject clock-skewed heartbeats before aggregating replicas', () => {
-  const manifest = YAML.parse(
-    readFileSync(
-      new URL('../../../../../argocd/applications/observability/graf-mimir-rules.yaml', import.meta.url),
-      'utf8',
-    ),
-  )
-  const rules: { groups: { rules: { alert?: string; expr: string }[] }[] } = YAML.parse(
-    manifest.data['graf-rules.yaml'],
-  )
-  const expression = rules.groups
-    .flatMap((group) => group.rules)
-    .find((rule) => rule.alert === 'BaynOperationMetricsUnavailable')?.expr
+  const expression = cacheRules.rules.find((rule) => rule.alert === 'BaynOperationMetricsUnavailable')?.expr
   if (expression === undefined) throw new Error('Bayn operation telemetry alert is missing')
   const services = ['bayn', 'bayn-execution-controller']
   const observations = [
@@ -63,9 +46,7 @@ test('Bayn operation telemetry alerts reject clock-skewed heartbeats before aggr
     { name: 'older heartbeat remains unavailable', offsets: [-91], unavailable: true },
   ]
   runPromtool({
-    'rules.yaml': manifest.data['graf-rules.yaml'],
     'tests.yaml': YAML.stringify({
-      rule_files: ['rules.yaml'],
       evaluation_interval: '15s',
       tests: services.flatMap((service) =>
         observations.map((observation) => ({
