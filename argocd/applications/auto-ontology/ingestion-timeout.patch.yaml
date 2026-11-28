@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: configure-nvidia-timeout
+          image: nvcr.io/nvidia/auto-ontology
+          command: ["python", "-c"]
+          args:
+            - |
+              from pathlib import Path
+              module = Path("/app/auto_ontology/utils/llm_invoke.py")
+              source = module.read_text()
+              constructor = "    client = ChatNVIDIA(\n"
+              if source.count(constructor) != 1:
+                  raise SystemExit("Review the ChatNVIDIA timeout patch against the new image")
+              source = source.replace(constructor, constructor + "        timeout=LLM_INVOKE_TIMEOUT_S,\n")
+              compile(source, str(module), "exec")
+              Path("/work/llm_invoke.py").write_text(source)
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - name: ingestion-client
+              mountPath: /work
+      containers:
+        - name: ingestion
+          env:
+            - name: LLM_INVOKE_TIMEOUT_S
+              value: "180"
+          volumeMounts:
+            - name: ingestion-client
+              mountPath: /app/auto_ontology/utils/llm_invoke.py
+              subPath: llm_invoke.py
+              readOnly: true
+      volumes:
+        - name: ingestion-client
+          emptyDir: {sizeLimit: 1Mi}

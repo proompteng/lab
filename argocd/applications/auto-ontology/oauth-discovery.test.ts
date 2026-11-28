@@ -38,6 +38,7 @@ type Workload = Resource & {
 type Service = Resource & {
   spec: { ports: { port: number; targetPort: string }[]; selector: Record<string, string> }
 }
+type WithInitContainers = { spec: { template: { spec: { initContainers: { name: string; image: string }[] } } } }
 
 let manifests: Resource[]
 beforeAll(() => {
@@ -132,8 +133,7 @@ test('catalog Postgres uses asynchronous commits without replacing its entrypoin
 })
 
 test('SQL routing is patched on the same backend image from a mounted, versioned ConfigMap', () => {
-  type Backend = { spec: { template: { spec: { initContainers: { name: string; image: string }[] } } } }
-  const { spec } = resource<Workload & Backend>('Deployment', 'auto-ontology').spec.template
+  const { spec } = resource<Workload & WithInitContainers>('Deployment', 'auto-ontology').spec.template
   const backend = spec.containers.find(({ name }) => name === 'backend')
   expect(spec.initContainers.slice(0, 2).map(({ name }) => name)).toEqual(['copy-sql-runtime', 'apply-sql-routing'])
   expect(spec.initContainers[0].image).toBe(backend?.image)
@@ -148,4 +148,19 @@ test('SQL routing is patched on the same backend image from a mounted, versioned
   expect(resource<Resource & { data: Record<string, string> }>('ConfigMap', name!).data['sql-routing.patch']).toContain(
     'def resolve_connector_for_sql(',
   )
+})
+
+test('ingestion loads the corrected client from its own pinned image', () => {
+  const { spec } = resource<Workload & WithInitContainers>('Deployment', 'ingestion').spec.template
+  const worker = spec.containers.find(({ name }) => name === 'ingestion')
+  const init = spec.initContainers.find(({ name }) => name === 'configure-nvidia-timeout')
+  expect(init?.image).toMatch(/@sha256:[0-9a-f]{64}$/)
+  expect(init?.image).toBe(worker?.image)
+  expect(worker?.env).toContainEqual({ name: 'LLM_INVOKE_TIMEOUT_S', value: '180' })
+  expect(worker?.volumeMounts).toContainEqual({
+    name: 'ingestion-client',
+    mountPath: '/app/auto_ontology/utils/llm_invoke.py',
+    subPath: 'llm_invoke.py',
+    readOnly: true,
+  })
 })
