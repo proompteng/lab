@@ -3,6 +3,9 @@
 **Goal:** Test whether a daily next-open switch earns positive net market-model alpha or improves Calmar and maximum
 drawdown when added to the incumbent Bayn sleeves. This is a historical research screen, not trading authority.
 
+**Verdict: DO NOT PROMOTE.** The switch improved the point estimate for pooled OOS drawdown, but neither the
+alpha nor diversification route cleared the registered gates at any nonzero cost.
+
 ## Pre-registered protocol
 
 ### Data and walk-forward windows
@@ -54,7 +57,7 @@ drawdown when added to the incumbent Bayn sleeves. This is a historical research
   circular resamples, mean block 10 sessions, seed `0x24a2026`, and 2.5th/97.5th percentile intervals. Resample the
   actual matched session paths together; refit alpha and recompute compound-path Calmar/MaxDD on each draw. The
   intervals are conditional on this historical path and block choice and do not correct for prior Bayn studies.
-- **PROMOTE** only if the *same* route passes at all of 2, 5, and 10 bp:
+- **PROMOTE** only if the _same_ route passes at all of 2, 5, and 10 bp:
   - **Alpha:** pooled OOS net CAGR and alpha lower bound are positive, and alpha is positive in every OOS window.
   - **Diversification:** for the equal B0/F4/O1 basket with a 25% switch allocation, both paired lower bounds are
     positive (blend minus incumbent Calmar, incumbent minus blend MaxDD); both point improvements hold in the
@@ -63,3 +66,87 @@ drawdown when added to the incumbent Bayn sleeves. This is a historical research
 - Undefined required evidence cannot pass. Otherwise the verdict is **DO NOT PROMOTE**. The always-calm comparator,
   individual blends, full-window measurements, and 0 bp scenario cannot substitute for the gate. Even a pass would
   only justify separate prospective evaluation.
+
+## Executed results
+
+The replay authenticated 450,712 rows in the base archive and verified 2,741 bars per required asset
+(16,446 candidate bars) on the pinned calendars. It reproduced the published B0, F4, and O1 split totals
+before comparisons. The switch spent 2,010 scored sessions calm and 709 in stress; it rebalanced 534 times at
+each cost, including the initial fill. [Results](results.json) retains receipts, oracle comparisons, path digests,
+and unrounded statistics for all costs and windows.
+
+### Standalone switch
+
+Pooled OOS, 1,735 sessions. Alpha and its paired 95% interval are annualized arithmetic percentages.
+
+| Round trip | Net CAGR | Sharpe | Calmar |  MaxDD | Net alpha | 95% alpha interval |
+| ---------: | -------: | -----: | -----: | -----: | --------: | ------------------ |
+|       0 bp |    5.84% |  0.766 |  0.374 | 15.61% |    +1.45% | [−2.78%, +5.65%]   |
+|       2 bp |    5.79% |  0.760 |  0.371 | 15.64% |    +1.40% | [−2.82%, +5.60%]   |
+|       5 bp |    5.72% |  0.751 |  0.365 | 15.68% |    +1.33% | [−2.88%, +5.53%]   |
+|      10 bp |    5.59% |  0.735 |  0.355 | 15.76% |    +1.21% | [−2.99%, +5.40%]   |
+
+At 5 bp, the always-calm parity comparator had 5.19% OOS CAGR, 0.212 Calmar, and 24.47% MaxDD. The switch
+improved all three point estimates while increasing annual one-way turnover from 1.83× to 2.38× NAV. Across
+the full scored window including development, the switch earned 6.59% CAGR, 0.954 Sharpe, and 15.68% MaxDD.
+The full-window figures are descriptive, not additional OOS evidence.
+
+| OOS window, 5 bp      | Sessions | Net CAGR |  MaxDD | Annualized alpha |
+| --------------------- | -------: | -------: | -----: | ---------------: |
+| 2020–2021             |      505 |   10.30% |  8.17% |           +5.93% |
+| 2022–2023             |      501 |    0.68% | 15.64% |           +0.15% |
+| 2024–2026 (to Nov 25) |      729 |    6.16% |  6.37% |           −1.11% |
+
+The **alpha limiters** were a nonpositive lower interval bound and negative alpha in the latest fold at every cost.
+The pooled point estimate was positive, not a reliable market-adjusted edge. Even at 0 bp slippage, the estimated
+alpha interval crossed zero; the verdict did not turn on the slippage estimate.
+
+### Fixed 25% blends
+
+Change from each unblended comparator on pooled OOS at 5 bp. A positive MaxDD reduction means less drawdown.
+
+| Comparator         | Correlation | CAGR change | Calmar change | MaxDD reduction |
+| ------------------ | ----------: | ----------: | ------------: | --------------: |
+| SPY                |       0.550 |    −1.82 pp |        +0.043 |        +7.19 pp |
+| B0                 |      −0.012 |    −0.86 pp |        +0.278 |        +3.18 pp |
+| F4                 |       0.656 |    −0.57 pp |        +0.067 |        +1.42 pp |
+| O1                 |       0.552 |    −0.21 pp |        +0.063 |        +3.87 pp |
+| Equal B0 + F4 + O1 |       0.507 |    −0.61 pp |        +0.054 |        +1.16 pp |
+
+For the primary equal-incumbent comparison at 5 bp, MaxDD fell from 9.22% to 8.06% and Calmar rose from 0.903
+to 0.956, but CAGR fell from 8.32% to 7.71% and Sharpe from 1.468 to 1.397.
+
+| Round trip | Primary Calmar lift (95% interval) | MaxDD reduction (95% interval) | Latest Calmar lift |
+| ---------: | ---------------------------------- | ------------------------------ | -----------------: |
+|       0 bp | +0.025 [−1.050, +0.289]            | +1.13 pp [−1.66, +1.92]        |             −0.213 |
+|       2 bp | +0.037 [−0.921, +0.299]            | +1.14 pp [−1.71, +1.99]        |             −0.204 |
+|       5 bp | +0.054 [−0.760, +0.315]            | +1.16 pp [−1.80, +2.14]        |             −0.129 |
+|      10 bp | +0.080 [−0.510, +0.330]            | +1.19 pp [−1.91, +2.53]        |             −0.020 |
+
+The **diversification limiters** were both paired intervals crossing zero, worse latest-fold Calmar, and
+correlation above the 0.50 maximum (0.506–0.507 at nonzero costs). The CAGR drag was within the registered
+1 pp allowance at all nonzero costs. The near-zero B0 correlation is a pair-specific diagnostic, not
+orthogonality to the full incumbent portfolio.
+
+## Reproduce and interpret
+
+From the repository root with read-only access to the pinned artifacts bucket:
+
+```sh
+run=$(mktemp -d)
+bun services/bayn/tools/research-10yr-vol-parity-switch.ts --output "$run/results.json"
+bunx oxfmt --config .oxfmtrc.json "$run/results.json"
+cmp "$run/results.json" docs/bayn/evidence/2026-11-28-10yr-vol-parity-switch/results.json
+rm -r "$run"
+```
+
+Two complete S3 replays produced byte-identical unformatted results. Truncating the verified daily tape at the
+three walk-forward seams produced exactly the same signals and marked daily returns through each seam
+as the full tape at every cost. The first execution was on 2016-02-04 from the 2016-02-03 close; every scored
+execution decision used its prior session's close signal.
+
+The archive provides adjusted historical bar marks, not a point-in-time arrival or correction audit. The
+next-open model gives fractional execution at observed opening marks, with no quote, auction capacity, order
+latency, or size-dependent impact model. Bootstrapped blocks omit neither losses nor idle sessions, but the
+sample covers only these historical regimes, and peak-to-trough statistics are sensitive to how blocks join.
+Do not use this report as a fill, leverage, or capital authorization decision.
