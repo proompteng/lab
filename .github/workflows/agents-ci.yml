@@ -224,6 +224,7 @@ jobs:
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
             packages/scripts/src/agents/__tests__/collect-smoke-diagnostics.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
+            packages/scripts/src/agents/__tests__/workspace-cache.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
 
       - name: Run Agents service typecheck and unit tests

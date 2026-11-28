@@ -7,6 +7,7 @@ resources:
   - codex-auth-master-externalsecret.yaml
   - codex-auth-externalsecret.yaml
   - codex-auth-refresher.yaml
+  - workspace-cache-daemonset.yaml
   - hf-router-token-sealedsecret.yaml
   - agents-shell-tunnel-runtime-sealedsecret.yaml
   - agents-shell-tunnel-deployment.yaml
@@ -55,6 +56,16 @@ resources:
   - alloy-configmap.yaml
   - alloy-deployment.yaml
 replacements:
+  - source:
+      kind: Deployment
+      name: agents-controllers
+      fieldPath: spec.template.spec.containers.0.env.[name=AGENTS_AGENT_RUNNER_IMAGE].value
+    targets:
+      - select:
+          kind: DaemonSet
+          name: agents-workspace-cache
+        fieldPaths:
+          - spec.template.spec.containers.[name=refresh].image
   - source:
       kind: SealedSecret
       name: agents-shell-tunnel-runtime
@@ -117,6 +128,9 @@ helmCharts:
     includeCRDs: true
 
 configMapGenerator:
+  - name: agents-workspace-cache-refresh
+    files:
+      - refresh.sh=workspace-cache-refresh.sh
   - name: agents-relay-targets
     files:
       - relay-targets.json

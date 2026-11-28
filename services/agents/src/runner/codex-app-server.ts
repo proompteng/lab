@@ -1,7 +1,20 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { chmod, mkdir, readdir, readFile, stat, statfs, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  statfs,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -20,6 +33,13 @@ import { AGENT_RUNNER_RESULT_PREVIEW_CHARS, type AgentRunnerResultPreview } from
 
 import { RUNNER_LOG_SUFFIX, type RunnerTelemetry } from '../runner-telemetry'
 import { encodeRunnerStatus } from '../runner-status'
+import {
+  isGitHubCloneBaseUrl,
+  isSafeRepositorySlug,
+  LAB_REPOSITORY,
+  resolveWorkspaceMirrorPath,
+  SHARED_WORKSPACE_CACHE_MOUNT_PATH,
+} from '../workspace-cache'
 
 import { uploadOutputArtifacts } from './artifact-upload'
 import { createRunnerTelemetry, createTelemetryPublisher } from './telemetry'
@@ -42,6 +62,7 @@ export const DEFAULT_CODEX_BINARY_PATH = '/usr/local/bin/codex'
 const BOOTSTRAP_RETRY_DELAY_MS = 2_000
 const MAX_RESULT_RESPONSE_CHARS = 64_000
 const TMPFS_MAGIC = 0x01021994
+const MAX_MIRROR_AGE_MS = 15 * 60 * 1000
 
 export const readRunnerWorkspaceTmpfsBytes = async (path = '/workspace') => {
   const stats = await statfs(path).catch(() => undefined)
@@ -91,6 +112,7 @@ export type CodexAppServerRunnerClient = {
 export type RunCodexAppServerAdapterOptions = {
   createClient?: (options: CodexAppServerOptions) => CodexAppServerRunnerClient
   runCommand?: CommandRunner
+  sharedCachePath?: string
   uploadArtifacts?: typeof uploadOutputArtifacts
   now?: () => Date
   abortSignal?: AbortSignal
@@ -103,7 +125,8 @@ type CommandResult = {
   stderr: string
 }
 
-type CommandRunner = (command: string, args: string[], options?: { cwd?: string }) => Promise<CommandResult>
+type CommandOptions = { cwd?: string; env?: Record<string, string> }
+type CommandRunner = (command: string, args: string[], options?: CommandOptions) => Promise<CommandResult>
 
 export class CodexRunnerInputError extends Data.TaggedError('CodexRunnerInputError')<{
   readonly operation: 'load-payload' | 'resolve-prompt' | 'validate-adapter' | 'load-system-prompt'
@@ -178,7 +201,7 @@ export type RunnerCommandService = {
   run: (
     command: string,
     args: string[],
-    options?: { cwd?: string },
+    options?: CommandOptions,
   ) => Effect.Effect<CommandResult, CodexRunnerWorkspaceError>
 }
 
@@ -383,7 +406,7 @@ const runProcessCommand: CommandRunner = (command, args, options = {}) =>
   new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: process.env,
+      env: { ...process.env, ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const stdout: Buffer[] = []
@@ -486,8 +509,6 @@ const nonBlankStringPreserve = (value: unknown): string | null => {
   return text && text.trim() ? text : null
 }
 
-const isSafeRepositorySlug = (repository: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
-
 const isSafeGitRef = (ref: string) =>
   /^[A-Za-z0-9._/-]+$/.test(ref) &&
   !ref.includes('..') &&
@@ -576,7 +597,57 @@ const fetchBranch = async (
   return false
 }
 
-const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, runner: CommandRunner) => {
+const findWorkspaceMirror = async (cacheRoot: string, vcs: VcsWorkspaceContext, runner: CommandRunner) => {
+  if (!isGitHubCloneBaseUrl(vcs.cloneBaseUrl)) return null
+  const mirror = resolveWorkspaceMirrorPath(cacheRoot, vcs.repository)
+  if (!mirror) return null
+  try {
+    if (!(await realpath(mirror)).startsWith(join(await realpath(cacheRoot), 'git') + '/')) return null
+    const refreshed = await stat(join(mirror, '.refreshed'))
+    if (!refreshed.isFile() || Date.now() - refreshed.mtimeMs >= MAX_MIRROR_AGE_MS) return null
+    const result = await runner('git', [
+      '--git-dir',
+      mirror,
+      'rev-parse',
+      '--is-bare-repository',
+      '--verify',
+      `refs/heads/${vcs.baseBranch}^{commit}`,
+    ])
+    return result.exitCode === 0 && result.stdout.split('\n')[0] === 'true' ? mirror : null
+  } catch {
+    return null
+  }
+}
+
+const cloneWorkspace = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoot: string, runner: CommandRunner) => {
+  const flags = ['clone', '--filter=blob:none', '--no-checkout']
+  const cloneUrl = resolveCloneUrl(vcs)
+  const mirror = await findWorkspaceMirror(cacheRoot, vcs, runner)
+  if (mirror) {
+    // Dissociating an unbounded clone packs every reachable object from the mirror into the Job.
+    const result = await runner('git', [
+      ...flags,
+      '--depth=1',
+      '--branch',
+      vcs.baseBranch,
+      '--reference-if-able',
+      mirror,
+      '--dissociate',
+      cloneUrl,
+      cwd,
+    ])
+    if (result.exitCode === 0) {
+      assertCommandSuccess(await runner('git', ['remote', 'set-branches', 'origin', '*'], { cwd }), 'git set-branches')
+      return
+    }
+    console.warn('[agents] shared mirror clone failed; retrying from origin')
+    // The destination was empty and --no-checkout writes only .git.
+    await rm(join(cwd, '.git'), { recursive: true, force: true })
+  }
+  assertCommandSuccess(await runner('git', [...flags, cloneUrl, cwd]), `git clone ${vcs.repository}`)
+}
+
+const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoot: string, runner: CommandRunner) => {
   await ensureGitAskpass()
   const cloneUrl = resolveCloneUrl(vcs)
   const gitDir = join(cwd, '.git')
@@ -602,10 +673,7 @@ const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, runner: 
         })
       }
     }
-    assertCommandSuccess(
-      await runner('git', ['clone', '--filter=blob:none', '--no-checkout', cloneUrl, cwd]),
-      `git clone ${vcs.repository}`,
-    )
+    await cloneWorkspace(cwd, vcs, cacheRoot, runner)
   }
 
   await fetchBranch(runner, cwd, vcs.baseBranch, { required: true })
@@ -627,17 +695,78 @@ const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, runner: 
   }
 }
 
+const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: string, runner: CommandRunner) => {
+  if (
+    !(await isDirectory(cacheRoot).catch(() => false)) ||
+    (await pathExists(join(cwd, 'node_modules'))) ||
+    !(await pathExists(join(cwd, 'bun.lock'))) ||
+    !(await pathExists(join(cwd, 'services/memories/package.json')))
+  ) {
+    return
+  }
+
+  const install = (deadline: string, flags: string[], env?: CommandOptions['env']) =>
+    runner(
+      'timeout',
+      [
+        '-k',
+        '5s',
+        deadline,
+        'bun',
+        'install',
+        '--frozen-lockfile',
+        '--production',
+        '--omit=peer',
+        '--ignore-scripts',
+        '--filter',
+        'memories',
+        ...flags,
+      ],
+      { cwd, env },
+    ).then(
+      (result) => result.exitCode === 0,
+      () => false,
+    )
+
+  try {
+    const bunCache = await realpath(join(cacheRoot, 'bun-cache'))
+    const entries = (await readdir(bunCache)).filter((entry) => !entry.startsWith('.'))
+    if (entries.length > 0) {
+      // Bun needs writable scratch space even offline for patched packages. Link the
+      // cache entries, not the installed files, so the shared cache stays read-only.
+      const cacheView = await mkdtemp(join(tmpdir(), 'agents-bun-cache-'))
+      try {
+        for (const entry of entries) {
+          await symlink(join(bunCache, entry), join(cacheView, entry))
+        }
+        if (await install('20s', ['--offline', '--backend=copyfile'], { BUN_INSTALL_CACHE_DIR: cacheView })) return
+      } finally {
+        await rm(cacheView, { recursive: true, force: true })
+      }
+    }
+  } catch {
+    // A missing or unusable node cache must not prevent a normal install in the Job.
+  }
+  if (!(await install('30s', ['--prefer-offline']))) {
+    console.warn('[agents] first-turn Bun dependencies unavailable; continuing without bootstrap install')
+  }
+}
+
 const prepareCodexCwd = async (
   adapter: CodexAppServerAdapterConfig,
   runPayload: AgentRunPayload,
   runner: CommandRunner,
+  cacheRoot: string,
 ): Promise<void> => {
   const cwd = nonEmptyString(adapter.cwd)
   if (!cwd) return
 
   const vcs = readVcsWorkspaceContext(runPayload)
   if (vcs) {
-    await ensureVcsCheckout(cwd, vcs, runner)
+    await ensureVcsCheckout(cwd, vcs, cacheRoot, runner)
+    if (vcs.repository === LAB_REPOSITORY && isGitHubCloneBaseUrl(vcs.cloneBaseUrl)) {
+      await installWorkspaceContextDependencies(cwd, cacheRoot, runner)
+    }
     return
   }
 
@@ -648,9 +777,10 @@ const prepareCodexCwdEffect = (
   adapter: CodexAppServerAdapterConfig,
   runPayload: AgentRunPayload,
   runner: CommandRunner,
+  cacheRoot: string,
 ) =>
   Effect.tryPromise({
-    try: () => prepareCodexCwd(adapter, runPayload, runner),
+    try: () => prepareCodexCwd(adapter, runPayload, runner, cacheRoot),
     catch: (cause) =>
       cause instanceof CodexRunnerWorkspaceError
         ? cause
@@ -1070,7 +1200,12 @@ export const runCodexAppServerAdapterEffect = ({
       onNotification: (notification) => state.telemetry?.observe(notification),
     }
 
-    yield* prepareCodexCwdEffect(adapter, runPayload, options.runCommand ?? runDefaultCommand)
+    yield* prepareCodexCwdEffect(
+      adapter,
+      runPayload,
+      options.runCommand ?? runDefaultCommand,
+      options.sharedCachePath ?? SHARED_WORKSPACE_CACHE_MOUNT_PATH,
+    )
     yield* throwIfCancelledEffect(options.abortSignal)
     state.client = yield* createRunnerClientEffect(clientOptions, options)
 
