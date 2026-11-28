@@ -10,11 +10,11 @@ interface WorkflowJob {
   readonly if?: string
   readonly uses?: string
   readonly needs?: readonly string[] | string
-  readonly outputs?: Record<string, string>
+  readonly with?: Record<string, string>
   readonly 'timeout-minutes'?: number
   readonly strategy?: {
     readonly 'fail-fast'?: boolean
-    readonly matrix?: { readonly group?: readonly string[] }
+    readonly matrix?: { readonly group?: readonly string[]; readonly shard?: readonly number[] }
   }
   readonly steps: readonly { readonly name?: string; readonly run?: string; readonly env?: Record<string, string> }[]
 }
@@ -84,9 +84,11 @@ test('the root gate requires the complete Bayn workflow on queued revisions', ()
 
 const successful = {
   PATH: process.env.PATH ?? '',
-  MERGE_GROUP: 'false',
+  EXACT_REVISION: 'false',
   CHANGES_RESULT: 'success',
-  BAYN_RELEVANT: 'true',
+  FULL_RELEVANT: 'true',
+  FAST_RELEVANT: 'false',
+  FAST_RESULT: 'skipped',
   PR_CHECKS_RELEVANT: 'true',
   PR_CHECKS_RESULT: 'success',
   FORMAL_RELEVANT: 'true',
@@ -112,6 +114,16 @@ const skippedRuntime = Object.fromEntries(
     'REPLAY_EXECUTION_RESULT',
   ].map((name) => [name, 'skipped']),
 )
+const noChecks = {
+  ...skippedRuntime,
+  FULL_RELEVANT: 'false',
+  PR_CHECKS_RELEVANT: 'false',
+  PR_CHECKS_RESULT: 'skipped',
+  FORMAL_RELEVANT: 'false',
+  FORMAL_RESULT: 'skipped',
+  GEPA_RELEVANT: 'false',
+  GEPA_RESULT: 'skipped',
+}
 const run = async (overrides: Record<string, string>) => {
   const child = Bun.spawn(['bash', '-c', command], {
     env: { ...successful, ...overrides },
@@ -126,26 +138,65 @@ const run = async (overrides: Record<string, string>) => {
   return { exit, stdout, stderr }
 }
 
-test('a merge group must select every Bayn suite', async () => {
-  expect((await run({ MERGE_GROUP: 'true' })).exit).toBe(0)
-  for (const flag of ['BAYN_RELEVANT', 'PR_CHECKS_RELEVANT', 'FORMAL_RELEVANT', 'GEPA_RELEVANT']) {
-    const failed = await run({ MERGE_GROUP: 'true', [flag]: 'false' })
+test('exact-revision callers must select full validation', async () => {
+  expect(gate.env?.EXACT_REVISION).toBe("${{ github.event_name != 'pull_request' }}")
+  expect((await run({ EXACT_REVISION: 'true' })).exit).toBe(0)
+  const failed = await run({ ...noChecks, EXACT_REVISION: 'true' })
+  expect(failed.exit).toBe(1)
+  expect(failed.stderr).toContain('Exact-revision validation requires the full Bayn tier.')
+})
+
+test('the full tier must select every full check and cannot select the fast tier', async () => {
+  for (const [flag, value] of [
+    ['FAST_RELEVANT', 'true'],
+    ['PR_CHECKS_RELEVANT', 'false'],
+    ['FORMAL_RELEVANT', 'false'],
+    ['GEPA_RELEVANT', 'false'],
+  ] as const) {
+    const failed = await run({ [flag]: value })
     expect(failed.exit).toBe(1)
-    expect(failed.stderr).toContain('Merge group validation must select every Bayn check.')
+    expect(failed.stderr).toContain('The full Bayn tier must select every full-tier check')
   }
 })
 
-test('contract-only changes still require the existing Bayn release gate and PR checks', async () => {
+test('fast-only changes require successful offline checks under the existing Bayn release gate', async () => {
   expect(required.name).toBe('Bayn release gate')
   expect(required.if).toBe('always()')
+  expect(required.needs).toContain('fast-checks')
+  expect(gate.env?.FAST_RELEVANT).toBe('${{ needs.changes.outputs.fast }}')
+  expect(gate.env?.FAST_RESULT).toBe('${{ needs.fast-checks.result }}')
+  const fast = workflow.jobs['fast-checks']
+  expect(fast?.needs).toBe('changes')
+  expect(fast?.if).toBe("needs.changes.outputs.fast == 'true'")
+  expect(fast?.uses).toBe('./.github/workflows/common-monorepo.yml')
+  expect(fast?.with).toMatchObject({
+    'bun-version': '1.4.3',
+    'working-directory': 'services/bayn',
+    'lint-command': 'bun run lint',
+    'oxlint-command': 'bun run lint:oxlint',
+    'oxlint-type-command': 'bun run lint:oxlint:type',
+  })
+  expect(fast?.with?.['test-command']).toContain('bun run tsc')
+  expect(fast?.with?.['test-command']).toContain('bun test ./tools')
+  expect(fast?.with?.['test-command']).toContain('--parallel=2')
+  expect(fast?.with?.['build-command']).toBeUndefined()
+  const applicable = { ...noChecks, FAST_RELEVANT: 'true', FAST_RESULT: 'success' }
+  expect((await run(applicable)).exit).toBe(0)
+  for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
+    const failed = await run({ ...applicable, FAST_RESULT: outcome })
+    expect(failed.exit).toBe(1)
+    expect(failed.stderr).toContain('FAST_RESULT must be success')
+  }
+  expect((await run({ ...applicable, FORMAL_RELEVANT: 'true' })).exit).toBe(1)
+  expect((await run({ ...applicable, POSTGRES_RESULT: 'failure' })).exit).toBe(1)
+})
+
+test('contract-only changes still require successful PR checks', async () => {
   expect(required.needs).toContain('pr-checks')
-  expect(workflow.jobs.changes?.outputs?.pr_checks).toBe(
-    "${{ github.event_name != 'pull_request' && steps.manual.outputs.bayn || fromJSON(steps.filter.outputs.affected).bayn || fromJSON(steps.filter.outputs.affected).contracts }}",
-  )
   expect(workflow.jobs['pr-checks']?.if).toBe("needs.changes.outputs.pr_checks == 'true'")
   expect(gate.env?.PR_CHECKS_RELEVANT).toBe('${{ needs.changes.outputs.pr_checks }}')
   expect(gate.env?.PR_CHECKS_RESULT).toBe('${{ needs.pr-checks.result }}')
-  const applicable = { ...skippedRuntime, BAYN_RELEVANT: 'false' }
+  const applicable = { ...noChecks, PR_CHECKS_RELEVANT: 'true', PR_CHECKS_RESULT: 'success' }
   expect((await run(applicable)).exit).toBe(0)
   for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
     const failed = await run({ ...applicable, PR_CHECKS_RESULT: outcome })
@@ -248,30 +299,28 @@ esac
 )
 
 test('market-data fixture runs for Bayn changes and participates in the existing release gate', () => {
-  expect(replay.if).toBe("needs.changes.outputs.bayn == 'true'")
   expect(replay.needs).toBe('changes')
   expect(replay['timeout-minutes']).toBeLessThanOrEqual(15)
-  expect(required.needs).toContain('market-data-replay')
-  expect(gate.env?.MARKET_DATA_REPLAY_RESULT).toBe('${{ needs.market-data-replay.result }}')
-  expect(required.needs).toContain('gepa')
-  expect(gate.env?.GEPA_RESULT).toBe('${{ needs.gepa.result }}')
-  for (const [job, result] of [
+  for (const [job, result, selector] of [
+    ['gepa', 'GEPA_RESULT', 'gepa'],
+    ['formal-verification', 'FORMAL_RESULT', 'formal'],
     ['unit-tests', 'UNIT_RESULT'],
     ['archive-integration', 'ARCHIVE_RESULT'],
     ['ledger-integration', 'LEDGER_RESULT'],
     ['postgres-integration', 'POSTGRES_RESULT'],
-    ['formal-verification', 'FORMAL_RESULT'],
+    ['market-data-replay', 'MARKET_DATA_REPLAY_RESULT'],
     ['replay-execution-observer', 'REPLAY_EXECUTION_RESULT'],
     ['streaming-integration', 'STREAMING_INTEGRATION_RESULT'],
   ] as const) {
+    expect(workflow.jobs[job]?.if).toBe(`needs.changes.outputs.${selector ?? 'full'} == 'true'`)
     expect(required.needs).toContain(job)
     expect(gate.env?.[result]).toBe(`\${{ needs.${job}.result }}`)
   }
+  expect(workflow.jobs['postgres-integration']?.strategy?.matrix?.shard).toEqual([1, 2, 3, 4])
 })
 
 test('streaming failure suites have an isolated required job in exact-revision validation', () => {
   const streaming = workflow.jobs['streaming-integration']
-  expect(streaming?.if).toBe("needs.changes.outputs.bayn == 'true'")
   expect(streaming?.needs).toBe('changes')
   expect(streaming?.['timeout-minutes']).toBeLessThanOrEqual(15)
   expect(
@@ -313,34 +362,25 @@ test.each([
 })
 
 test('irrelevant changes retain the existing skip policy but detection failures still fail', async () => {
-  const irrelevant = {
-    ...skippedRuntime,
-    BAYN_RELEVANT: 'false',
-    PR_CHECKS_RELEVANT: 'false',
-    PR_CHECKS_RESULT: 'skipped',
-    FORMAL_RELEVANT: 'false',
-    FORMAL_RESULT: 'skipped',
-    GEPA_RELEVANT: 'false',
-    GEPA_RESULT: 'skipped',
-  }
-  expect((await run(irrelevant)).exit).toBe(0)
-  expect((await run({ ...irrelevant, CHANGES_RESULT: 'failure' })).exit).not.toBe(0)
-  expect((await run({ ...irrelevant, PR_CHECKS_RELEVANT: '' })).exit).not.toBe(0)
-  expect((await run({ ...irrelevant, LEDGER_RESULT: 'failure' })).exit).not.toBe(0)
+  expect((await run(noChecks)).exit).toBe(0)
+  expect((await run({ ...noChecks, CHANGES_RESULT: 'failure' })).exit).not.toBe(0)
+  expect((await run({ ...noChecks, PR_CHECKS_RELEVANT: '' })).exit).not.toBe(0)
+  expect((await run({ ...noChecks, FAST_RELEVANT: '' })).exit).not.toBe(0)
+  expect((await run({ ...noChecks, LEDGER_RESULT: 'failure' })).exit).not.toBe(0)
 })
 
-test('unchanged Python inputs may skip GEPA independently of service validation', async () => {
-  expect((await run({ GEPA_RELEVANT: 'false', GEPA_RESULT: 'skipped' })).exit).toBe(0)
-  expect((await run({ BAYN_RELEVANT: 'false', GEPA_RESULT: 'failure' })).exit).not.toBe(0)
+test('GEPA changes require a successful Python result independently of service jobs', async () => {
+  const gepa = { ...noChecks, GEPA_RELEVANT: 'true' }
+  expect((await run({ ...gepa, GEPA_RESULT: 'success' })).exit).toBe(0)
+  expect((await run({ ...gepa, GEPA_RESULT: 'failure' })).exit).toBe(1)
 })
 
 test('formal-only changes require a successful proof result independently of service jobs', async () => {
-  const noRuntime = { ...skippedRuntime, BAYN_RELEVANT: 'false' }
-  expect((await run({ ...noRuntime, FORMAL_RESULT: 'success' })).exit).toBe(0)
+  const formal = { ...noChecks, FORMAL_RELEVANT: 'true' }
+  expect((await run({ ...formal, FORMAL_RESULT: 'success' })).exit).toBe(0)
   for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
-    const result = await run({ ...noRuntime, FORMAL_RESULT: outcome })
+    const result = await run({ ...formal, FORMAL_RESULT: outcome })
     expect(result.exit).not.toBe(0)
     expect(result.stderr).toContain('FORMAL_RESULT must be success')
   }
-  expect((await run({ FORMAL_RELEVANT: 'false', FORMAL_RESULT: 'skipped' })).exit).toBe(0)
 })

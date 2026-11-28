@@ -100,31 +100,46 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
 
-  it('offers two opt-in scratch sizes on each build host', () => {
+  it('reserves tmpfs capacity and leaves process headroom on both build hosts', () => {
     const application = YAML.parse(arcApplication)
     const sources = application.spec.sources
-    for (const [index, architecture, sizeLimit, memory] of [
-      [3, 'arm64', '16Gi', '18Gi'],
-      [4, 'amd64', '16Gi', '18Gi'],
-      [5, 'arm64', '24Gi', '28Gi'],
-      [6, 'amd64', '24Gi', '28Gi'],
+    const acceptance = YAML.parse(readRepoFile('.github/workflows/arc-tmpfs-acceptance.yml'))
+    for (const [index, architecture, scratch, memory] of [
+      [3, 'arm64', 16, 24],
+      [4, 'amd64', 16, 24],
+      [5, 'arm64', 24, 32],
+      [6, 'amd64', 24, 32],
     ] as const) {
       const { releaseName, valuesObject: values } = sources[index].helm
       const baseline = sources[architecture === 'arm64' ? 1 : 2].helm.valuesObject
-      const label = `arc-${architecture}-tmpfs${sizeLimit === '24Gi' ? '-large' : ''}`
+      const label = `arc-${architecture}-tmpfs${scratch === 24 ? '-large' : ''}`
       const pod = values.template.spec
       expect(releaseName).toBe(label)
+      expect(acceptance.jobs.verify.strategy.matrix.include).toContainEqual({
+        label,
+        node: baseline.template.spec.nodeSelector['kubernetes.io/hostname'],
+        arch: architecture === 'arm64' ? 'aarch64' : 'x86_64',
+        scratch,
+        memory,
+      })
       expect(values).toMatchObject({
         runnerScaleSetName: label,
         scaleSetLabels: [label],
         minRunners: 0,
-        maxRunners: sizeLimit === '16Gi' ? (architecture === 'amd64' ? 10 : 8) : 6,
+        maxRunners: scratch === 16 ? (architecture === 'amd64' ? 10 : 8) : 6,
         listenerTemplate: baseline.listenerTemplate,
         template: {
           spec: {
             nodeSelector: baseline.template.spec.nodeSelector,
-            volumes: [{ name: 'scratch', emptyDir: { medium: 'Memory', sizeLimit } }],
-            containers: [{ resources: { requests: { memory: '8Gi' }, limits: { memory } } }],
+            volumes: [{ name: 'scratch', emptyDir: { medium: 'Memory', sizeLimit: `${scratch}Gi` } }],
+            containers: [
+              {
+                resources: {
+                  requests: { cpu: '4', memory: `${scratch}Gi`, 'ephemeral-storage': '10Gi' },
+                  limits: { cpu: '20', memory: `${memory}Gi`, 'ephemeral-storage': '20Gi' },
+                },
+              },
+            ],
           },
         },
       })

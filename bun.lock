@@ -602,8 +602,10 @@
       "name": "@proompteng/scripts",
       "version": "0.1.0",
       "dependencies": {
+        "@electric-sql/pglite": "^0.4.5",
         "@proompteng/bumba": "workspace:*",
         "@proompteng/temporal-bun-sdk": "workspace:*",
+        "kysely": "0.28.17",
         "libpg-query": "18.3.0",
         "oxc-parser": "0.152.0",
         "oxfmt": "^0.48.0",
