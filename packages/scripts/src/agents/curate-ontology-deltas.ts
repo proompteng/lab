@@ -5,14 +5,14 @@ import { dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import { fatal } from '../shared/cli'
-import { readAgentsOntologyTables, withAgentsOntologySchema } from './agents-ontology-schema'
-import { containsCredentials, mergeKnowledgeDeltas, serializeBundle } from './ontology-deltas'
-import { validateOntologyAnalyses } from './ontology-sql'
+import { validateAgentsOntologyAnalyses } from './agents-ontology-schema'
+import { mergeKnowledgeDeltas, serializeBundle } from './ontology-deltas'
+import { containsCredentials, disclosureProblem } from './ontology-disclosure'
+import { maxOntologyJsonBytes } from './ontology-json'
 
 const usage =
   'Usage: curate-ontology-deltas --input <file-or-dir> [--input <file-or-dir> ...] --bundle <path> [--mode dry-run|write]'
-const maxJsonBytes = 1024 * 1024
-const safePath = (path: string) => (containsCredentials(path) ? '<redacted path>' : JSON.stringify(path))
+const safePath = (path: string) => (disclosureProblem(path) ? '<redacted path>' : JSON.stringify(path))
 
 const inputFiles = async (inputs: string[]) => {
   const files = new Set<string>()
@@ -38,7 +38,8 @@ const inputFiles = async (inputs: string[]) => {
 const readJson = async (path: string) => {
   const file = await lstat(path).catch(() => null)
   const label = safePath(path)
-  if (!file?.isFile() || file.size > maxJsonBytes) throw new Error(`${label}: expected a regular JSON file up to 1 MiB`)
+  if (!file?.isFile() || file.size > maxOntologyJsonBytes)
+    throw new Error(`${label}: expected a regular JSON file up to 1 MiB`)
   const raw = await readFile(path, 'utf8').catch(() => {
     throw new Error(`${label}: could not read file`)
   })
@@ -92,15 +93,10 @@ const main = async () => {
   const proposals = []
   for (const file of await inputFiles(values.input)) proposals.push(await readJson(file))
   const bundle = mergeKnowledgeDeltas(original.value, proposals)
-  await withAgentsOntologySchema(async (postgres) => {
-    await validateOntologyAnalyses(bundle.customAnalyses, {
-      tables: await readAgentsOntologyTables(postgres),
-      describe: (sql) => postgres.describeQuery(sql),
-    })
-  })
+  await validateAgentsOntologyAnalyses(bundle.customAnalyses)
 
   const contents = serializeBundle(bundle)
-  if (Buffer.byteLength(contents) > maxJsonBytes) throw new Error('Merged bundle exceeds the 1 MiB size limit')
+  if (Buffer.byteLength(contents) > maxOntologyJsonBytes) throw new Error('Merged bundle exceeds the 1 MiB size limit')
   const changed = contents !== original.raw
   if (values.mode === 'write' && changed) {
     await writeBundle(path, contents, original.mode).catch(() => {

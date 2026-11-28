@@ -1,3 +1,4 @@
+import auditReaderViewGrant from '../../migrations/0227_audit_reader_view_grant'
 import auditReaderGrants from '../../migrations/0226_audit_reader_grants'
 import alphaBaselinePreparation from '../../migrations/0225_alpha_baseline_preparation'
 import strategyBoundQualification from '../../migrations/0224_strategy_bound_qualification'
@@ -227,6 +228,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '227_audit_reader_view_grant': auditReaderViewGrant,
   '224_strategy_bound_qualification': strategyBoundQualification,
   '226_audit_reader_grants': auditReaderGrants,
   '225_alpha_baseline_preparation': alphaBaselinePreparation,

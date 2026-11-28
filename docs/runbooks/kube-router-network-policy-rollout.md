@@ -215,22 +215,24 @@ Recheck node, DNS, service routing, OpenClaw, and Flamingo health. Revert the Gi
 Argo no longer desires the controller. Do not remove the safety policies until a separate policy rollout proves each
 namespace's required traffic.
 
-
-After retirement of the PostgreSQL and ClickHouse upgrade test namespaces,
-the controller coverage gate recognizes the six additional namespaces below.
+After retirement of the PostgreSQL and ClickHouse upgrade test namespaces and the Restate Greeter demo,
+the controller coverage gate still recognizes the namespaces below.
 Their live policy names and complete specs match committed source at `5a8a64b4101cd379c9dc55c89f04bde947d4d56d`,
 after Kubernetes omits empty ingress/egress arrays. The hook compares each exact
 policy-set hash; no new rollout allow-all rules are installed. Keep the original
 Hermes/Tengri contracts, Bayn inert selector check and traffic-neutral policies.
 
-| Namespace | Policies | Source files |
-| --- | --- | --- |
-| buzz | 6 | `argocd/applications/buzz/networkpolicy.yaml` |
-| observability | 1 | `argocd/applications/observability/grafana-upgrade-backup.yaml` |
-| proompteng | 2 | `argocd/applications/proompteng/network-policy.yaml` |
-| restate | 1 | `argocd/applications/restate/networkpolicy.yaml` |
-| restate-example | 1 | `argocd/applications/restate-example/networkpolicy.yaml` |
-| temporal | 6 | `argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-4112-v3-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-509-backup.yaml`, `argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml` |
+| Namespace     | Policies | Source files                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| buzz          | 6        | `argocd/applications/buzz/networkpolicy.yaml`                                                                                                                                                                                                                                                                                                                                                                              |
+| observability | 1        | `argocd/applications/observability/grafana-upgrade-backup.yaml`                                                                                                                                                                                                                                                                                                                                                            |
+| proompteng    | 2        | `argocd/applications/proompteng/network-policy.yaml`                                                                                                                                                                                                                                                                                                                                                                       |
+| restate       | 1        | `argocd/applications/restate/networkpolicy.yaml`                                                                                                                                                                                                                                                                                                                                                                           |
+| temporal      | 6        | `argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-4112-v3-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-509-backup.yaml`, `argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml` |
+
+After the Greeter retirement, verify the Application and its NetworkPolicy have pruned, then run
+`scripts/kube-router/verify-safety-coverage.sh` before syncing this manual application. Keep the gate closed if the old
+policy is still present.
 
 Before/after acceptance must preserve these policy specs and verify all-node
 enforcement, DNS, service routing and native database isolation. The current

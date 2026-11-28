@@ -45,8 +45,9 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 
 ## Agents collective knowledge
 
-`src/agents/curate-ontology-deltas.ts` validates AgentRun proposals against an in-memory copy of the Agents schema and
-updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
+`src/agents/emit-knowledge-delta.ts` emits or checks a canonical proposal pinned to the verified checkout's Git SHA.
+`src/agents/curate-ontology-deltas.ts` validates the selected proposals against an in-memory copy of the Agents schema
+and updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
 
 ## Registry maintenance
 
@@ -79,6 +80,12 @@ Unsupported lockfiles and unresolved required dependencies fail the planner inst
 An optional `only-paths` list requires a nonempty PR diff in which every path matches, including both sides of
 moves. It checks the raw paths before dependency or workspace filtering and is false for non-PR events.
 
+The [root PR workflow](../../.github/workflows/pull-request.yml) evaluates Bumba, Froussard, Jangar, Ofz, Oirat,
+and Signal Publisher together on its existing planner runner. It calls only affected services, and `ci-pr`
+rejects missing decisions or unsuccessful selected checks. Merge groups still run their full validation set.
+The separate product image workflow starts on PRs only for candidate App dependency-closure inputs; source-only
+changes stay with the owning application validators.
+
 Push events retain path-based selection because Kargo requires groups of published images at one source revision.
 Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs
 and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
@@ -102,8 +109,8 @@ Replay image and execution acceptance share one hosted job and Nix environment, 
 The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
 Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
 the controller. Runtime compiler tools retain main-branch publication.
-Other product images retain their existing PR selection. Ofz, Tengri, and Nanoagent source validation uses
-GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
+Ofz, Tengri, and Nanoagent source validation uses GitHub-hosted runners; native image and KVM jobs retain the cluster
+runners.
 
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.

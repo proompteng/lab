@@ -1,6 +1,5 @@
 import { Command, Flag } from 'effect/cli'
 import * as Effect from 'effect/Effect'
-import * as Option from 'effect/Option'
 import { loadConfig, resolveConfigPath, saveConfig } from '../../config'
 import { maskSecret } from '../../runtime'
 import { AgentctlContext } from '../context'
@@ -19,15 +18,17 @@ const readStdin = async () =>
   })
 
 const makeLoginCommand = () => {
-  const token = Flag.optional(Flag.String('token'))
-  const withToken = Flag.Boolean('with-token').pipe(Flag.withDefault(false))
-  return Command.make('login', { token, withToken }, ({ token, withToken }) =>
+  const withToken = Flag.Boolean('with-token').pipe(
+    Flag.withDefault(false),
+    Flag.withDescription('Read the gRPC token from stdin.'),
+  )
+  return Command.make('login', { withToken }, ({ withToken }) =>
     Effect.gen(function* () {
       const { flags } = yield* AgentctlContext
-      if (withToken && (Option.isSome(token) || flags.token)) {
-        throw new Error('Use either --token or --with-token, not both.')
+      if (withToken && flags.token) {
+        return yield* Effect.fail(asAgentctlError('Use either --token or --with-token, not both.', 'ValidationError'))
       }
-      let resolvedToken = Option.isSome(token) ? token.value : (flags.token ?? '')
+      let resolvedToken = flags.token ?? ''
       if (withToken) {
         resolvedToken = (yield* Effect.tryPromise({
           try: () => readStdin(),
@@ -53,7 +54,7 @@ const makeLoginCommand = () => {
       })
       console.log(`Saved token to ${resolveConfigPath()}`)
     }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
-  )
+  ).pipe(Command.withDescription('Save a gRPC token in the local config.'))
 }
 
 const makeStatusCommand = () =>
@@ -69,7 +70,7 @@ const makeStatusCommand = () =>
       }
       console.log(`Token: ${maskSecret(config.token)}`)
     }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
-  )
+  ).pipe(Command.withDescription('Show whether a gRPC token is configured.'))
 
 const makeLogoutCommand = () =>
   Command.make('logout', {}, () =>
@@ -90,13 +91,13 @@ const makeLogoutCommand = () =>
       })
       console.log(`Removed token from ${resolveConfigPath()}`)
     }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
-  )
+  ).pipe(Command.withDescription('Remove the local gRPC token without revoking it on the server.'))
 
 export const makeAuthCommand = () => {
   const base = Command.make('auth', {}, () =>
     Effect.sync(() => {
       console.log('Usage: agentctl auth <login|status|logout>')
     }),
-  )
+  ).pipe(Command.withDescription('Manage local gRPC credentials.'))
   return Command.withSubcommands(base, [makeLoginCommand(), makeStatusCommand(), makeLogoutCommand()])
 }

@@ -95,6 +95,8 @@ completion for two hours, followed by a five-minute hold. That budget covers the
 and one-hour active lifetime. The alert also handles a first scheduled run that has never succeeded, deduplicates
 kube-state-metrics replicas, resolves after a successful owned recovery, and stays clear over weekends after success.
 The collector retains both CronJob timestamps; no additional Kubernetes permissions or Job collector are required.
+Scheduled Jobs become eligible for cleanup 30 minutes after they finish. If a Pod has been removed, look up its logs in
+Loki with `{namespace="torghut", pod=~"signal-adjusted-daily-publisher-.+"}` over the affected schedule window.
 
 Completion evidence requires the bounded backfill plus two distinct scheduled publication observations. For each one,
 retain the Job name, source revision, image digest, universe ID and symbol hash, snapshot ID, publication as-of date,

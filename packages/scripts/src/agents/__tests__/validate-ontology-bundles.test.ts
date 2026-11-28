@@ -29,7 +29,15 @@ const bundle = (sql = 'SELECT 1', tables?: string[]) => ({
 })
 const agentsBundle = (sql: string, tables?: string[]) => {
   const { acronyms, customAnalyses, rules, version } = bundle(sql, tables)
-  return { acronyms, customAnalyses, dataSource: 'agents-db-next', database: 'agents', rules, version }
+  return {
+    acronyms,
+    customAnalyses,
+    dataSource: 'agents-db-next',
+    database: 'agents',
+    ruleTag: 'agents canonical rule',
+    rules,
+    version,
+  }
 }
 const sources = ['https://github.com/proompteng/lab/pull/1']
 const baynAnalysis = (sql: string) => ({
@@ -151,9 +159,45 @@ describe('discovery and JSON contracts', () => {
       { ...bundle(), rules: [{ description: 'Text', name: 'Rule', payload: 'Not allowed' }] },
       'unexpected field',
     ],
+    [
+      'oversized derived ruleTag',
+      (() => {
+        const { acronyms, customAnalyses, rules, version } = bundle()
+        return { acronyms, customAnalyses, dataSource: 'observability', rules, version }
+      })(),
+      'bundle.ruleTag: canonical rule tag must be at most 25 characters',
+    ],
+    [
+      'oversized explicit ruleTag',
+      (() => {
+        const { acronyms, customAnalyses, rules, version } = bundle()
+        return { acronyms, customAnalyses, dataSource: 'observability', ruleTag: 'a'.repeat(26), rules, version }
+      })(),
+      'bundle.ruleTag: canonical rule tag must be at most 25 characters',
+    ],
   ])('rejects %s', async (_, value, error) => {
     await json(knowledge, value)
     expect((await validateOntologyBundles(root)).errors[0]).toContain(error)
+  })
+
+  test('accepts an explicit ruleTag at or below the 25-character limit and rejects oversized Agents defaults', async () => {
+    const { acronyms, customAnalyses, rules, version } = bundle()
+    await json(knowledge, {
+      acronyms,
+      customAnalyses,
+      dataSource: 'observability',
+      ruleTag: 'a'.repeat(25),
+      rules,
+      version,
+    })
+    expect(await validateOntologyBundles(root)).toEqual({ files: 1, errors: [] })
+
+    await put(`${agentsMigrations}/0001.sql`, 'CREATE TABLE audit.readings (status text)')
+    const { ruleTag: _omitted, ...agentsWithoutRuleTag } = agentsBundle('SELECT status FROM audit.readings')
+    await json(agentsKnowledge, agentsWithoutRuleTag)
+    expect((await validateOntologyBundles(root)).errors[0]).toContain(
+      'bundle.ruleTag: canonical rule tag must be at most 25 characters',
+    )
   })
 
   test('requires provenance and at least one entry for deltas', async () => {

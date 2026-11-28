@@ -43,6 +43,10 @@ describe('knowledge delta merge', () => {
     expect(serializeBundle(result)).toBe(serializeBundle(merge(result, first, second)))
     expect(Object.keys(JSON.parse(serializeBundle(result)).acronyms[0])).toEqual(['description', 'name', 'provenance'])
     expect(target.acronyms).toEqual([entry('VCSProvider')])
+
+    const tagged = merge({ ...empty, ruleTag: 'agents canonical rule' }, first)
+    expect(tagged.ruleTag).toBe('agents canonical rule')
+    expect(() => merge({ ...empty, ruleTag: 'a'.repeat(26) })).toThrow('ruleTag')
   })
 
   it('rejects collisions with the bundle or across proposals, including case-only changes', () => {

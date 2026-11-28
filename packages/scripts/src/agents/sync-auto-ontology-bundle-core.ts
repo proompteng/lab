@@ -34,14 +34,29 @@ const provenance = z
   })
   .optional()
 const entry = z.strictObject({ name: safeText(120), description: safeText(4_000), provenance })
-const bundleSchema = z.strictObject({
-  version: z.literal(1),
-  dataSource: databaseName,
-  database: databaseName.optional(),
-  acronyms: z.array(entry),
-  rules: z.array(entry.extend({ searchTerm: safeText(120).optional() })),
-  customAnalyses: z.array(entry.extend({ sql: safeText(16_000) })),
-})
+export const maxRuleTagLength = 25
+export const resolveRuleTag = ({ dataSource, ruleTag }: { dataSource: string; ruleTag?: string }) =>
+  ruleTag ?? `${dataSource} canonical rule`
+
+const bundleSchema = z
+  .strictObject({
+    version: z.literal(1),
+    dataSource: databaseName,
+    database: databaseName.optional(),
+    ruleTag: safeText(maxRuleTagLength).optional(),
+    acronyms: z.array(entry),
+    rules: z.array(entry.extend({ searchTerm: safeText(120).optional() })),
+    customAnalyses: z.array(entry.extend({ sql: safeText(16_000) })),
+  })
+  .superRefine((bundle, ctx) => {
+    if (resolveRuleTag(bundle).length > maxRuleTagLength) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ruleTag'],
+        message: `Resolved canonical rule tag must be at most ${maxRuleTagLength} characters`,
+      })
+    }
+  })
 type Bundle = z.infer<typeof bundleSchema>
 
 const functions = new Set([
@@ -166,6 +181,7 @@ export const prepareBundle = async (input: unknown, applying: boolean) => {
   }
   const bundle = decoded.data
   const database = bundle.database ?? bundle.dataSource
+  const ruleTag = resolveRuleTag(bundle)
   for (const section of ['acronyms', 'rules', 'customAnalyses'] as const) {
     const entries = bundle[section]
     if (new Set(entries.map(({ name }) => key(name))).size !== entries.length) {
@@ -181,7 +197,7 @@ export const prepareBundle = async (input: unknown, applying: boolean) => {
       throw new BundleSyncError(`customAnalyses[${index}]: Apply requires a catalogued relation`)
     }
   }
-  return { bundle, database, referenced }
+  return { bundle, database, ruleTag, referenced }
 }
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/)
