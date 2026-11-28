@@ -36,7 +36,6 @@ export const targetFiles = [
   'argocd/applications/flamingo/README.md',
   'argocd/applications/flamingo/docs/large-model-multigpu.md',
   'argocd/applications/agents/anypi-agentprovider.yaml',
-  'argocd/applications/agents/anypi-eval-agentprovider.yaml',
   'argocd/applications/jangar/openwebui-values.yaml',
   'argocd/applications/jangar/deployment.yaml',
   'argocd/applications/bumba/deployment.yaml',
