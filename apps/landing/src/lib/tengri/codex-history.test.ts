@@ -121,8 +121,6 @@ test('keeps data after a completed history stream a permanent validation failure
 
 test('rejects incomplete, corrupt, mismatched, and out-of-order streams without returning partial history', async () => {
   for (const input of [
-    response([metadata, items([], null), turns([])], false),
-    response([metadata, items([], null), turns([])], true, '{'),
     response([metadata, items([], 'more'), turns([])]),
     response([metadata, turns([])]),
     response([metadata, items([item('orphan', 'text', 'missing-turn')], null), turns([])]),

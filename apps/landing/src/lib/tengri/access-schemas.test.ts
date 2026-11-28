@@ -3,6 +3,14 @@ import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { accessCommandSchema, type AccessCommand } from './access-schemas'
 import { ObservationScopeSchema } from './generated/proompteng/authz/v1/authz_pb'
 
+function accepts(input: unknown) {
+  expect(accessCommandSchema.safeParse(input).success).toBe(true)
+}
+
+function rejects(input: unknown) {
+  expect(accessCommandSchema.safeParse(input).success).toBe(false)
+}
+
 const collaborator = {
   action: 'collaborator',
   operationId: '11111111-1111-4111-8111-111111111111',
@@ -28,13 +36,11 @@ describe('workspace collaborator command boundary', () => {
       accessCommandSchema.parse({ ...collaborator, recipient: { kind: 'github-id', githubId: '12027037' } }),
     ).toMatchObject({ recipient: { kind: 'github-id', githubId: '12027037' } })
     const { recipient: _recipient, ...legacy } = collaborator
-    expect(accessCommandSchema.safeParse({ ...legacy, login: 'diagnostic-viewer' }).success).toBe(false)
-    expect(
-      accessCommandSchema.safeParse({
-        ...collaborator,
-        recipient: { kind: 'github-id', githubId: '12027037', login: 'another-account' },
-      }).success,
-    ).toBe(false)
+    rejects({ ...legacy, login: 'diagnostic-viewer' })
+    rejects({
+      ...collaborator,
+      recipient: { kind: 'github-id', githubId: '12027037', login: 'another-account' },
+    })
   })
   test('Viewer content is opt-in and preserves the approved scope exactly', () => {
     expect(accessCommandSchema.parse(collaborator)).not.toHaveProperty('scope')
@@ -57,8 +63,8 @@ describe('workspace collaborator command boundary', () => {
       { role: 'viewer', enabled: false },
       { role: 'developer', enabled: false },
     ]) {
-      expect(accessCommandSchema.safeParse({ ...collaborator, ...assignment }).success).toBe(true)
-      expect(accessCommandSchema.safeParse({ ...collaborator, ...assignment, scope }).success).toBe(false)
+      accepts({ ...collaborator, ...assignment })
+      rejects({ ...collaborator, ...assignment, scope })
     }
   })
 
@@ -73,7 +79,7 @@ describe('workspace collaborator command boundary', () => {
       { ...scope, allowExecution: true },
       null,
     ]) {
-      expect(accessCommandSchema.safeParse({ ...collaborator, scope: invalid }).success).toBe(false)
+      rejects({ ...collaborator, scope: invalid })
     }
   })
 
@@ -102,32 +108,24 @@ describe('workspace collaborator command boundary', () => {
         '.env.local',
       ].map((name) => `/workspace/project/${name}`),
     ]) {
-      expect(accessCommandSchema.safeParse({ ...collaborator, scope: { ...scope, fileRoots: [root] } }).success).toBe(
-        false,
-      )
+      rejects({ ...collaborator, scope: { ...scope, fileRoots: [root] } })
     }
-    expect(
-      accessCommandSchema.safeParse({
-        ...collaborator,
-        scope: { ...scope, fileRoots: ['/workspace/project', '/workspace/projects/application'] },
-      }).success,
-    ).toBe(true)
+    accepts({
+      ...collaborator,
+      scope: { ...scope, fileRoots: ['/workspace/project', '/workspace/projects/application'] },
+    })
   })
 
   test('scope targets reject control characters and IDs reject path separators', () => {
     for (const field of ['fileRoots', 'threadIds', 'terminalIds'] as const) {
       for (const control of ['\n', '\r', '\u001b', '\u007f', '\u0085']) {
         const target = field === 'fileRoots' ? `/workspace/project${control}other` : `approved${control}other`
-        expect(accessCommandSchema.safeParse({ ...collaborator, scope: { ...scope, [field]: [target] } }).success).toBe(
-          false,
-        )
+        rejects({ ...collaborator, scope: { ...scope, [field]: [target] } })
       }
     }
     for (const field of ['threadIds', 'terminalIds'] as const) {
       for (const target of ['other/id', 'other\\id']) {
-        expect(accessCommandSchema.safeParse({ ...collaborator, scope: { ...scope, [field]: [target] } }).success).toBe(
-          false,
-        )
+        rejects({ ...collaborator, scope: { ...scope, [field]: [target] } })
       }
     }
   })
@@ -135,19 +133,13 @@ describe('workspace collaborator command boundary', () => {
   test('scope string limits use UTF-8 bytes to match central authorization', () => {
     const root = `/workspace/${'é'.repeat(2042)}a`
     expect(new TextEncoder().encode(root)).toHaveLength(4096)
-    expect(accessCommandSchema.safeParse({ ...collaborator, scope: { ...scope, fileRoots: [root] } }).success).toBe(
-      true,
-    )
-    expect(
-      accessCommandSchema.safeParse({ ...collaborator, scope: { ...scope, fileRoots: [root + 'a'] } }).success,
-    ).toBe(false)
+    accepts({ ...collaborator, scope: { ...scope, fileRoots: [root] } })
+    rejects({ ...collaborator, scope: { ...scope, fileRoots: [root + 'a'] } })
     for (const field of ['threadIds', 'terminalIds'] as const) {
       const id = '界'.repeat(42) + 'ab'
       expect(new TextEncoder().encode(id)).toHaveLength(128)
-      expect(accessCommandSchema.safeParse({ ...collaborator, scope: { ...scope, [field]: [id] } }).success).toBe(true)
-      expect(accessCommandSchema.safeParse({ ...collaborator, scope: { ...scope, [field]: [id + 'a'] } }).success).toBe(
-        false,
-      )
+      accepts({ ...collaborator, scope: { ...scope, [field]: [id] } })
+      rejects({ ...collaborator, scope: { ...scope, [field]: [id + 'a'] } })
     }
   })
 
@@ -155,9 +147,7 @@ describe('workspace collaborator command boundary', () => {
     for (const field of ['fileRoots', 'threadIds', 'terminalIds'] as const) {
       for (const code of [0xd800, 0xdbff, 0xdc00, 0xdfff]) {
         const target = (field === 'fileRoots' ? '/workspace/' : '') + String.fromCharCode(code)
-        expect(accessCommandSchema.safeParse({ ...collaborator, scope: { ...scope, [field]: [target] } }).success).toBe(
-          false,
-        )
+        rejects({ ...collaborator, scope: { ...scope, [field]: [target] } })
       }
     }
     const unicodeScope = {
@@ -178,7 +168,7 @@ describe('workspace collaborator command boundary', () => {
     const root = `/workspace/${'x'.repeat(4096 - '/workspace/'.length)}`
     const command = { ...collaborator, scope: { ...scope, fileRoots: Array(16).fill(root) } }
     expect(new TextEncoder().encode(JSON.stringify(command)).byteLength).toBeGreaterThan(64 * 1024)
-    expect(accessCommandSchema.safeParse(command).success).toBe(false)
+    rejects(command)
   })
 
   test('command budget counts escaped and multibyte targets', () => {
@@ -186,7 +176,7 @@ describe('workspace collaborator command boundary', () => {
     expect(new TextEncoder().encode(root).byteLength).toBeLessThanOrEqual(4096)
     const command = { ...collaborator, scope: { ...scope, fileRoots: Array(16).fill(root) } }
     expect(new TextEncoder().encode(JSON.stringify(command)).byteLength).toBeGreaterThan(64 * 1024)
-    expect(accessCommandSchema.safeParse(command).success).toBe(false)
+    rejects(command)
   })
 
   test('accepts the exact encoded command limit and rejects one byte more', () => {
@@ -198,8 +188,8 @@ describe('workspace collaborator command boundary', () => {
     const finalRoot = prefix + 'x'.repeat(remaining)
     roots[15] = finalRoot
     expect(new TextEncoder().encode(JSON.stringify(command)).byteLength).toBe(64 * 1024)
-    expect(accessCommandSchema.safeParse(command).success).toBe(true)
+    accepts(command)
     roots[15] = finalRoot + 'x'
-    expect(accessCommandSchema.safeParse(command).success).toBe(false)
+    rejects(command)
   })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { TengriCodexEvent } from '@/lib/tengri/types'
+import { agentMessage, codexEvent, codexHistory, codexParams, completedTurn, runningTurn } from './codex.fixture'
 import {
   appendCodexEvent,
   appendCodexEventAfterRestore,
@@ -25,34 +26,37 @@ import {
   retireCodexAsyncQuestions,
 } from './codex-events'
 
-const event: TengriCodexEvent = {
-  sequence: 7,
-  kind: 'assistant-text',
-  method: 'item/completed',
-  threadId: 'thread-1',
-  turnId: 'turn-1',
-  itemId: 'item-1',
-  text: 'Ready',
-  approvalId: '',
-  rawJson: '{}',
+const makeEvent = (fields: Partial<TengriCodexEvent> = {}) =>
+  codexEvent({ sequence: 7, itemId: 'item-1', text: 'Ready', ...fields })
+const event = makeEvent()
+
+function displayEvent(fields: Partial<TengriCodexEvent>) {
+  return codexEventDisplayText(makeEvent(fields))
+}
+
+function commandDelta(sequence: number, text: string) {
+  return makeEvent({ sequence, kind: 'tool-output', method: 'item/commandExecution/outputDelta', text })
+}
+
+function commandApproval(sequence: number, approvalId: string, text = event.text) {
+  return makeEvent({ sequence, kind: 'approval', method: 'item/commandExecution/requestApproval', approvalId, text })
 }
 
 test('replaces native image progress with completion or failure without regressing on replay', () => {
-  const started: TengriCodexEvent = {
-    ...event,
+  const started: TengriCodexEvent = makeEvent({
     sequence: 1,
     kind: 'tool-call',
     method: 'item/started',
-    rawJson: JSON.stringify({ params: { item: { type: 'imageGeneration', id: event.itemId, status: 'in_progress' } } }),
-  }
+    rawJson: codexParams({ item: { type: 'imageGeneration', id: event.itemId, status: 'in_progress' } }),
+  })
   for (const status of ['completed', 'failed']) {
     const completed: TengriCodexEvent = {
       ...started,
       sequence: 2,
       kind: 'tool-output',
       method: 'item/completed',
-      rawJson: JSON.stringify({
-        params: { item: { type: 'imageGeneration', id: event.itemId, status, savedPath: '/workspace/cat.png' } },
+      rawJson: codexParams({
+        item: { type: 'imageGeneration', id: event.itemId, status, savedPath: '/workspace/cat.png' },
       }),
     }
     const current = appendCodexEvent([started], completed)
@@ -67,23 +71,19 @@ test('replaces native image progress with completion or failure without regressi
 describe('Accepted prompt retention', () => {
   test('restores textless async questions with their choices instead of dropping them', () => {
     const items = codexTranscriptFromThread(
-      JSON.stringify({
-        thread: {
-          turns: [
+      codexHistory([
+        {
+          items: [
             {
-              items: [
-                {
-                  id: 'question-call',
-                  type: 'agentMessage',
-                  text: '',
-                  delivery: 'async',
-                  questions: [{ title: 'Which environment?', options: ['Staging', 'Production'] }],
-                },
-              ],
+              id: 'question-call',
+              type: 'agentMessage',
+              text: '',
+              delivery: 'async',
+              questions: [{ title: 'Which environment?', options: ['Staging', 'Production'] }],
             },
           ],
         },
-      }),
+      ]),
     )
     expect(items).toHaveLength(1)
     expect(items[0]).toMatchObject({
@@ -168,14 +168,13 @@ describe('Accepted prompt retention', () => {
       type: 'userMessage',
       content: [...(text ? [{ type: 'text', text }] : []), ...paths.map((path) => ({ type: 'localImage', path }))],
     }
-    const live = {
-      ...event,
-      kind: 'user-message' as const,
+    const live = makeEvent({
+      kind: 'user-message',
       method: 'item/completed',
       itemId: input.id,
       text,
-      rawJson: JSON.stringify({ params: { item: input } }),
-    }
+      rawJson: codexParams({ item: input }),
+    })
     const canonicalText = [text, ...paths.map((path) => `[Local image: ${path}]`)].filter(Boolean).join('\n')
     expect(codexEventDisplayText(live)).toBe(canonicalText)
     const imagePrompt = {
@@ -196,21 +195,18 @@ describe('Accepted prompt retention', () => {
 
 describe('Codex event replay', () => {
   test('retains unanswered async questions until they are retired, then restores ordinary eviction', () => {
-    const question = {
-      ...event,
+    const question = makeEvent({
       itemId: 'async-call',
       text: '',
-      rawJson: JSON.stringify({
-        params: {
-          item: {
-            id: 'async-call',
-            type: 'agentMessage',
-            text: '',
-            questions: [{ title: 'Which environment?', options: ['Staging'] }],
-          },
+      rawJson: codexParams({
+        item: {
+          id: 'async-call',
+          type: 'agentMessage',
+          text: '',
+          questions: [{ title: 'Which environment?', options: ['Staging'] }],
         },
       }),
-    }
+    })
     let events = appendCodexEvent([], question)
     const fill = (start: number) => {
       for (let sequence = start; sequence < start + 501; sequence++)
@@ -235,13 +231,12 @@ describe('Codex event replay', () => {
   })
 
   test('keeps one pending request when an approval is replayed with a newer sequence', () => {
-    const approval = {
-      ...event,
-      kind: 'approval' as const,
+    const approval = makeEvent({
+      kind: 'approval',
       method: 'item/commandExecution/requestApproval',
       approvalId: 'request-1',
       text: 'Run the check?',
-    }
+    })
     const first = appendCodexEvent([], approval)
     const replayed = appendCodexEvent(first, { ...approval, sequence: 8, text: 'Run the updated check?' })
     expect(replayed).toHaveLength(1)
@@ -250,15 +245,14 @@ describe('Codex event replay', () => {
     expect(appendCodexEvent(replayed, { ...approval, sequence: 9, approvalId: 'request-2' })).toHaveLength(2)
   })
 
-  const runtimeError: TengriCodexEvent = {
-    ...event,
+  const runtimeError = makeEvent({
     kind: 'error',
     method: 'error',
     threadId: '',
     turnId: '',
     itemId: '',
     text: 'Codex app-server is restarting',
-  }
+  })
 
   test('keeps only the latest unscoped runtime error', () => {
     const latest = { ...runtimeError, sequence: 8 }
@@ -266,27 +260,15 @@ describe('Codex event replay', () => {
     expect(appendCodexEvent([latest], runtimeError)).toEqual([latest])
   })
 
-  test('clears recovered runtime errors while preserving failed turns and warnings', () => {
+  test.each([
+    makeEvent({ sequence: 8, kind: 'thread-state', method: 'turn/started' }),
+    codexEvent({ ...runtimeError, sequence: 8, kind: 'thread-state', method: 'tengri/runtimeReady', text: '' }),
+  ])('clears a recovered restart notice on $method without hiding turn errors or warnings', (recovery) => {
     const turnError = { ...runtimeError, threadId: 'thread-1', turnId: 'turn-1' }
-    const warning = { ...runtimeError, kind: 'warning' as const }
-    const started = { ...event, sequence: 8, kind: 'thread-state' as const, method: 'turn/started' }
-    const next = appendCodexEvent([runtimeError, turnError, warning], started)
-    expect(next).toEqual([turnError, warning, started])
-  })
-
-  test('clears a restart notice on initialized runtime recovery without starting a turn', () => {
-    const ready: TengriCodexEvent = {
-      ...runtimeError,
-      sequence: 8,
-      kind: 'thread-state',
-      method: 'tengri/runtimeReady',
-      text: '',
-    }
-    const turnError = { ...runtimeError, threadId: 'thread-1', turnId: 'turn-1' }
-    const warning = { ...runtimeError, kind: 'warning' as const }
-    expect(appendCodexEvent([runtimeError, turnError, warning], ready)).toEqual([turnError, warning, ready])
+    const warning = codexEvent({ ...runtimeError, kind: 'warning' })
+    expect(appendCodexEvent([runtimeError, turnError, warning], recovery)).toEqual([turnError, warning, recovery])
     const laterError = { ...runtimeError, sequence: 9 }
-    expect(appendCodexEvent([laterError], ready)).toEqual([laterError, ready])
+    expect(appendCodexEvent([laterError], recovery)).toEqual([laterError, recovery])
   })
 
   test('does not replay a runtime error older than a successful thread snapshot', () => {
@@ -296,12 +278,7 @@ describe('Codex event replay', () => {
   })
 
   test('keeps pending approvals when later notices exceed the event buffer', () => {
-    const approval = {
-      ...event,
-      kind: 'approval' as const,
-      method: 'item/commandExecution/requestApproval',
-      approvalId: '101',
-    }
+    const approval = commandApproval(event.sequence, '101')
     let current = appendCodexEvent([], approval)
     for (let sequence = 8; sequence < 520; sequence += 1) {
       current = appendCodexEvent(current, {
@@ -325,22 +302,10 @@ describe('Codex event replay', () => {
   })
 
   test('removes approvals when their turn completes without a resolution notification', () => {
-    const approval = {
-      ...event,
-      kind: 'approval' as const,
-      method: 'item/commandExecution/requestApproval',
-      approvalId: '101',
-    }
+    const approval = commandApproval(event.sequence, '101')
     const anotherTurn = { ...approval, turnId: 'turn-2', approvalId: '102' }
     const anotherThread = { ...approval, threadId: 'thread-2', approvalId: '103' }
-    const completed = {
-      ...event,
-      sequence: 8,
-      kind: 'thread-state' as const,
-      method: 'turn/completed',
-      itemId: '',
-      text: '',
-    }
+    const completed = makeEvent({ sequence: 8, kind: 'thread-state', method: 'turn/completed', itemId: '', text: '' })
     const next = appendCodexEvent([approval, anotherTurn, anotherThread], completed)
     expect(next.filter((event) => event.kind === 'approval')).toEqual([anotherTurn, anotherThread])
     expect(
@@ -362,14 +327,13 @@ describe('Codex event replay', () => {
   })
 
   test('keeps only the newest cumulative usage snapshots', () => {
-    const tokenUsage = {
-      ...event,
+    const tokenUsage = makeEvent({
       sequence: 10,
-      kind: 'usage' as const,
+      kind: 'usage',
       method: 'thread/tokenUsage/updated',
       itemId: '',
       text: 'Tokens: 10 input · 4 output',
-    }
+    })
     const rateLimits = {
       ...tokenUsage,
       sequence: 11,
@@ -408,7 +372,7 @@ describe('Codex event replay', () => {
       threadId: '',
       itemId: '',
       text,
-      rawJson: JSON.stringify({ params: { rateLimits } }),
+      rawJson: codexParams({ rateLimits }),
     })
     const codex = rateLimitEvent(20, {
       limitId: 'codex',
@@ -456,49 +420,30 @@ describe('Codex event replay', () => {
     )
   })
 
-  test('coalesces camel-case app-server deltas by authoritative item ID', () => {
-    const first = {
-      ...event,
-      method: 'item/commandExecution/outputDelta',
-      kind: 'tool-output' as const,
-      text: 'Hel',
-      sequence: 1,
-    }
-    const second = { ...first, text: 'lo', sequence: 2 }
-    const result = appendCodexEvent(appendCodexEvent([], first), second)
-    expect(result).toHaveLength(1)
-    expect(result[0]).toMatchObject({ ...second, text: 'Hello' })
-  })
-
-  test('decodes base64 command deltas before coalescing them', () => {
-    const first = {
-      ...event,
-      method: 'item/commandExecution/outputDelta',
-      kind: 'tool-output' as const,
-      text: 'aGk=',
-      sequence: 1,
-    }
-    const second = { ...first, text: 'IHRoZXJl', sequence: 2 }
-    const result = appendCodexEvent(appendCodexEvent([], first), second)
-    expect(result).toHaveLength(1)
-    expect(result[0]).toMatchObject({ ...second, text: 'hi there' })
+  test.each([
+    ['Hel', 'lo', 'Hello'],
+    ['aGk=', 'IHRoZXJl', 'hi there'],
+  ])('coalesces consecutive command deltas %s + %s', (firstChunk, nextChunk, text) => {
+    const first = commandDelta(1, firstChunk)
+    const next = commandDelta(2, nextChunk)
+    const output = appendCodexEvent(appendCodexEvent([], first), next)
+    expect(output.map((item) => [item.itemId, item.text])).toEqual([[event.itemId, text]])
   })
 
   test('replaces streamed text with the authoritative completed item', () => {
-    const delta = { ...event, method: 'item/agentMessage/delta', text: 'Hel', sequence: 1 }
-    const completed = { ...event, method: 'item/completed', text: 'Hello', sequence: 2 }
+    const delta = makeEvent({ method: 'item/agentMessage/delta', text: 'Hel', sequence: 1 })
+    const completed = makeEvent({ method: 'item/completed', text: 'Hello', sequence: 2 })
     expect(appendCodexEvent([delta], completed)).toEqual([completed])
   })
 
   test('coalesces same-item lifecycle events without collapsing repeated prompts', () => {
-    const started = {
-      ...event,
+    const started = makeEvent({
       sequence: 1,
-      kind: 'user-message' as const,
+      kind: 'user-message',
       method: 'item/started',
       itemId: 'user-1',
       text: 'Repeat this prompt',
-    }
+    })
     const repeatedPrompt = { ...started, sequence: 2, itemId: 'user-2' }
     const completed = { ...started, sequence: 3, method: 'item/completed' }
 
@@ -511,15 +456,14 @@ describe('Codex event replay', () => {
   })
 
   test('coalesces file-diff lifecycle events and keeps item IDs scoped to their turn', () => {
-    const firstTurnStarted = {
-      ...event,
+    const firstTurnStarted = makeEvent({
       sequence: 1,
-      kind: 'file-diff' as const,
+      kind: 'file-diff',
       method: 'item/started',
       turnId: 'turn-1',
       itemId: 'file-1',
       text: 'initial diff',
-    }
+    })
     const secondTurnStarted = { ...firstTurnStarted, sequence: 2, turnId: 'turn-2', text: 'other diff' }
     const firstTurnCompleted = { ...firstTurnStarted, sequence: 3, method: 'item/completed', text: 'complete diff' }
 
@@ -532,14 +476,13 @@ describe('Codex event replay', () => {
   })
 
   test('coalesces same-kind tool lifecycles without merging tool-call and tool-output kinds', () => {
-    const started = {
-      ...event,
+    const started = makeEvent({
       sequence: 1,
-      kind: 'tool-call' as const,
+      kind: 'tool-call',
       method: 'item/started',
       itemId: 'tool-1',
       text: 'View /workspace/image.png',
-    }
+    })
     const completed = { ...started, sequence: 2, method: 'item/completed', text: 'View completed' }
     const output = { ...completed, sequence: 3, kind: 'tool-output' as const, text: 'image output' }
 
@@ -548,14 +491,8 @@ describe('Codex event replay', () => {
   })
 
   test('bounds coalesced deltas instead of allowing an unbounded transcript item', () => {
-    const first = {
-      ...event,
-      method: 'item/commandExecution/outputDelta',
-      kind: 'tool-output' as const,
-      text: 'x'.repeat((512 << 10) - 8),
-      sequence: 1,
-    }
-    const second = { ...first, text: 'y'.repeat(128), sequence: 2 }
+    const first = commandDelta(1, 'x'.repeat((512 << 10) - 8))
+    const second = commandDelta(2, 'y'.repeat(128))
     const [combined] = appendCodexEvent(appendCodexEvent([], first), second)
 
     expect(new TextEncoder().encode(combined?.text).byteLength).toBeLessThanOrEqual(512 << 10)
@@ -563,13 +500,12 @@ describe('Codex event replay', () => {
   })
 
   test('never stores or coalesces raw reasoning content deltas', () => {
-    const raw = {
-      ...event,
-      kind: 'reasoning-summary' as const,
+    const raw = makeEvent({
+      kind: 'reasoning-summary',
       method: 'item/reasoning/textDelta',
       text: 'private reasoning',
       sequence: 1,
-    }
+    })
     const summary = { ...raw, method: 'item/reasoning/summaryTextDelta', text: 'Public summary', sequence: 2 }
 
     expect(appendCodexEvent([], raw)).toEqual([])
@@ -580,12 +516,7 @@ describe('Codex event replay', () => {
   })
 
   test('keeps pending approval controls visible when their item is present in restored history', () => {
-    const approval = {
-      ...event,
-      kind: 'approval' as const,
-      method: 'item/commandExecution/requestApproval',
-      approvalId: 'approval-1',
-    }
+    const approval = commandApproval(event.sequence, 'approval-1')
     const restoredItemIds = new Set([approval.itemId])
 
     expect(codexEventShouldRender(approval, approval.threadId, restoredItemIds)).toBe(true)
@@ -594,9 +525,9 @@ describe('Codex event replay', () => {
   })
 
   test('keeps usage and developer deprecation notices out of the conversation during streaming and replay', () => {
-    const tokenUsage = { ...event, kind: 'usage' as const, method: 'thread/tokenUsage/updated', itemId: '' }
+    const tokenUsage = makeEvent({ kind: 'usage', method: 'thread/tokenUsage/updated', itemId: '' })
     const rateLimits = { ...tokenUsage, method: 'account/rateLimits/updated' }
-    const deprecation = { ...event, kind: 'warning' as const, method: 'deprecationNotice', itemId: '' }
+    const deprecation = makeEvent({ kind: 'warning', method: 'deprecationNotice', itemId: '' })
     for (const snapshotSequence of [0, event.sequence + 1]) {
       expect(codexEventShouldRender(tokenUsage, event.threadId, new Set(), snapshotSequence)).toBe(false)
       expect(codexEventShouldRender(rateLimits, event.threadId, new Set(), snapshotSequence)).toBe(false)
@@ -606,10 +537,10 @@ describe('Codex event replay', () => {
 
   test('keeps only post-resume item updates plus snapshot-independent events visible', () => {
     const restoredItemIds = new Set([event.itemId])
-    const itemlessSnapshotEvent = { ...event, kind: 'usage' as const, itemId: '' }
-    const renamedSnapshotItem = { ...event, itemId: 'app-server-generated-id' }
-    const snapshotWarning = { ...event, kind: 'warning' as const, itemId: '', text: 'Replay warning' }
-    const snapshotError = { ...event, kind: 'error' as const, itemId: '', text: 'Turn failed' }
+    const itemlessSnapshotEvent = makeEvent({ kind: 'usage', itemId: '' })
+    const renamedSnapshotItem = makeEvent({ itemId: 'app-server-generated-id' })
+    const snapshotWarning = makeEvent({ kind: 'warning', itemId: '', text: 'Replay warning' })
+    const snapshotError = makeEvent({ kind: 'error', itemId: '', text: 'Turn failed' })
 
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence)).toBe(false)
@@ -622,13 +553,12 @@ describe('Codex event replay', () => {
 
   test('seeds the first post-resume delta with the authoritative restored prefix', () => {
     const restored = { id: event.itemId, kind: 'assistant-text', text: 'restored prefix' } as const
-    const delta = {
-      ...event,
+    const delta = makeEvent({
       sequence: 43,
-      kind: 'assistant-text' as const,
+      kind: 'assistant-text',
       method: 'item/agentMessage/delta',
       text: ' plus live delta',
-    }
+    })
 
     expect(codexEventContinuesRestoredItem(delta, restored, 42)).toBe(true)
     expect(codexEventContinuesRestoredItem({ ...delta, sequence: 42 }, restored, 42)).toBe(false)
@@ -638,13 +568,12 @@ describe('Codex event replay', () => {
 
   test('replaces a stale restored operation with its newer completion event', () => {
     const restored = { id: event.itemId, kind: 'tool-call', text: 'Web search: Kata Firecracker' } as const
-    const completed = {
-      ...event,
+    const completed = makeEvent({
       sequence: 43,
-      kind: 'tool-output' as const,
+      kind: 'tool-output',
       method: 'item/completed',
       text: 'Search completed',
-    }
+    })
 
     expect(codexEventContinuesRestoredItem(completed, restored, 42)).toBe(false)
     expect(codexEventSupersedesRestoredItem(completed, restored, 42)).toBe(true)
@@ -659,45 +588,17 @@ describe('Codex event replay', () => {
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-2')).toBe(false)
   })
 
-  test('reconciles reordered snapshot responses and event deliveries against the server cursor', () => {
-    const restored = { id: event.itemId, kind: 'assistant-text', text: 'snapshot includes delta' } as const
-    const restoredById = new Map([[restored.id, restored]])
-    const delayedIncludedDelta = {
-      ...event,
-      sequence: 42,
-      method: 'item/agentMessage/delta',
-      text: ' delta',
-    }
-    const earlyPostSnapshotDelta = {
-      ...delayedIncludedDelta,
-      sequence: 43,
-      text: ' plus newer output',
-    }
-
-    expect(reconcileCodexEventsWithRestoredHistory([delayedIncludedDelta], restoredById, 42)).toEqual([])
-    expect(reconcileCodexEventsWithRestoredHistory([earlyPostSnapshotDelta], restoredById, 42)[0]?.text).toBe(
-      'snapshot includes delta plus newer output',
-    )
-  })
-
   test('reconciles live messages against their own history page without dropping later updates to earlier pages', () => {
     const history = codexTranscriptFromThread(
-      JSON.stringify({
-        thread: {
-          turns: [
-            {
-              items: [
-                { id: 'item-1', type: 'agentMessage', text: 'First' },
-                { id: 'item-2', type: 'agentMessage', text: 'Second' },
-              ],
-            },
-          ],
+      codexHistory([
+        {
+          items: [agentMessage('item-1', 'First'), agentMessage('item-2', 'Second')],
         },
-      }),
+      ]),
       { 'item-1': 20, 'item-2': 30 },
     )
     const restored = new Map(history.map((item) => [item.id, item]))
-    const delta = { ...event, method: 'item/agentMessage/delta' }
+    const delta = makeEvent({ method: 'item/agentMessage/delta' })
     const replay = [
       { ...delta, sequence: 18, itemId: 'item-1', text: 'rst' },
       { ...delta, sequence: 24, itemId: 'item-1', text: ' live' },
@@ -724,20 +625,13 @@ describe('Codex event replay', () => {
   })
 
   test('retains page cursors for items omitted by the visible transcript cap', () => {
-    const items = Array.from({ length: 501 }, (_, index) => ({
-      id: `item-${index}`,
-      type: 'agentMessage',
-      text: `Message ${index}`,
-    }))
+    const items = Array.from({ length: 501 }, (_, index) => agentMessage(`item-${index}`, `Message ${index}`))
     const itemSequences = new Map(items.map((item) => [item.id, 30]))
-    const history = codexTranscriptFromThread(
-      JSON.stringify({ thread: { turns: [{ items }] } }),
-      Object.fromEntries(itemSequences),
-    )
+    const history = codexTranscriptFromThread(codexHistory([{ items }]), Object.fromEntries(itemSequences))
     const restored = new Map(history.map((item) => [item.id, item]))
     expect(history).toHaveLength(500)
     expect(restored.has('item-0')).toBe(false)
-    const staleDelta = { ...event, itemId: 'item-0', method: 'item/agentMessage/delta', sequence: 20, text: 'stale' }
+    const staleDelta = makeEvent({ itemId: 'item-0', method: 'item/agentMessage/delta', sequence: 20, text: 'stale' })
     const staleCompletion = { ...staleDelta, method: 'item/completed', sequence: 25 }
     for (const buffered of [[staleDelta], [staleCompletion], appendCodexEvent([], staleDelta)]) {
       expect(reconcileCodexEventsWithRestoredHistory(buffered, restored, 10, itemSequences)).toEqual([])
@@ -768,31 +662,28 @@ describe('Codex event replay', () => {
       },
       { ...event, sequence: 42, itemId: 'msg-agent-final-live', text: '/workspace/proof.txt' },
     ]
-    const snapshotUsage = {
-      ...event,
+    const snapshotUsage = makeEvent({
       sequence: 27,
-      kind: 'usage' as const,
+      kind: 'usage',
       method: 'thread/tokenUsage/updated',
       itemId: '',
       text: 'Tokens: 10 input · 4 output',
-    }
-    const snapshotWarning = {
-      ...event,
+    })
+    const snapshotWarning = makeEvent({
       sequence: 44,
-      kind: 'warning' as const,
+      kind: 'warning',
       method: 'tengri/eventOmitted',
       itemId: '',
       text: 'One oversized event was omitted',
-    }
-    const snapshotError = {
-      ...event,
+    })
+    const snapshotError = makeEvent({
       sequence: 45,
-      kind: 'error' as const,
+      kind: 'error',
       method: 'turn/completed',
       itemId: '',
       text: 'The turn failed',
-    }
-    const postSnapshot = { ...event, sequence: 54, kind: 'warning' as const, itemId: '', text: 'Live warning' }
+    })
+    const postSnapshot = makeEvent({ sequence: 54, kind: 'warning', itemId: '', text: 'Live warning' })
 
     expect(
       reconcileCodexEventsWithRestoredHistory(
@@ -804,7 +695,7 @@ describe('Codex event replay', () => {
   })
 
   test('rebases streamed fragments again without repeating a prior restored prefix or a completed item', () => {
-    const delta = { ...event, method: 'item/agentMessage/delta', sequence: 12, text: ' live' }
+    const delta = makeEvent({ method: 'item/agentMessage/delta', sequence: 12, text: ' live' })
     const firstHistory = new Map([
       [event.itemId, { id: event.itemId, kind: 'assistant-text' as const, text: 'First', eventSequence: 10 }],
     ])
@@ -818,7 +709,7 @@ describe('Codex event replay', () => {
     expect(rebased[0]?.text).toBe('First live again')
     expect(reconcileCodexEventsWithRestoredHistory(rebased, secondHistory, 20)[0]?.text).toBe('First live again')
 
-    const completed = { ...event, sequence: 21, text: 'Authoritative replacement' }
+    const completed = makeEvent({ sequence: 21, text: 'Authoritative replacement' })
     const afterCompletion = appendCodexEvent([completed], secondDelta)
     expect(reconcileCodexEventsWithRestoredHistory(afterCompletion, secondHistory, 20)[0]?.text).toBe(
       'Authoritative replacement again',
@@ -826,108 +717,47 @@ describe('Codex event replay', () => {
     expect(appendCodexEvent(afterCompletion, delta)).toBe(afterCompletion)
   })
 
-  test('drops snapshot-covered deltas delivered after the snapshot commit', () => {
+  test('keeps only post-snapshot deltas regardless of delivery order', () => {
     const restored = { id: event.itemId, kind: 'assistant-text', text: 'snapshot includes delta' } as const
-    const restoredById = new Map([[restored.id, restored]])
-    const delayedIncludedDelta = {
-      ...event,
-      sequence: 42,
-      method: 'item/agentMessage/delta',
-      text: ' hidden suffix',
-    }
-    const liveDelta = {
-      ...delayedIncludedDelta,
-      sequence: 43,
-      text: ' plus newer output',
-    }
+    const history = new Map([[restored.id, restored]])
+    const covered = makeEvent({ sequence: 42, method: 'item/agentMessage/delta', text: ' covered delta' })
+    const live = { ...covered, sequence: 43, text: ' plus newer output' }
 
-    const afterDelayed = appendCodexEventAfterRestore([], delayedIncludedDelta, restoredById, 42)
-    expect(afterDelayed).toEqual([])
-    expect(appendCodexEventAfterRestore(afterDelayed, liveDelta, restoredById, 42)[0]?.text).toBe(
-      'snapshot includes delta plus newer output',
-    )
-
-    const approval = { ...delayedIncludedDelta, kind: 'approval' as const, approvalId: 'approval-1' }
-    expect(appendCodexEventAfterRestore([], approval, restoredById, 42)).toEqual([approval])
+    expect(reconcileCodexEventsWithRestoredHistory([covered], history, 42)).toEqual([])
+    expect(appendCodexEventAfterRestore([], covered, history, 42)).toEqual([])
+    for (const updated of [
+      reconcileCodexEventsWithRestoredHistory([live], history, 42),
+      appendCodexEventAfterRestore([], live, history, 42),
+    ]) {
+      expect(updated.map(({ text }) => text)).toEqual(['snapshot includes delta plus newer output'])
+    }
+    const approval = { ...covered, kind: 'approval' as const, approvalId: 'approval-1' }
+    expect(appendCodexEventAfterRestore([], approval, history, 42)).toEqual([approval])
   })
 
-  test('reconciles snapshot-covered approval requests with their resolution events', () => {
-    const approval = {
-      ...event,
-      sequence: 20,
-      kind: 'approval' as const,
-      method: 'item/commandExecution/requestApproval',
-      approvalId: '7',
-    }
-    const resolved = {
-      ...event,
-      sequence: 21,
-      kind: 'thread-state' as const,
+  test('retires a resolved approval without hiding another pending request, before or after replay', () => {
+    const request = commandApproval(20, '7')
+    const other = commandApproval(21, '8')
+    const resolved = makeEvent({
+      sequence: 22,
+      kind: 'thread-state',
       method: 'serverRequest/resolved',
       itemId: '',
-      rawJson: JSON.stringify({ params: { threadId: event.threadId, requestId: 7 } }),
-    }
-
-    expect(reconcileCodexEventsWithRestoredHistory([approval, resolved], new Map(), 42)).toEqual([])
+      rawJson: codexParams({ threadId: event.threadId, requestId: 7 }),
+    })
+    expect(appendCodexEvent([request, other], resolved)).toEqual([other])
+    expect(reconcileCodexEventsWithRestoredHistory([request, other, resolved], new Map(), 42)).toEqual([other])
   })
 
-  test('removes a replayed approval after its server request resolves', () => {
-    const approval = {
-      ...event,
-      sequence: 1,
-      kind: 'approval' as const,
-      method: 'item/commandExecution/requestApproval',
-      approvalId: '7',
-    }
-    const otherApproval = { ...approval, sequence: 2, approvalId: '8' }
-    const resolved = {
-      ...event,
-      sequence: 3,
-      kind: 'thread-state' as const,
-      method: 'serverRequest/resolved',
-      itemId: '',
-      rawJson: JSON.stringify({ params: { threadId: event.threadId, requestId: 7 } }),
-    }
-
-    expect(appendCodexEvent([approval, otherApproval], resolved)).toEqual([otherApproval])
-  })
-
-  test('replaces authoritative plan snapshots for the same turn', () => {
-    const first = {
-      ...event,
-      sequence: 1,
-      kind: 'plan' as const,
-      method: 'turn/plan/updated',
-      itemId: '',
-      text: '- [ ] First plan',
-    }
-    const second = { ...first, sequence: 2, text: '- [x] Updated plan' }
-    const otherTurn = { ...second, sequence: 3, turnId: 'turn-2', text: '- [ ] Other turn' }
-
-    expect(appendCodexEvent(appendCodexEvent([], first), second)).toEqual([second])
-    expect(appendCodexEvent(appendCodexEvent(appendCodexEvent([], first), second), otherTurn)).toEqual([
-      second,
-      otherTurn,
-    ])
-  })
-
-  test('replaces authoritative aggregate diff snapshots for the same turn', () => {
-    const first = {
-      ...event,
-      sequence: 1,
-      kind: 'file-diff' as const,
-      method: 'turn/diff/updated',
-      itemId: '',
-      text: '--- first diff',
-    }
-    const second = { ...first, sequence: 2, text: '--- current diff' }
-    const otherTurn = { ...second, sequence: 3, turnId: 'turn-2', text: '--- other turn' }
-
-    expect(appendCodexEvent(appendCodexEvent([], first), second)).toEqual([second])
-    expect(appendCodexEvent(appendCodexEvent(appendCodexEvent([], first), second), otherTurn)).toEqual([
-      second,
-      otherTurn,
-    ])
+  test.each([
+    ['plan', 'turn/plan/updated', '- [ ] First plan', '- [x] Updated plan', '- [ ] Other turn'],
+    ['file-diff', 'turn/diff/updated', '--- first diff', '--- current diff', '--- other turn'],
+  ] as const)('replaces %s snapshots only within the same turn', (kind, method, earlier, latest, unrelated) => {
+    const first = makeEvent({ sequence: 1, kind, method, itemId: '', text: earlier })
+    const next = appendCodexEvent([first], { ...first, sequence: 2, text: latest })
+    expect(next.map(({ text }) => text)).toEqual([latest])
+    const otherTurn = { ...first, sequence: 3, turnId: 'turn-2', text: unrelated }
+    expect(appendCodexEvent(next, otherTurn).map(({ text }) => text)).toEqual([latest, unrelated])
   })
 })
 
@@ -948,37 +778,34 @@ describe('Codex event decoding', () => {
 
   test('shows the complete command, file, and permission scope of approval requests', () => {
     expect(
-      codexEventDisplayText({
-        ...event,
+      displayEvent({
         kind: 'approval',
         text: '',
-        rawJson: JSON.stringify({
-          params: {
-            reason: 'Needs network',
-            command: ['git', 'fetch', 'origin', 'feature branch'],
-            cwd: '/workspace',
-            proposedExecpolicyAmendment: ['git fetch'],
-            networkApprovalContext: { host: 'api.github.com', protocol: 'https' },
-            proposedNetworkPolicyAmendments: [
-              { host: 'api.github.com', action: 'allow' },
-              { host: 'tracker.invalid', action: 'deny' },
-            ],
-            fileChanges: {
-              '/workspace/app.ts': { type: 'update' },
-              '/workspace/new.ts': { type: 'add' },
+        rawJson: codexParams({
+          reason: 'Needs network',
+          command: ['git', 'fetch', 'origin', 'feature branch'],
+          cwd: '/workspace',
+          proposedExecpolicyAmendment: ['git fetch'],
+          networkApprovalContext: { host: 'api.github.com', protocol: 'https' },
+          proposedNetworkPolicyAmendments: [
+            { host: 'api.github.com', action: 'allow' },
+            { host: 'tracker.invalid', action: 'deny' },
+          ],
+          fileChanges: {
+            '/workspace/app.ts': { type: 'update' },
+            '/workspace/new.ts': { type: 'add' },
+          },
+          permissions: {
+            network: { enabled: true },
+            fileSystem: {
+              read: ['/workspace/input'],
+              write: ['/workspace/output'],
+              entries: [{ path: { type: 'glob_pattern', pattern: '/tmp/*.json' }, access: 'read' }],
             },
-            permissions: {
-              network: { enabled: true },
-              fileSystem: {
-                read: ['/workspace/input'],
-                write: ['/workspace/output'],
-                entries: [{ path: { type: 'glob_pattern', pattern: '/tmp/*.json' }, access: 'read' }],
-              },
-            },
-            additionalPermissions: {
-              network: null,
-              fileSystem: { read: null, write: ['/var/tmp'], entries: [] },
-            },
+          },
+          additionalPermissions: {
+            network: null,
+            fileSystem: { read: null, write: ['/var/tmp'], entries: [] },
           },
         }),
       }),
@@ -1011,12 +838,11 @@ describe('Codex event decoding', () => {
   })
 
   test('scopes approvals to the active thread and exposes only advertised decisions', () => {
-    const approval = {
-      ...event,
-      kind: 'approval' as const,
+    const approval = makeEvent({
+      kind: 'approval',
       method: 'item/commandExecution/requestApproval',
-      rawJson: JSON.stringify({ params: { availableDecisions: ['accept', 'decline'] } }),
-    }
+      rawJson: codexParams({ availableDecisions: ['accept', 'decline'] }),
+    })
 
     expect(codexEventMatchesThread(approval, 'thread-1')).toBe(true)
     expect(codexEventMatchesThread({ ...approval, threadId: '' }, 'thread-1')).toBe(false)
@@ -1026,18 +852,16 @@ describe('Codex event decoding', () => {
     expect(
       codexApprovalDecisions({
         ...approval,
-        rawJson: JSON.stringify({
-          params: {
-            availableDecisions: [
-              { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git status'] } },
-              { applyNetworkPolicyAmendment: { network_policy_amendment: { host: 'github.com', action: 'allow' } } },
-              'decline',
-            ],
-          },
+        rawJson: codexParams({
+          availableDecisions: [
+            { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git status'] } },
+            { applyNetworkPolicyAmendment: { network_policy_amendment: { host: 'github.com', action: 'allow' } } },
+            'decline',
+          ],
         }),
       }),
     ).toEqual(['approve-exec-policy-amendment', 'approve-network-policy-amendment', 'deny'])
-    expect(codexApprovalDecisions({ ...approval, rawJson: JSON.stringify({ params: {} }) })).toEqual([
+    expect(codexApprovalDecisions({ ...approval, rawJson: codexParams({}) })).toEqual([
       'approve-once',
       'approve-session',
       'deny',
@@ -1056,12 +880,11 @@ describe('Codex event decoding', () => {
         tool_params: { command: 'printf fixture', cwd: '/tmp/fixture' },
       },
     }
-    const approval = {
-      ...event,
-      kind: 'approval' as const,
+    const approval = makeEvent({
+      kind: 'approval',
       method: 'mcpServer/elicitation/request',
-      rawJson: JSON.stringify({ params }),
-    }
+      rawJson: codexParams(params),
+    })
     expect(codexApprovalDecisions(approval)).toEqual(['approve-once', 'approve-session', 'deny'])
     expect(codexEventDisplayText(approval)).toContain(params.message)
     expect(codexEventDisplayText(approval)).toContain('printf fixture')
@@ -1072,7 +895,7 @@ describe('Codex event decoding', () => {
       expect(
         codexApprovalDecisions({
           ...approval,
-          rawJson: JSON.stringify({ params: { ...params, _meta: { ...params._meta, persist } } }),
+          rawJson: codexParams({ ...params, _meta: { ...params._meta, persist } }),
         }),
       ).toEqual(['approve-once', 'deny'])
     }
@@ -1080,16 +903,15 @@ describe('Codex event decoding', () => {
 
   test('keeps MCP controls and an omission notice after large arguments are bounded', () => {
     for (const persist of [undefined, 'session']) {
-      const approval = {
-        ...event,
-        kind: 'approval' as const,
+      const approval = makeEvent({
+        kind: 'approval',
         method: 'mcpServer/elicitation/request',
         text: 'Allow the fixture tool?',
         rawJson: JSON.stringify({
           params: { _meta: { codex_approval_kind: 'mcp_tool_call', persist } },
           rawOmitted: true,
         }),
-      }
+      })
       expect(codexApprovalDecisions(approval)).toEqual(
         persist === 'session' ? ['approve-once', 'approve-session', 'deny'] : ['approve-once', 'deny'],
       )
@@ -1100,28 +922,22 @@ describe('Codex event decoding', () => {
 
   test('renders token usage and rate-limit snapshots', () => {
     expect(
-      codexEventDisplayText({
-        ...event,
+      displayEvent({
         kind: 'usage',
         text: '',
-        rawJson: JSON.stringify({
-          params: { tokenUsage: { total: { inputTokens: 12, outputTokens: 4 } } },
-        }),
+        rawJson: codexParams({ tokenUsage: { total: { inputTokens: 12, outputTokens: 4 } } }),
       }),
     ).toBe('Tokens: 12 input · 4 output')
     expect(
-      codexEventDisplayText({
-        ...event,
+      displayEvent({
         kind: 'usage',
         text: '',
-        rawJson: JSON.stringify({
-          params: {
-            rateLimits: {
-              primary: { usedPercent: 12, windowDurationMins: 300 },
-              secondary: { usedPercent: 45, windowDurationMins: 10_080 },
-              credits: { balance: '17.50' },
-              rateLimitReachedType: null,
-            },
+        rawJson: codexParams({
+          rateLimits: {
+            primary: { usedPercent: 12, windowDurationMins: 300 },
+            secondary: { usedPercent: 45, windowDurationMins: 10_080 },
+            credits: { balance: '17.50' },
+            rateLimitReachedType: null,
           },
         }),
       }),
@@ -1136,31 +952,29 @@ describe('Codex event decoding', () => {
     [12.5, '', 'Weekly 87% left'],
   ])('formats remaining weekly usage %s and credits %s', (usedPercent, balance, expected) => {
     expect(
-      codexEventDisplayText({
-        ...event,
+      displayEvent({
         kind: 'usage',
-        rawJson: JSON.stringify({
-          params: { rateLimits: { secondary: { usedPercent, windowDurationMins: 10_080 }, credits: { balance } } },
+        rawJson: codexParams({
+          rateLimits: { secondary: { usedPercent, windowDurationMins: 10_080 }, credits: { balance } },
         }),
       }),
     ).toBe(expected)
   })
 
   test('extracts a failed device-login completion error', () => {
-    const failedLogin = {
-      ...event,
-      kind: 'error' as const,
+    const failedLogin = makeEvent({
+      kind: 'error',
       method: 'account/login/completed',
       text: 'device code expired',
-      rawJson: JSON.stringify({ params: { loginId: 'login-1', success: false, error: 'device code expired' } }),
-    }
+      rawJson: codexParams({ loginId: 'login-1', success: false, error: 'device code expired' }),
+    })
 
     expect(codexLoginCompletionError(failedLogin)).toBe('device code expired')
     expect(codexLoginCompletionMatches(failedLogin, 'login-1')).toBe(true)
     expect(codexLoginCompletionMatches(failedLogin, 'login-2')).toBe(false)
     const uncorrelatedCompletion = {
       ...failedLogin,
-      rawJson: JSON.stringify({ params: { loginId: null, success: false } }),
+      rawJson: codexParams({ loginId: null, success: false }),
     }
     expect(codexLoginCompletionMatches(uncorrelatedCompletion, 'login-2')).toBe(false)
     expect(codexLoginCompletionIsUncorrelated(uncorrelatedCompletion)).toBe(true)
@@ -1171,7 +985,7 @@ describe('Codex event decoding', () => {
         ...failedLogin,
         kind: 'thread-state',
         text: '',
-        rawJson: JSON.stringify({ params: { loginId: 'login-1', success: true, error: null } }),
+        rawJson: codexParams({ loginId: 'login-1', success: true, error: null }),
       }),
     ).toBe('')
   })
@@ -1188,57 +1002,36 @@ describe('Codex event decoding', () => {
   })
 
   test('decodes printable base64 command output without corrupting ordinary text', () => {
-    expect(
-      codexEventDisplayText({
-        ...event,
-        kind: 'tool-output',
-        method: 'item/commandExecution/outputDelta',
-        text: 'aGVsbG8K',
-      }),
-    ).toBe('hello\n')
-    expect(codexEventDisplayText({ ...event, kind: 'tool-output', text: '12 pass' })).toBe('12 pass')
-    expect(
-      codexEventDisplayText({
-        ...event,
-        kind: 'tool-output',
-        method: 'item/completed',
-        text: 'dGVzdA==',
-        rawJson: JSON.stringify({ params: { item: { type: 'mcpToolCall' } } }),
-      }),
-    ).toBe('dGVzdA==')
-    expect(
-      codexEventDisplayText({
-        ...event,
-        kind: 'tool-output',
-        method: 'item/completed',
-        text: 'dGVzdA==',
-        rawJson: JSON.stringify({ params: { item: { type: 'commandExecution' } } }),
-      }),
-    ).toBe('test')
+    expect(codexEventDisplayText(commandDelta(1, 'aGVsbG8K'))).toBe('hello\n')
+    expect(displayEvent({ kind: 'tool-output', text: '12 pass' })).toBe('12 pass')
+    for (const [type, text] of [
+      ['mcpToolCall', 'dGVzdA=='],
+      ['commandExecution', 'test'],
+    ]) {
+      expect(displayEvent({ kind: 'tool-output', text: 'dGVzdA==', rawJson: codexParams({ item: { type } }) })).toBe(
+        text,
+      )
+    }
   })
 
   test('shows web search and sub-agent activity from typed raw events', () => {
     expect(
-      codexEventDisplayText({
-        ...event,
+      displayEvent({
         kind: 'tool-call',
         text: '',
-        rawJson: JSON.stringify({ params: { item: { type: 'webSearch', query: 'Kata Firecracker' } } }),
+        rawJson: codexParams({ item: { type: 'webSearch', query: 'Kata Firecracker' } }),
       }),
     ).toBe('Web search: Kata Firecracker')
     expect(
-      codexEventDisplayText({
-        ...event,
+      displayEvent({
         kind: 'tool-call',
         text: '',
-        rawJson: JSON.stringify({
-          params: {
-            item: {
-              type: 'subAgentActivity',
-              kind: 'started',
-              agentPath: '/root/reviewer',
-              agentThreadId: 'thread-child',
-            },
+        rawJson: codexParams({
+          item: {
+            type: 'subAgentActivity',
+            kind: 'started',
+            agentPath: '/root/reviewer',
+            agentThreadId: 'thread-child',
           },
         }),
       }),
@@ -1249,21 +1042,17 @@ describe('Codex event decoding', () => {
 describe('Codex thread restoration', () => {
   test('links native client identities to turns in streamed items and recovered history', () => {
     const item = { type: 'userMessage', id: 'user-1', clientId: 'run-identity', content: [] }
-    expect(
-      codexEventClientTurnIds({ ...event, kind: 'user-message', rawJson: JSON.stringify({ params: { item } }) }),
-    ).toEqual([['run-identity', 'turn-1']])
+    expect(codexEventClientTurnIds({ ...event, kind: 'user-message', rawJson: codexParams({ item }) })).toEqual([
+      ['run-identity', 'turn-1'],
+    ])
     expect(
       codexEventClientTurnIds({
         ...event,
-        rawJson: JSON.stringify({ params: { item: { ...item, type: 'commandExecution' } } }),
+        rawJson: codexParams({ item: { ...item, type: 'commandExecution' } }),
       }),
     ).toEqual([])
     expect(codexEventClientTurnIds({ ...event, rawJson: '{' })).toEqual([])
-    expect(
-      codexThreadTurnState(
-        JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'completed', items: [item] }] } }),
-      ),
-    ).toEqual({
+    expect(codexThreadTurnState(codexHistory([completedTurn('turn-1', [item])]))).toEqual({
       activeTurnId: '',
       completedTurnIds: ['turn-1'],
       clientTurnIds: new Map([['run-identity', 'turn-1']]),
@@ -1271,14 +1060,7 @@ describe('Codex thread restoration', () => {
   })
 
   test('recovers the active turn from the authoritative resumed thread', () => {
-    const thread = JSON.stringify({
-      thread: {
-        turns: [
-          { id: 'turn-complete', status: 'completed', items: [] },
-          { id: 'turn-active', status: 'inProgress', items: [] },
-        ],
-      },
-    })
+    const thread = codexHistory([completedTurn('turn-complete'), runningTurn('turn-active')])
 
     expect(codexThreadTurnState(thread)).toEqual({
       activeTurnId: 'turn-active',
@@ -1290,67 +1072,63 @@ describe('Codex thread restoration', () => {
 
   test('restores persisted typed items in thread order', () => {
     const transcript = codexTranscriptFromThread(
-      JSON.stringify({
-        thread: {
-          turns: [
+      codexHistory([
+        {
+          items: [
+            { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'Build it' }] },
             {
-              items: [
-                { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'Build it' }] },
-                {
-                  id: 'user-2',
-                  type: 'userMessage',
-                  content: [
-                    { type: 'image', url: 'data:image/png;base64,opaque' },
-                    { type: 'localImage', path: '/workspace/reference.png' },
-                    { type: 'skill', name: 'release', path: '/skills/release/SKILL.md' },
-                    { type: 'mention', name: 'api.ts', path: '/workspace/api.ts' },
-                  ],
-                },
-                { id: 'assistant-1', type: 'agentMessage', text: 'Done' },
-                { id: 'plan-1', type: 'plan', text: '- [x] Build it' },
-                { id: 'reasoning-1', type: 'reasoning', summary: ['Checked the result'], content: [] },
-                { id: 'command-1', type: 'commandExecution', command: 'bun test', aggregatedOutput: '12 pass' },
-                {
-                  id: 'command-2',
-                  type: 'commandExecution',
-                  command: 'true',
-                  status: 'completed',
-                  aggregatedOutput: '',
-                  exitCode: 0,
-                },
-                {
-                  id: 'file-1',
-                  type: 'fileChange',
-                  changes: [{ path: '/workspace/app.ts', diff: '+export {}' }],
-                },
-                {
-                  id: 'mcp-1',
-                  type: 'mcpToolCall',
-                  server: 'linear',
-                  tool: 'get_issue',
-                  result: { content: [], structuredContent: { id: 'ENG-123', state: 'Done' } },
-                },
-                { id: 'search-1', type: 'webSearch', query: 'Kata Firecracker', action: null },
-                {
-                  id: 'collab-1',
-                  type: 'collabAgentToolCall',
-                  tool: 'spawnAgent',
-                  status: 'completed',
-                  receiverThreadIds: ['thread-child'],
-                  prompt: 'Review this change',
-                },
-                {
-                  id: 'subagent-1',
-                  type: 'subAgentActivity',
-                  kind: 'started',
-                  agentPath: '/root/reviewer',
-                  agentThreadId: 'thread-child',
-                },
+              id: 'user-2',
+              type: 'userMessage',
+              content: [
+                { type: 'image', url: 'data:image/png;base64,opaque' },
+                { type: 'localImage', path: '/workspace/reference.png' },
+                { type: 'skill', name: 'release', path: '/skills/release/SKILL.md' },
+                { type: 'mention', name: 'api.ts', path: '/workspace/api.ts' },
               ],
+            },
+            agentMessage('assistant-1', 'Done'),
+            { id: 'plan-1', type: 'plan', text: '- [x] Build it' },
+            { id: 'reasoning-1', type: 'reasoning', summary: ['Checked the result'], content: [] },
+            { id: 'command-1', type: 'commandExecution', command: 'bun test', aggregatedOutput: '12 pass' },
+            {
+              id: 'command-2',
+              type: 'commandExecution',
+              command: 'true',
+              status: 'completed',
+              aggregatedOutput: '',
+              exitCode: 0,
+            },
+            {
+              id: 'file-1',
+              type: 'fileChange',
+              changes: [{ path: '/workspace/app.ts', diff: '+export {}' }],
+            },
+            {
+              id: 'mcp-1',
+              type: 'mcpToolCall',
+              server: 'linear',
+              tool: 'get_issue',
+              result: { content: [], structuredContent: { id: 'ENG-123', state: 'Done' } },
+            },
+            { id: 'search-1', type: 'webSearch', query: 'Kata Firecracker', action: null },
+            {
+              id: 'collab-1',
+              type: 'collabAgentToolCall',
+              tool: 'spawnAgent',
+              status: 'completed',
+              receiverThreadIds: ['thread-child'],
+              prompt: 'Review this change',
+            },
+            {
+              id: 'subagent-1',
+              type: 'subAgentActivity',
+              kind: 'started',
+              agentPath: '/root/reviewer',
+              agentThreadId: 'thread-child',
             },
           ],
         },
-      }),
+      ]),
     )
     expect(transcript).toEqual([
       { id: 'user-1', kind: 'user-message', text: 'Build it' },
@@ -1390,14 +1168,7 @@ describe('Codex thread restoration', () => {
     expect(codexTranscriptFromThread('{')).toEqual([])
     expect(
       codexTranscriptFromThread(
-        JSON.stringify({
-          thread: {
-            turns: [
-              { items: [{ id: 'same', type: 'agentMessage', text: 'First' }] },
-              { items: [{ id: 'same', type: 'agentMessage', text: 'Duplicate' }] },
-            ],
-          },
-        }),
+        codexHistory([{ items: [agentMessage('same', 'First')] }, { items: [agentMessage('same', 'Duplicate')] }]),
       ),
     ).toEqual([{ id: 'same', kind: 'assistant-text', text: 'First' }])
   })
@@ -1429,9 +1200,9 @@ describe('Codex buffering equivalence', () => {
       new Map([[restored.id, 80]]),
     )
     expect(rebased[0]!.text).toBe(expected)
-    const sequences = []
-    for (let segment = rebased[0]!.textSegments; segment; segment = segment.previous) sequences.push(segment.sequence)
-    expect(sequences).toEqual(Array.from({ length: 60 }, (_, index) => 140 - index))
+    const fresh = makeEvent({ sequence: 141, method: 'item/agentMessage/delta', text: ' live tail' })
+    expect(appendCodexEvent(rebased, fresh).map(({ text }) => text)).toEqual([expected + ' live tail'])
+    expect(appendCodexEvent(rebased, { ...fresh, sequence: 80, text: ' covered' })).toEqual(rebased)
   })
 
   test('matches serialized item identity after normalizing untrusted wire values', () => {
@@ -1485,7 +1256,7 @@ describe('Codex buffering equivalence', () => {
     for (const unit of ['a', 'é', '漢', '😀', '\ud800', '\udc00', 'a\ud800b', '\ud800\udc00']) {
       for (const length of lengths) {
         const text = unit.repeat(Math.ceil(length / unit.length)).slice(0, length)
-        const first = { ...event, sequence: 1, method: 'item/agentMessage/delta', text }
+        const first = makeEvent({ sequence: 1, method: 'item/agentMessage/delta', text })
         let current = appendCodexEvent([], first)
         let expected = reference(text)
         expect(current[0]!.text).toBe(expected)
@@ -1508,12 +1279,7 @@ test('app tools expose their arguments and structured result instead of generic 
     tool: 'github.create_branch',
     arguments: { repository_full_name: 'proompteng/lab', branch_name: 'codex/ui' },
   }
-  const call = {
-    ...event,
-    kind: 'tool-call' as const,
-    text: 'codex_apps/github.create_branch',
-    rawJson: JSON.stringify({ params: { item } }),
-  }
+  const call = makeEvent({ kind: 'tool-call', text: 'codex_apps/github.create_branch', rawJson: codexParams({ item }) })
   expect(codexEventDisplayText(call)).toBe(
     'codex_apps/github.create_branch\n{\n  "repository_full_name": "proompteng/lab",\n  "branch_name": "codex/ui"\n}',
   )
@@ -1525,12 +1291,10 @@ test('app tools expose their arguments and structured result instead of generic 
     ...call,
     kind: 'tool-output' as const,
     text: 'Action completed.',
-    rawJson: JSON.stringify({ params: { item: completed } }),
+    rawJson: codexParams({ item: completed }),
   }
   expect(codexEventDisplayText(output)).toContain('"branch": "codex/ui"')
-  const history = codexTranscriptFromThread(
-    JSON.stringify({ thread: { turns: [{ items: [{ ...completed, id: 'app-output' }] }] } }),
-  )
+  const history = codexTranscriptFromThread(codexHistory([{ items: [{ ...completed, id: 'app-output' }] }]))
   expect(history[0].text).toBe(codexEventDisplayText(output))
 })
 
@@ -1541,12 +1305,7 @@ test('keeps status-only connector outcomes visible', () => {
       ['failed', 'Command failed'],
       ['declined', 'Command declined'],
     ]) {
-      const output = {
-        ...event,
-        kind: 'tool-output' as const,
-        text: '',
-        rawJson: JSON.stringify({ params: { item: { type, status } } }),
-      }
+      const output = makeEvent({ kind: 'tool-output', text: '', rawJson: codexParams({ item: { type, status } }) })
       expect(codexEventDisplayText(output)).toBe(expected)
       expect(codexEventShouldRender(output, output.threadId, new Set(), 0)).toBe(true)
     }
@@ -1562,9 +1321,9 @@ test('decodes complete JSON string connector results before adding tool labels',
       tool: 'github.fetch',
       result: JSON.stringify('First line\nSecond line'),
     }
-    const output = { ...event, kind: 'tool-output' as const, text: '', rawJson: JSON.stringify({ params: { item } }) }
+    const output = makeEvent({ kind: 'tool-output', text: '', rawJson: codexParams({ item }) })
     const expected = 'codex_apps/github.fetch\nFirst line\nSecond line'
     expect(codexEventDisplayText(output)).toBe(expected)
-    expect(codexTranscriptFromThread(JSON.stringify({ thread: { turns: [{ items: [item] }] } }))[0].text).toBe(expected)
+    expect(codexTranscriptFromThread(codexHistory([{ items: [item] }]))[0].text).toBe(expected)
   }
 })

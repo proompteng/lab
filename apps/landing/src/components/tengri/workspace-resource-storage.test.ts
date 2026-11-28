@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { MemoryStorage } from '@/lib/tengri/storage.fixture'
 import {
   MAX_WORKSPACE_RESOURCES,
   readWorkspacePins,
@@ -9,20 +10,10 @@ import {
   writeWorkspaceResources,
 } from './workspace-resource-storage'
 
-function memoryStorage() {
-  const data = new Map<string, string>()
-  return {
-    getItem: (key: string) => data.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      data.set(key, value)
-    },
-  }
-}
-
 describe('workspace resource persistence', () => {
   test('restores exact file locations and the selected tab independently of pins', () => {
-    const tabs = memoryStorage()
-    const pins = memoryStorage()
+    const tabs = new MemoryStorage()
+    const pins = new MemoryStorage()
     const file = { path: '/workspace/src/main.ts', line: 12, column: 3 }
     expect(writeWorkspaceResources('agent-a', { tabs: [file], activePath: file.path }, tabs)).toBe(true)
     expect(writeWorkspacePins('agent-a', [file], pins)).toBe(true)
@@ -34,9 +25,9 @@ describe('workspace resource persistence', () => {
   })
 
   test('window tab selections cannot overwrite shared pins or another window selection', () => {
-    const windowA = memoryStorage()
-    const windowB = memoryStorage()
-    const pins = memoryStorage()
+    const windowA = new MemoryStorage()
+    const windowB = new MemoryStorage()
+    const pins = new MemoryStorage()
     const file = { path: '/workspace/README.md' }
     writeWorkspacePins('agent-a', [file], pins)
     writeWorkspaceResources('agent-a', { tabs: [file], activePath: file.path }, windowA)
@@ -57,7 +48,7 @@ describe('workspace resource persistence', () => {
     { path: '/workspace/README.md', content: 'file contents must not be persisted' },
   ]) {
     test(`rejects untrusted resource metadata ${JSON.stringify(invalid)}`, () => {
-      const storage = memoryStorage()
+      const storage = new MemoryStorage()
       storage.setItem(workspaceResourcesKey('agent-a'), JSON.stringify({ tabs: [invalid], activePath: null }))
       storage.setItem(workspacePinsKey('agent-a'), JSON.stringify([invalid]))
       expect(readWorkspaceResources('agent-a', storage)).toEqual({ tabs: [], activePath: null })
@@ -66,7 +57,7 @@ describe('workspace resource persistence', () => {
   }
 
   test('rejects missing active tabs, duplicate paths, excessive tabs and malformed JSON', () => {
-    const storage = memoryStorage()
+    const storage = new MemoryStorage()
     const file = { path: '/workspace/README.md' }
     for (const state of [
       { tabs: [file], activePath: '/workspace/missing.md' },
