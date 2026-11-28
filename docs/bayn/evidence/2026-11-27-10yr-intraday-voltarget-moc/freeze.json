@@ -1,0 +1,890 @@
+{
+  "schema": "bayn.research.wave-11b.freeze.v1",
+  "files": {
+    "docs/bayn/evidence/2026-11-27-10yr-intraday-voltarget-moc/protocol.md": "a6bc20e04a488b9901ab4d3c90fad4351f25f6952221d75958199e38d11699fe",
+    "services/bayn/tools/research-10yr-intraday-voltarget-moc.ts": "5209984ab153ce109db1dedd35870bee630502b23ff12ec518844ee5fe3fef4a",
+    "services/bayn/tools/noise-area-study-data.ts": "2af5160955fe0645b918cce745b067c259df3d8267a06a30334791524788263b",
+    "services/bayn/tools/noise-area-study-replay.ts": "5b66253db637592752f8803ed62ce77b3f2a5239d79d37972f1ac4a586ce667f",
+    "services/bayn/tools/noise-area-study-statistics.ts": "ace4768d89f81b208194fb91f88f22a26318ae3b58bfbd0c2af74c2bdc9259e5",
+    "services/bayn/tools/midday-research-statistics.ts": "d643c4ad1f05086b924c11285d6254a794b4a25e68004eb35a639a22a077e1e1",
+    "services/bayn/tools/research-orb-zab-data.ts": "2128021f73ed208e8937dadead6b9cae679bd3f45f519f40ff8f689e4cbf18d3"
+  },
+  "sources": {
+    "development": {
+      "manifest": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/MANIFEST.json",
+      "manifestSha256": "c18d9c4d537ae17a6322dc8a2d5a9338b8851706d58c5ea62f02a31b37ea0eb0",
+      "calendar": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/calendar_2016_2023.json",
+      "calendarSha256": "0165400d9544973b0971a2397969e65bd2543beff5d8bd47510f09b015ef7f86",
+      "bars": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/alpaca_sip_5m_rth_exact62_20160104_20231229.tsv.gz",
+      "rows": 8641719,
+      "memberBytes": 174597176
+    },
+    "holdout": {
+      "manifest": "bayn-research-datasets/2026-11-27-sip-multiyear/MANIFEST.json",
+      "manifestSha256": "5df0cfe213c69e9a6489dde46553db610edb2632b5e54fb76a6347740abcdead",
+      "calendar": "bayn-research-datasets/2026-11-27/calendar_2024_2026.json",
+      "calendarSha256": "b7a02f0c79aa479de2eba14e6168826cabaf8eef15df4c94cf1f199511752b71",
+      "bars": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz",
+      "rows": 3923737
+    },
+    "shy": {
+      "manifest": "bayn-research-datasets/2026-11-27-sip-10yr-sp100/MANIFEST.json",
+      "manifestSha256": "ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e",
+      "bars": "bayn-research-datasets/2026-11-27-sip-10yr-sp100/alpaca_sip_daily_10yr_sp100_etfs_20160104_20261125.tsv.gz",
+      "rows": 450712
+    }
+  },
+  "splits": {
+    "train": {
+      "first": "2016-01-04",
+      "last": "2021-12-31",
+      "count": 1511
+    },
+    "validation": {
+      "first": "2022-01-03",
+      "last": "2023-12-29",
+      "count": 501
+    },
+    "holdout": {
+      "first": "2024-01-02",
+      "last": "2026-11-25",
+      "count": 729
+    }
+  },
+  "rosters": {
+    "development": [
+      "AAPL",
+      "AMD",
+      "AMZN",
+      "AVGO",
+      "COHR",
+      "GOOGL",
+      "INTC",
+      "IWM",
+      "LITE",
+      "META",
+      "MRVL",
+      "MSFT",
+      "MU",
+      "NFLX",
+      "NVDA",
+      "QQQ",
+      "SMH",
+      "SNDK",
+      "SPY",
+      "TSLA",
+      "WDC",
+      "PLTR",
+      "MSTR",
+      "COIN",
+      "SMCI",
+      "ARM",
+      "ANET",
+      "PANW",
+      "CRWD",
+      "NET",
+      "APP",
+      "HOOD",
+      "SOFI",
+      "VRT",
+      "VST",
+      "CEG",
+      "GEV",
+      "ALAB",
+      "CRDO",
+      "KLAC",
+      "LRCX",
+      "AMAT",
+      "ASML",
+      "TSM",
+      "ORCL",
+      "NOW",
+      "SNOW",
+      "UBER",
+      "SHOP",
+      "SPOT",
+      "XLF",
+      "XLE",
+      "XLK",
+      "XLV",
+      "XLI",
+      "XLY",
+      "XBI",
+      "ARKK",
+      "TLT",
+      "IEF",
+      "GLD",
+      "USO"
+    ],
+    "holdout": [
+      "AAPL",
+      "AMD",
+      "AMZN",
+      "AVGO",
+      "COHR",
+      "GOOGL",
+      "INTC",
+      "IWM",
+      "LITE",
+      "META",
+      "MRVL",
+      "MSFT",
+      "MU",
+      "NFLX",
+      "NVDA",
+      "QQQ",
+      "SMH",
+      "SNDK",
+      "SPY",
+      "TSLA",
+      "WDC",
+      "PLTR",
+      "MSTR",
+      "COIN",
+      "SMCI",
+      "ARM",
+      "ANET",
+      "PANW",
+      "CRWD",
+      "NET",
+      "APP",
+      "HOOD",
+      "SOFI",
+      "VRT",
+      "VST",
+      "CEG",
+      "GEV",
+      "ALAB",
+      "CRDO",
+      "KLAC",
+      "LRCX",
+      "AMAT",
+      "ASML",
+      "TSM",
+      "ORCL",
+      "NOW",
+      "SNOW",
+      "UBER",
+      "SHOP",
+      "SPOT",
+      "XLF",
+      "XLE",
+      "XLK",
+      "XLV",
+      "XLI",
+      "XLY",
+      "XBI",
+      "ARKK",
+      "TLT",
+      "IEF",
+      "GLD",
+      "USO"
+    ]
+  },
+  "traded": ["SPY", "QQQ", "IWM", "SMH", "XLK", "TLT", "IEF", "GLD"],
+  "excluded": ["SLV", "HYG"],
+  "coverage": {
+    "SPY": {
+      "rthBars": 156387,
+      "missingRthBars": 9,
+      "missingFlatOpen": 0,
+      "emptySessions": [],
+      "firstRthDate": "2016-01-04",
+      "lastRthDate": "2023-12-29"
+    },
+    "QQQ": {
+      "rthBars": 156379,
+      "missingRthBars": 17,
+      "missingFlatOpen": 0,
+      "emptySessions": [],
+      "firstRthDate": "2016-01-04",
+      "lastRthDate": "2023-12-29"
+    },
+    "IWM": {
+      "rthBars": 156382,
+      "missingRthBars": 14,
+      "missingFlatOpen": 1,
+      "emptySessions": [],
+      "firstRthDate": "2016-01-04",
+      "lastRthDate": "2023-12-29"
+    },
+    "SMH": {
+      "rthBars": 156382,
+      "missingRthBars": 14,
+      "missingFlatOpen": 1,
+      "emptySessions": [],
+      "firstRthDate": "2016-01-04",
+      "lastRthDate": "2023-12-29"
+    },
+    "XLK": {
+      "rthBars": 156381,
+      "missingRthBars": 15,
+      "missingFlatOpen": 1,
+      "emptySessions": [],
+      "firstRthDate": "2016-01-04",
+      "lastRthDate": "2023-12-29"
+    },
+    "TLT": {
+      "rthBars": 156379,
+      "missingRthBars": 17,
+      "missingFlatOpen": 0,
+      "emptySessions": [],
+      "firstRthDate": "2016-01-04",
+      "lastRthDate": "2023-12-29"
+    },
+    "IEF": {
+      "rthBars": 156363,
+      "missingRthBars": 33,
+      "missingFlatOpen": 0,
+      "emptySessions": [],
+      "firstRthDate": "2016-01-04",
+      "lastRthDate": "2023-12-29"
+    },
+    "GLD": {
+      "rthBars": 156381,
+      "missingRthBars": 15,
+      "missingFlatOpen": 1,
+      "emptySessions": [],
+      "firstRthDate": "2016-01-04",
+      "lastRthDate": "2023-12-29"
+    }
+  },
+  "grid": [
+    {
+      "id": "A/B0/fixed",
+      "family": "A",
+      "basket": "B0",
+      "target": null
+    },
+    {
+      "id": "A/B0/10pct/2x",
+      "family": "A",
+      "basket": "B0",
+      "target": {
+        "targetAnnVol": 0.1,
+        "leverageCap": 2
+      }
+    },
+    {
+      "id": "A/B0/15pct/1x",
+      "family": "A",
+      "basket": "B0",
+      "target": {
+        "targetAnnVol": 0.15,
+        "leverageCap": 1
+      }
+    },
+    {
+      "id": "A/B0/15pct/1.5x",
+      "family": "A",
+      "basket": "B0",
+      "target": {
+        "targetAnnVol": 0.15,
+        "leverageCap": 1.5
+      }
+    },
+    {
+      "id": "A/B0/15pct/2x",
+      "family": "A",
+      "basket": "B0",
+      "target": {
+        "targetAnnVol": 0.15,
+        "leverageCap": 2
+      }
+    },
+    {
+      "id": "A/B0/20pct/2x",
+      "family": "A",
+      "basket": "B0",
+      "target": {
+        "targetAnnVol": 0.2,
+        "leverageCap": 2
+      }
+    },
+    {
+      "id": "A/Tech/fixed",
+      "family": "A",
+      "basket": "Tech",
+      "target": null
+    },
+    {
+      "id": "A/Tech/10pct/2x",
+      "family": "A",
+      "basket": "Tech",
+      "target": {
+        "targetAnnVol": 0.1,
+        "leverageCap": 2
+      }
+    },
+    {
+      "id": "A/Tech/15pct/1x",
+      "family": "A",
+      "basket": "Tech",
+      "target": {
+        "targetAnnVol": 0.15,
+        "leverageCap": 1
+      }
+    },
+    {
+      "id": "A/Tech/15pct/1.5x",
+      "family": "A",
+      "basket": "Tech",
+      "target": {
+        "targetAnnVol": 0.15,
+        "leverageCap": 1.5
+      }
+    },
+    {
+      "id": "A/Tech/15pct/2x",
+      "family": "A",
+      "basket": "Tech",
+      "target": {
+        "targetAnnVol": 0.15,
+        "leverageCap": 2
+      }
+    },
+    {
+      "id": "A/Tech/20pct/2x",
+      "family": "A",
+      "basket": "Tech",
+      "target": {
+        "targetAnnVol": 0.2,
+        "leverageCap": 2
+      }
+    },
+    {
+      "id": "B/Index/previous_close/0.5",
+      "family": "B",
+      "basket": "Index",
+      "sigma": 0.5,
+      "anchor": "previous_close"
+    },
+    {
+      "id": "B/Index/previous_close/1",
+      "family": "B",
+      "basket": "Index",
+      "sigma": 1,
+      "anchor": "previous_close"
+    },
+    {
+      "id": "B/Index/previous_close/1.5",
+      "family": "B",
+      "basket": "Index",
+      "sigma": 1.5,
+      "anchor": "previous_close"
+    },
+    {
+      "id": "B/Tech/previous_close/0.5",
+      "family": "B",
+      "basket": "Tech",
+      "sigma": 0.5,
+      "anchor": "previous_close"
+    },
+    {
+      "id": "B/Tech/previous_close/1",
+      "family": "B",
+      "basket": "Tech",
+      "sigma": 1,
+      "anchor": "previous_close"
+    },
+    {
+      "id": "B/Tech/previous_close/1.5",
+      "family": "B",
+      "basket": "Tech",
+      "sigma": 1.5,
+      "anchor": "previous_close"
+    },
+    {
+      "id": "B/Cross/previous_close/0.5",
+      "family": "B",
+      "basket": "Cross",
+      "sigma": 0.5,
+      "anchor": "previous_close"
+    },
+    {
+      "id": "B/Cross/previous_close/1",
+      "family": "B",
+      "basket": "Cross",
+      "sigma": 1,
+      "anchor": "previous_close"
+    },
+    {
+      "id": "B/Cross/previous_close/1.5",
+      "family": "B",
+      "basket": "Cross",
+      "sigma": 1.5,
+      "anchor": "previous_close"
+    },
+    {
+      "id": "B/Index/open/1",
+      "family": "B",
+      "basket": "Index",
+      "sigma": 1,
+      "anchor": "open"
+    },
+    {
+      "id": "C/SMH-QQQ/1.5",
+      "family": "C",
+      "pair": ["SMH", "QQQ"],
+      "sigma": 1.5
+    },
+    {
+      "id": "C/SMH-QQQ/2",
+      "family": "C",
+      "pair": ["SMH", "QQQ"],
+      "sigma": 2
+    },
+    {
+      "id": "C/XLK-QQQ/1.5",
+      "family": "C",
+      "pair": ["XLK", "QQQ"],
+      "sigma": 1.5
+    },
+    {
+      "id": "C/XLK-QQQ/2",
+      "family": "C",
+      "pair": ["XLK", "QQQ"],
+      "sigma": 2
+    },
+    {
+      "id": "C/IWM-SPY/1.5",
+      "family": "C",
+      "pair": ["IWM", "SPY"],
+      "sigma": 1.5
+    },
+    {
+      "id": "C/IWM-SPY/2",
+      "family": "C",
+      "pair": ["IWM", "SPY"],
+      "sigma": 2
+    },
+    {
+      "id": "C/TLT-IEF/1.5",
+      "family": "C",
+      "pair": ["TLT", "IEF"],
+      "sigma": 1.5
+    },
+    {
+      "id": "C/TLT-IEF/2",
+      "family": "C",
+      "pair": ["TLT", "IEF"],
+      "sigma": 2
+    }
+  ],
+  "targetBaskets": {
+    "B0": ["QQQ", "SMH"],
+    "Tech": ["QQQ", "SMH", "XLK"]
+  },
+  "momentumBaskets": {
+    "Index": ["SPY", "QQQ", "IWM"],
+    "Tech": ["QQQ", "SMH", "XLK"],
+    "Cross": ["TLT", "GLD"]
+  },
+  "lookback": 14,
+  "costs": [2, 5, 10],
+  "capital": 100000,
+  "bootstrap": {
+    "seed": 1780491793,
+    "draws": 10000,
+    "meanBlockSessions": 5
+  },
+  "baselineParity": {
+    "train": [33107.45, 14806],
+    "validation": [29982.77, 23345.9]
+  },
+  "developmentLedgerSha256": "07e92d4c655203d7762d2d127b02c5d313f7bf2aa04fa99a5bba5b79537eb4b1",
+  "dsrTrials": 28,
+  "dsrBenchmarkDaily": [
+    {
+      "bp": 2,
+      "value": 0.17838922599999948
+    },
+    {
+      "bp": 5,
+      "value": 0.3421984696146751
+    },
+    {
+      "bp": 10,
+      "value": 0.5199196303717382
+    }
+  ],
+  "selection": [
+    {
+      "family": "A",
+      "finalists": ["A/B0/15pct/1x", "A/B0/20pct/2x", "A/B0/15pct/1.5x"],
+      "selected": "A/B0/15pct/1x"
+    },
+    {
+      "family": "B",
+      "finalists": ["B/Tech/previous_close/1.5", "B/Tech/previous_close/1", "B/Index/previous_close/1.5"],
+      "selected": "B/Index/previous_close/1.5"
+    },
+    {
+      "family": "C",
+      "finalists": ["C/XLK-QQQ/2"],
+      "selected": "C/XLK-QQQ/2"
+    }
+  ],
+  "rankings": [
+    {
+      "id": "A/B0/fixed",
+      "family": "A",
+      "train": {
+        "safe": false,
+        "sharpeDaily": 0.021362740142653682
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.0707815990338106
+      }
+    },
+    {
+      "id": "A/B0/10pct/2x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.016200710224937947
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.07371768589757506
+      }
+    },
+    {
+      "id": "A/B0/15pct/1x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.020592560516551336
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.07190325630822011
+      }
+    },
+    {
+      "id": "A/B0/15pct/1.5x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.01995284698258993
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.07176285899108435
+      }
+    },
+    {
+      "id": "A/B0/15pct/2x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.018206344499857696
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.07148883918535055
+      }
+    },
+    {
+      "id": "A/B0/20pct/2x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.019961307991638293
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.0717869291014349
+      }
+    },
+    {
+      "id": "A/Tech/fixed",
+      "family": "A",
+      "train": {
+        "safe": false,
+        "sharpeDaily": 0.02071045014317687
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.08207245733746704
+      }
+    },
+    {
+      "id": "A/Tech/10pct/2x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.014934497209337478
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.08029352106969848
+      }
+    },
+    {
+      "id": "A/Tech/15pct/1x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.019487145330490934
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.08279341920546786
+      }
+    },
+    {
+      "id": "A/Tech/15pct/1.5x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.018954704834831484
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.08316221712066903
+      }
+    },
+    {
+      "id": "A/Tech/15pct/2x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.01727867937761397
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.08202261756664671
+      }
+    },
+    {
+      "id": "A/Tech/20pct/2x",
+      "family": "A",
+      "train": {
+        "safe": true,
+        "sharpeDaily": 0.018967865158448623
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": 0.08316766160233338
+      }
+    },
+    {
+      "id": "B/Index/previous_close/0.5",
+      "family": "B",
+      "train": {
+        "safe": false,
+        "sharpeDaily": null
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.11208096475101678
+      }
+    },
+    {
+      "id": "B/Index/previous_close/1",
+      "family": "B",
+      "train": {
+        "safe": true,
+        "sharpeDaily": -0.05913209999696411
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.0393807359846312
+      }
+    },
+    {
+      "id": "B/Index/previous_close/1.5",
+      "family": "B",
+      "train": {
+        "safe": true,
+        "sharpeDaily": -0.04628963674173025
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.023930450902098915
+      }
+    },
+    {
+      "id": "B/Tech/previous_close/0.5",
+      "family": "B",
+      "train": {
+        "safe": false,
+        "sharpeDaily": null
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.11391912605133078
+      }
+    },
+    {
+      "id": "B/Tech/previous_close/1",
+      "family": "B",
+      "train": {
+        "safe": true,
+        "sharpeDaily": -0.015356783832978447
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.05654379986685844
+      }
+    },
+    {
+      "id": "B/Tech/previous_close/1.5",
+      "family": "B",
+      "train": {
+        "safe": true,
+        "sharpeDaily": -0.010488678323322486
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.05185068644631753
+      }
+    },
+    {
+      "id": "B/Cross/previous_close/0.5",
+      "family": "B",
+      "train": {
+        "safe": true,
+        "sharpeDaily": -0.3760678812348822
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.25135030371641165
+      }
+    },
+    {
+      "id": "B/Cross/previous_close/1",
+      "family": "B",
+      "train": {
+        "safe": true,
+        "sharpeDaily": -0.2218605928946999
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.16309492836178602
+      }
+    },
+    {
+      "id": "B/Cross/previous_close/1.5",
+      "family": "B",
+      "train": {
+        "safe": true,
+        "sharpeDaily": -0.1557546941192033
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.09064393092169627
+      }
+    },
+    {
+      "id": "B/Index/open/1",
+      "family": "B",
+      "train": {
+        "safe": true,
+        "sharpeDaily": -0.06410028670549675
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.08434671259971233
+      }
+    },
+    {
+      "id": "C/SMH-QQQ/1.5",
+      "family": "C",
+      "train": {
+        "safe": false,
+        "sharpeDaily": -0.19673392916833576
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.23309396803633714
+      }
+    },
+    {
+      "id": "C/SMH-QQQ/2",
+      "family": "C",
+      "train": {
+        "safe": false,
+        "sharpeDaily": -0.14819761613457044
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.16847921149278808
+      }
+    },
+    {
+      "id": "C/XLK-QQQ/1.5",
+      "family": "C",
+      "train": {
+        "safe": false,
+        "sharpeDaily": -0.3867064974285997
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.28909075183779565
+      }
+    },
+    {
+      "id": "C/XLK-QQQ/2",
+      "family": "C",
+      "train": {
+        "safe": true,
+        "sharpeDaily": -0.259185218558757
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.18813623607601973
+      }
+    },
+    {
+      "id": "C/IWM-SPY/1.5",
+      "family": "C",
+      "train": {
+        "safe": false,
+        "sharpeDaily": -0.19263203452476846
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.18972665577261866
+      }
+    },
+    {
+      "id": "C/IWM-SPY/2",
+      "family": "C",
+      "train": {
+        "safe": false,
+        "sharpeDaily": -0.14258670469227064
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.08218356165559002
+      }
+    },
+    {
+      "id": "C/TLT-IEF/1.5",
+      "family": "C",
+      "train": {
+        "safe": false,
+        "sharpeDaily": -0.5922034087715073
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.3533336142100012
+      }
+    },
+    {
+      "id": "C/TLT-IEF/2",
+      "family": "C",
+      "train": {
+        "safe": false,
+        "sharpeDaily": -0.38487569365804575
+      },
+      "validation": {
+        "safe": true,
+        "sharpeDaily": -0.2707403946082679
+      }
+    }
+  ]
+}

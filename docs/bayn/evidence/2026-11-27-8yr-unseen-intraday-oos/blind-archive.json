@@ -1,0 +1,9 @@
+{
+  "schema": "bayn.research.wave-4e.blind-archive.v1",
+  "manifest": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/MANIFEST.json",
+  "manifestSha256": "c18d9c4d537ae17a6322dc8a2d5a9338b8851706d58c5ea62f02a31b37ea0eb0",
+  "bars": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/alpaca_sip_5m_rth_exact62_20160104_20231229.tsv.gz",
+  "calendar": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/calendar_2016_2023.json",
+  "gzipMemberBytes": 174597176,
+  "rows": 8641719
+}

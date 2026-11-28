@@ -450,9 +450,8 @@ describe('scheduled AgentRun templates', () => {
     const agentProviderFiles = [
       'argocd/applications/agents/agents-primitives-agentprovider.yaml',
       'argocd/applications/agents/codex-agentprovider.yaml',
-      'argocd/applications/agents/codex-spark-agentprovider.yaml',
-      'argocd/applications/agents/codex-spark-smoke-agentprovider.yaml',
-      'argocd/applications/agents/graf-codex-agentprovider.yaml',
+      'argocd/applications/agents/codex-smoke-agentprovider.yaml',
+      'argocd/applications/agents/anypi-agentprovider.yaml',
       'charts/agents/examples/agentprovider-native-workflow.yaml',
       'charts/agents/examples/agentprovider-sample.yaml',
       'charts/agents/examples/agentprovider-smoke.yaml',
@@ -480,40 +479,10 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(objectAt(bucketClaim, 'spec'), 'bucketName')).toBe('agents-artifacts')
     expect(objectAt(objectAt(bucketClaim, 'spec'), 'storageClassName')).toBe('rook-ceph-bucket')
 
-    const provider = readYamlObjects('argocd/applications/agents/graf-codex-agentprovider.yaml').find(
-      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
-    )
-    const providerSpec = objectAt(provider, 'spec')
-    const adapter = objectAt(providerSpec, 'adapter')
-    const codex = objectAt(adapter, 'codex')
-    const secretEnv = objectAt(codex, 'secretEnv') as Record<string, unknown>[] | undefined
-
-    expect(secretEnv).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: 'AGENTS_ARTIFACTS_ACCESS_KEY_ID',
-          secretName: 'agents-artifacts',
-          key: 'AWS_ACCESS_KEY_ID',
-        }),
-        expect.objectContaining({
-          name: 'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
-          secretName: 'agents-artifacts',
-          key: 'AWS_SECRET_ACCESS_KEY',
-        }),
-      ]),
-    )
-    expect(objectAt(objectAt(providerSpec, 'envTemplate'), 'AGENTS_ARTIFACTS_ENDPOINT')).toBe(
-      'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
-    )
-
-    const agent = readYamlObjects('argocd/applications/agents/graf-codex-agent.yaml').find(
-      (manifest) => objectAt(manifest, 'kind') === 'Agent',
-    )
-    const allowedSecrets = objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets') as
-      | string[]
-      | undefined
-    expect(allowedSecrets).toEqual(expect.arrayContaining(['codex-auth', 'agents-artifacts']))
-    expect(allowedSecrets).not.toContain('observability-minio-creds')
+    const provider = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')[0]
+    const env = objectAt(objectAt(provider, 'spec'), 'envTemplate')
+    expect(objectAt(env, 'AGENTS_ARTIFACTS_BUCKET')).toBe('agents-artifacts')
+    expect(objectAt(env, 'AGENTS_ARTIFACTS_ENDPOINT')).toBe('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80')
   })
 
   it('keeps the chart workflow smoke provider on the fake app-server', () => {
@@ -546,7 +515,7 @@ describe('scheduled AgentRun templates', () => {
     const smokeRun = objectAt(smoke, 'agentRun') as Record<string, unknown>
     const additionalSmokeRuns = objectAt(smoke, 'additionalAgentRuns')
     const smokeRunSpec = objectAt(smokeRun, 'spec')
-    const provider = readYamlObjects('argocd/applications/agents/codex-spark-smoke-agentprovider.yaml').find(
+    const provider = readYamlObjects('argocd/applications/agents/codex-smoke-agentprovider.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
     )
     const providerSpec = objectAt(provider, 'spec')
@@ -699,12 +668,11 @@ describe('scheduled AgentRun templates', () => {
   })
 
   it('renders Codex app-server adapter metadata instead of legacy provider wrapper scripts', () => {
-    const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
-    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
+    const manifests = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')
+    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex')
     const spec = objectAt(provider, 'spec')
     const adapter = objectAt(spec, 'adapter')
     const codex = objectAt(adapter, 'codex')
-    const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
     const codexConfig = (inputFiles ?? []).find(
       (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/config.toml',
@@ -714,17 +682,13 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(spec, 'argsTemplate')).toEqual([])
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
     expect(objectAt(codex, 'model')).toBe('gpt-6.2-sol')
-    expect(objectAt(codex, 'effort')).toBe('high')
+    expect(objectAt(codex, 'effort')).toBe('max')
     expect(objectAt(codex, 'sandbox')).toBe('danger-full-access')
     expect(objectAt(codex, 'approval')).toBe('never')
     expect(objectAt(codex, 'cwd')).toBe('/workspace/lab')
-    expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
-    expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
-    expect(objectAt(envTemplate, 'CODEX_MODEL')).toBe('gpt-6.2-sol')
-    expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('5')
     expect(objectAt(codexConfig, 'content')).toContain('model = "gpt-6.2-sol"')
-    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "high"')
-    expect(objectAt(codexConfig, 'content')).not.toContain('model_reasoning_effort = "xhigh"')
+    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "max"')
+    expect(objectAt(codexConfig, 'content')).not.toContain('model_reasoning_effort = "high"')
     expect(objectAt(codexConfig, 'content')).not.toContain('model = "gpt-5.6-sol"')
     expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(
       '/root/.codex/provider-codex-spark.json',

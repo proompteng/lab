@@ -146,12 +146,12 @@ argocdHooks:
       apiVersion: agents.proompteng.ai/v1alpha1
       kind: AgentRun
       metadata:
-        name: codex-spark-smoke
+        name: codex-smoke
       spec:
         agentRef:
-          name: codex-spark-smoke-agent
+          name: codex-smoke-agent
         implementationSpecRef:
-          name: codex-spark-smoke-implspec
+          name: codex-smoke-implspec
         goal:
           objective: Verify Codex app-server runner protocol, status, artifact collection, and the promoted runner image without
             external side effects.
@@ -173,7 +173,7 @@ argocdHooks:
           base: main
           head: codex/agents-smoke
           issueNumber: swarm-codex-smoke
-          issueTitle: Codex Spark smoke validation
+          issueTitle: Codex app-server smoke validation
           objective: verify deterministic app-server runner protocol and the promoted runner image without VCS or external model
             calls
         secrets:
@@ -240,8 +240,8 @@ controller:
     - agents
     - synthesis
   concurrency:
-    perNamespace: 14
-    perAgent: 10
+    perNamespace: 24
+    perAgent: 20
   queue:
     perRepo: 200
   agentRunRetentionSeconds: 604800

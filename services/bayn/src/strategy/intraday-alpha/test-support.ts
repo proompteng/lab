@@ -45,7 +45,6 @@ const calendar = Result.getOrThrow(
     { start: '2026-09-04', end: '2026-09-04' },
   ),
 )
-const sessionOpenMs = Date.parse('2026-09-04T13:30:00.000Z') // 09:30 EDT
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 const policy = makeIntradayAlphaPolicy(protocol)
 
@@ -167,6 +166,10 @@ export const makeAlphaStreamingSnapshot = (input: {
   readonly snapshotCalendar?: typeof calendar
 }) => {
   const effectiveCalendar = input.snapshotCalendar ?? calendar
+  const session = effectiveCalendar.providerSessions[0]
+  if (session === undefined) throw new Error('Expected a fixture session')
+  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)(session.date)
+  const sessionOpenMs = Date.parse(session.regularOpenAt)
   const rangeEndMs = sessionOpenMs + input.minutesFromOpen * 60_000
   const observedAtMs = rangeEndMs + protocol.decisionDelaySeconds * 1000
   const observedAt = utcInstantFromEpochMillis(observedAtMs)

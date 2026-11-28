@@ -44,7 +44,7 @@ class AgentRunClientTest {
     AgentsConfig(
       baseUrl = baseUrl,
       namespace = "agents",
-      agentName = "graf-codex-agent",
+      agentName = "test-research-agent",
       serviceAccountName = "agents-sa",
       tokenPath = null,
       bearerToken = null,
@@ -94,13 +94,13 @@ class AgentRunClientTest {
               "ok": true,
               "agentRun": {
                 "id": "record-1",
-                "agentName": "graf-codex-agent",
+                "agentName": "test-research-agent",
                 "deliveryId": "codex-test",
                 "status": "Pending",
-                "externalRunId": "graf-codex-agent-abc"
+                "externalRunId": "test-research-agent-abc"
               },
               "resource": {
-                "metadata": { "name": "graf-codex-agent-abc" },
+                "metadata": { "name": "test-research-agent-abc" },
                 "status": { "phase": "Pending" }
               }
             }
@@ -120,7 +120,7 @@ class AgentRunClientTest {
             ),
           )
         assertEquals("record-1", result.recordId)
-        assertEquals("graf-codex-agent-abc", result.resourceName)
+        assertEquals("test-research-agent-abc", result.resourceName)
       }
 
       val recorded = server.takeRequest()
@@ -128,7 +128,7 @@ class AgentRunClientTest {
       assertEquals("Bearer graf-token", recorded.getHeader("Authorization"))
       assertEquals("codex-test", recorded.getHeader("Idempotency-Key"))
       val payload = json.decodeFromString(AgentRunSubmitPayload.serializer(), recorded.body.readUtf8())
-      assertEquals("graf-codex-agent", payload.agentRef.name)
+      assertEquals("test-research-agent", payload.agentRef.name)
       assertEquals("agents", payload.namespace)
       assertEquals("job", payload.runtime.type)
       assertEquals("agents-sa", payload.runtime.config["serviceAccountName"])

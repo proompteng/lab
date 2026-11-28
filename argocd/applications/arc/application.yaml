@@ -66,7 +66,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -196,7 +196,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -303,7 +303,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -433,7 +433,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -515,7 +515,7 @@ spec:
           scaleSetLabels:
             - arc-arm64-tmpfs
           minRunners: 0
-          maxRunners: 3
+          maxRunners: 6
           listenerTemplate: &tmpfs-listener
             spec:
               nodeSelector:
@@ -546,7 +546,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   command: [ "/bin/bash", "-lc" ]
                   args: &tmpfs-init-args
                     - |
@@ -673,7 +673,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -739,7 +739,7 @@ spec:
           scaleSetLabels:
             - arc-amd64-tmpfs
           minRunners: 0
-          maxRunners: 3
+          maxRunners: 6
           listenerTemplate: *tmpfs-listener
           template:
             spec:
@@ -755,7 +755,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   command: [ "/bin/bash", "-lc" ]
                   args: *tmpfs-init-args
                   securityContext:
@@ -773,7 +773,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -813,7 +813,7 @@ spec:
           scaleSetLabels:
             - arc-arm64-tmpfs-large
           minRunners: 0
-          maxRunners: 2
+          maxRunners: 4
           listenerTemplate: *tmpfs-listener
           template:
             spec:
@@ -830,7 +830,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   command: [ "/bin/bash", "-lc" ]
                   args: *tmpfs-init-args
                   securityContext:
@@ -848,7 +848,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -883,7 +883,7 @@ spec:
           scaleSetLabels:
             - arc-amd64-tmpfs-large
           minRunners: 0
-          maxRunners: 2
+          maxRunners: 4
           listenerTemplate: *tmpfs-listener
           template:
             spec:
@@ -899,7 +899,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   command: [ "/bin/bash", "-lc" ]
                   args: *tmpfs-init-args
                   securityContext:
@@ -917,7 +917,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:fecbe93d0064757c67f2d5a8bceef26375c11c2bc8896a85e57c4a2ebda3932b
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7b853581db08d487a029989bd9b5d2ef254c241c374a47f679d7680151319261
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]

@@ -20,6 +20,7 @@ const readJobPodSpec = (job: Record<string, unknown> | undefined) => {
 describe('agents controller job-runtime module', () => {
   afterEach(() => {
     delete process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT
+    vi.unstubAllEnvs()
   })
 
   it('creates DNS-safe names and appends stable hash when needed', () => {
@@ -289,6 +290,69 @@ describe('agents controller job-runtime module', () => {
     })
     expect(agentRunnerContainer.terminationMessagePath).toBe('/workspace/.agent/status.json')
     expect(agentRunnerContainer.terminationMessagePolicy).toBe('File')
+  })
+
+  it.each([
+    {
+      name: 'standard runner',
+      customImage: false,
+      persistentWorkspace: false,
+      mounts: ['/workspace', '/tmp', '/opt/bun/install/cache', '/root/.codex'],
+    },
+    {
+      name: 'declared workspace and Bun install mounts',
+      customImage: false,
+      persistentWorkspace: true,
+      mounts: ['/tmp', '/root/.codex'],
+    },
+    { name: 'custom runner image', customImage: true, persistentWorkspace: false, mounts: [] },
+  ])('mounts the expected tmpfs paths for $name', async ({ customImage, persistentWorkspace, mounts }) => {
+    const standardImage = 'registry.example/agents-codex-runner:standard'
+    vi.stubEnv('AGENTS_AGENT_RUNNER_IMAGE', standardImage)
+    vi.stubEnv('AGENTS_CONTROLLER_AUTH_SECRET_NAME', 'codex-auth')
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => resource),
+    }
+
+    await submitJobRun(
+      kube as never,
+      {
+        metadata: { name: 'run-1', namespace: 'agents' },
+        spec: {
+          workload: persistentWorkspace
+            ? {
+                volumes: [
+                  { type: 'pvc', name: 'worktree', claimName: 'worktree-pvc', mountPath: '/workspace' },
+                  { type: 'pvc', name: 'bun-install', claimName: 'bun-install-pvc', mountPath: '/opt/bun/install' },
+                ],
+              }
+            : {},
+        },
+      },
+      { metadata: { name: 'agent-a' }, spec: {} },
+      { metadata: { name: 'codex' }, spec: {} },
+      { summary: 'Run summary' },
+      null,
+      'agents',
+      customImage ? 'registry.example/custom-runner:tag' : standardImage,
+      'job',
+    )
+
+    const podSpec = readJobPodSpec(kube.apply.mock.calls.find(([resource]) => resource.kind === 'Job')?.[0])
+    const volumes = podSpec.volumes as { name: string; emptyDir?: { medium?: string } }[]
+    const [container] = podSpec.containers as { volumeMounts: { name: string; mountPath: string }[] }[]
+    const memoryNames = new Set(
+      volumes.filter((volume) => volume.emptyDir?.medium === 'Memory').map((volume) => volume.name),
+    )
+    expect(
+      container.volumeMounts.filter((mount) => memoryNames.has(mount.name)).map((mount) => mount.mountPath),
+    ).toEqual(mounts)
+    if (persistentWorkspace) {
+      expect(container.volumeMounts.filter((mount) => mount.mountPath === '/workspace')).toEqual([
+        { name: 'worktree', mountPath: '/workspace', readOnly: false },
+      ])
+    }
   })
 
   it('preserves the image-baked Codex home when no auth secret is configured', async () => {

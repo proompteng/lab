@@ -1,19 +1,14 @@
 # Saigak To Flamingo GPU Pod Migration
 
 This runbook records the hard migration where completion traffic moves to the
-`flamingo` Kubernetes GPU pod and `saigak` becomes embeddings-only on the RTX
-3090.
+`flamingo` Kubernetes GPU pod and `saigak` serves embeddings.
 
 ## Current Roles
 
 `saigak` is a Kubernetes `StatefulSet` serving Ollama through an embeddings-only
-proxy on port `11434`; it must not expose chat completion endpoints. Its current
-active PVC is `saigak-altra-data`, a local-path cache that binds on first
-consumer to the ARM64 Altra node (`talos-192-168-1-85`) so the old Turin-bound
-`saigak-data` cache cannot pin the pod away from the RTX 3090. The pod must use
-`runtimeClassName: nvidia`, request and limit `nvidia.com/gpu: "1"`, and keep
-`SAIGAK_REQUIRE_GPU_RESIDENCY=true` so readiness fails unless the 4096-dimensional
-embedding model is resident in GPU VRAM.
+proxy on port `11434`. It requests one `amd.com/gpu` on Ryzen
+(`talos-192-168-1-194`) and stores the model in its local `saigak-ryzen-data`
+claim. Readiness requires the model to be resident in GPU memory.
 
 `flamingo` is a normal Kubernetes Deployment pinned to Turin's Blackwell GPU. It
 serves a vLLM OpenAI-compatible API on:
@@ -31,7 +26,7 @@ qwen38-flamingo
 
 ## Embedding Contract
 
-Keep embedding traffic on `saigak` with the existing 4096-dimensional model:
+Saigak defaults OpenAI requests to 2,048 dimensions. Consumers with 4,096-dimensional indexes request their width explicitly.
 
 ```text
 OPENAI_EMBEDDING_API_BASE_URL=http://saigak.saigak.svc.cluster.local:11434/v1
@@ -155,7 +150,7 @@ Do not treat completion migration as complete until all of these are true:
 - No completion consumer depends on Saigak's Ollama model store.
 - OpenWebUI, Jangar, Bumba, Agents, Torghut, and Synthesis configs have been audited.
 - Saigak rejects `/v1/chat/completions` and `/api/generate`.
-- Saigak `/v1/embeddings` returns 4096 dimensions, and `/api/ps` shows the
-  embedding model with non-zero `size_vram` on the Altra RTX 3090. CPU-only
+- Saigak `/v1/embeddings` returns 2,048 dimensions by default and 4,096 when requested. `/api/ps` shows the
+  embedding model with non-zero `size_vram` on the Ryzen Radeon 8060S. CPU-only
   residency is not an acceptable steady state.
 - A stability window has passed with Flamingo stable under normal agent load.
