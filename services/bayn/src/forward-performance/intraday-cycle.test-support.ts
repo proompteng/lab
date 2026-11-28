@@ -7,6 +7,82 @@ import { streamingFixture } from '../testing/streaming-market-fixture'
 import { IsoDateSchema } from '../schemas'
 import { canonicalHashV1Result } from '../hash'
 
+// The two recorded cuts use the same venue timetable and universe. Keep each cut's actual provider offsets,
+// record counts, time window and content hashes rather than rebuilding them from synthetic bars.
+const tradingDates = [
+  '2026-09-10',
+  '2026-09-11',
+  '2026-09-14',
+  '2026-09-15',
+  '2026-09-16',
+  '2026-09-17',
+  '2026-09-18',
+  '2026-09-21',
+  '2026-09-22',
+  '2026-09-23',
+  '2026-09-24',
+  '2026-09-25',
+  '2026-09-28',
+  '2026-09-29',
+  '2026-09-30',
+  '2026-10-01',
+  '2026-10-02',
+  '2026-10-05',
+  '2026-10-06',
+  '2026-10-07',
+  '2026-10-08',
+  '2026-10-09',
+] as const
+const recordedCalendar = (start: (typeof tradingDates)[number], end: '2026-10-10' | '2026-10-11') =>
+  withProviderSessions({
+    source: 'alpaca-v2-calendar',
+    sessions: tradingDates
+      .filter((date) => date >= start)
+      .map((date) => ({
+        date,
+        openAt: `${date}T13:30:00.000Z`,
+        closeAt: `${date}T20:00:00.000Z`,
+      })),
+    timeZone: 'UTC',
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
+    requestedRange: { end, start },
+  } as const)
+
+const universe = [
+  'AAPL',
+  'AMD',
+  'AMZN',
+  'AVGO',
+  'COHR',
+  'CRDO',
+  'IWM',
+  'LITE',
+  'MRVL',
+  'MU',
+  'NVDA',
+  'QQQ',
+  'SMH',
+  'SNDK',
+  'SPY',
+  'WDC',
+] as const
+const sourceTopics = { bars: 'torghut.bars.1m.v1', quotes: 'torghut.quotes.v1', trades: 'torghut.trades.v1' } as const
+
+const lineage = (
+  sourceTopic: string,
+  rows: ReadonlyArray<readonly [partition: number, firstOffset: string, lastOffset: string, count: number]>,
+) =>
+  rows.map(([sourcePartition, firstOffset, lastOffset, recordCount]) => ({
+    lastOffset,
+    firstOffset,
+    recordCount,
+    sourceTopic,
+    sourcePartition,
+  }))
+
+const watermarks = (sourceTopic: string, rows: ReadonlyArray<readonly [partition: number, inclusiveOffset: string]>) =>
+  rows.map(([sourcePartition, inclusiveLastOffset]) => ({ sourceTopic, sourcePartition, inclusiveLastOffset }))
+
 const recordedIntradayCycles = [
   {
     cycleId: 'c4b0a5b9bd46f3e2fc8b972809b400b19510cdcd444f2cb4ad1ee5f0bd4b2e99',
@@ -16,324 +92,62 @@ const recordedIntradayCycles = [
     manifest: {
       feed: 'iex',
       lineage: [
-        {
-          lastOffset: '1146404',
-          firstOffset: '1146333',
-          recordCount: 30,
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 0,
-        },
-        {
-          lastOffset: '1708028',
-          firstOffset: '1707896',
-          recordCount: 29,
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 1,
-        },
-        {
-          lastOffset: '2125442',
-          firstOffset: '2125204',
-          recordCount: 150,
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 2,
-        },
-        {
-          lastOffset: '178161311',
-          firstOffset: '178161311',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 1,
-        },
-        {
-          lastOffset: '4709726',
-          firstOffset: '4709726',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 3,
-        },
-        {
-          lastOffset: '9884334',
-          firstOffset: '9884334',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 4,
-        },
-        {
-          lastOffset: '3507816',
-          firstOffset: '3507816',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 6,
-        },
-        {
-          lastOffset: '2308433',
-          firstOffset: '2308433',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 8,
-        },
-        {
-          lastOffset: '9189160',
-          firstOffset: '9189160',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 9,
-        },
-        {
-          lastOffset: '14462334',
-          firstOffset: '14462334',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 12,
-        },
-        {
-          lastOffset: '6398302',
-          firstOffset: '6398302',
-          recordCount: 1,
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 0,
-        },
-        {
-          lastOffset: '10213132',
-          firstOffset: '10213132',
-          recordCount: 1,
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 1,
-        },
-        {
-          lastOffset: '12465101',
-          firstOffset: '12465079',
-          recordCount: 5,
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 2,
-        },
+        ...lineage(sourceTopics.bars, [
+          [0, '1146333', '1146404', 30],
+          [1, '1707896', '1708028', 29],
+          [2, '2125204', '2125442', 150],
+        ]),
+        ...lineage(sourceTopics.quotes, [
+          [1, '178161311', '178161311', 1],
+          [3, '4709726', '4709726', 1],
+          [4, '9884334', '9884334', 1],
+          [6, '3507816', '3507816', 1],
+          [8, '2308433', '2308433', 1],
+          [9, '9189160', '9189160', 1],
+          [12, '14462334', '14462334', 1],
+        ]),
+        ...lineage(sourceTopics.trades, [
+          [0, '6398302', '6398302', 1],
+          [1, '10213132', '10213132', 1],
+          [2, '12465079', '12465101', 5],
+        ]),
       ],
       symbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'],
       barCount: 209,
-      calendar: withProviderSessions({
-        source: 'alpaca-v2-calendar',
-        sessions: [
-          {
-            date: '2026-09-10',
-            openAt: '2026-09-10T13:30:00.000Z',
-            closeAt: '2026-09-10T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-11',
-            openAt: '2026-09-11T13:30:00.000Z',
-            closeAt: '2026-09-11T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-14',
-            openAt: '2026-09-14T13:30:00.000Z',
-            closeAt: '2026-09-14T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-15',
-            openAt: '2026-09-15T13:30:00.000Z',
-            closeAt: '2026-09-15T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-16',
-            openAt: '2026-09-16T13:30:00.000Z',
-            closeAt: '2026-09-16T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-17',
-            openAt: '2026-09-17T13:30:00.000Z',
-            closeAt: '2026-09-17T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-18',
-            openAt: '2026-09-18T13:30:00.000Z',
-            closeAt: '2026-09-18T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-21',
-            openAt: '2026-09-21T13:30:00.000Z',
-            closeAt: '2026-09-21T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-22',
-            openAt: '2026-09-22T13:30:00.000Z',
-            closeAt: '2026-09-22T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-23',
-            openAt: '2026-09-23T13:30:00.000Z',
-            closeAt: '2026-09-23T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-24',
-            openAt: '2026-09-24T13:30:00.000Z',
-            closeAt: '2026-09-24T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-25',
-            openAt: '2026-09-25T13:30:00.000Z',
-            closeAt: '2026-09-25T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-28',
-            openAt: '2026-09-28T13:30:00.000Z',
-            closeAt: '2026-09-28T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-29',
-            openAt: '2026-09-29T13:30:00.000Z',
-            closeAt: '2026-09-29T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-30',
-            openAt: '2026-09-30T13:30:00.000Z',
-            closeAt: '2026-09-30T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-01',
-            openAt: '2026-10-01T13:30:00.000Z',
-            closeAt: '2026-10-01T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-02',
-            openAt: '2026-10-02T13:30:00.000Z',
-            closeAt: '2026-10-02T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-05',
-            openAt: '2026-10-05T13:30:00.000Z',
-            closeAt: '2026-10-05T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-06',
-            openAt: '2026-10-06T13:30:00.000Z',
-            closeAt: '2026-10-06T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-07',
-            openAt: '2026-10-07T13:30:00.000Z',
-            closeAt: '2026-10-07T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-08',
-            openAt: '2026-10-08T13:30:00.000Z',
-            closeAt: '2026-10-08T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-09',
-            openAt: '2026-10-09T13:30:00.000Z',
-            closeAt: '2026-10-09T20:00:00.000Z',
-          },
-        ],
-        timeZone: 'UTC',
-        schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
-        requestedRange: {
-          end: '2026-10-10',
-          start: '2026-09-10',
-        },
-        normalizedResponseHash: '1e5955ff3fe06032aa6f3422b1b2422aaca1fa5afdcfcf2656722a7abd3c4138',
-      }),
-      universe: [
-        'AAPL',
-        'AMD',
-        'AMZN',
-        'AVGO',
-        'COHR',
-        'CRDO',
-        'IWM',
-        'LITE',
-        'MRVL',
-        'MU',
-        'NVDA',
-        'QQQ',
-        'SMH',
-        'SNDK',
-        'SPY',
-        'WDC',
-      ],
+      calendar: recordedCalendar('2026-09-10', '2026-10-10'),
+      universe: universe,
       delayClass: 'real_time_exchange_only',
       observedAt: '2026-09-10T19:50:27.072Z',
       quoteCount: 7,
       rangeEndAt: '2026-09-10T19:50:00.000Z',
-      snapshotId: '70bd829b446556de0eb3845eb323822f727ddb978b8d12757ad82bd9eafc952d',
       tradeCount: 7,
       universeId: 'torghut-core-equity-v2',
-      contentHash: '9330c3c03c00c638d0c565cd433896e743a92974a14a1f47ccecfbb520c6a05b',
       sessionDate: '2026-09-10',
       rangeStartAt: '2026-09-10T19:20:00.000Z',
-      sourceTopics: {
-        bars: 'torghut.bars.1m.v1',
-        quotes: 'torghut.quotes.v1',
-        trades: 'torghut.trades.v1',
-      },
+      sourceTopics: { ...sourceTopics },
       schemaVersion: 'bayn.intraday-market-snapshot.v1',
       barsContentHash: 'c04336843d74ecbcd167ab6f3fcbd4fac880a32cb9aea90ce8d8389eb9f66dea',
       candidateSymbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'],
       archiveWatermarks: [
-        {
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 0,
-          inclusiveLastOffset: '1146405',
-        },
-        {
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 1,
-          inclusiveLastOffset: '1708031',
-        },
-        {
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 2,
-          inclusiveLastOffset: '2125442',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 1,
-          inclusiveLastOffset: '178161311',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 3,
-          inclusiveLastOffset: '4709726',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 4,
-          inclusiveLastOffset: '9884334',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 6,
-          inclusiveLastOffset: '3507816',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 8,
-          inclusiveLastOffset: '2308433',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 9,
-          inclusiveLastOffset: '9189160',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 12,
-          inclusiveLastOffset: '14462334',
-        },
-        {
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 0,
-          inclusiveLastOffset: '6398302',
-        },
-        {
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 1,
-          inclusiveLastOffset: '10213132',
-        },
-        {
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 2,
-          inclusiveLastOffset: '12465101',
-        },
+        ...watermarks(sourceTopics.bars, [
+          [0, '1146405'],
+          [1, '1708031'],
+          [2, '2125442'],
+        ]),
+        ...watermarks(sourceTopics.quotes, [
+          [1, '178161311'],
+          [3, '4709726'],
+          [4, '9884334'],
+          [6, '3507816'],
+          [8, '2308433'],
+          [9, '9189160'],
+          [12, '14462334'],
+        ]),
+        ...watermarks(sourceTopics.trades, [
+          [0, '6398302'],
+          [1, '10213132'],
+          [2, '12465101'],
+        ]),
       ],
       maximumQuoteAgeMs: 2000,
       quotesContentHash: '7fa6c2d6381c52fc219701b4a13bdf677140823010f5e61a6cefa739eec639de',
@@ -351,319 +165,62 @@ const recordedIntradayCycles = [
     manifest: {
       feed: 'iex',
       lineage: [
-        {
-          lastOffset: '1146559',
-          firstOffset: '1146471',
-          recordCount: 30,
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 0,
-        },
-        {
-          lastOffset: '1708255',
-          firstOffset: '1708114',
-          recordCount: 30,
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 1,
-        },
-        {
-          lastOffset: '2125830',
-          firstOffset: '2125594',
-          recordCount: 149,
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 2,
-        },
-        {
-          lastOffset: '178485127',
-          firstOffset: '178485127',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 1,
-        },
-        {
-          lastOffset: '4845243',
-          firstOffset: '4845243',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 3,
-        },
-        {
-          lastOffset: '10241845',
-          firstOffset: '10241845',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 4,
-        },
-        {
-          lastOffset: '3585389',
-          firstOffset: '3585389',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 6,
-        },
-        {
-          lastOffset: '2409817',
-          firstOffset: '2409817',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 8,
-        },
-        {
-          lastOffset: '9601595',
-          firstOffset: '9601595',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 9,
-        },
-        {
-          lastOffset: '14840410',
-          firstOffset: '14840410',
-          recordCount: 1,
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 12,
-        },
-        {
-          lastOffset: '6406339',
-          firstOffset: '6406339',
-          recordCount: 1,
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 0,
-        },
-        {
-          lastOffset: '10216677',
-          firstOffset: '10216677',
-          recordCount: 1,
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 1,
-        },
-        {
-          lastOffset: '12483240',
-          firstOffset: '12483161',
-          recordCount: 5,
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 2,
-        },
+        ...lineage(sourceTopics.bars, [
+          [0, '1146471', '1146559', 30],
+          [1, '1708114', '1708255', 30],
+          [2, '2125594', '2125830', 149],
+        ]),
+        ...lineage(sourceTopics.quotes, [
+          [1, '178485127', '178485127', 1],
+          [3, '4845243', '4845243', 1],
+          [4, '10241845', '10241845', 1],
+          [6, '3585389', '3585389', 1],
+          [8, '2409817', '2409817', 1],
+          [9, '9601595', '9601595', 1],
+          [12, '14840410', '14840410', 1],
+        ]),
+        ...lineage(sourceTopics.trades, [
+          [0, '6406339', '6406339', 1],
+          [1, '10216677', '10216677', 1],
+          [2, '12483161', '12483240', 5],
+        ]),
       ],
       symbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'],
       barCount: 209,
-      calendar: withProviderSessions({
-        source: 'alpaca-v2-calendar',
-        sessions: [
-          {
-            date: '2026-09-11',
-            openAt: '2026-09-11T13:30:00.000Z',
-            closeAt: '2026-09-11T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-14',
-            openAt: '2026-09-14T13:30:00.000Z',
-            closeAt: '2026-09-14T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-15',
-            openAt: '2026-09-15T13:30:00.000Z',
-            closeAt: '2026-09-15T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-16',
-            openAt: '2026-09-16T13:30:00.000Z',
-            closeAt: '2026-09-16T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-17',
-            openAt: '2026-09-17T13:30:00.000Z',
-            closeAt: '2026-09-17T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-18',
-            openAt: '2026-09-18T13:30:00.000Z',
-            closeAt: '2026-09-18T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-21',
-            openAt: '2026-09-21T13:30:00.000Z',
-            closeAt: '2026-09-21T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-22',
-            openAt: '2026-09-22T13:30:00.000Z',
-            closeAt: '2026-09-22T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-23',
-            openAt: '2026-09-23T13:30:00.000Z',
-            closeAt: '2026-09-23T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-24',
-            openAt: '2026-09-24T13:30:00.000Z',
-            closeAt: '2026-09-24T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-25',
-            openAt: '2026-09-25T13:30:00.000Z',
-            closeAt: '2026-09-25T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-28',
-            openAt: '2026-09-28T13:30:00.000Z',
-            closeAt: '2026-09-28T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-29',
-            openAt: '2026-09-29T13:30:00.000Z',
-            closeAt: '2026-09-29T20:00:00.000Z',
-          },
-          {
-            date: '2026-09-30',
-            openAt: '2026-09-30T13:30:00.000Z',
-            closeAt: '2026-09-30T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-01',
-            openAt: '2026-10-01T13:30:00.000Z',
-            closeAt: '2026-10-01T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-02',
-            openAt: '2026-10-02T13:30:00.000Z',
-            closeAt: '2026-10-02T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-05',
-            openAt: '2026-10-05T13:30:00.000Z',
-            closeAt: '2026-10-05T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-06',
-            openAt: '2026-10-06T13:30:00.000Z',
-            closeAt: '2026-10-06T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-07',
-            openAt: '2026-10-07T13:30:00.000Z',
-            closeAt: '2026-10-07T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-08',
-            openAt: '2026-10-08T13:30:00.000Z',
-            closeAt: '2026-10-08T20:00:00.000Z',
-          },
-          {
-            date: '2026-10-09',
-            openAt: '2026-10-09T13:30:00.000Z',
-            closeAt: '2026-10-09T20:00:00.000Z',
-          },
-        ],
-        timeZone: 'UTC',
-        schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
-        requestedRange: {
-          end: '2026-10-11',
-          start: '2026-09-11',
-        },
-        normalizedResponseHash: '4fa7db4671cb39bfcea964c2df6e093dc11f798ff9787debd533790ac2c678dd',
-      }),
-      universe: [
-        'AAPL',
-        'AMD',
-        'AMZN',
-        'AVGO',
-        'COHR',
-        'CRDO',
-        'IWM',
-        'LITE',
-        'MRVL',
-        'MU',
-        'NVDA',
-        'QQQ',
-        'SMH',
-        'SNDK',
-        'SPY',
-        'WDC',
-      ],
+      calendar: recordedCalendar('2026-09-11', '2026-10-11'),
+      universe: universe,
       delayClass: 'real_time_exchange_only',
       observedAt: '2026-09-11T14:01:31.791Z',
       quoteCount: 7,
       rangeEndAt: '2026-09-11T14:01:00.000Z',
-      snapshotId: 'f0edc76ec42fe76498818c34f72ab7abe65320a347421355930db0d27966c958',
       tradeCount: 7,
       universeId: 'torghut-core-equity-v2',
-      contentHash: '25e4a200a58c1c0c40af3171284d4f18a384a94ade6f4d2d2cea6485a46c0187',
       sessionDate: '2026-09-11',
       rangeStartAt: '2026-09-11T13:31:00.000Z',
-      sourceTopics: {
-        bars: 'torghut.bars.1m.v1',
-        quotes: 'torghut.quotes.v1',
-        trades: 'torghut.trades.v1',
-      },
+      sourceTopics: { ...sourceTopics },
       schemaVersion: 'bayn.intraday-market-snapshot.v1',
       barsContentHash: '95af06f50199a0630109635a47c2ea9b03ff5620e5180bb906c24776760b563c',
       candidateSymbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'],
       archiveWatermarks: [
-        {
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 0,
-          inclusiveLastOffset: '1146559',
-        },
-        {
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 1,
-          inclusiveLastOffset: '1708259',
-        },
-        {
-          sourceTopic: 'torghut.bars.1m.v1',
-          sourcePartition: 2,
-          inclusiveLastOffset: '2125832',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 1,
-          inclusiveLastOffset: '178485127',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 3,
-          inclusiveLastOffset: '4845243',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 4,
-          inclusiveLastOffset: '10241845',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 6,
-          inclusiveLastOffset: '3585389',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 8,
-          inclusiveLastOffset: '2409817',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 9,
-          inclusiveLastOffset: '9601595',
-        },
-        {
-          sourceTopic: 'torghut.quotes.v1',
-          sourcePartition: 12,
-          inclusiveLastOffset: '14840410',
-        },
-        {
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 0,
-          inclusiveLastOffset: '6406339',
-        },
-        {
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 1,
-          inclusiveLastOffset: '10216677',
-        },
-        {
-          sourceTopic: 'torghut.trades.v1',
-          sourcePartition: 2,
-          inclusiveLastOffset: '12483240',
-        },
+        ...watermarks(sourceTopics.bars, [
+          [0, '1146559'],
+          [1, '1708259'],
+          [2, '2125832'],
+        ]),
+        ...watermarks(sourceTopics.quotes, [
+          [1, '178485127'],
+          [3, '4845243'],
+          [4, '10241845'],
+          [6, '3585389'],
+          [8, '2409817'],
+          [9, '9601595'],
+          [12, '14840410'],
+        ]),
+        ...watermarks(sourceTopics.trades, [
+          [0, '6406339'],
+          [1, '10216677'],
+          [2, '12483240'],
+        ]),
       ],
       maximumQuoteAgeMs: 10000,
       quotesContentHash: '0a13c49ddd1176c71b2ecc107f6097fd3303aea5ceaf00d66d4262a49aefdcb5',
@@ -676,13 +233,12 @@ const recordedIntradayCycles = [
 ] as const
 
 export const completedIntradayCycles = recordedIntradayCycles.map((cycle) => {
-  const { normalizedResponseHash: _calendarHash, ...calendarMaterial } = cycle.manifest.calendar
+  const calendarMaterial = cycle.manifest.calendar
   const calendar = {
     ...calendarMaterial,
     normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)),
   }
-  const { snapshotId: _snapshotId, contentHash: _contentHash, ...original } = cycle.manifest
-  const material = { ...original, calendar }
+  const material = { ...cycle.manifest, calendar }
   const hashed = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
   return { ...cycle, manifest: { ...hashed, snapshotId: Result.getOrThrow(canonicalHashV1Result(hashed)) } }
 })
