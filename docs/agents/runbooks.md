@@ -94,6 +94,28 @@ Keep the port-forward running while collecting the checks, or run the curls from
 temporary diagnostic Pod. `/ready` and control-plane status are evidence surfaces; they
 do not replace an AgentRun proof.
 
+### AgentRun triage access
+
+`codex-agent` and `google-agent` in `agents` use dedicated accounts bound only to the `agentrun-triage` ClusterRole.
+The kubelet projects their normal Kubernetes API tokens. Codex keeps its separate Auto Ontology token.
+The observability proxy at `http://agents-observability-query.agents.svc.cluster.local:8080` accepts only GET requests
+to explicit query paths. It sets the Mimir and Alertmanager tenant to `anonymous`. The dashboards, ingestion, and
+administration services are not replaced.
+
+For an authorized rollout, promote the Agents image and manifests together through Kargo. Verify the query Deployment
+and the two triage NetworkPolicies are present before syncing the reviewed kube-router revision that excludes these
+pods from the rollout allow-all. Do not treat the query path as enforced until kube-router applies the exclusion.
+The runner policy keeps public egress, DNS, and existing pod-to-pod dependencies outside the observability and ingress
+namespaces. If the Kubernetes Service or control-plane endpoint IPs change, update the API rules with the cluster change.
+
+From a fresh run of each provider, confirm that `kubectl -n agents get pods` and a namespaced pod log read succeed.
+Confirm that reads of `secrets` and `configmaps`, and access checks for `create pods/exec` and `patch deployments`,
+are denied. Make one GET query each to Mimir, Loki, Tempo, and Alertmanager through the proxy. Confirm it refuses
+a POST to a query path and a GET to an administrative path. Confirm the original gateway addresses (including tailnet
+ingress) are unreachable from those runs, and that GitHub, artifact uploads, and Codex's MCP gateway still work.
+To roll back the network changes, restore the previous kube-router safety selector before reverting the Agents revision.
+This restores the prior network behavior; remove the triage bindings if revoking the Kubernetes API access.
+
 ## Production rollback
 
 Rollback is a Kargo operation. Identify the last known-good Freight and re-promote it

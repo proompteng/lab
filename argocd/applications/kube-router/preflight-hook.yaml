@@ -164,7 +164,7 @@ spec:
                     jq -e --arg namespace "$namespace" '
                       .spec.podSelector == (
                         if $namespace == "agents" then
-                          {"matchExpressions":[{"key":"app.kubernetes.io/name","operator":"NotIn","values":["auto-ontology-sync"]}]}
+                          {"matchExpressions":[{"key":"app.kubernetes.io/name","operator":"NotIn","values":["auto-ontology-sync","agents-observability-query"]},{"key":"agents.proompteng.ai/provider","operator":"NotIn","values":["codex","google"]}]}
                         else {} end
                       ) and
                       (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
