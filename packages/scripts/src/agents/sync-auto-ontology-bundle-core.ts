@@ -1,15 +1,7 @@
-import {
-  type A_Expr,
-  type ColumnRef,
-  type FuncCall,
-  type Node,
-  type RangeVar,
-  type SelectStmt,
-  type SortBy,
-  type TypeName,
-  parse,
-} from 'libpg-query'
+import type { A_Expr, ColumnRef, FuncCall, RangeVar, SortBy, TypeName } from 'libpg-query'
 import { z } from 'zod'
+
+import { builtInTypes, isBuiltin, visitReadOnlySelect } from './ontology-bundle-sql'
 
 // All errors returned to the operator must use fixed text, not input or API response values.
 export class BundleSyncError extends Error {}
@@ -71,24 +63,6 @@ const functions = new Set([
   'sum',
   'upper',
 ])
-const castTypes = new Set([
-  'bool',
-  'date',
-  'float4',
-  'float8',
-  'int2',
-  'int4',
-  'int8',
-  'interval',
-  'json',
-  'jsonb',
-  'numeric',
-  'text',
-  'timestamp',
-  'timestamptz',
-  'uuid',
-  'varchar',
-])
 const operators = new Set([
   '=',
   '<>',
@@ -115,65 +89,16 @@ const operators = new Set([
 const sensitiveIdentifier =
   /(?:^|_)(?:passwords?|passwd|credentials?|api_keys?|access_tokens?|refresh_tokens?|client_secrets?|secret_keys?|secrets?)(?:_|$)/i
 
-const builtin = (parts: Node[] | undefined, allowed: ReadonlySet<string>) => {
-  const path = (parts ?? []).map((part) => ('String' in part ? part.String.sval : undefined))
-  const name = path.at(-1)
-  return (
-    name !== undefined && allowed.has(name) && (path.length === 1 || (path.length === 2 && path[0] === 'pg_catalog'))
-  )
-}
-
 const validateAnalysis = async (sql: string, index: number, database: string, referenced: Map<string, Set<string>>) => {
   const reject = (reason: string): never => {
     throw new BundleSyncError(`customAnalyses[${index}]: ${reason}`)
   }
-  const statements = await parse(sql).then(
-    (result) => result.stmts,
-    () => reject('Invalid PostgreSQL SQL'),
-  )
-  const root = statements?.[0]?.stmt
-  if (statements?.length !== 1 || !root || !('SelectStmt' in root)) {
-    return reject('Expected exactly one SELECT statement')
-  }
   let readsRelation = false
-  const visitSelect = (select: SelectStmt, inherited: ReadonlySet<string>) => {
-    if (
-      select.intoClause ||
-      select.lockingClause?.length ||
-      select.valuesLists?.length ||
-      select.withClause?.recursive
-    ) {
-      reject('SELECT INTO, row locks, VALUES and recursive CTEs are not supported')
-    }
-    const visible = new Set(inherited)
-    const { withClause, larg, rarg, ...clauses } = select
-    for (const cte of withClause?.ctes ?? []) {
-      if (
-        !('CommonTableExpr' in cte) ||
-        !cte.CommonTableExpr.ctename ||
-        !cte.CommonTableExpr.ctequery ||
-        !('SelectStmt' in cte.CommonTableExpr.ctequery)
-      ) {
-        return reject('CTEs must be read-only SELECTs')
-      }
-      visitSelect(cte.CommonTableExpr.ctequery.SelectStmt, visible)
-      visible.add(cte.CommonTableExpr.ctename)
-    }
-    if (larg) visitSelect(larg, visible)
-    if (rarg) visitSelect(rarg, visible)
-    visit(clauses, visible)
-  }
-  const visit = (node: unknown, visible: ReadonlySet<string>): void => {
+  const inspect = (node: unknown): void => {
     if (typeof node === 'string' && containsCredential(node)) reject('Possible credential in SQL')
-    if (Array.isArray(node)) {
-      for (const child of node) visit(child, visible)
-      return
-    }
     if (node === null || typeof node !== 'object') return
-    if ('SelectStmt' in node) return visitSelect(node.SelectStmt as SelectStmt, visible)
     if ('RangeVar' in node) {
       const { catalogname, schemaname, relname } = node.RangeVar as RangeVar
-      if (!catalogname && !schemaname && relname && visible.has(relname)) return
       if (
         !relname ||
         !schemaname ||
@@ -190,15 +115,15 @@ const validateAnalysis = async (sql: string, index: number, database: string, re
       referenced.set(schemaname, tables)
       readsRelation = true
     }
-    if ('FuncCall' in node && !builtin((node.FuncCall as FuncCall).funcname, functions)) {
+    if ('FuncCall' in node && !isBuiltin((node.FuncCall as FuncCall).funcname, functions)) {
       reject('Only allowlisted read-only PostgreSQL functions are supported')
     }
-    if ('typeName' in node && !builtin((node.typeName as TypeName).names, castTypes)) {
+    if ('typeName' in node && !isBuiltin((node.typeName as TypeName).names, builtInTypes)) {
       reject('Only allowlisted PostgreSQL built-in casts are supported')
     }
     const op =
       'A_Expr' in node ? (node.A_Expr as A_Expr).name : 'SortBy' in node ? (node.SortBy as SortBy).useOp : undefined
-    if (op?.length && !builtin(op, operators)) reject('Only allowlisted PostgreSQL operators are supported')
+    if (op?.length && !isBuiltin(op, operators)) reject('Only allowlisted PostgreSQL operators are supported')
     if ('ColumnRef' in node) {
       const fields = (node.ColumnRef as ColumnRef).fields ?? []
       if (
@@ -218,10 +143,14 @@ const validateAnalysis = async (sql: string, index: number, database: string, re
     ) {
       reject('Table routines, sampling and parameters are not supported in saved analyses')
     }
-    for (const child of Object.values(node)) visit(child, visible)
   }
 
-  visitSelect(root.SelectStmt, new Set())
+  try {
+    await visitReadOnlySelect(sql, inspect)
+  } catch (error) {
+    if (error instanceof BundleSyncError) throw error
+    return reject(error instanceof Error ? error.message : 'Invalid PostgreSQL SQL')
+  }
   return readsRelation
 }
 
