@@ -29,6 +29,12 @@ From the tailnet, supply a read/chat token in `AUTO_ONTOLOGY_API_TOKEN` and run
 `bun argocd/applications/auto-ontology/verify-queries.ts <agents-count> <bayn-count>`.
 It submits both questions to the private frontend without a source hint and checks the returned SQL relation and count. At release, repeat the two questions in the signed-in UI and with the public MCP server's authenticated `ask_question` tool. Both must agree with the reference counts.
 
+## Non-reasoning Qwen3 thinking control
+
+Flamingo serves `qwen38-flamingo` with vLLM `--reasoning-parser qwen3`. Because `NON_REASONING_MODEL` falls back to `DEFAULT_MODELS_MODEL`, calls through `get_non_reasoning_llm_client()` (including `check_answerable` / `QuestionExtractionLiteModel`) can enter unbounded thinking loops and hit the 120s client timeout.
+
+The backend startup init containers also apply `non-reasoning-thinking.patch` onto `/app/auto_ontology/utils/llm_invoke.py` and mount the patched directory read-only at `/app/auto_ontology/utils`. It injects `"chat_template_kwargs": {"enable_thinking": false}` into `/chat/completions` POST payloads only for `get_non_reasoning_llm_client()` while leaving `get_llm_client()` untouched. Set `AUTO_ONTOLOGY_NON_REASONING_DISABLE_THINKING=false` to bypass this without removing the patch, or remove the patch once a dedicated non-reasoning model or upstream support is configured.
+
 ## PostgreSQL commit durability
 
 The single-instance catalog database uses [`synchronous_commit=off`](https://www.postgresql.org/docs/19/wal-async-commit.html)

@@ -10,6 +10,7 @@ configMapGenerator:
   - name: auto-ontology-sql-routing
     files:
       - sql-routing.patch
+      - non-reasoning-thinking.patch
   - name: auto-ontology-oauth-discovery
     files:
       - haproxy.cfg=oauth-discovery.cfg
