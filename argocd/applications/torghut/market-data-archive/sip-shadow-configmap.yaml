@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: market-data-archive-sip-shadow-config
+  namespace: torghut
+# Leave unreferenced until activation. The archive enables the lane when these six keys are present;
+# there is no ARCHIVE_SIP_SHADOW_ENABLED switch.
+data:
+  ARCHIVE_SIP_SHADOW_UNIVERSE_ID: "torghut-core-equity-sip-v1"
+  ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS: "AAPL,ALAB,AMAT,AMD,AMZN,ANET,APP,ARM,ASML,AVGO,CEG,COHR,COIN,CRDO,CRWD,DBC,EEM,EFA,GEV,GLD,GOOGL,HOOD,HYG,IEF,INTC,IWM,KLAC,LITE,LQD,LRCX,META,MRVL,MSFT,MSTR,MU,NET,NFLX,NOW,NVDA,ORCL,PANW,PLTR,QQQ,SHOP,SHY,SLV,SMCI,SMH,SNDK,SNOW,SOFI,SPOT,SPY,TLT,TSLA,TSM,UBER,USO,VNQ,VRT,VST,WDC,XLB,XLC,XLE,XLF,XLI,XLK,XLP,XLRE,XLU,XLV,XLY"
+  ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOL_HASH: "89de937a84155ab0cffdfbc5687edf0ace82f68dcd07ffcdc724c58efb28960b"
+  ARCHIVE_SIP_SHADOW_BARS_TOPIC: "bayn.market-data.sip.bars.1m.v1"
+  ARCHIVE_SIP_SHADOW_QUOTES_TOPIC: "bayn.market-data.sip.quotes.v1"
+  ARCHIVE_SIP_SHADOW_TRADES_TOPIC: "bayn.market-data.sip.trades.v1"

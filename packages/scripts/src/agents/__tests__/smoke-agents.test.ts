@@ -451,7 +451,7 @@ describe('scheduled AgentRun templates', () => {
       'argocd/applications/agents/agents-primitives-agentprovider.yaml',
       'argocd/applications/agents/codex-agentprovider.yaml',
       'argocd/applications/agents/codex-smoke-agentprovider.yaml',
-      'argocd/applications/agents/graf-codex-agentprovider.yaml',
+      'argocd/applications/agents/anypi-agentprovider.yaml',
       'charts/agents/examples/agentprovider-native-workflow.yaml',
       'charts/agents/examples/agentprovider-sample.yaml',
       'charts/agents/examples/agentprovider-smoke.yaml',
@@ -479,40 +479,10 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(objectAt(bucketClaim, 'spec'), 'bucketName')).toBe('agents-artifacts')
     expect(objectAt(objectAt(bucketClaim, 'spec'), 'storageClassName')).toBe('rook-ceph-bucket')
 
-    const provider = readYamlObjects('argocd/applications/agents/graf-codex-agentprovider.yaml').find(
-      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
-    )
-    const providerSpec = objectAt(provider, 'spec')
-    const adapter = objectAt(providerSpec, 'adapter')
-    const codex = objectAt(adapter, 'codex')
-    const secretEnv = objectAt(codex, 'secretEnv') as Record<string, unknown>[] | undefined
-
-    expect(secretEnv).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: 'AGENTS_ARTIFACTS_ACCESS_KEY_ID',
-          secretName: 'agents-artifacts',
-          key: 'AWS_ACCESS_KEY_ID',
-        }),
-        expect.objectContaining({
-          name: 'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
-          secretName: 'agents-artifacts',
-          key: 'AWS_SECRET_ACCESS_KEY',
-        }),
-      ]),
-    )
-    expect(objectAt(objectAt(providerSpec, 'envTemplate'), 'AGENTS_ARTIFACTS_ENDPOINT')).toBe(
-      'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
-    )
-
-    const agent = readYamlObjects('argocd/applications/agents/graf-codex-agent.yaml').find(
-      (manifest) => objectAt(manifest, 'kind') === 'Agent',
-    )
-    const allowedSecrets = objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets') as
-      | string[]
-      | undefined
-    expect(allowedSecrets).toEqual(expect.arrayContaining(['codex-auth', 'agents-artifacts']))
-    expect(allowedSecrets).not.toContain('observability-minio-creds')
+    const provider = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')[0]
+    const env = objectAt(objectAt(provider, 'spec'), 'envTemplate')
+    expect(objectAt(env, 'AGENTS_ARTIFACTS_BUCKET')).toBe('agents-artifacts')
+    expect(objectAt(env, 'AGENTS_ARTIFACTS_ENDPOINT')).toBe('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80')
   })
 
   it('keeps the chart workflow smoke provider on the fake app-server', () => {
@@ -712,12 +682,12 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(spec, 'argsTemplate')).toEqual([])
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
     expect(objectAt(codex, 'model')).toBe('gpt-6.2-sol')
-    expect(objectAt(codex, 'effort')).toBe('xhigh')
+    expect(objectAt(codex, 'effort')).toBe('max')
     expect(objectAt(codex, 'sandbox')).toBe('danger-full-access')
     expect(objectAt(codex, 'approval')).toBe('never')
     expect(objectAt(codex, 'cwd')).toBe('/workspace/lab')
     expect(objectAt(codexConfig, 'content')).toContain('model = "gpt-6.2-sol"')
-    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "xhigh"')
+    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "max"')
     expect(objectAt(codexConfig, 'content')).not.toContain('model_reasoning_effort = "high"')
     expect(objectAt(codexConfig, 'content')).not.toContain('model = "gpt-5.6-sol"')
     expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(

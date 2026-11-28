@@ -63,8 +63,7 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 ## Prompt Contract
 
 The system prompt is a measured runner artifact, not an Agent-owned prose blob.
-The default provider uses `repair-loop`. `anypi-eval-agent` runs comparative
-variants through `ANYPI_PROMPT_VARIANT={{parameters.promptVariant}}`.
+The deployed provider uses the `repair-loop` variant selected in the June 2026 evaluation.
 
 Prompt variants are intentionally small and repo-focused. They do not mention
 Anypi, yolo mode, Kubernetes, Flamingo, or the Pi SDK. Runtime details stay in

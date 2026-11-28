@@ -25,7 +25,7 @@ define executable behavior.
 | Operate or release Bayn                       | [Operations](#operations), [delivery](#delivery), [cycle runbook](../../docs/runbooks/bayn-cycle-operations.md)                                 |
 | Read status or diagnose an outage             | [Endpoints](#endpoints), [cache runbook](../../docs/runbooks/bayn-cache-observability.md)                                                       |
 | Evaluate economics or a proposed strategy     | [Profitability goal](#profitability-goal), [replay and backtesting](#replay-and-backtesting), [research](#independent-jev-instruction-research) |
-| Run the daily macro ETF paper qualification   | [Macro canary next-open runner](tools/macro-canary-runner/README.md)                                                                            |
+| Qualify daily multi-horizon PAPER evidence    | [Profitability master playbook](../../docs/bayn/profitability-master-playbook.md)                                                               |
 | Build and validate a change                   | [Package scripts](package.json), [validation](#validation), [service guide](AGENTS.md)                                                          |
 
 ## Core contracts
