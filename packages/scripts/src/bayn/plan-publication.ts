@@ -68,7 +68,7 @@ const planPublication = (env: NodeJS.ProcessEnv): boolean => {
       console.log(`Verified Bayn publication base: ${source} (run ${id}, attempt ${attempt})`)
       if (ancestor === head) return false // Already published or superseded by a published descendant.
       const targets = parseTargets("image: ['', 'services/bayn']", '', workflow, 'push')
-      return selectAffectedRange('push', source, head, targets, true).image === true
+      return selectAffectedRange('push', source, head, targets, true).affected.image === true
     }
     if (runs.length < pageSize) break
   }
