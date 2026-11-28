@@ -232,6 +232,34 @@ tests:
         exp_samples:
           - labels: '{}'
             value: 0
+  - name: collector warnings stay visible without email during shared quota pressure
+    interval: 1m
+    input_series:
+      - series: up{job="ci-observability"}
+        values: 0+0x20
+      - series: ci_observability_github_rate_limit_remaining
+        values: 1500+0x20
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+0x20
+      - series: ci_observability_last_history_progress_timestamp_seconds
+        values: 0+0x20
+      - series: ci_observability_oldest_live_pending_seconds
+        values: 600+0x20
+      - series: ci_observability_oldest_loki_pending_seconds
+        values: 900+0x20
+      - series: ci_observability_loki_rejected_records
+        values: 1+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname=~"CiObservability.*",alertstate="firing",severity="warning",notify=""}) or vector(0)
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 6
+      - expr: count(ALERTS{alertname=~"CiObservability.*",alertstate="firing",notify="email"}) or vector(0)
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 0
   - name: workflow changes retain one runner pool incident
     interval: 1m
     input_series:
