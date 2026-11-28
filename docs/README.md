@@ -28,6 +28,7 @@ Start here when deciding which documentation to trust.
 
 ## Active Architecture Proposals
 
+- Turin pod IP reclamation: [Tailscale proxy consolidation](cleanup/tailscale-proxy-ip-consolidation.md)
 - Bayn Jev instruction research, native comparison and qualification: [GEPA and native Jev evaluation](bayn/jev-optimization.md)
 - Bayn raw Kafka streams and Dorvud/Flink features: [streaming market data design](bayn/streaming-market-data-design.md)
 - Tengri RAM-releasing creation and resume: [KVM and TAP lifecycle design](tengri/kvm-tap-design.md)
