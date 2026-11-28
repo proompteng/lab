@@ -291,6 +291,75 @@ describe('agents controller startup resync', () => {
     }
   })
 
+  it('records terminal idempotency receipts observed by periodic relist even when the MODIFIED watch event is covered', async () => {
+    vi.stubEnv('AGENTS_AGENTRUN_IDEMPOTENCY_ENABLED', 'true')
+    const markAgentRunIdempotencyKeyTerminal = vi.fn(async () => null)
+    configureAgentsControllerRuntime({
+      createPrimitivesStore: () => ({
+        markAgentRunIdempotencyKeyTerminal,
+        reserveAgentRunIdempotencyKey: vi.fn(),
+        assignAgentRunIdempotencyKey: vi.fn(),
+        pruneAgentRunIdempotencyKeys: vi.fn(),
+      }),
+    })
+    const namespace = 'agents'
+    const finishedAt = new Date().toISOString()
+    const runningRun = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      metadata: {
+        namespace,
+        name: 'idempotent-run',
+        uid: 'idem-uid',
+        resourceVersion: '200',
+        generation: 1,
+        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+      },
+      spec: { agentRef: { name: 'agent' }, idempotencyKey: 'relist-receipt' },
+      status: { phase: 'Running', observedGeneration: 1 },
+    }
+    const terminalRun = {
+      ...runningRun,
+      metadata: { ...runningRun.metadata, resourceVersion: '205' },
+      status: { phase: 'Succeeded', observedGeneration: 1, finishedAt },
+    }
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ metadata: { resourceVersion: '200' }, items: [runningRun] })
+      .mockResolvedValueOnce({ metadata: { resourceVersion: '205' }, items: [terminalRun] })
+      .mockResolvedValueOnce({ metadata: { resourceVersion: '206' }, items: [terminalRun] })
+    const kube = buildKube({ list })
+    const state = createControllerState()
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      await __test.startNamespaceWatches(kube as never, namespace, state, defaultConcurrency, handles)
+      await awaitNamespaceIdle(namespace)
+      const watch = getWatch(RESOURCE_MAP.AgentRun)
+
+      await __test.resyncAgentRunsForNamespace(kube as never, namespace, state, defaultConcurrency, 'periodic')
+      // Watch delivers the MODIFIED event already covered by listVersion=205.
+      void watch.onEvent({ type: 'MODIFIED', object: terminalRun })
+      await awaitNamespaceIdle(namespace)
+
+      expect(markAgentRunIdempotencyKeyTerminal).toHaveBeenCalledExactlyOnceWith({
+        namespace,
+        agentName: 'agent',
+        idempotencyKey: 'relist-receipt',
+        terminalPhase: 'Succeeded',
+        terminalAt: finishedAt,
+      })
+
+      // Subsequent steady-state relists must not repeatedly write the already-terminal receipt.
+      await __test.resyncAgentRunsForNamespace(kube as never, namespace, state, defaultConcurrency, 'periodic')
+      await awaitNamespaceIdle(namespace)
+      expect(markAgentRunIdempotencyKeyTerminal).toHaveBeenCalledTimes(1)
+    } finally {
+      __test.stopWatchHandles(handles)
+      configureAgentsControllerRuntime({ createPrimitivesStore: undefined })
+      __test.getRuntimeMutableState().primitivesStoreRef = null
+    }
+  })
+
   it('dispatches and completes a 200-run watch burst without replaying stale observations', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:00Z'))

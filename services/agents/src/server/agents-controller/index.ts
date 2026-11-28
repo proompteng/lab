@@ -964,6 +964,14 @@ const enqueueRun = (
   })
 }
 
+const getTerminalIdempotencyReceipt = (run: Record<string, unknown>) =>
+  !readNested(run, ['metadata', 'deletionTimestamp']) &&
+  isAgentRunTerminalPhase(asString(readNested(run, ['status', 'phase']))) &&
+  isAgentRunIdempotencyEnabled() &&
+  asString(readNested(run, ['spec', 'idempotencyKey']))
+    ? run
+    : undefined
+
 const resyncAgentRunsForNamespace = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
@@ -973,7 +981,7 @@ const resyncAgentRunsForNamespace = async (
 ) => {
   const lifecycleToken = runtimeMutableState.lifecycleToken
   const now = Date.now()
-  const refreshedRuns = await readWhileWatchingRuns(state, namespace, async (changes) => {
+  const syncResult = await readWhileWatchingRuns(state, namespace, async (changes) => {
     const list = await kube.list(RESOURCE_MAP.AgentRun, namespace)
     if (lifecycleToken !== runtimeMutableState.lifecycleToken) return null
     const listVersion = getResourceVersion(list)
@@ -981,6 +989,21 @@ const resyncAgentRunsForNamespace = async (
     for (const run of listItems(list)) {
       const name = asString(readNested(run, ['metadata', 'name']))
       if (name) byName.set(name, run)
+    }
+    const terminalReceipts: Array<{ name: string; receipt: Record<string, unknown> }> = []
+    for (const [name, run] of byName) {
+      const receipt = getTerminalIdempotencyReceipt(run)
+      if (!receipt) continue
+      const previous = state.runs.get(namespace, name)
+      const previousUid = asString(readNested(previous, ['metadata', 'uid']))
+      const currentUid = asString(readNested(run, ['metadata', 'uid']))
+      const wasTerminal =
+        previous !== undefined &&
+        previousUid === currentUid &&
+        isAgentRunTerminalPhase(asString(readNested(previous, ['status', 'phase'])))
+      if (!wasTerminal) {
+        terminalReceipts.push({ name, receipt })
+      }
     }
     // Only listed resources are eligible for this sweep. Defer any whose watch observation changed.
     await sweepExpiredAgentRunsForNamespace(kube, namespace, byName, now, reason, (name) => {
@@ -995,9 +1018,10 @@ const resyncAgentRunsForNamespace = async (
     }
     ensureNamespaceState(state, namespace).runListVersion = listVersion
     state.runs.replaceNamespace(namespace, byName)
-    return byName
+    return { refreshedRuns: byName, terminalReceipts }
   })
-  if (!refreshedRuns || lifecycleToken !== runtimeMutableState.lifecycleToken) return
+  if (!syncResult || lifecycleToken !== runtimeMutableState.lifecycleToken) return
+  const { refreshedRuns, terminalReceipts } = syncResult
   const candidateRuns: Array<{ name: string; reasons: string[] }> = []
   const retryRuns: string[] = []
   let untouchedRunCount = 0
@@ -1149,6 +1173,9 @@ const resyncAgentRunsForNamespace = async (
     void enqueueRun(kube, namespace, name, state, concurrency)
   }
   for (const name of retryRuns) void enqueueRun(kube, namespace, name, state, concurrency)
+  for (const { name, receipt } of terminalReceipts) {
+    void enqueueRun(kube, namespace, name, state, concurrency, { terminalReceipt: receipt })
+  }
 }
 
 const queueAgentRunResync = (
@@ -1420,13 +1447,7 @@ const startNamespaceWatches = async (
     nsState.runChangesDuringRead?.set(runName, { resource, deleted })
     state.runs.update(namespace, runName, deleted ? null : resource)
     if (deleted) return
-    const terminalReceipt =
-      !readNested(resource, ['metadata', 'deletionTimestamp']) &&
-      isAgentRunTerminalPhase(asString(readNested(resource, ['status', 'phase']))) &&
-      isAgentRunIdempotencyEnabled() &&
-      asString(readNested(resource, ['spec', 'idempotencyKey']))
-        ? resource
-        : undefined
+    const terminalReceipt = getTerminalIdempotencyReceipt(resource)
     void enqueueRun(kube, namespace, runName, state, concurrency, { terminalReceipt })
   }
 
