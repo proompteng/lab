@@ -1387,6 +1387,45 @@ recovery behavior, and evidence boundaries.
 
 ## Operations
 
+### November 30 cutover verification
+
+Run the read-only verifier with the credentials from `bayn-alpaca-auth` in
+`BAYN_ALPACA_{KEY_ID,SECRET_KEY}` and the dedicated Paper sleeve credentials in
+`BAYN_MACRO_CORE_ALPACA_{KEY_ID,SECRET_KEY}` (F4) and `BAYN_MACRO_CANARY_ALPACA_{KEY_ID,SECRET_KEY}` (O1).
+Each prefix accepts `_ACCOUNT_ID` to pin its identity and `_BASE_URL`, which defaults to Alpaca's official
+[Paper origin](https://docs.alpaca.markets/us/v1.1/docs/authentication-1). Non-Alpaca origins and redirects are
+rejected; `--allow-live-endpoint` permits GETs to the official live origin. Use `--skip-macro-accounts` only
+to intentionally omit both sleeve checks; incomplete credentials otherwise fail the isolation check.
+
+```sh
+bun services/bayn/tools/verify-monday-cutover.ts --phase pre-open --format markdown --require-standby
+bun services/bayn/tools/verify-monday-cutover.ts --phase post-flatten --require-standby
+bun services/bayn/tools/verify-monday-cutover.ts --phase post-cutover --require-standby \
+  --expected-policy-hash "$reviewed_v3_behavior_hash" --output monday-post-cutover.json
+```
+
+- `pre-open` reports Account #1's signed GOOGL quantity. `post-flatten` rejects any nonzero GOOGL quantity or
+  working GOOGL order, including flat-listed bracket children. These are separate broker reads; use the
+  settlement procedure to rule out concurrent new submissions.
+- `post-cutover` rejects positions outside the reviewed v3 QQQ/SMH universe by default, including XLK.
+  For a separately reviewed Phase 2 check, explicitly replace the allowlist with `--allowed-symbols QQQ,SMH,XLK`.
+  The report records the effective allowlist; the flag does not change the running strategy or verify its policy.
+  For the optional policy gate, use the
+  [reviewed v3 behavior hash](https://github.com/proompteng/lab/pull/16395) as the expectation and supply
+  `BAYN_STRATEGY_BEHAVIOR_HASH` and `BAYN_STRATEGY_PARAMETER_HASH` from the **running, build-verified execution
+  controller**. Do not source the observed hashes from the proposed release or this checkout. The parameter hash
+  is checked against the reviewed v3 policy document; without the flag, the policy is not verified.
+- `BAYN_POSTGRES_URL` uses a role with read access to `public.execution_controller_observations`, never
+  `bayn_app`. The verifier requires TLS and accepts `BAYN_POSTGRES_CA_PATH` and
+  `BAYN_POSTGRES_TLS_SERVERNAME` for a private CA or hostname override. The report includes the newest retained
+  controller observation across the database. `--require-standby` requires the URL and rejects a primary.
+- Set `AUTO_ONTOLOGY_API_URL` to its origin to read [`/api/health`](https://nvidia.github.io/auto-ontology/).
+  The probe is bounded to three seconds and its status never changes the trading-readiness verdict.
+
+JSON is the default and goes to stdout unless `--output` names a new, private report file. A blocking check
+failure still writes the report and exits nonzero. A passing report does not establish flat ledger state,
+complete reconciliation, settlement, strategy activation, or any authorization to trade.
+
 ### Runtime and historical-report configuration
 
 The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
