@@ -724,6 +724,7 @@ export const awaitNativeMarketProjectionReady = (projection: typeof KafkaMarketP
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlan,
+  allowAccountHandoff = true,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
     const config = yield* Effect.fromResult(executionControllerConfig(plan))
@@ -774,7 +775,9 @@ export const acquireNativeExecutionRuntime = (
       config.planHash,
       (signal) =>
         projectionManaged.runPromise(
-          awaitNativeMarketProjectionReady(market).pipe(Effect.andThen(nativeActivationPreflight(plan))),
+          awaitNativeMarketProjectionReady(market).pipe(
+            Effect.andThen(nativeActivationPreflight(plan, allowAccountHandoff)),
+          ),
           { signal },
         ),
     )
@@ -786,14 +789,16 @@ export const acquireNativeExecutionRuntime = (
         brokerAccount: {
           bind: (signal) =>
             projectionManaged.runPromise(
-              selectConfiguredBrokerAccount(identity, plan.config.reconciliationStaleThresholdMs),
+              selectConfiguredBrokerAccount(identity, plan.config.reconciliationStaleThresholdMs, allowAccountHandoff),
               { signal },
             ),
           previousController: (signal) =>
-            projectionManaged.runPromise(
-              PgClient.PgClient.pipe(Effect.flatMap((sql) => previousConfiguredController(sql, identity))),
-              { signal },
-            ),
+            allowAccountHandoff
+              ? projectionManaged.runPromise(
+                  PgClient.PgClient.pipe(Effect.flatMap((sql) => previousConfiguredController(sql, identity))),
+                  { signal },
+                )
+              : Promise.resolve(null),
         },
       },
       inferenceRuntime: makeNativeEntryInferenceRuntime(inferenceManaged, {

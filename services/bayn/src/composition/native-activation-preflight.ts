@@ -38,10 +38,10 @@ const decodePreflightRows = Schema.decodeUnknownEffect(
   strictParseOptions,
 )
 
-export const nativeActivationPreflight = (plan: ApplicationPlan) =>
+export const nativeActivationPreflight = (plan: ApplicationPlan, allowAccountHandoff = true) =>
   Effect.gen(function* () {
     const configured = yield* Effect.fromResult(configuredCapitalActivation(plan))
-    if (configured !== null) return
+    if (configured !== null && allowAccountHandoff) return
     const sql = yield* PgClient.PgClient
     const rows = yield* sql<Record<string, unknown>>`
       SELECT s.schema_version, s.generation_hash, s.maximum, s.effective, s.kill_state, s.reason,
@@ -55,6 +55,11 @@ export const nativeActivationPreflight = (plan: ApplicationPlan) =>
     `.pipe(Effect.flatMap(decodePreflightRows))
     const row = rows[0]
     if (row === undefined) return
+    if (row.replaces_account && !allowAccountHandoff)
+      return yield* new NativeActivationPreflightError({
+        message: 'a prefixed Restate sleeve requires its own Postgres database and broker account',
+      })
+    if (configured !== null) return
     const authority = yield* authorityStateFromRow(row)
     yield* Effect.fromResult(validateAuthorityObservation(authority, row.observed_at))
     if (!row.replaces_account) yield* Effect.fromResult(validateObserveActivationAuthority(authority))
