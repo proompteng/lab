@@ -81,7 +81,7 @@ class PatchTests(unittest.TestCase):
             make_plan(self.node, self.pods, "test")
 
     def test_cap_and_cordon_are_required(self):
-        for cap, cordon in (("500", True), ("250", False)):
+        for cap, cordon in (("500", True), ("1000", True), ("250", False)):
             with self.subTest(cap=cap, cordon=cordon):
                 self.node["status"]["capacity"]["pods"] = cap
                 self.node["spec"]["unschedulable"] = cordon
@@ -99,6 +99,7 @@ class PatchTests(unittest.TestCase):
         )
 
     def test_renderer_emits_explicit_retry_for_same_operation_and_resource(self):
+        self.node["spec"]["podCIDR"] = "10.244.8.0/22"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "node.json").write_text(json.dumps(self.node))
@@ -116,6 +117,8 @@ class PatchTests(unittest.TestCase):
             ]
             with patch("sys.argv", arguments), redirect_stdout(io.StringIO()):
                 renderer.main()
+            plan = json.loads((root / "output/plan.json").read_text())
+            self.assertEqual(plan["oldCIDR"], "10.244.8.0/22")
             normal = json.loads((root / "output/standalone-omni.yaml").read_text())
             retry = json.loads((root / "output/retry-omni.yaml").read_text())
             register = json.loads((root / "output/register-omni.yaml").read_text())
@@ -133,6 +136,7 @@ class PatchTests(unittest.TestCase):
                 self.assertEqual(
                     len(machine["kubelet"]["extraConfig"]["registerWithTaints"]), 1
                 )
+                self.assertEqual(machine["kubelet"]["extraConfig"]["maxPods"], 250)
             normal_machine = json.loads(normal["spec"]["data"])["machine"]
             retry_machine = json.loads(retry["spec"]["data"])["machine"]
             self.assertEqual(normal_machine["kubelet"], retry_machine["kubelet"])
