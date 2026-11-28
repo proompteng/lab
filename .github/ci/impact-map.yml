@@ -246,6 +246,7 @@ targets:
       - packages/temporal-bun-sdk/**/*.spec.tsx
     paths:
       - .github/workflows/agents-ci.yml
+      - docs/agents/ontology/**
       - flake.lock
       - flake.nix
       - nix/images/agents.nix
