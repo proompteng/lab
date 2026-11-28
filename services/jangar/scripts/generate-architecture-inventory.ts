@@ -243,7 +243,7 @@ const renderMarkdownTable = (
   const divider = widths.map((width, columnIndex) => {
     const dashCount = Math.max(3, width)
     if (align[columnIndex] === 'right') {
-      return `${'-'.repeat(Math.max(3, dashCount - 1))}:`
+      return `${'-'.repeat(dashCount - 1)}:`
     }
     return '-'.repeat(dashCount)
   })
