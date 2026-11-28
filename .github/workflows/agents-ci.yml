@@ -79,13 +79,23 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          # PRs get the changed files from the central router; only a push diffs local history.
-          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
+          # The chart guard compares the PR merge commit to its base parent.
+          fetch-depth: ${{ github.event_name == 'push' && '0' || github.event_name == 'pull_request' && '2' || '1' }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
+
+      - name: Check Agents chart version bump
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if ! git cat-file -e "${BASE_SHA}^{commit}"; then
+            git fetch --no-tags --depth=1 origin "${BASE_SHA}"
+          fi
+          bun run packages/scripts/src/agents/check-chart-version-bump.ts "${BASE_SHA}"
 
       - name: Resolve changed files
         id: files
@@ -220,6 +230,7 @@ jobs:
         run: |
           bun test \
             packages/scripts/src/agents/__tests__/build-image.test.ts \
+            packages/scripts/src/agents/__tests__/check-chart-version-bump.test.ts \
             packages/scripts/src/agents/__tests__/resolve-agents-image-mode.test.ts \
             packages/scripts/src/agents/__tests__/resolve-published-agents-images.test.ts \
             packages/scripts/src/agents/__tests__/resolve-smoke-runner-image.test.ts \

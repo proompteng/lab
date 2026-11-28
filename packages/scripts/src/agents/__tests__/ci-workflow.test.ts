@@ -14,10 +14,18 @@ type Job = {
 const loadWorkflow = (name: string): { jobs: Record<string, Job> } =>
   parse(readFileSync(new URL(`../../../../../.github/workflows/${name}`, import.meta.url), 'utf8'))
 
-test('only a direct Agents push needs history to plan validation', () => {
+test('Agents PRs compare their rendered chart inputs to the PR base without fetching full history', () => {
   const { jobs } = loadWorkflow('agents-ci.yml')
   const checkout = jobs.plan?.steps?.find((step) => step.uses === 'actions/checkout@v5')
-  expect(checkout?.with?.['fetch-depth']).toBe("${{ github.event_name == 'push' && '0' || '1' }}")
+  expect(checkout?.with?.['fetch-depth']).toBe(
+    "${{ github.event_name == 'push' && '0' || github.event_name == 'pull_request' && '2' || '1' }}",
+  )
+  const guard = jobs.plan?.steps?.find((step) => step.name === 'Check Agents chart version bump')
+  expect(guard).toMatchObject({
+    if: "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+    env: { BASE_SHA: '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}' },
+  })
+  expect(guard?.run).toContain('bun run packages/scripts/src/agents/check-chart-version-bump.ts "${BASE_SHA}"')
 })
 
 test('Agents unit, static, and Kind start from the same plan without dropping enforceable results', () => {

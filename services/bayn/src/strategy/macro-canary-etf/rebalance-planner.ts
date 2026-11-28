@@ -3,7 +3,13 @@ import { Result } from 'effect'
 import { OrderSide } from '../../execution/contracts'
 import type { IsoDate } from '../../schemas'
 import { BPS, WEIGHT_SCALE } from '../execution-model/model'
-import { macroCanaryEtfs, type MacroCanaryEtf, type MacroCanaryEtfPolicyReceipt } from './policy'
+import { planBoundMacroEtfRebalance } from '../macro-etf-core/planner'
+import {
+  decodeMacroCanaryEtfPolicyV2,
+  macroCanaryEtfs,
+  type MacroCanaryEtf,
+  type MacroCanaryEtfPolicyReceipt,
+} from './policy'
 import type { MacroCanaryEtfTarget } from './signals'
 
 export interface RawEtfReference {
@@ -219,3 +225,18 @@ export const planMacroCanaryEtfRebalance = (
     reservedCashMicros: reservedCash,
   })
 }
+
+/** Coordinated v2 opening sizing, not a v1 collar order or Paper submission receipt. */
+export const planMacroCanaryEtfRebalanceV2 = (policyInput: unknown, target: unknown, book: unknown) =>
+  decodeMacroCanaryEtfPolicyV2(policyInput).pipe(
+    Result.flatMap(({ policy, policyHash }) =>
+      planBoundMacroEtfRebalance(policyHash, target, book, {
+        mode: policy.risk.mode,
+        symbolBand: {
+          bps: policy.settings.minDriftBps,
+          maxWeight: policy.settings.maxEtfWeight,
+          universe: policy.universe,
+        },
+      }),
+    ),
+  )

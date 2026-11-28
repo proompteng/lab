@@ -156,7 +156,7 @@ const targetReceipt = (label: string, rows: readonly unknown[], count: number, e
   return { count, sha256: digest }
 }
 
-const prepareDaily = (frames: readonly DailyFrame[]) => {
+export const prepareDaily = (frames: readonly DailyFrame[]) => {
   const calendar = frames.map(({ date, openAt, closeAt }) => ({ date, openAt, closeAt }))
   const snapshot = {
     schema: closeSnapshotSchema,
