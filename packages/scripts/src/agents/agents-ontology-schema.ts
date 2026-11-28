@@ -14,6 +14,8 @@ import {
 
 import type { AgentsDatabase } from '../../../../services/agents/src/server/db'
 import { ensureMigrations, getRegisteredMigrationNames } from '../../../../services/agents/src/server/kysely-migrations'
+import type { KnowledgeBundle } from './ontology-deltas'
+import { validateOntologyAnalyses } from './ontology-sql'
 
 const migrationDirectory = new URL('../../../../services/agents/src/server/migrations/', import.meta.url)
 
@@ -93,4 +95,14 @@ export const readAgentsOntologyTables = async (postgres: PGlite): Promise<Readon
         (('public', 'agents_kysely_migration'), ('public', 'agents_kysely_migration_lock'))
   `)
   return new Set(rows.map(({ schema, name }) => `${schema}.${name}`))
+}
+
+export const validateAgentsOntologyAnalyses = async (analyses: KnowledgeBundle['customAnalyses']) => {
+  if (!analyses.length) return
+  await withAgentsOntologySchema(async (postgres) => {
+    await validateOntologyAnalyses(analyses, {
+      tables: await readAgentsOntologyTables(postgres),
+      describe: (sql) => postgres.describeQuery(sql),
+    })
+  })
 }
