@@ -92,7 +92,8 @@ export const createAutoOntologyUpstream = (options: UpstreamOptions) => {
       signal?: AbortSignal
       query?: Query
       body?: Question | ChatQuestion
-      chat?: true
+      accept?: 'application/json' | 'text/event-stream'
+      timeoutMs?: number
       authenticated?: boolean
     },
   ) => {
@@ -101,9 +102,9 @@ export const createAutoOntologyUpstream = (options: UpstreamOptions) => {
     for (const [key, value] of Object.entries(requestOptions.query ?? {})) {
       if (value !== undefined) url.searchParams.set(key, String(value))
     }
-    const deadline = AbortSignal.timeout(requestOptions.chat ? options.chatTimeoutMs : options.timeoutMs)
+    const deadline = AbortSignal.timeout(requestOptions.timeoutMs ?? options.timeoutMs)
     const signal = requestOptions.signal ? AbortSignal.any([deadline, requestOptions.signal]) : deadline
-    const accept = requestOptions.chat ? 'text/event-stream' : 'application/json'
+    const accept = requestOptions.accept ?? 'application/json'
     const headers = new Headers({ accept })
     if (requestOptions.authenticated !== false) headers.set('x-api-key', options.token)
     const body = requestOptions.body && JSON.stringify(requestOptions.body)
@@ -166,10 +167,19 @@ export const createAutoOntologyUpstream = (options: UpstreamOptions) => {
       }
     },
     checkAnswerable: ({ question, max_distance }: Question, signal: AbortSignal) =>
-      request('/api/question-entity-coverage', json, { signal, body: { question, max_distance } }),
+      request('/api/question-entity-coverage', json, {
+        signal,
+        body: { question, max_distance },
+        timeoutMs: options.chatTimeoutMs,
+      }),
     askQuestion: ({ question, evidence }: ChatQuestion, signal: AbortSignal) =>
       // A conversation_id makes the API persist the turn. Never accept or send one.
-      request('/api/chat/completions', decodeAnswer, { chat: true, signal, body: { question, evidence } }),
+      request('/api/chat/completions', decodeAnswer, {
+        signal,
+        body: { question, evidence },
+        accept: 'text/event-stream',
+        timeoutMs: options.chatTimeoutMs,
+      }),
   }
 }
 

@@ -3,13 +3,13 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { createAutoOntologyUpstream } from './upstream'
 
-const upstreamWith = (fetch: FetchLike) =>
+const upstreamWith = (fetch: FetchLike, chatTimeoutMs = 25) =>
   createAutoOntologyUpstream({
     url: new URL('http://localhost:3000'),
     token: 'auto_ontology_test',
     maxResponseBytes: 1024,
-    timeoutMs: 1000,
-    chatTimeoutMs: 25,
+    timeoutMs: 10_000,
+    chatTimeoutMs,
     fetch,
   })
 const signal = new AbortController().signal
@@ -17,6 +17,30 @@ const ask = (response: Response) => upstreamWith(async () => response).askQuesti
 const sse = (body: string) => new Response(body, { headers: { 'content-type': 'text/event-stream' } })
 
 describe('Auto Ontology upstream limits', () => {
+  it('waits past the regular timeout for a JSON answerability response', async () => {
+    const chatTimeoutMs = 75_000
+    vi.useFakeTimers()
+    // Native AbortSignal.timeout does not use Vitest's fake clock.
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(), ms)
+      return controller.signal
+    })
+    try {
+      const fetch = vi.fn<FetchLike>(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10_001))
+        return Response.json({ answerable: true })
+      })
+      const result = upstreamWith(fetch, chatTimeoutMs).checkAnswerable({ question: 'Count rows' }, signal)
+      await Promise.all([expect(result).resolves.toEqual({ answerable: true }), vi.advanceTimersByTimeAsync(10_001)])
+      expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('accept')).toBe('application/json')
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(chatTimeoutMs)
+    } finally {
+      timeout.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('cancels a stalled chat body within its deadline, even after headers arrive', async () => {
     const cancel = vi.fn()
     const stream = new ReadableStream<Uint8Array>({ cancel })

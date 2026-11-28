@@ -21,9 +21,13 @@ The gateway exposes `check_readiness`, `search_terms`, `get_term`, `get_term_col
 Use `check_readiness` to check compilation and catalog ingestion (not database connectivity) and
 `check_answerable` before an expensive question. The chat POST omits all conversation fields, so it
 does not persist a conversation or run the chart step. Source database credentials must be read-only:
-the upstream service, not this gateway, executes generated SQL. Chat is limited to 60 seconds by
-default and returns at most 100 rows. Large responses fail explicitly instead of returning partial
-data.
+the upstream service, not this gateway, executes generated SQL. Chat returns at most 100 rows.
+Large responses fail explicitly instead of returning partial data.
+
+`check_answerable` and `ask_question` share a 90-second upstream timeout by default. The stdio bridge
+defaults to 120 seconds, and the Codex tool timeout is 100 seconds. If you raise
+`AUTO_ONTOLOGY_MCP_CHAT_TIMEOUT_MS`, keep `AUTO_ONTOLOGY_MCP_BRIDGE_TIMEOUT_MS` and `tool_timeout_sec`
+above the upstream deadline to leave time for authorization and transport.
 
 The Bayn and OpenCode **research** policies permit TCP to the authenticated frontend and NVIDIA MCP
 pods on ports 3000 and 3003 only. Kubernetes NetworkPolicy does not enforce HTTP methods; allowing
