@@ -9,6 +9,7 @@ import YAML from 'yaml'
 const scope = 'job="bayn",namespace="bayn",service="bayn"'
 const observation = 'BaynCycleObservationUnavailable'
 const scrape = 'BaynMetricsUnavailable'
+const degraded = 'BaynRuntimeDegraded'
 const series = (available: string | null, up = '1+0x60', instance = 'a') => [
   { series: `up{${scope},instance="${instance}"}`, values: up },
   ...(available === null
@@ -27,9 +28,9 @@ test('missing cycle telemetry is distinct from valid idle cycles and failed scra
     (group: { name: string }) => group.name === 'bayn-cycle-operations.rules',
   )
   const rules = group.rules.filter((rule: { alert: string }) =>
-    [observation, scrape, 'BaynCycleFailed', 'BaynCycleStalled'].includes(rule.alert),
+    [observation, scrape, degraded, 'BaynCycleFailed', 'BaynCycleStalled'].includes(rule.alert),
   )
-  expect(rules).toHaveLength(4)
+  expect(rules).toHaveLength(5)
   expect(group.interval).toBe('15s')
   expect(rules.find((rule: { alert: string }) => rule.alert === observation).for).toBe('2m')
   expect(rules.find((rule: { alert: string }) => rule.alert === observation).keep_firing_for).toBe('5m')
@@ -86,6 +87,25 @@ test('missing cycle telemetry is distinct from valid idle cycles and failed scra
     'BaynCycleFailed',
   ])
   check('completed recovery clears after the existing firing hold', recoveredFailure, '7m30s')
+  const waiting = (instance: string) => [
+    ...series('1+0x60', '1+0x60', instance),
+    { series: `bayn_runtime_ready{${scope},instance="${instance}"}`, values: '0+0x60' },
+    { series: `bayn_cycle_condition{${scope},instance="${instance}",condition="failed"}`, values: '0+0x60' },
+    { series: `bayn_cycle_condition{${scope},instance="${instance}",condition="stalled"}`, values: '0+0x60' },
+  ]
+  const feesPending = (projectionTimestamps: string) => [
+    ...waiting('a'),
+    { series: `bayn_cycle_reason{${scope},instance="a",reason="cash_fees_pending"}`, values: '1+0x60' },
+    { series: `bayn_runtime_projection_timestamp_seconds{${scope},instance="a"}`, values: projectionTimestamps },
+  ]
+  check('a fresh cash fee wait is not a runtime-degraded or cycle-failed page', feesPending('0+15x60'), '10m')
+  check(
+    'a cash fee wait cannot hide a real degradation on another replica',
+    [...feesPending('0+15x60'), ...waiting('b')],
+    '3m',
+    [degraded],
+  )
+  check('a stale cash fee wait cannot hide a stopped runtime projection', feesPending('0+0x60'), '3m', [degraded])
   check(
     'brief fail-closed observation does not fire',
     [

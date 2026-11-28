@@ -8,13 +8,14 @@ metadata:
     app.kubernetes.io/component: cluster-metrics
 spec:
   replicas: 1
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: observability-cluster-metrics-alloy
   template:
     metadata:
       annotations:
-        observability.proompteng.ai/config-sha256: 61522521f0a56b90ad442239876fa1e7fd2e0cd26061ce515bc2fbe1fb93c4ff
+        observability.proompteng.ai/config-sha256: 4a6845f76807e858bff4ccbb87b7b37d1b497854ac0dd57f01f0949f010a7820
       labels:
         app.kubernetes.io/name: observability-cluster-metrics-alloy
         app.kubernetes.io/component: cluster-metrics

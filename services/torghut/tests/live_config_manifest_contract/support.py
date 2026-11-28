@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -14,7 +13,6 @@ from app.config import Settings
 from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
 from app.trading.tigerbeetle_journal import SOURCE_TYPE_EXECUTION_ORDER_EVENT
 from scripts import run_tigerbeetle_journal_cron as tigerbeetle_journal_runner
-
 
 _RESEARCHED_CHIP_TECH_UNIVERSE = (
     "NVDA",
@@ -302,20 +300,6 @@ def _assert_chip_universe(
     )
 
 
-def _assert_exact_chip_tech_universe(
-    test_case: TestCase, symbols: Iterable[object], *, context: str
-) -> None:
-    normalized = [
-        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
-    ]
-    _assert_chip_universe(test_case, normalized, context=context)
-    test_case.assertEqual(
-        tuple(normalized),
-        _RESEARCHED_CHIP_TECH_UNIVERSE,
-        f"{context} does not match the researched chip/AI infrastructure universe",
-    )
-
-
 def _assert_exact_live_execution_chip_universe(
     test_case: TestCase, symbols: Iterable[object], *, context: str
 ) -> None:
@@ -420,7 +404,6 @@ __all__: tuple[str, ...] = (
     "_RESEARCHED_CHIP_TECH_UNIVERSE",
     "_TestLiveConfigManifestContractBase",
     "_assert_chip_universe",
-    "_assert_exact_chip_tech_universe",
     "_assert_exact_live_execution_chip_universe",
     "_assert_exact_quote_covered_paper_strategy_universe",
     "_assert_exact_shared_market_data_universes",

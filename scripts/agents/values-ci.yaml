@@ -14,10 +14,6 @@ controllers:
     vars:
       AGENTS_MIGRATIONS: 'auto'
 
-runner:
-  image:
-    repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-
 namespaceOverride: agents-ci
 
 grpc:

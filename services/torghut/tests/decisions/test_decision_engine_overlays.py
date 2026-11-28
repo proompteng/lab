@@ -1,54 +1,37 @@
 from __future__ import annotations
 
-from tests.decisions.support import (
-    Decimal,
-    DecisionEngine,
-    SignalEnvelope,
-    SimpleNamespace,
-    Strategy,
-    StrategyConfig,
-    TestCase,
-    build_runtime_position_exit_overlay,
-    _compose_strategy_description,
-    datetime,
-    extract_signal_features,
-    patch,
-    settings,
-    timezone,
-    uuid,
-)
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import patch
+
+from app.config import settings
+from app.trading.decisions import DecisionEngine, build_runtime_position_exit_overlay
+from app.trading.features import extract_signal_features
+from app.trading.models import SignalEnvelope
+from tests.trading_fixtures import make_catalog_strategy, make_signal
 
 
 class TestDecisionEngineOverlays(TestCase):
     def test_scheduler_runtime_position_trailing_stop_respects_min_hold(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-trailing-stop-min-hold",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-trailing-stop-min-hold",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={
-                        "min_hold_seconds": "120",
-                        "long_trailing_stop_activation_profit_bps": "20",
-                        "long_trailing_stop_drawdown_bps": "15",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={
+                "min_hold_seconds": "120",
+                "long_trailing_stop_activation_profit_bps": "20",
+                "long_trailing_stop_drawdown_bps": "15",
+            },
         )
         peak_signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 18, 29, 10, tzinfo=timezone.utc),
@@ -111,33 +94,21 @@ class TestDecisionEngineOverlays(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-trailing-stop-profit-floor",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-trailing-stop-profit-floor",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={
-                        "require_positive_price_for_signal_exit": "true",
-                        "long_trailing_stop_activation_profit_bps": "20",
-                        "long_trailing_stop_drawdown_bps": "15",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={
+                "require_positive_price_for_signal_exit": "true",
+                "long_trailing_stop_activation_profit_bps": "20",
+                "long_trailing_stop_drawdown_bps": "15",
+            },
         )
         peak_signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 18, 29, 10, tzinfo=timezone.utc),
@@ -199,36 +170,21 @@ class TestDecisionEngineOverlays(TestCase):
     def test_scheduler_runtime_breakout_trailing_stop_holds_above_structure(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-trailing-stop-structure-aware",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-trailing-stop-structure-aware",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.5"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "long_trailing_stop_activation_profit_bps": "18",
-                        "long_trailing_stop_drawdown_bps": "10",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.5"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "long_trailing_stop_activation_profit_bps": "18",
+                "long_trailing_stop_drawdown_bps": "10",
+            },
         )
-        trailing_signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 14, 19, 7, tzinfo=timezone.utc),
-            symbol="AAPL",
+        trailing_signal = make_signal(
+            datetime(2026, 3, 26, 14, 19, 7, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=22,
             payload={
@@ -284,36 +240,21 @@ class TestDecisionEngineOverlays(TestCase):
     def test_scheduler_runtime_breakout_trailing_stop_exits_after_structure_loss(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-trailing-stop-structure-loss",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-trailing-stop-structure-loss",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.5"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "long_trailing_stop_activation_profit_bps": "18",
-                        "long_trailing_stop_drawdown_bps": "10",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.5"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "long_trailing_stop_activation_profit_bps": "18",
+                "long_trailing_stop_drawdown_bps": "10",
+            },
         )
-        trailing_signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 14, 19, 7, tzinfo=timezone.utc),
-            symbol="AAPL",
+        trailing_signal = make_signal(
+            datetime(2026, 3, 26, 14, 19, 7, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=24,
             payload={
@@ -375,36 +316,23 @@ class TestDecisionEngineOverlays(TestCase):
     def test_scheduler_runtime_position_exit_overlay_falls_through_to_max_hold_when_trailing_stop_fails_profit_floor(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="momentum-pullback-max-hold-fallback",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="momentum-pullback-max-hold-fallback",
-                    strategy_id="momentum_pullback_long_v1@research",
-                    strategy_type="momentum_pullback_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="momentum_pullback_long_v1",
-                    universe_symbols=["GOOG"],
-                    max_position_pct_equity=Decimal("2.0"),
-                    max_notional_per_trade=Decimal("63180"),
-                    params={
-                        "position_isolation_mode": "per_strategy",
-                        "long_trailing_stop_activation_profit_bps": "8",
-                        "long_trailing_stop_drawdown_bps": "4",
-                        "max_hold_seconds": "420",
-                        "require_positive_price_for_signal_exit": "true",
-                        "min_signal_exit_profit_bps": "8",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="momentum_pullback_long_v1@research",
+            strategy_type="momentum_pullback_long_v1",
             base_timeframe="1Sec",
             universe_type="momentum_pullback_long_v1",
             universe_symbols=["GOOG"],
             max_position_pct_equity=Decimal("2.0"),
             max_notional_per_trade=Decimal("63180"),
+            params={
+                "position_isolation_mode": "per_strategy",
+                "long_trailing_stop_activation_profit_bps": "8",
+                "long_trailing_stop_drawdown_bps": "4",
+                "max_hold_seconds": "420",
+                "require_positive_price_for_signal_exit": "true",
+                "min_signal_exit_profit_bps": "8",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 26, 14, 57, 51, tzinfo=timezone.utc),
@@ -466,31 +394,19 @@ class TestDecisionEngineOverlays(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-session-flatten",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-session-flatten",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={
-                        "session_flatten_start_minute_utc": "1170",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={
+                "session_flatten_start_minute_utc": "1170",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
@@ -538,32 +454,19 @@ class TestDecisionEngineOverlays(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="microbar-cross-sectional-pairs-v1",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-cross-sectional-pairs-v1",
-                    strategy_id="microbar_cross_sectional_pairs_v1@research",
-                    strategy_type="microbar_cross_sectional_pairs_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["AAPL", "AMZN"],
-                    max_position_pct_equity=Decimal("0.06"),
-                    max_notional_per_trade=Decimal("75000"),
-                    params={
-                        "session_flatten_start_minute_utc": "1170",
-                        "position_isolation_mode": "per_strategy",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_pairs_v1",
             universe_symbols=["AAPL", "AMZN"],
             max_position_pct_equity=Decimal("0.06"),
             max_notional_per_trade=Decimal("75000"),
+            params={
+                "session_flatten_start_minute_utc": "1170",
+                "position_isolation_mode": "per_strategy",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
@@ -612,36 +515,22 @@ class TestDecisionEngineOverlays(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="microbar-cross-sectional-pairs-v1",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-cross-sectional-pairs-v1",
-                    strategy_id="microbar_cross_sectional_pairs_v1@research",
-                    strategy_type="microbar_cross_sectional_pairs_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["AAPL", "AMZN"],
-                    max_position_pct_equity=Decimal("0.06"),
-                    max_notional_per_trade=Decimal("75000"),
-                    params={
-                        "session_flatten_start_minute_utc": "1170",
-                        "position_isolation_mode": "per_strategy",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_pairs_v1",
             universe_symbols=["AAPL", "AMZN"],
             max_position_pct_equity=Decimal("0.06"),
             max_notional_per_trade=Decimal("75000"),
+            params={
+                "session_flatten_start_minute_utc": "1170",
+                "position_isolation_mode": "per_strategy",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=13,
             payload={
@@ -686,32 +575,20 @@ class TestDecisionEngineOverlays(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-session-flatten-min-hold",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-session-flatten-min-hold",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={
-                        "min_hold_seconds": "3600",
-                        "session_flatten_start_minute_utc": "1170",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={
+                "min_hold_seconds": "3600",
+                "session_flatten_start_minute_utc": "1170",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
@@ -760,33 +637,21 @@ class TestDecisionEngineOverlays(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-session-flatten-loss",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-session-flatten-loss",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={
-                        "session_flatten_start_minute_utc": "1170",
-                        "require_positive_price_for_signal_exit": "true",
-                        "min_signal_exit_profit_bps": "8",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={
+                "session_flatten_start_minute_utc": "1170",
+                "require_positive_price_for_signal_exit": "true",
+                "min_signal_exit_profit_bps": "8",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
@@ -832,33 +697,20 @@ class TestDecisionEngineOverlays(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation-max-hold",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation-max-hold",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "max_hold_seconds": "300",
-                        "require_positive_price_for_signal_exit": "true",
-                        "min_signal_exit_profit_bps": "8",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "max_hold_seconds": "300",
+                "require_positive_price_for_signal_exit": "true",
+                "min_signal_exit_profit_bps": "8",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 17, 35, 30, tzinfo=timezone.utc),
@@ -909,34 +761,22 @@ class TestDecisionEngineOverlays(TestCase):
     ) -> None:
         strategy_id = uuid.uuid4()
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_catalog_strategy(
             id=strategy_id,
             name="breakout-continuation-max-hold-isolated",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation-max-hold-isolated",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "position_isolation_mode": "per_strategy",
-                        "max_hold_seconds": "300",
-                        "require_positive_price_for_signal_exit": "true",
-                        "min_signal_exit_profit_bps": "8",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "position_isolation_mode": "per_strategy",
+                "max_hold_seconds": "300",
+                "require_positive_price_for_signal_exit": "true",
+                "min_signal_exit_profit_bps": "8",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 17, 35, 30, tzinfo=timezone.utc),

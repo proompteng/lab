@@ -15,19 +15,22 @@ type Ingress = Resource & {
     rules: { host: string; http: { paths: { path: string; pathType: string; backend: ServiceBackend }[] } }[]
   }
 }
-type Deployment = Resource & {
+type Workload = Resource & {
   spec: {
     template: {
       metadata: { labels: Record<string, string> }
       spec: {
         automountServiceAccountToken?: boolean
         containers: {
+          name: string
+          image: string
+          command?: string[]
           args?: string[]
           env?: { name: string; value?: string }[]
-          readinessProbe?: { httpGet: { path: string; port: string } }
-          volumeMounts?: { name: string; mountPath: string; readOnly: boolean }[]
+          readinessProbe?: { httpGet?: { path: string; port: string } }
+          volumeMounts?: { name: string; mountPath: string; readOnly?: boolean }[]
         }[]
-        volumes?: { name: string; configMap: { name: string } }[]
+        volumes?: { name: string; configMap?: { name: string } }[]
       }
     }
   }
@@ -68,10 +71,10 @@ const prefix = (path: string, name: string, number: number) => ({
 })
 
 test('the RFC 8414 path for the advertised issuer is routed on the web host without moving existing routes', () => {
-  const frontend = resource<Deployment>('Deployment', 'frontend').spec.template.spec.containers[0]
+  const frontend = resource<Workload>('Deployment', 'frontend').spec.template.spec.containers[0]
   expect(frontend.env?.find((entry) => entry.name === 'APP_URL')?.value).toBe(issuer.origin)
 
-  const mcp = resource<Deployment>('Deployment', 'auto-ontology-mcp').spec.template.spec.containers[0]
+  const mcp = resource<Workload>('Deployment', 'auto-ontology-mcp').spec.template.spec.containers[0]
   const advertisedOrigin = mcp.env?.find((entry) => entry.name === 'AUTO_ONTOLOGY_API_URL')?.value
   expect(`${advertisedOrigin}/api/auth`).toBe(issuer.href)
   expect(mcp.args?.join('\n')).toContain('auth.authorization_servers = [AnyHttpUrl(f"{settings.api_url}/api/auth")]')
@@ -88,7 +91,7 @@ test('only the exact discovery path reaches the existing metadata handler withou
 
   const { spec } = resource<Service>('Service', proxyName)
   expect(spec.ports).toMatchObject([{ port: 8080, targetPort: 'http' }])
-  const { template } = resource<Deployment>('Deployment', proxyName).spec
+  const { template } = resource<Workload>('Deployment', proxyName).spec
   expect(template.metadata.labels).toMatchObject(spec.selector)
   expect(template.spec.automountServiceAccountToken).toBe(false)
   const [proxy] = template.spec.containers
@@ -96,7 +99,7 @@ test('only the exact discovery path reaches the existing metadata handler withou
   expect(Object.hasOwn(proxy, 'envFrom')).toBe(false)
   expect(proxy.readinessProbe?.httpGet).toEqual({ path: discoveryPath, port: 'http' })
   expect(proxy.volumeMounts).toEqual([{ name: 'config', mountPath: '/usr/local/etc/haproxy', readOnly: true }])
-  const configName = template.spec.volumes?.find((volume) => volume.name === 'config')?.configMap.name
+  const configName = template.spec.volumes?.find((volume) => volume.name === 'config')?.configMap?.name
   if (!configName) throw new Error('The discovery proxy is missing its configuration volume')
   expect(template.spec.volumes).toEqual([{ name: 'config', configMap: { name: configName } }])
 
@@ -110,4 +113,20 @@ test('only the exact discovery path reaches the existing metadata handler withou
   expect(directives).toContain(`http-request set-uri ${metadataPath}`)
   expect(directives).toContain('default_backend frontend')
   expect(directives.filter((line) => line.startsWith('server '))).toEqual(['server frontend frontend:3000'])
+})
+
+test('catalog Postgres uses asynchronous commits without replacing its entrypoint or storage', () => {
+  const { spec } = resource<Workload>('StatefulSet', 'postgres').spec.template
+  const postgres = spec.containers.find(({ name }) => name === 'postgres')
+
+  expect(postgres?.args).toEqual(['-c', 'synchronous_commit=off'])
+  expect(postgres?.command).toBeUndefined()
+  expect(postgres?.image).toMatch(/^pgvector\/pgvector:/)
+  expect(postgres?.env).toContainEqual({
+    name: 'POSTGRES_PASSWORD',
+    valueFrom: { secretKeyRef: { name: 'auto-ontology-secrets', key: 'POSTGRES_PASSWORD' } },
+  })
+  expect(postgres?.env?.map(({ name }) => name)).not.toContain('PGDATA')
+  expect(postgres?.volumeMounts).toEqual([{ name: 'data', mountPath: '/var/lib/postgresql' }])
+  expect(spec.volumes).toContainEqual({ name: 'data', persistentVolumeClaim: { claimName: 'postgres-data' } })
 })

@@ -1,3 +1,6 @@
+import executionQualityAuditViews from '../../migrations/0230_execution_quality_audit_views'
+import intradayAlphaV2PaperSettlement from '../../migrations/0229_intraday_alpha_v2_paper_settlement'
+import intradayAlphaV3Admission from '../../migrations/0228_intraday_alpha_v3_admission'
 import auditReaderViewGrant from '../../migrations/0227_audit_reader_view_grant'
 import auditReaderGrants from '../../migrations/0226_audit_reader_grants'
 import alphaBaselinePreparation from '../../migrations/0225_alpha_baseline_preparation'
@@ -228,6 +231,9 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '230_execution_quality_audit_views': executionQualityAuditViews,
+  '229_intraday_alpha_v2_paper_settlement': intradayAlphaV2PaperSettlement,
+  '228_intraday_alpha_v3_admission': intradayAlphaV3Admission,
   '227_audit_reader_view_grant': auditReaderViewGrant,
   '224_strategy_bound_qualification': strategyBoundQualification,
   '226_audit_reader_grants': auditReaderGrants,

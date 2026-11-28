@@ -64,9 +64,11 @@ const validateSelect = async (sql: string, migrationTables: ReadonlySet<string>)
   return statement
 }
 
+export type OntologySqlSchema = { tables: ReadonlySet<string>; describe: (sql: string) => Promise<unknown> }
+
 export const validateOntologyAnalyses = async (
   analyses: KnowledgeBundle['customAnalyses'],
-  schema: { tables: ReadonlySet<string>; describe: (sql: string) => Promise<unknown> },
+  schema: OntologySqlSchema,
 ) => {
   const queries = new Set<string>()
   for (const [index, { sql }] of analyses.entries()) {

@@ -119,14 +119,16 @@ export type RunCodexAppServerAdapterOptions = {
   publishTelemetry?: (snapshot: RunnerTelemetry) => Promise<void>
 }
 
-type CommandResult = {
+export type CommandResult = {
   exitCode: number
   stdout: string
   stderr: string
 }
 
-type CommandOptions = { cwd?: string; env?: Record<string, string> }
-type CommandRunner = (command: string, args: string[], options?: CommandOptions) => Promise<CommandResult>
+export type CommandOptions = { cwd?: string; env?: Record<string, string> }
+export type CommandRunner = (command: string, args: string[], options?: CommandOptions) => Promise<CommandResult>
+export type StartupPhase = 'git_checkout' | 'bun_bootstrap' | 'app_server_ready' | 'first_turn_started'
+export type ReportStartupPhase = (phase: StartupPhase, started: number, outcome?: string) => void
 
 export class CodexRunnerInputError extends Data.TaggedError('CodexRunnerInputError')<{
   readonly operation: 'load-payload' | 'resolve-prompt' | 'validate-adapter' | 'load-system-prompt'
@@ -214,6 +216,7 @@ type VcsWorkspaceContext = {
   headBranch: string | null
   writeEnabled: boolean
 }
+type CheckoutSource = 'existing' | 'shared-mirror' | 'origin'
 
 const timestampUtc = (now: () => Date): string =>
   now()
@@ -447,7 +450,7 @@ export const CodexAppServerClientFactoryLive = Layer.succeed(CodexAppServerClien
 
 const runnerRuntime = ManagedRuntime.make(Layer.merge(RunnerCommandLive, CodexAppServerClientFactoryLive))
 
-const runDefaultCommand: CommandRunner = (command, args, options) =>
+export const runDefaultCommand: CommandRunner = (command, args, options) =>
   runnerRuntime.runPromise(Effect.flatMap(RunnerCommand, (service) => service.run(command, args, options)))
 
 const createDefaultClient = (options: CodexAppServerOptions) =>
@@ -556,17 +559,17 @@ const readVcsWorkspaceContext = (runPayload: AgentRunPayload): VcsWorkspaceConte
 const resolveCloneUrl = (vcs: VcsWorkspaceContext): string =>
   `${vcs.cloneBaseUrl.replace(/\/+$/, '')}/${vcs.repository}.git`
 
-const ensureGitAskpass = async () => {
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.VCS_TOKEN
+export const ensureGitAskpass = async (env: Record<string, string | undefined> = process.env) => {
+  const token = env.GH_TOKEN || env.GITHUB_TOKEN || env.VCS_TOKEN
   if (!token) return
 
-  if (!process.env.GITHUB_TOKEN) process.env.GITHUB_TOKEN = token
-  if (!process.env.GH_TOKEN) process.env.GH_TOKEN = token
-  if (!process.env.GIT_ASKPASS_USERNAME) process.env.GIT_ASKPASS_USERNAME = 'x-access-token'
-  process.env.GIT_ASKPASS_TOKEN = token
-  process.env.GIT_TERMINAL_PROMPT ??= '0'
+  if (!env.GITHUB_TOKEN) env.GITHUB_TOKEN = token
+  if (!env.GH_TOKEN) env.GH_TOKEN = token
+  if (!env.GIT_ASKPASS_USERNAME) env.GIT_ASKPASS_USERNAME = 'x-access-token'
+  env.GIT_ASKPASS_TOKEN = token
+  env.GIT_TERMINAL_PROMPT ??= '0'
 
-  if (process.env.GIT_ASKPASS) return
+  if (env.GIT_ASKPASS) return
   const askpassPath = '/tmp/agents-git-askpass.sh'
   const script = `#!/bin/sh
 case "$1" in
@@ -577,7 +580,7 @@ esac
 `
   await writeFile(askpassPath, script, 'utf8')
   await chmod(askpassPath, 0o700)
-  process.env.GIT_ASKPASS = askpassPath
+  env.GIT_ASKPASS = askpassPath
 }
 
 const fetchBranch = async (
@@ -597,23 +600,29 @@ const fetchBranch = async (
   return false
 }
 
+const hasRemoteBranch = async (runner: CommandRunner, cwd: string, branch: string) =>
+  // origin/HEAD is a symbolic default-branch pointer, not a fetched branch.
+  branch !== 'HEAD' &&
+  (await runner('git', ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`], { cwd })).exitCode === 0
+
 const findWorkspaceMirror = async (cacheRoot: string, vcs: VcsWorkspaceContext, runner: CommandRunner) => {
   if (!isGitHubCloneBaseUrl(vcs.cloneBaseUrl)) return null
   const mirror = resolveWorkspaceMirrorPath(cacheRoot, vcs.repository)
   if (!mirror) return null
   try {
-    if (!(await realpath(mirror)).startsWith(join(await realpath(cacheRoot), 'git') + '/')) return null
-    const refreshed = await stat(join(mirror, '.refreshed'))
+    const slot = await realpath(mirror)
+    if (!slot.startsWith(join(await realpath(cacheRoot), 'git') + '/')) return null
+    const refreshed = await stat(join(slot, '.refreshed'))
     if (!refreshed.isFile() || Date.now() - refreshed.mtimeMs >= MAX_MIRROR_AGE_MS) return null
     const result = await runner('git', [
       '--git-dir',
-      mirror,
+      slot,
       'rev-parse',
       '--is-bare-repository',
       '--verify',
       `refs/heads/${vcs.baseBranch}^{commit}`,
     ])
-    return result.exitCode === 0 && result.stdout.split('\n')[0] === 'true' ? mirror : null
+    return result.exitCode === 0 && result.stdout.split('\n')[0] === 'true' ? slot : null
   } catch {
     return null
   }
@@ -624,13 +633,13 @@ const cloneWorkspace = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoot: 
   const cloneUrl = resolveCloneUrl(vcs)
   const mirror = await findWorkspaceMirror(cacheRoot, vcs, runner)
   if (mirror) {
-    // Dissociating an unbounded clone packs every reachable object from the mirror into the Job.
+    // Bound the borrowed history and detach before the refresher can recycle this slot.
     const result = await runner('git', [
       ...flags,
       '--depth=1',
       '--branch',
       vcs.baseBranch,
-      '--reference-if-able',
+      '--reference',
       mirror,
       '--dissociate',
       cloneUrl,
@@ -638,19 +647,21 @@ const cloneWorkspace = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoot: 
     ])
     if (result.exitCode === 0) {
       assertCommandSuccess(await runner('git', ['remote', 'set-branches', 'origin', '*'], { cwd }), 'git set-branches')
-      return
+      return 'shared-mirror'
     }
     console.warn('[agents] shared mirror clone failed; retrying from origin')
     // The destination was empty and --no-checkout writes only .git.
     await rm(join(cwd, '.git'), { recursive: true, force: true })
   }
   assertCommandSuccess(await runner('git', [...flags, cloneUrl, cwd]), `git clone ${vcs.repository}`)
+  return 'origin'
 }
 
 const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoot: string, runner: CommandRunner) => {
   await ensureGitAskpass()
   const cloneUrl = resolveCloneUrl(vcs)
   const gitDir = join(cwd, '.git')
+  let source: CheckoutSource = 'existing'
 
   if (await pathExists(gitDir)) {
     assertCommandSuccess(await runner('git', ['remote', 'set-url', 'origin', cloneUrl], { cwd }), 'git remote set-url')
@@ -673,13 +684,19 @@ const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoo
         })
       }
     }
-    await cloneWorkspace(cwd, vcs, cacheRoot, runner)
+    source = await cloneWorkspace(cwd, vcs, cacheRoot, runner)
   }
 
-  await fetchBranch(runner, cwd, vcs.baseBranch, { required: true })
+  // Fresh clones already negotiated refs with origin, even when a mirror supplied objects.
+  if (source === 'existing' || !(await hasRemoteBranch(runner, cwd, vcs.baseBranch))) {
+    await fetchBranch(runner, cwd, vcs.baseBranch, { required: true })
+  }
   const headBranch = vcs.headBranch ?? vcs.baseBranch
   const fetchedHead =
-    headBranch === vcs.baseBranch ? true : await fetchBranch(runner, cwd, headBranch, { required: false })
+    headBranch === vcs.baseBranch ||
+    (source === 'origin'
+      ? await hasRemoteBranch(runner, cwd, headBranch)
+      : await fetchBranch(runner, cwd, headBranch, { required: false }))
   const checkoutRef = fetchedHead ? `refs/remotes/origin/${headBranch}` : `refs/remotes/origin/${vcs.baseBranch}`
 
   if (vcs.writeEnabled) {
@@ -693,6 +710,7 @@ const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoo
       `git checkout ${checkoutRef}`,
     )
   }
+  return source
 }
 
 const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: string, runner: CommandRunner) => {
@@ -702,7 +720,7 @@ const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: strin
     !(await pathExists(join(cwd, 'bun.lock'))) ||
     !(await pathExists(join(cwd, 'services/memories/package.json')))
   ) {
-    return
+    return 'skipped'
   }
 
   const install = (deadline: string, flags: string[], env?: CommandOptions['env']) =>
@@ -739,7 +757,8 @@ const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: strin
         for (const entry of entries) {
           await symlink(join(bunCache, entry), join(cacheView, entry))
         }
-        if (await install('20s', ['--offline', '--backend=copyfile'], { BUN_INSTALL_CACHE_DIR: cacheView })) return
+        if (await install('20s', ['--offline', '--backend=copyfile'], { BUN_INSTALL_CACHE_DIR: cacheView }))
+          return 'shared'
       } finally {
         await rm(cacheView, { recursive: true, force: true })
       }
@@ -747,25 +766,33 @@ const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: strin
   } catch {
     // A missing or unusable node cache must not prevent a normal install in the Job.
   }
-  if (!(await install('30s', ['--prefer-offline']))) {
-    console.warn('[agents] first-turn Bun dependencies unavailable; continuing without bootstrap install')
-  }
+  if (await install('30s', ['--prefer-offline'])) return 'local'
+  console.warn('[agents] first-turn Bun dependencies unavailable; continuing without bootstrap install')
+  return 'failed'
 }
 
-const prepareCodexCwd = async (
-  adapter: CodexAppServerAdapterConfig,
+export const prepareRunnerWorkspace = async (
+  adapter: Pick<CodexAppServerAdapterConfig, 'cwd'>,
   runPayload: AgentRunPayload,
   runner: CommandRunner,
   cacheRoot: string,
+  reportStartupPhase: ReportStartupPhase,
 ): Promise<void> => {
   const cwd = nonEmptyString(adapter.cwd)
   if (!cwd) return
 
   const vcs = readVcsWorkspaceContext(runPayload)
   if (vcs) {
-    await ensureVcsCheckout(cwd, vcs, cacheRoot, runner)
+    const checkoutStarted = performance.now()
+    let outcome = 'failed'
+    try {
+      outcome = await ensureVcsCheckout(cwd, vcs, cacheRoot, runner)
+    } finally {
+      reportStartupPhase('git_checkout', checkoutStarted, outcome)
+    }
     if (vcs.repository === LAB_REPOSITORY && isGitHubCloneBaseUrl(vcs.cloneBaseUrl)) {
-      await installWorkspaceContextDependencies(cwd, cacheRoot, runner)
+      const bunStarted = performance.now()
+      reportStartupPhase('bun_bootstrap', bunStarted, await installWorkspaceContextDependencies(cwd, cacheRoot, runner))
     }
     return
   }
@@ -778,9 +805,10 @@ const prepareCodexCwdEffect = (
   runPayload: AgentRunPayload,
   runner: CommandRunner,
   cacheRoot: string,
+  reportStartupPhase: ReportStartupPhase,
 ) =>
   Effect.tryPromise({
-    try: () => prepareCodexCwd(adapter, runPayload, runner, cacheRoot),
+    try: () => prepareRunnerWorkspace(adapter, runPayload, runner, cacheRoot, reportStartupPhase),
     catch: (cause) =>
       cause instanceof CodexRunnerWorkspaceError
         ? cause
@@ -893,8 +921,8 @@ const assertSystemPromptHash = (contents: string, adapter: CodexAppServerAdapter
   }
 }
 
-const readSystemPromptInstructions = async (
-  adapter: CodexAppServerAdapterConfig,
+export const readRunnerSystemPrompt = async (
+  adapter: Pick<CodexAppServerAdapterConfig, 'baseInstructions' | 'systemPromptPath' | 'systemPromptExpectedHash'>,
   spec: AgentRunnerSpec,
   runPayload: AgentRunPayload,
 ): Promise<string | null> => {
@@ -940,7 +968,7 @@ const readSystemPromptInstructionsEffect = (
   runPayload: AgentRunPayload,
 ) =>
   Effect.tryPromise({
-    try: () => readSystemPromptInstructions(adapter, spec, runPayload),
+    try: () => readRunnerSystemPrompt(adapter, spec, runPayload),
     catch: (cause) =>
       cause instanceof CodexRunnerInputError
         ? cause
@@ -1163,11 +1191,13 @@ export const runCodexAppServerAdapterEffect = ({
   adapter,
   options,
   state,
+  reportStartupPhase,
 }: {
   spec: AgentRunnerSpec
   adapter: CodexAppServerAdapterConfig
   options: RunCodexAppServerAdapterOptions
   state: CodexAppServerAdapterState
+  reportStartupPhase: ReportStartupPhase
 }) =>
   Effect.gen(function* () {
     yield* throwIfCancelledEffect(options.abortSignal)
@@ -1205,9 +1235,12 @@ export const runCodexAppServerAdapterEffect = ({
       runPayload,
       options.runCommand ?? runDefaultCommand,
       options.sharedCachePath ?? SHARED_WORKSPACE_CACHE_MOUNT_PATH,
+      reportStartupPhase,
     )
     yield* throwIfCancelledEffect(options.abortSignal)
+    const appServerStarted = performance.now()
     state.client = yield* createRunnerClientEffect(clientOptions, options)
+    reportStartupPhase('app_server_ready', appServerStarted)
 
     const turnOptions: CodexAppServerTurnOptions = {
       model: adapter.model,
@@ -1219,7 +1252,9 @@ export const runCodexAppServerAdapterEffect = ({
       goal,
     }
     yield* throwIfCancelledEffect(options.abortSignal)
+    const turnStarted = performance.now()
     const response = yield* startTurnStreamEffect(state.client, prompt, turnOptions)
+    reportStartupPhase('first_turn_started', turnStarted)
     state.threadId = response.threadId
     state.turnId = response.turnId
     const completion = yield* consumeTurnStreamEffect({
@@ -1304,6 +1339,7 @@ export const runCodexAppServerAdapter = async (
   adapter: CodexAppServerAdapterConfig,
   options: RunCodexAppServerAdapterOptions = {},
 ): Promise<number> => {
+  const startupStarted = performance.now()
   const now = options.now ?? (() => new Date())
   const startedAt = timestampUtc(now)
   const statusPath = spec.artifacts?.statusPath
@@ -1331,6 +1367,22 @@ export const runCodexAppServerAdapter = async (
       state.logStream?.write(line)
       process.stdout.write(line)
     }
+    const reportStartupPhase: ReportStartupPhase = (phase, started, outcome = 'ok') => {
+      const finished = performance.now()
+      write(
+        `${JSON.stringify({
+          ts: now().toISOString(),
+          component: 'agent-runner',
+          event: {
+            type: 'startup_phase',
+            phase,
+            outcome,
+            durationMs: Math.round(finished - started),
+            elapsedMs: Math.round(finished - startupStarted),
+          },
+        })}\n`,
+      )
+    }
     state.telemetry = createRunnerTelemetry({
       model: adapter.model,
       effort: adapter.effort,
@@ -1352,7 +1404,9 @@ export const runCodexAppServerAdapter = async (
       write,
     })
     await state.telemetry.start()
-    exitCode = await runCodexEffectPromise(runCodexAppServerAdapterEffect({ spec, adapter, options, state }))
+    exitCode = await runCodexEffectPromise(
+      runCodexAppServerAdapterEffect({ spec, adapter, options, state, reportStartupPhase }),
+    )
   } catch (error) {
     let runnerError = error
     if (error instanceof CodexRunnerCancellationError) {

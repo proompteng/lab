@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   name: auto-ontology-oauth-discovery
 spec:
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: auto-ontology-oauth-discovery

@@ -16,6 +16,7 @@ metadata:
     argocd.argoproj.io/sync-wave: '-1'
 spec:
   replicas: 2
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: tengri-run-reader

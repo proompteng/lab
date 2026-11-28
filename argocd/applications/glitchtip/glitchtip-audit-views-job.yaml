@@ -1,0 +1,167 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: glitchtip-audit-views
+  namespace: glitchtip
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 300
+  backoffLimit: 4
+  template:
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 26
+        runAsGroup: 26
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: apply-audit-views
+          image: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
+          env:
+            - name: PGHOST
+              value: glitchtip-pg-rw.glitchtip.svc.cluster.local
+            - name: PGDATABASE
+              value: glitchtip
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-pg-app
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-pg-app
+                  key: password
+            - name: PGSSLMODE
+              value: verify-full
+            - name: PGSSLROOTCERT
+              value: /etc/glitchtip-pg-ca/ca.crt
+            - name: PGCONNECT_TIMEOUT
+              value: "5"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: postgres-ca
+              mountPath: /etc/glitchtip-pg-ca
+              readOnly: true
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              exec psql --no-psqlrc --no-password --set=ON_ERROR_STOP=1 --set=VERBOSITY=terse <<'SQL'
+              SET search_path = pg_catalog;
+              SET lock_timeout = '5s';
+              SET statement_timeout = '30s';
+
+              DO $audit$
+              DECLARE
+                audit_role oid;
+              BEGIN
+                IF current_database() <> 'glitchtip' OR current_user <> 'glitchtip' OR pg_is_in_recovery() THEN
+                  RAISE EXCEPTION 'Run the audit DDL as the GlitchTip owner on the primary';
+                END IF;
+
+                SELECT oid INTO audit_role
+                FROM pg_roles
+                WHERE rolname = 'glitchtip_audit_ro' AND rolcanlogin
+                  AND NOT (rolinherit OR rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls);
+                IF audit_role IS NULL OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member = audit_role) THEN
+                  RAISE EXCEPTION 'The unprivileged CNPG-managed glitchtip_audit_ro role is not ready';
+                END IF;
+
+                CREATE SCHEMA IF NOT EXISTS glitchtip_audit;
+
+                CREATE OR REPLACE VIEW glitchtip_audit.project_issue_counts AS
+                SELECT p.id AS project_id, COUNT(i.id) AS issues
+                FROM public.projects_project AS p
+                LEFT JOIN public.issue_events_issue AS i ON i.project_id = p.id AND NOT i.is_deleted
+                WHERE NOT p.is_deleted
+                GROUP BY p.id;
+
+                -- GlitchTip 7 keeps the issue's current status in IssueIndex (0 = unresolved).
+                CREATE OR REPLACE VIEW glitchtip_audit.unresolved_issue_aging AS
+                SELECT i.project_id,
+                  COUNT(*) AS unresolved_issues,
+                  COUNT(*) FILTER (WHERE i.first_seen > CURRENT_TIMESTAMP - INTERVAL '168 hours') AS under_7_days,
+                  COUNT(*) FILTER (WHERE i.first_seen <= CURRENT_TIMESTAMP - INTERVAL '168 hours'
+                    AND i.first_seen > CURRENT_TIMESTAMP - INTERVAL '720 hours') AS days_7_to_29,
+                  COUNT(*) FILTER (WHERE i.first_seen <= CURRENT_TIMESTAMP - INTERVAL '720 hours') AS at_least_30_days
+                FROM public.issue_events_issue AS i
+                JOIN public.projects_project AS p ON p.id = i.project_id
+                JOIN public.issue_events_issueindex AS s ON s.issue_id = i.id AND s.organization_id = p.organization_id
+                WHERE NOT p.is_deleted AND NOT i.is_deleted AND s.status = 0
+                GROUP BY i.project_id;
+
+                CREATE OR REPLACE VIEW glitchtip_audit.issue_hourly_events AS
+                SELECT i.project_id, a.issue_id, a.date AS hour_start, SUM(a.count) AS event_count
+                FROM public.issue_events_issueaggregate AS a
+                JOIN public.issue_events_issue AS i ON i.id = a.issue_id
+                JOIN public.projects_project AS p ON p.id = i.project_id AND p.organization_id = a.organization_id
+                WHERE NOT p.is_deleted AND NOT i.is_deleted
+                GROUP BY i.project_id, a.issue_id, a.date;
+
+                CREATE OR REPLACE VIEW glitchtip_audit.project_hourly_errors AS
+                SELECT a.project_id, a.date AS hour_start, SUM(a.count) AS event_count
+                FROM public.projects_issueeventprojecthourlystatistic AS a
+                JOIN public.projects_project AS p ON p.id = a.project_id AND p.organization_id = a.organization_id
+                WHERE NOT p.is_deleted
+                GROUP BY a.project_id, a.date;
+
+                CREATE OR REPLACE VIEW glitchtip_audit.release_activity AS
+                SELECT date_trunc('hour', r.released, 'UTC') AS release_hour, COUNT(*) AS releases
+                FROM public.releases_release AS r
+                WHERE r.released IS NOT NULL
+                GROUP BY 1;
+
+                CREATE OR REPLACE VIEW glitchtip_audit.project_release_activity AS
+                SELECT rp.project_id, date_trunc('hour', r.released, 'UTC') AS release_hour, COUNT(*) AS releases
+                FROM public.releases_release_projects AS rp
+                JOIN public.releases_release AS r ON r.id = rp.release_id
+                JOIN public.projects_project AS p ON p.id = rp.project_id AND p.organization_id = r.organization_id
+                WHERE r.released IS NOT NULL AND NOT p.is_deleted
+                GROUP BY rp.project_id, 2;
+
+                -- The database owner keeps access; revoking from only the audit role would leave PUBLIC defaults.
+                REVOKE CREATE, TEMPORARY ON DATABASE glitchtip FROM PUBLIC, glitchtip_audit_ro;
+                REVOKE ALL ON SCHEMA public, glitchtip_audit FROM PUBLIC, glitchtip_audit_ro;
+                REVOKE ALL ON ALL TABLES IN SCHEMA glitchtip_audit FROM PUBLIC, glitchtip_audit_ro;
+
+                -- A legacy table or column grant can expose values through pg_stats even without schema USAGE.
+                IF EXISTS (
+                  SELECT 1 FROM pg_class AS c
+                  JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                  WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                    AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                    AND has_any_column_privilege(audit_role, c.oid, 'SELECT')
+                ) THEN
+                  RAISE EXCEPTION 'Remove unexpected GlitchTip audit reader relation privileges before continuing';
+                END IF;
+
+                GRANT USAGE ON SCHEMA glitchtip_audit TO glitchtip_audit_ro;
+                GRANT SELECT ON glitchtip_audit.project_issue_counts, glitchtip_audit.unresolved_issue_aging,
+                  glitchtip_audit.issue_hourly_events, glitchtip_audit.project_hourly_errors,
+                  glitchtip_audit.release_activity, glitchtip_audit.project_release_activity TO glitchtip_audit_ro;
+              END;
+              $audit$;
+              SQL
+      volumes:
+        - name: postgres-ca
+          secret:
+            secretName: glitchtip-pg-ca
+            items:
+              - key: ca.crt
+                path: ca.crt

@@ -1,27 +1,29 @@
 from __future__ import annotations
 
-from tests.decisions.support import (
-    Decimal,
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest import TestCase
+from unittest.mock import patch
+
+from app.config import settings
+from app.strategies.catalog import StrategyConfig, _compose_strategy_description
+from app.trading.decisions import (
     DecisionEngine,
-    SignalEnvelope,
-    Strategy,
-    StrategyConfig,
-    StrategyRegistry,
-    StrategyRuntime,
-    TestCase,
-    _SellPlugin,
-    _compose_strategy_description,
     count_open_short_positions,
     exit_position_side_for_strategies,
     is_entry_action_for_strategies,
     is_exit_action_for_strategies,
     resolve_qty,
     resolve_qty_for_aggregated,
-    datetime,
-    patch,
-    settings,
-    timezone,
-    uuid,
+)
+from app.trading.models import SignalEnvelope
+from app.trading.strategy_runtime import StrategyRegistry, StrategyRuntime
+from tests.trading_fixtures import (
+    _SellPlugin,
+    make_catalog_strategy,
+    make_runtime_strategy,
+    make_signal,
 )
 
 
@@ -29,11 +31,9 @@ class TestDecisionEngineExitPolicyB(TestCase):
     def test_short_side_runtime_helpers_cover_exit_only_and_short_position_fallbacks(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="mean-reversion-exhaustion-short",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="mean_reversion_exhaustion_short_v1",
             universe_symbols=["META"],
@@ -102,11 +102,9 @@ class TestDecisionEngineExitPolicyB(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="breakout-continuation",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
@@ -158,14 +156,12 @@ class TestDecisionEngineExitPolicyB(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="breakout-continuation",
             description=(
                 "version=1.0.0\n[catalog_metadata]\n"
                 '{"params":{"entry_cooldown_seconds":"300","bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_open_return_efficiency":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
             ),
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
@@ -247,14 +243,12 @@ class TestDecisionEngineExitPolicyB(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="breakout-continuation",
             description=(
                 "version=1.0.0\n[catalog_metadata]\n"
                 '{"params":{"bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_open_return_efficiency":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
             ),
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
@@ -335,14 +329,12 @@ class TestDecisionEngineExitPolicyB(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="breakout-continuation",
             description=(
                 "version=1.0.0\n[catalog_metadata]\n"
                 '{"params":{"max_entries_per_session":"1","bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_open_return_efficiency":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
             ),
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
@@ -437,23 +429,10 @@ class TestDecisionEngineExitPolicyB(TestCase):
                 }
             )
         )
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="microbar-long-flat-exit",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-long-flat-exit",
-                    strategy_id="microbar_cross_sectional_long_v1@research",
-                    strategy_type="sell_plugin",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_long_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("15000"),
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_long_v1@research",
+            strategy_type="sell_plugin",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_long_v1",
             universe_symbols=["META"],
@@ -482,8 +461,7 @@ class TestDecisionEngineExitPolicyB(TestCase):
     def test_resolve_qty_for_aggregated_blocks_flat_microbar_long_time_exit(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="microbar-long-flat-exit",
             description=_compose_strategy_description(
                 StrategyConfig(
@@ -497,7 +475,6 @@ class TestDecisionEngineExitPolicyB(TestCase):
                     max_notional_per_trade=Decimal("15000"),
                 )
             ),
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_long_v1",
             universe_symbols=["NVDA"],
@@ -524,46 +501,20 @@ class TestDecisionEngineExitPolicyB(TestCase):
     def test_microbar_pairs_uses_catalog_strategy_type_for_directional_exit_semantics(
         self,
     ) -> None:
-        long_strategy = Strategy(
-            id=uuid.uuid4(),
+        long_strategy = make_catalog_strategy(
             name="microbar-pairs-long-leg",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-pairs-long-leg",
-                    strategy_id="microbar_cross_sectional_pairs_v1@research:long",
-                    strategy_type="microbar_cross_sectional_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("50000"),
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_pairs_v1@research:long",
+            strategy_type="microbar_cross_sectional_long_v1",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_pairs_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("50000"),
         )
-        short_strategy = Strategy(
-            id=uuid.uuid4(),
+        short_strategy = make_catalog_strategy(
             name="microbar-pairs-short-leg",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-pairs-short-leg",
-                    strategy_id="microbar_cross_sectional_pairs_v1@research:short",
-                    strategy_type="microbar_cross_sectional_short_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("50000"),
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_pairs_v1@research:short",
+            strategy_type="microbar_cross_sectional_short_v1",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_pairs_v1",
             universe_symbols=["META"],
@@ -604,41 +555,28 @@ class TestDecisionEngineExitPolicyB(TestCase):
     ) -> None:
         strategy_id = uuid.uuid4()
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_catalog_strategy(
             id=strategy_id,
             name="microbar-pairs-runtime",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-pairs-runtime",
-                    strategy_id="microbar_cross_sectional_pairs_v1@research",
-                    strategy_type="microbar_cross_sectional_pairs_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["AAPL", "AMZN"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("100"),
-                    params={
-                        "entry_minute_after_open": "60",
-                        "exit_minute_after_open": "120",
-                        "signal_motif": "vwap_close_continuation",
-                        "rank_feature": "cross_section_vwap_w5m_rank",
-                        "selection_mode": "continuation",
-                        "max_pair_legs": "2",
-                        "position_isolation_mode": "per_strategy",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_pairs_v1",
             universe_symbols=["AAPL", "AMZN"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("100"),
+            params={
+                "entry_minute_after_open": "60",
+                "exit_minute_after_open": "120",
+                "signal_motif": "vwap_close_continuation",
+                "rank_feature": "cross_section_vwap_w5m_rank",
+                "selection_mode": "continuation",
+                "max_pair_legs": "2",
+                "position_isolation_mode": "per_strategy",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 27, 15, 30, 0, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 27, 15, 30, 0, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -704,38 +642,25 @@ class TestDecisionEngineExitPolicyB(TestCase):
     def test_scheduler_runtime_microbar_pairs_materializes_aapl_amzn_entries_with_broader_feature_universe(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="microbar-cross-sectional-pairs-v1",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-cross-sectional-pairs-v1",
-                    strategy_id="microbar_cross_sectional_pairs_v1@research",
-                    strategy_type="microbar_cross_sectional_pairs_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["AAPL", "AMZN"],
-                    max_position_pct_equity=Decimal("6.0"),
-                    max_notional_per_trade=Decimal("100"),
-                    params={
-                        "entry_minute_after_open": "60",
-                        "exit_minute_after_open": "120",
-                        "signal_motif": "vwap_close_continuation",
-                        "rank_feature": "cross_section_vwap_w5m_rank",
-                        "selection_mode": "continuation",
-                        "top_n": "1",
-                        "max_pair_legs": "2",
-                        "position_isolation_mode": "per_strategy",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_pairs_v1",
             universe_symbols=["AAPL", "AMZN"],
             max_position_pct_equity=Decimal("6.0"),
             max_notional_per_trade=Decimal("100"),
+            params={
+                "entry_minute_after_open": "60",
+                "exit_minute_after_open": "120",
+                "signal_motif": "vwap_close_continuation",
+                "rank_feature": "cross_section_vwap_w5m_rank",
+                "selection_mode": "continuation",
+                "top_n": "1",
+                "max_pair_legs": "2",
+                "position_isolation_mode": "per_strategy",
+            },
         )
         base_payload = {
             "spread": 0.02,
@@ -777,9 +702,8 @@ class TestDecisionEngineExitPolicyB(TestCase):
                     positions=[],
                 )
             aapl_decisions = engine.evaluate(
-                SignalEnvelope(
-                    event_ts=datetime(2026, 3, 27, 14, 30, 0, tzinfo=timezone.utc),
-                    symbol="AAPL",
+                make_signal(
+                    datetime(2026, 3, 27, 14, 30, 0, tzinfo=timezone.utc),
                     timeframe="1Sec",
                     seq=1,
                     payload=base_payload | {"price": 102},
@@ -825,37 +749,25 @@ class TestDecisionEngineExitPolicyB(TestCase):
     ) -> None:
         strategy_id = uuid.uuid4()
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_catalog_strategy(
             id=strategy_id,
             name="microbar-pairs-runtime",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-pairs-runtime",
-                    strategy_id="microbar_cross_sectional_pairs_v1@research",
-                    strategy_type="microbar_cross_sectional_pairs_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["AAPL", "AMZN"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("100"),
-                    params={
-                        "entry_minute_after_open": "60",
-                        "exit_minute_after_open": "120",
-                        "signal_motif": "vwap_close_continuation",
-                        "rank_feature": "cross_section_vwap_w5m_rank",
-                        "selection_mode": "continuation",
-                        "max_pair_legs": "2",
-                        "position_isolation_mode": "per_strategy",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_pairs_v1",
             universe_symbols=["AAPL", "AMZN"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("100"),
+            params={
+                "entry_minute_after_open": "60",
+                "exit_minute_after_open": "120",
+                "signal_motif": "vwap_close_continuation",
+                "rank_feature": "cross_section_vwap_w5m_rank",
+                "selection_mode": "continuation",
+                "max_pair_legs": "2",
+                "position_isolation_mode": "per_strategy",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 15, 30, 0, tzinfo=timezone.utc),

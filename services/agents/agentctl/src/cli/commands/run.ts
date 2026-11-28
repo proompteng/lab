@@ -7,7 +7,6 @@ import * as Option from 'effect/Option'
 import YAML from 'yaml'
 
 import { normalizeKubernetesLabelValue } from '../../../../src/kubernetes-labels'
-import { createImplementationContractTools } from '../../../../src/server/agents-controller/implementation-contract'
 import { runCodex } from '../../codex'
 import type { KubeBackend } from '../../kube/backend'
 import {
@@ -32,18 +31,21 @@ import { type Transport, TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
 import { asAgentctlError, validationError } from '../errors'
 import { promptText } from '../prompt'
-import { parseRunValues } from '../run-input'
+import { makeRunBatchCommand } from '../run-batch'
+import { buildEventContext, parseRunValues } from '../run-input'
 import { makeRunListCommand } from '../run-list'
 import {
   DEFAULT_RUN_INTERVAL_MS,
   DEFAULT_RUN_TIMEOUT_MS,
   kubeCall,
+  readVerificationIdentity,
   runnerContainer,
   type Verification,
   verifyRun,
   waitForRunCompletion,
   waitForRunCompletionKube,
 } from '../run-observation'
+import { makeRunSummaryCommand } from '../run-summary'
 
 const textFlag = (name: string, description: string) => Flag.String(name).pipe(Flag.withDescription(description))
 const optionalText = (name: string, description: string) => Flag.optional(textFlag(name, description))
@@ -177,14 +179,6 @@ const readInputs = (flags: CommonFlags, transport: Transport, implementationRef?
 const grpcCall = <T>(tryCall: (signal: AbortSignal) => Promise<T>) =>
   Effect.tryPromise({ try: tryCall, catch: (error) => asAgentctlError(error, 'GrpcError') })
 
-const { buildEventContext } = createImplementationContractTools((params, keys) => {
-  for (const key of keys) {
-    const value = params[key]
-    if (typeof value === 'string' && value.trim().length > 0) return value.trim()
-  }
-  return ''
-})
-
 const readName = (resource: unknown) => {
   const name = readNestedValue(resource, ['metadata', 'name'])
   return typeof name === 'string' && name ? name : undefined
@@ -192,27 +186,7 @@ const readName = (resource: unknown) => {
 
 const readVerification = (backend: KubeBackend, namespace: string, input: AgentRunParams) =>
   Effect.gen(function* () {
-    const agent = yield* kubeCall(() => backend.getCustomObject(RESOURCE_SPECS.agent, namespace, input.agentName))
-    const providerName = readNestedValue(agent, ['spec', 'providerRef', 'name'])
-    if (typeof providerName !== 'string' || !providerName) {
-      return yield* Effect.fail(validationError('--verify requires an Agent with an AgentProvider reference.'))
-    }
-    const provider = yield* kubeCall(() => backend.getCustomObject(RESOURCE_SPECS.provider, namespace, providerName))
-    const serviceAccountName = readNestedValue(provider, ['spec', 'workload', 'serviceAccountName'])
-    const audience = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'audience'])
-    const mountPath = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'mountPath'])
-    if (
-      typeof serviceAccountName !== 'string' ||
-      !serviceAccountName ||
-      typeof audience !== 'string' ||
-      !audience ||
-      typeof mountPath !== 'string' ||
-      !mountPath
-    ) {
-      return yield* Effect.fail(
-        validationError('--verify requires an AgentProvider with a service account and MCP token projection.'),
-      )
-    }
+    const identity = yield* readVerificationIdentity(backend, namespace, input.agentName)
     let implementationSpec: Record<string, unknown> =
       input.implementationText !== undefined ? { text: input.implementationText } : {}
     if (input.implName && input.implementationText === undefined) {
@@ -226,7 +200,7 @@ const readVerification = (backend: KubeBackend, namespace: string, input: AgentR
     if (typeof prompt !== 'string' || !prompt.trim()) {
       return yield* Effect.fail(validationError('--verify requires non-empty implementation text.'))
     }
-    return { serviceAccountName, audience, mountPath, prompt }
+    return { ...identity, prompt }
   })
 
 const submitRun = (
@@ -288,7 +262,12 @@ const submitRun = (
         message: 'Submission returned no AgentRun name; check the namespace before retrying.',
       })
     if (expected || wait) console.error(`Submitted AgentRun ${namespace}/${name}.`)
-    if (expected && transport.mode === 'kube') yield* verifyRun(transport.backend, namespace, name, expected)
+    if (expected && transport.mode === 'kube') {
+      const { configMap, account } = yield* verifyRun(transport.backend, namespace, name, expected)
+      console.error(
+        `Verified AgentRun ${name}: ${configMap} run.json.prompt, inherited SA ${account}, and projected MCP token mount.`,
+      )
+    }
     if (!wait) {
       outputResource(resource, output)
     } else if (transport.mode === 'kube') {
@@ -599,6 +578,15 @@ export const makeRunCommand = () => {
 
   return Command.make('run').pipe(
     Command.withDescription('Submit, list, and operate AgentRuns.'),
-    Command.withSubcommands([submit, codex, makeRunListCommand(), logs, wait, cancel]),
+    Command.withSubcommands([
+      submit,
+      codex,
+      makeRunBatchCommand(),
+      makeRunListCommand(),
+      makeRunSummaryCommand(),
+      logs,
+      wait,
+      cancel,
+    ]),
   )
 }

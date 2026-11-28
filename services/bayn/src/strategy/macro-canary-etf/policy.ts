@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../../hash'
 import { IsoDateSchema, strictParseOptions, UnitIntervalSchema } from '../../schemas'
+import { MacroRiskConfig, macroRiskRules } from '../macro-portfolio/risk'
 
 // Reference: Wave 5D (#16376), ensemble/base/21/0.05. Array order also breaks ranking ties.
 export const macroCanaryEtfs = Object.freeze([
@@ -220,3 +221,56 @@ export const defaultMacroCanaryEtfPolicy = Result.getOrThrow(
     execution: { ...settings.execution, maxGrossLeverage: 1, maxEtfWeight: 0.5 },
   }),
 )
+
+export const canaryPolicyV2 = 'bayn.macro-canary-etf-policy.v2'
+export const crossAssetV2 = Object.freeze({
+  equity: Object.freeze(['SPY', 'QQQ', 'IWM'] as const),
+  duration: Object.freeze(['TLT', 'IEF'] as const),
+  realAssets: Object.freeze(['GLD', 'DBC'] as const),
+  dollar: 'UUP',
+  credit: 'HYG',
+  carry: 'SHY',
+  horizons: Object.freeze([21, 63, 126] as const),
+  horizonWeights: Object.freeze([4, 2, 1] as const),
+  cadence: 10,
+  equityBudget: 0.15,
+  durationBudget: 0.3,
+  realAssetBudget: 0.35,
+  dollarBudget: 0.15,
+  creditBudget: 0.05,
+  rateShockRealAssetTilt: 0.2,
+  creditStress: -0.02,
+  durationShock: -0.04,
+  flightToSafety: 0.04,
+  minDriftBps: 500,
+  maxEtfWeight: 0.5,
+})
+
+export const crossAssetEtfs = Object.freeze([
+  ...crossAssetV2.equity,
+  ...crossAssetV2.duration,
+  ...crossAssetV2.realAssets,
+  crossAssetV2.dollar,
+  crossAssetV2.credit,
+  crossAssetV2.carry,
+])
+export type CrossAssetEtf = (typeof crossAssetEtfs)[number]
+
+const PolicyV2 = Schema.Struct({
+  schemaVersion: Schema.Literal(canaryPolicyV2),
+  risk: MacroRiskConfig,
+})
+
+export const decodeMacroCanaryEtfPolicyV2 = (input: unknown) =>
+  Result.gen(function* () {
+    const decoded = yield* Schema.decodeUnknownResult(PolicyV2, strictParseOptions)(input)
+    const policy = {
+      ...decoded,
+      universe: crossAssetEtfs,
+      settings: crossAssetV2,
+      governor: macroRiskRules,
+    }
+    const policyHash = yield* canonicalHashV1Result(policy)
+    freezeTree(policy)
+    return Object.freeze({ policy, policyHash })
+  })

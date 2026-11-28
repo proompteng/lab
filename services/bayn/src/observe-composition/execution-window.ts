@@ -3,6 +3,7 @@ import type { AutonomousCycle } from '../cycle/model'
 import type { JevProtocol } from '../jev/protocol'
 import { continuousExecutionPolicy, isContinuousMarket, regularEquitySessions, type MarketHours } from '../market-hours'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
+import { isPureEtfPolicy } from '../strategy/intraday-alpha/policy'
 import { IntradayAlphaPhase } from '../strategy/intraday-alpha/constants'
 
 import { utcInstantFromEpochMillis, utcInstantFromEpochMillisResult } from '../time'
@@ -65,7 +66,13 @@ export const executionCycleCloseSchedule = (
   const target = document.strategyDecision
   const sessionCloseSubmitLeadMs = protocol.hardFlatBeforeCloseMinutes * 60_000
   let sessionCloseStartLeadMs = protocol.flattenBeforeCloseMinutes * 60_000
-  if (target?.schemaVersion === 'bayn.intraday-alpha-target.v2' && regular !== undefined) {
+  if (target?.schemaVersion === 'bayn.intraday-alpha-target.v3' && isPureEtfPolicy(target.policy)) {
+    sessionCloseStartLeadMs = target.policy.noiseArea.flattenBeforeCloseMinutes * 60_000
+  } else if (
+    target?.schemaVersion === 'bayn.intraday-alpha-target.v2' &&
+    !isPureEtfPolicy(target.policy) &&
+    regular !== undefined
+  ) {
     const flattenMinute =
       target.phase === IntradayAlphaPhase.NoiseAreaTrend
         ? target.policy.noiseArea.flattenMinuteFromOpen

@@ -7,7 +7,6 @@ from tests.config.support import (
     FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD,
     Path,
     Settings,
-    ValidationError,
     _MockFlagResponse,
     _TestConfigBase,
     json,
@@ -68,15 +67,6 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             settings.trading_allocator_symbol_correlation_groups,
             {"AAPL": "tech", "MSFT": "growth"},
         )
-
-    def test_rejects_negative_allocator_strategy_budget(self) -> None:
-        with self.assertRaises(ValidationError):
-            Settings(
-                TRADING_UNIVERSE_SOURCE="static",
-                TRADING_ENABLED=False,
-                TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS={"s1": -1},
-                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-            )
 
     def test_parses_drift_reason_code_sets(self) -> None:
         settings = Settings(

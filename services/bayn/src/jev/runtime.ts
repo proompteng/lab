@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../strategy/runtime-decision'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { jevProfitTargetCrossed } from './profit-target'
@@ -470,7 +471,7 @@ export const compileJevEntry = (
       )
     const symbols = [...decision.selectedSymbols].sort()
     const planningTargetWeights = jevPlanningTargetWeights(decision)
-    const isIntradayAlpha = decision.schemaVersion === 'bayn.intraday-alpha-target.v2'
+    const isIntradayAlpha = isIntradayAlphaTarget(decision)
     const quotePrices = isIntradayAlpha
       ? yield* Result.gen(function* () {
           const expectedBarMs = Date.parse(decisionSnapshot.manifest.rangeEndAt) - 60_000

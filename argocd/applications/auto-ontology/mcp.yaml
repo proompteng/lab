@@ -4,6 +4,7 @@ metadata:
   name: auto-ontology-mcp
 spec:
   replicas: 1
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: auto-ontology-mcp

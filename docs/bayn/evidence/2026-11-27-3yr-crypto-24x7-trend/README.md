@@ -7,7 +7,7 @@ no strategy module or deployment binding and preserves the live policy hash and 
 
 The [protocol](protocol.md) was committed before development was evaluated. The [development-only receipt](freeze.json)
 was separately committed at `56d775bf2bd83e07495ad9ed765e93bdb7a8001e` before loading holdout prices.
-[Results](results.json) contain every trial and the BTC/USD and 10-coin passive benchmarks at 50/30/20 bp, on
+[Results][archived-results] contain every trial and the BTC/USD and 10-coin passive benchmarks at 50/30/20 bp, on
 each split, each available calendar year, and the registered regimes. The strongest development rank within each
 group is a diagnostic, not a substitute for a nominee.
 
@@ -80,7 +80,7 @@ observed bars; there is no pre-2022 history for warming up the first daily split
 is not evidence of executable liquidity or maker fill rates; adding real spread/slippage could worsen results.
 Alpaca's schedule identifies the requested 20 bp maker scenario as Tier 3, not Tier 4.
 
-Reproduce from the PR revision or a checkout containing its squash merge, using the existing read-only S3
+Reproduce from the original PR revision or the [archived checkout][study-revision], using the existing read-only S3
 credentials. On the original branch the scorecard matches byte for byte. A squash changes the two
 checkout-history IDs that identify where the receipt files first appeared. Compare everything else, including both receipt hashes and both frozen
 source registration IDs:
@@ -102,3 +102,6 @@ excluded coin and fee. The tuple order is declared in the file. All compounded r
 are decimals; turnover is a NAV multiple. Undefined diagnostics are `null`, not passes. Any follow-on
 discovery must register a new experiment and find an independent holdout; do not reuse these shadows as
 proof of an edge.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-3yr-crypto-24x7-trend/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

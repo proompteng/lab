@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from hypothesis import strategies as st
@@ -72,31 +72,8 @@ def utc_datetimes() -> st.SearchStrategy[datetime]:
     )
 
 
-def regular_session_datetimes() -> st.SearchStrategy[datetime]:
-    return st.builds(
-        lambda base_day, minute_offset, second_offset: (
-            datetime(
-                base_day.year,
-                base_day.month,
-                base_day.day,
-                13,
-                30,
-                tzinfo=timezone.utc,
-            )
-            + timedelta(minutes=minute_offset, seconds=second_offset)
-        ),
-        st.dates(min_value=_UTC_MIN.date(), max_value=_UTC_MAX.date()),
-        st.integers(min_value=0, max_value=390),
-        st.integers(min_value=0, max_value=59),
-    )
-
-
 def equity_symbols() -> st.SearchStrategy[str]:
     return st.sampled_from(JANGAR_EQUITY_SYMBOLS)
-
-
-def crypto_symbols() -> st.SearchStrategy[str]:
-    return st.sampled_from(CRYPTO_SYMBOLS)
 
 
 def trading_symbols(*, include_crypto: bool = True) -> st.SearchStrategy[str]:
