@@ -122,6 +122,10 @@ spec:
     storageClass: rook-ceph-block
     size: 30Gi
     resizeInUseVolumes: true
+  walStorage:
+    storageClass: local-path
+    size: 32Gi
+    resizeInUseVolumes: false
   bootstrap:
     initdb:
       database: spicedb
@@ -133,6 +137,7 @@ spec:
       method: any
       number: 1
       dataDurability: required
+      failoverQuorum: true
     parameters:
       archive_timeout: 60s
       wal_buffers: 16MB

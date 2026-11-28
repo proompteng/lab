@@ -33,6 +33,19 @@ operator. Their upstream versions remain pinned in source; the repository-owned 
 CNPG generates `ofz-db-app`. The SpiceDB operator reads its `uri` key directly. Both migration jobs and serving pods
 verify PostgreSQL's TLS certificate with `ofz-db-ca`. `track_commit_timestamp=on` enables the SpiceDB Watch API.
 
+Each instance keeps its Ceph data claim and writes WAL to its own node-local volume. A commit requires a durable
+flush on the primary and one standby on a different host. Failover quorum prevents promoting an instance that
+cannot prove it has the acknowledged WAL. Barman keeps its existing scheduled base backups and continuous WAL
+archive. Online data-volume snapshots recover with archived WAL.
+
+Adding the dedicated WAL volume is a one-way CloudNativePG change. Before rolling the cluster, verify the existing
+off-host streaming replicas, a completed base backup, current WAL archiving and the local provisioner paths and
+available space on all three database nodes. During the managed rolling update, preserve all data PVCs and verify
+the new WAL mount and streaming state on each standby before it can become primary. After switchover, verify
+synchronous replication, exact WAL and data mounts, archived WAL, and commit latency on authenticated Ofz requests.
+See [CloudNativePG storage](https://cloudnative-pg.io/docs/1.30/storage/#volume-for-wal) and
+[failover quorum](https://cloudnative-pg.io/docs/1.30/failover/#failover-quorum-quorum-based-failover).
+
 The WAL buffer is 16 MiB, matching one WAL segment. Forced archive switches pad the segment, so a smaller buffer can
 cause repeated buffer evictions and small writes while authorization commits wait. `fdatasync` lets the primary and
 standbys batch WAL writes before their durable flush. WAL I/O timing is enabled for live
@@ -47,7 +60,7 @@ transport inside the cluster and has no ingress route. Browser access uses Tails
 The Tailscale operator provisions the private DNS name and certificate without a separate Pi-hole entry.
 
 The database, its inherited resources and backup ObjectStore are retained during Argo pruning or Application deletion.
-Ceph provides database storage, physical base backups and WAL. The private S3 gateway serves the
+Ceph provides database data volumes, physical base backups and the WAL archive. The private S3 gateway serves the
 `ofz-database-backups` bucket through a separate namespace-scoped writer. Thirty-day COMPLIANCE retention protects
 immutable versions. The old `cnpg-ofz` bucket remains protected and is outside the active destination.
 
