@@ -35,24 +35,24 @@ import { IsoDateSchema } from '../../schemas'
 import { constructExecutionDecision, constructObserveShadowDecision } from '../../shadow-decision'
 import { shortEntryBrokerReads } from '../../testing/entry-broker-reads.test-support'
 import { fixtureRuntime } from '../../testing/runtime-fixtures'
-import { intradayAlphaStrategyIdentity, makeIntradayAlphaPolicy } from './policy'
+import { intradayAlphaStrategyIdentity, makeIntradayAlphaPolicy, makePureEtfPolicy } from './policy'
 import { makeAlphaStreamingSnapshot, makeFlatAlphaPortfolio } from './test-support'
 
 /** Real native construction over synthetic market/account inputs, never operational trading evidence. */
 export const nativeAlphaDecisionFixture = async (
   options: {
+    readonly pureEtf?: boolean
     readonly accountId?: string
     readonly authorityGenerationHash?: string
     readonly calendar?: typeof MarketCalendarObservationSchema.Type
+    readonly snapshot?: Omit<Parameters<typeof makeAlphaStreamingSnapshot>[0], 'snapshotCalendar'>
     readonly baselinePreparation?: RecordedAlphaBaselinePreparation
   } = {},
 ) => {
   const accountId = options.accountId ?? 'alpha-test-account'
   const authorityGenerationHash = options.authorityGenerationHash ?? '2'.repeat(64)
-  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)('2026-09-04')
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-  const policy = makeIntradayAlphaPolicy(protocol)
-  const preparedBaseline = options.baselinePreparation ?? preparedAlphaBaselineFixture()
+  const policy = options.pureEtf === true ? makePureEtfPolicy(protocol) : makeIntradayAlphaPolicy(protocol)
   const testTrailingBaselineLayer = Layer.succeed(NativeAlphaBaselinePreparation, {
     prepare: (request) =>
       Effect.fromResult(reproduceAlphaBaselinePreparation({ ...preparedBaseline.payload, ...request })).pipe(
@@ -67,6 +67,8 @@ export const nativeAlphaDecisionFixture = async (
         { start: '2026-09-04', end: '2026-09-04' },
       ),
     )
+  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)(extendedCalendar.sessions[0]?.date)
+  const preparedBaseline = options.baselinePreparation ?? preparedAlphaBaselineFixture(sessionDate, policy)
   const { snapshot, cut, observedAt, rangeEndAt } = makeAlphaStreamingSnapshot({
     minutesFromOpen: 121,
     spyProfile: { basePrice: 550, endReturnBps: 0 },
@@ -79,6 +81,8 @@ export const nativeAlphaDecisionFixture = async (
     quoteSpreadBps: 450, // Wide single-exchange IEX spread (~4.5%)
     quoteBidSize: 1, // Thin top-of-book displayed bid size on IEX
     quoteAskSize: 1,
+    ...options.snapshot,
+    pureEtf: options.pureEtf === true,
     snapshotCalendar: extendedCalendar,
   })
 
@@ -102,7 +106,12 @@ export const nativeAlphaDecisionFixture = async (
     }),
   )
   const riskPolicy = Result.getOrThrow(
-    makeExecutionRiskPolicy(accountId, policy.sharedProtocol.universe, BrokerEnvironment.Sandbox),
+    makeExecutionRiskPolicy(
+      accountId,
+      policy.sharedProtocol.universe,
+      BrokerEnvironment.Sandbox,
+      options.pureEtf === true,
+    ),
   )
   const portfolio = makeFlatAlphaPortfolio(observedAt, undefined, undefined, accountId)
   const calendarSession = extendedCalendar.sessions[0]
@@ -275,5 +284,18 @@ export const nativeAlphaDecisionFixture = async (
     ),
   )
 
-  return { document, cycle, rangeEndAt, jevCalls, observedAt, policy, identity, portfolio }
+  return {
+    document,
+    cycle,
+    rangeEndAt,
+    jevCalls,
+    observedAt,
+    policy,
+    identity,
+    portfolio,
+    strategy,
+    reconciliation,
+    prepared,
+    riskPolicy,
+  }
 }

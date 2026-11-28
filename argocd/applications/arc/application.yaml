@@ -515,7 +515,7 @@ spec:
           scaleSetLabels:
             - arc-arm64-tmpfs
           minRunners: 0
-          maxRunners: 2
+          maxRunners: 8
           listenerTemplate: &tmpfs-listener
             spec:
               nodeSelector:
@@ -677,15 +677,15 @@ spec:
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
-                  resources:
+                  resources: &tmpfs-standard-resources
                     requests:
                       cpu: "4"
-                      memory: "8Gi"
+                      memory: "16Gi"
                       ephemeral-storage: "10Gi"
                     limits:
                       cpu: "20"
-                      memory: "18Gi"
-                      ephemeral-storage: "100Gi"
+                      memory: "24Gi"
+                      ephemeral-storage: "20Gi"
                   env: &tmpfs-env
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -739,7 +739,7 @@ spec:
           scaleSetLabels:
             - arc-amd64-tmpfs
           minRunners: 0
-          maxRunners: 2
+          maxRunners: 10
           listenerTemplate: *tmpfs-listener
           template:
             spec:
@@ -777,15 +777,7 @@ spec:
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
-                  resources:
-                    requests:
-                      cpu: "4"
-                      memory: "8Gi"
-                      ephemeral-storage: "10Gi"
-                    limits:
-                      cpu: "20"
-                      memory: "18Gi"
-                      ephemeral-storage: "100Gi"
+                  resources: *tmpfs-standard-resources
                   env: *tmpfs-env
                   volumeMounts: *tmpfs-mounts
               volumes:
@@ -813,7 +805,7 @@ spec:
           scaleSetLabels:
             - arc-arm64-tmpfs-large
           minRunners: 0
-          maxRunners: 2
+          maxRunners: 6
           listenerTemplate: *tmpfs-listener
           template:
             spec:
@@ -852,15 +844,15 @@ spec:
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
-                  resources:
+                  resources: &tmpfs-large-resources
                     requests:
                       cpu: "4"
-                      memory: "8Gi"
+                      memory: "24Gi"
                       ephemeral-storage: "10Gi"
                     limits:
                       cpu: "20"
-                      memory: "28Gi"
-                      ephemeral-storage: "100Gi"
+                      memory: "32Gi"
+                      ephemeral-storage: "20Gi"
                   env: *tmpfs-env
                   volumeMounts: *tmpfs-mounts
               volumes:
@@ -883,7 +875,7 @@ spec:
           scaleSetLabels:
             - arc-amd64-tmpfs-large
           minRunners: 0
-          maxRunners: 2
+          maxRunners: 6
           listenerTemplate: *tmpfs-listener
           template:
             spec:
@@ -921,15 +913,7 @@ spec:
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
-                  resources:
-                    requests:
-                      cpu: "4"
-                      memory: "8Gi"
-                      ephemeral-storage: "10Gi"
-                    limits:
-                      cpu: "20"
-                      memory: "28Gi"
-                      ephemeral-storage: "100Gi"
+                  resources: *tmpfs-large-resources
                   env: *tmpfs-env
                   volumeMounts: *tmpfs-mounts
               volumes:

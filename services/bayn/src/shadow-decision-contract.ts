@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from './strategy/runtime-decision'
 import {
   entryAblationStrategyIdentity,
   makeEntryAblationPolicy,
@@ -26,7 +27,8 @@ import {
 import {
   intradayAlphaStrategyIdentity,
   makeIntradayAlphaPolicy,
-  type IntradayAlphaPolicy,
+  makePureEtfPolicy,
+  type IntradayAlphaPolicyMaterial,
 } from './strategy/intraday-alpha/policy'
 import { entryBracketProtection } from './execution/position-protection'
 import { jevProfitTargetLimitFloors, jevProfitTargetLimitCeilings } from './jev/exit'
@@ -87,7 +89,7 @@ import {
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, canonicalJsonEqualV1, canonicalJsonV1Result, sha256 } from './hash'
 import { intradayAgeNanos, millisecondsAsNanos } from './market-data/intraday/time'
-import { IntradaySnapshotPurpose } from './market-data/intraday/model'
+import { IntradaySnapshotPurpose, sameIntradaySource } from './market-data/intraday/model'
 import {
   AuthorityStateSchema,
   OrderSide,
@@ -376,14 +378,6 @@ export const isSnapshotExecutionMarketDataBinding = (
 
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
-
-const sameSourceUniverse = (
-  left: SnapshotExecutionMarketDataBinding,
-  right: SnapshotExecutionMarketDataBinding,
-): boolean =>
-  left.universeId === right.universeId &&
-  left.universeSymbolHash === right.universeSymbolHash &&
-  sameStrings(left.universe, right.universe)
 
 const ShadowDecisionBindingsSchema = Schema.Struct({
   strategyName: StrictNonEmptyStringSchema,
@@ -1043,7 +1037,7 @@ const streamingPricingEvidenceIssues = (
   )
     return [{ path: ['plannerInput'], issue: 'streaming execution requires quote-bound planner inputs' }]
   const target = document.strategyDecision
-  const isIntradayAlpha = target?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+  const isIntradayAlpha = isIntradayAlphaTarget(target)
   const alphaBarCloses = isIntradayAlpha
     ? Result.gen(function* () {
         const rangeEndAt = target.evidence.observation.manifest['rangeEndAt']
@@ -1414,13 +1408,11 @@ const momentumProtocolIdentityMatches = (
 }
 
 const intradayAlphaProtocolIdentityMatches = (
-  policy: Omit<IntradayAlphaPolicy, 'sharedProtocol'> & {
-    readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
-  },
+  policy: IntradayAlphaPolicyMaterial,
   strategyProtocolHash: string,
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
-  const expected = canonicalHashV1Result({ ...retainedExpectedProtocolDocument(policy.sharedProtocol) })
+  const expected = canonicalHashV1Result(defaultJevProtocolDocument)
   const identity = intradayAlphaStrategyIdentity(policy)
   return (
     Result.isSuccess(parameters) &&
@@ -1478,7 +1470,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
             targetWeights: jevPlanningTargetWeights(target),
             capitalMicros: observation.portfolio.brokerState.account.equityMicros,
             precision: observation.protocol.executionModel.precision,
-            ...(target.schemaVersion === 'bayn.intraday-alpha-target.v2' ? { ignoreDisplayedBidSize: true } : {}),
+            ...(isIntradayAlphaTarget(target) ? { ignoreDisplayedBidSize: true } : {}),
           }),
           equityShortEntries: protectedEntryShortEligibility(target),
         }
@@ -1529,7 +1521,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
     target.selectedSymbols.some(
       (symbol) =>
         (document.entryLimitSlippageBps ?? 0) >
-        (target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+        (isIntradayAlphaTarget(target)
           ? target.policy.entryLimitSlippageBps
           : jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps),
     )
@@ -1552,7 +1544,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     !(target.schemaVersion === 'bayn.repeated-momentum-target.v1'
       ? momentumProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
-      : target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+      : isIntradayAlphaTarget(target)
         ? intradayAlphaProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
         : target.schemaVersion === 'bayn.entry-ablation-target.v1'
           ? ablationProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
@@ -1599,7 +1591,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     !isSnapshotExecutionMarketDataBinding(source) ||
     !isSnapshotExecutionMarketDataBinding(pricing) ||
-    !sameSourceUniverse(source, pricing) ||
+    !sameIntradaySource(source, pricing) ||
     document.executionSession === undefined ||
     !sameMarketHours(source.calendar, document.executionSession.calendar) ||
     !sameMarketHours(pricing.calendar, source.calendar) ||
@@ -1613,7 +1605,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   )
     issues.push({
       path: ['bindings'],
-      issue: 'Jev execution requires fresh quote pricing from the same verified source universe and session',
+      issue: 'Jev execution requires fresh quote pricing from the same verified market source and session',
     })
   issues.push(...streamingPricingEvidenceIssues(document))
   return issues
@@ -1658,7 +1650,8 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
       intradayAlphaProtocolIdentityMatches(
         makeIntradayAlphaPolicy(evidence.protocol),
         document.bindings.strategyProtocolHash,
-      )
+      ) ||
+      intradayAlphaProtocolIdentityMatches(makePureEtfPolicy(evidence.protocol), document.bindings.strategyProtocolHash)
     ) ||
     target.cycleId !== document.bindings.cycleId ||
     target.sessionDate !== document.executionSession?.executionSession.date ||
@@ -1982,7 +1975,7 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
             issue: 'dedicated intraday execution pricing must be explicitly quote-only',
           })
         }
-        if (!sameSourceUniverse(decisionMarketData, executionMarketData)) {
+        if (!sameIntradaySource(decisionMarketData, executionMarketData)) {
           issues.push({
             path: ['bindings', 'executionMarketData', 'universe'],
             issue: 'intraday decision and execution pricing evidence must share one immutable source universe',

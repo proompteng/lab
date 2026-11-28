@@ -85,7 +85,12 @@ runtimeConfig:
     anonymous:
       ingestion_rate: 20000
       ingestion_burst_size: 400000
-      max_global_series_per_user: 300000
+      max_global_series_per_user: 600000
+      metric_relabel_configs:
+        # The cumulative CI buckets keep old label sets live and have no dashboard or alert consumers.
+        - source_labels: [job, __name__]
+          regex: ci-observability;ci_job_collection_delay_seconds_bucket
+          action: drop
 
 rollout_operator:
   enabled: false
@@ -105,6 +110,11 @@ distributor:
 
 ingester:
   replicas: 3
+  # Reserve working memory for the TSDB head and replay without capping either.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
   statefulStrategy:
     type: RollingUpdate
   zoneAwareReplication:

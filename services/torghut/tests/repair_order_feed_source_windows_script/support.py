@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import io
 import json
 import os
@@ -131,44 +130,6 @@ def _seed_canonical_execution(
     return decision, execution, metric
 
 
-def _seed_live_source_window(
-    session: Session, *, event_count: int
-) -> OrderFeedSourceWindow:
-    source_window = OrderFeedSourceWindow(
-        consumer_group="torghut-order-feed-v1",
-        source_topic="torghut.trade-updates.v1",
-        source_partition=0,
-        alpaca_account_label="PA3SX7FYNUTF",
-        assignment_mode="group",
-        source_revision="alpaca-trade-updates-v1",
-        window_started_at=datetime(2026, 6, 11, 13, 30, tzinfo=timezone.utc),
-        window_ended_at=datetime(2026, 6, 11, 20, 10, tzinfo=timezone.utc),
-        start_offset=10_000,
-        end_offset=10_000 + event_count - 1,
-        consumed_count=event_count,
-        inserted_count=event_count,
-        unlinked_execution_count=event_count,
-        unlinked_decision_count=event_count,
-        status="inserted",
-        status_reason="missing_execution_and_decision_links",
-        classification_counts={
-            "inserted": event_count,
-            "unlinked_execution": event_count,
-            "unlinked_decision": event_count,
-        },
-        payload_json={
-            "classification_counts": {
-                "inserted": event_count,
-                "unlinked_execution": event_count,
-                "unlinked_decision": event_count,
-            }
-        },
-    )
-    session.add(source_window)
-    session.flush()
-    return source_window
-
-
 FakeSession = _FakeSession
 FakeSessionFactory = _FakeSessionFactory
 seed_canonical_execution = _seed_canonical_execution
@@ -192,7 +153,6 @@ __all__: tuple[str, ...] = (
     "_FakeSessionFactory",
     "_TestRepairOrderFeedSourceWindowsScriptBase",
     "_seed_canonical_execution",
-    "_seed_live_source_window",
     "_sqlite_model_engine",
     "create_engine",
     "cross_dsn_script",

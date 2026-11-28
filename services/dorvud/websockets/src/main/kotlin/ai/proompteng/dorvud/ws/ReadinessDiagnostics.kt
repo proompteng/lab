@@ -17,7 +17,9 @@ import org.apache.kafka.common.errors.UnknownTopicOrPartitionException
 enum class ReadinessErrorClass(
   val id: String,
 ) {
+  Alpaca405SymbolLimit("alpaca_405_symbol_limit"),
   Alpaca406SecondConnection("alpaca_406_second_connection"),
+  Alpaca409InsufficientSubscription("alpaca_409_insufficient_subscription"),
   AlpacaAuth("alpaca_auth"),
   OptionsEventStarvation("options_event_starvation"),
   KafkaAuth("kafka_auth"),

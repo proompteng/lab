@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from unittest.mock import patch
 
-from app.trading.tigerbeetle_client import TigerBeetleClientTimeoutError
+from sqlalchemy.orm import Session
 
-from tests.order_feed.support import (
-    FakeConsumer,
-    FakeRecord,
+from app.config import settings
+from app.trading.order_feed import OrderFeedIngestor
+from app.trading.tigerbeetle_client import (
     FakeTigerBeetleClient,
-    OrderFeedIngestor,
-    OrderFeedTestCase,
-    Session,
-    patch,
-    settings,
+    TigerBeetleClientTimeoutError,
 )
+from tests.order_feed.support import FakeConsumer, FakeRecord, OrderFeedTestCase
 
 
 class _CloseTrackingTigerBeetleClient(FakeTigerBeetleClient):

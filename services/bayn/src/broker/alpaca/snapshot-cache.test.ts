@@ -2,10 +2,24 @@ import { ValkeyCache } from '../../valkey-cache'
 import { observedBrokerState } from './observed-snapshot'
 import { describe, expect, test } from 'bun:test'
 import type { PgClient } from '@effect/sql-pg'
-import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit } from 'effect'
+import {
+  Cause,
+  Option,
+  Clock,
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Fiber,
+  Logger,
+  Ref,
+  Result,
+  Exit,
+  Redacted,
+} from 'effect'
 import {
   BrokerObservations,
   decodeObservedBrokerSnapshot,
+  requireSettledCashFees,
   validateObservedBrokerSnapshot,
   type ObservedBrokerSnapshot,
 } from './observed-snapshot'
@@ -42,6 +56,9 @@ import {
   type Position,
   type ReadResult,
 } from './model'
+import { BrokerEnvironment, BrokerProvider } from '../identity'
+import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
+import { ordersUrl } from './requests'
 import { brokerSnapshotCacheConfig, makeBrokerObservationCapture, makeProjectedBrokerRead } from './snapshot-cache'
 
 const config = { maxAgeMs: 60_000 }
@@ -183,11 +200,15 @@ const healthPass = (read: BrokerReadShape, timeoutMs = 1000) =>
   })
 
 describe('durable broker observations', () => {
-  test('status identifies pending cash fees and clears the reason only after the canonical cut settles', async () => {
+  test('status only identifies a cash fee wait with verified broker permissions', async () => {
     const source = fixture()
-    let snapshot = { ...observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z'), pendingCashFeeCount: 2 }
-    let failure: BrokerReadError | undefined
-    const observed = Effect.suspend(() => (failure === undefined ? Effect.succeed(snapshot) : Effect.fail(failure)))
+    const settled = observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z')
+    const pending = { ...settled, pendingCashFeeCount: 2 }
+    let snapshot = pending
+    let failure: Cause.Cause<BrokerReadError> | undefined
+    const observed = Effect.suspend(() =>
+      failure === undefined ? Effect.succeed(snapshot) : Effect.failCause(failure),
+    )
     await run(
       Effect.gen(function* () {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
@@ -201,31 +222,75 @@ describe('durable broker observations', () => {
         )
         const facts = () =>
           healthPass(projected).pipe(
-            Effect.map((broker) =>
-              statusFacts(
+            Effect.map((broker) => ({
+              broker,
+              status: statusFacts(
                 { ...readyState(), broker },
                 runtimeConfig.execution,
                 provenance,
                 runtimeConfig.build.verification,
               ),
-            ),
+            })),
           )
-        expect(yield* facts()).toMatchObject({
+        expect((yield* facts()).status).toMatchObject({
           operational: { ready: false },
           broker: { readAvailable: false, reasonCode: 'BROKER_CASH_FEES_PENDING', error: 'BROKER_CASH_FEES_PENDING' },
         })
-        snapshot = { ...snapshot, pendingCashFeeCount: 0 }
-        expect(yield* facts()).toMatchObject({
+        for (const [restriction, message] of [
+          [{ tradingBlocked: true }, 'trading is blocked'],
+          [{ accountBlocked: true }, 'account is blocked'],
+          [{ status: AccountStatus.Inactive }, 'account status is INACTIVE, expected ACTIVE'],
+          [{ transfersBlocked: true }, 'transfers are blocked'],
+        ] as const) {
+          const { account } = pending.snapshot
+          snapshot = Result.getOrThrow(
+            decodeObservedBrokerSnapshot({
+              ...pending,
+              snapshot: { ...pending.snapshot, account: { ...account, value: { ...account.value, ...restriction } } },
+            }),
+          )
+          const { broker, status } = yield* facts()
+          expect(broker).toMatchObject({
+            accountBound: true,
+            readAvailable: false,
+            error: `Alpaca account permission drift detected: ${message}`,
+          })
+          expect(broker).not.toHaveProperty('observationFailure')
+          expect(status).toMatchObject({
+            operational: { ready: false },
+            broker: {
+              readAvailable: false,
+              reasonCode: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+              error: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+            },
+          })
+        }
+        snapshot = settled
+        expect((yield* facts()).status).toMatchObject({
           operational: { ready: true },
           broker: { readAvailable: true, reasonCode: null, error: null },
         })
-        failure = new BrokerReadError({
-          operation: 'preflight',
-          kind: BrokerReadErrorKind.Timeout,
-          retryable: true,
-          message: 'Broker observation is awaiting authoritative cash fee records',
+        const timeout = Cause.fail(
+          new BrokerReadError({
+            operation: 'preflight',
+            kind: BrokerReadErrorKind.Timeout,
+            retryable: true,
+            message: 'Broker observation is awaiting authoritative cash fee records',
+          }),
+        )
+        failure = timeout
+        expect((yield* facts()).status).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
         })
-        expect(yield* facts()).toMatchObject({
+        const feeWait = yield* Effect.flip(requireSettledCashFees({ pendingCashFeeCount: 1 }))
+        failure = Cause.fail(feeWait)
+        expect((yield* facts()).status).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
+        })
+        failure = Cause.combine(Cause.fail(feeWait), timeout)
+        expect((yield* facts()).status).toMatchObject({
           operational: { ready: false },
           broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
         })
@@ -856,6 +921,100 @@ describe('complete open broker order capture', () => {
       },
     }
   }
+
+  test('Black Friday: a filled GOOGL short bracket does not hide either live DAY child', async () => {
+    const checkedAt = '2026-11-27T16:28:02.379Z'
+    const fillAt = '2026-11-27T15:02:09.000Z'
+    const template = observedBrokerSnapshotFixture(accountId, checkedAt, fillAt)
+    const parent = template.snapshot.history.orders.rows[0]?.value
+    const fill = template.snapshot.history.fills[0]?.value
+    if (parent === undefined || fill === undefined) throw new Error('Expected broker fill fixture')
+    const positionQuantity = '103000000000'
+    const f = protectionFixture()
+    const profit: Order = {
+      ...f.profit,
+      symbol: 'GOOGL',
+      side: OrderSide.Buy,
+      quantityAtoms: positionQuantity,
+      limitPriceMicros: '261810000',
+      createdAt: fillAt,
+      submittedAt: fillAt,
+      updatedAt: fillAt,
+      observedAt: checkedAt,
+    }
+    const stop: Order = {
+      ...profit,
+      brokerOrderId: f.stop.brokerOrderId,
+      clientOrderId: f.stop.clientOrderId,
+      orderType: OrderType.StopLimit,
+      stopPriceMicros: '275310000',
+      limitPriceMicros: '275580000',
+    }
+    const bracket: Order = {
+      ...parent,
+      symbol: 'GOOGL',
+      side: OrderSide.Sell,
+      quantityAtoms: positionQuantity,
+      filledQuantityAtoms: positionQuantity,
+      filledAveragePriceMicros: '271025500',
+      limitPriceMicros: '270810000',
+      orderClass: OrderClass.Bracket,
+      timeInForce: TimeInForce.Day,
+      legs: [profit, stop],
+    }
+    const source = fixture({
+      orders: [bracket],
+      fills: [
+        {
+          ...fill,
+          symbol: 'GOOGL',
+          side: OrderSide.Sell,
+          quantityAtoms: positionQuantity,
+          cumulativeQuantityAtoms: positionQuantity,
+          priceAtoms: '271025500000',
+        },
+      ],
+    })
+    const connection = Result.getOrThrow(
+      decodeBrokerConnection({
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        baseUrl: alpacaSandboxBaseUrl,
+        expectedAccountId: accountId,
+        key: Redacted.make('key'),
+        secret: Redacted.make('secret'),
+        proxyUrl: 'http://proxy.test:3128',
+        operationTimeoutMs: 15_000,
+        retryAttempts: 2,
+      }),
+    )
+    const read: BrokerReadShape = {
+      ...source.read,
+      orders: (query) =>
+        source.read.orders(query).pipe(
+          Effect.map((response) =>
+            query?.status !== OrderCollection.Open
+              ? response
+              : {
+                  ...response,
+                  value:
+                    ordersUrl(connection, query).searchParams.get('nested') === 'false'
+                      ? [f.standalone(profit), f.standalone(stop)]
+                      : [],
+                },
+          ),
+        ),
+    }
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(checkedAt))
+        const capture = yield* makeBrokerObservationCapture
+        const snapshot = yield* capture(read, { generation: 1, startedAt: checkedAt }, 15_000)
+        expect(snapshot.openOrders.value).toEqual([profit, stop])
+        expect(snapshot.snapshot.history.orders.rows[0]?.value).toEqual(bracket)
+      }),
+    )
+  })
 
   test('retains both protective children and every unrelated open order without another broker request', async () => {
     const f = protectionFixture()

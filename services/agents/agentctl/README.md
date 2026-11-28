@@ -30,6 +30,9 @@ brew install proompteng/tap/agentctl
 
 ```bash
 agentctl status
+agentctl diagnose
+agentctl fleet
+agentctl run list --active -o wide
 agentctl get agent
 agentctl get impl
 ```
@@ -170,14 +173,17 @@ agentctl apply -f workspace.yaml
 
 agentctl run submit --agent <name> --impl <name> --runtime <type>
 agentctl init run --apply --wait
-agentctl run codex --prompt "Summarize repo" --agent <name> --runtime workflow --wait
+agentctl run codex --prompt-file task.md --repo owner/repo --base main --head codex/task --verify
+agentctl run batch --spec runs.yaml --verify --concurrency 8
+agentctl run list --stale -o wide
+agentctl run summary <name> --json
 agentctl get run
 agentctl get run <name>
 agentctl describe run <name>
 agentctl list run --phase Succeeded
 agentctl watch run --runtime workflow
-agentctl run wait <name>
-agentctl run logs <name> --follow
+agentctl run wait <name> --timeout 10m --interval 2s
+agentctl run logs <name> -f --tail 100 --timestamps
 agentctl run cancel <name>
 ```
 
@@ -190,7 +196,54 @@ Notes:
 
 By default, `agentctl` targets the Kubernetes API using your kube context. Use `--grpc` (or `AGENTCTL_MODE=grpc`) plus
 `--server` (or `--address`) to target the Agents gRPC endpoint. `--output` supports `table` (default), `wide`, `json`,
-`yaml`, `yaml-stream`, and `text`; `describe` defaults to `yaml` when `--output` is omitted.
+`yaml`, `yaml-stream`, and `text`. In kube mode `describe run` defaults to a human summary with Job/Pod details and
+recent Events; use `-o json` or `-o yaml` for the raw AgentRun. Other `describe` commands still default to YAML.
+
+In kube mode, `status` shows control-plane health and run/runtime desync counts; `diagnose` adds next steps.
+`fleet` (also `capacity`) shows namespace load, node capacity, and controller limits. For non-interactive Codex runs,
+use `--inline-prompt` or `--prompt-file` to submit the task verbatim. Do not pass `--param prompt=...`. `--verify` checks
+the Pod's inherited provider identity, projected MCP token mount, and rendered prompt; if verification fails after
+submission, inspect the reported run instead of resubmitting.
+
+### Fleet dispatch and summaries (Kubernetes)
+
+Use `agentctl run batch --spec runs.yaml` with `AgentRun` manifests in YAML documents separated by `---`, a YAML or
+JSON array, or a Kubernetes `List`. Use the selected namespace, specify `metadata.name` or `metadata.generateName`,
+and put each task in `spec.implementation.inline.text` or a referenced `ImplementationSpec`. For example:
+
+```yaml
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  generateName: docs-check-
+spec:
+  agentRef:
+    name: codex-agent
+  runtime:
+    type: job
+  parameters:
+    repository: owner/repo
+    base: main
+    head: codex/docs-check
+  implementation:
+    inline:
+      text: Check that the installation examples match the current CLI.
+```
+
+The CLI rejects head branch collisions across runs targeting the same repository (including workflow steps),
+`serviceAccount` and `serviceAccountName` overrides, and missing task text. It then uses Kubernetes server-side dry runs
+to validate every manifest before creating any run. `--concurrency` bounds each stage (default 8). `--verify` checks
+the mounted prompt and inherited identity on each submitted run’s runner Pod. The table shows the node if the Pod
+has been scheduled; `-` means no placement was observed. If a create or verification fails after preflight, the
+command reports the outcomes for the whole batch and exits nonzero. Inspect the reported runs before retrying; a
+failed request does not roll back other submissions.
+
+Use `agentctl run summary NAME` or `agentctl run summary NAME --json` to read the current runner Pod’s logs. The summary
+shows run and workload phase, node, duration, model and effort, cumulative token counts, VCS branches, detected GitHub
+PR links, and the assistant message. It omits raw tool output and redacts credentials. When the logs or terminal
+status are incomplete, the summary identifies an unconfirmed or partial message rather than treating it as final.
+
+### Port-forwarding
 
 Port-forward example:
 
@@ -209,7 +262,7 @@ agentctl --grpc --server 127.0.0.1:50051 status
 - `agentctl <resource> delete <name>` → `agentctl delete <resource> <name> --yes`
 - `agentctl impl init` → `agentctl init impl`
 - `agentctl impl create` → `agentctl create impl`
-- `agentctl run list/get/describe/watch` → `agentctl list|get|describe|watch run`
+- `agentctl run get/describe/watch` → `agentctl get|describe|watch run`; `run list` is an alias for `list run`.
 - `agentctl run init` → `agentctl init run`
 
 ## Build

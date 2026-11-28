@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../strategy/runtime-decision'
 import { buildExecutionDecision, buildObserveShadowDecision, type DecisionConstruction } from '../decision-construction'
 import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
@@ -16,9 +17,10 @@ import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { MarketKind, instrumentMarket } from '../instruments'
 import type { ProtectionCloseBasis } from '../execution/protection-close-basis'
-import { continuousMarketHours, type MarketHours } from '../market-hours'
+import { continuousMarketHours, executionCloseRecoveryExpiry, type MarketHours } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { CandidateObservationStore } from './candidate-observation'
+import { executionCycleCloseSchedule } from './execution-window'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
@@ -1496,7 +1498,7 @@ export function buildStrategyCycleDecision<R>(
     }
     const entryLimitSlippageBps =
       requirements.documentMode === Authority.Execution
-        ? entryDecision.schemaVersion === 'bayn.intraday-alpha-target.v2'
+        ? isIntradayAlphaTarget(entryDecision)
           ? Math.min(input.policy.maxAdverseSlippageBps, entryDecision.policy.entryLimitSlippageBps)
           : isProtectedEntryTarget(entryDecision)
             ? Math.min(
@@ -1705,6 +1707,12 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
     const intradayParameters = yield* Effect.fromResult(nativeJevProtocol(input.strategy)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
+    const schedule = executionCycleCloseSchedule(cycle, entryDocument, intradayParameters)
+    const regularCloseMs = Date.parse(schedule.executionCloseAt)
+    const flatLeadMs =
+      schedule.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+        ? intradayParameters.flattenBeforeCloseMinutes * 60_000
+        : schedule.sessionCloseStartLeadMs
     const target = request.exitTarget
     const mandatoryExit =
       source === 'reconciled-position' &&
@@ -1721,7 +1729,6 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
         ? target
         : undefined
     const requireFallbackWindow = (observedAt: string) => {
-      const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
       const portfolio = mandatoryExit?.evidence.portfolio
       const targetSymbol = mandatoryExit?.symbols[0]
@@ -1749,9 +1756,9 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
           (mandatoryExit.reason === JevExitReason.ProtectionReleased &&
             portfolio.exitRequestedAt !== null &&
             !portfolio.profitExitRequested))
-      return (observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 || resumeMandatoryExit) &&
+      return (observed >= regularCloseMs - flatLeadMs || resumeMandatoryExit) &&
         (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' ||
-          observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000) &&
+          observed < regularCloseMs - schedule.sessionCloseSubmitLeadMs) &&
         observedAt < closeExpiresAt
         ? Effect.void
         : Effect.fail(
@@ -1808,7 +1815,12 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
       })
     }
     // Reconciliation can cross the deadline; the early guard never replaces this final check.
-    if (evaluatedAt >= closeExpiresAt)
+    const sessionEnded = evaluatedAt >= schedule.executionCloseAt
+    const recoveryExpiresAt = sessionEnded ? executionCloseRecoveryExpiry(executionSession.calendar, evaluatedAt) : null
+    if (
+      evaluatedAt >= closeExpiresAt ||
+      (sessionEnded && (recoveryExpiresAt === null || closeExpiresAt > recoveryExpiresAt))
+    )
       return yield* new ExecutionCloseAwaitingMarketData({
         message: 'execution close lease expired before construction',
         observedAt: evaluatedAt,
@@ -1818,14 +1830,17 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
     const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
       ? entryMarketData.universe
       : undefined
-    const ownedSymbols =
-      entryDocument.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
-        ? Object.keys(entryDocument.strategyDecision.exitPolicy.plans).sort()
+    const ownedSymbols = isIntradayAlphaTarget(entryDocument.strategyDecision)
+      ? Object.keys(entryDocument.strategyDecision.exitPolicy.plans).sort()
+      : undefined
+    const requestedLeg =
+      entryDocument.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v3'
+        ? request.exitTarget?.symbols
         : undefined
     const closingPass = selectClosingSymbolPass(
       reconciliation.brokerState.positions,
       persistedUniverse ?? intradayParameters.universe,
-      ownedSymbols,
+      requestedLeg === undefined ? ownedSymbols : ownedSymbols?.filter((symbol) => requestedLeg.includes(symbol)),
     )
     const symbols = closingPass.symbols
     const closingSymbol = symbols[0]
@@ -1864,11 +1879,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
         }),
     )
     const closeExecutionMarketData = yield* Effect.gen(function* () {
-      if (
-        closingPass.kind === 'broker-position' ||
-        source === 'reconciled-position' ||
-        evaluatedAt >= cycle.window.executionCloseAt
-      ) {
+      if (closingPass.kind === 'broker-position' || source === 'reconciled-position' || sessionEnded) {
         if (protectionClose !== undefined)
           return yield* new ExecutionCloseAwaitingMarketData({
             message: 'a protection release requires a current executable close quote',

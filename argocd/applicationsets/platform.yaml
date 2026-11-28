@@ -119,13 +119,6 @@ spec:
                     name: chideat-validating-webhook-configuration
                     jqPathExpressions:
                       - .webhooks[].clientConfig.caBundle
-              - name: cockroach-operator-system
-                path: argocd/applications/cockroach-operator
-                namespace: cockroach-operator-system
-                annotations:
-                  argocd.argoproj.io/sync-wave: "-1"
-                automation: auto
-                enabled: "true"
               - name: spicedb-operator
                 path: argocd/applications/spicedb-operator
                 namespace: spicedb-operator
@@ -436,6 +429,13 @@ spec:
                       - /metadata/annotations
                       - /spec/volumeMode
                       - /spec/volumeName
+                  - group: ""
+                    kind: PersistentVolumeClaim
+                    name: saigak-ryzen-data
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /spec/volumeMode
+                      - /spec/volumeName
                   - group: apps
                     kind: StatefulSet
                     name: saigak
@@ -457,6 +457,20 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
+              - name: nemotron-rerank
+                path: argocd/applications/nemotron-rerank
+                namespace: nemotron-rerank
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
+              - name: auto-ontology
+                path: argocd/applications/auto-ontology
+                namespace: auto-ontology
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
               - name: torghut-cuda-ranker
                 path: argocd/applications/torghut-cuda-ranker
                 namespace: torghut-cuda-ranker
@@ -780,21 +794,6 @@ spec:
                     pod-security.kubernetes.io/enforce: restricted
                     pod-security.kubernetes.io/audit: restricted
                     pod-security.kubernetes.io/warn: restricted
-                  annotations:
-                    argocd.argoproj.io/sync-options: Prune=false
-              - name: restate-example
-                path: argocd/applications/restate-example
-                namespace: restate-example
-                annotations:
-                  argocd.argoproj.io/sync-wave: "5"
-                automation: auto
-                enabled: "true"
-                managedNamespaceMetadata:
-                  labels:
-                    pod-security.kubernetes.io/enforce: restricted
-                    pod-security.kubernetes.io/audit: restricted
-                    pod-security.kubernetes.io/warn: restricted
-                    restate.proompteng.ai/admin-access: "true"
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false
               - name: temporal

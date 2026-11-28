@@ -2,11 +2,21 @@ import { Result } from 'effect'
 
 import { equityShortIsEligible, type EquityShortEligibility } from '../../execution/equity-short'
 import { JevContractError } from '../../jev/contract'
-import { exchangeSessions, isContinuousMarket, type MarketHours } from '../../market-hours'
+import { isContinuousMarket, regularEquitySessions, type MarketHours } from '../../market-hours'
 import type { IntradayBar } from '../../market-data/intraday/model'
 import type { IntradayAlphaTrailingBaseline } from '../../market-data/intraday/trailing-baseline'
 import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
-import { IntradayAlphaPhase, IntradayAlphaSetup, type IntradayAlphaPolicyMaterial } from './policy'
+import {
+  IntradayAlphaPhase,
+  IntradayAlphaSetup,
+  isPureEtfPolicy,
+  type IntradayAlphaPolicyMaterial,
+  type IntradayAlphaV2PolicyMaterial,
+} from './policy'
+
+import type { IntradayAlphaPolicyV21 } from './policy-v2-1'
+
+type AlphaSignalPolicy = IntradayAlphaPolicyMaterial | IntradayAlphaPolicyV21
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -22,7 +32,7 @@ export interface RegularAlphaSessionBounds {
 }
 
 /**
- * Resolve regular US equity trading hours (09:30–16:00 America/New_York) from broker
+ * Resolve regular US equity trading hours (including early closes) from broker
  * providerSessions rather than the extended 08:00–17:00 IEX data-session envelope.
  */
 export const resolveAlphaRegularSession = (
@@ -30,11 +40,9 @@ export const resolveAlphaRegularSession = (
   sessionDate: string,
 ): Result.Result<RegularAlphaSessionBounds, JevContractError> => {
   if (isContinuousMarket(calendar)) return unavailable('Intraday alpha requires an exchange-session equity calendar')
-  const session = exchangeSessions(calendar).find((entry) => entry.date === sessionDate)
+  const session = regularEquitySessions(calendar).find((entry) => entry.date === sessionDate)
   if (session === undefined) return unavailable('Intraday alpha snapshot has no matching regular session')
-  const provider = calendar.providerSessions.find((entry) => entry.date === sessionDate)
-  const openAt = provider?.regularOpenAt ?? session.openAt
-  const closeAt = provider?.regularCloseAt ?? session.closeAt
+  const { openAt, closeAt } = session
   const openMs = Date.parse(openAt)
   const closeMs = Date.parse(closeAt)
   if (!Number.isFinite(openMs) || !Number.isFinite(closeMs) || openMs >= closeMs) {
@@ -88,6 +96,7 @@ export interface SelectedAlphaLeg {
   readonly setup: IntradayAlphaSetup
   readonly direction: 'LONG' | 'SHORT'
   readonly phase: ActiveAlphaPhase
+  readonly atr14Ratio?: number
   readonly targetWeight: number
   readonly protectiveStopBps: number
   readonly profitTargetBps: number
@@ -170,12 +179,12 @@ export const computeOpeningRange = (
   return { open, close, high, low, barCount }
 }
 
-const isNoiseAreaCheckpoint = (elapsedMinutesFromOpen: number, policy: IntradayAlphaPolicyMaterial): boolean =>
+const isNoiseAreaCheckpoint = (elapsedMinutesFromOpen: number, policy: AlphaSignalPolicy): boolean =>
   policy.noiseArea.checkpointMinutesFromOpen.includes(elapsedMinutesFromOpen)
 
 export const resolveAlphaSessionContext = (input: {
   readonly snapshot: Pick<StrategyMarketSnapshot, 'manifest'>
-  readonly policy: IntradayAlphaPolicyMaterial
+  readonly policy: AlphaSignalPolicy
   readonly middayReversionCompleted?: boolean
   readonly noiseAreaAllTaken?: boolean
 }): Result.Result<AlphaSessionContext, JevContractError> => {
@@ -188,19 +197,28 @@ export const resolveAlphaSessionContext = (input: {
   // The latest completed 1m bar starts at rangeEndMs - 60_000; elapsedMinutesFromOpen = completed + 1.
   const elapsedMinutesFromOpen = Math.floor((rangeEndMs - sessionOpenMs) / 60_000)
   const completedMinuteFromOpen = elapsedMinutesFromOpen - 1
-  const { morningOrb, middayReversion } = input.policy
+  const { policy } = input
+  const pureEtf = isPureEtfPolicy(policy)
   let phase = IntradayAlphaPhase.OutsideWindow
-  if (input.noiseAreaAllTaken !== true && isNoiseAreaCheckpoint(elapsedMinutesFromOpen, input.policy)) {
+  if (
+    input.noiseAreaAllTaken !== true &&
+    isNoiseAreaCheckpoint(elapsedMinutesFromOpen, policy) &&
+    (!pureEtf ||
+      (rangeEndMs === sessionOpenMs + elapsedMinutesFromOpen * 60_000 &&
+        rangeEndMs <= sessionCloseMs - policy.noiseArea.lastEntryMinutesBeforeClose * 60_000))
+  ) {
     phase = IntradayAlphaPhase.NoiseAreaTrend
   } else if (
-    completedMinuteFromOpen >= morningOrb.entryStartMinuteFromOpen &&
-    completedMinuteFromOpen <= morningOrb.entryEndMinuteFromOpen
+    !pureEtf &&
+    completedMinuteFromOpen >= policy.morningOrb.entryStartMinuteFromOpen &&
+    completedMinuteFromOpen <= policy.morningOrb.entryEndMinuteFromOpen
   ) {
     phase = IntradayAlphaPhase.MorningOrb
   } else if (
+    !pureEtf &&
     input.middayReversionCompleted !== true &&
-    completedMinuteFromOpen >= middayReversion.entryStartMinuteFromOpen &&
-    completedMinuteFromOpen <= middayReversion.entryEndMinuteFromOpen
+    completedMinuteFromOpen >= policy.middayReversion.entryStartMinuteFromOpen &&
+    completedMinuteFromOpen <= policy.middayReversion.entryEndMinuteFromOpen
   ) {
     phase = IntradayAlphaPhase.MiddayReversion
   }
@@ -254,13 +272,27 @@ const symbolSessionStats = (
   }
 }
 
+export const noiseAreaBands = (open: number, previousClose: number, meanSwing: number, multiplier: number) => ({
+  upperBand: Math.max(open, previousClose) * (1 + multiplier * meanSwing),
+  lowerBand: Math.min(open, previousClose) * (1 - multiplier * meanSwing),
+})
+
 const computeNoiseAreaWeights = (
-  policy: IntradayAlphaPolicyMaterial,
+  policy: AlphaSignalPolicy,
   trailingBaseline: IntradayAlphaTrailingBaseline,
 ): ReadonlyMap<string, number> => {
   const invAtrs: { readonly symbol: string; readonly invAtr: number }[] = []
   for (const symbol of policy.noiseAreaSymbols) {
     const base = trailingBaseline.symbols[symbol]
+    if (isPureEtfPolicy(policy)) {
+      if (
+        base !== undefined &&
+        base.priorSessions >= policy.trailingBaseline.minimumSessions &&
+        base.sessionVolatility !== undefined
+      )
+        invAtrs.push({ symbol, invAtr: 1 / Math.max(policy.noiseArea.volatilityFloor, base.sessionVolatility) })
+      continue
+    }
     if (base !== undefined && base.priorSessions >= policy.trailingBaseline.minimumSessions && base.atr14Ratio > 0) {
       invAtrs.push({ symbol, invAtr: 1 / base.atr14Ratio })
     }
@@ -269,15 +301,22 @@ const computeNoiseAreaWeights = (
   const weights = new Map<string, number>()
   if (totalInv <= 0) return weights
   for (const { symbol, invAtr } of invAtrs) {
-    const raw = (policy.noiseArea.sleeveGrossWeight * invAtr) / totalInv
-    weights.set(symbol, round4(clamp(raw, policy.noiseArea.minimumWeightPerLeg, policy.noiseArea.maximumWeightPerLeg)))
+    if (isPureEtfPolicy(policy)) {
+      weights.set(symbol, round4(Math.min(policy.maximumSymbolWeight, (policy.maximumGrossWeight * invAtr) / totalInv)))
+    } else {
+      const raw = (policy.noiseArea.sleeveGrossWeight * invAtr) / totalInv
+      weights.set(
+        symbol,
+        round4(clamp(raw, policy.noiseArea.minimumWeightPerLeg, policy.noiseArea.maximumWeightPerLeg)),
+      )
+    }
   }
   return weights
 }
 
 export const extractIntradayAlphaCandidates = (input: {
   readonly snapshot: StrategyMarketSnapshot
-  readonly policy: IntradayAlphaPolicyMaterial
+  readonly policy: AlphaSignalPolicy
   readonly trailingBaseline: IntradayAlphaTrailingBaseline
   readonly accountId: string
   readonly equityShortEligibility?: Readonly<Record<string, EquityShortEligibility>>
@@ -295,6 +334,7 @@ export const extractIntradayAlphaCandidates = (input: {
   JevContractError
 > =>
   Result.gen(function* () {
+    const pureEtf = isPureEtfPolicy(input.policy)
     const occupied = new Set(input.occupiedSymbols ?? [])
     const takenOrb = new Set(input.morningOrbTakenSymbols ?? [])
     const takenNoise = new Set(input.noiseAreaTakenSymbols ?? [])
@@ -323,6 +363,7 @@ export const extractIntradayAlphaCandidates = (input: {
       expectedLatestEventMs,
     )
     if (spy === null) {
+      if (pureEtf) return yield* unavailable('Intraday alpha requires a valid completed SPY benchmark bar')
       return { context: initialContext, spyVwapDevBps: null, longPool: [], shortPool: [] }
     }
 
@@ -365,12 +406,17 @@ export const extractIntradayAlphaCandidates = (input: {
         )
         if (
           stats === null ||
+          (pureEtf && Date.parse(stats.bars[0]?.eventAt ?? '') !== initialContext.sessionOpenMs) ||
           countRecentBars(stats.bars, initialContext.rangeEndMs, 15) < input.policy.noiseArea.minimumRecent15MinBars
         )
           continue
 
-        const upperBand = Math.max(stats.sessionOpenPrice, baseline.prevClose) * (1 + avgSwing)
-        const lowerBand = Math.min(stats.sessionOpenPrice, baseline.prevClose) * (1 - avgSwing)
+        const { upperBand, lowerBand } = noiseAreaBands(
+          stats.sessionOpenPrice,
+          baseline.prevClose,
+          avgSwing,
+          pureEtf ? input.policy.noiseArea.bandMultiplier : 1,
+        )
         const close = stats.latestBar.close
         const stopBps = clamp(
           Math.round(baseline.atr14Ratio * 10_000 * input.policy.noiseArea.stopAtrMultiple),
@@ -379,7 +425,7 @@ export const extractIntradayAlphaCandidates = (input: {
         )
         const relVwapDevBps = stats.vwapDevBps - spy.vwapDevBps
 
-        if (close > upperBand && close > stats.sessionVwap) {
+        if ((!pureEtf || avgSwing > 0) && close > upperBand && (pureEtf || close > stats.sessionVwap)) {
           longPool.push({
             symbol,
             setup: IntradayAlphaSetup.NoiseAreaLong,
@@ -396,7 +442,12 @@ export const extractIntradayAlphaCandidates = (input: {
             profitTargetBpsOverride: input.policy.noiseArea.profitTargetBps,
             bars: stats.bars,
           })
-        } else if (canShort(symbol) && close < lowerBand && close < stats.sessionVwap) {
+        } else if (
+          canShort(symbol) &&
+          (!pureEtf || avgSwing > 0) &&
+          close < lowerBand &&
+          (pureEtf || close < stats.sessionVwap)
+        ) {
           shortPool.push({
             symbol,
             setup: IntradayAlphaSetup.NoiseAreaShort,
@@ -416,7 +467,7 @@ export const extractIntradayAlphaCandidates = (input: {
         }
       }
 
-      if (longPool.length > 0 || shortPool.length > 0) {
+      if (pureEtf || longPool.length > 0 || shortPool.length > 0) {
         longPool.sort((a, b) => b.scoreBps - a.scoreBps || a.symbol.localeCompare(b.symbol))
         shortPool.sort((a, b) => b.scoreBps - a.scoreBps || a.symbol.localeCompare(b.symbol))
         return { context: initialContext, spyVwapDevBps: spy.vwapDevBps, longPool, shortPool }
@@ -448,6 +499,7 @@ export const extractIntradayAlphaCandidates = (input: {
       })
     }
 
+    if (pureEtf) return { context: initialContext, spyVwapDevBps: spy.vwapDevBps, longPool: [], shortPool: [] }
     return yield* extractEquityAlphaCandidates({
       snapshot: input.snapshot,
       policy: input.policy,
@@ -463,7 +515,7 @@ export const extractIntradayAlphaCandidates = (input: {
 
 const extractEquityAlphaCandidates = (input: {
   readonly snapshot: StrategyMarketSnapshot
-  readonly policy: IntradayAlphaPolicyMaterial
+  readonly policy: IntradayAlphaV2PolicyMaterial | IntradayAlphaPolicyV21
   readonly trailingBaseline: IntradayAlphaTrailingBaseline
   readonly context: AlphaSessionContext
   readonly spy: SessionBarStats
@@ -663,7 +715,7 @@ const extractEquityAlphaCandidates = (input: {
 
 export const selectIntradayAlphaLegs = (input: {
   readonly context: AlphaSessionContext
-  readonly policy: IntradayAlphaPolicyMaterial
+  readonly policy: AlphaSignalPolicy
   readonly longPool: readonly AlphaRankedCandidate[]
   readonly shortPool: readonly AlphaRankedCandidate[]
   readonly vetoedSymbols: ReadonlySet<string>
@@ -676,17 +728,18 @@ export const selectIntradayAlphaLegs = (input: {
 
   if (context.phase === IntradayAlphaPhase.NoiseAreaTrend) {
     const combined = [...longs, ...shorts].toSorted((a, b) => a.symbol.localeCompare(b.symbol))
-    const holdMinutes = clamp(
-      policy.noiseArea.flattenMinuteFromOpen - context.elapsedMinutesFromOpen,
-      10,
-      policy.maximumHoldingMinutes,
-    )
+    const pureEtf = isPureEtfPolicy(policy)
+    const flattenMinute = pureEtf
+      ? (context.sessionCloseMs - context.sessionOpenMs) / 60_000 - policy.noiseArea.flattenBeforeCloseMinutes
+      : policy.noiseArea.flattenMinuteFromOpen
+    const holdMinutes = clamp(flattenMinute - context.elapsedMinutesFromOpen, 10, policy.maximumHoldingMinutes)
     return combined.map((candidate) => ({
       symbol: candidate.symbol,
       setup: candidate.setup,
       direction: candidate.direction,
       phase: IntradayAlphaPhase.NoiseAreaTrend as const,
-      targetWeight: candidate.targetWeightOverride ?? policy.noiseArea.minimumWeightPerLeg,
+      targetWeight: candidate.targetWeightOverride ?? (pureEtf ? 0 : policy.noiseArea.minimumWeightPerLeg),
+      ...(candidate.atr14Ratio === undefined ? {} : { atr14Ratio: candidate.atr14Ratio }),
       protectiveStopBps: candidate.protectiveStopBpsOverride ?? policy.noiseArea.minimumStopBps,
       profitTargetBps: candidate.profitTargetBpsOverride ?? policy.noiseArea.profitTargetBps,
       maximumHoldingMinutes: holdMinutes,
@@ -694,6 +747,8 @@ export const selectIntradayAlphaLegs = (input: {
       relVwapDevBps: candidate.relVwapDevBps,
     }))
   }
+
+  if (isPureEtfPolicy(policy)) return []
 
   if (context.phase === IntradayAlphaPhase.MorningOrb) {
     const combined = [...longs, ...shorts].toSorted(

@@ -122,8 +122,9 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - After merge migrations reduce the graph back within tolerance, remove
      `TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true` from GitOps and confirm warnings clear from `/db-check`.
 3. Validate signal freshness and TA pipeline health.
-   - `kubectl -n torghut get deploy torghut-clickhouse-guardrails-exporter torghut-ws torghut-ta`
-   - `kubectl -n torghut port-forward svc/torghut-ws 19090:9090`
+   - `kubectl -n torghut get deploy torghut-clickhouse-guardrails-exporter torghut-ta`
+   - `kubectl -n bayn get deploy torghut-ws`
+   - `kubectl -n bayn port-forward svc/torghut-ws 19090:9090`
    - `curl -fsS http://127.0.0.1:19090/metrics | rg '^torghut_ws_desired_symbols_fetch_(degraded|failures_total|success_total|last_.*_ts_seconds)'`
    - `kubectl -n torghut port-forward svc/torghut-clickhouse-guardrails-exporter 19108:9108`
    - `curl -fsS http://127.0.0.1:19108/metrics | rg '^torghut_clickhouse_guardrails_(ta_signals_max_event_ts_seconds|ta_microbars_max_window_end_seconds|freshness_low_memory_mode|freshness_fallback_total)'`

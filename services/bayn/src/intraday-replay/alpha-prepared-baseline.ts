@@ -10,7 +10,7 @@ import {
   PreparedAlphaBaselineSourceSchema,
   type PreparedAlphaBaselineSource,
 } from '../system-assessment/alpha-baseline-witness'
-import { ResearchStrategyEngine, type ResearchStrategyBinding } from '../system-assessment/strategy-binding'
+import { isAlphaBinding, type ResearchStrategyBinding } from '../system-assessment/strategy-binding'
 import { ReplayBrokerFailure } from './broker'
 
 const canonicalQuery = (query: TrailingBaselineQuery) => ({
@@ -30,7 +30,7 @@ export const prepareReplayAlphaBaselinePreparations = (
       strictParseOptions,
     )(raw)
     const fail = (message: string) => Result.fail(new ReplayBrokerFailure({ message }))
-    if (binding.engine !== ResearchStrategyEngine.IntradayAlpha) {
+    if (!isAlphaBinding(binding)) {
       if (sources.length !== 0)
         return yield* fail('Only the explicitly bound alpha engine may consume prepared alpha baselines')
       return sources
@@ -66,7 +66,7 @@ export const selectReplayAlphaBaselinePreparation = (
     const fail = (message: string) =>
       Result.fail(operationalError({ component: 'market-data', operation: 'replay-alpha-baseline', message }))
     if (
-      binding.engine !== ResearchStrategyEngine.IntradayAlpha ||
+      !isAlphaBinding(binding) ||
       !Number.isFinite(Date.parse(commandIssuedAt)) ||
       query.lookbackSessions !== binding.parameters.trailingBaseline.lookbackSessions ||
       query.minimumSessions !== binding.parameters.trailingBaseline.minimumSessions ||

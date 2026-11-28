@@ -1,0 +1,36 @@
+// Exact public.* relations granted SELECT to bayn_audit_ro by migrations 0226, 0227 and 0230,
+// verified against PostgreSQL pg_class privileges in audit-reader-grants.integration.test.ts.
+export const auditReaderGrantedRelnames = [
+  'account_snapshots',
+  'accounting_receipts',
+  'accounting_transactions',
+  'authority_generations',
+  'autonomous_cycle_paper_close_replans',
+  'autonomous_cycle_paper_closures',
+  'autonomous_cycle_shadow_decisions',
+  'autonomous_cycles',
+  'autonomous_forward_performance_receipts',
+  'broker_events',
+  'broker_fee_accounting',
+  'broker_fee_accounting_evidence',
+  'broker_inventory_debits',
+  'broker_observations',
+  'execution_controller_observations',
+  'execution_fill_slippage_daily',
+  'execution_order_churn_daily',
+  'fills',
+  'intents',
+  'intraday_alpha_baseline_preparations',
+  'intraday_candidate_observations',
+  'live_capital_grants',
+  'mutation_events',
+  'orders',
+  'position_snapshots',
+  'positions',
+  'reconciliations',
+  'system_durable_observations',
+] as const
+
+export const auditReaderGrantedRelations: ReadonlySet<string> = new Set(
+  auditReaderGrantedRelnames.map((relname) => `public.${relname}`),
+)

@@ -6,6 +6,7 @@ metadata:
   name: cloudflared-deployment
   namespace: cloudflare
 spec:
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       pod: cloudflared

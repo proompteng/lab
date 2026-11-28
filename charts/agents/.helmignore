@@ -8,6 +8,7 @@
 # Helm itself
 *.tgz
 Chart.lock
+/tests/
 
 # IDEs
 *.swp

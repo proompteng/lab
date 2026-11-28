@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nemotron-rerank
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  progressDeadlineSeconds: 3600
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nemotron-rerank
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nemotron-rerank
+    spec:
+      runtimeClassName: nvidia
+      nodeSelector:
+        kubernetes.io/arch: arm64
+        kubernetes.io/hostname: talos-192-168-1-85
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: download-model
+          image: ghcr.io/astral-sh/uv:0.13.10-python3.13-trixie-slim@sha256:00e2b362982a5ce19eb3a51453ed76af92ccaaedccc0236fae83b27d994ae0f3
+          command: [uvx, --from, huggingface-hub==2.5.0, hf, download]
+          args:
+            - nvidia/Nemotron-3.5-Rerank-8B-BF16
+            - --revision
+            - a9fe147be7a1114faf3df1f5e700e798420d06aa
+            - --local-dir
+            - /model/rerank
+          env:
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: model
+              mountPath: /model
+      containers:
+        - name: nim
+          image: nvcr.io/nim/nvidia/nemotron-rerank:2.4.0@sha256:591892c68fd5db10327f0e7e25c733f5406cec8d1edbec2884629b8151f2e467
+          env:
+            - name: NIM_ENGINE_MODEL_PATH
+              value: /model/rerank
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "8"
+              memory: 24Gi
+              nvidia.com/gpu: "1"
+            limits:
+              memory: 48Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model
+              mountPath: /model
+            - name: cache
+              mountPath: /opt/cache
+      volumes:
+        - name: model
+          persistentVolumeClaim:
+            claimName: nemotron-model
+        - name: cache
+          emptyDir: {}

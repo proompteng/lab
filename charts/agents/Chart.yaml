@@ -6,7 +6,7 @@ sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
 kubeVersion: '>=1.25.0-0'
-version: 0.9.31
+version: 0.9.34
 appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
@@ -208,6 +208,14 @@ annotations:
           implement: {targetRef: {kind: OrchestrationRun, name: codex-orchestration-run}}
           verify: {targetRef: {kind: AgentRun, name: codex-run-sample}}
   artifacthub.io/changes: |
+    - kind: fixed
+      description: "Render separate disruption budgets and apply controller runtime settings in both deployment modes."
+    - kind: added
+      description: "Add Auto Ontology MCP gateway scheduling and disruption settings and improve AgentRun table output."
+    - kind: removed
+      description: "Remove obsolete native workflow demo manifests; use the deterministic app-server smoke examples."
+    - kind: changed
+      description: "Raise AgentRun concurrency defaults, wire API admission env vars, and add controller observability and Auto Ontology MCP bridge support."
     - kind: fixed
       description: "Keep runner permissions read-only by publishing AgentRun progress to artifact storage."
     - kind: changed

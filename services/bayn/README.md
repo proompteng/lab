@@ -16,6 +16,8 @@ define executable behavior.
 
 ## Start here
 
+See the [Bayn documentation index](../../docs/bayn/README.md) for production runbooks, architecture, and retained evidence.
+
 | Task                                          | Reference                                                                                                                                       |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Understand current entries, pricing and exits | [Active strategy](#active-strategy), [strategy protection](../../docs/bayn/strategy-protection.md)                                              |
@@ -25,6 +27,11 @@ define executable behavior.
 | Operate or release Bayn                       | [Operations](#operations), [delivery](#delivery), [cycle runbook](../../docs/runbooks/bayn-cycle-operations.md)                                 |
 | Read status or diagnose an outage             | [Endpoints](#endpoints), [cache runbook](../../docs/runbooks/bayn-cache-observability.md)                                                       |
 | Evaluate economics or a proposed strategy     | [Profitability goal](#profitability-goal), [replay and backtesting](#replay-and-backtesting), [research](#independent-jev-instruction-research) |
+| Configure independent Alpaca Paper sleeves    | [Multi-account sleeve runbook](../../docs/bayn/multi-account-sleeve-architecture.md)                                                            |
+| Qualify daily multi-horizon PAPER evidence    | [Profitability master playbook](../../docs/bayn/profitability-master-playbook.md)                                                               |
+| Review readiness for live capital             | [Paper-to-live graduation gate](../../docs/bayn/paper-to-live-graduation-gate.md)                                                               |
+| Attribute weekly three-account PAPER results  | [Weekly attribution](#weekly-attribution)                                                                                                       |
+| Maintain the research knowledge catalog       | [Auto Ontology seed and standby onboarding](../../docs/bayn/ontology/README.md)                                                                 |
 | Build and validate a change                   | [Package scripts](package.json), [validation](#validation), [service guide](AGENTS.md)                                                          |
 
 ## Core contracts
@@ -55,8 +62,81 @@ This guide describes current source behavior. Historical implementation notes re
 [pre-cleanup revision](https://github.com/proompteng/lab/blob/ce24661870dd490c1fac592227f77027f7c6ddab/services/bayn/README.md);
 earlier activation recipes remain in the
 [prior guide](https://github.com/proompteng/lab/blob/55f1aad1e416e03ba4c3a7b9ce14ab2a20b7c4fc/services/bayn/README.md).
-The [October 17 investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) retains its reproduction and cost
+The [October 17 investigation](../../docs/bayn/archive/crypto-entry-research-2026-10-17.md) retains its reproduction and cost
 evidence. Historical recipes and measurements do not establish current deployment, authority or profitable edge.
+
+## Weekly attribution
+
+Run the report offline against the retained [intraday audit](../../docs/bayn/live-profitability-audit-runbook.md) and
+[portfolio receipts](../../docs/bayn/multi-account-sleeve-architecture.md). Supply one audit JSON for a Monday–Sunday
+week and one portfolio receipt per observed execution session. The tool checks hashes, requires three distinct and
+stable account bindings (v3 QQQ/SMH, $10,000 F4, $10,000 O1), and rejects malformed or cross-wired inputs before output.
+
+```sh
+bun services/bayn/tools/bayn-weekly-attribution-report.ts \
+  --audit /private/intraday-week.json \
+  --sleeve-receipt /private/portfolio-monday.json \
+  --sleeve-receipt /private/portfolio-tuesday.json \
+  --account-evidence /private/settled-account-evidence.json \
+  --format markdown
+```
+
+Use `--format json` for machine-readable output. Optionally pass `--scorecard` with the daily qualification scorecard's
+JSON output. The report checks overlapping audit hashes and includes in-week registered sessions in the coverage;
+it displays the upstream qualification gate separately because that gate can cover more than one week. Without a
+registered calendar, the report can only cover the supplied sessions; check the trading dates before sharing it.
+
+**Settled inputs.** The audit v1 has no account ID. The portfolio v1 records pre-open plans and submission outcomes,
+not filled notional or settled account equity. Supply `--account-evidence` to bind the audit and/or supply actual macro
+economics. Assemble it only from independently verified, read-only account and accounting evidence; the tool matches
+the binding but cannot authenticate its origin. Keep this file and the source receipts private:
+
+```json
+{
+  "schemaVersion": "bayn.weekly-attribution-evidence.v1",
+  "intraday": {
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "auditSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "macroSessions": [
+    {
+      "accountId": "22222222-2222-4222-8222-222222222222",
+      "portfolioSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "openingEquityMicros": "10000000000",
+      "closingEquityMicros": "10010000000",
+      "netExternalCashFlowMicros": "0",
+      "tradedNotionalMicros": "1500000000"
+    }
+  ]
+}
+```
+
+The intraday digest is the audit's Bayn canonical JSON SHA-256 (`canonicalHashV1Result` in [`src/hash.ts`](src/hash.ts)),
+not the hash of the formatted file bytes. For each verified macro account and receipt, use previous-session close and
+current-session close for the equity marks, net external transfers in that interval (deposits positive), and the
+two-sided notional of executed fills. Use `0` only for verified zero flows or fills. Equities already account for
+booked trading costs and internal income; do not subtract them again.
+
+- **Economics:** Intraday net is audited realized P&L after booked fees for flat, reconciled sessions. Macro net is
+  the equity change less net external transfers. Combined metrics require all three accounts on aligned dates;
+  an unattested intraday audit is not included. Turnover is weekly executed notional divided by first-session opening
+  equity. Max drawdown uses compounded daily returns with a starting high-water mark. Annualized Sharpe uses at
+  least five daily returns, their sample standard deviation, and √252 (zero risk-free rate). If there are external
+  flows, the P&L is adjusted but risk metrics are unavailable without intraday flow timing.
+- **Slippage / drift / rotation:** The weekly B0 comparison uses pooled unrounded round trips. A weekly mean or
+  median over 2.5 bp is a breach; equality cannot qualify and does not clear a failing daily live audit. F4 drift
+  is the gap from its target dollars to whole shares at the raw reference price, not realized tracking error. O1
+  completion requires a successful PaperSubmit resume with reconciled `NoWholeShareDrift`; acknowledgements and
+  shadow plans do not complete a rotation.
+- **Badges:** `BREACH` takes precedence for reported audit failures, over-budget slippage, or failed/blocked sleeves.
+  `WATCH` covers missing evidence, nonpositive net, and unresolved rotations. `QUALIFYING` describes the supplied
+  evidence, not the multi-week scorecard gate or permission to trade. Unavailable metrics are `null`, never imputed.
+
+**Knowledge proposal.** Add `--emit-knowledge-delta /private/knowledge-delta.json --source-commit <full-git-sha>` to
+create a new private file. Pass the actual source revision used for verification. The rules-only v1 proposal is for the
+[collective-knowledge curator](https://github.com/proompteng/lab/pull/16422); it includes only aggregate findings from
+verified audit samples and/or full-budget F4 sizing reviews. No verified finding means no file. The tool never copies
+receipt identifiers or prose into the proposal and never writes to the ontology, database or broker.
 
 ## Webull live ingestion
 
@@ -150,9 +230,9 @@ could have read historically and cannot serve as a qualified backtest or live de
 **Produce repeatable positive profit after all costs, within the registered risk limits, using the smallest
 understandable system that meets its original deadlines and reliability requirements.**
 
-The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
+The [October 6, 2026 research review](../../docs/bayn/archive/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
 
-The [November 7 paper-edge campaign](../../docs/bayn/paper-edge-research-2026-11-07.md) starts with exact-source CosmosAlpha reproduction and examines new factor-search and wallet-flow mechanisms. Its reference design does not register a prospective economic period or authorize a strategy change.
+The [November 7 paper-edge campaign](../../docs/bayn/archive/paper-edge-research-2026-11-07.md) starts with exact-source CosmosAlpha reproduction and examines new factor-search and wallet-flow mechanisms. Its reference design does not register a prospective economic period or authorize a strategy change.
 
 Demonstrate repeatable positive net profit after execution, inference, data, infrastructure, and research costs on
 untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) requires positive
@@ -238,6 +318,10 @@ selected symbol. Current and retained protocols use the same projection. Changed
 verification, and funding, pricing, authority and deadline checks remain unchanged. The
 [native quote-projection benchmark](tools/benchmark-decision-quote-projection.md) records fixture measurements,
 exact-output comparisons and their limits; it does not establish live latency or a complete report's runtime.
+
+The [intraday execution audit](tools/benchmark-intraday-pricing.md) measures quote-only reads and the PostgreSQL
+submit-containment check. A retained signal and its execution pricing must bind the same feed and topics; a
+separately verified SIP cut cannot reprice an in-flight IEX signal.
 
 ## Runtime and research images
 
@@ -682,7 +766,7 @@ worker build cannot establish correctly completed controller work or supported r
 uses `bayn.qualification-runtime.v3` with `decisionTrigger: streaming` and an explicit complete strategy binding.
 Retained v1/v2 registrations remain readable. Old polling latency/replay studies cannot qualify this runtime;
 a new prospective v6 registration and independently witnessed live evidence are required. Candidate and incumbent
-are comparison roles; either can bind the native Jev v44 or intraday alpha v2 engine. The incumbent must still match
+are comparison roles; either can bind the native Jev v44 or a versioned intraday alpha engine. The incumbent must still match
 its independently witnessed serving generation and retain separate account, store and authority identity.
 
 This hard migration changes handler and journal shapes. Roll out immutable `RestateDeployment` revisions so in-flight
@@ -774,7 +858,15 @@ for interpreting and persisting broker history.
 
 ## Active strategy
 
-Entry observations use the native Jev reader. New entries must meet the cycle's submission deadline. Management
+The source-selected v3 policy trades only QQQ and SMH from the existing 22-symbol IEX market profile. It uses
+completed SPY benchmark bars, 30-minute 1.4× Noise Area breakouts and inverse-volatility parity from the prior
+14 regular sessions. No paid inference runs in this policy. It uses whole shares, a 25 bp entry limit collar,
+fill-anchored protection, opposite-band exits and forced flattening two minutes before the provider regular close.
+See the [v3 PAPER cutover and activation runbook](../../docs/bayn/intraday-v3-pure-etf-cutover.md).
+
+### Retained Jev v44 entry and inference
+
+Historical and research Jev entry observations use the native Jev reader. New entries must meet the cycle's submission deadline. Management
 of an already filled position remains valid after that deadline within the execution session, using liquidation quotes
 and accounted position evidence. It retains the original first-fill holding deadline and forced-close window,
 including continuous crypto cycles whose entry lease lasts one minute.
@@ -836,12 +928,11 @@ failure, defect or interruption during atomic persistence rolls back the receipt
 the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
-The submission window follows the entitled equity market calendar. Bayn can evaluate after the first completed minute
-and the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Equity entries
-use up to 30 minutes of actual completed history and evaluate the source-controlled candidates independently until
-five minutes before the close. The retained protocol also defines 120-minute crypto context for historical evidence
+The equity submission window follows the broker's regular calendar, not extended IEX capture hours. Retained Jev
+equity entries use actual completed history and stop no later than five minutes before the regular close, including
+early closes. The retained protocol also defines 120-minute crypto context for historical evidence
 and position recovery. The [compiled market profiles](src/jev/protocol.ts) bind the entry spread and positioning
-limits. The current protocol permits one equity long or short position with a gross weight capped at 20% of account
+limits. The retained Jev v44 policy permits one equity long or short position with a gross weight capped at 20% of account
 equity. Allocation reduces the target when required by order, symbol, exposure or remaining daily turnover limits.
 The daily counter includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
@@ -1383,6 +1474,45 @@ recovery behavior, and evidence boundaries.
 
 ## Operations
 
+### November 30 cutover verification
+
+Run the read-only verifier with the credentials from `bayn-alpaca-auth` in
+`BAYN_ALPACA_{KEY_ID,SECRET_KEY}` and the dedicated Paper sleeve credentials in
+`BAYN_MACRO_CORE_ALPACA_{KEY_ID,SECRET_KEY}` (F4) and `BAYN_MACRO_CANARY_ALPACA_{KEY_ID,SECRET_KEY}` (O1).
+Each prefix accepts `_ACCOUNT_ID` to pin its identity and `_BASE_URL`, which defaults to Alpaca's official
+[Paper origin](https://docs.alpaca.markets/us/v1.1/docs/authentication-1). Non-Alpaca origins and redirects are
+rejected; `--allow-live-endpoint` permits GETs to the official live origin. Use `--skip-macro-accounts` only
+to intentionally omit both sleeve checks; incomplete credentials otherwise fail the isolation check.
+
+```sh
+bun services/bayn/tools/verify-monday-cutover.ts --phase pre-open --format markdown --require-standby
+bun services/bayn/tools/verify-monday-cutover.ts --phase post-flatten --require-standby
+bun services/bayn/tools/verify-monday-cutover.ts --phase post-cutover --require-standby \
+  --expected-policy-hash "$reviewed_v3_behavior_hash" --output monday-post-cutover.json
+```
+
+- `pre-open` reports Account #1's signed GOOGL quantity. `post-flatten` rejects any nonzero GOOGL quantity or
+  working GOOGL order, including flat-listed bracket children. These are separate broker reads; use the
+  settlement procedure to rule out concurrent new submissions.
+- `post-cutover` rejects positions outside the reviewed v3 QQQ/SMH universe by default, including XLK.
+  For a separately reviewed Phase 2 check, explicitly replace the allowlist with `--allowed-symbols QQQ,SMH,XLK`.
+  The report records the effective allowlist; the flag does not change the running strategy or verify its policy.
+  For the optional policy gate, use the
+  [reviewed v3 behavior hash](https://github.com/proompteng/lab/pull/16395) as the expectation and supply
+  `BAYN_STRATEGY_BEHAVIOR_HASH` and `BAYN_STRATEGY_PARAMETER_HASH` from the **running, build-verified execution
+  controller**. Do not source the observed hashes from the proposed release or this checkout. The parameter hash
+  is checked against the reviewed v3 policy document; without the flag, the policy is not verified.
+- `BAYN_POSTGRES_URL` uses a role with read access to `public.execution_controller_observations`, never
+  `bayn_app`. The verifier requires TLS and accepts `BAYN_POSTGRES_CA_PATH` and
+  `BAYN_POSTGRES_TLS_SERVERNAME` for a private CA or hostname override. The report includes the newest retained
+  controller observation across the database. `--require-standby` requires the URL and rejects a primary.
+- Set `AUTO_ONTOLOGY_API_URL` to its origin to read [`/api/health`](https://nvidia.github.io/auto-ontology/).
+  The probe is bounded to three seconds and its status never changes the trading-readiness verdict.
+
+JSON is the default and goes to stdout unless `--output` names a new, private report file. A blocking check
+failure still writes the report and exits nonzero. A passing report does not establish flat ledger state,
+complete reconciliation, settlement, strategy activation, or any authorization to trade.
+
 ### Runtime and historical-report configuration
 
 The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
@@ -1903,7 +2033,7 @@ after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start dela
 
 Run forward-performance reports outside execution-controller pods, in a separately budgeted reporting process. A November 13 diagnostic
 report exhausted a controller's 1 GiB memory limit and restarted it; the report subsequently completed in a 4 GiB
-API pod. That single success is not a memory bound. See the [investigation](../../docs/bayn/system-investigation-2026-11-13.md)
+API pod. That single success is not a memory bound. See the [investigation](../../docs/bayn/archive/system-investigation-2026-11-13.md)
 for the measured result and remaining evidence gaps.
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
@@ -2105,7 +2235,7 @@ limit supports the pool without increasing the 250m CPU reservation. Reports rem
 Manifest authentication for archive grouping also uses the same pool, preserving request order and grouping keys.
 Completed-session intraday reads run at concurrency eight. Requests for an identical archive window reuse one
 verified bar summary within that read while retaining each decision's identity, scope and watermark lower bound.
-See the [report measurements](../../docs/bayn/report-performance-2026-11-13.md) for observed timings and limitations.
+See the [report measurements](../../docs/bayn/archive/report-performance-2026-11-13.md) for observed timings and limitations.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
@@ -2443,6 +2573,45 @@ liquidity; an unsupported market remainder fails the simulation. See the streami
 [close and coverage acceptance](src/market-data/streaming/README.md#replay-close-and-coverage-acceptance). Negative
 returns are valid measurements. Reconciled simulated results do not establish profitability or calibrate broker fills.
 
+### ETF Noise Area v4 research
+
+[The v4 walk-forward command](tools/research-noise-area-v4.ts) tests three fixed changes and their combinations
+against exact [Wave 6A B0](../../docs/bayn/evidence/2026-11-27-10yr-16etf-noise-area/README.md), not a new live
+default. It trades only QQQ and SMH in replay; XLK, SPY and IWM supply breadth. Use the existing read-only
+`agents-artifacts` credentials for the [pinned 5m SIP tape](../../docs/bayn/evidence/2026-11-27-10yr-qqq-smh-conditioning/protocol.md)
+and the [F4/O1 daily inputs](tools/vol-regime-carry-data.ts).
+
+1. At the committed research revision, run `bun services/bayn/tools/research-noise-area-v4.ts --develop`. Record the
+   source SHA and development receipt before accessing Holdout. The annual forward folds (2019–23) choose on
+   expanding prior history with 20 official sessions purged before each test. The 2024–26 arms are frozen to the
+   final development choice with the same purge. Prior bars may warm features across the seam, never positions.
+2. From that same revision, run `bun services/bayn/tools/research-noise-area-v4.ts --score <receipt-sha256>`. The
+   command checks the source, development replay and B0 parity before opening Holdout. It emits only a Markdown
+   summary; no per-bar, per-trade, or per-day reports.
+
+- **Sizing:** scale each B0 reservation by at most one, inversely to realized noise (overnight log gap plus
+  completed intraday log returns in quadrature), relative to the prior 14 same-clock observations. An inactive
+  name never transfers its reservation to another name.
+- **Regime:** the candidate must close beyond its first 15-minute range and VWAP. Require all four peer snapshots
+  and at least three peers on the same side of their open and VWAP. From 11:30 to 13:30 ET, also require
+  directional net progress of at least 35% of the last hour's absolute path.
+- **Exit:** instead of the opposite band, initialize a fill-anchored 4× five-minute ATR stop. Only a completed
+  close showing strictly more than 1.2R activates breakeven and the one-way Chandelier ratchet. An already-active
+  stop wins on an ambiguous bar. Exits use the next observed open, or flatten 15 minutes before the scheduled
+  close. There is no re-entry; the exit change alone cannot reduce the number of round trips.
+
+All arms use a fixed $100k B0 sizing base, whole shares, a $180k marked-gross ceiling, 2/5/10 bp **round-trip**
+costs and 0.21 bp on sells. CAGR and drawdown use starting capital plus cumulative net P&L, with no reinvestment.
+Turnover is mean daily two-sided raw traded value over starting capital. At **both** stress costs the locked arm
+must be profitable, exceed B0 by >1 CAGR percentage point and >0.15 Sharpe, clear DSR ≥0.95 and a paired
+stationary-block p <0.05, and improve both metrics in at least two of the three Holdout years. Each retained
+part must lift both metrics standalone and against the locked arm without that part. An incomplete Holdout
+execution path vetoes promotion. Descriptive arms cannot replace a failed lock.
+
+[DSR](https://doi.org/10.3905/jpm.2014.40.5.094) deflates for this eight-arm grid, not earlier research on
+the same years. The archive does not establish executable quotes, arrival latency, market impact or borrow.
+These results cannot authorize a switch from the frozen live v2/v3 configurations.
+
 ## Historical data workflow
 
 `bun run --filter @proompteng/bayn history --input job.json` is the single offline data tool. Its four operations
@@ -2558,9 +2727,10 @@ Effect compatibility and broker sandbox tests run in this suite with broker cred
 four shards, each with its own disposable database server in CI. Every test file runs in an isolated Bun module
 graph with a fresh database, and Bun prints the randomized order's seed. Run one shard locally with
 `bun run --filter @proompteng/bayn test:postgres 1/4` or omit the shard to run the complete suite. The local PostgreSQL
-role needs `CREATEDB` and a loopback URL for a database that ends in `_test`. The Jev batch, migration cutover and broker
-observation suites migrate each fixture once, then clone and remove a separate database for each test. ClickHouse/Java
-archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
+role needs `CREATEDB` and a loopback URL for a database that ends in `_test`. Use the disposable server's bootstrap
+user for the audit grant test, which creates a cluster-wide role inside a rolled-back transaction. The Jev batch,
+migration cutover and broker observation suites migrate each fixture once, then clone and remove a separate database
+for each test. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
 
 The PostgreSQL runner assigns the longest measured files to the least-loaded shards using the same checked-in timing
@@ -2777,12 +2947,16 @@ Historical observations remain immutable; readers reject records missing this ev
 The [matched comparison](../../docs/bayn/matched-entry-study.md) retains its five-session, twenty-different-selection,
 original timing, capacity, and complete-cost requirements. Missing evidence cannot qualify Jev.
 
-Equities use Alpaca's full provider calendar intersected with the entitled IEX data interval, 08:00–17:00
-America/New_York. Provider regular and extended bounds remain in the hashed calendar v2 evidence; DST, holidays
-and early closes follow that source. The shared order loop submits stock LIMIT/DAY with `extended_hours=true`
-and crypto LIMIT/IOC with `extended_hours=false`. An acknowledged open order is canceled through the same durable
-mutation coordinator when its original approval or submission window expires. Known partial fills retain their
-original accounting. Whole-share equity liquidation during an archive outage also uses a bounded LIMIT/DAY order.
+Equity market **data** uses Alpaca's full provider calendar intersected with the entitled IEX interval, 08:00–17:00
+America/New_York. Equity **execution** binds the provider's regular open and close, including early closes. The hashed
+calendar v2 retains both schedules. If IEX cannot price a due flatten, the close planner can use a fresh reconciled
+broker mark within the existing signed quantity and price bounds. It does not query IEX after the regular close;
+recovery then requires a bounded lease within verified broker hours. See the
+[Black Friday incident](../../docs/bayn/incidents/2026-11-27-black-friday-googl-unclosed-exit.md).
+
+The shared order loop uses stock LIMIT/DAY and crypto LIMIT/IOC. Unprotected equity limits are extended-hours
+eligible for recovery; native brackets are not. An acknowledged open order is canceled through the same durable
+mutation coordinator when its approval or submission window expires. Known partial fills retain their accounting.
 
 Dorvud's observed-window and technical definitions v2 isolate the 08:00, 09:30 and 16:00 clock segments. Regular
 indicator math is unchanged, sparse intervals remain missing, and the first completed minute can authorize
@@ -2797,7 +2971,7 @@ predicate with the shared strict DAY/IOC proof, including the renamed partial-fi
 current economic-plan v18 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
 reconciliation before activating a new same-account v18 PAPER mandate against its verified published image.
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
-See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
+See the [Alpaca hours investigation](../../docs/bayn/archive/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.
 
 Current equity fee modeling uses the registered effective-dated schedule and an explicit New York execution date.

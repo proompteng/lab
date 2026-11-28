@@ -1,3 +1,4 @@
+import { ledgerTotalsFixture } from './ledger-totals.test-support'
 import { makeIntradayPerformanceFixture, makeStreamingPerformanceFixture } from './intraday-cycle.test-support'
 import { makeIntradayPerformanceVolumeEvidence } from './intraday-volume'
 import { bindForwardPerformanceTerminalReferencePrices } from './program'
@@ -117,14 +118,7 @@ const input = (overrides: Partial<ForwardPerformanceEvidenceInput> = {}): Forwar
   },
   startingCapitalMicros: '1000',
   transactions: [transaction('e', '100', '20')],
-  ledgerTotals: {
-    realizedGainMicros: '100',
-    cashSettlementRoundingMicros: '0',
-    realizedLossMicros: '0',
-    brokerExecutionFeesMicros: '20',
-    otherChargedCostsMicros: '0',
-    cashYieldMicros: '0',
-  },
+  ledgerTotals: ledgerTotalsFixture({ realizedGainMicros: '100', brokerExecutionFeesMicros: '20' }),
   accountingReceiptsExact: true,
   ledgerExact: true,
   missingLedgerAccountCount: 0,
@@ -281,16 +275,12 @@ const success = (value: Result.Result<ForwardPerformanceReceipt, unknown>): Forw
 }
 
 test('keeps accounting totals while any unverified decision withholds execution measurements', () => {
-  const baseline = success(makeForwardPerformanceReceipt(input({ executionEvidence: exactExecutionEvidence() })))
+  const baseline = measure({ executionEvidence: exactExecutionEvidence() })
   for (const executionEvidence of [[], exactExecutionEvidence()]) {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          executionEvidence,
-          unverifiedDecisionHashes: [hash('9')],
-        }),
-      ),
-    )
+    const receipt = measure({
+      executionEvidence,
+      unverifiedDecisionHashes: [hash('9')],
+    })
     expect(receipt.totals).toEqual(baseline.totals)
     expect(receipt.executionQuality).toEqual({
       status: 'UNDETERMINED',
@@ -302,6 +292,67 @@ test('keeps accounting totals while any unverified decision withholds execution 
     expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
   }
 })
+
+const terminalBuy = (
+  marketVolume: ForwardPerformanceMarketVolumeEvidence,
+  intentId: string,
+  clientOrderId: string,
+  updatedAt: string,
+  order?: {
+    eventId: string
+    brokerOrderId: string
+    filledQuantityAtoms: string
+    observedAt: string
+  },
+  fills: ForwardPerformanceExecutionEvidence['fills'] = [],
+): ForwardPerformanceExecutionEvidence => {
+  const identity = { intentId, accountId: 'paper-account-1', symbol: 'NVDA', side: 'BUY' as const }
+  const binding = { cycleId: hash('a'), decisionHash: hash('e') }
+  const createdAt = '2026-07-20T13:00:00.000Z'
+  const quantityAtoms = '1000000000'
+  return {
+    ...identity,
+    ...binding,
+    decisionDocumentHash: hash('8'),
+    decisionCreatedAt: createdAt,
+    plannedQuantityAtoms: quantityAtoms,
+    referencePriceMicros: '100000000',
+    intent: {
+      ...identity,
+      ...binding,
+      clientOrderId,
+      quantityAtoms,
+      terminalOutcome: order === undefined ? 'BLOCKED' : 'CANCELED',
+      createdAt,
+      updatedAt,
+    },
+    ...(order === undefined
+      ? {}
+      : {
+          terminalOrder: {
+            ...identity,
+            ...order,
+            clientOrderId,
+            quantityAtoms,
+            status: 'CANCELED',
+            occurredAt: updatedAt,
+          },
+        }),
+    fills,
+    terminalReferencePrice: terminalReferencePriceFor(marketVolume),
+  }
+}
+
+const zeroFillBuy = (marketVolume: ForwardPerformanceMarketVolumeEvidence, prefix: string) =>
+  terminalBuy(marketVolume, hash('0'), `${prefix}-client-order`, '2026-07-20T20:00:03.000Z', {
+    eventId: hash('9'),
+    brokerOrderId: `${prefix}-broker-order`,
+    filledQuantityAtoms: '0',
+    observedAt: '2026-07-20T20:00:03.100Z',
+  })
+
+const measure = (overrides: Partial<ForwardPerformanceEvidenceInput>) =>
+  success(makeForwardPerformanceReceipt(input(overrides)))
 
 describe('forward performance domain', () => {
   test('unknown operating costs preserve trading evidence and withhold full net profitability', () => {
@@ -429,16 +480,12 @@ describe('forward performance domain', () => {
       executionEvidence: exactExecutionEvidence(),
       marketVolumeEvidence: exactMarketVolumeEvidence(),
     }
-    const first = success(makeForwardPerformanceReceipt(input(evidence)))
-    const second = success(
-      makeForwardPerformanceReceipt(
-        input({
-          ...evidence,
-          transactions: transactions.toReversed(),
-          executionEvidence: exactExecutionEvidence(true),
-        }),
-      ),
-    )
+    const first = measure(evidence)
+    const second = measure({
+      ...evidence,
+      transactions: transactions.toReversed(),
+      executionEvidence: exactExecutionEvidence(true),
+    })
 
     expect(first).toEqual(second)
     expect(first.profitability).toBe('PROFITABLE')
@@ -556,23 +603,12 @@ describe('forward performance domain', () => {
       }),
     ]
 
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions,
-          executionEvidence: [executionEvidence],
-          marketVolumeEvidence: exactMarketVolumeEvidence(),
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '20',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions,
+      executionEvidence: [executionEvidence],
+      marketVolumeEvidence: exactMarketVolumeEvidence(),
+      ledgerTotals: ledgerTotalsFixture({ brokerExecutionFeesMicros: '20' }),
+    })
 
     expect(receipt.executionQuality).toMatchObject({
       status: 'UNDETERMINED',
@@ -591,27 +627,23 @@ describe('forward performance domain', () => {
       throw new Error('execution identity fixture missing')
     }
     const { quantityAtoms: _quantityAtoms, ...notionalOrder } = baseExecution.terminalOrder
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: exactTransactions(),
-          executionEvidence: [
-            {
-              ...baseExecution,
-              intent: {
-                ...baseExecution.intent,
-                notionalLimitMicros: '110000001',
-              },
-              terminalOrder: {
-                ...notionalOrder,
-                notionalMicros: '110000000',
-              },
-            },
-          ],
-          marketVolumeEvidence: exactMarketVolumeEvidence(),
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: exactTransactions(),
+      executionEvidence: [
+        {
+          ...baseExecution,
+          intent: {
+            ...baseExecution.intent,
+            notionalLimitMicros: '110000001',
+          },
+          terminalOrder: {
+            ...notionalOrder,
+            notionalMicros: '110000000',
+          },
+        },
+      ],
+      marketVolumeEvidence: exactMarketVolumeEvidence(),
+    })
 
     expect(receipt.executionQuality.status).toBe('UNDETERMINED')
     expect(receipt.executionQuality.reasonCodes).toContain('TERMINAL_ORDER_EVIDENCE_GAP')
@@ -620,23 +652,19 @@ describe('forward performance domain', () => {
   test('orders terminal fills by broker occurrence even when fill observation completes after order observation', () => {
     const [execution] = exactExecutionEvidence()
     if (execution === undefined) throw new Error('execution fixture missing')
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: exactTransactions(),
-          executionEvidence: [
-            {
-              ...execution,
-              fills: execution.fills.map((fill, index) => ({
-                ...fill,
-                observedAt: `2026-07-20T20:00:0${index + 3}.100Z`,
-              })),
-            },
-          ],
-          marketVolumeEvidence: exactMarketVolumeEvidence(),
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: exactTransactions(),
+      executionEvidence: [
+        {
+          ...execution,
+          fills: execution.fills.map((fill, index) => ({
+            ...fill,
+            observedAt: `2026-07-20T20:00:0${index + 3}.100Z`,
+          })),
+        },
+      ],
+      marketVolumeEvidence: exactMarketVolumeEvidence(),
+    })
 
     expect(receipt.executionQuality.status).toBe('MEASURED')
     expect(receipt.executionQuality.reasonCodes).toEqual([])
@@ -647,15 +675,11 @@ describe('forward performance domain', () => {
     const execution = exactExecutionEvidence().map(
       ({ referencePriceMicros: _referencePriceMicros, ...evidence }) => evidence,
     )
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: exactTransactions(),
-          executionEvidence: execution,
-          marketVolumeEvidence: exactMarketVolumeEvidence(),
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: exactTransactions(),
+      executionEvidence: execution,
+      marketVolumeEvidence: exactMarketVolumeEvidence(),
+    })
 
     expect(receipt.profitability).toBe('PROFITABLE')
     expect(receipt.executionQuality.status).toBe('UNDETERMINED')
@@ -671,14 +695,10 @@ describe('forward performance domain', () => {
   test('fails execution measurement closed when a terminal fill lacks accounting and quantity binding', () => {
     const [execution] = exactExecutionEvidence()
     if (execution === undefined) throw new Error('execution fixture missing')
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: exactTransactions(),
-          executionEvidence: [{ ...execution, fills: execution.fills.slice(0, 1) }],
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: exactTransactions(),
+      executionEvidence: [{ ...execution, fills: execution.fills.slice(0, 1) }],
+    })
 
     expect(receipt.executionQuality.status).toBe('UNDETERMINED')
     expect(receipt.executionQuality.reasonCodes).toEqual(
@@ -688,11 +708,7 @@ describe('forward performance domain', () => {
   })
 
   test('measures shortfall but leaves observed capacity undetermined without market volume', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({ transactions: exactTransactions(), executionEvidence: exactExecutionEvidence() }),
-      ),
-    )
+    const receipt = measure({ transactions: exactTransactions(), executionEvidence: exactExecutionEvidence() })
 
     expect(receipt.executionQuality.status).toBe('MEASURED')
     expect(receipt.observedCapacity).toEqual({
@@ -710,45 +726,18 @@ describe('forward performance domain', () => {
     const [marketVolume] = exactMarketVolumeEvidence()
     if (marketVolume === undefined) throw new Error('market-volume fixture missing')
     const executionEvidence = [
-      {
-        cycleId: hash('a'),
-        decisionDocumentHash: hash('8'),
-        decisionHash: hash('e'),
-        decisionCreatedAt: '2026-07-20T13:00:00.000Z',
-        intentId: hash('c'),
-        accountId: 'paper-account-1',
-        symbol: 'NVDA',
-        side: 'BUY' as const,
-        plannedQuantityAtoms: '1000000000',
-        referencePriceMicros: '100000000',
-        intent: {
-          intentId: hash('c'),
-          accountId: 'paper-account-1',
-          clientOrderId: 'client-order-1',
-          cycleId: hash('a'),
-          decisionHash: hash('e'),
-          symbol: 'NVDA',
-          side: 'BUY' as const,
-          quantityAtoms: '1000000000',
-          terminalOutcome: 'CANCELED' as const,
-          createdAt: '2026-07-20T13:00:00.000Z',
-          updatedAt: '2026-07-20T20:00:02.000Z',
-        },
-        terminalOrder: {
+      terminalBuy(
+        marketVolume,
+        hash('c'),
+        'client-order-1',
+        '2026-07-20T20:00:02.000Z',
+        {
           eventId: hash('f'),
           brokerOrderId: 'broker-order-1',
-          clientOrderId: 'client-order-1',
-          intentId: hash('c'),
-          accountId: 'paper-account-1',
-          symbol: 'NVDA',
-          side: 'BUY' as const,
-          quantityAtoms: '1000000000',
           filledQuantityAtoms: '400000000',
-          status: 'CANCELED' as const,
-          occurredAt: '2026-07-20T20:00:02.000Z',
           observedAt: '2026-07-20T21:06:00.000Z',
         },
-        fills: [
+        [
           {
             brokerEventId: hash('b'),
             fillId: 'fill-1',
@@ -757,7 +746,7 @@ describe('forward performance domain', () => {
             intentId: hash('c'),
             accountId: 'paper-account-1',
             symbol: 'NVDA',
-            side: 'BUY' as const,
+            side: 'BUY',
             quantityAtoms: '400000000',
             priceAtoms: '101000000000',
             feeMicros: '10',
@@ -766,8 +755,7 @@ describe('forward performance domain', () => {
             observedAt: '2026-07-20T20:00:00.100Z',
           },
         ],
-        terminalReferencePrice: terminalReferencePriceFor(marketVolume),
-      },
+      ),
     ]
     const transactions = [
       transaction('1', '0', '10', {
@@ -779,23 +767,12 @@ describe('forward performance domain', () => {
         occurredAt: '2026-07-20T20:00:00.000Z',
       }),
     ]
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions,
-          executionEvidence,
-          marketVolumeEvidence: [marketVolume],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '10',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions,
+      executionEvidence,
+      marketVolumeEvidence: [marketVolume],
+      ledgerTotals: ledgerTotalsFixture({ brokerExecutionFeesMicros: '10' }),
+    })
 
     expect(receipt.executionQuality).toMatchObject({
       status: 'MEASURED',
@@ -814,57 +791,11 @@ describe('forward performance domain', () => {
     const [marketVolume] = exactMarketVolumeEvidence()
     const [filledExecution] = exactExecutionEvidence()
     if (marketVolume === undefined || filledExecution === undefined) throw new Error('execution fixture missing')
-    const zeroFillIntentId = hash('0')
-    const zeroFillExecution: ForwardPerformanceExecutionEvidence = {
-      cycleId: hash('a'),
-      decisionDocumentHash: hash('8'),
-      decisionHash: hash('e'),
-      decisionCreatedAt: '2026-07-20T13:00:00.000Z',
-      intentId: zeroFillIntentId,
-      accountId: 'paper-account-1',
-      symbol: 'NVDA',
-      side: 'BUY',
-      plannedQuantityAtoms: '1000000000',
-      referencePriceMicros: '100000000',
-      intent: {
-        intentId: zeroFillIntentId,
-        accountId: 'paper-account-1',
-        clientOrderId: 'zero-fill-client-order',
-        cycleId: hash('a'),
-        decisionHash: hash('e'),
-        symbol: 'NVDA',
-        side: 'BUY',
-        quantityAtoms: '1000000000',
-        terminalOutcome: 'CANCELED',
-        createdAt: '2026-07-20T13:00:00.000Z',
-        updatedAt: '2026-07-20T20:00:03.000Z',
-      },
-      terminalOrder: {
-        eventId: hash('9'),
-        brokerOrderId: 'zero-fill-broker-order',
-        clientOrderId: 'zero-fill-client-order',
-        intentId: zeroFillIntentId,
-        accountId: 'paper-account-1',
-        symbol: 'NVDA',
-        side: 'BUY',
-        quantityAtoms: '1000000000',
-        filledQuantityAtoms: '0',
-        status: 'CANCELED',
-        occurredAt: '2026-07-20T20:00:03.000Z',
-        observedAt: '2026-07-20T20:00:03.100Z',
-      },
-      fills: [],
-      terminalReferencePrice: terminalReferencePriceFor(marketVolume),
-    }
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: exactTransactions(),
-          executionEvidence: [filledExecution, zeroFillExecution],
-          marketVolumeEvidence: [marketVolume],
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: exactTransactions(),
+      executionEvidence: [filledExecution, zeroFillBuy(marketVolume, 'zero-fill')],
+      marketVolumeEvidence: [marketVolume],
+    })
 
     expect(receipt.executionQuality.reasonCodes).not.toContain('FILL_EVIDENCE_GAP')
     expect(receipt.executionQuality).toMatchObject({
@@ -894,65 +825,12 @@ describe('forward performance domain', () => {
   test('measures an all-zero terminal plan while profitability remains unproven', () => {
     const [marketVolume] = exactMarketVolumeEvidence()
     if (marketVolume === undefined) throw new Error('market-volume fixture missing')
-    const intentId = hash('0')
-    const zeroFillExecution: ForwardPerformanceExecutionEvidence = {
-      cycleId: hash('a'),
-      decisionDocumentHash: hash('8'),
-      decisionHash: hash('e'),
-      decisionCreatedAt: '2026-07-20T13:00:00.000Z',
-      intentId,
-      accountId: 'paper-account-1',
-      symbol: 'NVDA',
-      side: 'BUY',
-      plannedQuantityAtoms: '1000000000',
-      referencePriceMicros: '100000000',
-      intent: {
-        intentId,
-        accountId: 'paper-account-1',
-        clientOrderId: 'all-zero-client-order',
-        cycleId: hash('a'),
-        decisionHash: hash('e'),
-        symbol: 'NVDA',
-        side: 'BUY',
-        quantityAtoms: '1000000000',
-        terminalOutcome: 'CANCELED',
-        createdAt: '2026-07-20T13:00:00.000Z',
-        updatedAt: '2026-07-20T20:00:03.000Z',
-      },
-      terminalOrder: {
-        eventId: hash('9'),
-        brokerOrderId: 'all-zero-broker-order',
-        clientOrderId: 'all-zero-client-order',
-        intentId,
-        accountId: 'paper-account-1',
-        symbol: 'NVDA',
-        side: 'BUY',
-        quantityAtoms: '1000000000',
-        filledQuantityAtoms: '0',
-        status: 'CANCELED',
-        occurredAt: '2026-07-20T20:00:03.000Z',
-        observedAt: '2026-07-20T20:00:03.100Z',
-      },
-      fills: [],
-      terminalReferencePrice: terminalReferencePriceFor(marketVolume),
-    }
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: [],
-          executionEvidence: [zeroFillExecution],
-          marketVolumeEvidence: [marketVolume],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: [],
+      executionEvidence: [zeroFillBuy(marketVolume, 'all-zero')],
+      marketVolumeEvidence: [marketVolume],
+      ledgerTotals: ledgerTotalsFixture(),
+    })
 
     expect(receipt.evidence.reasonCodes).toContain('ZERO_COMPLETED_EXECUTIONS')
     expect(receipt.profitability).toBe('UNDETERMINED')
@@ -997,51 +875,12 @@ describe('forward performance domain', () => {
   test('measures a risk-blocked plan without requiring broker-order evidence', () => {
     const [marketVolume] = exactMarketVolumeEvidence()
     if (marketVolume === undefined) throw new Error('market-volume fixture missing')
-    const intentId = hash('0')
-    const blockedExecution: ForwardPerformanceExecutionEvidence = {
-      cycleId: hash('a'),
-      decisionDocumentHash: hash('8'),
-      decisionHash: hash('e'),
-      decisionCreatedAt: '2026-07-20T13:00:00.000Z',
-      intentId,
-      accountId: 'paper-account-1',
-      symbol: 'NVDA',
-      side: 'BUY',
-      plannedQuantityAtoms: '1000000000',
-      referencePriceMicros: '100000000',
-      intent: {
-        intentId,
-        accountId: 'paper-account-1',
-        clientOrderId: 'blocked-client-order',
-        cycleId: hash('a'),
-        decisionHash: hash('e'),
-        symbol: 'NVDA',
-        side: 'BUY',
-        quantityAtoms: '1000000000',
-        terminalOutcome: 'BLOCKED',
-        createdAt: '2026-07-20T13:00:00.000Z',
-        updatedAt: '2026-07-20T13:05:00.000Z',
-      },
-      fills: [],
-      terminalReferencePrice: terminalReferencePriceFor(marketVolume),
-    }
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: [],
-          executionEvidence: [blockedExecution],
-          marketVolumeEvidence: [marketVolume],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: [],
+      executionEvidence: [terminalBuy(marketVolume, hash('0'), 'blocked-client-order', '2026-07-20T13:05:00.000Z')],
+      marketVolumeEvidence: [marketVolume],
+      ledgerTotals: ledgerTotalsFixture(),
+    })
 
     expect(receipt.profitability).toBe('UNDETERMINED')
     expect(receipt.executionQuality.reasonCodes).not.toEqual(
@@ -1077,33 +916,22 @@ describe('forward performance domain', () => {
     if (execution === undefined || execution.terminalOrder === undefined || execution.intent === undefined) {
       throw new Error('execution fixture missing')
     }
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: [exactTransactions()[0]!],
-          executionEvidence: [
-            {
-              ...execution,
-              intent: { ...execution.intent, terminalOutcome: 'CANCELED' },
-              terminalOrder: {
-                ...execution.terminalOrder,
-                status: 'CANCELED',
-                filledQuantityAtoms: '400000000',
-              },
-              fills: execution.fills.slice(0, 1),
-            },
-          ],
-          ledgerTotals: {
-            realizedGainMicros: '40',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '10',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
+    const receipt = measure({
+      transactions: [exactTransactions()[0]!],
+      executionEvidence: [
+        {
+          ...execution,
+          intent: { ...execution.intent, terminalOutcome: 'CANCELED' },
+          terminalOrder: {
+            ...execution.terminalOrder,
+            status: 'CANCELED',
+            filledQuantityAtoms: '400000000',
           },
-        }),
-      ),
-    )
+          fills: execution.fills.slice(0, 1),
+        },
+      ],
+      ledgerTotals: ledgerTotalsFixture({ realizedGainMicros: '40', brokerExecutionFeesMicros: '10' }),
+    })
 
     expect(receipt.executionQuality.status).toBe('UNDETERMINED')
     expect(receipt.executionQuality.reasonCodes).toContain('TERMINAL_PRICE_EVIDENCE_GAP')
@@ -1115,17 +943,13 @@ describe('forward performance domain', () => {
     if (volume === undefined) throw new Error('volume fixture missing')
     const { contentHash: _contentHash, ...volumeMaterial } = volume
     const driftedMaterial = { ...volumeMaterial, windowOpenedAt: '2026-07-20T20:00:00.500Z' }
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: exactTransactions(),
-          executionEvidence: exactExecutionEvidence(),
-          marketVolumeEvidence: [
-            { ...driftedMaterial, contentHash: Result.getOrThrow(canonicalHashV1Result(driftedMaterial)) },
-          ],
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: exactTransactions(),
+      executionEvidence: exactExecutionEvidence(),
+      marketVolumeEvidence: [
+        { ...driftedMaterial, contentHash: Result.getOrThrow(canonicalHashV1Result(driftedMaterial)) },
+      ],
+    })
 
     expect(receipt.executionQuality.status).toBe('MEASURED')
     expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
@@ -1136,15 +960,11 @@ describe('forward performance domain', () => {
   test('rejects self-inconsistent immutable market-volume evidence', () => {
     const [volume] = exactMarketVolumeEvidence()
     if (volume === undefined) throw new Error('volume fixture missing')
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: exactTransactions(),
-          executionEvidence: exactExecutionEvidence(),
-          marketVolumeEvidence: [{ ...volume, quantityAtoms: '100000001000' }],
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: exactTransactions(),
+      executionEvidence: exactExecutionEvidence(),
+      marketVolumeEvidence: [{ ...volume, quantityAtoms: '100000001000' }],
+    })
 
     expect(receipt.executionQuality.status).toBe('MEASURED')
     expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
@@ -1153,21 +973,10 @@ describe('forward performance domain', () => {
   })
 
   test('reports realized losses without using mark-to-market equity', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: [transaction('e', '-50', '10')],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '50',
-            brokerExecutionFeesMicros: '10',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: [transaction('e', '-50', '10')],
+      ledgerTotals: ledgerTotalsFixture({ realizedLossMicros: '50', brokerExecutionFeesMicros: '10' }),
+    })
 
     expect(receipt.profitability).toBe('NOT_PROFITABLE')
     expect(receipt.totals.grossRealizedPnlMicros).toBe('-50')
@@ -1176,26 +985,13 @@ describe('forward performance domain', () => {
 
   test('retains observed settlement costs and withholds qualification until broker receipts match', () => {
     for (const settled of [false, true]) {
-      const receipt = success(
-        makeForwardPerformanceReceipt(
-          input({
-            transactions: exactTransactions(),
-            executionEvidence: exactExecutionEvidence(),
-            marketVolumeEvidence: exactMarketVolumeEvidence(),
-            brokerFeeAccruals: [
-              { accrualId: 'a'.repeat(64), accountId: 'paper-account-1', expenseMicros: '140', settled },
-            ],
-            ledgerTotals: {
-              realizedGainMicros: '100',
-              cashSettlementRoundingMicros: '0',
-              realizedLossMicros: '0',
-              brokerExecutionFeesMicros: '160',
-              otherChargedCostsMicros: '0',
-              cashYieldMicros: '0',
-            },
-          }),
-        ),
-      )
+      const receipt = measure({
+        transactions: exactTransactions(),
+        executionEvidence: exactExecutionEvidence(),
+        marketVolumeEvidence: exactMarketVolumeEvidence(),
+        brokerFeeAccruals: [{ accrualId: 'a'.repeat(64), accountId: 'paper-account-1', expenseMicros: '140', settled }],
+        ledgerTotals: ledgerTotalsFixture({ realizedGainMicros: '100', brokerExecutionFeesMicros: '160' }),
+      })
       expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
       expect(receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
       expect(receipt.evidence.reasonCodes.includes('BROKER_FEE_SETTLEMENT_PENDING')).toBe(!settled)
@@ -1204,27 +1000,16 @@ describe('forward performance domain', () => {
   })
 
   test('deducts delayed broker fees and refunds without fabricating fills', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: exactTransactions(),
-          executionEvidence: exactExecutionEvidence(),
-          marketVolumeEvidence: exactMarketVolumeEvidence(),
-          brokerFees: [
-            { accountId: 'paper-account-1', activityId: 'fee', date: '2026-07-20', netAmountMicros: '-150' },
-            { accountId: 'paper-account-1', activityId: 'refund', date: '2026-07-20', netAmountMicros: '10' },
-          ],
-          ledgerTotals: {
-            realizedGainMicros: '100',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '160',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: exactTransactions(),
+      executionEvidence: exactExecutionEvidence(),
+      marketVolumeEvidence: exactMarketVolumeEvidence(),
+      brokerFees: [
+        { accountId: 'paper-account-1', activityId: 'fee', date: '2026-07-20', netAmountMicros: '-150' },
+        { accountId: 'paper-account-1', activityId: 'refund', date: '2026-07-20', netAmountMicros: '10' },
+      ],
+      ledgerTotals: ledgerTotalsFixture({ realizedGainMicros: '100', brokerExecutionFeesMicros: '160' }),
+    })
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
     expect(receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
     expect(receipt.executionQuality.reasonCodes).not.toContain('EXPLICIT_COST_EVIDENCE_GAP')
@@ -1234,21 +1019,10 @@ describe('forward performance domain', () => {
   })
 
   test('fees can flip gross profit into a net realized loss', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: [transaction('e', '100', '150')],
-          ledgerTotals: {
-            realizedGainMicros: '100',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '150',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: [transaction('e', '100', '150')],
+      ledgerTotals: ledgerTotalsFixture({ realizedGainMicros: '100', brokerExecutionFeesMicros: '150' }),
+    })
 
     expect(receipt.profitability).toBe('NOT_PROFITABLE')
     expect(receipt.totals.grossRealizedPnlMicros).toBe('100')
@@ -1256,31 +1030,20 @@ describe('forward performance domain', () => {
   })
 
   test('cash yield can make total realized economic income profitable without changing gross trade PnL', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          reconciliation: {
-            reconciliationId: hash('8'),
-            contentHash: hash('9'),
-            status: 'DISCREPANCY',
-            performanceExact: true,
-            cashYieldAdjustedExact: true,
-            reconciledAt: '2026-07-20T21:01:00.000Z',
-          },
-          transactions: [transaction('e', '-100', '0')],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '100',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '200',
-          },
-          cashYieldEvidenceRequired: true,
-          cashYieldEvidence: cashYieldBinding(),
-        }),
-      ),
-    )
+    const receipt = measure({
+      reconciliation: {
+        reconciliationId: hash('8'),
+        contentHash: hash('9'),
+        status: 'DISCREPANCY',
+        performanceExact: true,
+        cashYieldAdjustedExact: true,
+        reconciledAt: '2026-07-20T21:01:00.000Z',
+      },
+      transactions: [transaction('e', '-100', '0')],
+      ledgerTotals: ledgerTotalsFixture({ realizedLossMicros: '100', cashYieldMicros: '200' }),
+      cashYieldEvidenceRequired: true,
+      cashYieldEvidence: cashYieldBinding(),
+    })
 
     expect(receipt.evidence).toEqual({
       status: 'SUFFICIENT',
@@ -1305,23 +1068,12 @@ describe('forward performance domain', () => {
   })
 
   test('cash yield can reduce a realized loss without falsely crossing profitability', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: [transaction('e', '-200', '0')],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '200',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '100',
-          },
-          cashYieldEvidenceRequired: true,
-          cashYieldEvidence: cashYieldBinding('100'),
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: [transaction('e', '-200', '0')],
+      ledgerTotals: ledgerTotalsFixture({ realizedLossMicros: '200', cashYieldMicros: '100' }),
+      cashYieldEvidenceRequired: true,
+      cashYieldEvidence: cashYieldBinding('100'),
+    })
 
     expect(receipt.profitability).toBe('NOT_PROFITABLE')
     expect(receipt.totals.grossRealizedPnlMicros).toBe('-200')
@@ -1338,7 +1090,7 @@ describe('forward performance domain', () => {
   })
 
   test('an open or partial operating window is insufficient evidence', () => {
-    const receipt = success(makeForwardPerformanceReceipt(input({ unclosedCycleCount: 1 })))
+    const receipt = measure({ unclosedCycleCount: 1 })
 
     expect(receipt.evidence).toEqual({
       status: 'INSUFFICIENT_EVIDENCE',
@@ -1349,22 +1101,11 @@ describe('forward performance domain', () => {
   })
 
   test('zero activity is never profitable', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          cycles: [cycle('a', { state: 'NO_TRADE' })],
-          transactions: [],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      cycles: [cycle('a', { state: 'NO_TRADE' })],
+      transactions: [],
+      ledgerTotals: ledgerTotalsFixture(),
+    })
 
     expect(receipt.evidence.reasonCodes).toContain('ZERO_COMPLETED_EXECUTIONS')
     expect(receipt.profitability).toBe('UNDETERMINED')
@@ -1439,21 +1180,10 @@ describe('forward performance domain', () => {
 
   test('invalid or overflowing integer-micro arithmetic fails closed', () => {
     const max = ((1n << 127n) - 1n).toString()
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: [transaction('e', `-${max}`, max)],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: max,
-            brokerExecutionFeesMicros: max,
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: [transaction('e', `-${max}`, max)],
+      ledgerTotals: ledgerTotalsFixture({ realizedLossMicros: max, brokerExecutionFeesMicros: max }),
+    })
 
     expect(receipt.evidence.reasonCodes).toContain('INVALID_MICROS')
     expect(receipt.profitability).toBe('UNDETERMINED')
@@ -1462,35 +1192,17 @@ describe('forward performance domain', () => {
 
   test('invalid or overflowing cash yield arithmetic fails closed', () => {
     const max = ((1n << 127n) - 1n).toString()
-    const overflow = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: [transaction('e', max, '0')],
-          ledgerTotals: {
-            realizedGainMicros: max,
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '1',
-          },
-        }),
-      ),
-    )
-    const invalid = success(
-      makeForwardPerformanceReceipt(
-        input({
-          ledgerTotals: {
-            realizedGainMicros: '100',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '20',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '-1',
-          },
-        }),
-      ),
-    )
+    const overflow = measure({
+      transactions: [transaction('e', max, '0')],
+      ledgerTotals: ledgerTotalsFixture({ realizedGainMicros: max, cashYieldMicros: '1' }),
+    })
+    const invalid = measure({
+      ledgerTotals: ledgerTotalsFixture({
+        realizedGainMicros: '100',
+        brokerExecutionFeesMicros: '20',
+        cashYieldMicros: '-1',
+      }),
+    })
 
     for (const receipt of [overflow, invalid]) {
       expect(receipt.evidence.reasonCodes).toContain('INVALID_MICROS')
@@ -1506,14 +1218,7 @@ describe('forward performance domain', () => {
     })
     const evidence = {
       transactions: [transaction('e', '-100', '0')],
-      ledgerTotals: {
-        realizedGainMicros: '0',
-        cashSettlementRoundingMicros: '0',
-        realizedLossMicros: '100',
-        brokerExecutionFeesMicros: '0',
-        otherChargedCostsMicros: '0',
-        cashYieldMicros: '200',
-      },
+      ledgerTotals: ledgerTotalsFixture({ realizedLossMicros: '100', cashYieldMicros: '200' }),
       cashYieldEvidenceRequired: true,
       cashYieldEvidence: cashYieldBinding(),
       reconciliation: {
@@ -1525,8 +1230,8 @@ describe('forward performance domain', () => {
         reconciledAt: '2026-07-21T21:01:00.000Z',
       },
     } as const
-    const first = success(makeForwardPerformanceReceipt(input({ ...evidence, cycles: [secondCycle, cycle('a')] })))
-    const second = success(makeForwardPerformanceReceipt(input({ ...evidence, cycles: [cycle('a'), secondCycle] })))
+    const first = measure({ ...evidence, cycles: [secondCycle, cycle('a')] })
+    const second = measure({ ...evidence, cycles: [cycle('a'), secondCycle] })
 
     expect(first).toEqual(second)
     expect(first.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
@@ -1542,22 +1247,11 @@ describe('forward performance domain', () => {
   })
 
   test('a ledger reconciliation failure remains insufficient even when cash yield crosses profitability', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          transactions: [transaction('e', '-100', '0')],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '100',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '200',
-          },
-          ledgerExact: false,
-        }),
-      ),
-    )
+    const receipt = measure({
+      transactions: [transaction('e', '-100', '0')],
+      ledgerTotals: ledgerTotalsFixture({ realizedLossMicros: '100', cashYieldMicros: '200' }),
+      ledgerExact: false,
+    })
 
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('100')
     expect(receipt.evidence.reasonCodes).toContain('LEDGER_MISMATCH')
@@ -1566,29 +1260,18 @@ describe('forward performance domain', () => {
   })
 
   test('an unexplained cash discrepancy remains insufficient even when yield would cross profitability', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          reconciliation: {
-            reconciliationId: hash('8'),
-            contentHash: hash('9'),
-            status: 'DISCREPANCY',
-            performanceExact: false,
-            cashYieldAdjustedExact: false,
-            reconciledAt: '2026-07-20T21:01:00.000Z',
-          },
-          transactions: [transaction('e', '-100', '0')],
-          ledgerTotals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '100',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '200',
-          },
-        }),
-      ),
-    )
+    const receipt = measure({
+      reconciliation: {
+        reconciliationId: hash('8'),
+        contentHash: hash('9'),
+        status: 'DISCREPANCY',
+        performanceExact: false,
+        cashYieldAdjustedExact: false,
+        reconciledAt: '2026-07-20T21:01:00.000Z',
+      },
+      transactions: [transaction('e', '-100', '0')],
+      ledgerTotals: ledgerTotalsFixture({ realizedLossMicros: '100', cashYieldMicros: '200' }),
+    })
 
     expect(receipt.evidence.reasonCodes).toContain('NON_EXACT_RECONCILIATION')
     expect(receipt.profitability).toBe('UNDETERMINED')
@@ -1599,13 +1282,9 @@ describe('forward performance domain', () => {
   })
 
   test('identity drift across completed cycles is insufficient', () => {
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          cycles: [cycle('a'), cycle('f', { strategyProtocolHash: hash('f') })],
-        }),
-      ),
-    )
+    const receipt = measure({
+      cycles: [cycle('a'), cycle('f', { strategyProtocolHash: hash('f') })],
+    })
 
     expect(receipt.evidence.reasonCodes).toContain('CYCLE_IDENTITY_DRIFT')
     expect(receipt.profitability).toBe('UNDETERMINED')
@@ -1615,13 +1294,9 @@ describe('forward performance domain', () => {
     const baseline = input()
     const binding = baseline.durableExecutionBindings[0]
     assert(binding !== undefined)
-    const receipt = success(
-      makeForwardPerformanceReceipt(
-        input({
-          durableExecutionBindings: [{ ...binding, environment: 'live' }],
-        }),
-      ),
-    )
+    const receipt = measure({
+      durableExecutionBindings: [{ ...binding, environment: 'live' }],
+    })
 
     expect(receipt.evidence.reasonCodes).toContain('ACCOUNT_IDENTITY_GAP')
     expect(receipt.profitability).toBe('UNDETERMINED')
@@ -1729,14 +1404,10 @@ test('retains native archive evidence even when a missing fill prevents executio
   const { request, archive, bars } = makeIntradayPerformanceFixture()
   const volume = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars.slice(1)))
   if (volume === undefined) throw new Error('expected native evidence')
-  const receipt = success(
-    makeForwardPerformanceReceipt(
-      input({
-        executionEvidence: exactExecutionEvidence().map((evidence) => ({ ...evidence, fills: [] })),
-        marketVolumeEvidence: [volume],
-      }),
-    ),
-  )
+  const receipt = measure({
+    executionEvidence: exactExecutionEvidence().map((evidence) => ({ ...evidence, fills: [] })),
+    marketVolumeEvidence: [volume],
+  })
   expect(receipt.executionQuality.status).toBe('UNDETERMINED')
   expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
   expect(receipt.observedCapacity.intradaySources).toEqual([volume])

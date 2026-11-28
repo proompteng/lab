@@ -48,8 +48,12 @@ export const decidePositionProtection = (input: {
   readonly protection: ProtectionOrderState
   readonly exitDue: boolean
   readonly observedAt: string
+  readonly prices?: Pick<
+    FundedEntryExitPlan['levels'],
+    'stopPriceMicros' | 'stopLimitPriceMicros' | 'profitLimitPriceMicros'
+  >
 }): PositionProtectionAction => {
-  const { plan, entry, protection } = input
+  const { plan, entry, protection, prices = plan.levels } = input
   const quantityAtoms = isShortExitPlan(plan) ? -input.quantityAtoms : input.quantityAtoms
   if (protection._tag === 'Unknown') return { _tag: 'Recover', intentId: protection.intentId }
   if (protection._tag === 'Canceling') return { _tag: 'Wait', reason: 'CANCEL_PENDING' }
@@ -76,12 +80,12 @@ export const decidePositionProtection = (input: {
     const targetMatches =
       protection.method === 'STOP_LIMIT'
         ? protection.profitLimitPriceMicros === null
-        : protection.profitLimitPriceMicros === BigInt(plan.levels.profitLimitPriceMicros)
+        : protection.profitLimitPriceMicros === BigInt(prices.profitLimitPriceMicros)
     const exact =
       methodMatches &&
       protection.quantityAtoms === quantityAtoms &&
-      protection.stopPriceMicros === BigInt(plan.levels.stopPriceMicros) &&
-      protection.stopLimitPriceMicros === BigInt(plan.levels.stopLimitPriceMicros) &&
+      protection.stopPriceMicros === BigInt(prices.stopPriceMicros) &&
+      protection.stopLimitPriceMicros === BigInt(prices.stopLimitPriceMicros) &&
       targetMatches
     if (input.exitDue || !exact || available === 'APPLICATION')
       return { _tag: 'CancelProtection', intentId: protection.intentId }

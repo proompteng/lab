@@ -1,51 +1,33 @@
 from __future__ import annotations
 
-from tests.strategy_runtime.support import (
-    Decimal,
-    SignalEnvelope,
-    Strategy,
-    StrategyConfig,
-    StrategyRuntime,
-    TestCase,
-    _compose_strategy_description,
-    datetime,
-    normalize_feature_vector_v3,
-    timezone,
-    uuid,
-)
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest import TestCase
+
+from app.trading.features import normalize_feature_vector_v3
+from app.trading.models import SignalEnvelope
+from app.trading.strategy_runtime import StrategyRuntime
+from tests.trading_fixtures import make_catalog_strategy, make_signal
 
 
 class TestStrategyRuntimeBreakoutA(TestCase):
     def test_breakout_continuation_plugin_prefers_live_structure_rank_late_in_session(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["NVDA"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_opening_window_return_bps": "20",
-                        "min_cross_section_opening_window_return_rank": "0.65",
-                        "min_cross_section_continuation_rank": "0.75",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["NVDA"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_opening_window_return_bps": "20",
+                "min_cross_section_opening_window_return_rank": "0.65",
+                "min_cross_section_continuation_rank": "0.75",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 23, 17, 30, 3, tzinfo=timezone.utc),
@@ -99,32 +81,19 @@ class TestStrategyRuntimeBreakoutA(TestCase):
     def test_breakout_continuation_plugin_preserves_stronger_fallback_rank(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_cross_section_continuation_rank": "0.80",
-                        "min_cross_section_opening_window_return_rank": "0.55",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_cross_section_continuation_rank": "0.80",
+                "min_cross_section_opening_window_return_rank": "0.55",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 24, 17, 48, 3, tzinfo=timezone.utc),
@@ -180,34 +149,21 @@ class TestStrategyRuntimeBreakoutA(TestCase):
         self.assertEqual(decision.plugin_id, "breakout_continuation_long")
 
     def test_breakout_continuation_plugin_skips_weak_opening_window_drive(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_opening_window_return_bps": "20",
-                        "late_session_min_opening_window_return_bps": "15",
-                        "min_cross_section_opening_window_return_rank": "0.70",
-                        "late_session_min_session_open_return_efficiency": "0.20",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_opening_window_return_bps": "20",
+                "late_session_min_opening_window_return_bps": "15",
+                "min_cross_section_opening_window_return_rank": "0.70",
+                "late_session_min_session_open_return_efficiency": "0.20",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
@@ -252,34 +208,21 @@ class TestStrategyRuntimeBreakoutA(TestCase):
     def test_breakout_continuation_plugin_allows_late_isolated_leader_with_relaxed_drive_requirements(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["NVDA"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_session_open_drive_bps": "35",
-                        "late_session_min_session_open_drive_bps": "18",
-                        "min_opening_window_return_bps": "20",
-                        "late_session_min_opening_window_return_bps": "10",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["NVDA"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_session_open_drive_bps": "35",
+                "late_session_min_session_open_drive_bps": "18",
+                "min_opening_window_return_bps": "20",
+                "late_session_min_opening_window_return_bps": "10",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 24, 18, 6, 3, tzinfo=timezone.utc),
@@ -331,38 +274,25 @@ class TestStrategyRuntimeBreakoutA(TestCase):
     def test_breakout_continuation_plugin_allows_isolated_flow_breakout_when_breadth_is_middling(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["NVDA"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_cross_section_positive_session_open_ratio": "0.50",
-                        "min_cross_section_positive_opening_window_return_ratio": "0.55",
-                        "min_cross_section_above_vwap_w5m_ratio": "0.60",
-                        "min_cross_section_continuation_breadth": "0.65",
-                        "isolated_flow_session_open_ratio_relaxation": "0.12",
-                        "isolated_flow_opening_window_ratio_relaxation": "0.15",
-                        "isolated_flow_above_vwap_ratio_relaxation": "0.15",
-                        "isolated_flow_continuation_breadth_relaxation": "0.15",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["NVDA"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_cross_section_positive_session_open_ratio": "0.50",
+                "min_cross_section_positive_opening_window_return_ratio": "0.55",
+                "min_cross_section_above_vwap_w5m_ratio": "0.60",
+                "min_cross_section_continuation_breadth": "0.65",
+                "isolated_flow_session_open_ratio_relaxation": "0.12",
+                "isolated_flow_opening_window_ratio_relaxation": "0.15",
+                "isolated_flow_above_vwap_ratio_relaxation": "0.15",
+                "isolated_flow_continuation_breadth_relaxation": "0.15",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 23, 17, 30, 3, tzinfo=timezone.utc),
@@ -420,38 +350,23 @@ class TestStrategyRuntimeBreakoutA(TestCase):
     def test_breakout_continuation_plugin_allows_isolated_same_day_leader_when_breadth_is_weak(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_cross_section_positive_session_open_ratio": "0.50",
-                        "min_cross_section_positive_opening_window_return_ratio": "0.55",
-                        "min_cross_section_above_vwap_w5m_ratio": "0.60",
-                        "min_cross_section_continuation_breadth": "0.65",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_cross_section_positive_session_open_ratio": "0.50",
+                "min_cross_section_positive_opening_window_return_ratio": "0.55",
+                "min_cross_section_above_vwap_w5m_ratio": "0.60",
+                "min_cross_section_continuation_breadth": "0.65",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 14, 22, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 14, 22, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=142,
             payload={
@@ -510,42 +425,29 @@ class TestStrategyRuntimeBreakoutA(TestCase):
     def test_breakout_continuation_plugin_allows_guarded_leader_reclaim_after_open(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AMAT"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "bullish_hist_min": "0.003",
-                        "min_bull_rsi": "54",
-                        "max_bull_rsi": "74",
-                        "vol_ceil": "0.00045",
-                        "max_spread_bps": "20",
-                        "max_recent_spread_bps": "18",
-                        "max_recent_spread_bps_max": "60",
-                        "min_imbalance_pressure": "-0.18",
-                        "min_recent_imbalance_pressure": "-0.12",
-                        "min_cross_section_continuation_rank": "0.72",
-                        "min_cross_section_opening_window_return_rank": "0.60",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["AMAT"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "entry_start_minute_utc": "845",
+                "bullish_hist_min": "0.003",
+                "min_bull_rsi": "54",
+                "max_bull_rsi": "74",
+                "vol_ceil": "0.00045",
+                "max_spread_bps": "20",
+                "max_recent_spread_bps": "18",
+                "max_recent_spread_bps_max": "60",
+                "min_imbalance_pressure": "-0.18",
+                "min_recent_imbalance_pressure": "-0.12",
+                "min_cross_section_continuation_rank": "0.72",
+                "min_cross_section_opening_window_return_rank": "0.60",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 24, 15, 21, 27, tzinfo=timezone.utc),
@@ -609,42 +511,29 @@ class TestStrategyRuntimeBreakoutA(TestCase):
     def test_breakout_continuation_plugin_rejects_leader_reclaim_without_recent_flow_confirmation(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AMAT"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "bullish_hist_min": "0.003",
-                        "min_bull_rsi": "54",
-                        "max_bull_rsi": "74",
-                        "vol_ceil": "0.00045",
-                        "max_spread_bps": "20",
-                        "max_recent_spread_bps": "18",
-                        "max_recent_spread_bps_max": "60",
-                        "min_imbalance_pressure": "-0.18",
-                        "min_recent_imbalance_pressure": "-0.12",
-                        "min_cross_section_continuation_rank": "0.72",
-                        "min_cross_section_opening_window_return_rank": "0.60",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["AMAT"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "entry_start_minute_utc": "845",
+                "bullish_hist_min": "0.003",
+                "min_bull_rsi": "54",
+                "max_bull_rsi": "74",
+                "vol_ceil": "0.00045",
+                "max_spread_bps": "20",
+                "max_recent_spread_bps": "18",
+                "max_recent_spread_bps_max": "60",
+                "min_imbalance_pressure": "-0.18",
+                "min_recent_imbalance_pressure": "-0.12",
+                "min_cross_section_continuation_rank": "0.72",
+                "min_cross_section_opening_window_return_rank": "0.60",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 24, 15, 21, 27, tzinfo=timezone.utc),

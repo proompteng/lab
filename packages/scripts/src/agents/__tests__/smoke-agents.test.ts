@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseAllDocuments } from 'yaml'
 
+import { localSmokeRunnerImage } from '../resolve-smoke-runner-image'
 import {
   checkFreshDeploymentReady,
   isFreshDeploymentReady,
@@ -161,6 +162,8 @@ describe('buildHelmArgs', () => {
       'controlPlane.image.digest=',
       '--set',
       'controllers.image.digest=',
+      '--set-string',
+      `env.vars.AGENTS_AGENT_RUNNER_IMAGE=${localSmokeRunnerImage}`,
     ])
   })
 
@@ -217,8 +220,9 @@ describe('buildHelmArgs', () => {
     )
   })
 
-  it('allows a separate runner image pin for AgentRun jobs', () => {
+  it('passes the exact published smoke runner digest to AgentRun jobs independently of deployment images', () => {
     const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
+    const smokeRunnerImage = `registry.ide-newton.ts.net/lab/agents-smoke-runner:sha-${'a'.repeat(40)}@sha256:${'b'.repeat(64)}`
     const args = buildHelmArgs({
       releaseName: 'agents',
       namespace: 'agents-ci',
@@ -227,20 +231,32 @@ describe('buildHelmArgs', () => {
       imageRepository: 'registry.example/agents-control-plane',
       controlPlaneImageRepository: 'registry.example/agents-control-plane',
       controllersImageRepository: 'registry.example/agents-controller',
-      runnerImageRepository: 'registry.example/agents-codex-runner',
       imageTag: 'ci',
-      runnerImageTag: 'runner-ci',
-      imageDigestSet: false,
-      imageDigest: '',
-      runnerImageDigestSet: true,
-      runnerImageDigest: 'sha256:3333333333333333333333333333333333333333333333333333333333333333',
+      imageDigestSet: true,
+      imageDigest: `sha256:${'c'.repeat(64)}`,
+      smokeRunnerImage,
     })
 
-    expect(args).toContain('runner.image.repository=registry.example/agents-codex-runner')
-    expect(args).toContain('runner.image.tag=runner-ci')
-    expect(args).toContain(
-      'runner.image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333',
-    )
+    expect(args.slice(-2)).toEqual(['--set-string', `env.vars.AGENTS_AGENT_RUNNER_IMAGE=${smokeRunnerImage}`])
+  })
+
+  it.each([
+    '',
+    'registry.ide-newton.ts.net/lab/agents-codex-runner:nix',
+    'registry.ide-newton.ts.net/lab/agents-smoke-runner:latest',
+    `registry.ide-newton.ts.net/lab/agents-smoke-runner:sha-${'a'.repeat(40)}`,
+  ])('does not accept a missing, production, or unpinned published runner (%s)', (smokeRunnerImage) => {
+    expect(() =>
+      buildHelmArgs({
+        releaseName: 'agents',
+        namespace: 'agents-ci',
+        valuesFile: resolve(process.cwd(), 'scripts/agents/values-ci.yaml'),
+        createNamespace: false,
+        imageDigestSet: false,
+        imageDigest: '',
+        smokeRunnerImage,
+      }),
+    ).toThrow('AGENTS_SMOKE_RUNNER_IMAGE')
   })
 
   it('passes numeric-looking published image tags as strings for Helm schema validation', () => {
@@ -252,10 +268,8 @@ describe('buildHelmArgs', () => {
       createNamespace: false,
       controlPlaneImageRepository: 'registry.example/agents-control-plane',
       controllersImageRepository: 'registry.example/agents-controller',
-      runnerImageRepository: 'registry.example/agents-codex-runner',
       controlPlaneImageTag: '80403146',
       controllersImageTag: '80403146',
-      runnerImageTag: '80403146',
       imageDigestSet: false,
       imageDigest: '',
     })
@@ -273,9 +287,6 @@ describe('buildHelmArgs', () => {
         args.indexOf('controllers.image.tag=80403146') + 1,
       ),
     ).toEqual(['--set-string', 'controllers.image.tag=80403146'])
-    expect(
-      args.slice(args.indexOf('runner.image.tag=80403146') - 1, args.indexOf('runner.image.tag=80403146') + 1),
-    ).toEqual(['--set-string', 'runner.image.tag=80403146'])
   })
 
   it('omits image digest when the env key is unset', () => {
@@ -450,10 +461,8 @@ describe('scheduled AgentRun templates', () => {
     const agentProviderFiles = [
       'argocd/applications/agents/agents-primitives-agentprovider.yaml',
       'argocd/applications/agents/codex-agentprovider.yaml',
-      'argocd/applications/agents/codex-spark-agentprovider.yaml',
-      'argocd/applications/agents/codex-spark-smoke-agentprovider.yaml',
-      'argocd/applications/agents/graf-codex-agentprovider.yaml',
-      'charts/agents/examples/agentprovider-native-workflow.yaml',
+      'argocd/applications/agents/codex-smoke-agentprovider.yaml',
+      'argocd/applications/agents/anypi-agentprovider.yaml',
       'charts/agents/examples/agentprovider-sample.yaml',
       'charts/agents/examples/agentprovider-smoke.yaml',
     ]
@@ -480,40 +489,54 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(objectAt(bucketClaim, 'spec'), 'bucketName')).toBe('agents-artifacts')
     expect(objectAt(objectAt(bucketClaim, 'spec'), 'storageClassName')).toBe('rook-ceph-bucket')
 
-    const provider = readYamlObjects('argocd/applications/agents/graf-codex-agentprovider.yaml').find(
-      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
-    )
-    const providerSpec = objectAt(provider, 'spec')
-    const adapter = objectAt(providerSpec, 'adapter')
-    const codex = objectAt(adapter, 'codex')
-    const secretEnv = objectAt(codex, 'secretEnv') as Record<string, unknown>[] | undefined
+    const provider = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')[0]
+    const env = objectAt(objectAt(provider, 'spec'), 'envTemplate')
+    expect(objectAt(env, 'AGENTS_ARTIFACTS_BUCKET')).toBe('agents-artifacts')
+    expect(objectAt(env, 'AGENTS_ARTIFACTS_ENDPOINT')).toBe('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80')
+  })
 
-    expect(secretEnv).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: 'AGENTS_ARTIFACTS_ACCESS_KEY_ID',
-          secretName: 'agents-artifacts',
-          key: 'AWS_ACCESS_KEY_ID',
-        }),
-        expect.objectContaining({
-          name: 'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
-          secretName: 'agents-artifacts',
-          key: 'AWS_SECRET_ACCESS_KEY',
-        }),
-      ]),
-    )
-    expect(objectAt(objectAt(providerSpec, 'envTemplate'), 'AGENTS_ARTIFACTS_ENDPOINT')).toBe(
-      'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
-    )
+  it('gives the headless Codex provider a 60-second bootstrap budget and only the Auto Ontology MCP bridge', () => {
+    const provider = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')[0]
+    const spec = objectAt(provider, 'spec')
+    const codex = objectAt(objectAt(spec, 'adapter'), 'codex')
+    const inputFiles = objectAt(spec, 'inputFiles') as unknown[]
+    const input = inputFiles.find((file) => objectAt(file, 'path') === '/root/.codex/config.toml')
+    const config = Bun.TOML.parse(String(objectAt(input, 'content')))
 
-    const agent = readYamlObjects('argocd/applications/agents/graf-codex-agent.yaml').find(
-      (manifest) => objectAt(manifest, 'kind') === 'Agent',
-    )
-    const allowedSecrets = objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets') as
-      | string[]
-      | undefined
-    expect(allowedSecrets).toEqual(expect.arrayContaining(['codex-auth', 'agents-artifacts']))
-    expect(allowedSecrets).not.toContain('observability-minio-creds')
+    expect(objectAt(codex, 'bootstrapTimeoutMs')).toBe(60_000)
+    expect(objectAt(objectAt(spec, 'workload'), 'serviceAccountName')).toBe('codex-auto-ontology-runner')
+    expect(objectAt(objectAt(codex, 'threadConfig'), 'mcp_servers')).toEqual({
+      auto_ontology: {
+        command: '/usr/local/bin/auto-ontology-mcp-bridge',
+        required: false,
+        startup_timeout_sec: 15,
+        tool_timeout_sec: 100,
+        env_vars: ['AGENTS_MCP_IDENTITY_TOKEN_PATH'],
+        env: {
+          AUTO_ONTOLOGY_MCP_GATEWAY_URL: 'http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/mcp',
+        },
+      },
+    })
+    expect(objectAt(config, 'mcp_servers')).toEqual({})
+    expect(objectAt(objectAt(config, 'features'), 'multi_agent')).toBeUndefined()
+
+    const orchestrations = readYamlObjects('argocd/applications/agents/codex-orchestrations.yaml')
+    for (const orchestration of orchestrations) {
+      const steps = objectAt(orchestration, 'spec').steps as unknown[]
+      const runtime = JSON.parse(String(objectAt(objectAt(steps[0], 'with'), 'runtime')))
+      expect(runtime.config.serviceAccountName).toBe('codex-auto-ontology-runner')
+    }
+  })
+
+  it('ends the default Codex worker task at a locally validated, ready-to-review PR', () => {
+    const configMap = readYamlObjects('argocd/applications/agents/codex-agent-system-prompt-configmap.yaml')[0]
+    const prompt = objectAt(objectAt(configMap, 'data'), 'system-prompt.md')
+
+    expect(prompt).toContain('Validate locally')
+    expect(prompt).toContain('open a ready-to-review PR')
+    expect(prompt).toMatch(/Once the PR is open, .*exit\./)
+    expect(prompt).toMatch(/Do not wait for CI or review[\s\S]+or merge unless the task prompt explicitly asks/)
+    expect(prompt).not.toContain('ready-to-merge PR')
   })
 
   it('keeps the chart workflow smoke provider on the fake app-server', () => {
@@ -524,7 +547,6 @@ describe('scheduled AgentRun templates', () => {
     const adapter = objectAt(providerSpec, 'adapter')
     const codex = objectAt(adapter, 'codex')
     const threadConfig = objectAt(codex, 'threadConfig')
-    const envTemplate = objectAt(providerSpec, 'envTemplate')
 
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
     expect(objectAt(codex, 'binaryPath')).toBe('/usr/local/bin/agents-fake-codex-app-server')
@@ -533,9 +555,6 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(codex, 'cwd')).toBeUndefined()
     expect(objectAt(threadConfig, 'mcp_servers')).toEqual({})
     expect(objectAt(threadConfig, 'web_search')).toBe('off')
-    expect(objectAt(envTemplate, 'CODEX_MODEL')).toBe('agents-fake-codex-app-server')
-    expect(objectAt(envTemplate, 'CODEX_DISABLE_RESUME')).toBe('1')
-    expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('1')
   })
 
   it('runs the live Argo smoke as a deterministic app-server canary without OpenAI quota', () => {
@@ -546,7 +565,7 @@ describe('scheduled AgentRun templates', () => {
     const smokeRun = objectAt(smoke, 'agentRun') as Record<string, unknown>
     const additionalSmokeRuns = objectAt(smoke, 'additionalAgentRuns')
     const smokeRunSpec = objectAt(smokeRun, 'spec')
-    const provider = readYamlObjects('argocd/applications/agents/codex-spark-smoke-agentprovider.yaml').find(
+    const provider = readYamlObjects('argocd/applications/agents/codex-smoke-agentprovider.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
     )
     const providerSpec = objectAt(provider, 'spec')
@@ -646,7 +665,7 @@ describe('scheduled AgentRun templates', () => {
     expect(JSON.stringify(provider)).not.toContain('gpt-5.6-sol')
   })
 
-  it('configures default runner resource requests for swarm jobs', () => {
+  it('sizes default AgentRun jobs and spreads them away from the Ryzen node', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controller = objectAt(values, 'controller')
     const defaultWorkload = objectAt(controller, 'defaultWorkload')
@@ -654,11 +673,34 @@ describe('scheduled AgentRun templates', () => {
     const requests = objectAt(resources, 'requests')
     const limits = objectAt(resources, 'limits')
 
-    expect(objectAt(requests, 'cpu')).toBe('1')
+    expect(objectAt(requests, 'cpu')).toBe('500m')
     expect(objectAt(requests, 'memory')).toBe('4Gi')
     expect(objectAt(requests, 'ephemeral-storage')).toBe('8Gi')
-    expect(objectAt(limits, 'memory')).toBe('16Gi')
+    expect(objectAt(limits, 'memory')).toBe('32Gi')
     expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
+    expect(objectAt(defaultWorkload, 'affinity')).toEqual({
+      nodeAffinity: {
+        requiredDuringSchedulingIgnoredDuringExecution: {
+          nodeSelectorTerms: [
+            {
+              matchExpressions: [{ key: 'kubernetes.io/hostname', operator: 'NotIn', values: ['talos-192-168-1-194'] }],
+            },
+          ],
+        },
+      },
+    })
+    expect(objectAt(defaultWorkload, 'topologySpreadConstraints')).toEqual([
+      {
+        maxSkew: 4,
+        topologyKey: 'kubernetes.io/hostname',
+        whenUnsatisfiable: 'ScheduleAnyway',
+        labelSelector: { matchExpressions: [{ key: 'agents.proompteng.ai/agent-run', operator: 'Exists' }] },
+      },
+    ])
+    const concurrency = objectAt(controller, 'concurrency')
+    expect(objectAt(concurrency, 'perAgent')).toBe(96)
+    expect(objectAt(concurrency, 'perNamespace')).toBe(112)
+    expect(objectAt(concurrency, 'cluster')).toBe(160)
   })
 
   it('enables Swarm primitive RBAC for the live controllers while keeping domain admission env out of Agents', () => {
@@ -699,12 +741,11 @@ describe('scheduled AgentRun templates', () => {
   })
 
   it('renders Codex app-server adapter metadata instead of legacy provider wrapper scripts', () => {
-    const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
-    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
+    const manifests = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')
+    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex')
     const spec = objectAt(provider, 'spec')
     const adapter = objectAt(spec, 'adapter')
     const codex = objectAt(adapter, 'codex')
-    const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
     const codexConfig = (inputFiles ?? []).find(
       (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/config.toml',
@@ -714,17 +755,13 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(spec, 'argsTemplate')).toEqual([])
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
     expect(objectAt(codex, 'model')).toBe('gpt-6.2-sol')
-    expect(objectAt(codex, 'effort')).toBe('high')
+    expect(objectAt(codex, 'effort')).toBe('max')
     expect(objectAt(codex, 'sandbox')).toBe('danger-full-access')
     expect(objectAt(codex, 'approval')).toBe('never')
     expect(objectAt(codex, 'cwd')).toBe('/workspace/lab')
-    expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
-    expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
-    expect(objectAt(envTemplate, 'CODEX_MODEL')).toBe('gpt-6.2-sol')
-    expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('5')
     expect(objectAt(codexConfig, 'content')).toContain('model = "gpt-6.2-sol"')
-    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "high"')
-    expect(objectAt(codexConfig, 'content')).not.toContain('model_reasoning_effort = "xhigh"')
+    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "max"')
+    expect(objectAt(codexConfig, 'content')).not.toContain('model_reasoning_effort = "high"')
     expect(objectAt(codexConfig, 'content')).not.toContain('model = "gpt-5.6-sol"')
     expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(
       '/root/.codex/provider-codex-spark.json',

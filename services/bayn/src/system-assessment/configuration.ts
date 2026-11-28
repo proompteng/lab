@@ -96,7 +96,7 @@ export const configuredQualificationRuntime = (
     if (registered.schemaVersion !== 'bayn.qualification-runtime.v3')
       return qualificationRuntime(config, yield* loadSharedJevProtocol())
     const binding = yield* makeResearchStrategyBinding({
-      engine: ResearchStrategyEngine.IntradayAlpha,
+      engine: ResearchStrategyEngine.PureEtf,
       parameters: yield* loadActiveStrategyProtocol(),
     })
     const serving = yield* Schema.decodeUnknownResult(ServingResearchStrategyBindingSchema, strictParseOptions)(binding)

@@ -1,8 +1,14 @@
+import { atTestTime } from '../effect-test-support'
+import {
+  noProtection,
+  withFixtureIntentStore,
+  withFixtureMutationStore,
+} from '../testing/execution-stores.test-support'
 import { DecisionConstruction } from '../decision-construction'
 import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
-import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
+import { MarketCalendarObservationSchema, MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { executionCloseRecoveryExpiry } from '../market-hours'
@@ -27,6 +33,8 @@ import {
   Authority,
   IntentState,
   KillState,
+  isBracketProtection,
+  type Order,
   OrderType,
   OrderSide,
   OrderStatus,
@@ -34,13 +42,8 @@ import {
   TerminalOutcome,
   TimeInForce,
 } from '../execution/contracts'
-import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents/domain'
-import {
-  MutationEventType,
-  MutationStore,
-  type MutationEvent,
-  type MutationStoreShape,
-} from '../execution/mutations/model'
+import { planExecutionIntent, type StoredIntent } from '../execution/intents/domain'
+import { MutationEventType, type MutationEvent } from '../execution/mutations/model'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { legacyCycleClosureSchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
@@ -50,9 +53,13 @@ import {
   type ExecutionCycleClosure,
   type ExecutionCycleClosureStoreShape,
 } from '../db/execution-cycle-closure'
-import { ensureExecutionCycleClosure } from './execution-cycle'
+import { nativeAlphaDecisionFixture } from '../strategy/intraday-alpha/alpha-decision.test-support'
+import { IntradayAlphaPhase } from '../strategy/intraday-alpha/policy'
+import { closeWindowForCycle, ensureExecutionCycleClosure } from './execution-cycle'
 import { resolveExecutionCycleCloseWindow } from './execution-window'
-import { prepareMutationIntent } from './mutation-intent-interpreter'
+import { BrokerAccess, grantedCapitalAuthority } from '../execution/authority'
+import { advancePositionProtection } from './position-protection-interpreter'
+import { prepareMutationIntent, readPreparedExecutionIntents } from './mutation-intent-interpreter'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
@@ -103,6 +110,7 @@ const generationHash = 'b'.repeat(64)
 const activeNativeFixture = (purpose: JevPurpose = JevPurpose.Entry) =>
   nativeJevFixture(purpose, undefined, 'jev-native-test', fixtureRuntime.definition.parameters)
 const native = activeNativeFixture()
+const managed = activeNativeFixture(JevPurpose.Manage).portfolio
 const accountId = native.portfolio.brokerState.account.accountId
 const at = native.query.observedAt
 const activeCycle = Effect.runSync(
@@ -120,7 +128,7 @@ const activeCycle = Effect.runSync(
 )
 
 const factsAt = (observedAt: string, held = false): ReconciliationPassResult => {
-  const source = held ? activeNativeFixture(JevPurpose.Manage).portfolio.brokerState : native.portfolio.brokerState
+  const source = held ? managed.brokerState : native.portfolio.brokerState
   const state = {
     ...source,
     account: { ...source.account, observedAt },
@@ -165,6 +173,16 @@ const factsAt = (observedAt: string, held = false): ReconciliationPassResult => 
   }
 }
 
+const withBrokerCut = (
+  facts: ReconciliationPassResult,
+  state: ReconciliationPassResult['brokerState'],
+  overrides: Partial<ReconciliationPassResult['report']['reconciliation']> = {},
+): ReconciliationPassResult => {
+  const hash = Result.getOrThrow(reconciledStateHash(state))
+  const reconciliation = { ...state.reconciliation, expectedHash: hash, observedHash: hash, ...overrides }
+  return { ...facts, brokerState: { ...state, reconciliation }, report: { ...facts.report, reconciliation } }
+}
+
 const unavailable = new IntradaySnapshotFailure({
   reason: 'not-ready',
   message: 'Fixture quote partition has not caught up',
@@ -188,6 +206,12 @@ const freshMarket: IntradayMarketDataService = {
     ),
   verifyReference: fixtureStreamingReference,
 }
+
+const marketWith = (loadSnapshot: IntradayMarketDataService['loadSnapshot']): IntradayMarketDataService => ({
+  ...freshMarket,
+  loadSnapshot,
+})
+const unavailableMarket = marketWith(() => Effect.fail(marketFailure))
 
 const makeFixture = async (source: typeof native) => {
   const selectedCycle = Effect.runSync(
@@ -235,9 +259,8 @@ const makeFixture = async (source: typeof native) => {
       }),
   }
   const document = await runWithConstruction(
-    Effect.gen(function* () {
-      yield* TestClock.setTime(Date.parse(at))
-      return yield* buildMutationShadowCycleDecision({
+    atTestTime(Date.parse(at), () =>
+      buildMutationShadowCycleDecision({
         authorityGenerationHash: generationHash,
         cycle: selectedCycle,
         executionModel: preparation.executionModel,
@@ -245,8 +268,8 @@ const makeFixture = async (source: typeof native) => {
         reconcile: Effect.succeed(factsAt(at)),
         strategy: fixtureRuntime,
         intradayMarketData: freshMarket,
-      })
-    }).pipe(
+      }),
+    ).pipe(
       Effect.provideService(BrokerRead, broker),
       Effect.provideService(CandidateObservationStore, {
         record: () => Effect.void,
@@ -301,8 +324,22 @@ const makeFixture = async (source: typeof native) => {
   }
 }
 
+type ClosingFixture = Awaited<ReturnType<typeof makeFixture>>
+const fixtureCloseWindow = (request: ClosingFixture) =>
+  Result.getOrThrow(
+    resolveExecutionCycleCloseWindow({
+      executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
+      recoveryExpiresAt: null,
+      observedAt: '2026-08-19T19:00:00.000Z',
+      executionCloseAt: request.closeExpiresAt,
+      sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
+      sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
+    }),
+  )
+
 describe('closing market-data fallback boundaries', () => {
-  let defaultFixture: Awaited<ReturnType<typeof makeFixture>>
+  let defaultFixture: ClosingFixture
+  let shortEntry: Promise<ClosingFixture['entryDocument']> | undefined
   beforeAll(async () => {
     defaultFixture = await makeFixture(native)
   })
@@ -312,6 +349,254 @@ describe('closing market-data fallback boundaries', () => {
     const { input, ...state } = defaultFixture
     return { input: { ...input }, ...structuredClone(state) }
   }
+
+  test.each(['16:28:02.379', '17:55:02.000', '18:02:03.000'])(
+    'Black Friday MorningOrb closes GOOGL -103 with a stale IEX quote at %sZ',
+    async (time) => {
+      const date = '2026-11-27'
+      const calendar = Result.getOrThrow(
+        normalizeMarketCalendarResult(
+          [{ date, open: '09:30', close: '13:00', session_open: '0400', session_close: '1700' }],
+          { start: date, end: date },
+        ),
+      )
+      const { document, cycle, strategy, prepared, riskPolicy, reconciliation, policy } =
+        await nativeAlphaDecisionFixture({
+          calendar: Schema.decodeUnknownSync(MarketCalendarObservationSchema)(calendar),
+          snapshot: {
+            minutesFromOpen: 32,
+            spyProfile: { basePrice: 550, endReturnBps: -55 },
+            profiles: {
+              GOOGL: {
+                basePrice: 274,
+                endReturnBps: -60,
+                openingRangeLow: 272,
+                overridePrevClose: 272.1,
+                overrideLatestClose: 271.08,
+              },
+            },
+          },
+        })
+      expect(document.strategyDecision).toMatchObject({
+        phase: IntradayAlphaPhase.MorningOrb,
+        selectedSymbols: ['GOOGL'],
+        exitPolicy: {
+          plans: { GOOGL: { levels: { minimumEntryPriceMicros: '270810000', maximumHoldingMinutes: 60 } } },
+        },
+      })
+      expect(document.executionSession?.executionSession.closeAt).toBe('2026-11-27T22:00:00.000Z')
+      const observedAt = `${date}T${time}Z`
+      const state = {
+        ...reconciliation.brokerState,
+        account: { ...reconciliation.brokerState.account, observedAt },
+        positions: [
+          {
+            schemaVersion: 'bayn.position.v2' as const,
+            accountId: cycle.identity.accountId,
+            symbol: 'GOOGL',
+            quantityAtoms: '-103000000000',
+            averageEntryPriceMicros: '271025500',
+            costBasisMicros: '-27915626500',
+            marketPriceMicros: '275880000',
+            marketValueMicros: '-28415640000',
+            unrealizedPnlMicros: '-500013500',
+            observedAt,
+          },
+        ],
+        positionsObservedAt: observedAt,
+        ordersObservedAt: observedAt,
+      }
+      const hash = Result.getOrThrow(reconciledStateHash(state))
+      const cut = { ...state.reconciliation, reconciledAt: observedAt, expectedHash: hash, observedHash: hash }
+      const exact = {
+        ...reconciliation,
+        brokerState: { ...state, reconciliation: cut },
+        report: { ...reconciliation.report, reconciliation: cut },
+        riskContext: {
+          ...reconciliation.riskContext,
+          authority: { ...reconciliation.riskContext.authority, updatedAt: observedAt },
+          authorityObservedAt: observedAt,
+        },
+      }
+      const window = await Effect.runPromise(closeWindowForCycle(cycle, document, policy.sharedProtocol, observedAt))
+      expect(window.startAt).toBe('2026-11-27T16:28:00.000Z')
+      const postClose = time === '18:02:03.000'
+      expect(window.expiresAt).toBe(postClose ? '2026-11-27T18:05:03.000Z' : '2026-11-27T18:00:00.000Z')
+      let quoteReads = 0
+      const input = {
+        accountId: cycle.identity.accountId,
+        authorityGenerationHash: document.bindings.authorityGenerationHash,
+        pollIntervalMs: 30_000,
+        reconciliationIntervalMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
+        strategy,
+        intradayMarketData: marketWith(() => {
+          quoteReads++
+          return Effect.fail(
+            retryableOperationalError({
+              component: 'market-data',
+              operation: 'load',
+              message: 'Streaming snapshot verification failed',
+              cause: new IntradaySnapshotFailure({
+                reason: 'not-ready',
+                message: 'intraday snapshot lacks a post-range quote for every symbol',
+                facts: { symbol: 'GOOGL', quoteAgeMs: 61_000 },
+              }),
+            }),
+          )
+        }),
+      }
+      if (!postClose) {
+        const unused = () => Effect.die('Unexpected protection operation')
+        let stored: StoredIntent | undefined
+        let submitted: MutationEvent | undefined
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            yield* TestClock.setTime(Date.parse(observedAt))
+            const [entry] = yield* readPreparedExecutionIntents(document)
+            if (entry === undefined || !isBracketProtection(entry.intent.protection))
+              throw new Error('Expected a durable native short bracket')
+            const intent = entry.intent
+            const terms = entry.intent.protection
+            stored = {
+              intent: { ...intent, state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Filled },
+              stateVersion: 3,
+              updatedAt: '2026-11-27T15:02:09.000Z',
+            }
+            submitted = {
+              schemaVersion: 'bayn.paper-mutation-event.v1',
+              eventId: 'a'.repeat(64),
+              mutationId: 'b'.repeat(64),
+              intentId: intent.intentId,
+              sequence: 2,
+              operation: MutationOperation.Submit,
+              eventType: MutationEventType.SubmitAccepted,
+              requestHash: 'c'.repeat(64),
+              consistencyDelayMs: 1_000,
+              brokerOrderId: 'googl-entry',
+              occurredAt: stored.updatedAt,
+            }
+            const stop: Order = {
+              schemaVersion: 'bayn.order.v3',
+              accountId: input.accountId,
+              brokerOrderId: 'googl-stop',
+              clientOrderId: 'googl-stop-client',
+              intentId: intent.intentId,
+              symbol: 'GOOGL',
+              side: OrderSide.Buy,
+              orderType: OrderType.StopLimit,
+              timeInForce: TimeInForce.Day,
+              quantityAtoms: '103000000000',
+              filledQuantityAtoms: '0',
+              status: OrderStatus.New,
+              stopPriceMicros: terms.stopPriceMicros,
+              limitPriceMicros: terms.stopLimitPriceMicros,
+              observedAt,
+            }
+            const { stopPriceMicros: _stop, ...profit } = stop
+            const orders: readonly Order[] = [
+              stop,
+              {
+                ...profit,
+                brokerOrderId: 'googl-profit',
+                clientOrderId: 'googl-profit-client',
+                orderType: OrderType.Limit,
+                limitPriceMicros: terms.profitLimitPriceMicros,
+              },
+            ]
+            const cancels: string[] = []
+            const advance = (openOrders: readonly Order[]) =>
+              advancePositionProtection({
+                input,
+                cycle,
+                document,
+                protocol: policy.sharedProtocol,
+                policy: riskPolicy,
+                reconciliation: { ...exact, brokerState: { ...exact.brokerState, orders: openOrders } },
+                closeDue: observedAt >= window.startAt,
+                closeExpiresAt: window.expiresAt,
+                capability: {
+                  _tag: 'Mutation',
+                  executionProgram: {
+                    _tag: 'ExecutionProgram',
+                    schemaVersion: 'bayn.execution-program.v1',
+                    authority: {
+                      brokerAccess: BrokerAccess.Mutation,
+                      brokerIdentity: exact.riskContext.brokerIdentity,
+                      capitalAuthority: grantedCapitalAuthority(input.authorityGenerationHash),
+                      strategy: strategy.provenance.strategy,
+                    },
+                    recordReconciliation: unused,
+                    invalidateBrokerState: unused(),
+                    dryRunSubmit: unused,
+                    submit: unused,
+                    submitProtectionClose: unused,
+                    cancel: unused,
+                    recover: unused,
+                    cancelProtectionOrder: (intentId, brokerOrderId) =>
+                      Effect.sync(() => {
+                        cancels.push(brokerOrderId)
+                        return {
+                          _tag: 'Accepted',
+                          phase: 'Fresh',
+                          receipt: {
+                            command: { intentId, accountId: input.accountId, brokerOrderId, requestedAt: observedAt },
+                            requestHash: 'a'.repeat(64),
+                            evidence: {
+                              requestId: 'incident-test-cancel',
+                              status: 204,
+                              contentHash: 'b'.repeat(64),
+                              observedAt,
+                            },
+                          },
+                        } as const
+                      }),
+                  },
+                },
+              })
+            expect(yield* advance(orders)).toMatchObject({ _tag: 'PostMutationReconciliation' })
+            expect(cancels).toEqual(['googl-stop'])
+            expect(yield* advance([])).toEqual({ _tag: 'Ready' })
+            expect(quoteReads).toBe(0)
+          }).pipe(
+            withFixtureIntentStore({
+              read: () => Effect.succeed(Option.fromUndefinedOr(stored)),
+              protectionForCycle: () => Effect.succeed(stored === undefined ? [] : [stored]),
+            }),
+            withFixtureMutationStore({
+              latest: (_id, operation) =>
+                Effect.succeed(operation === MutationOperation.Submit ? submitted : undefined),
+            }),
+            Effect.provideService(JevPositionStore, { read: unused }),
+            Effect.provide(TestClock.layer()),
+          ),
+        )
+      }
+      const closed = await runWithConstruction(
+        TestClock.setTime(Date.parse(observedAt)).pipe(
+          Effect.andThen(
+            prepareClosingExecutionCycleDecision({
+              input,
+              preparation: prepared,
+              policy: riskPolicy,
+              cycle,
+              entryDocument: document,
+              closeExpiresAt: window.expiresAt,
+              reconcile: Effect.succeed(exact),
+            }),
+          ),
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+      expect(quoteReads).toBe(postClose ? 0 : 1)
+      expect(closed.document.dispatchable).toBe(true)
+      expect(closed.document.deltaRisk[0]?.limitPriceMicros).toBe('276150000')
+      expect(closed.document.targetPlan.executionTerms?.priceReference).toBe('reconciled-broker-position-mark')
+      expect(closed.document.targetPlan.intentTargets).toMatchObject([
+        { symbol: 'GOOGL', side: OrderSide.Buy, quantityAtoms: '103000000000', orderType: OrderType.Limit },
+      ])
+    },
+  )
 
   test.each([
     'stop',
@@ -393,13 +678,7 @@ describe('closing market-data fallback boundaries', () => {
         { ...open.order, status: OrderStatus.New, filledQuantityAtoms: '0', observedAt: checkAt },
       ],
     }
-    const hash = Result.getOrThrow(reconciledStateHash(state))
-    const exact = { ...state.reconciliation, expectedHash: hash, observedHash: hash }
-    const reconciliation = {
-      ...initial,
-      brokerState: { ...state, reconciliation: exact },
-      report: { ...initial.report, reconciliation: exact },
-    }
+    const reconciliation = withBrokerCut(initial, state)
     const stop = Number(plan.levels.stopPriceMicros) / 1_000_000
     const profit = Number(plan.levels.profitLimitPriceMicros) / 1_000_000
     const bid =
@@ -417,53 +696,51 @@ describe('closing market-data fallback boundaries', () => {
       message: 'Pending entry source contract failed',
       retryable: false,
     })
-    const market: IntradayMarketDataService = {
-      ...freshMarket,
-      loadSnapshot: (query) =>
-        Effect.suspend(() => {
-          marketReads += 1
-          if (scenario === 'pending') return Effect.fail(marketFailure)
-          if (scenario === 'typed-error') return Effect.fail(typedFailure)
-          if (scenario === 'defect') return Effect.die(defect)
-          if (scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption') return Effect.never
-          const raw = makeIntradayMomentumTestSnapshot(
-            native.protocol,
-            { ...query, archiveWatermarks: [] },
-            { AAPL: 0.02 },
-            10,
-          )
-          const snapshot = streamingFixtureFromRaw(
-            {
-              ...raw,
-              quotes: raw.quotes.map((quote) => ({
-                ...quote,
-                eventAt:
-                  scenario === 'stale'
-                    ? new Date(Date.parse(checkAt) - native.protocol.maximumQuoteAgeMs + 1).toISOString()
-                    : quote.eventAt,
-                bidPrice: bid,
-                askPrice: bid + (scenario === 'wide-stop' ? 1 : 0.001),
-                bidSize: scenario === 'missing-bid' ? 0 : quote.bidSize,
-                askSize: scenario === 'missing-ask' ? 0 : quote.askSize,
-              })),
-            },
-            query,
-          ).snapshot
-          return Effect.succeed(
-            scenario === 'malformed'
-              ? { ...snapshot, manifest: { ...snapshot.manifest, contentHash: '0'.repeat(64) } }
-              : snapshot,
-          )
-        }).pipe(
-          Effect.ensuring(
-            Clock.currentTimeMillis.pipe(
-              Effect.map((now) => {
-                finalizedAt.push(now)
-              }),
-            ),
+    const market: IntradayMarketDataService = marketWith((query) =>
+      Effect.suspend(() => {
+        marketReads += 1
+        if (scenario === 'pending') return Effect.fail(marketFailure)
+        if (scenario === 'typed-error') return Effect.fail(typedFailure)
+        if (scenario === 'defect') return Effect.die(defect)
+        if (scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption') return Effect.never
+        const raw = makeIntradayMomentumTestSnapshot(
+          native.protocol,
+          { ...query, archiveWatermarks: [] },
+          { AAPL: 0.02 },
+          10,
+        )
+        const snapshot = streamingFixtureFromRaw(
+          {
+            ...raw,
+            quotes: raw.quotes.map((quote) => ({
+              ...quote,
+              eventAt:
+                scenario === 'stale'
+                  ? new Date(Date.parse(checkAt) - native.protocol.maximumQuoteAgeMs + 1).toISOString()
+                  : quote.eventAt,
+              bidPrice: bid,
+              askPrice: bid + (scenario === 'wide-stop' ? 1 : 0.001),
+              bidSize: scenario === 'missing-bid' ? 0 : quote.bidSize,
+              askSize: scenario === 'missing-ask' ? 0 : quote.askSize,
+            })),
+          },
+          query,
+        ).snapshot
+        return Effect.succeed(
+          scenario === 'malformed'
+            ? { ...snapshot, manifest: { ...snapshot.manifest, contentHash: '0'.repeat(64) } }
+            : snapshot,
+        )
+      }).pipe(
+        Effect.ensuring(
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => {
+              finalizedAt.push(now)
+            }),
           ),
         ),
-    }
+      ),
+    )
     const unused = () => Effect.die(new Error('Pending entry must retain its immutable commit and mutation owner'))
     const cancel: MutationEvent = {
       ...accepted,
@@ -501,20 +778,17 @@ describe('closing market-data fallback boundaries', () => {
           }),
       },
     ).pipe(
-      Effect.provideService(IntentStore, {
-        protectionForCycle: () => Effect.succeed([]),
-        beginProtectionCancel: unused,
-        recordProtectionCancelAccepted: unused,
+      withFixtureIntentStore({
+        ...noProtection,
         read: () => Effect.succeed(Option.some(record)),
-        commit: unused,
         commitClosing: unused,
       }),
-      Effect.provideService(MutationStore, {
+      withFixtureMutationStore({
         latest: (_id: string, operation: MutationOperation) =>
           Effect.succeed(
             operation === MutationOperation.Submit ? accepted : scenario === 'cancel-accepted' ? cancel : undefined,
           ),
-      } as unknown as MutationStoreShape),
+      }),
       Effect.result,
     )
     const exit = await runWithConstruction(
@@ -646,9 +920,9 @@ describe('closing market-data fallback boundaries', () => {
     )
     const stopBid = Number(plan.levels.stopPriceMicros) / 1_000_000
     const trigger = snapshotAt(query, scenario === 'pending-stop-nonprofit' ? stopBid : floor)
-    const managed = activeNativeFixture(JevPurpose.Manage).portfolio
-    if (managed.purpose !== JevPurpose.Manage) throw new Error('Expected a managed portfolio')
-    const fill = managed.entryFills[0]
+    const portfolio = structuredClone(managed)
+    if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected a managed portfolio')
+    const fill = portfolio.entryFills[0]
     if (fill === undefined) throw new Error('Expected an entry fill')
     const quantity = BigInt(plan.maximumQuantityAtoms)
     const priceAtoms = BigInt(plan.levels.maximumEntryPriceMicros) * 1000n
@@ -668,13 +942,7 @@ describe('closing market-data fallback boundaries', () => {
           costBasisMicros: String(cost),
         })),
       }
-      const stateHash = Result.getOrThrow(reconciledStateHash(state))
-      const reconciliation = { ...state.reconciliation, expectedHash: stateHash, observedHash: stateHash }
-      return {
-        ...originalFacts,
-        brokerState: { ...state, reconciliation },
-        report: { ...originalFacts.report, reconciliation },
-      }
+      return withBrokerCut(originalFacts, state)
     }
     const heldFacts = makeHeldFacts(observedAt)
     const triggeredTarget = Result.getOrThrow(
@@ -683,7 +951,7 @@ describe('closing market-data fallback boundaries', () => {
         sessionDate: request.cycle.identity.executionSessionDate,
         protocol: native.protocol,
         portfolio: {
-          ...managed,
+          ...portfolio,
           entryDecisionHash: request.entryDocument.contentHash,
           exitPolicy: entry.exitPolicy,
           entryFills: [{ ...fill, quantityAtoms: String(quantity), priceAtoms: String(priceAtoms), occurredAt: at }],
@@ -702,7 +970,7 @@ describe('closing market-data fallback boundaries', () => {
           decideJevExit({
             ...triggeredTarget.evidence,
             portfolio: {
-              ...managed,
+              ...portfolio,
               ...triggeredTarget.evidence.portfolio,
               exitRequestedAt: observedAt,
               profitExitRequested: scenario === 'released-profit',
@@ -722,19 +990,18 @@ describe('closing market-data fallback boundaries', () => {
         : observedAt
     const bid = scenario === 'stop' || scenario === 'pending-stop-nonprofit' ? stopBid : floor - 0.01
     const result = await runWithConstruction(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(buildAt))
-        return yield* prepareClosingExecutionCycleDecision({
+      atTestTime(Date.parse(buildAt), () =>
+        prepareClosingExecutionCycleDecision({
           ...request,
           exitTarget,
           ...(scenario === 'holding' ? { replanGenerationHash: 'f'.repeat(64) } : {}),
           reconcile: Effect.succeed(makeHeldFacts(buildAt)),
           input: {
             ...request.input,
-            intradayMarketData: { ...freshMarket, loadSnapshot: (pricing) => Effect.succeed(snapshotAt(pricing, bid)) },
+            intradayMarketData: marketWith((pricing) => Effect.succeed(snapshotAt(pricing, bid))),
           },
-        })
-      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+        }),
+      ).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(result.document.dispatchable).toBe(true)
     const risk = result.document.deltaRisk[0]
@@ -836,33 +1103,31 @@ describe('closing market-data fallback boundaries', () => {
     for (const allowSubmit of [true, false]) {
       const unused = () => Effect.die(new Error('Pending profit must use its existing immutable commit'))
       let marketReads = 0
-      const stopMarket: IntradayMarketDataService = {
-        ...freshMarket,
-        loadSnapshot: (pricing) =>
-          Effect.suspend(() => {
-            marketReads += 1
-            if (scenario === 'pending-stop-unavailable') return Effect.fail(marketFailure)
-            if (scenario === 'pending-stop-error')
-              return Effect.fail(
-                new OperationalError({
-                  component: 'market-data',
-                  operation: 'snapshot',
-                  message: 'Fixture source contract failure',
-                  retryable: false,
-                  cause: { _tag: 'FixtureContractFailure' },
-                }),
-              )
-            const source = scenario === 'pending-stop-wrong-symbol' ? { ...pricing, symbols: ['AMD'] } : pricing
-            const snapshot = snapshotAt(source, scenario === 'pending-before-holding' ? floor - 0.01 : stopBid)
-            return Effect.succeed(
-              scenario === 'pending-stop-wrong-source'
-                ? { ...snapshot, manifest: { ...snapshot.manifest, universeId: 'unrelated-source' } }
-                : scenario === 'pending-stop-malformed'
-                  ? { ...snapshot, manifest: { ...snapshot.manifest, contentHash: '0'.repeat(64) } }
-                  : snapshot,
+      const stopMarket: IntradayMarketDataService = marketWith((pricing) =>
+        Effect.suspend(() => {
+          marketReads += 1
+          if (scenario === 'pending-stop-unavailable') return Effect.fail(marketFailure)
+          if (scenario === 'pending-stop-error')
+            return Effect.fail(
+              new OperationalError({
+                component: 'market-data',
+                operation: 'snapshot',
+                message: 'Fixture source contract failure',
+                retryable: false,
+                cause: { _tag: 'FixtureContractFailure' },
+              }),
             )
-          }),
-      }
+          const source = scenario === 'pending-stop-wrong-symbol' ? { ...pricing, symbols: ['AMD'] } : pricing
+          const snapshot = snapshotAt(source, scenario === 'pending-before-holding' ? floor - 0.01 : stopBid)
+          return Effect.succeed(
+            scenario === 'pending-stop-wrong-source'
+              ? { ...snapshot, manifest: { ...snapshot.manifest, universeId: 'unrelated-source' } }
+              : scenario === 'pending-stop-malformed'
+                ? { ...snapshot, manifest: { ...snapshot.manifest, contentHash: '0'.repeat(64) } }
+                : snapshot,
+          )
+        }),
+      )
       const outcome = await runWithConstruction(
         prepareMutationIntent(
           {
@@ -898,18 +1163,15 @@ describe('closing market-data fallback boundaries', () => {
               }),
           },
         ).pipe(
-          Effect.provideService(IntentStore, {
-            protectionForCycle: () => Effect.succeed([]),
-            beginProtectionCancel: unused,
-            recordProtectionCancelAccepted: unused,
+          withFixtureIntentStore({
+            ...noProtection,
             read: () => Effect.succeed(Option.some(record)),
-            commit: unused,
             commitClosing: unused,
           }),
-          Effect.provideService(MutationStore, {
+          withFixtureMutationStore({
             latest: (_intentId: string, operation: MutationOperation) =>
               Effect.succeed(operation === MutationOperation.Submit ? accepted : undefined),
-          } as unknown as MutationStoreShape),
+          }),
           Effect.result,
         ),
       )
@@ -978,18 +1240,7 @@ describe('closing market-data fallback boundaries', () => {
       ordersObservedAt: reboundAt,
       orders: positionState.orders.map((order) => ({ ...order, status: OrderStatus.Canceled, observedAt: reboundAt })),
     }
-    const settledHash = Result.getOrThrow(reconciledStateHash(settledState))
-    const settledReconciliation = {
-      ...exact,
-      reconciledAt: reboundAt,
-      expectedHash: settledHash,
-      observedHash: settledHash,
-    }
-    const recovered = {
-      ...reconciliation,
-      brokerState: { ...settledState, reconciliation: settledReconciliation },
-      report: { ...reconciliation.report, reconciliation: settledReconciliation },
-    }
+    const recovered = withBrokerCut(reconciliation, settledState, { reconciledAt: reboundAt })
     const closureStore: ExecutionCycleClosureStoreShape = {
       read: () => Effect.succeed(Option.some(closure)),
       readLatestReplan: () => Effect.succeed(Option.none()),
@@ -1010,10 +1261,7 @@ describe('closing market-data fallback boundaries', () => {
           input: {
             ...request.input,
             executionCycleClosureStore: closureStore,
-            intradayMarketData: {
-              ...freshMarket,
-              loadSnapshot: (pricing) => Effect.succeed(snapshotAt(pricing, floor - 0.01)),
-            },
+            intradayMarketData: marketWith((pricing) => Effect.succeed(snapshotAt(pricing, floor - 0.01))),
           },
           closeWindow: {
             startAt: result.document.createdAt,
@@ -1044,10 +1292,8 @@ describe('closing market-data fallback boundaries', () => {
       }).pipe(
         Effect.provide(entryInferenceFixtureLayer),
         Effect.provide(TestClock.layer()),
-        Effect.provideService(IntentStore, {
-          protectionForCycle: () => Effect.succeed([]),
-          beginProtectionCancel: unused,
-          recordProtectionCancelAccepted: unused,
+        withFixtureIntentStore({
+          ...noProtection,
           read: () =>
             Effect.sync(() =>
               Option.some(
@@ -1064,12 +1310,11 @@ describe('closing market-data fallback boundaries', () => {
                   : record,
               ),
             ),
-          commit: unused,
           commitClosing: unused,
         }),
-        Effect.provideService(MutationStore, {
+        withFixtureMutationStore({
           latest: () => Effect.succeed(accepted),
-        } as unknown as MutationStoreShape),
+        }),
       ),
     )
   })
@@ -1085,9 +1330,8 @@ describe('closing market-data fallback boundaries', () => {
     const stateHash = Result.getOrThrow(reconciledStateHash(state))
     const reconciliation = { ...state.reconciliation, expectedHash: stateHash, observedHash: stateHash }
     const result = await runWithConstruction(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* prepareClosingExecutionCycleDecision({
+      atTestTime(Date.parse(observedAt), () =>
+        prepareClosingExecutionCycleDecision({
           ...request,
           reconcile: Effect.succeed({
             ...facts,
@@ -1096,13 +1340,10 @@ describe('closing market-data fallback boundaries', () => {
           }),
           input: {
             ...request.input,
-            intradayMarketData: {
-              ...freshMarket,
-              loadSnapshot: () => Effect.die('An external holding uses reconciled position evidence'),
-            },
+            intradayMarketData: marketWith(() => Effect.die('An external holding uses reconciled position evidence')),
           },
-        })
-      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+        }),
+      ).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(result.document.dispatchable).toBe(true)
     expect(result.document.targetPlan.intentTargets).toMatchObject([
@@ -1136,21 +1377,19 @@ describe('closing market-data fallback boundaries', () => {
     const expiry = executionCloseRecoveryExpiry(calendar, observedAt)
     if (expiry === null) throw new Error('Expected broker extended hours')
     const closed = await runWithConstruction(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* prepareClosingExecutionCycleDecision({
+      atTestTime(Date.parse(observedAt), () =>
+        prepareClosingExecutionCycleDecision({
           ...request,
           closeExpiresAt: expiry,
           reconcile: Effect.succeed(factsAt(observedAt, true)),
           input: {
             ...request.input,
-            intradayMarketData: {
-              ...freshMarket,
-              loadSnapshot: () => Effect.die('An expired IEX session cannot supply a fresh strategy quote'),
-            },
+            intradayMarketData: marketWith(() =>
+              Effect.die('An expired IEX session cannot supply a fresh strategy quote'),
+            ),
           },
-        })
-      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+        }),
+      ).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(closed.document.dispatchable).toBe(true)
     expect(closed.document.expiresAt).toBe(expiry)
@@ -1168,16 +1407,7 @@ describe('closing market-data fallback boundaries', () => {
     'an inexact reconciliation waits before binding a close and recovers with exact evidence (%s)',
     async (scenario) => {
       const request = await fixture()
-      const closeWindow = Result.getOrThrow(
-        resolveExecutionCycleCloseWindow({
-          executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
-          recoveryExpiresAt: null,
-          observedAt: '2026-08-19T19:00:00.000Z',
-          executionCloseAt: request.closeExpiresAt,
-          sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
-          sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
-        }),
-      )
+      const closeWindow = fixtureCloseWindow(request)
       let closure: ExecutionCycleClosure | undefined
       let archiveReads = 0
       const unused = () => Effect.die('reconciliation wait must not read or mutate intents')
@@ -1195,13 +1425,11 @@ describe('closing market-data fallback boundaries', () => {
       const input = {
         ...request.input,
         executionCycleClosureStore: store,
-        intradayMarketData: {
-          ...freshMarket,
-          loadSnapshot: (query: Parameters<IntradayMarketDataService['loadSnapshot']>[0]) =>
-            Effect.sync(() => {
-              archiveReads += 1
-            }).pipe(Effect.andThen(freshMarket.loadSnapshot(query))),
-        },
+        intradayMarketData: marketWith((query: Parameters<IntradayMarketDataService['loadSnapshot']>[0]) =>
+          Effect.sync(() => {
+            archiveReads += 1
+          }).pipe(Effect.andThen(freshMarket.loadSnapshot(query))),
+        ),
       }
       await runWithConstruction(
         Effect.gen(function* () {
@@ -1272,30 +1500,11 @@ describe('closing market-data fallback boundaries', () => {
           expect(closure).toBeDefined()
           expect(archiveReads).toBeGreaterThan(0)
         }).pipe(
-          Effect.provideService(IntentStore, {
-            protectionForCycle: () => Effect.succeed([]),
-            beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
-            recordProtectionCancelAccepted: () =>
-              Effect.die(new Error('unexpected protection cancellation acceptance')),
-            read: unused,
-            commit: unused,
+          withFixtureIntentStore({
+            ...noProtection,
             commitClosing: unused,
           }),
-          Effect.provideService(MutationStore, {
-            authorizeSubmit: unused,
-            beginSubmit: unused,
-            submitAccepted: unused,
-            submitRejected: unused,
-            submitDenied: unused,
-            submitUnknown: unused,
-            beginCancel: unused,
-            cancelAccepted: unused,
-            cancelUnknown: unused,
-            recoveryFound: unused,
-            recoveryNotFound: unused,
-            recoveryUnknown: unused,
-            latest: unused,
-          }),
+          withFixtureMutationStore(),
           Effect.provide(entryInferenceFixtureLayer),
           Effect.provide(TestClock.layer()),
         ),
@@ -1320,16 +1529,7 @@ describe('closing market-data fallback boundaries', () => {
   ] as const)('terminal close uses fresh settlement evidence before another action (%s)', async (scenario) => {
     const fallbackFlat = scenario.startsWith('fallback-flat')
     const request = await fixture()
-    const closeWindow = Result.getOrThrow(
-      resolveExecutionCycleCloseWindow({
-        executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
-        recoveryExpiresAt: null,
-        observedAt: '2026-08-19T19:00:00.000Z',
-        executionCloseAt: request.closeExpiresAt,
-        sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
-        sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
-      }),
-    )
+    const closeWindow = fixtureCloseWindow(request)
     const records = new Map<string, StoredIntent>()
     let closure: ExecutionCycleClosure | undefined
     let retainedReplan: ExecutionCycleClosure | undefined
@@ -1362,7 +1562,7 @@ describe('closing market-data fallback boundaries', () => {
                   sessionDate: request.cycle.identity.executionSessionDate,
                   protocol: native.protocol,
                   portfolio: {
-                    ...activeNativeFixture(JevPurpose.Manage).portfolio,
+                    ...structuredClone(managed),
                     entryDecisionHash: request.entryDocument.contentHash,
                     brokerState: factsAt(before, true).brokerState,
                   },
@@ -1490,9 +1690,7 @@ describe('closing market-data fallback boundaries', () => {
           input: {
             ...request.input,
             executionCycleClosureStore: store,
-            ...(fallbackFlat
-              ? { intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) } }
-              : {}),
+            ...(fallbackFlat ? { intradayMarketData: unavailableMarket } : {}),
           },
           closeWindow,
           reconcile: scenario.startsWith('filled ') ? terminalReconciliation.read : refreshReconciliation,
@@ -1547,15 +1745,15 @@ describe('closing market-data fallback boundaries', () => {
           expect(records.size).toBe(expectedIntentCount)
         }
       }).pipe(
-        Effect.provideService(IntentStore, {
-          protectionForCycle: () => Effect.succeed([]),
-          beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
-          recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
+        withFixtureIntentStore({
+          ...noProtection,
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die('terminal close must not commit another intent'),
           commitClosing: () => Effect.die('terminal close must not commit another close'),
         }),
-        Effect.provideService(MutationStore, { latest: () => Effect.void } as unknown as MutationStoreShape),
+        withFixtureMutationStore({
+          latest: () => Effect.as(Effect.void, undefined),
+        }),
         Effect.provide(entryInferenceFixtureLayer),
         Effect.provide(TestClock.layer()),
       ),
@@ -1579,16 +1777,7 @@ describe('closing market-data fallback boundaries', () => {
     const unavailableArchive =
       scenario !== 'expiry' && scenario !== 'partial fill' && scenario !== 'partial fill reuses preflight'
     const request = await fixture()
-    const closeWindow = Result.getOrThrow(
-      resolveExecutionCycleCloseWindow({
-        executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
-        recoveryExpiresAt: null,
-        observedAt: '2026-08-19T19:00:00.000Z',
-        executionCloseAt: request.closeExpiresAt,
-        sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
-        sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
-      }),
-    )
+    const closeWindow = fixtureCloseWindow(request)
     const records = new Map<string, StoredIntent>()
     let closure: ExecutionCycleClosure | undefined
     let replan: ExecutionCycleClosure | undefined
@@ -1639,9 +1828,7 @@ describe('closing market-data fallback boundaries', () => {
               buyingPowerMicros: (BigInt(facts.brokerState.account.buyingPowerMicros) + releasedValue).toString(),
             },
           }
-          const hash = Result.getOrThrow(reconciledStateHash(state))
-          const reconciliation = { ...state.reconciliation, expectedHash: hash, observedHash: hash }
-          return { ...facts, brokerState: { ...state, reconciliation }, report: { ...facts.report, reconciliation } }
+          return withBrokerCut(facts, state)
         })
         const prepare = (document: NonNullable<typeof closure>['document']) =>
           prepareMutationIntent(
@@ -1768,13 +1955,11 @@ describe('closing market-data fallback boundaries', () => {
             executionCycleClosureStore: store,
             ...(unavailableArchive
               ? {
-                  intradayMarketData: {
-                    ...freshMarket,
-                    loadSnapshot: () =>
-                      Effect.sync(() => {
-                        if (scenario === 'cached residual refreshes after archive failure') positionDivisor = 4n
-                      }).pipe(Effect.andThen(Effect.fail(marketFailure))),
-                  },
+                  intradayMarketData: marketWith(() =>
+                    Effect.sync(() => {
+                      if (scenario === 'cached residual refreshes after archive failure') positionDivisor = 4n
+                    }).pipe(Effect.andThen(Effect.fail(marketFailure))),
+                  ),
                 }
               : {}),
           },
@@ -1839,10 +2024,8 @@ describe('closing market-data fallback boundaries', () => {
         })
         expect(closeCommits).toBe(2)
       }).pipe(
-        Effect.provideService(IntentStore, {
-          protectionForCycle: () => Effect.succeed([]),
-          beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
-          recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
+        withFixtureIntentStore({
+          ...noProtection,
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die(new Error('residual close cannot use entry commit authority')),
           commitClosing: (intent, decision) =>
@@ -1858,7 +2041,9 @@ describe('closing market-data fallback boundaries', () => {
               return { record, deduplicated: false }
             }),
         }),
-        Effect.provideService(MutationStore, { latest: () => Effect.void } as unknown as MutationStoreShape),
+        withFixtureMutationStore({
+          latest: () => Effect.as(Effect.void, undefined),
+        }),
         Effect.provide(entryInferenceFixtureLayer),
         Effect.provide(TestClock.layer()),
       ),
@@ -2033,7 +2218,7 @@ describe('closing market-data fallback boundaries', () => {
         yield* TestClock.setTime(start)
         const close = prepareClosingExecutionCycleDecision({
           ...request,
-          input: { ...request.input, intradayMarketData: { ...freshMarket, loadSnapshot } },
+          input: { ...request.input, intradayMarketData: marketWith(loadSnapshot) },
           reconcile,
         })
         const first = yield* Effect.flip(close)
@@ -2253,7 +2438,9 @@ describe('closing market-data fallback boundaries', () => {
     const profitHoldDeadline = scenario === 'profit-hold-deadline' || scenario === 'short-profit-hold-deadline'
     const timedExit = maximumHold || profitHoldDeadline
     if (short) {
-      const document = await Effect.runPromise(makePersistenceDocumentFixture(accountId, 1, true))
+      const document = structuredClone(
+        await (shortEntry ??= Effect.runPromise(makePersistenceDocumentFixture(accountId, 1, true))),
+      )
       expect(document.bindings.cycleId).toBe(request.cycle.identity.cycleId)
       expect(document.bindings.strategyProtocolHash).toBe(request.cycle.identity.strategyProtocolHash)
       request.entryDocument = document
@@ -2264,10 +2451,10 @@ describe('closing market-data fallback boundaries', () => {
     }
     const entry = request.entryDocument.strategyDecision
     if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected a Jev entry')
-    const managed = activeNativeFixture(JevPurpose.Manage).portfolio
-    if (managed.purpose !== JevPurpose.Manage) throw new Error('Expected a managed portfolio')
+    const portfolio = structuredClone(managed)
+    if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected a managed portfolio')
     const plan = entry.exitPolicy.plans['AAPL']
-    const fill = managed.entryFills[0]
+    const fill = portfolio.entryFills[0]
     if (plan === undefined || fill === undefined) throw new Error('Expected an entry-bound plan and fill')
     const quantityAtoms = plan.maximumQuantityAtoms
     const priceMicros =
@@ -2305,20 +2492,14 @@ describe('closing market-data fallback boundaries', () => {
         costBasisMicros,
       })),
     }
-    const stateHash = Result.getOrThrow(reconciledStateHash(state))
-    const reconciliation = { ...state.reconciliation, expectedHash: stateHash, observedHash: stateHash }
-    const heldFacts = {
-      ...facts,
-      brokerState: { ...state, reconciliation },
-      report: { ...facts.report, reconciliation },
-    }
+    const heldFacts = withBrokerCut(facts, state)
     const exitTarget = Result.getOrThrow(
       decideJevExit({
         cycleId: request.cycle.identity.cycleId,
         sessionDate: request.cycle.identity.executionSessionDate,
         protocol: native.protocol,
         portfolio: {
-          ...managed,
+          ...portfolio,
           entryDecisionHash: request.entryDocument.contentHash,
           exitPolicy: entry.exitPolicy,
           entryFills: [
@@ -2396,7 +2577,7 @@ describe('closing market-data fallback boundaries', () => {
     }
     const currentHash = Result.getOrThrow(reconciledStateHash(currentState))
     const currentReconciliation = {
-      ...reconciliation,
+      ...heldFacts.report.reconciliation,
       expectedHash: currentHash,
       observedHash: currentHash,
       status: scenario === 'inexact-reconciliation' ? ReconciliationStatus.Discrepancy : ReconciliationStatus.Exact,
@@ -2426,10 +2607,7 @@ describe('closing market-data fallback boundaries', () => {
               protocol: native.protocol,
               calendar: native.snapshot.manifest.calendar,
               brokerState: heldFacts.brokerState,
-              marketData: {
-                ...freshMarket,
-                loadSnapshot: () => Effect.die('A due holding deadline must not require archive prices'),
-              },
+              marketData: marketWith(() => Effect.die('A due holding deadline must not require archive prices')),
             }).pipe(Effect.provideService(JevPositionStore, { read: () => Effect.succeed(exitPortfolio) }))
           : undefined
         if (exerciseTimedManagement && management?._tag !== 'Exit') throw new Error('Expected mandatory position exit')
@@ -2440,21 +2618,19 @@ describe('closing market-data fallback boundaries', () => {
           ...(fallbackReconciliationGuard ? { initialReconciliation: heldFacts } : {}),
           input: {
             ...request.input,
-            intradayMarketData: {
-              ...freshMarket,
-              loadSnapshot: () =>
-                scenario === 'invalid-archive'
-                  ? Effect.fail(
-                      new OperationalError({
-                        component: 'market-data',
-                        operation: 'snapshot',
-                        message: 'Invalid archive contract',
-                        retryable: false,
-                        cause: new Error('Invalid source'),
-                      }),
-                    )
-                  : Effect.fail(marketFailure),
-            },
+            intradayMarketData: marketWith(() =>
+              scenario === 'invalid-archive'
+                ? Effect.fail(
+                    new OperationalError({
+                      component: 'market-data',
+                      operation: 'snapshot',
+                      message: 'Invalid archive contract',
+                      retryable: false,
+                      cause: new Error('Invalid source'),
+                    }),
+                  )
+                : Effect.fail(marketFailure),
+            ),
           },
           reconcile: Effect.gen(function* () {
             reads += 1
@@ -2498,18 +2674,17 @@ describe('closing market-data fallback boundaries', () => {
         }),
       )
       const renewed = await runWithConstruction(
-        Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(recheckedAt))
-          return yield* prepareClosingExecutionCycleDecision({
+        atTestTime(Date.parse(recheckedAt), () =>
+          prepareClosingExecutionCycleDecision({
             ...request,
             exitTarget: renewedTarget,
             reconcile: Effect.succeed(latestFacts),
             input: {
               ...request.input,
-              intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) },
+              intradayMarketData: unavailableMarket,
             },
-          })
-        }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+          }),
+        ).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
       )
       expect(renewedTarget.observedAt).toBe(recheckedAt)
       expect(renewedTarget.commitDeadlineAt > exitTarget.commitDeadlineAt).toBe(true)
@@ -2566,14 +2741,13 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     let reads = 0
     const failure = await runWithConstruction(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(at) + 60_000)
-        return yield* Effect.flip(
+      atTestTime(Date.parse(at) + 60_000, () =>
+        Effect.flip(
           prepareClosingExecutionCycleDecision({
             ...request,
             input: {
               ...request.input,
-              intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) },
+              intradayMarketData: unavailableMarket,
             },
             reconcile: currentUtcInstant.pipe(
               Effect.map((now) => {
@@ -2582,8 +2756,8 @@ describe('closing market-data fallback boundaries', () => {
               }),
             ),
           }),
-        )
-      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+        ),
+      ).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(reads).toBe(1)
     expect(failure).toBeInstanceOf(ExecutionCloseAwaitingMarketData)
@@ -2603,25 +2777,20 @@ describe('closing market-data fallback boundaries', () => {
   test('an absent executable quote never receives the stale-quote continuation', async () => {
     const request = await fixture()
     const failure = await runWithConstruction(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(at) + 60_000)
-        return yield* Effect.flip(
+      atTestTime(Date.parse(at) + 60_000, () =>
+        Effect.flip(
           prepareClosingExecutionCycleDecision({
             ...request,
             input: {
               ...request.input,
-              intradayMarketData: {
-                ...freshMarket,
-                // Fault injection at the capability boundary: even if a reader omits the held-symbol
-                // quote, absence is unavailable data, not a present quote awaiting refresh.
-                loadSnapshot: (query) =>
-                  freshMarket.loadSnapshot(query).pipe(Effect.map((snapshot) => ({ ...snapshot, latestQuotes: {} }))),
-              },
+              intradayMarketData: marketWith((query) =>
+                freshMarket.loadSnapshot(query).pipe(Effect.map((snapshot) => ({ ...snapshot, latestQuotes: {} }))),
+              ),
             },
             reconcile: currentUtcInstant.pipe(Effect.map((now) => factsAt(now, true))),
           }),
-        )
-      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+        ),
+      ).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(failure).toBeInstanceOf(ExecutionCloseAwaitingMarketData)
     expect(failure).toMatchObject({
@@ -2636,16 +2805,14 @@ describe('closing market-data fallback boundaries', () => {
     let reads = 0
     const start = Date.parse(request.cycle.window.executionCloseAt) - native.protocol.flattenBeforeCloseMinutes * 60_000
     const result = await runWithConstruction(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(start + offset)
-        return yield* prepareClosingExecutionCycleDecision({
+      atTestTime(start + offset, () =>
+        prepareClosingExecutionCycleDecision({
           ...request,
           input: {
             ...request.input,
-            intradayMarketData: {
-              ...freshMarket,
-              loadSnapshot: () => TestClock.setTime(start).pipe(Effect.andThen(Effect.fail(marketFailure))),
-            },
+            intradayMarketData: marketWith(() =>
+              TestClock.setTime(start).pipe(Effect.andThen(Effect.fail(marketFailure))),
+            ),
           },
           reconcile: currentUtcInstant.pipe(
             Effect.map((now) => {
@@ -2653,8 +2820,8 @@ describe('closing market-data fallback boundaries', () => {
               return factsAt(now, true)
             }),
           ),
-        })
-      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+        }),
+      ).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(reads).toBe(2)
     expect(result.document.bindings.executionMarketData?.schemaVersion).toBe(
@@ -2672,14 +2839,13 @@ describe('closing market-data fallback boundaries', () => {
     let reads = 0
     const close = Date.parse(request.closeExpiresAt)
     const failure = await runWithConstruction(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(close - 1)
-        return yield* Effect.flip(
+      atTestTime(close - 1, () =>
+        Effect.flip(
           prepareClosingExecutionCycleDecision({
             ...request,
             input: {
               ...request.input,
-              intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) },
+              intradayMarketData: unavailableMarket,
             },
             reconcile: Effect.gen(function* () {
               reads += 1
@@ -2687,8 +2853,8 @@ describe('closing market-data fallback boundaries', () => {
               return factsAt(yield* currentUtcInstant, true)
             }),
           }),
-        )
-      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+        ),
+      ).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(reads).toBe(2)
     expect(failure).toBeInstanceOf(ExecutionCloseAwaitingMarketData)

@@ -12,6 +12,7 @@ metadata:
     deploy.knative.dev/rollout: 2026-08-27T21:26:59Z
 spec:
   replicas: 1
+  revisionHistoryLimit: 2
   strategy:
     type: Recreate
   selector:
@@ -262,7 +263,7 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: '300'
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
-              value: codex-spark,codex
+              value: codex
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD
               value: '3'
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS

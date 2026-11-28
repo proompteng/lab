@@ -35,6 +35,7 @@ import {
   intradayAlphaCandidateSymbols,
   intradayAlphaEquityMarketProfile,
   makeIntradayAlphaPolicy,
+  makePureEtfPolicy,
 } from './policy'
 import { makeIntradayAlphaEntryQuery } from './runtime'
 
@@ -45,7 +46,6 @@ const calendar = Result.getOrThrow(
     { start: '2026-09-04', end: '2026-09-04' },
   ),
 )
-const sessionOpenMs = Date.parse('2026-09-04T13:30:00.000Z') // 09:30 EDT
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 const policy = makeIntradayAlphaPolicy(protocol)
 
@@ -164,16 +164,23 @@ export const makeAlphaStreamingSnapshot = (input: {
   readonly quoteSpreadBps?: number
   readonly quoteBidSize?: number
   readonly quoteAskSize?: number
+  readonly pureEtf?: boolean
+  readonly prematureSymbol?: string
   readonly snapshotCalendar?: typeof calendar
 }) => {
+  const activePolicy = input.pureEtf === true ? makePureEtfPolicy(protocol) : policy
   const effectiveCalendar = input.snapshotCalendar ?? calendar
+  const session = effectiveCalendar.providerSessions[0]
+  if (session === undefined) throw new Error('Expected a fixture session')
+  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)(session.date)
+  const sessionOpenMs = Date.parse(session.regularOpenAt)
   const rangeEndMs = sessionOpenMs + input.minutesFromOpen * 60_000
   const observedAtMs = rangeEndMs + protocol.decisionDelaySeconds * 1000
   const observedAt = utcInstantFromEpochMillis(observedAtMs)
   const rangeStartAt = utcInstantFromEpochMillis(sessionOpenMs)
   const rangeEndAt = utcInstantFromEpochMillis(rangeEndMs)
   const market = intradayAlphaEquityMarketProfile
-  const symbols = [...new Set([...intradayAlphaCandidateSymbols, intradayAlphaBenchmarkSymbol])].sort()
+  const symbols = [...activePolicy.candidateSymbols, intradayAlphaBenchmarkSymbol].sort()
 
   const universe = {
     universeId: market.universeId,
@@ -205,7 +212,11 @@ export const makeAlphaStreamingSnapshot = (input: {
     for (let m = 0; m < input.minutesFromOpen; m++) {
       if (gapSet.has(m) && m !== input.minutesFromOpen - 1) continue
       const barTime = utcInstantFromEpochMillis(sessionOpenMs + m * 60_000)
-      const ingestedAt = utcInstantFromEpochMillis(sessionOpenMs + (m + 1) * 60_000 - 1_000)
+      const ingestedAt = utcInstantFromEpochMillis(
+        sessionOpenMs +
+          (m + 1) * 60_000 -
+          (input.pureEtf !== true || (symbol === input.prematureSymbol && m === input.minutesFromOpen - 1) ? 1_000 : 0),
+      )
       const frac = m / totalSteps
       let close = Number((profile.basePrice * (1 + (profile.endReturnBps / 10_000) * frac)).toFixed(2))
       if (m === input.minutesFromOpen - 2 && profile.overridePrevClose !== undefined) close = profile.overridePrevClose
@@ -398,7 +409,7 @@ export const makeAlphaStreamingSnapshot = (input: {
   }
 
   const query = Result.getOrThrow(
-    makeIntradayAlphaEntryQuery({ policy, calendar: effectiveCalendar, sessionDate, observedAtMs }),
+    makeIntradayAlphaEntryQuery({ policy: activePolicy, calendar: effectiveCalendar, sessionDate, observedAtMs }),
   )
   const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut, query))
   return { snapshot, cut, observedAt, observedAtMs, rangeStartAt, rangeEndAt, query }

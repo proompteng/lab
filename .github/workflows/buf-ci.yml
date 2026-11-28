@@ -11,7 +11,6 @@ on:
       - 'buf.yaml'
       - 'buf.lock'
       - 'buf.gen.yaml'
-      - 'scripts/generate-proto.sh'
       - '.github/workflows/buf-ci.yml'
   pull_request:
     paths:
@@ -20,7 +19,6 @@ on:
       - 'buf.yaml'
       - 'buf.lock'
       - 'buf.gen.yaml'
-      - 'scripts/generate-proto.sh'
       - '.github/workflows/buf-ci.yml'
 
 concurrency:

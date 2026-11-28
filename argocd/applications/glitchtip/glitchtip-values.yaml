@@ -23,6 +23,19 @@ postgresql:
     storage:
       size: 20Gi
       storageClass: rook-ceph-block
+    # Chart 9.2.0 does not render managed.roles; the Cluster patch applies this role.
+    managed:
+      roles:
+        - name: glitchtip_audit_ro
+          login: true
+          inherit: false
+          superuser: false
+          createdb: false
+          createrole: false
+          replication: false
+          bypassrls: false
+          passwordSecret:
+            name: glitchtip-audit-ro-db
 
 # GlitchTip supports PostgreSQL-backed async tasks and session storage.
 # Avoid adding a second cache cluster to this low-volume internal service.

@@ -26,6 +26,8 @@ import {
 import { IntradayAlphaObservationSchema, reproduceIntradayAlphaObservation } from './observation'
 import {
   IntradayAlphaPhase,
+  alphaObservationVersion,
+  isPureEtfPolicy,
   IntradayAlphaPolicySchema,
   IntradayAlphaSetup,
   type IntradayAlphaPolicy,
@@ -66,6 +68,21 @@ export const isBalancedMiddayBasket = (
     longNotional - shortNotional <= shortShareRounding &&
     shortNotional - longNotional <= longShareRounding
   )
+}
+
+/** Keep the first funded pairs in selection order, or a single funded leg if only one side remains. */
+export const balancedFundedMiddaySymbols = (
+  symbols: readonly string[],
+  weights: Readonly<Record<string, number>>,
+): readonly string[] => {
+  if (symbols.length <= 1) return symbols
+  const longs = symbols.filter((symbol) => (weights[symbol] ?? 0) > 0)
+  const shorts = symbols.filter((symbol) => (weights[symbol] ?? 0) < 0)
+  if (longs.length === shorts.length) return symbols
+  const pairs = Math.min(longs.length, shorts.length)
+  if (pairs === 0) return symbols.slice(0, 1)
+  const keep = new Set([...longs.slice(0, pairs), ...shorts.slice(0, pairs)])
+  return symbols.filter((symbol) => keep.has(symbol))
 }
 
 export enum IntradayAlphaDecisionReason {
@@ -124,6 +141,8 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
     const hours = observation.snapshot.manifest.calendar
     const regularSession = resolveAlphaRegularSession(hours, observation.snapshot.manifest.sessionDate)
     if (
+      observation.schemaVersion !== alphaObservationVersion(policy) ||
+      (isPureEtfPolicy(policy) && evidence.catalystVetos.length > 0) ||
       observation.portfolio.purpose !== JevPurpose.Entry ||
       (yield* canonicalHashV1Result(protocol)) !== (yield* canonicalHashV1Result(observation.protocol)) ||
       decided < Date.parse(observation.observedAt) ||
@@ -186,22 +205,14 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
     // For paired midday reversion, preserve dollar-neutrality when one leg fails funding:
     // if at least 1 long and 1 short funded, pair equal counts; otherwise retain single funded extreme.
     if (extracted.context.phase === IntradayAlphaPhase.MiddayReversion && selectedSymbols.length > 1) {
-      const fundedLongs = selectedSymbols.filter((symbol) => (weights[symbol] ?? 0) > 0)
-      const fundedShorts = selectedSymbols.filter((symbol) => (weights[symbol] ?? 0) < 0)
-      if (fundedLongs.length !== fundedShorts.length) {
-        const balancedCount = Math.min(fundedLongs.length, fundedShorts.length)
-        const keep =
-          balancedCount > 0
-            ? new Set([...fundedLongs.slice(0, balancedCount), ...fundedShorts.slice(0, balancedCount)])
-            : new Set([selectedSymbols[0] ?? ''])
-        for (const symbol of selectedSymbols) {
-          if (!keep.has(symbol)) {
-            delete plans[symbol]
-            weights[symbol] = 0
-          }
+      const balanced = balancedFundedMiddaySymbols(selectedSymbols, weights)
+      for (const symbol of selectedSymbols) {
+        if (!balanced.includes(symbol)) {
+          delete plans[symbol]
+          weights[symbol] = 0
         }
-        selectedSymbols.splice(0, selectedSymbols.length, ...selectedSymbols.filter((symbol) => keep.has(symbol)))
       }
+      selectedSymbols.splice(0, selectedSymbols.length, ...balanced)
     }
 
     selectedSymbols.sort()
@@ -233,8 +244,7 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
       }))
       .toSorted((a, b) => a.symbol.localeCompare(b.symbol) || a.direction.localeCompare(b.direction))
 
-    return {
-      schemaVersion: 'bayn.intraday-alpha-target.v2' as const,
+    const material = {
       strategy: 'jev' as const,
       policy,
       evidence,
@@ -255,6 +265,9 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
         plans,
       },
     }
+    return isPureEtfPolicy(policy)
+      ? { ...material, schemaVersion: 'bayn.intraday-alpha-target.v3' as const }
+      : { ...material, schemaVersion: 'bayn.intraday-alpha-target.v2' as const }
   })
 
 const deriveIntradayAlphaTarget = (policy: IntradayAlphaPolicy, evidence: IntradayAlphaDecisionEvidence) =>
@@ -271,8 +284,7 @@ export const decideIntradayAlphaEntry = (input: unknown, policy: IntradayAlphaPo
     Result.mapError((cause) => new JevContractError({ message: 'Intraday alpha target could not be derived', cause })),
   )
 
-export const IntradayAlphaTargetSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-alpha-target.v2'),
+const alphaTargetFields = {
   strategy: Schema.Literal('jev'),
   policy: IntradayAlphaPolicySchema,
   evidence: IntradayAlphaDecisionEvidenceSchema,
@@ -287,7 +299,16 @@ export const IntradayAlphaTargetSchema = Schema.Struct({
   selectedSymbols: Schema.Array(SymbolSchema).check(Schema.isMaxLength(4), Schema.isUnique()),
   targetWeights: Schema.Record(SymbolSchema, Schema.Finite.check(Schema.isBetween({ minimum: -1, maximum: 1 }))),
   exitPolicy: AlphaExitPolicySchema,
-}).check(
+}
+const AlphaV2TargetSchema = Schema.Struct({
+  ...alphaTargetFields,
+  schemaVersion: Schema.Literal('bayn.intraday-alpha-target.v2'),
+})
+const PureEtfTargetSchema = Schema.Struct({
+  ...alphaTargetFields,
+  schemaVersion: Schema.Literal('bayn.intraday-alpha-target.v3'),
+})
+export const IntradayAlphaTargetSchema = Schema.Union([AlphaV2TargetSchema, PureEtfTargetSchema]).check(
   Schema.makeFilter((target) => {
     const reproduced = deriveIntradayAlphaTarget(target.policy, target.evidence).pipe(
       Result.flatMap(canonicalHashV1Result),

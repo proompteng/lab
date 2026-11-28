@@ -1,0 +1,428 @@
+{
+  "schema": "bayn.crypto-24x7-trend.freeze.v1",
+  "registeredCommit": "ea9e3bb4c58f72ed564272d45b13f116cb193853",
+  "sourceSha256": "b3c7894c50267ccc9d8a74279eb1a8066cc10b996526cd5ea34861ea26d46f2d",
+  "dataset": {
+    "manifestSha256": "85ad2ae87c8afa8ddd0be70b31ca718a309fa335c6e7f74dbfd8252d6a7a2054",
+    "files": [
+      {
+        "key": "bayn-research-datasets/2026-11-27-crypto-3yr/alpaca_crypto_1h_10sym_20240101_20261126.tsv.gz",
+        "rows": 248820,
+        "rawBytes": 20330962,
+        "gzipBytes": 6309396,
+        "rawSha256": "500493b23b84f678f70c4e04ceaaf29d71e7f0bd271803f22337f869d7b579b5",
+        "gzipSha256": "9152814f3aa118c67b448280f2f821d84cf7d736bf94a505dbd765c18e7f81a8"
+      },
+      {
+        "key": "bayn-research-datasets/2026-11-27-crypto-3yr/alpaca_crypto_1d_10sym_20220101_20261126.tsv.gz",
+        "rows": 16772,
+        "rawBytes": 1503741,
+        "gzipBytes": 544353,
+        "rawSha256": "fd6bd78adb2316d4cffadfeecca65914cf964196be50e20230ad4f09f1d3d5e1",
+        "gzipSha256": "45e52815557ae52c85ecabf275c978da3621e7f57d1e12fea90c6f3583903f35"
+      }
+    ]
+  },
+  "fees": [
+    50,
+    30,
+    20
+  ],
+  "selectedUsing": [
+    "train",
+    "validation"
+  ],
+  "development": {
+    "1h": {
+      "periods": {
+        "train": [
+          "2024-01-01",
+          "2025-07-01"
+        ],
+        "validation": [
+          "2025-07-01",
+          "2026-04-01"
+        ],
+        "bull2024": [
+          "2024-01-01",
+          "2025-01-01"
+        ],
+        "pullback2026": [
+          "2026-01-01",
+          "2026-04-01"
+        ]
+      },
+      "dsrReference": {
+        "20": 0.10237737392327274,
+        "30": 0.11052354989105692,
+        "50": 0.13097415177951693
+      },
+      "coverage": {
+        "train": {
+          "BTC/USD": {
+            "present": 13125,
+            "missing": 3,
+            "first": "2024-01-01T00:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 3
+          },
+          "ETH/USD": {
+            "present": 13126,
+            "missing": 2,
+            "first": "2024-01-01T00:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 2
+          },
+          "SOL/USD": {
+            "present": 7400,
+            "missing": 5728,
+            "first": "2024-08-26T16:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "LINK/USD": {
+            "present": 13125,
+            "missing": 3,
+            "first": "2024-01-01T00:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 3
+          },
+          "AVAX/USD": {
+            "present": 13125,
+            "missing": 3,
+            "first": "2024-01-01T00:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 3
+          },
+          "LTC/USD": {
+            "present": 13126,
+            "missing": 2,
+            "first": "2024-01-01T00:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 2
+          },
+          "DOGE/USD": {
+            "present": 13125,
+            "missing": 3,
+            "first": "2024-01-01T00:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 3
+          },
+          "AAVE/USD": {
+            "present": 13125,
+            "missing": 3,
+            "first": "2024-01-01T00:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 3
+          },
+          "UNI/USD": {
+            "present": 13125,
+            "missing": 3,
+            "first": "2024-01-01T00:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 3
+          },
+          "XRP/USD": {
+            "present": 13087,
+            "missing": 41,
+            "first": "2024-01-01T06:00:00.000Z",
+            "last": "2025-06-30T23:00:00.000Z",
+            "interiorMissing": 35
+          }
+        },
+        "validation": {
+          "BTC/USD": {
+            "present": 6575,
+            "missing": 1,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 1
+          },
+          "ETH/USD": {
+            "present": 6574,
+            "missing": 2,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 2
+          },
+          "SOL/USD": {
+            "present": 6569,
+            "missing": 7,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 7
+          },
+          "LINK/USD": {
+            "present": 6570,
+            "missing": 6,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 6
+          },
+          "AVAX/USD": {
+            "present": 6575,
+            "missing": 1,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 1
+          },
+          "LTC/USD": {
+            "present": 6574,
+            "missing": 2,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 2
+          },
+          "DOGE/USD": {
+            "present": 6572,
+            "missing": 4,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 4
+          },
+          "AAVE/USD": {
+            "present": 6567,
+            "missing": 9,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 9
+          },
+          "UNI/USD": {
+            "present": 6571,
+            "missing": 5,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 5
+          },
+          "XRP/USD": {
+            "present": 6574,
+            "missing": 2,
+            "first": "2025-07-01T00:00:00.000Z",
+            "last": "2026-03-31T23:00:00.000Z",
+            "interiorMissing": 2
+          }
+        }
+      },
+      "excludedEndRows": 10
+    },
+    "1d": {
+      "periods": {
+        "train": [
+          "2022-01-01",
+          "2024-07-01"
+        ],
+        "validation": [
+          "2024-07-01",
+          "2025-09-01"
+        ],
+        "bear2022": [
+          "2022-01-01",
+          "2023-01-01"
+        ],
+        "bull2024": [
+          "2024-01-01",
+          "2025-01-01"
+        ]
+      },
+      "dsrReference": {
+        "20": 0.051184462915901105,
+        "30": 0.05252289484159159,
+        "50": 0.05582948739327148
+      },
+      "coverage": {
+        "train": {
+          "BTC/USD": {
+            "present": 912,
+            "missing": 0,
+            "first": "2022-01-01T00:00:00.000Z",
+            "last": "2024-06-30T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "ETH/USD": {
+            "present": 912,
+            "missing": 0,
+            "first": "2022-01-01T00:00:00.000Z",
+            "last": "2024-06-30T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "SOL/USD": {
+            "present": 550,
+            "missing": 362,
+            "first": "2022-01-01T00:00:00.000Z",
+            "last": "2023-07-06T00:00:00.000Z",
+            "interiorMissing": 2
+          },
+          "LINK/USD": {
+            "present": 912,
+            "missing": 0,
+            "first": "2022-01-01T00:00:00.000Z",
+            "last": "2024-06-30T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "AVAX/USD": {
+            "present": 912,
+            "missing": 0,
+            "first": "2022-01-01T00:00:00.000Z",
+            "last": "2024-06-30T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "LTC/USD": {
+            "present": 912,
+            "missing": 0,
+            "first": "2022-01-01T00:00:00.000Z",
+            "last": "2024-06-30T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "DOGE/USD": {
+            "present": 912,
+            "missing": 0,
+            "first": "2022-01-01T00:00:00.000Z",
+            "last": "2024-06-30T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "AAVE/USD": {
+            "present": 912,
+            "missing": 0,
+            "first": "2022-01-01T00:00:00.000Z",
+            "last": "2024-06-30T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "UNI/USD": {
+            "present": 912,
+            "missing": 0,
+            "first": "2022-01-01T00:00:00.000Z",
+            "last": "2024-06-30T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "XRP/USD": {
+            "present": 182,
+            "missing": 730,
+            "first": "2024-01-01T00:00:00.000Z",
+            "last": "2024-06-30T00:00:00.000Z",
+            "interiorMissing": 0
+          }
+        },
+        "validation": {
+          "BTC/USD": {
+            "present": 427,
+            "missing": 0,
+            "first": "2024-07-01T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "ETH/USD": {
+            "present": 427,
+            "missing": 0,
+            "first": "2024-07-01T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "SOL/USD": {
+            "present": 371,
+            "missing": 56,
+            "first": "2024-08-26T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "LINK/USD": {
+            "present": 427,
+            "missing": 0,
+            "first": "2024-07-01T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "AVAX/USD": {
+            "present": 427,
+            "missing": 0,
+            "first": "2024-07-01T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "LTC/USD": {
+            "present": 427,
+            "missing": 0,
+            "first": "2024-07-01T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "DOGE/USD": {
+            "present": 427,
+            "missing": 0,
+            "first": "2024-07-01T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "AAVE/USD": {
+            "present": 427,
+            "missing": 0,
+            "first": "2024-07-01T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "UNI/USD": {
+            "present": 427,
+            "missing": 0,
+            "first": "2024-07-01T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          },
+          "XRP/USD": {
+            "present": 427,
+            "missing": 0,
+            "first": "2024-07-01T00:00:00.000Z",
+            "last": "2025-08-31T00:00:00.000Z",
+            "interiorMissing": 0
+          }
+        }
+      },
+      "excludedEndRows": 10
+    }
+  },
+  "selection": {
+    "1h/channel": {
+      "nominee": null,
+      "developmentEligible": [],
+      "diagnostic": "1h-full-channel-h3-s2-v0"
+    },
+    "1h/ema": {
+      "nominee": null,
+      "developmentEligible": [],
+      "diagnostic": "1h-full-ema-h3-v1"
+    },
+    "1h/parity": {
+      "nominee": null,
+      "developmentEligible": [],
+      "diagnostic": "1h-core-parity-h2-v2-b0"
+    },
+    "1h/momentum": {
+      "nominee": null,
+      "developmentEligible": [],
+      "diagnostic": "1h-full-momentum-h2-k0-a1-r0"
+    },
+    "1h/compression": {
+      "nominee": null,
+      "developmentEligible": [],
+      "diagnostic": "1h-core-compression-h2-c0-w0"
+    },
+    "1d/channel": {
+      "nominee": null,
+      "developmentEligible": [],
+      "diagnostic": "1d-full-channel-h3-s0-v1"
+    },
+    "1d/ema": {
+      "nominee": null,
+      "developmentEligible": [],
+      "diagnostic": "1d-full-ema-h2-v0"
+    },
+    "1d/parity": {
+      "nominee": null,
+      "developmentEligible": [],
+      "diagnostic": "1d-full-parity-h0-v0-b1"
+    },
+    "1d/momentum": {
+      "nominee": null,
+      "developmentEligible": [],
+      "diagnostic": "1d-full-momentum-h3-k1-a1-r1"
+    }
+  }
+}

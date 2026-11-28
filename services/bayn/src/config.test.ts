@@ -426,6 +426,15 @@ describe('runtime configuration loading', () => {
     })
   })
 
+  test('Restate routing configuration does not enter the hashed runtime configuration or build binding', async () => {
+    const baseline = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
+    for (const prefix of ['', 'sleeve-4']) {
+      const environment = new Map(runtimeEnvironment).set('BAYN_RESTATE_SERVICE_PREFIX', prefix)
+      const configured = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+      expect(configured).toEqual(baseline)
+    }
+  })
+
   test('loads native forward reporting without inventing a historical snapshot', async () => {
     const report = await Effect.runPromise(
       provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment),

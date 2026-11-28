@@ -1,45 +1,40 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
+from contextlib import ExitStack
+from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from scripts import historical_simulation_startup
+from scripts.historical_simulation_startup import (
     ClickHouseRuntimeConfig,
-    ExitStack,
-    KafkaRuntimeConfig,
-    Path,
-    PostgresRuntimeConfig,
-    SimpleNamespace,
-    StartHistoricalSimulationTestCaseBase,
-    TemporaryDirectory,
-    _build_resources,
     _ensure_topics,
-    datetime,
-    patch,
-    replace,
-    historical_simulation_startup,
-    timezone,
+    kafka_runtime,
+    replay_execution,
+    storage_and_database,
+)
+from tests.historical_simulation.fixtures import (
+    SimulationOrchestrationTestCase,
+    make_clickhouse_config,
+    make_kafka_config,
+    make_postgres_config,
+    simulation_resources,
+    stub_replay_databases,
+    stub_replay_preflight,
+    stub_replay_storage,
 )
 
 
-class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase):
+class TestStartHistoricalSimulationApplyB(SimulationOrchestrationTestCase):
     def test_apply_rejects_missing_restore_state_config_in_required_mode(self) -> None:
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
+        clickhouse_config = make_clickhouse_config(
             password="secret",
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         manifest = {
             "dataset_id": "dataset-a",
             "ta_restore": {"mode": "required"},
@@ -52,24 +47,29 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
             with (
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._ensure_supported_binary",
+                patch.object(
+                    replay_execution,
+                    "_ensure_supported_binary",
                     return_value=None,
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._ensure_lz4_codec_available",
+                patch.object(
+                    replay_execution,
+                    "_ensure_lz4_codec_available",
                     return_value=None,
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._acquire_simulation_runtime_lock",
+                patch.object(
+                    replay_execution,
+                    "_acquire_simulation_runtime_lock",
                     return_value={"status": "acquired", "run_id": resources.run_id},
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._capture_cluster_state",
+                patch.object(
+                    replay_execution,
+                    "_capture_cluster_state",
                     return_value={"ta_data": {"TA_GROUP_ID": "prod-ta-group"}},
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._release_simulation_runtime_lock",
+                patch.object(
+                    replay_execution,
+                    "_release_simulation_runtime_lock",
                     return_value={"status": "released"},
                 ) as release_lock,
             ):
@@ -89,25 +89,12 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
         release_lock.assert_called_once_with(resources=resources)
 
     def test_apply_defaults_compact_profiles_to_stateless_restore(self) -> None:
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
+        clickhouse_config = make_clickhouse_config(
             password="secret",
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         manifest = {
             "dataset_id": "dataset-a",
             "clickhouse": {"database_precreated": True},
@@ -124,27 +111,11 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
             with ExitStack() as stack:
+                stub_replay_preflight(stack, resources)
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_supported_binary",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_lz4_codec_available",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._acquire_simulation_runtime_lock",
-                        return_value={"status": "acquired", "run_id": resources.run_id},
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._capture_cluster_state",
+                    patch.object(
+                        replay_execution,
+                        "_capture_cluster_state",
                         return_value={
                             "ta_data": {
                                 "TA_GROUP_ID": "prod-ta-group",
@@ -155,96 +126,46 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                     ),
                 )
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_topics",
+                    patch.object(
+                        replay_execution,
+                        "_ensure_topics",
                         return_value={"status": "ok"},
                     ),
                 )
+                stub_replay_databases(stack)
+                stub_replay_storage(stack)
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_database"
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_runtime_tables",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_database"
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_runtime_permissions",
-                        return_value={"grants_applied": True},
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._run_migrations",
-                        return_value=None,
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._reset_postgres_runtime_state",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._seed_simulation_trade_cursor",
-                        return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._upsert_simulation_runtime_context",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._dump_topics",
-                        return_value={"records": 1, "sha256": "abc"},
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._validate_dump_coverage",
-                        return_value={"coverage_ratio": 1.0},
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ta_runtime_reconfigure_required",
+                    patch.object(
+                        replay_execution,
+                        "_ta_runtime_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._torghut_service_reconfigure_required",
+                    patch.object(
+                        replay_execution,
+                        "_torghut_service_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._configure_ta_for_simulation",
+                    patch.object(
+                        replay_execution,
+                        "_configure_ta_for_simulation",
                         return_value=None,
                     ),
                 )
                 restart_ta = stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._restart_ta_deployment",
+                    patch.object(
+                        replay_execution,
+                        "_restart_ta_deployment",
                         return_value="nonce",
                     ),
                 )
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._configure_torghut_service_for_simulation",
+                    patch.object(
+                        replay_execution,
+                        "_configure_torghut_service_for_simulation",
                         return_value=None,
                     ),
                 )
@@ -269,25 +190,12 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
     def test_apply_falls_back_to_stateless_when_restore_state_config_missing(
         self,
     ) -> None:
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
+        clickhouse_config = make_clickhouse_config(
             password="secret",
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         manifest = {
             "dataset_id": "dataset-a",
             "ta_restore": {"mode": "stateless_if_missing"},
@@ -302,121 +210,55 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
             with ExitStack() as stack:
+                stub_replay_preflight(stack, resources)
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_supported_binary",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_lz4_codec_available",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._acquire_simulation_runtime_lock",
-                        return_value={"status": "acquired", "run_id": resources.run_id},
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._capture_cluster_state",
+                    patch.object(
+                        replay_execution,
+                        "_capture_cluster_state",
                         return_value={"ta_data": {"TA_GROUP_ID": "prod-ta-group"}},
                     ),
                 )
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_topics",
+                    patch.object(
+                        replay_execution,
+                        "_ensure_topics",
                         return_value={"status": "ok"},
                     ),
                 )
+                stub_replay_databases(stack)
+                stub_replay_storage(stack)
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_database"
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_runtime_tables",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_database"
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_runtime_permissions",
-                        return_value={"grants_applied": True},
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._run_migrations",
-                        return_value=None,
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._reset_postgres_runtime_state",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._seed_simulation_trade_cursor",
-                        return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._upsert_simulation_runtime_context",
-                        return_value=None,
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._dump_topics",
-                        return_value={"records": 1, "sha256": "abc"},
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._validate_dump_coverage",
-                        return_value={"coverage_ratio": 1.0},
-                    ),
-                )
-                stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._ta_runtime_reconfigure_required",
+                    patch.object(
+                        replay_execution,
+                        "_ta_runtime_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._torghut_service_reconfigure_required",
+                    patch.object(
+                        replay_execution,
+                        "_torghut_service_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._configure_ta_for_simulation",
+                    patch.object(
+                        replay_execution,
+                        "_configure_ta_for_simulation",
                         return_value=None,
                     ),
                 )
                 restart_ta = stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._restart_ta_deployment",
+                    patch.object(
+                        replay_execution,
+                        "_restart_ta_deployment",
                         return_value="nonce",
                     ),
                 )
                 stack.enter_context(
-                    patch(
-                        "scripts.historical_simulation_startup.replay_execution._configure_torghut_service_for_simulation",
+                    patch.object(
+                        replay_execution,
+                        "_configure_torghut_service_for_simulation",
                         return_value=None,
                     ),
                 )
@@ -442,25 +284,12 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
         )
 
     def test_apply_releases_runtime_lock_when_prepare_fails(self) -> None:
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
+        clickhouse_config = make_clickhouse_config(
             password="secret",
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         manifest = {
             "dataset_id": "dataset-a",
             "window": {
@@ -472,20 +301,24 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
             with (
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._ensure_supported_binary",
+                patch.object(
+                    replay_execution,
+                    "_ensure_supported_binary",
                     return_value=None,
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._ensure_lz4_codec_available",
+                patch.object(
+                    replay_execution,
+                    "_ensure_lz4_codec_available",
                     return_value=None,
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._acquire_simulation_runtime_lock",
+                patch.object(
+                    replay_execution,
+                    "_acquire_simulation_runtime_lock",
                     return_value={"status": "acquired", "run_id": resources.run_id},
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._capture_cluster_state",
+                patch.object(
+                    replay_execution,
+                    "_capture_cluster_state",
                     return_value={
                         "ta_data": {
                             "TA_GROUP_ID": "prod-ta-group",
@@ -494,12 +327,13 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                         }
                     },
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._ensure_topics",
+                patch.object(
+                    replay_execution,
+                    "_ensure_topics",
                     side_effect=RuntimeError("topic_create_failed"),
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._release_simulation_runtime_lock"
+                patch.object(
+                    replay_execution, "_release_simulation_runtime_lock"
                 ) as release_lock,
             ):
                 with self.assertRaisesRegex(RuntimeError, "topic_create_failed"):
@@ -541,14 +375,13 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                 return 200, "1"
             return 200, ""
 
-        with patch(
-            "scripts.historical_simulation_startup.storage_and_database._http_clickhouse_query",
+        with patch.object(
+            storage_and_database,
+            "_http_clickhouse_query",
             side_effect=_fake_clickhouse_query,
         ):
             historical_simulation_startup._ensure_clickhouse_runtime_tables(
-                config=ClickHouseRuntimeConfig(
-                    http_url="http://clickhouse:8123",
-                    username="torghut",
+                config=make_clickhouse_config(
                     password="secret",
                 ),
                 database="torghut_sim_sim_1",
@@ -603,8 +436,9 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
             return 200, ""
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.storage_and_database._kubectl_json",
+            patch.object(
+                storage_and_database,
+                "_kubectl_json",
                 return_value={
                     "subsets": [
                         {
@@ -616,8 +450,9 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                     ]
                 },
             ),
-            patch(
-                "scripts.historical_simulation_startup.storage_and_database._http_clickhouse_query",
+            patch.object(
+                storage_and_database,
+                "_http_clickhouse_query",
                 side_effect=_fake_clickhouse_query,
             ),
         ):
@@ -687,8 +522,9 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
             return next(responses)
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.storage_and_database._http_clickhouse_query",
+            patch.object(
+                storage_and_database,
+                "_http_clickhouse_query",
                 side_effect=_fake_clickhouse_query,
             ),
             patch(
@@ -696,9 +532,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
             ) as sleep_mock,
         ):
             historical_simulation_startup._wait_for_clickhouse_table(
-                config=ClickHouseRuntimeConfig(
-                    http_url="http://clickhouse:8123",
-                    username="torghut",
+                config=make_clickhouse_config(
                     password="secret",
                 ),
                 database="torghut_sim_sim_1",
@@ -729,8 +563,9 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
             return next(responses)
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.storage_and_database._http_clickhouse_query",
+            patch.object(
+                storage_and_database,
+                "_http_clickhouse_query",
                 side_effect=_fake_clickhouse_query,
             ),
             patch(
@@ -738,9 +573,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
             ) as sleep_mock,
         ):
             historical_simulation_startup._wait_for_clickhouse_database(
-                config=ClickHouseRuntimeConfig(
-                    http_url="http://clickhouse:8123",
-                    username="torghut",
+                config=make_clickhouse_config(
                     password="secret",
                 ),
                 database="torghut_sim_sim_1",
@@ -758,19 +591,8 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
         self.assertEqual(sleep_mock.call_count, 1)
 
     def test_ensure_topics_caps_partitions_to_available_brokers(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
         manifest = {"kafka": {"default_partitions": 6, "replication_factor": 1}}
 
         class _FakeNewTopic:
@@ -817,8 +639,9 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                 "sys.modules",
                 {"kafka.admin": SimpleNamespace(NewTopic=_FakeNewTopic)},
             ),
-            patch(
-                "scripts.historical_simulation_startup.kafka_runtime._kafka_admin_client",
+            patch.object(
+                kafka_runtime,
+                "_kafka_admin_client",
                 return_value=fake_admin,
             ),
         ):
@@ -855,19 +678,8 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
         )
 
     def test_ensure_topics_respects_max_partitions_override(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
+        resources = simulation_resources()
+        kafka_config = make_kafka_config()
         manifest = {
             "kafka": {
                 "default_partitions": 6,
@@ -920,8 +732,9 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                 "sys.modules",
                 {"kafka.admin": SimpleNamespace(NewTopic=_FakeNewTopic)},
             ),
-            patch(
-                "scripts.historical_simulation_startup.kafka_runtime._kafka_admin_client",
+            patch.object(
+                kafka_runtime,
+                "_kafka_admin_client",
                 return_value=fake_admin,
             ),
         ):

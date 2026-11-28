@@ -5,7 +5,7 @@ import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { reproduceTrailingBaselineAcquisition } from '../market-data/intraday/baseline-acquisition'
 import { buildTrailingBaseline, noiseAreaCheckpointMinutes } from '../market-data/intraday/trailing-baseline'
 import { IsoDateSchema } from '../schemas'
-import { makeIntradayAlphaPolicy } from '../strategy/intraday-alpha/policy'
+import { isPureEtfPolicy, makeIntradayAlphaPolicy, type IntradayAlphaPolicy } from '../strategy/intraday-alpha/policy'
 import {
   alphaBaselinePreparationIdentity,
   reproduceAlphaBaselinePreparation,
@@ -13,9 +13,14 @@ import {
 } from './alpha-baseline-preparation'
 
 /** Synthetic input fixture only; it is never evidence of an actual provider acquisition. */
-export const preparedAlphaBaselineFixture = (): RecordedAlphaBaselinePreparation => {
-  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)('2026-09-04')
-  const policy = makeIntradayAlphaPolicy(Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument)))
+export const preparedAlphaBaselineFixture = (
+  date = '2026-09-04',
+  policy: IntradayAlphaPolicy = makeIntradayAlphaPolicy(
+    Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument)),
+  ),
+): RecordedAlphaBaselinePreparation => {
+  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)(date)
+  const pureEtf = isPureEtfPolicy(policy)
   const calendar = Result.getOrThrow(
     normalizeMarketCalendarResult(
       [{ session_open: '0400', session_close: '2000', date: sessionDate, open: '09:30', close: '16:00' }],
@@ -35,46 +40,44 @@ export const preparedAlphaBaselineFixture = (): RecordedAlphaBaselinePreparation
     imageRepository: 'ghcr.io/proompteng/bayn',
     imageDigest: `sha256:${'d'.repeat(64)}`,
   }
-  const { query } = Result.getOrThrow(alphaBaselinePreparationIdentity(request, executionBuild))
-  const dates = [
-    '2026-08-14',
-    '2026-08-17',
-    '2026-08-18',
-    '2026-08-19',
-    '2026-08-20',
-    '2026-08-21',
-    '2026-08-24',
-    '2026-08-25',
-    '2026-08-26',
-    '2026-08-27',
-    '2026-08-28',
-    '2026-08-31',
-    '2026-09-01',
-    '2026-09-02',
-    '2026-09-03',
-  ].map((day) => Schema.decodeUnknownSync(IsoDateSchema)(day))
+  const { query, nativeSession } = Result.getOrThrow(alphaBaselinePreparationIdentity(request, executionBuild))
+  const dates = Array.from({ length: 23 }, (_, index) => new Date(Date.parse(sessionDate) - (23 - index) * 86_400_000))
+    .filter((day) => day.getUTCDay() !== 0 && day.getUTCDay() !== 6 && day.toISOString().slice(0, 10) !== '2026-11-26')
+    .slice(pureEtf ? -15 : -14)
+    .map((day) => Schema.decodeUnknownSync(IsoDateSchema)(day.toISOString().slice(0, 10)))
+  const history = pureEtf
+    ? {
+        historySessions: dates.map((date) => ({
+          date,
+          openAt: `${date}T13:30:00.000Z`,
+          closeAt: `${date}T20:00:00.000Z`,
+        })),
+      }
+    : {}
+  const startedAt = new Date(Date.parse(nativeSession.openAt) + 62_000).toISOString()
+  const completedAt = new Date(Date.parse(startedAt) + 1_000).toISOString()
   const intradayDailyRows = query.symbols.flatMap((symbol, index) =>
     dates.map((date, day) => ({
       symbol,
       sessionDate: date,
-      open: 100 + index + day / 10,
-      high: 103 + index + day / 10,
-      low: 98 + index + day / 10,
-      close: 101 + index + day / 10,
+      open: pureEtf ? (index === 0 ? 500 : 250) : 100 + index + day / 10,
+      high: pureEtf ? (index === 0 ? 505 : 260) : 103 + index + day / 10,
+      low: pureEtf ? (index === 0 ? 495 : 240) : 98 + index + day / 10,
+      close: pureEtf ? (index === 0 ? 500 + (day % 2) * 5 : 250 + (day % 2) * 10) : 101 + index + day / 10,
     })),
   )
   const checkpointRows = intradayDailyRows
     .filter((row) => query.noiseAreaSymbols.includes(row.symbol))
     .flatMap((row) =>
-      noiseAreaCheckpointMinutes.map((minuteFromOpen) => ({
+      (query.checkpointMinutesFromOpen ?? noiseAreaCheckpointMinutes).map((minuteFromOpen) => ({
         symbol: row.symbol,
         sessionDate: row.sessionDate,
         minuteFromOpen,
-        close: row.open + minuteFromOpen / 100,
+        close: pureEtf ? row.open * 1.004 : row.open + minuteFromOpen / 100,
       })),
     )
   const trailingBaseline = Result.getOrThrow(
-    buildTrailingBaseline({ ...query, dailyRows: intradayDailyRows, checkpointRows }),
+    buildTrailingBaseline({ ...query, ...history, dailyRows: intradayDailyRows, checkpointRows }),
   )
   const source = Result.getOrThrow(
     reproduceAlphaBaselinePreparation({
@@ -84,14 +87,18 @@ export const preparedAlphaBaselineFixture = (): RecordedAlphaBaselinePreparation
       acquisition: {
         schemaVersion: 'bayn.intraday-alpha-baseline-acquisition.v1',
         query,
-        startedAt: '2026-09-04T12:01:02.000Z',
-        completedAt: '2026-09-04T12:01:03.000Z',
-        inputs: { intradayDailyRows, checkpointRows, adjustedDailyFallback: null },
+        startedAt,
+        completedAt,
+        inputs: { ...history, intradayDailyRows, checkpointRows, adjustedDailyFallback: null },
         trailingBaseline,
       },
     }),
   )
-  return { contentHash: source.contentHash, payload: source.payload, recordedAt: '2026-09-04T12:01:03.001Z' }
+  return {
+    contentHash: source.contentHash,
+    payload: source.payload,
+    recordedAt: new Date(Date.parse(completedAt) + 1).toISOString(),
+  }
 }
 
 /** Reproducible partial inputs, without claiming they satisfy preopen preparation readiness. */

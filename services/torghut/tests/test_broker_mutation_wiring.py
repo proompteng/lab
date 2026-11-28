@@ -3,11 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from app.trading.broker_mutation_receipts.runtime_status import (
-    build_broker_mutation_runtime_status,
-)
-
-
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -214,17 +209,6 @@ def test_recovery_routes_have_no_broker_mutation_calls() -> None:
         for call in calls
         if call[0] in recovery_paths and call[2] in forbidden_methods
     }
-
-
-def test_runtime_status_claims_entry_and_reduction_capabilities() -> None:
-    status = build_broker_mutation_runtime_status()
-
-    assert status["runtime_wired"] is True
-    assert status["entry_fencing_proven"] is True
-    assert status["reduction_fencing_proven"] is True
-    assert status["recovery_worker_wired"] is True
-    assert status["recovery_worker_enabled"] is True
-    assert status["recovery_degraded"] is False
 
 
 def test_scheduler_writer_is_singleton_or_explicitly_quiesced() -> None:

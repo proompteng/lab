@@ -1,3 +1,4 @@
+import { executionServiceName } from '../restate/execution-service-names'
 import { ByteSize, Effect, Schema } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse, HttpIncomingMessage } from 'effect/http'
 
@@ -18,13 +19,17 @@ export const makeExecutionControllerHealthReader =
     ingressOrigin: string,
     readStatus: ExecutionControllerStatusStoreShape['read'],
     operationTimeoutMs: number,
+    servicePrefix?: string,
   ): ExecutionControllerProbe['read'] =>
   (controllerKey) =>
     Effect.gen(function* () {
       const response = yield* HttpClient.withScope(http)
         .execute(
           HttpClientRequest.post(
-            new URL(`/BaynExecutionController/${encodeURIComponent(controllerKey)}/health`, ingressOrigin).href,
+            new URL(
+              `/${executionServiceName('controller', servicePrefix)}/${encodeURIComponent(controllerKey)}/health`,
+              ingressOrigin,
+            ).href,
           ).pipe(HttpClientRequest.bodyText('{}', 'application/json'), HttpClientRequest.acceptJson),
         )
         .pipe(

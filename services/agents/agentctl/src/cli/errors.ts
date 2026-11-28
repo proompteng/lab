@@ -11,14 +11,16 @@ export type AgentctlError =
   | { _tag: 'CodexError'; message: string; cause?: unknown }
   | { _tag: 'UnknownError'; message: string; cause?: unknown }
 
+export const validationError = (message: string): AgentctlError => ({ _tag: 'ValidationError', message })
+
 export const isAgentctlError = (value: unknown): value is AgentctlError =>
   !!value && typeof value === 'object' && '_tag' in value
 
 export const asAgentctlError = (error: unknown, fallbackTag: AgentctlError['_tag'] = 'UnknownError'): AgentctlError => {
   if (isAgentctlError(error)) return error
   const message = error instanceof Error ? error.message : String(error)
-  if (error && typeof error === 'object' && 'code' in error) {
-    const code = (error as { code?: number }).code
+  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'number') {
+    const { code } = error
     return { _tag: 'GrpcError', message, code, cause: error }
   }
   return { _tag: fallbackTag, message, cause: error }

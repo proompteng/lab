@@ -1,9 +1,19 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
-    Path,
-    StartHistoricalSimulationTestCaseBase,
-    TemporaryDirectory,
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import (
+    historical_simulation_runtime_verification as runtime_verification,
+)
+from scripts import (
+    historical_simulation_startup,
+)
+from scripts.historical_simulation_runtime_verification import artifact_verification
+from scripts.historical_simulation_startup import (
     _analysis_run_name,
     _build_clickhouse_runtime_config,
     _build_kafka_runtime_config,
@@ -20,14 +30,11 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _redact_dsn_credentials,
     _simulation_evidence_lineage,
     _simulation_schema_registry_subject_specs,
-    runtime_verification,
-    json,
-    patch,
-    historical_simulation_startup,
+    kafka_runtime,
 )
 
 
-class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase):
+class TestStartHistoricalSimulationConfig(TestCase):
     def test_verification_cluster_service_host_candidates_expand_service_namespace_short_form(
         self,
     ) -> None:
@@ -70,8 +77,9 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
             def close(self) -> None:
                 return None
 
-        with patch(
-            "scripts.historical_simulation_runtime_verification.artifact_verification.HTTPConnection",
+        with patch.object(
+            artifact_verification,
+            "HTTPConnection",
             _FakeConnection,
         ):
             status, body = runtime_verification._http_json_get(
@@ -197,8 +205,9 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
             def close(self) -> None:
                 captured["closed"] = True
 
-        with patch(
-            "scripts.historical_simulation_runtime_verification.artifact_verification.HTTPConnection",
+        with patch.object(
+            artifact_verification,
+            "HTTPConnection",
             _FakeConnection,
         ):
             status, body = runtime_verification._http_json_get(
@@ -471,8 +480,9 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
                 '{"type":"record","name":"Signal","fields":[]}', encoding="utf-8"
             )
 
-            with patch(
-                "scripts.historical_simulation_startup.kafka_runtime.__file__",
+            with patch.object(
+                kafka_runtime,
+                "__file__",
                 str(script_path),
             ):
                 specs = _simulation_schema_registry_subject_specs(resources=resources)

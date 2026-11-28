@@ -1,28 +1,29 @@
 from __future__ import annotations
 
-from tests.strategy_runtime.support import (
-    Decimal,
-    FeatureVectorV3,
-    GateTrace,
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest import TestCase
+
+from app.trading.evaluation_trace import GateTrace, StrategyTrace
+from app.trading.features import FeatureVectorV3, normalize_feature_vector_v3
+from app.trading.models import SignalEnvelope
+from app.trading.strategy_runtime import (
     LegacyMacdRsiPlugin,
     PluginEvaluationResult,
-    SignalEnvelope,
-    Strategy,
-    StrategyConfig,
     StrategyContext,
     StrategyRegistry,
     StrategyRuntime,
-    StrategyTrace,
-    TestCase,
+)
+from app.trading.strategy_runtime.coerce_plugin_result import trace_suppression_reason
+from tests.strategy_runtime.support import _FailingPlugin
+from tests.trading_fixtures import (
     _BuyPlugin,
-    _FailingPlugin,
     _SellPlugin,
-    _compose_strategy_description,
-    trace_suppression_reason,
-    datetime,
-    normalize_feature_vector_v3,
-    timezone,
-    uuid,
+    make_catalog_strategy,
+    make_runtime_strategy,
+    make_signal,
+    make_strategy,
 )
 
 
@@ -30,11 +31,9 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_mean_reversion_rebound_plugin_skips_when_liquidity_has_not_normalized(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="mean-reversion-rebound",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="mean_reversion_rebound_long_v1",
             universe_symbols=["META"],
@@ -76,11 +75,9 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_washout_rebound_plugin_emits_buy_after_active_selloff_recovery(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="washout-rebound",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="washout_rebound_long_v1",
             universe_symbols=["AMD"],
@@ -137,11 +134,9 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_washout_rebound_plugin_skips_without_bid_recovery_confirmation(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="washout-rebound",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="washout_rebound_long_v1",
             universe_symbols=["AMD"],
@@ -194,11 +189,9 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_washout_rebound_plugin_does_not_exit_on_shallow_recovery_touch(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="washout-rebound",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="washout_rebound_long_v1",
             universe_symbols=["AMD"],
@@ -251,11 +244,9 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_mean_reversion_exhaustion_short_plugin_emits_sell_after_controlled_extension(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="mean-reversion-exhaustion-short",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="mean_reversion_exhaustion_short_v1",
             universe_symbols=["META"],
@@ -305,11 +296,9 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_mean_reversion_exhaustion_short_plugin_emits_buy_after_fade_completes(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="mean-reversion-exhaustion-short",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="mean_reversion_exhaustion_short_v1",
             universe_symbols=["META"],
@@ -352,20 +341,16 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
         self.assertEqual(decision.plugin_id, "mean_reversion_exhaustion_short")
 
     def test_end_of_day_reversal_plugin_emits_buy_for_late_intraday_loser(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="end-of-day-reversal",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="end_of_day_reversal_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("12000"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 27, 19, 28, 12, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 27, 19, 28, 12, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -403,20 +388,16 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_end_of_day_reversal_plugin_emits_sell_after_reversion_completes(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="end-of-day-reversal",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="end_of_day_reversal_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("12000"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 27, 19, 28, 12, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 27, 19, 28, 12, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=2,
             payload={
@@ -451,32 +432,22 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
         self.assertEqual(decision.plugin_id, "end_of_day_reversal_long")
 
     def test_runtime_isolates_plugin_failures_and_continues(self) -> None:
-        healthy = Strategy(
-            id=uuid.uuid4(),
+        healthy = make_runtime_strategy(
             name="healthy",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="legacy_macd_rsi",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("2000"),
         )
-        broken = Strategy(
-            id=uuid.uuid4(),
+        broken = make_runtime_strategy(
             name="broken",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="failing",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("2000"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 10, tzinfo=timezone.utc),
             seq=5,
             payload={"macd": {"macd": 1.2, "signal": 0.3}, "rsi14": 24, "price": 101.5},
         )
@@ -502,32 +473,22 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
         )
 
     def test_runtime_replay_is_deterministic_for_fixed_fixture(self) -> None:
-        strategy_a = Strategy(
-            id=uuid.uuid4(),
+        strategy_a = make_runtime_strategy(
             name="legacy-a",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="legacy_macd_rsi",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("1000"),
         )
-        strategy_b = Strategy(
-            id=uuid.uuid4(),
+        strategy_b = make_runtime_strategy(
             name="legacy-b",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="legacy_macd_rsi",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("2000"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 10, 14, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 10, 14, 1, tzinfo=timezone.utc),
             seq=88,
             payload={"macd": {"macd": 1.5, "signal": 0.4}, "rsi14": 22, "price": 130.1},
         )
@@ -560,32 +521,24 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
         )
 
     def test_runtime_aggregates_source_ids_only_from_winning_direction(self) -> None:
-        buy_strategy = Strategy(
+        buy_strategy = make_strategy(
             id=uuid.UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
             name="buy",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="buy_plugin",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("100"),
         )
-        sell_strategy = Strategy(
+        sell_strategy = make_strategy(
             id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
             name="sell",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="sell_plugin",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("900"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 10, tzinfo=timezone.utc),
             seq=99,
             payload={"macd": {"macd": 1.2, "signal": 0.3}, "rsi14": 24, "price": 101.5},
         )
@@ -613,20 +566,17 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_runtime_skips_strategy_when_signal_symbol_is_outside_universe(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="momentum-pullback",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="momentum_pullback_long_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 19, 45, 55, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 19, 45, 55, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -661,21 +611,15 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
                 _ = features
                 return PluginEvaluationResult(intent=None)
 
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="invalid-plugin",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="invalid",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("2500"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 10, tzinfo=timezone.utc),
             payload={"macd": {"macd": 1.2, "signal": 0.3}, "rsi14": 25, "price": 101.5},
         )
         feature_contract = normalize_feature_vector_v3(signal)
@@ -689,8 +633,7 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_definition_from_strategy_uses_catalog_metadata_bridge_for_compiled_identity(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="intraday-tsmom-db-row",
             description=(
                 "intraday compiled spec\n[catalog_metadata]\n"
@@ -702,8 +645,6 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
                 '"strategy_type":"intraday_tsmom_v1",'
                 '"version":"1.1.0"}'
             ),
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["NVDA"],
             max_position_pct_equity=Decimal("0.02"),
@@ -725,35 +666,22 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
     def test_definition_from_strategy_materializes_hpairs_spec_v2_targets(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="microbar-cross-sectional-pairs-v1",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="microbar-cross-sectional-pairs-v1",
-                    strategy_id="microbar_cross_sectional_pairs_v1@research",
-                    strategy_type="microbar_cross_sectional_pairs_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="microbar_cross_sectional_pairs_v1",
-                    universe_symbols=["AAPL", "AMZN"],
-                    max_position_pct_equity=Decimal("6.0"),
-                    max_notional_per_trade=Decimal("75000"),
-                    params={
-                        "entry_minute_after_open": "60",
-                        "exit_minute_after_open": "120",
-                        "rank_feature": "cross_section_vwap_w5m_rank",
-                        "selection_mode": "continuation",
-                        "max_pair_legs": "2",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
             base_timeframe="1Sec",
             universe_type="microbar_cross_sectional_pairs_v1",
             universe_symbols=["AAPL", "AMZN"],
             max_position_pct_equity=Decimal("6.0"),
             max_notional_per_trade=Decimal("75000"),
+            params={
+                "entry_minute_after_open": "60",
+                "exit_minute_after_open": "120",
+                "rank_feature": "cross_section_vwap_w5m_rank",
+                "selection_mode": "continuation",
+                "max_pair_legs": "2",
+            },
         )
 
         definition = StrategyRuntime.definition_from_strategy(strategy)

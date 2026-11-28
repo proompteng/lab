@@ -73,6 +73,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 960
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels: *id001

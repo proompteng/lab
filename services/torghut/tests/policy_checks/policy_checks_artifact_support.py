@@ -42,6 +42,62 @@ def _sha256_json(payload: object) -> str:
     ).hexdigest()
 
 
+def write_stage_artifacts(root: Path) -> dict[str, Path]:
+    """Write one complete set of stub artifacts for manifest validation."""
+    artifacts = {
+        "candidate_spec_path": ("research/candidate-spec.json", {}),
+        "candidate_generation_manifest_path": (
+            "research/candidate-generation-manifest.json",
+            {},
+        ),
+        "walkforward_results_path": (
+            "backtest/walkforward-results.json",
+            {"status": "ok"},
+        ),
+        "baseline_evaluation_report_path": (
+            "backtest/baseline-evaluation-report.json",
+            {"status": "ok"},
+        ),
+        "evaluation_report_path": ("backtest/evaluation-report.json", {"status": "ok"}),
+        "gate_report_path": ("gates/gate-evaluation.json", _gate_report()),
+        "profitability_benchmark_path": (
+            "gates/profitability-benchmark-v4.json",
+            {"slices": [{"slice_type": "regime", "slice_key": "regime:neutral"}]},
+        ),
+        "profitability_evidence_path": (
+            "gates/profitability-evidence-v4.json",
+            {"schema_version": "profitability-evidence-v4"},
+        ),
+        "profitability_validation_path": (
+            "gates/profitability-evidence-validation.json",
+            {"passed": True, "reasons": []},
+        ),
+        "janus_event_car_path": (
+            "gates/janus-event-car-v1.json",
+            {"schema_version": "janus-event-car-v1", "summary": {"event_count": 1}},
+        ),
+        "janus_hgrm_reward_path": (
+            "gates/janus-hgrm-reward-v1.json",
+            {"schema_version": "janus-hgrm-reward-v1", "summary": {"reward_count": 1}},
+        ),
+        "recalibration_report_path": (
+            "gates/recalibration-report.json",
+            {"status": "not_required"},
+        ),
+        "rollback_readiness_path": (
+            "gates/rollback-readiness.json",
+            {"dryRunCompletedAt": datetime.now(timezone.utc).isoformat()},
+        ),
+    }
+    paths = {}
+    for key, (relative_path, payload) in artifacts.items():
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        paths[key] = path
+    return paths
+
+
 def _build_profitability_stage_manifest_payload(
     *,
     root: Path,

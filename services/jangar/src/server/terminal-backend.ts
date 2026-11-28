@@ -1,18 +1,14 @@
 import { resolveTerminalBackendConfig } from '~/server/terminals-config'
 
-export const terminalBackendUrl = resolveTerminalBackendConfig().backendUrl
+const terminalBackendUrl = resolveTerminalBackendConfig().backendUrl
 
 export const isTerminalBackendProxyEnabled = () => Boolean(terminalBackendUrl)
 
-export const buildTerminalBackendUrl = (path: string, query?: URLSearchParams) => {
+const buildTerminalBackendUrl = (path: string) => {
   if (!terminalBackendUrl) {
     throw new Error('Terminal backend URL is not configured')
   }
-  const url = new URL(path, terminalBackendUrl)
-  if (query) {
-    url.search = query.toString()
-  }
-  return url.toString()
+  return new URL(path, terminalBackendUrl).toString()
 }
 
 export const fetchTerminalBackend = async (path: string, init: RequestInit = {}, timeoutOverride?: number) => {
