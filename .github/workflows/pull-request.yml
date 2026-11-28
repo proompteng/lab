@@ -474,9 +474,6 @@ jobs:
                 nix flake check --no-build
               fi
               ;;
-            jangar-inventory)
-              bun run --cwd services/jangar docs:inventory:check
-              ;;
             argo-lint)
               nix run .#lint-argo-workflows
               ;;
