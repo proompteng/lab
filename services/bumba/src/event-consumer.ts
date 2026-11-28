@@ -15,14 +15,11 @@ const DEFAULT_TASK_QUEUE = 'bumba'
 const DEFAULT_REF = 'main'
 const DEFAULT_POLL_INTERVAL_MS = 10_000
 const DEFAULT_BATCH_SIZE = 20
-const DEFAULT_MAX_EVENT_FILE_TARGETS = 200
 const DEFAULT_MAX_DISPATCH_FAILURES = 6
 const DEFAULT_NONTERMINAL_INGESTION_STALE_MS = 12 * 60 * 60 * 1000
 const STALE_INGESTION_ERROR = 'stale nonterminal ingestion auto-failed by bumba event-consumer'
 const MAX_MERGE_DIFF_CHARS = 36_000
 const MERGE_DIFF_GIT_TIMEOUT_MS = 30_000
-
-const TERMINAL_INGESTION_STATUSES = new Set(['completed', 'failed', 'skipped'])
 
 type SqlClient = InstanceType<typeof SQL>
 
@@ -48,7 +45,6 @@ type GithubEventConsumerConfig = {
   pollIntervalMs: number
   batchSize: number
   maxDispatchEventsPerTick: number
-  maxEventFileTargets: number
   maxDispatchFailures: number
   nonterminalIngestionStaleMs: number
   taskQueue: string
@@ -118,7 +114,7 @@ type EventConsumerTickDependencies = {
   processPendingEvent?: typeof processEvent
 }
 
-export type GithubEventConsumer = {
+type GithubEventConsumer = {
   start: () => Promise<void>
   stop: () => Promise<void>
   tick: () => Promise<void>
@@ -160,10 +156,6 @@ const resolveConsumerConfig = (): GithubEventConsumerConfig => {
     pollIntervalMs: parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS),
     batchSize,
     maxDispatchEventsPerTick: parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK, batchSize),
-    maxEventFileTargets: parsePositiveInt(
-      process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS,
-      DEFAULT_MAX_EVENT_FILE_TARGETS,
-    ),
     maxDispatchFailures: parsePositiveInt(
       process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES,
       DEFAULT_MAX_DISPATCH_FAILURES,
@@ -422,9 +414,6 @@ const loadMainMergeEnrichmentsEffect = (db: SqlClient, eventId: string, commit: 
       `) as EventEnrichment[],
     catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
   })
-
-const loadMainMergeEnrichments = (db: SqlClient, eventId: string, commit: string): Promise<EventEnrichment[]> =>
-  Effect.runPromise(loadMainMergeEnrichmentsEffect(db, eventId, commit))
 
 const loadMainMergeDiffEffect = (
   repoRoot: string,
@@ -686,6 +675,12 @@ const generateMainMergeMemoryNote = (
 ): Promise<GeneratedMemoryNote> =>
   Effect.runPromise(generateMainMergeMemoryNoteEffect(event, payload, enrichments, diffFiles))
 
+type MainMergeMemoryNoteDependencies = {
+  loadEnrichments?: (db: SqlClient, eventId: string, commit: string) => Promise<EventEnrichment[]>
+  loadDiff?: typeof loadMainMergeDiff
+  generateNote?: typeof generateMainMergeMemoryNote
+}
+
 const publishMainMergeMemoryNoteEffect = (
   db: SqlClient,
   repoRoot: string,
@@ -695,11 +690,7 @@ const publishMainMergeMemoryNoteEffect = (
   commit: string,
   files: string[],
   counts: IngestionCounts,
-  dependencies: {
-    loadEnrichments?: typeof loadMainMergeEnrichments
-    loadDiff?: typeof loadMainMergeDiff
-    generateNote?: typeof generateMainMergeMemoryNote
-  } = {},
+  dependencies: MainMergeMemoryNoteDependencies = {},
 ): Effect.Effect<void, Error> =>
   Effect.gen(function* () {
     if (!isMainBranchRef(ref)) return
@@ -765,11 +756,7 @@ const publishMainMergeMemoryNote = (
   commit: string,
   files: string[],
   counts: IngestionCounts,
-  dependencies: {
-    loadEnrichments?: typeof loadMainMergeEnrichments
-    loadDiff?: typeof loadMainMergeDiff
-    generateNote?: typeof generateMainMergeMemoryNote
-  } = {},
+  dependencies: MainMergeMemoryNoteDependencies = {},
 ): Promise<void> =>
   Effect.runPromise(
     publishMainMergeMemoryNoteEffect(db, repoRoot, event, payload, ref, commit, files, counts, dependencies),
@@ -1326,14 +1313,12 @@ export const __test__ = {
   resolveEventCommit,
   resolveEventRef,
   resolveConsumerConfig,
-  shouldSkipFilePath,
   isWorkflowAlreadyStartedError,
   runEventConsumerTick,
   processEvent,
   startEventWorkflow,
   startMainMergeNoteWorkflow,
   publishMainMergeMemoryNote,
-  loadMainMergeEnrichments,
   loadMainMergeDiff,
   generateMainMergeMemoryNote,
   normalizeGeneratedMemoryNote,
@@ -1341,5 +1326,4 @@ export const __test__ = {
   mainMergeMemoryNamespace,
   getIngestionCounts,
   markStaleIngestionsFailed,
-  TERMINAL_INGESTION_STATUSES,
 }

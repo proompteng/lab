@@ -13,5 +13,19 @@ helmCharts:
         create: false
       metrics:
         port: 8080
+      defaultConfiguration:
+        # config.yaml replaces the chart's overrides, so preserve its existing defaults.
+        config.yaml: |
+          kubernetes.operator:
+            metrics.reporter.slf4j.factory.class: org.apache.flink.metrics.slf4j.Slf4jReporterFactory
+            metrics.reporter.slf4j.interval: 5 MINUTE
+            metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+            metrics.reporter.prom.port: "8080"
+            reconcile.interval: 15 s
+            observer.progress-check.interval: 5 s
+      operatorPod:
+        annotations:
+          # Reporters initialize at startup, and the chart does not roll pods on config changes.
+          observability.proompteng.ai/config-sha256: 6d28bd5f36496ba33191e16b7dc286e3ec2bddcb3b564090bb6ac9771b4e2123
 resources:
   - metrics-service.yaml

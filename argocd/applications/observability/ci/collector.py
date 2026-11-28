@@ -10,12 +10,14 @@ import math
 import os
 import pathlib
 import re
+import signal
 import sqlite3
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 
 UTC = dt.timezone.utc
 NIX_CACHE_FIELDS = {
@@ -65,6 +67,8 @@ COLLECTION_PHASES = (
 )
 MAX_LOG_BYTES = 16 * 1024 * 1024
 LOKI_MAX_SAMPLE_AGE_SECONDS = 168 * 3600
+POLL_BUDGET_SECONDS = 30
+LOKI_FLUSH_BUDGET_SECONDS = 15
 METRICS = {
     "ci_observability_phase_active": (
         "gauge",
@@ -437,6 +441,9 @@ class Store:
                 completed REAL, record TEXT
             );
             CREATE INDEX IF NOT EXISTS jobs_completed ON jobs(completed);
+            CREATE TABLE IF NOT EXISTS pending_jobs (
+                job_id INTEGER PRIMARY KEY, priority REAL NOT NULL, record TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS observations (
                 record_key TEXT, phase TEXT, PRIMARY KEY(record_key, phase)
             );
@@ -465,24 +472,52 @@ class Store:
         run = {k: run.get(k) for k in RUN_FIELDS}
         if run["status"] != "completed":
             return
-        for attempt in range(1, run["run_attempt"] + 1):
-            if (timestamp(run["updated_at"]) or 0) < now - backfill_days * 86400:
-                continue
+        updated = timestamp(run["updated_at"])
+        if updated is None or updated < now - backfill_days * 86400:
+            return
+        encoded = json.dumps(run)
+        with self.db:
+            for attempt in range(1, run["run_attempt"] + 1):
+                self.db.execute(
+                    "INSERT OR IGNORE INTO attempts VALUES (?, ?, ?, 'pending', ?, ?)",
+                    (run["id"], attempt, run["updated_at"], updated, encoded),
+                )
+
+    def pending(
+        self,
+        *,
+        include_backfill: bool = True,
+        after: tuple[float, int, int] | None = None,
+    ):
+        return self.db.execute(
+            """SELECT * FROM attempts
+            WHERE state='pending' AND (priority >= ? OR ?)
+            ORDER BY priority < ?, (priority, run_id, attempt) <= (?, ?, ?),
+                     priority, run_id, attempt LIMIT 1""",
+            (
+                self.installed_at,
+                include_backfill,
+                self.installed_at,
+                *(after or (None,) * 3),
+            ),
+        ).fetchone()
+
+    def defer_job(self, record, now):
+        with self.db:
             self.db.execute(
-                "INSERT OR IGNORE INTO attempts VALUES (?, ?, ?, 'pending', ?, ?)",
+                """INSERT OR IGNORE INTO pending_jobs
+                SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE job_id=?)""",
                 (
-                    run["id"],
-                    attempt,
-                    run["updated_at"],
-                    timestamp(run["updated_at"]),
-                    json.dumps(run),
+                    record["job_id"],
+                    timestamp(record["completed_at"]) or now,
+                    json.dumps(record),
+                    record["job_id"],
                 ),
             )
-        self.db.commit()
 
-    def pending(self):
+    def pending_job(self):
         return self.db.execute(
-            "SELECT * FROM attempts WHERE state='pending' ORDER BY priority DESC LIMIT 1"
+            "SELECT priority, record FROM pending_jobs ORDER BY priority, job_id LIMIT 1"
         ).fetchone()
 
     def observe(self, record_key, key, metric, attrs, value):
@@ -543,6 +578,9 @@ class Store:
         )
         encoded = json.dumps(record, sort_keys=True, separators=(",", ":"))
         with self.db:
+            self.db.execute(
+                "DELETE FROM pending_jobs WHERE job_id=?", (record["job_id"],)
+            )
             inserted = self.db.execute(
                 "INSERT OR IGNORE INTO jobs VALUES (?, ?, ?, ?, ?)",
                 (
@@ -838,6 +876,28 @@ class GitHubQuotaError(RuntimeError):
     pass
 
 
+class CollectionBudgetExceeded(RuntimeError):
+    pass
+
+
+@contextlib.contextmanager
+def before_deadline(deadline: float, operation: str) -> Iterator[None]:
+    # The collector runs on the main thread. Socket timeouts alone do not bound streaming responses.
+    def expire(*_args):
+        raise CollectionBudgetExceeded(f"{operation} exceeded its wall-clock budget")
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        expire()
+    previous = signal.signal(signal.SIGALRM, expire)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, remaining)
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 class GitHub:
     def __init__(self, token):
         self.token, self.cache = token, {}
@@ -1041,6 +1101,7 @@ class Collector:
         self.cache_errors = 0
         self.history_day = 0
         self.history_runs = None
+        self.pending_after: tuple[float, int, int] | None = None
         self.metrics = b""
         self.phases = CollectionPhases()
 
@@ -1048,6 +1109,12 @@ class Collector:
         return run.get("path", "").split("@", 1)[0].rsplit("/", 1)[-1] in self.workflows
 
     def poll(self, now):
+        with before_deadline(time.monotonic() + POLL_BUDGET_SECONDS, "GitHub poll"):
+            active, metrics = self._poll_current(now)
+        self.active_runs, self.active_metrics = active, metrics
+        self.last_poll = time.time()
+
+    def _poll_current(self, now):
         active = {}
         for state in ACTIVE_STATES:
             for run in self.api.pages(
@@ -1059,7 +1126,6 @@ class Collector:
             run = self.api.get(f"actions/runs/{run_id}")
             if run["status"] == "completed":
                 self.store.discover(run, now)
-        self.active_runs = active
         counts, oldest = collections.Counter(), collections.defaultdict(float)
         running = collections.defaultdict(float)
         current_phases = collections.defaultdict(float)
@@ -1077,11 +1143,11 @@ class Collector:
             for job in jobs:
                 if job["run_attempt"] != run["run_attempt"]:
                     continue
+                record = job_record(run, job, self.families[workflow])
                 if job["status"] == "completed":
-                    self.collect_job(run, job, now + 20)
+                    self.store.defer_job(record, now)
                     continue
                 state = job["status"] if job["status"] in ACTIVE_STATES else "waiting"
-                record = job_record(run, job, self.families[workflow])
                 attrs = {k: v for k, v in labels(record).items() if k != "outcome"}
                 encoded = json.dumps(attrs, sort_keys=True)
                 counts[
@@ -1117,11 +1183,11 @@ class Collector:
                     current_phases[phase_labels] = max(
                         current_phases[phase_labels], now - phase_start
                     )
-        self.active_metrics = "".join(
+        metrics = "".join(
             exposition(metric, value, json.loads(encoded))
             for (metric, encoded), value in counts.items()
         )
-        self.active_metrics += "".join(
+        metrics += "".join(
             exposition(
                 "ci_job_oldest_queue_seconds",
                 value,
@@ -1129,11 +1195,11 @@ class Collector:
             )
             for encoded, value in oldest.items()
         )
-        self.active_metrics += "".join(
+        metrics += "".join(
             exposition("ci_job_oldest_execution_seconds", value, json.loads(encoded))
             for encoded, value in running.items()
         )
-        self.active_metrics += "".join(
+        metrics += "".join(
             exposition("ci_job_current_phase_age_seconds", value, json.loads(encoded))
             for encoded, value in current_phases.items()
         )
@@ -1143,7 +1209,7 @@ class Collector:
         ):
             if self.selected(run):
                 self.store.discover(run, now)
-        self.last_poll = time.time()
+        return active, metrics
 
     def history(self, now, days=90, windows=30):
         today = dt.datetime.fromtimestamp(now, UTC).date()
@@ -1174,21 +1240,22 @@ class Collector:
             if self.history_day == days:
                 self.last_history = time.time()
 
-    def collect_job(self, run, job, deadline):
+    def collect_job(self, record, deadline: float):
         if self.store.db.execute(
-            "SELECT 1 FROM jobs WHERE job_id=?", (job["id"],)
+            "SELECT 1 FROM jobs WHERE job_id=?", (record["job_id"],)
         ).fetchone():
             return
-        workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
-        record = job_record(run, job, self.families[workflow])
         log = None
         reason = "not_a_build"
         if any(k in record["durations"] for k in ("build", "build_and_publish")):
             reason = "collection_budget"
-            if time.time() < deadline:
+            if time.monotonic() < deadline:
                 reason = "logs_unavailable"
                 try:
-                    log = self.api.log(job["id"])
+                    with before_deadline(deadline, "GitHub build log download"):
+                        log = self.api.log(record["job_id"])
+                except CollectionBudgetExceeded:
+                    reason = "collection_budget"
                 except (
                     OSError,
                     http.client.HTTPException,
@@ -1205,47 +1272,66 @@ class Collector:
             cache["reason"] = reason
         self.store.save_job(record, cache)
 
-    def collect_attempt(self, pending):
-        try:
-            run = self.api.get(
-                f"actions/runs/{pending['run_id']}/attempts/{pending['attempt']}"
-            )
-        except GitHubError as error:
-            if error.status not in (404, 410):
-                raise
-            with self.store.db:
-                self.store.db.execute(
-                    "UPDATE attempts SET state='unavailable' WHERE run_id=? AND attempt=?",
-                    (pending["run_id"], pending["attempt"]),
+    def collect_attempt(self, pending, deadline: float):
+        with before_deadline(deadline, "GitHub attempt metadata"):
+            try:
+                run = self.api.get(
+                    f"actions/runs/{pending['run_id']}/attempts/{pending['attempt']}"
                 )
-            return
-        run = {k: run.get(k) for k in RUN_FIELDS}
-        if run["status"] != "completed":
-            raise RuntimeError("Attempt has not reached its terminal state")
-        jobs = list(
-            self.api.pages(
-                f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"
+            except GitHubError as error:
+                if error.status not in (404, 410):
+                    raise
+                with self.store.db:
+                    self.store.db.execute(
+                        "UPDATE attempts SET state='unavailable' WHERE run_id=? AND attempt=?",
+                        (pending["run_id"], pending["attempt"]),
+                    )
+                return
+            run = {k: run.get(k) for k in RUN_FIELDS}
+            if run["status"] != "completed":
+                raise RuntimeError("Attempt has not reached its terminal state")
+            jobs = list(
+                self.api.pages(
+                    f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs",
+                    "jobs",
+                )
             )
-        )
         jobs = [j for j in jobs if j["run_attempt"] == run["run_attempt"]]
-        deadline = time.time() + 30
+        workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
         for job in jobs:
+            if time.monotonic() >= deadline:
+                return
             if job["status"] != "completed":
                 raise RuntimeError("Completed run still has nonterminal jobs")
-            self.collect_job(run, job, deadline)
+            self.collect_job(job_record(run, job, self.families[workflow]), deadline)
         self.store.finish(run, jobs)
 
-    def collect_pending(self, deadline):
-        while time.time() < deadline:
-            pending = self.store.pending()
-            if pending is None:
-                break
-            if (
-                pending["priority"] < self.store.installed_at
-                and self.api.remaining < 2000
+    def collect_pending(self, deadline: float):
+        while time.monotonic() < deadline:
+            pending = self.store.pending(
+                include_backfill=self.api.remaining >= 2000, after=self.pending_after
+            )
+            job = self.store.pending_job()
+            if job is not None and (
+                pending is None
+                or pending["priority"] < self.store.installed_at
+                or job["priority"] < pending["priority"]
             ):
+                self.collect_job(json.loads(job["record"]), deadline)
+            elif pending is not None:
+                try:
+                    self.collect_attempt(pending, deadline)
+                except Exception:
+                    # Retry a blocked attempt without letting it monopolize the next slice.
+                    self.pending_after = (
+                        pending["priority"],
+                        pending["run_id"],
+                        pending["attempt"],
+                    )
+                    raise
+                self.pending_after = None
+            else:
                 break
-            self.collect_attempt(pending)
 
     def flush(self):
         cutoff = int((time.time() - LOKI_MAX_SAMPLE_AGE_SECONDS) * 1e9)
@@ -1361,12 +1447,12 @@ class Collector:
             try:
                 with self.phases.track("poll"):
                     self.poll(begin)
+                with self.phases.track("refresh"):
+                    self.refresh()
                 with self.phases.track("pending_live"):
-                    self.collect_pending(time.time() + 20)
+                    self.collect_pending(time.monotonic() + 20)
             except Exception as error:
                 self.failure(error)
-            with self.phases.track("refresh"):
-                self.refresh()
             try:
                 with self.phases.track("history"):
                     self.history(begin)
@@ -1374,7 +1460,7 @@ class Collector:
                 self.failure(error)
             try:
                 with self.phases.track("pending_backfill"):
-                    self.collect_pending(time.time() + 10)
+                    self.collect_pending(time.monotonic() + 10)
                 with self.phases.track("prune"), self.store.db:
                     self.store.db.execute(
                         "DELETE FROM jobs WHERE completed < ?", (begin - 90 * 86400,)
@@ -1383,12 +1469,15 @@ class Collector:
                 self.failure(error)
             try:
                 with self.phases.track("loki"):
-                    while self.store.db.execute(
-                        "SELECT 1 FROM outbox LIMIT 1"
-                    ).fetchone():
-                        self.flush()
-                        if time.time() > begin + 55:
-                            break
+                    loki_deadline = time.monotonic() + LOKI_FLUSH_BUDGET_SECONDS
+                    with before_deadline(loki_deadline, "Loki outbox flush"):
+                        while (
+                            time.monotonic() < loki_deadline
+                            and self.store.db.execute(
+                                "SELECT 1 FROM outbox LIMIT 1"
+                            ).fetchone()
+                        ):
+                            self.flush()
             except Exception as error:
                 self.failure(error)
             with self.phases.track("refresh"):
@@ -1433,7 +1522,13 @@ def main():
             return
 
     server = http.server.ThreadingHTTPServer(("0.0.0.0", 9101), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def serve_metrics():
+        # Keep the collection alarm on the main thread, even during a scrape.
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+        server.serve_forever()
+
+    threading.Thread(target=serve_metrics, daemon=True).start()
     collector.run()
 
 

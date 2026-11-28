@@ -208,6 +208,12 @@ The Jobs collector uses the chart's read-only Job list/watch grant; Alloy forwar
 two name prefixes and the rules verify owner references. `AutoOntologyDeploymentUnavailable` warns after five
 minutes below the desired replica count. It is advisory (no email route) and is not a trading-readiness check.
 
+The Agents catalog sync has separate platform warnings for zero available MCP gateway replicas for five minutes,
+terminal failures of Jobs owned by `auto-ontology-sync`, and no successful run in 36 hours. Alloy forwards Job
+metrics only for the scheduled sync Job name prefix and the failure rule checks the actual controller owner.
+See the [sync runbook](../../../docs/agents/ontology/README.md#nightly-sync-and-alerts) and
+[promtool scenarios](tests/agents-auto-ontology-alerts.yaml).
+
 Run the [multi-sleeve scenarios](tests/bayn-multi-sleeve-alerts.yaml) against the loaded Mimir rule file:
 
 ```sh
@@ -257,9 +263,8 @@ Raw block-device capacity does not establish free space inside a VM; that requir
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
-and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace
-`torghut`. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
-Other Torghut containers remain excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
+and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn`, including its shared `torghut-ws` producer. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
+Containers in the `torghut` namespace are excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
 than zero throttling. See [producer stall diagnostics](../../../services/dorvud/README.md#producer-stall-diagnostics)
 for JVM, Kafka, probe, and restart correlation.
 The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic

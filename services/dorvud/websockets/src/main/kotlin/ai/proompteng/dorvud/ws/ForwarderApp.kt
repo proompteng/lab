@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.POJONode
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
@@ -18,6 +19,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.url
+import io.ktor.http.Url
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
@@ -359,6 +361,7 @@ class ForwarderApp(
     config.enableTradeUpdates && !config.alpacaTradeStreamUrl.isNullOrBlank() && config.topics.tradeUpdates != null
   private val httpClient =
     httpClient ?: HttpClient(CIO) {
+      config.marketDataProxyUrl?.let { url -> engine { proxy = ProxyBuilder.http(Url(url)) } }
       install(WebSockets) { pingInterval = WEBSOCKET_PING_INTERVAL_MS }
       install(ContentNegotiation) { json(this@ForwarderApp.json) }
     }

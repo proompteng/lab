@@ -14,6 +14,9 @@ const trafficNeutralSafetyNamespaces = [
   'synthesis',
   'torghut',
 ]
+const agentsSafetySelector = {
+  matchExpressions: [{ key: 'app.kubernetes.io/name', operator: 'NotIn', values: ['auto-ontology-sync'] }],
+}
 const retiredSafetyNamespace = 'bayn'
 const safetyNamespaces = [...trafficNeutralSafetyNamespaces, retiredSafetyNamespace]
 const enforcedNamespaces = ['hermes']
@@ -41,7 +44,6 @@ export const productionPaths = {
   proomptengPolicies: 'argocd/applications/proompteng/network-policy.yaml',
   platformAdminPolicies: 'argocd/applications/proompteng/admin-network-policy.yaml',
   restatePolicies: 'argocd/applications/restate/networkpolicy.yaml',
-  restateExamplePolicies: 'argocd/applications/restate-example/networkpolicy.yaml',
   cassandra311Policies: 'argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml',
   cassandra411Policies: 'argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml',
   cassandra411v2Policies: 'argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml',
@@ -81,7 +83,6 @@ export const reviewedPolicySources = {
   pelican: ['pelicanPolicies'],
   proompteng: ['proomptengPolicies', 'platformAdminPolicies', 'kargoSmokePolicies'],
   restate: ['restatePolicies', 'kargoSmokePolicies', 'tengriReaderPolicies'],
-  'restate-example': ['restateExamplePolicies'],
   temporal: [
     'cassandra311Policies',
     'cassandra411Policies',
@@ -296,7 +297,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
     if (
       !trafficNeutralSafetyNamespaces.includes(namespace) ||
-      JSON.stringify(policy.spec?.podSelector) !== '{}' ||
+      JSON.stringify(policy.spec?.podSelector) !== JSON.stringify(namespace === 'agents' ? agentsSafetySelector : {}) ||
       JSON.stringify(policy.spec?.ingress) !== '[{}]' ||
       JSON.stringify(policy.spec?.egress) !== '[{}]'
     ) {
@@ -346,7 +347,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     "jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)'",
     'Hermes NetworkPolicies differ from the exact reviewed policy set.',
     "kubectl -n bayn get pods -l 'network-policy.proompteng.ai/retired-rollout-policy=bayn' -o json",
-    '.spec.podSelector == {}',
+    'if $namespace == "agents" then',
+    JSON.stringify(agentsSafetySelector),
+    'else {} end',
     '.spec.ingress == [{}]',
     '.spec.egress == [{}]',
   ])

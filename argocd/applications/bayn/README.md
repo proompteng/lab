@@ -26,14 +26,17 @@ full allocation because it does not share the intraday account. Only the plan ha
 are logged. The private receipts volume retains the latest complete JSON per sleeve; each writer publishes its file
 atomically.
 
-`bayn-daily-scorecard` is scheduled for 20:35 New York time. It reads the current PAPER intraday audit from the
-TLS-verified PostgreSQL standby and the latest same-day shadow receipts from a read-only mount. Delayed or missing
-sleeve runs are reported as missing evidence, not filled in with stale receipts. This scorecard cannot qualify the
-shared-account strategy or submit orders. The CronJob is suspended until the approved SELECT-only audit identity is
-bound to `bayn-scorecard-db-ro` (keys `username`, `password`, and the verified intraday `account-id`); do not substitute the
-execution database credentials or broker Secret. Both jobs use the research image digest selected by the Bayn Kargo Stage.
-On promotion, Argo reconciles the receipts claim and network policies before the jobs. To stop either schedule,
-suspend that CronJob through GitOps; leave the claim in place so recovery does not discard the last receipts.
+`bayn-daily-scorecard` runs weekdays at 20:35 New York time. It selects
+[Paper Account #1](../../../docs/bayn/multi-account-sleeve-architecture.md#account-layout) with the non-secret
+`BAYN_AUDIT_ACCOUNT_ID` and reads its intraday audit from the TLS-verified PostgreSQL standby. It uses the
+SELECT-only `bayn_audit_ro` login from `bayn-audit-ro-db` (keys `username` and `password`). Do not substitute
+execution database or broker credentials. The scorecard reads same-day shadow receipts from a read-only mount
+and reports missing evidence rather than reusing stale receipts. It cannot qualify the shared-account strategy
+or submit orders. At most three successful and three failed Jobs are kept, and finished Jobs expire after one hour.
+
+Both CronJobs use the research image digest selected by the Bayn Kargo Stage. On promotion, Argo reconciles the
+receipts claim and network policies before the CronJobs. To pause either schedule, suspend it through GitOps and
+keep the receipts claim. Argo reports suspended CronJobs as `Suspended`, which can block Kargo readiness.
 
 ## Streaming broker delivery
 
@@ -103,7 +106,7 @@ reconciliation and deadline timers retain their specific purpose.
 
 The feed can reach only DNS, the existing egress proxy and Restate ingress 8080. Restate can reach the registered Bayn
 execution endpoint through its existing policy. HMAC authentication remains necessary even inside those network
-boundaries. Torghut's collector, account, credentials, topics and consumer groups are independent.
+boundaries. The shared market-data collector uses the primary provider entitlement through the market-data-only proxy listener. Its Kafka producer identity, topics and consumer groups stay independent of the private broker feed.
 
 The feed is the third member of Bayn's atomic image cohort. The main-only workflow tests and publishes
 `lab/bayn`, `lab/bayn-research` and `lab/bayn-broker-feed` under the same successful source/run receipt, withholding

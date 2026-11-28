@@ -81,6 +81,19 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['services/agents/scripts/codex/agent-runner.ts'])
   })
 
+  it.each([
+    'docs/agents/ontology/agents-knowledge.json',
+    'packages/scripts/src/agents/ontology-bundle-sql.ts',
+    'packages/scripts/src/agents/sync-auto-ontology-bundle.ts',
+    'packages/scripts/src/agents/sync-auto-ontology-bundle-core.ts',
+  ])('checks the packaged catalog sync in the controller image when %s changes', (path) => {
+    expect(classifyAgentsImageMode([path])).toMatchObject({
+      tier: 'local-smoke',
+      imageTargets: ['controller'],
+      matchedPaths: [path],
+    })
+  })
+
   it('rebuilds the runner when its toolchain or acceptance command changes', () => {
     for (const path of ['nix/images/agentrun-tools.nix', 'services/agents/scripts/runner-acceptance.sh']) {
       expect(classifyAgentsImageMode([path]).imageTargets).toEqual(['runner'])
@@ -158,14 +171,14 @@ describe('classifyAgentsImageMode', () => {
   it('merges mixed image impact in stable component order', () => {
     const result = classifyAgentsImageMode([
       'services/agents/scripts/codex/agent-runner.ts',
-      'services/agents/src/server/index.ts',
-      'services/agents/src/server/index.ts',
+      'services/agents/src/server/start-runtime.ts',
+      'services/agents/src/server/start-runtime.ts',
     ])
 
     expect(result.imageTargets).toEqual(['control-plane', 'controller', 'runner'])
     expect(result.matchedPaths).toEqual([
       'services/agents/scripts/codex/agent-runner.ts',
-      'services/agents/src/server/index.ts',
+      'services/agents/src/server/start-runtime.ts',
     ])
   })
 

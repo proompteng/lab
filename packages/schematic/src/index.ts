@@ -159,7 +159,7 @@ export const runCli = async (opts: CliOptions = {}) => {
     includeArgo = Boolean(includeArgoAnswer)
 
     const includeScriptsAnswer = await confirm({
-      message: 'Create build/deploy scripts under packages/scripts?',
+      message: 'Create an image build script under packages/scripts?',
       initialValue: includeScripts,
     })
     if (isCancel(includeScriptsAnswer)) cancel('Aborted')
