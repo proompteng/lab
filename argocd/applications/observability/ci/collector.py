@@ -10,14 +10,19 @@ import math
 import os
 import pathlib
 import re
+import signal
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 
 UTC = dt.timezone.utc
+REPOSITORY = "proompteng/lab"
 NIX_CACHE_FIELDS = {
     "attic_substitutions": "Attic substitutions",
     "nixos_substitutions": "cache.nixos.org substitutions",
@@ -37,6 +42,7 @@ RUN_FIELDS = (
     "created_at",
     "run_started_at",
     "updated_at",
+    "head_branch",
     "head_sha",
     "event",
     "html_url",
@@ -65,6 +71,12 @@ COLLECTION_PHASES = (
 )
 MAX_LOG_BYTES = 16 * 1024 * 1024
 LOKI_MAX_SAMPLE_AGE_SECONDS = 168 * 3600
+COLLECTION_INTERVAL_SECONDS = 60
+POLL_BUDGET_SECONDS = 30
+LOKI_FLUSH_BUDGET_SECONDS = 15
+JOB_RETENTION_SECONDS = 90 * 86400
+CI_AUDIT_BUDGET_SECONDS = 5
+CI_AUDIT_ROW_LIMIT = 100
 METRICS = {
     "ci_observability_phase_active": (
         "gauge",
@@ -357,7 +369,7 @@ def job_record(run, job, families=()):
     }
     return {
         "kind": "job",
-        "repository": "proompteng/lab",
+        "repository": REPOSITORY,
         "workflow": workflow,
         "run_id": run["id"],
         "attempt": run["run_attempt"],
@@ -437,6 +449,9 @@ class Store:
                 completed REAL, record TEXT
             );
             CREATE INDEX IF NOT EXISTS jobs_completed ON jobs(completed);
+            CREATE TABLE IF NOT EXISTS pending_jobs (
+                job_id INTEGER PRIMARY KEY, priority REAL NOT NULL, record TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS observations (
                 record_key TEXT, phase TEXT, PRIMARY KEY(record_key, phase)
             );
@@ -465,24 +480,52 @@ class Store:
         run = {k: run.get(k) for k in RUN_FIELDS}
         if run["status"] != "completed":
             return
-        for attempt in range(1, run["run_attempt"] + 1):
-            if (timestamp(run["updated_at"]) or 0) < now - backfill_days * 86400:
-                continue
+        updated = timestamp(run["updated_at"])
+        if updated is None or updated < now - backfill_days * 86400:
+            return
+        encoded = json.dumps(run)
+        with self.db:
+            for attempt in range(1, run["run_attempt"] + 1):
+                self.db.execute(
+                    "INSERT OR IGNORE INTO attempts VALUES (?, ?, ?, 'pending', ?, ?)",
+                    (run["id"], attempt, run["updated_at"], updated, encoded),
+                )
+
+    def pending(
+        self,
+        *,
+        include_backfill: bool = True,
+        after: tuple[float, int, int] | None = None,
+    ):
+        return self.db.execute(
+            """SELECT * FROM attempts
+            WHERE state='pending' AND (priority >= ? OR ?)
+            ORDER BY priority < ?, (priority, run_id, attempt) <= (?, ?, ?),
+                     priority, run_id, attempt LIMIT 1""",
+            (
+                self.installed_at,
+                include_backfill,
+                self.installed_at,
+                *(after or (None,) * 3),
+            ),
+        ).fetchone()
+
+    def defer_job(self, record, now):
+        with self.db:
             self.db.execute(
-                "INSERT OR IGNORE INTO attempts VALUES (?, ?, ?, 'pending', ?, ?)",
+                """INSERT OR IGNORE INTO pending_jobs
+                SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE job_id=?)""",
                 (
-                    run["id"],
-                    attempt,
-                    run["updated_at"],
-                    timestamp(run["updated_at"]),
-                    json.dumps(run),
+                    record["job_id"],
+                    timestamp(record["completed_at"]) or now,
+                    json.dumps(record),
+                    record["job_id"],
                 ),
             )
-        self.db.commit()
 
-    def pending(self):
+    def pending_job(self):
         return self.db.execute(
-            "SELECT * FROM attempts WHERE state='pending' ORDER BY priority DESC LIMIT 1"
+            "SELECT priority, record FROM pending_jobs ORDER BY priority, job_id LIMIT 1"
         ).fetchone()
 
     def observe(self, record_key, key, metric, attrs, value):
@@ -543,6 +586,9 @@ class Store:
         )
         encoded = json.dumps(record, sort_keys=True, separators=(",", ":"))
         with self.db:
+            self.db.execute(
+                "DELETE FROM pending_jobs WHERE job_id=?", (record["job_id"],)
+            )
             inserted = self.db.execute(
                 "INSERT OR IGNORE INTO jobs VALUES (?, ?, ?, ?, ?)",
                 (
@@ -595,6 +641,8 @@ class Store:
             else None,
             "run_url": f"https://github.com/proompteng/lab/actions/runs/{run['id']}/attempts/{run['run_attempt']}",
         }
+        # Retain the branch for SQL without expanding the existing Loki records.
+        head_branch = record.pop("head_branch")
         attrs = {
             "workflow": record["workflow"],
             "event": run["event"] if run["event"] in EVENTS else "other",
@@ -611,7 +659,11 @@ class Store:
                 return
             self.db.execute(
                 "UPDATE attempts SET state='complete', run=? WHERE run_id=? AND attempt=?",
-                (json.dumps(record), run["id"], run["run_attempt"]),
+                (
+                    json.dumps(record | {"head_branch": head_branch}),
+                    run["id"],
+                    run["run_attempt"],
+                ),
             )
             self.db.execute(
                 "INSERT INTO outbox(stamp, labels, line) VALUES (?, ?, ?)",
@@ -838,6 +890,254 @@ class GitHubQuotaError(RuntimeError):
     pass
 
 
+class CollectionBudgetExceeded(RuntimeError):
+    pass
+
+
+def ci_audit_timestamp(value):
+    stamp = timestamp(value)
+    return dt.datetime.fromtimestamp(stamp, UTC) if stamp is not None else None
+
+
+def ci_audit_failure_category(job):
+    conclusion = job["github_conclusion"]
+    if conclusion in {"timed_out", "startup_failure"}:
+        return conclusion
+    if conclusion == "failure":
+        return next(
+            (step["phase"] for step in job["steps"] if step["outcome"] == "failure"),
+            "unattributed",
+        )
+    return None
+
+
+def ci_audit_batch(db, cutoff):
+    # Keep checkpoints separate so reverting the collector does not change the
+    # SQLite tables older collectors write. A terminal attempt's job set can be paged by ID.
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS ci_audit_checkpoints (
+            run_id INTEGER NOT NULL, attempt INTEGER NOT NULL, job_cursor INTEGER NOT NULL,
+            priority REAL NOT NULL, PRIMARY KEY (run_id, attempt)
+        );
+        CREATE INDEX IF NOT EXISTS ci_audit_checkpoints_expiry ON ci_audit_checkpoints(priority);
+        CREATE INDEX IF NOT EXISTS ci_audit_completed_attempts ON attempts(priority DESC, run_id, attempt)
+          WHERE state='complete';
+        CREATE INDEX IF NOT EXISTS ci_audit_attempt_jobs ON jobs(run_id, attempt, job_id);
+    """)
+    workflows, jobs, checkpoints = {}, [], []
+    pending = db.execute(
+        """SELECT a.run_id, a.attempt, COALESCE(c.job_cursor, 0), a.priority
+           FROM attempts AS a LEFT JOIN ci_audit_checkpoints AS c USING (run_id, attempt)
+           WHERE a.state='complete' AND a.priority >= ? AND COALESCE(c.job_cursor, 0) >= 0
+           ORDER BY a.priority DESC, a.run_id, a.attempt LIMIT ?""",
+        (cutoff.timestamp(), CI_AUDIT_ROW_LIMIT),
+    )
+    for run_id, attempt, cursor, priority in pending:
+        room = CI_AUDIT_ROW_LIMIT - len(workflows) - len(jobs)
+        if run_id not in workflows:
+            if room < 2:
+                break
+            # A late backfill of an old attempt must not replace the latest outcome.
+            run = json.loads(
+                db.execute(
+                    """SELECT run FROM attempts WHERE run_id=? AND state='complete'
+                       ORDER BY attempt DESC LIMIT 1""",
+                    (run_id,),
+                ).fetchone()[0]
+            )
+            workflows[run_id] = (
+                run_id,
+                run["workflow"][:255],
+                (run.get("head_branch") or "")[:255] or None,
+                run["head_sha"],
+                run["event"],
+                run["status"],
+                run["conclusion"],
+                ci_audit_timestamp(run["created_at"]),
+                ci_audit_timestamp(run["updated_at"]),
+                run["duration_seconds"],
+                REPOSITORY,
+            )
+            room -= 1
+        if not room:
+            break
+        batch = db.execute(
+            """SELECT job_id, record FROM jobs
+               WHERE run_id=? AND attempt=? AND job_id>? ORDER BY job_id LIMIT ?""",
+            (run_id, attempt, cursor, room + 1),
+        ).fetchall()
+        for job_id, record in batch[:room]:
+            job = json.loads(record)
+            jobs.append(
+                (
+                    job_id,
+                    run_id,
+                    job["workflow"][:255],
+                    job["job_name"][:512],
+                    job["runner_name"][:255] or None,
+                    "completed",
+                    job["github_conclusion"],
+                    ci_audit_timestamp(job["started_at"]),
+                    ci_audit_timestamp(job["completed_at"]),
+                    job["durations"].get("execution"),
+                    ci_audit_failure_category(job),
+                )
+            )
+        checkpoints.append(
+            (run_id, attempt, batch[room - 1][0] if len(batch) > room else -1, priority)
+        )
+    return workflows.values(), jobs, checkpoints
+
+
+def project_ci_audit(path, database_url):
+    if not database_url:
+        return
+    try:
+        import psycopg
+
+        cutoff = dt.datetime.fromtimestamp(time.time() - JOB_RETENTION_SECONDS, UTC)
+        with contextlib.closing(sqlite3.connect(path)) as cache:
+            cache.row_factory = sqlite3.Row
+            workflows, jobs, checkpoints = ci_audit_batch(cache, cutoff)
+            with (
+                psycopg.connect(
+                    database_url,
+                    user="ci_audit_writer",
+                    connect_timeout=2,
+                    options="-c lock_timeout=1000 -c statement_timeout=2000 -c transaction_timeout=4000",
+                ) as db,
+                db.cursor() as cursor,
+            ):
+                if workflows:
+                    cursor.executemany(
+                        """INSERT INTO ci_audit.workflow_runs
+                           (run_id, workflow_name, head_branch, head_sha, event, status, conclusion,
+                            created_at, updated_at, duration_seconds, repository)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (run_id) DO UPDATE SET
+                             workflow_name=EXCLUDED.workflow_name, head_branch=EXCLUDED.head_branch,
+                             head_sha=EXCLUDED.head_sha, event=EXCLUDED.event, status=EXCLUDED.status,
+                             conclusion=EXCLUDED.conclusion, created_at=EXCLUDED.created_at,
+                             updated_at=EXCLUDED.updated_at, duration_seconds=EXCLUDED.duration_seconds,
+                             repository=EXCLUDED.repository, synced_at=EXCLUDED.synced_at
+                           WHERE workflow_runs.updated_at <= EXCLUDED.updated_at""",
+                        workflows,
+                    )
+                if jobs:
+                    cursor.executemany(
+                        """INSERT INTO ci_audit.job_runs
+                           (job_id, run_id, workflow_name, job_name, runner_name, status, conclusion,
+                            started_at, completed_at, duration_seconds, failure_category)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (job_id) DO NOTHING""",
+                        jobs,
+                    )
+                cursor.execute(
+                    """WITH refreshed AS (
+                         INSERT INTO ci_audit.failure_clusters
+                           (cluster_key, workflow_name, job_name, failure_category,
+                            sample_run_id, occurrences_24h, last_seen_at)
+                         SELECT encode(sha256(convert_to(
+                                  jsonb_build_array(workflow_name, job_name, failure_category)::text,
+                                  'UTF8')), 'hex'),
+                                workflow_name, job_name, failure_category,
+                                (array_agg(run_id ORDER BY completed_at DESC, job_id DESC))[1],
+                                count(*), max(completed_at)
+                         FROM ci_audit.job_runs
+                         WHERE failure_category IS NOT NULL
+                           AND completed_at BETWEEN now() - interval '24 hours' AND now()
+                         GROUP BY workflow_name, job_name, failure_category
+                         ORDER BY count(*) DESC, max(completed_at) DESC, 1
+                         LIMIT %s
+                         ON CONFLICT (cluster_key) DO UPDATE SET
+                           sample_run_id=EXCLUDED.sample_run_id, occurrences_24h=EXCLUDED.occurrences_24h,
+                           last_seen_at=EXCLUDED.last_seen_at, synced_at=EXCLUDED.synced_at
+                         RETURNING cluster_key
+                       )
+                       DELETE FROM ci_audit.failure_clusters WHERE cluster_key IN (
+                         SELECT cluster_key FROM ci_audit.failure_clusters AS previous
+                         WHERE NOT EXISTS (SELECT 1 FROM refreshed WHERE cluster_key=previous.cluster_key)
+                         ORDER BY cluster_key LIMIT %s
+                       )""",
+                    (CI_AUDIT_ROW_LIMIT, CI_AUDIT_ROW_LIMIT),
+                )
+                cursor.execute(
+                    """DELETE FROM ci_audit.job_runs WHERE job_id IN (
+                           SELECT job_id FROM ci_audit.workflow_runs JOIN ci_audit.job_runs USING (run_id)
+                           WHERE updated_at < %s ORDER BY updated_at, run_id, job_id LIMIT %s
+                       )""",
+                    (cutoff, CI_AUDIT_ROW_LIMIT),
+                )
+                cursor.execute(
+                    """DELETE FROM ci_audit.workflow_runs WHERE run_id IN (
+                           SELECT run_id FROM ci_audit.workflow_runs AS run WHERE updated_at < %s
+                           AND NOT EXISTS (SELECT 1 FROM ci_audit.job_runs WHERE run_id=run.run_id)
+                           ORDER BY updated_at, run_id LIMIT %s
+                       )""",
+                    (cutoff, CI_AUDIT_ROW_LIMIT),
+                )
+            # Commit Postgres first. An interruption before this mark replays safe upserts.
+            with cache:
+                cache.executemany(
+                    """INSERT INTO ci_audit_checkpoints VALUES (?, ?, ?, ?)
+                       ON CONFLICT (run_id, attempt) DO UPDATE SET job_cursor=excluded.job_cursor""",
+                    checkpoints,
+                )
+                cache.execute(
+                    """DELETE FROM ci_audit_checkpoints WHERE (run_id, attempt) IN (
+                           SELECT run_id, attempt FROM ci_audit_checkpoints
+                           WHERE priority < ? ORDER BY priority LIMIT ?
+                       )""",
+                    (cutoff.timestamp(), CI_AUDIT_ROW_LIMIT),
+                )
+    except Exception as error:
+        ci_audit_error(error)
+
+
+def ci_audit_error(error):
+    # Driver exceptions can include connection details; never print their text.
+    print(
+        json.dumps(
+            {"event": "ci_audit_projection_failed", "error_type": type(error).__name__}
+        ),
+        flush=True,
+    )
+
+
+def run_ci_audit(deadline):
+    timeout = min(CI_AUDIT_BUDGET_SECONDS, deadline - time.monotonic())
+    if timeout < 1:
+        return
+    # Isolate DNS, libpq and rollback so even a stuck native call can be killed.
+    try:
+        subprocess.run(
+            [sys.executable, __file__, "--project-ci-audit"],
+            timeout=timeout,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        ci_audit_error(error)
+
+
+@contextlib.contextmanager
+def before_deadline(deadline: float, operation: str) -> Iterator[None]:
+    # The collector runs on the main thread. Socket timeouts alone do not bound streaming responses.
+    def expire(*_args):
+        raise CollectionBudgetExceeded(f"{operation} exceeded its wall-clock budget")
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        expire()
+    previous = signal.signal(signal.SIGALRM, expire)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, remaining)
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 class GitHub:
     def __init__(self, token):
         self.token, self.cache = token, {}
@@ -1041,6 +1341,7 @@ class Collector:
         self.cache_errors = 0
         self.history_day = 0
         self.history_runs = None
+        self.pending_after: tuple[float, int, int] | None = None
         self.metrics = b""
         self.phases = CollectionPhases()
 
@@ -1048,6 +1349,12 @@ class Collector:
         return run.get("path", "").split("@", 1)[0].rsplit("/", 1)[-1] in self.workflows
 
     def poll(self, now):
+        with before_deadline(time.monotonic() + POLL_BUDGET_SECONDS, "GitHub poll"):
+            active, metrics = self._poll_current(now)
+        self.active_runs, self.active_metrics = active, metrics
+        self.last_poll = time.time()
+
+    def _poll_current(self, now):
         active = {}
         for state in ACTIVE_STATES:
             for run in self.api.pages(
@@ -1059,7 +1366,6 @@ class Collector:
             run = self.api.get(f"actions/runs/{run_id}")
             if run["status"] == "completed":
                 self.store.discover(run, now)
-        self.active_runs = active
         counts, oldest = collections.Counter(), collections.defaultdict(float)
         running = collections.defaultdict(float)
         current_phases = collections.defaultdict(float)
@@ -1077,11 +1383,11 @@ class Collector:
             for job in jobs:
                 if job["run_attempt"] != run["run_attempt"]:
                     continue
+                record = job_record(run, job, self.families[workflow])
                 if job["status"] == "completed":
-                    self.collect_job(run, job, now + 20)
+                    self.store.defer_job(record, now)
                     continue
                 state = job["status"] if job["status"] in ACTIVE_STATES else "waiting"
-                record = job_record(run, job, self.families[workflow])
                 attrs = {k: v for k, v in labels(record).items() if k != "outcome"}
                 encoded = json.dumps(attrs, sort_keys=True)
                 counts[
@@ -1117,11 +1423,11 @@ class Collector:
                     current_phases[phase_labels] = max(
                         current_phases[phase_labels], now - phase_start
                     )
-        self.active_metrics = "".join(
+        metrics = "".join(
             exposition(metric, value, json.loads(encoded))
             for (metric, encoded), value in counts.items()
         )
-        self.active_metrics += "".join(
+        metrics += "".join(
             exposition(
                 "ci_job_oldest_queue_seconds",
                 value,
@@ -1129,11 +1435,11 @@ class Collector:
             )
             for encoded, value in oldest.items()
         )
-        self.active_metrics += "".join(
+        metrics += "".join(
             exposition("ci_job_oldest_execution_seconds", value, json.loads(encoded))
             for encoded, value in running.items()
         )
-        self.active_metrics += "".join(
+        metrics += "".join(
             exposition("ci_job_current_phase_age_seconds", value, json.loads(encoded))
             for encoded, value in current_phases.items()
         )
@@ -1143,7 +1449,7 @@ class Collector:
         ):
             if self.selected(run):
                 self.store.discover(run, now)
-        self.last_poll = time.time()
+        return active, metrics
 
     def history(self, now, days=90, windows=30):
         today = dt.datetime.fromtimestamp(now, UTC).date()
@@ -1174,21 +1480,22 @@ class Collector:
             if self.history_day == days:
                 self.last_history = time.time()
 
-    def collect_job(self, run, job, deadline):
+    def collect_job(self, record, deadline: float):
         if self.store.db.execute(
-            "SELECT 1 FROM jobs WHERE job_id=?", (job["id"],)
+            "SELECT 1 FROM jobs WHERE job_id=?", (record["job_id"],)
         ).fetchone():
             return
-        workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
-        record = job_record(run, job, self.families[workflow])
         log = None
         reason = "not_a_build"
         if any(k in record["durations"] for k in ("build", "build_and_publish")):
             reason = "collection_budget"
-            if time.time() < deadline:
+            if time.monotonic() < deadline:
                 reason = "logs_unavailable"
                 try:
-                    log = self.api.log(job["id"])
+                    with before_deadline(deadline, "GitHub build log download"):
+                        log = self.api.log(record["job_id"])
+                except CollectionBudgetExceeded:
+                    reason = "collection_budget"
                 except (
                     OSError,
                     http.client.HTTPException,
@@ -1205,47 +1512,66 @@ class Collector:
             cache["reason"] = reason
         self.store.save_job(record, cache)
 
-    def collect_attempt(self, pending):
-        try:
-            run = self.api.get(
-                f"actions/runs/{pending['run_id']}/attempts/{pending['attempt']}"
-            )
-        except GitHubError as error:
-            if error.status not in (404, 410):
-                raise
-            with self.store.db:
-                self.store.db.execute(
-                    "UPDATE attempts SET state='unavailable' WHERE run_id=? AND attempt=?",
-                    (pending["run_id"], pending["attempt"]),
+    def collect_attempt(self, pending, deadline: float):
+        with before_deadline(deadline, "GitHub attempt metadata"):
+            try:
+                run = self.api.get(
+                    f"actions/runs/{pending['run_id']}/attempts/{pending['attempt']}"
                 )
-            return
-        run = {k: run.get(k) for k in RUN_FIELDS}
-        if run["status"] != "completed":
-            raise RuntimeError("Attempt has not reached its terminal state")
-        jobs = list(
-            self.api.pages(
-                f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"
+            except GitHubError as error:
+                if error.status not in (404, 410):
+                    raise
+                with self.store.db:
+                    self.store.db.execute(
+                        "UPDATE attempts SET state='unavailable' WHERE run_id=? AND attempt=?",
+                        (pending["run_id"], pending["attempt"]),
+                    )
+                return
+            run = {k: run.get(k) for k in RUN_FIELDS}
+            if run["status"] != "completed":
+                raise RuntimeError("Attempt has not reached its terminal state")
+            jobs = list(
+                self.api.pages(
+                    f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs",
+                    "jobs",
+                )
             )
-        )
         jobs = [j for j in jobs if j["run_attempt"] == run["run_attempt"]]
-        deadline = time.time() + 30
+        workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
         for job in jobs:
+            if time.monotonic() >= deadline:
+                return
             if job["status"] != "completed":
                 raise RuntimeError("Completed run still has nonterminal jobs")
-            self.collect_job(run, job, deadline)
+            self.collect_job(job_record(run, job, self.families[workflow]), deadline)
         self.store.finish(run, jobs)
 
-    def collect_pending(self, deadline):
-        while time.time() < deadline:
-            pending = self.store.pending()
-            if pending is None:
-                break
-            if (
-                pending["priority"] < self.store.installed_at
-                and self.api.remaining < 2000
+    def collect_pending(self, deadline: float):
+        while time.monotonic() < deadline:
+            pending = self.store.pending(
+                include_backfill=self.api.remaining >= 2000, after=self.pending_after
+            )
+            job = self.store.pending_job()
+            if job is not None and (
+                pending is None
+                or pending["priority"] < self.store.installed_at
+                or job["priority"] < pending["priority"]
             ):
+                self.collect_job(json.loads(job["record"]), deadline)
+            elif pending is not None:
+                try:
+                    self.collect_attempt(pending, deadline)
+                except Exception:
+                    # Retry a blocked attempt without letting it monopolize the next slice.
+                    self.pending_after = (
+                        pending["priority"],
+                        pending["run_id"],
+                        pending["attempt"],
+                    )
+                    raise
+                self.pending_after = None
+            else:
                 break
-            self.collect_attempt(pending)
 
     def flush(self):
         cutoff = int((time.time() - LOKI_MAX_SAMPLE_AGE_SECONDS) * 1e9)
@@ -1356,17 +1682,21 @@ class Collector:
         return self.metrics + self.phases.render().encode()
 
     def run(self):
+        audit_enabled = bool(os.environ.get("CI_AUDIT_DATABASE_URL"))
         while True:
             begin = time.time()
+            if audit_enabled:
+                # Reserve the minimum sleep.
+                audit_deadline = time.monotonic() + COLLECTION_INTERVAL_SECONDS - 1
             try:
                 with self.phases.track("poll"):
                     self.poll(begin)
+                with self.phases.track("refresh"):
+                    self.refresh()
                 with self.phases.track("pending_live"):
-                    self.collect_pending(time.time() + 20)
+                    self.collect_pending(time.monotonic() + 20)
             except Exception as error:
                 self.failure(error)
-            with self.phases.track("refresh"):
-                self.refresh()
             try:
                 with self.phases.track("history"):
                     self.history(begin)
@@ -1374,31 +1704,40 @@ class Collector:
                 self.failure(error)
             try:
                 with self.phases.track("pending_backfill"):
-                    self.collect_pending(time.time() + 10)
+                    self.collect_pending(time.monotonic() + 10)
                 with self.phases.track("prune"), self.store.db:
                     self.store.db.execute(
-                        "DELETE FROM jobs WHERE completed < ?", (begin - 90 * 86400,)
+                        "DELETE FROM jobs WHERE completed < ?",
+                        (begin - JOB_RETENTION_SECONDS,),
                     )
             except Exception as error:
                 self.failure(error)
             try:
                 with self.phases.track("loki"):
-                    while self.store.db.execute(
-                        "SELECT 1 FROM outbox LIMIT 1"
-                    ).fetchone():
-                        self.flush()
-                        if time.time() > begin + 55:
-                            break
+                    loki_deadline = time.monotonic() + LOKI_FLUSH_BUDGET_SECONDS
+                    with before_deadline(loki_deadline, "Loki outbox flush"):
+                        while (
+                            time.monotonic() < loki_deadline
+                            and self.store.db.execute(
+                                "SELECT 1 FROM outbox LIMIT 1"
+                            ).fetchone()
+                        ):
+                            self.flush()
             except Exception as error:
                 self.failure(error)
             with self.phases.track("refresh"):
                 self.refresh()
+            if audit_enabled:
+                run_ci_audit(audit_deadline)
             with self.phases.track("sleep"):
-                time.sleep(max(1, 60 - (time.time() - begin)))
+                time.sleep(max(1, COLLECTION_INTERVAL_SECONDS - (time.time() - begin)))
 
 
 def main():
     root = pathlib.Path(os.environ.get("CI_STATE_DIR", "/data"))
+    if sys.argv[1:] == ["--project-ci-audit"]:
+        project_ci_audit(root / "ci.sqlite3", os.environ.get("CI_AUDIT_DATABASE_URL"))
+        return
     root.mkdir(parents=True, exist_ok=True)
     workflows = json.loads(
         pathlib.Path(
@@ -1433,7 +1772,13 @@ def main():
             return
 
     server = http.server.ThreadingHTTPServer(("0.0.0.0", 9101), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def serve_metrics():
+        # Keep the collection alarm on the main thread, even during a scrape.
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+        server.serve_forever()
+
+    threading.Thread(target=serve_metrics, daemon=True).start()
     collector.run()
 
 

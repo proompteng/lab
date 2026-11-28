@@ -24,6 +24,7 @@ import { deriveAlphaBaselineSources } from './alpha-observation-witness'
 import { derivePreparedAlphaBaselineSources } from './alpha-baseline-witness'
 import { verifyRegisteredAlphaBaselinePreparations } from './alpha-baseline-capture'
 import {
+  isAlphaBinding,
   ResearchStrategyEngine,
   researchStrategyPolicyMaterial,
   validateResearchStrategyBinding,
@@ -373,10 +374,10 @@ const bindStrategyLatencyReplayInput = (
       )
       const witnessed = yield* derivePreparedAlphaBaselineSources({ ...cut, alphaBaselinePreparations: retained })
       // These remain candidate-owned market inputs. Each role keeps its own account, portfolio, authority and build.
-      const sources = binding.engine === ResearchStrategyEngine.IntradayAlpha ? witnessed : []
+      const sources = isAlphaBinding(binding) ? witnessed : []
       if (
         (yield* canonicalHashV1Result(input.alphaBaselinePreparations)) !== (yield* canonicalHashV1Result(sources)) ||
-        (binding.engine === ResearchStrategyEngine.IntradayAlpha &&
+        (isAlphaBinding(binding) &&
           sources.some((source) => {
             const policyHash = canonicalHashV1Result(source.payload.policy)
             return Result.isFailure(policyHash) || policyHash.success !== binding.strategy.parameterHash
@@ -386,10 +387,7 @@ const bindStrategyLatencyReplayInput = (
           'Prepared alpha replay differs from the exact candidate-owned policy, build and committed source',
         )
     } else {
-      const sources =
-        binding.engine === ResearchStrategyEngine.IntradayAlpha
-          ? yield* deriveAlphaBaselineSources(input.latencyStress.sourceCut)
-          : []
+      const sources = isAlphaBinding(binding) ? yield* deriveAlphaBaselineSources(input.latencyStress.sourceCut) : []
       if ((yield* canonicalHashV1Result(input.alphaBaselineSources)) !== (yield* canonicalHashV1Result(sources)))
         return yield* fail('Alpha replay baselines differ from independently witnessed registered source evidence')
     }

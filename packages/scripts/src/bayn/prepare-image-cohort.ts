@@ -136,10 +136,10 @@ const prepareBaynImageCohort = (environment: NodeJS.ProcessEnv): BaynCohortDiges
   }
 }
 
-if (import.meta.main) {
-  const output = process.env.GITHUB_OUTPUT
+export const writeBaynImageCohortOutputs = (environment: NodeJS.ProcessEnv) => {
+  const output = environment.GITHUB_OUTPUT
   if (!output) throw new Error('Bayn image cohort preparation requires GITHUB_OUTPUT')
-  const digests = prepareBaynImageCohort(process.env)
+  const digests = prepareBaynImageCohort(environment)
   // Never expose a partial set to the verification/artifact/discovery steps.
   appendFileSync(
     output,
@@ -148,3 +148,5 @@ if (import.meta.main) {
       .join(''),
   )
 }
+
+if (import.meta.main) writeBaynImageCohortOutputs(process.env)

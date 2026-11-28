@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../../strategy/runtime-decision'
 import type { PgClient } from '@effect/sql-pg'
 import { Result, Schema } from 'effect'
 
@@ -73,7 +74,7 @@ export const alphaDecisionQuery = (
     AND generation.account_id = cycle.account_id AND generation.maximum = 'PAPER'
     AND COALESCE(generation.qualification_run_id, generation.research_plan_hash) = cycle.qualification_run_id
     AND COALESCE(generation.protocol_hash, generation.strategy_protocol_hash) = cycle.strategy_protocol_hash
-    AND generation.strategy_parameter_schema_version = 'bayn.intraday-alpha-policy.v2'
+    AND generation.strategy_parameter_schema_version IN ('bayn.intraday-alpha-policy.v2', 'bayn.intraday-alpha-policy.v3')
   CROSS JOIN latest_reconciliation
   WHERE cycle.account_id = ${accountId}
     AND decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
@@ -100,7 +101,7 @@ export const verifyAlphaDecisionJson = (row: typeof AlphaDecisionJsonRow.Type): 
   if (document === undefined || document.mode !== legacyExecutionAuthorityToken) return rejected
   const target = document.strategyDecision
   if (
-    target?.schemaVersion !== 'bayn.intraday-alpha-target.v2' ||
+    !isIntradayAlphaTarget(target) ||
     document.contentHash !== row.decision_hash ||
     document.bindings.cycleId !== row.cycle_id ||
     document.bindings.accountId !== row.account_id ||

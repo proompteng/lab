@@ -61,7 +61,7 @@ tests:
           - exp_labels: *burst_labels
             exp_annotations: *burst_annotations
 
-  - name: healthy volume, entry snapshot waits, single nested errors and resets do not page
+  - name: pending broker snapshots, healthy volume, entry reads and single nested errors do not page
     interval: 30s
     input_series:
       - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.execution.cycle-pass",outcome="succeeded"}
@@ -70,6 +70,8 @@ tests:
         values: '0+18x20'
       - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.reconciliation.broker-snapshot",outcome="failed"}
         values: '8+0x7 9+0x12'
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.reconciliation.broker-snapshot",outcome="pending"}
+        values: '0+1x20'
       - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.execution.cycle-pass",outcome="failed"}
         values: '42+0x7 43+0x3 0+0x8'
       - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn",stage="bayn.execution.cycle-pass",outcome="failed"}

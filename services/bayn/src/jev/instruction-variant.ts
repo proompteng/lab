@@ -50,7 +50,7 @@ export const JevCompilerDependencyReceiptV5Schema = Schema.Struct({
   applicationStrategyBinding: ResearchStrategyBindingSchema,
   compiledReplayStrategies: Schema.Array(ResearchStrategyBindingSchema).check(
     Schema.isMinLength(4),
-    Schema.isMaxLength(4),
+    Schema.isMaxLength(5),
   ),
 })
 export const JevCompilerDependencyReceiptSchema = Schema.Union([

@@ -91,6 +91,8 @@ const successful = {
   FAST_RESULT: 'skipped',
   PR_CHECKS_RELEVANT: 'true',
   PR_CHECKS_RESULT: 'success',
+  POSTGRES_RELEVANT: 'true',
+  ARCHIVE_RELEVANT: 'true',
   FORMAL_RELEVANT: 'true',
   FORMAL_RESULT: 'success',
   GEPA_RELEVANT: 'true',
@@ -119,6 +121,8 @@ const noChecks = {
   FULL_RELEVANT: 'false',
   PR_CHECKS_RELEVANT: 'false',
   PR_CHECKS_RESULT: 'skipped',
+  POSTGRES_RELEVANT: 'false',
+  ARCHIVE_RELEVANT: 'false',
   FORMAL_RELEVANT: 'false',
   FORMAL_RESULT: 'skipped',
   GEPA_RELEVANT: 'false',
@@ -138,25 +142,39 @@ const run = async (overrides: Record<string, string>) => {
   return { exit, stdout, stderr }
 }
 
-test('exact-revision callers must select full validation', async () => {
+test('exact-revision callers must select full validation and both specialty suites', async () => {
   expect(gate.env?.EXACT_REVISION).toBe("${{ github.event_name != 'pull_request' }}")
   expect((await run({ EXACT_REVISION: 'true' })).exit).toBe(0)
-  const failed = await run({ ...noChecks, EXACT_REVISION: 'true' })
-  expect(failed.exit).toBe(1)
-  expect(failed.stderr).toContain('Exact-revision validation requires the full Bayn tier.')
+  for (const flag of ['FULL_RELEVANT', 'FORMAL_RELEVANT', 'GEPA_RELEVANT']) {
+    const failed = await run({ EXACT_REVISION: 'true', [flag]: 'false' })
+    expect(failed.exit).toBe(1)
+    expect(failed.stderr).toContain(
+      'Exact-revision validation requires the full Bayn tier, formal verification and GEPA.',
+    )
+  }
 })
 
 test('the full tier must select every full check and cannot select the fast tier', async () => {
   for (const [flag, value] of [
     ['FAST_RELEVANT', 'true'],
     ['PR_CHECKS_RELEVANT', 'false'],
-    ['FORMAL_RELEVANT', 'false'],
-    ['GEPA_RELEVANT', 'false'],
+    ['POSTGRES_RELEVANT', 'false'],
+    ['ARCHIVE_RELEVANT', 'false'],
   ] as const) {
     const failed = await run({ [flag]: value })
     expect(failed.exit).toBe(1)
     expect(failed.stderr).toContain('The full Bayn tier must select every full-tier check')
   }
+  expect(
+    (
+      await run({
+        FORMAL_RELEVANT: 'false',
+        FORMAL_RESULT: 'skipped',
+        GEPA_RELEVANT: 'false',
+        GEPA_RESULT: 'skipped',
+      })
+    ).exit,
+  ).toBe(0)
 })
 
 test('fast-only changes require successful offline checks under the existing Bayn release gate', async () => {
@@ -305,9 +323,9 @@ test('market-data fixture runs for Bayn changes and participates in the existing
     ['gepa', 'GEPA_RESULT', 'gepa'],
     ['formal-verification', 'FORMAL_RESULT', 'formal'],
     ['unit-tests', 'UNIT_RESULT'],
-    ['archive-integration', 'ARCHIVE_RESULT'],
+    ['archive-integration', 'ARCHIVE_RESULT', 'archive'],
     ['ledger-integration', 'LEDGER_RESULT'],
-    ['postgres-integration', 'POSTGRES_RESULT'],
+    ['postgres-integration', 'POSTGRES_RESULT', 'postgres'],
     ['market-data-replay', 'MARKET_DATA_REPLAY_RESULT'],
     ['replay-execution-observer', 'REPLAY_EXECUTION_RESULT'],
     ['streaming-integration', 'STREAMING_INTEGRATION_RESULT'],
@@ -317,6 +335,20 @@ test('market-data fixture runs for Bayn changes and participates in the existing
     expect(gate.env?.[result]).toBe(`\${{ needs.${job}.result }}`)
   }
   expect(workflow.jobs['postgres-integration']?.strategy?.matrix?.shard).toEqual([1, 2, 3, 4])
+})
+
+test.each([
+  ['POSTGRES_RELEVANT', 'POSTGRES_RESULT', 'postgres'],
+  ['ARCHIVE_RELEVANT', 'ARCHIVE_RESULT', 'archive'],
+] as const)('a deployed fixture can require %s independently of runtime shards', async (flag, result, output) => {
+  expect(gate.env?.[flag]).toBe(`\${{ needs.changes.outputs.${output} }}`)
+  const applicable = { ...noChecks, [flag]: 'true' }
+  expect((await run({ ...applicable, [result]: 'success' })).exit).toBe(0)
+  for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
+    const failed = await run({ ...applicable, [result]: outcome })
+    expect(failed.exit).toBe(1)
+    expect(failed.stderr).toContain(`${result} must be success`)
+  }
 })
 
 test('streaming failure suites have an isolated required job in exact-revision validation', () => {

@@ -35,7 +35,7 @@ Before scoring, the replay reproduced B0 fixed-$100k net dollars to the cent by 
 trip; Full $103,533.58 / $69,780.16), F4 compounded returns by fold (10/20 bp round trip; Full
 +111.1094% / +109.2766%), and O1's Full returns (2/5/10 bp round trip; +94.4297% / +92.8669% /
 +90.2911%). B0 retained one missing held bar in the historical replay, with no missing entries
-or unresolved exits. The input hashes, audits and all unrounded results are in [results.json](results.json).
+or unresolved exits. The input hashes, audits and all unrounded results are in [results.json][archived-results].
 
 ## Holdout cost stress
 
@@ -131,7 +131,7 @@ using the same window's zero-slippage turnover path, not an incremental benchmar
 
 ## Reproduce and interpret
 
-From the repository root with the existing read-only agents-artifacts archive access:
+From the repository root in the [archived checkout][study-revision], with the existing read-only agents-artifacts archive access:
 
 ```sh
 out=$(mktemp -d)
@@ -147,3 +147,6 @@ The Holdout is out of sample for this preregistration, not new to Bayn. The ETF 
 marks are historical, fractional next-open fills are modeled, and sleeve transfers do not prove shared-account
 execution, market impact, capacity, or independent causal evidence. The result changes no strategy,
 broker permission or capital authority.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-10yr-vol-target-macro/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

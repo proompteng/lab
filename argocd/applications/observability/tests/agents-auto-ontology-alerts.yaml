@@ -1,0 +1,120 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  - name: gateway has zero available replicas for five consecutive minutes
+    interval: 1m
+    input_series:
+      - series: kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="agents",deployment="agents-auto-ontology-mcp-gateway"}
+        values: '1 0x5 1x2'
+      - series: kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="other",deployment="agents-auto-ontology-mcp-gateway"}
+        values: '0x9'
+      - series: kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="agents",deployment="agents-controllers"}
+        values: '0x9'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AgentsAutoOntologyMcpGatewayUnavailable
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: AgentsAutoOntologyMcpGatewayUnavailable
+        exp_alerts:
+          - exp_labels:
+              namespace: agents
+              deployment: agents-auto-ontology-mcp-gateway
+              severity: warning
+              team: platform
+              service: agents
+              notify: email
+            exp_annotations:
+              summary: Agents Auto Ontology MCP gateway has no available replicas
+              description: The gateway has had zero available replicas for five minutes. Inspect the Deployment, pod events and gateway logs.
+              runbook_url: docs/agents/ontology/README.md#nightly-sync-and-alerts
+      - eval_time: 7m
+        alertname: AgentsAutoOntologyMcpGatewayUnavailable
+        exp_alerts: []
+
+  - name: failed pods and unowned Jobs do not alert, terminal failure clears after a later success
+    interval: 1m
+    input_series:
+      - series: kube_job_created{job="kube-state-metrics",namespace="agents",job_name="auto-ontology-sync-100"}
+        values: '_ 60+0x6'
+      - series: kube_job_owner{job="kube-state-metrics",namespace="agents",job_name="auto-ontology-sync-100",owner_kind="CronJob",owner_name="auto-ontology-sync",owner_is_controller="true"}
+        values: '_ 1x6'
+      - series: kube_job_status_failed{job="kube-state-metrics",namespace="agents",job_name="auto-ontology-sync-100"}
+        values: '_ 1x6'
+      - series: kube_job_failed{job="kube-state-metrics",namespace="agents",job_name="auto-ontology-sync-100",condition="true"}
+        values: '_ _ 1x5'
+      - series: kube_job_created{job="kube-state-metrics",namespace="agents",job_name="auto-ontology-sync-101"}
+        values: '_ 60+0x6'
+      - series: kube_job_owner{job="kube-state-metrics",namespace="agents",job_name="auto-ontology-sync-101",owner_kind="",owner_name="",owner_is_controller=""}
+        values: '_ 1x6'
+      - series: kube_job_failed{job="kube-state-metrics",namespace="agents",job_name="auto-ontology-sync-101",condition="true"}
+        values: '_ 1x6'
+      - series: kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"}
+        values: '_ _ _ _ 230+0x3'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AgentsAutoOntologySyncFailed
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: AgentsAutoOntologySyncFailed
+        exp_alerts:
+          - exp_labels:
+              namespace: agents
+              cronjob: auto-ontology-sync
+              severity: warning
+              team: platform
+              service: agents
+              notify: email
+            exp_annotations:
+              summary: Agents Auto Ontology catalog sync failed
+              description: An owned Job reached terminal failure and has not been followed by a successful sync. Inspect the Job condition and pod logs.
+              runbook_url: docs/agents/ontology/README.md#nightly-sync-and-alerts
+      - eval_time: 4m
+        alertname: AgentsAutoOntologySyncFailed
+        exp_alerts: []
+
+  - name: the first success has a 36 hour grace period after creation
+    interval: 1m
+    input_series:
+      - series: kube_cronjob_created{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"}
+        values: '_ 60+0x2161'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: AgentsAutoOntologySyncStale
+        exp_alerts: []
+      - eval_time: 36h
+        alertname: AgentsAutoOntologySyncStale
+        exp_alerts: []
+      - eval_time: 36h1m
+        alertname: AgentsAutoOntologySyncStale
+        exp_alerts: &stale_alerts
+          - exp_labels:
+              namespace: agents
+              cronjob: auto-ontology-sync
+              severity: warning
+              team: platform
+              service: agents
+              notify: email
+            exp_annotations:
+              summary: Agents Auto Ontology catalog sync is stale
+              description: No successful sync has been observed for 36 hours since the last success or CronJob creation. Inspect the schedule, Jobs and pod logs.
+              runbook_url: docs/agents/ontology/README.md#nightly-sync-and-alerts
+
+  - name: a successful completion resets the 36 hour timer
+    interval: 1h
+    input_series:
+      - series: kube_cronjob_created{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"}
+        values: '_ 3600+0x40'
+      - series: kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"}
+        values: '_ _ 7200+0x36 140400+0x2'
+    alert_rule_test:
+      - eval_time: 37h
+        alertname: AgentsAutoOntologySyncStale
+        exp_alerts: []
+      - eval_time: 38h
+        alertname: AgentsAutoOntologySyncStale
+        exp_alerts: *stale_alerts
+      - eval_time: 39h
+        alertname: AgentsAutoOntologySyncStale
+        exp_alerts: []

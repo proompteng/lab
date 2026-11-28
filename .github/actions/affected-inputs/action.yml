@@ -1,5 +1,5 @@
 name: Affected inputs
-description: Compare owned source paths and resolved Bun dependencies before scheduling PR jobs.
+description: Compare owned source paths and resolved Bun dependencies before scheduling CI jobs.
 inputs:
   workspaces:
     description: YAML mapping of target names to installed workspace paths. Include the root as an empty string.
@@ -14,7 +14,7 @@ inputs:
     description: Read default path patterns from this workflow's event trigger.
     default: ''
   dependency-aware-push:
-    description: Compare resolved dependencies for an independent publisher rather than a co-built image cohort.
+    description: Compare resolved dependencies on push. Co-built images must use the same source paths and workspace union.
     default: 'false'
 outputs:
   affected:

@@ -41,11 +41,11 @@ describe('agents-ci workflow', () => {
     const integrationSteps: { name: string; if?: string }[] = workflow.jobs.integration.steps
     for (const name of [
       'Connect to the tailnet',
-      'Verify internal image and cache access',
+      'Verify internal registry access',
+      'Verify internal cache access for local images',
       'Resolve published Agents images from GitOps values',
       'Select published defaults for the smoke test',
       'Configure and verify Kind tailnet access',
-      'Preload published Agents runner',
     ]) {
       expect(integrationSteps.find((step) => step.name === name)?.if).toContain("github.event_name != 'merge_group'")
     }
@@ -94,9 +94,9 @@ describe('agents-ci workflow', () => {
     expect(integration).toContain('oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}')
     expect(integration).toContain('tags: tag:ci')
     expect(integration.indexOf('Connect to the tailnet')).toBeLessThan(
-      integration.indexOf('Verify internal image and cache access'),
+      integration.indexOf('Verify internal registry access'),
     )
-    expect(integration.indexOf('Verify internal image and cache access')).toBeLessThan(
+    expect(integration.indexOf('Verify internal cache access for local images')).toBeLessThan(
       integration.indexOf('Set up Nix for selected local Agents images'),
     )
     expect(integration).toContain('https://registry.ide-newton.ts.net/v2/')
@@ -119,9 +119,37 @@ describe('agents-ci workflow', () => {
     expect(workflow).toContain('kind load image-archive --name "${KIND_CLUSTER_NAME}" "${load_archives[@]}"')
     expect(workflow).toContain('agents-shell) echo agents-shell-image')
     expect(workflow).toContain('agents-shell) echo registry.ide-newton.ts.net/lab/agents-shell')
+    expect(workflow).toContain('smoke-runner) echo agents-smoke-runner-image')
+    expect(workflow).toContain('build_targets=("${targets[@]}" smoke-runner)')
     expect(workflow.match(/nix build --no-link/g)).toHaveLength(1)
     expect(workflow.match(/kind load image-archive/g)).toHaveLength(1)
     expect(workflow).not.toContain('docker build')
+  })
+
+  it('always runs lifecycle smoke with the selected slim runner, not the toolchain image', () => {
+    const workflow = readWorkflow('agents-ci.yml')
+    const steps = parse(workflow).jobs.integration.steps as { name: string; if?: string; run?: string }[]
+    const step = (name: string) => steps.find((candidate) => candidate.name === name)
+    const selection = step('Select Agents lifecycle smoke runner')
+    expect(selection).not.toHaveProperty('if')
+    expect(selection?.run).toContain('resolve-smoke-runner-image.ts local')
+    expect(selection?.run).toContain('resolve-smoke-runner-image.ts published "${PUBLISHED_SOURCE_SHA}"')
+    for (const name of [
+      'Set up Nix for selected local Agents images',
+      'Build and preload selected local Nix Agents images',
+    ]) {
+      expect(step(name)?.if).toBe("steps.smoke_runner.outputs.build_local == 'true'")
+    }
+
+    const lifecycle = step('Run Agents integration smoke test')
+    expect(lifecycle).toMatchObject({ env: { AGENTS_SMOKE_RUNNER_IMAGE: '${{ steps.smoke_runner.outputs.image }}' } })
+    expect(lifecycle).not.toHaveProperty('if')
+    expect(lifecycle?.run).toContain('${AGENTS_SMOKE_RUNNER_IMAGE:?')
+    expect(workflow).not.toContain('crictl pull')
+    const toolchain = step('Verify runner toolchain in a fresh Pod')
+    expect(toolchain?.if).toContain("contains(fromJSON(needs.plan.outputs.image_targets), 'runner')")
+    expect(toolchain?.run).toContain('BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY')
+    expect(toolchain?.run).toContain('agentrun-acceptance --smoke')
   })
 
   it('uses published images for unaffected components without DNS-triggered rebuilding', () => {
@@ -150,6 +178,7 @@ describe('agents-ci workflow', () => {
       'flake.nix',
       'nix/images/agents.nix',
       'nix/images/bun-workspace-service.nix',
+      'nix/images/antigravity-cli.nix',
       'nix/images/openai-codex-cli.nix',
       'nix/packages.nix',
       'packages/scripts/src/shared/nix-oci-deploy.ts',
@@ -164,5 +193,28 @@ describe('agents-ci workflow', () => {
     expect(workflow).toContain('uses: helm/kind-action@v1')
     expect(workflow).toContain('kubectl_version: v1.29.4')
     expect(workflow).not.toContain('https://dl.k8s.io/release/')
+  })
+})
+
+describe('Agents image publication', () => {
+  it('publishes the slim runner from main without involving Kargo or gating its production receipt', () => {
+    const { jobs } = parse(readWorkflow('agents-build-push.yml'))
+    expect(jobs['smoke-runner-image']).toMatchObject({
+      if: "github.ref == 'refs/heads/main'",
+      uses: './.github/workflows/nix-oci-build-common.yml',
+      with: {
+        image_name: 'agents-smoke-runner',
+        package_attr: 'agents-smoke-runner-image',
+        tag: 'sha-${{ github.sha }}',
+        publish_kargo_tag: false,
+      },
+    })
+    expect(jobs['write-values'].needs).toEqual([
+      'controller-image',
+      'control-plane-image',
+      'agents-shell-image',
+      'runner-image',
+    ])
+    expect(JSON.stringify(jobs['write-values'])).not.toContain('agents-smoke-runner')
   })
 })

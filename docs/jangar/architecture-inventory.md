@@ -18,7 +18,7 @@ The inventory keeps the Jangar HTTP registration boundary separate from its UI r
 | ----------- | ----------------------------------------------------------------------------------------------------------------- | ----------: | ----: | ------------: | --------: |
 | Jangar HTTP | `services/jangar/src/server/app.ts` import globs (`api/**`, `openai/**`, `health.tsx`, `ready.tsx`, and `mcp.ts`) |          74 |     0 |            74 |         0 |
 | Jangar UI   | `services/jangar/src/routes/**` TanStack file-route declarations                                                  |          96 |    19 |            74 |         3 |
-| Agents HTTP | `services/agents/src/server/control-plane.ts` routeSources under `services/agents/src/routes/**`                  |          50 |     0 |            50 |         0 |
+| Agents HTTP | `services/agents/src/server/control-plane.ts` routeModules under `services/agents/src/routes/**`                  |          50 |     0 |            50 |         0 |
 | Agents UI   | `services/agents/src/app-routes/**` TanStack Start control-plane UI route declarations                            |          15 |     5 |            10 |         0 |
 
 ## Top 20 Largest Jangar App Modules
@@ -88,7 +88,7 @@ Boundary: `services/jangar/src/routes/**` TanStack file-route declarations
 
 #### Agents HTTP
 
-Boundary: `services/agents/src/server/control-plane.ts` routeSources under `services/agents/src/routes/**`
+Boundary: `services/agents/src/server/control-plane.ts` routeModules under `services/agents/src/routes/**`
 
 | Route                               | Kind      | File                                                             |
 | ----------------------------------- | --------- | ---------------------------------------------------------------- |
@@ -123,7 +123,7 @@ Boundary: `services/agents/src/app-routes/**` TanStack Start control-plane UI ro
 
 ## Control-Plane Source Boundaries
 
-Summary: 164 control-plane source files, 50658 LOC across 6 current boundaries.
+Summary: 164 control-plane source files, 50596 LOC across 6 current boundaries.
 
 Tests (`*.test.*`, `*.spec.*`) and generated (`*.gen.*`, `*.generated.*`) source are excluded from these structural counts.
 
@@ -217,7 +217,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 
 | File                                                                      |  LOC |
 | ------------------------------------------------------------------------- | ---: |
-| `services/agents/src/server/agents-controller/agent-run-reconciler.ts`    | 1420 |
+| `services/agents/src/server/agents-controller/agent-run-reconciler.ts`    | 1447 |
 | `services/agents/src/server/agents-controller/agent-run-template.ts`      |  103 |
 | `services/agents/src/server/agents-controller/agentrun-artifacts.ts`      |  127 |
 | `services/agents/src/server/agents-controller/conditions.ts`              |  156 |
@@ -226,13 +226,13 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/agents-controller/immutable-spec.ts`          |   27 |
 | `services/agents/src/server/agents-controller/implementation-contract.ts` |  265 |
 | `services/agents/src/server/agents-controller/index.ts`                   | 1734 |
-| `services/agents/src/server/agents-controller/job-runtime.ts`             | 1180 |
+| `services/agents/src/server/agents-controller/job-runtime.ts`             | 1248 |
 | `services/agents/src/server/agents-controller/job-status.ts`              |   31 |
 | `services/agents/src/server/agents-controller/lifecycle-machine.ts`       |   69 |
 | `services/agents/src/server/agents-controller/mutable-state.ts`           |   95 |
 | `services/agents/src/server/agents-controller/namespace-state.ts`         |   93 |
 | `services/agents/src/server/agents-controller/operational-logging.ts`     |   51 |
-| `services/agents/src/server/agents-controller/policy.ts`                  |  245 |
+| `services/agents/src/server/agents-controller/policy.ts`                  |  294 |
 | `services/agents/src/server/agents-controller/provider-capacity.ts`       |  134 |
 | `services/agents/src/server/agents-controller/queue-state.ts`             |   92 |
 | `services/agents/src/server/agents-controller/rate-limits.ts`             |   97 |
@@ -248,7 +248,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/agents-controller/temporal-runtime.ts`        |  230 |
 | `services/agents/src/server/agents-controller/vcs-auth.ts`                |  170 |
 | `services/agents/src/server/agents-controller/vcs-context.ts`             |  986 |
-| `services/agents/src/server/agents-controller/workflow-reconciler.ts`     | 1329 |
+| `services/agents/src/server/agents-controller/workflow-reconciler.ts`     | 1342 |
 | `services/agents/src/server/agents-controller/workflow.ts`                |  473 |
 | `services/agents/src/server/agents-controller/workload-image.ts`          |   29 |
 | `services/agents/src/server/control-plane-cache-config.ts`                |   37 |
@@ -263,12 +263,12 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/control-plane-status.ts`                      |  500 |
 | `services/agents/src/server/control-plane-ui-api.ts`                      |  112 |
 | `services/agents/src/server/control-plane-watch-reliability.ts`           |  301 |
-| `services/agents/src/server/control-plane.ts`                             |  477 |
+| `services/agents/src/server/control-plane.ts`                             |  264 |
 | `services/agents/src/server/health.ts`                                    |   39 |
 | `services/agents/src/server/metrics.ts`                                   |  527 |
 | `services/agents/src/server/orchestration-controller.ts`                  | 2213 |
 | `services/agents/src/server/ready.ts`                                     |  207 |
-| `services/agents/src/server/start-runtime.ts`                             |   16 |
+| `services/agents/src/server/start-runtime.ts`                             |   10 |
 | `services/agents/src/server/supporting-primitives-controller.ts`          | 1098 |
 | `services/agents/src/server/v1/control-plane-events.ts`                   |  218 |
 | `services/agents/src/server/v1/control-plane-execution-trust.ts`          |   73 |

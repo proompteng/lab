@@ -89,7 +89,7 @@ buy-and-hold SHY P&L, not merely the interest on the strategy's remaining cash.
 2. The [development freeze](freeze.json) was committed and pushed in
    [`87cc50131`](https://github.com/proompteng/lab/commit/87cc50131822672c547efa3016fffc7b65436c14), before scoring.
    It binds the dataset, exact source versions, 85-trial ledger hash, centers, probes and DSR references.
-3. The single [scoring result](results.json) contains all 11 calendar years for each center, every split,
+3. The single [scoring result][archived-results] contains all 11 calendar years for each center, every split,
    all four cost levels and three cash/benchmark views, all 11 GICS exclusions per split, probe and plateau
    results, drawdown/Calmar/SPY diagnostics, and stationary p/DSR for the centers. Its aligned daily standalone
    sleeve series and SHY prices permit independent correlation and cash-benchmark verification. The
@@ -104,10 +104,13 @@ bun services/bayn/tools/research-10yr-sp100-clean-factors.ts --freeze --input-di
 bun services/bayn/tools/research-10yr-sp100-clean-factors.ts --score --input-dir "<dataset directory>"
 ```
 
-The retained study refuses another score. To inspect evidence without reopening the sample:
+The historical runner refuses another score. To inspect the evidence in the [archived checkout][study-revision] without reopening the sample:
 
 ```sh
 jq '.finalists[] | select(.slot == "combined") | .splits[] |
   {split, annualExcess: (.yearly | map_values(.costs["10"].shyExcess.netUsd)),
    vetoes}' docs/bayn/evidence/2026-11-27-10yr-sp100-clean-factors/results.json
 ```
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-10yr-sp100-clean-factors/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

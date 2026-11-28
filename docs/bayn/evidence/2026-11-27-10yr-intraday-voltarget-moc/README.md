@@ -78,7 +78,7 @@ trading alpha. SHY is never used for nomination, p, DSR or correlation.
   the output from the original committed runner with only the formatter invoked under Node. No variant,
   decision, input, gate or original receipt changed.
 
-From the repository root with the pinned Bun and Node toolchain, dependencies installed, and the existing
+From the repository root in the [archived checkout][study-revision], with the pinned Bun and Node toolchain, dependencies installed, and the existing
 `AGENTS_ARTIFACTS_*`/AWS read credentials for `agents-artifacts`:
 
 ```sh
@@ -89,3 +89,5 @@ git diff --exit-code -- docs/bayn/evidence/2026-11-27-10yr-intraday-voltarget-mo
 The runner verifies committed SHA-256 content (including the transport correction) and regenerates the
 full development freeze before reading Holdout prices. It does not require a pre-squash commit or branch
 to be in the checkout's ancestry.
+
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

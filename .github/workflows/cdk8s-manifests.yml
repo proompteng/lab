@@ -14,6 +14,10 @@ on:
       - 'argocd/applications/*/generated/**'
       - 'bun.lock'
       - 'package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
+      - 'tsconfig.base.json'
       - 'scripts/kubeconform.sh'
       - 'schemas/custom/**'
       - 'flake.nix'
@@ -22,12 +26,30 @@ on:
       - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/cdk8s-manifests.yml'
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).k8s }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/cdk8s-manifests.yml
+          dependency-aware-push: 'true'
+          workspaces: |
+            k8s: ['', 'packages/k8s']
+
   validate:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

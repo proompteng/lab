@@ -35,7 +35,7 @@ struct PreparedRequest {
     path: String,
     query: Vec<(String, String)>,
 }
-pub fn name(value: &str) -> bool {
+pub(crate) fn name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 253
         && value.as_bytes()[0].is_ascii_alphanumeric()

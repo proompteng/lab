@@ -86,6 +86,31 @@ It never writes the source database or deletes catalog entries. Re-read the cata
 question; an unchanged rerun must report `writes: 0`. Run one publisher at a time. On a timeout or conflict,
 re-read the live state before retrying: the API does not provide a bundle-wide transaction.
 
+## Nightly sync and alerts
+
+The [Agents CronJob](../../../argocd/applications/agents/auto-ontology-sync-cronjob.yaml) applies the Git-reviewed
+bundle at 07:15 UTC. Kustomize mounts this directory's JSON read-only and uses the same digest-pinned controller
+image as the Agents Deployment. The job reads no database credentials and has no Kubernetes API token. It writes
+only catalog metadata through the authenticated frontend; the source database remains read-only.
+
+Before the first run, verify onboarding above, including the catalogued audit views, canonical rule tag and API
+permissions of the existing `auto-ontology-mcp-token` Secret. Sync the reviewed
+[kube-router policy](../../../argocd/applications/kube-router/safety-policies.yaml) before the Agents release so its
+rollout allow-all does not override the job's frontend-and-DNS allowlist. Release the controller image, bundle and
+CronJob together through the [Agents Kargo Stage](../../release-automation.md). Verify the rendered digest and
+mounted bundle, then check `.status.lastSuccessfulTime` and the Job's log counts after the first scheduled run.
+
+The gateway alert means there were zero available replicas for five minutes; inspect the gateway Deployment and
+pod events in `agents`. For a sync alert, inspect `kubectl -n agents describe cronjob auto-ontology-sync`, the
+owned Job conditions, and `kubectl -n agents logs job/<job-name>`. A terminal Job failure alerts until a newer
+success; failed pods still being retried do not alert. Staleness is measured from the last success or, before the
+first success, CronJob creation. Do not dump the Secret or pod environment.
+
+If a bad bundle or image must be rolled back, suspend the schedule through reviewed GitOps, let any active Job
+finish, and restore the previous bundle and image together through the release path. Leave the schedule suspended
+if the restored image predates the sync CLI. Keep the egress exclusion in place while sync pods exist. Do not run
+a manual publisher concurrently with the nightly job.
+
 ## Other domains
 
 Pass any reviewed version 1 JSON bundle with `dataSource`, `acronyms`, `rules`, and `customAnalyses`. Each item has

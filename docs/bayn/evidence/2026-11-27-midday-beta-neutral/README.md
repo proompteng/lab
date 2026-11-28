@@ -5,7 +5,7 @@ controls, but no beta-adjusted, beta-sized protected configuration had positive 
 either 5 or 10 bp round trip. No complete observed-IEX trial had positive net or ex-top-five net. No trial
 passed the promotion gates, so there are no v3 production helpers, policy or migration changes, or live orders.
 
-The [pre-scoring protocol](protocol.md) was committed as `8c78f54cc`. [The ledger](results.json) retains all
+The [pre-scoring protocol](protocol.md) was committed as `8c78f54cc`. [The ledger][archived-results] retains all
 47 configurations × four costs, not just winning rows. All figures are simulated on $100,000 fixed capital over
 the same 66 sessions, August 25–November 25, with July 16–August 24 for warmup. The folds are August 25–September 24,
 September 25–October 26, and October 27–November 25 (22 sessions each). They and the 18 leave-one-symbol-out
@@ -89,6 +89,8 @@ a missing observation never becomes a zero spread.
 
 ## Reproduce and interpret
 
+The commands below use the runner and results from the [archived checkout][study-revision].
+
 Use the frozen objects under `bayn-research-datasets/2026-11-27/` in the artifacts bucket. No market data is
 committed. The runner pins the manifest SHA-256 and checks each used object's stored and decoded bytes, row
 counts for the tabular inputs, and normalized calendar. The actual export has 523,944 bars across 22 symbols,
@@ -146,3 +148,6 @@ constraints. The allowance is a 1 bp per-side stress, not an observed adverse-se
 next-minute midquote markout is descriptive and not charged again as execution cost. A missing quote cannot
 establish a fill, and an unresolved exit cannot be priced from a bar or close on this path. These limits,
 the unqualified rows and the shared evaluation cohort preclude any trading or capital recommendation.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-midday-beta-neutral/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

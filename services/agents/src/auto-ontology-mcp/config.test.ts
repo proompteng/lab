@@ -11,6 +11,8 @@ describe('Auto Ontology MCP config', () => {
     const bridge = resolveAutoOntologyBridgeConfig(projection)
     expect(gateway.upstream.url.href).toBe('http://frontend.auto-ontology.svc.cluster.local:3000/')
     expect(gateway.port).toBe(8080)
+    expect(gateway.upstream.chatTimeoutMs).toBe(90_000)
+    expect(bridge.timeoutMs).toBe(120_000)
     expect(gateway.upstream.chatTimeoutMs).toBeLessThan(bridge.timeoutMs)
     expect(bridge.gatewayUrl.pathname).toBe('/mcp')
   })
@@ -32,10 +34,14 @@ describe('Auto Ontology MCP config', () => {
   })
 
   it('validates bounded timeouts and byte limits', () => {
-    expect(() => resolveAutoOntologyGatewayConfig({ ...token, AUTO_ONTOLOGY_MCP_CHAT_TIMEOUT_MS: '120001' })).toThrow()
+    expect(
+      resolveAutoOntologyGatewayConfig({ ...token, AUTO_ONTOLOGY_MCP_CHAT_TIMEOUT_MS: '150000' }).upstream
+        .chatTimeoutMs,
+    ).toBe(150_000)
+    expect(() => resolveAutoOntologyGatewayConfig({ ...token, AUTO_ONTOLOGY_MCP_CHAT_TIMEOUT_MS: '150001' })).toThrow()
     expect(() => resolveAutoOntologyGatewayConfig({ ...token, AUTO_ONTOLOGY_MCP_MAX_REQUEST_BYTES: '0' })).toThrow()
     expect(
-      resolveAutoOntologyBridgeConfig({ ...projection, AUTO_ONTOLOGY_MCP_BRIDGE_TIMEOUT_MS: '120000' }).timeoutMs,
-    ).toBe(120_000)
+      resolveAutoOntologyBridgeConfig({ ...projection, AUTO_ONTOLOGY_MCP_BRIDGE_TIMEOUT_MS: '180000' }).timeoutMs,
+    ).toBe(180_000)
   })
 })

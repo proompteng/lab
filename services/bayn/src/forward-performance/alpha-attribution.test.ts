@@ -1,3 +1,4 @@
+import { ledgerTotalsFixture } from './ledger-totals.test-support'
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
@@ -243,14 +244,12 @@ const fixture = (
     startingCapitalMicros: '100000000000',
     transactions: history.map((trade) => ({ ...trade, cycleId: cycleFor(trade.intentId) })),
     accountTransactions: history,
-    ledgerTotals: {
+    ledgerTotals: ledgerTotalsFixture({
       realizedGainMicros: gains.toString(),
       realizedLossMicros: losses.toString(),
       brokerExecutionFeesMicros: (fees + 50000n).toString(),
       otherChargedCostsMicros: '20000',
-      cashYieldMicros: '0',
-      cashSettlementRoundingMicros: '0',
-    },
+    }),
     brokerFees: [{ accountId, activityId: 'pooled-session-fee', date: '2026-09-18', netAmountMicros: '-50000' }],
     accountingReceiptsExact: true,
     ledgerExact: true,

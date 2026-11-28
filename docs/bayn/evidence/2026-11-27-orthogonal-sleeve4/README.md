@@ -4,7 +4,7 @@
 
 ## Experimental design
 
-The [prespecified protocol](protocol.md), [development-only freeze](freeze.json), and [full trial ledger](results.json) are separate artifacts. The ledger contains **264 unique registered variants**: 113 multi-year minute, 118 live minute, and 33 daily SIP. All 113 multi-year rules were scored on development; only the frozen rule and its two predetermined neighbors were scored on its holdout. Live-only and SIP results are diagnostic and cannot replace the locked rule. The initial freeze ([a329b2f](https://github.com/proompteng/lab/commit/a329b2f082436e6afb389ce5b091a97f5555e280)) precedes successful holdout scoring. An initial attempt rejected the regular-only calendar before scoring returns; the benchmark-input adapter changed, and the registry, development hash, selected rule, and neighbors were verified unchanged before the rerun.
+The [prespecified protocol](protocol.md), [development-only freeze](freeze.json), and [full trial ledger][archived-results] are separate artifacts. The ledger contains **264 unique registered variants**: 113 multi-year minute, 118 live minute, and 33 daily SIP. All 113 multi-year rules were scored on development; only the frozen rule and its two predetermined neighbors were scored on its holdout. Live-only and SIP results are diagnostic and cannot replace the locked rule. The initial freeze ([a329b2f](https://github.com/proompteng/lab/commit/a329b2f082436e6afb389ce5b091a97f5555e280)) precedes successful holdout scoring. An initial attempt rejected the regular-only calendar before scoring returns; the benchmark-input adapter changed, and the registry, development hash, selected rule, and neighbors were verified unchanged before the rerun.
 
 The hypotheses draw on [Lou, Polk and Skouras (2019)](https://personal.lse.ac.uk/polk/research/TugOfWar.pdf) for overnight/daytime pressure, [Gao et al. (2018)](https://doi.org/10.1016/j.jfineco.2018.05.009) for intraday momentum, [Lo and MacKinlay (1990)](https://doi.org/10.1093/rfs/3.2.175) for lead–lag and cross-autocovariance, and [Heston, Korajczyk and Sadka (2010)](https://doi.org/10.1111/j.1540-6261.2010.01573.x) for cross-sectional continuation and reversals. [Barbon et al.](https://abarbon.com/assets/Liquidity_Provision_to_Rebalancing_Flows_from_Leveraged_ETFs_and_Equity_Options.pdf) provide an end-of-day rebalancing-flow rationale; the bar-only proxies here do not identify actual leveraged ETF flows or institutional orders. These are adapted hypotheses, not replications. In particular, the power-hour rule measures the first half hour from the regular open, not from the prior close. DSR follows the [Bailey and López de Prado selection/non-normality adjustment](https://doi.org/10.2139/ssrn.2460551), using the total count of 264 and the dispersion method in the protocol.
 
@@ -52,6 +52,8 @@ The comparison used the existing bar replay under v2 policy hash `f6321704735345
 
 ## Reproduce and continue
 
+The commands below use the runner and results from the [archived checkout][study-revision].
+
 Run on the experiment revision with a Bun environment able to read the pinned S3 objects (or give the directory holding the exact compressed exports as the final argument). The CLI creates new files and refuses to overwrite an existing receipt or ledger.
 
 ```sh
@@ -66,3 +68,6 @@ cmp "$evidence/results.json" "$work/results.json"
 ```
 
 Do not tune or pick a replacement from this holdout. To qualify a new candidate, commit its hypothesis before a fresh chronological holdout and obtain date-aligned v2 returns with adequate active reference coverage. To evaluate the untested portions of B, C and E, the missing frozen intraday macro symbols, daily index series and multi-year semiconductor minute series need verified export receipts. Neither an expanded tape nor more reference dates would reverse the observed losses of the frozen diagnostic.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-orthogonal-sleeve4/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

@@ -103,8 +103,14 @@ describe('explicit research engine binding', () => {
 
   test('candidate and incumbent each select an authenticated engine; fixed controls cannot be relabeled', () => {
     const admitted = new Map<JevResearchPolicy, readonly ResearchStrategyEngine[]>([
-      [JevResearchPolicy.Candidate, [ResearchStrategyEngine.Jev, ResearchStrategyEngine.IntradayAlpha]],
-      [JevResearchPolicy.Incumbent, [ResearchStrategyEngine.Jev, ResearchStrategyEngine.IntradayAlpha]],
+      [
+        JevResearchPolicy.Candidate,
+        [ResearchStrategyEngine.Jev, ResearchStrategyEngine.IntradayAlpha, ResearchStrategyEngine.PureEtf],
+      ],
+      [
+        JevResearchPolicy.Incumbent,
+        [ResearchStrategyEngine.Jev, ResearchStrategyEngine.IntradayAlpha, ResearchStrategyEngine.PureEtf],
+      ],
       [JevResearchPolicy.Ablation, [ResearchStrategyEngine.EntryAblation]],
       [JevResearchPolicy.Momentum, [ResearchStrategyEngine.RepeatedMomentum]],
       [JevResearchPolicy.Deployed, [ResearchStrategyEngine.FrozenDeployed]],

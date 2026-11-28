@@ -1,3 +1,4 @@
+import { isIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { Context, Effect, Option, Result } from 'effect'
 
 import { operationalError, type OperationalError } from '../errors'
@@ -79,6 +80,7 @@ export class CandidateObservationStore extends Context.Service<
         | 'bayn.jev-observation.v1'
         | 'bayn.intraday-alpha-observation.v1'
         | 'bayn.intraday-alpha-observation.v2'
+        | 'bayn.intraday-alpha-observation.v3'
     }) => Effect.Effect<Option.Option<string>, OperationalError>
     readonly readIntradayAlphaSessionState?: (input: {
       readonly cycleId: string
@@ -102,7 +104,7 @@ export const candidateObservationLog = ({ contentHash, payload }: CandidateObser
         candidates: payload.manifest.candidateSymbols,
         excludedCandidates: payload.manifest.candidateExclusions?.map(({ symbol, reason }) => ({ symbol, reason })),
       }
-    : payload.schemaVersion === 'bayn.intraday-alpha-observation.v2'
+    : isIntradayAlphaObservation(payload)
       ? {
           event: payload.schemaVersion,
           contentHash,
