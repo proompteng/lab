@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { execa } from 'execa'
-import { dockerCompose, dockerfile, scriptsBuild, scriptsDeploy } from '../../docker'
+import { dockerCompose, dockerfile, scriptsBuild } from '../../docker'
 import { buildWorkflow, ciWorkflow } from '../../github'
 import {
   argoBaseKustomization,
@@ -184,10 +184,9 @@ ${description ?? 'Starter TanStack Start service scaffolded via schematic.'}
 - bun run build
 - bun run start # after build, runs the Nitro output
 
-## Deploy
-Use the generated scripts:
-- bun run packages/scripts/src/${name}/build-image.ts
-- bun run packages/scripts/src/${name}/deploy-service.ts
+## Production deployment
+Follow the [release automation guide](../../docs/release-automation.md) to enroll the service for
+CI image publication, Kargo promotion, and Argo CD reconciliation from committed desired state.
 `
 
 const collectFiles = async (root: string, prefix: string): Promise<GeneratedFile[]> => {
@@ -397,11 +396,6 @@ export const buildTanstackStartService = async (
     files.push({
       path: join('packages', 'scripts', 'src', opts.name, 'build-image.ts'),
       contents: scriptsBuild(opts.name),
-      executable: true,
-    })
-    files.push({
-      path: join('packages', 'scripts', 'src', opts.name, 'deploy-service.ts'),
-      contents: scriptsDeploy(opts.name),
       executable: true,
     })
   }

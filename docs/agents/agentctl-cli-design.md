@@ -1,6 +1,6 @@
 # agentctl CLI Design
 
-Status: Current implementation contract, verified 2026-08-30 at `2279c55bf2427c346d496a747020355e4c0c7b4b`
+Status: Current source contract (Wave 22C)
 
 Docs index: [README](README.md)
 
@@ -20,9 +20,8 @@ health. It is an Effect CLI application with two transport implementations:
   server information, and control-plane status.
 
 The package is `@proompteng/agentctl` at version `0.2.2`. The npm entry point is `dist/agentctl.js`; the repository also
-contains Bun binary and Homebrew-generation scripts. The build targets Node, but the current Kubernetes backend calls
-`Bun.spawn` for `kubectl` and pod logs. Node-only kube execution is therefore not a demonstrated support path at this
-revision; verify Bun availability when using the generated Node bundle against Kubernetes.
+contains Bun binary and Homebrew-generation scripts. The Kubernetes backend invokes `kubectl` through Node's
+child-process API in both the npm launcher and the Bun binaries.
 
 The CLI does not replace `kubectl` for arbitrary Kubernetes operations, manage Helm, own database lifecycle, or manage
 ingress. It operates only on the resource kinds and RPCs listed below.
@@ -79,7 +78,7 @@ syntax. Without `--tls`, the gRPC client uses insecure channel credentials.
 ## Command surface
 
 Global flags are pre-parsed and can be used with the commands below. The command names are literal: resource verbs are
-top-level commands, not subcommands of a resource.
+top-level commands, not subcommands of a resource. `run list` is a convenience alias for `list run`.
 
 The complete custom global flag set is:
 
@@ -120,15 +119,14 @@ agentctl config init [--namespace <ns>] [--server <address>] [--address <address
                      [--token <token>] [--kubeconfig <path>] [--context <name>] [--tls|--no-tls]
 
 agentctl completion <shell>
-agentctl completion <shell> install <shell>
+agentctl completion install <shell>
 ```
 
-`<shell>` is `bash`, `zsh`, or `fish`. The current command tree places the shell argument on both completion levels,
-so the install form is, for example, `agentctl completion zsh install zsh`; `agentctl completion install zsh` is not a
-valid current invocation. Installation writes under `$XDG_CONFIG_HOME/agentctl/completions` or
-`$HOME/.config/agentctl/completions` and prints a shell-specific activation hint.
+`<shell>` is `bash`, `zsh`, or `fish`. Use `agentctl completion install zsh` to install rather than print a script.
+Installation writes under `$XDG_CONFIG_HOME/agentctl/completions` or `$HOME/.config/agentctl/completions` and prints
+a shell-specific activation hint.
 
-`help all` prints the generated Effect command help plus the custom global flags.
+`help all` and `--help` show descriptions for commands and flags, with one inherited global-flags section.
 
 `version --client` (or `--client-only`) prints only `agentctl <version>`. Without that flag it prints the client
 version and attempts to report the server: the kube path prints the Agents deployment image or
@@ -136,39 +134,48 @@ version and attempts to report the server: the kube path prints the Agents deplo
 when present, build SHA/time.
 
 `auth` is local file management. `auth login` saves a token and does not contact or validate the server. `--with-token`
-reads the token from stdin and cannot be combined with a command or global `--token`; if no token is supplied, the
+reads the token from stdin and cannot be combined with `--token`; if no token is supplied, the
 interactive login prompts. `auth status` and `auth logout` inspect or modify only the config file, and logout is not a
 server-side revocation.
 
-`config init` is intended to be interactive unless all required answers are supplied. It asks for namespace, optional
-kubeconfig and context, and whether to configure gRPC; the gRPC branch asks for address, optional token, and TLS.
-`config set` is intended to need at least one setting and write without prompting.
-
-Known implementation gap: the entrypoint's global-flag pre-parser removes `--namespace`, `--server`, `--address`,
-`--token`, `--kubeconfig`, and `--context` before the `config set`/`config init` handlers receive their command-local
-options. Consequently those values are currently ignored by these two subcommands: for example,
-`agentctl config set --namespace demo` reaches the handler with no setting and fails, while `config init --namespace
-demo` can still prompt for the namespace. `--tls` and `--no-tls` are read from the raw argument vector and do work.
-This is a parser/command wiring defect, not a supported configuration workflow; use a config file or fix the wiring
-before documenting those option forms as operational.
+`config init` prompts for settings not supplied by flags. It asks for namespace, optional kubeconfig and context,
+and whether to configure gRPC; the gRPC branch asks for address, optional token, and TLS. `config set` saves only the
+settings explicitly provided and does not prompt.
 
 ### Resource verbs
 
 ```text
-agentctl get [(-l|--selector <selector>)] [--phase <phase>] [--runtime <runtime>] <resource> [<name>]
+agentctl get <resource> [<name>] [--selector <selector>] [run filters]
 agentctl describe <resource> <name>
-agentctl list [(-l|--selector <selector>)] [--phase <phase>] [--runtime <runtime>] <resource>
-agentctl watch [(-l|--selector <selector>)] [--phase <phase>] [--runtime <runtime>]
-                 [--interval <seconds>] <resource>
+agentctl list <resource> [--selector <selector>] [run filters]
+agentctl run list [--selector <selector>] [run filters]
+agentctl watch <resource> [--selector <selector>] [run filters] [--interval <seconds>]
 agentctl apply (-f|--file <path|->) [--dry-run]
 agentctl delete [--dry-run] <resource> <name>
 agentctl explain <resource>
 ```
 
-`get <resource>` without a name is a list operation; adding a name gets one resource. `list` is the explicit list
-alias. `--phase` and `--runtime` are valid only when the resource resolves to `run`; other resources reject those
-filters. A named `get` rejects selectors and run filters. `describe` is the named get form with YAML as its default
-output when no global `--output` was supplied.
+`get <resource>` without a name is a list operation. A named `get` rejects selectors and run filters. Selectors
+can be abbreviated `-l`. AgentRun lists accept these filters in addition to the selector:
+
+- `--phase <phase>` matches the AgentRun CR phase; `--runtime <type>` matches the runtime in its spec.
+- `--sort-by age|name|phase` defaults to newest-first. Name and phase sort ascending, with name breaking ties.
+- `--active` keeps non-terminal runs or live Pods. For example, a stale Pending CR with a completed Job and no live
+  Pod is not active. In gRPC mode, only the CR phase is available.
+- `--stale` (kube only) keeps runs whose CR and current runtime evidence disagree. A snapshot can catch a normal
+  transition, so investigate persistent mismatches before intervening.
+- `--limit <n>` keeps the first positive integer number of rows after filtering and sorting.
+
+In kube mode the CLI joins each namespace's AgentRun, Job, and Pod lists once. It correlates owner references, run UID
+labels, and `status.runtimeRef`; it does not merge evidence from replaced runs or Jobs with conflicting UIDs. A Job's
+active count does not imply a Running Pod, and a Pod failure inside a retryable Job is not a terminal run failure.
+JSON and YAML preserve the raw resource objects; Pod/Job metadata and inferred phases appear only in the human views.
+
+`describe run <name>` defaults to a human summary in kube mode: CR phase and conditions, runtimeRef, Job and Pod phases,
+node, branch, service account, MCP token projection/mount, a bounded excerpt of `run.json.prompt`, and up to ten recent
+Events for the AgentRun, Job, and Pod. ConfigMap and Event access gaps are shown in the summary. Structured
+`-o json`/`-o yaml` returns the raw CR without fetching workloads or Events. Other resource types and gRPC
+`describe` default to YAML.
 
 `watch` repeatedly performs the corresponding list operation every five seconds by default. `--interval` is parsed as
 seconds; invalid, zero, and negative values fall back to five seconds. This is client-side polling in both transports,
@@ -188,7 +195,7 @@ delete path rejects AgentRuns.
 are validation errors.
 
 The following older nested forms are not in the current command tree: `agentctl agent get`, `agentctl impl create`,
-`agentctl impl init`, `agentctl run apply`, `agentctl run get`, `agentctl run list`, `agentctl run watch`,
+`agentctl impl init`, `agentctl run apply`, `agentctl run get`, `agentctl run watch`,
 `agentctl run status`, and `agentctl run init`. Use the top-level resource verbs and the `create impl`/`init impl`/
 `init run` forms documented here. They are not compatibility aliases.
 
@@ -234,69 +241,72 @@ for generated kube maps, a duplicate key keeps the last value.
 ### AgentRun actions
 
 ```text
-agentctl run submit --agent <name> --impl <name> --runtime <type>
-                    --runtime-config <key=value>... --param <key=value>...
-                    [--idempotency-key <key>] [--workload-image <image>]
-                    [--cpu <quantity>] [--memory <quantity>] [--memory-ref <name>]
-                    [--vcs <name>] [--vcs-mode <mode>] [--vcs-required] [--wait]
+agentctl run submit --agent <name> --runtime <type> (--impl <name>|--inline-prompt <text>|--prompt-file <path|->)
+agentctl run codex [--agent <name>] [--runtime <type>] (--inline-prompt <text>|--prompt-file <path|->|--prompt <text>)
 
-agentctl run logs [--follow] <name>
-agentctl run wait <name>
+agentctl run logs <name> [-f|--follow] [--tail <lines>] [--since <duration>] [--timestamps] [--previous]
+agentctl run wait <name> [--timeout <duration>] [--interval <duration>]
 agentctl run cancel <name>
-
-agentctl run codex [--prompt <prompt>] [--agent <name>] [--runtime <type>]
-                   --runtime-config <key=value>... --param <key=value>...
-                   [--workload-image <image>] [--cpu <quantity>] [--memory <quantity>]
-                   [--memory-ref <name>] [--vcs <name>] [--vcs-mode <mode>]
-                   [--vcs-required] [--idempotency-key <key>] [--wait]
 ```
 
-`run submit` and `run codex` mutate the selected backend immediately. They have no confirmation prompt and no
-`--dry-run` option. To inspect a run manifest without creating a resource, use `init run` without `--apply`; do not
-probe either submission command against a production context.
+`run submit` and `run codex` create an AgentRun immediately; neither prompts for confirmation nor has a dry-run
+option. Use `init run` without `--apply` to render a manifest for an existing ImplementationSpec. The prompt belongs in
+the ImplementationSpec or inline implementation. The CLI rejects `--param prompt=...` before reading a prompt file,
+calling local Codex, or submitting anything.
 
-`run submit` constructs the following logical spec fields:
+`run codex` defaults to `--agent codex-agent --runtime workflow`. `--inline-prompt` and `--prompt-file` submit the
+literal task without starting local Codex. `--prompt` (or the interactive prompt when no task flag is supplied) instead
+uses local Codex to generate an ImplementationSpec and submits a reference to it. The two paths are mutually exclusive.
 
-| Flag                         | Manifest/RPC field                                                     |
-| ---------------------------- | ---------------------------------------------------------------------- |
-| `--agent`                    | `spec.agentRef.name` / `agent_name`                                    |
-| `--impl`                     | `spec.implementationSpecRef.name` / `implementation_name`              |
-| `--runtime`                  | `spec.runtime.type` / `runtime_type`                                   |
-| `--runtime-config key=value` | `spec.runtime.config` / repeated `runtime_config` entries              |
-| `--param key=value`          | `spec.parameters` / repeated `parameters` entries                      |
-| `--memory-ref`               | `spec.memoryRef.name` / `memory_ref`                                   |
-| `--vcs`                      | `spec.vcsRef.name` / `vcs_ref`                                         |
-| `--vcs-mode`                 | `spec.vcsPolicy.mode` / `vcs_policy_mode`                              |
-| `--vcs-required`             | `spec.vcsPolicy.required` / `vcs_policy_required`                      |
-| `--workload-image`           | `spec.workload.image` / `workload.image`                               |
-| `--cpu`, `--memory`          | `spec.workload.resources.requests` / `workload.cpu`, `workload.memory` |
-| `--idempotency-key`          | kube delivery-id label; gRPC `idempotency_key`                         |
+| Submission flag                           | AgentRun field or behavior                                                                |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `--agent`                                 | `spec.agentRef.name`                                                                      |
+| `--impl`                                  | `spec.implementationSpecRef.name` (submit only)                                           |
+| `--inline-prompt`, `--prompt-file`        | `spec.implementation.inline.text`                                                         |
+| `--repo`, `--base`, `--head`              | `spec.parameters.repository`, `base`, `head`; take precedence over `--param`              |
+| `--runtime`, `--runtime-config key=value` | `spec.runtime.type` and `config`                                                          |
+| `--param key=value`                       | `spec.parameters`; repeat for multiple values                                             |
+| `--memory-ref`                            | `spec.memoryRef.name`                                                                     |
+| `--vcs`, `--vcs-mode`, `--vcs-required`   | `spec.vcsRef.name`, `spec.vcsPolicy.mode`, `spec.vcsPolicy.required`                      |
+| `--workload-image`                        | `spec.workload.image`                                                                     |
+| `--cpu`, `--memory-request`               | `spec.workload.resources.requests`; `--memory` aliases `--memory-request`                 |
+| `--memory-limit`                          | `spec.workload.resources.limits.memory`                                                   |
+| `--ttl`                                   | `spec.ttlSecondsAfterFinished` in seconds; 0 disables per-run TTL                         |
+| `--secret`                                | `spec.secrets`; repeat for multiple allowed Kubernetes Secret names                       |
+| `--idempotency-key`                       | `spec.idempotencyKey` for controller deduplication when enabled (gRPC: `idempotency_key`) |
+| `--wait`                                  | Wait for the submitted run using the same terminal-state logic as `run wait`              |
+| `--verify`                                | Check the rendered prompt and runner identity before returning                            |
 
-When runtime is `workflow`, the generated manifest also contains `workflow.steps: [{name: implement}]`. Kube submit
-uses a generated name prefix `<agent>-` and labels the object `agents.proompteng.ai/delivery-id`. The kube path does
-not deduplicate on that label; `--idempotency-key` is only a delivery identifier there. gRPC submit sends the key to
-`SubmitAgentRun`, whose response includes `resource_json`, `record_json`, and `idempotent`; the CLI renders the resource
-JSON and does not render the separate record.
+Kube submit generates a name from the Agent name, labels the resource for delivery tracking, and adds a single
+`implement` step for workflow runtime. The CLI does not set `spec.runtime.config.serviceAccountName` unless explicitly
+supplied in `--runtime-config`; the Pod inherits the AgentProvider account (`codex-auto-ontology-runner` for Galactic's
+standard Codex provider). The existing gRPC `SubmitAgentRun` RPC does not encode inline task text, memory limits, TTL,
+or secrets. Those options and `--verify` require Kubernetes mode; the CLI does not bypass gRPC admission by applying
+a substitute manifest.
 
-With `--wait`, kube submit polls the created AgentRun every two seconds until its phase is `Succeeded`, `Failed`,
-`Cancelled`, or `Canceled`. gRPC submit and `run wait` consume `StreamAgentRunStatus` and render the latest resource
-when the stream ends. A kube terminal failure is rendered as a resource and does not itself change the CLI exit code.
-The gRPC wait helper also does not inspect the terminal phase for its exit code; it returns a runtime failure when the
-stream closes without any resource update (or when the transport fails).
+`--verify` reads the AgentProvider's expected service account and token projection settings, then waits up to 60
+seconds for a Pod and its mounted run-spec ConfigMap. A direct Job normally mounts `<run>-spec`; the CLI follows the
+Pod mount to handle workflow attempt suffixes and truncated names. It checks that `run.json.prompt` matches the supplied
+task text ignoring outer whitespace, the Pod uses the expected account, and `agent-runner` has the read-only projection
+at the configured audience and mount path. For verification use literal, non-templated task text. The check reads no
+Secret data or token contents. A failure after submission prints the existing AgentRun name; inspect that run rather
+than blindly submitting again.
 
-`run logs` resolves the AgentRun's runtime. In kube mode it selects a pod from the runtime Job (or the AgentRun label),
-then invokes pod logs; `--follow` is passed through. In gRPC mode it calls `StreamAgentRunLogs`; messages tagged
-`stderr` go to stderr and other messages go to stdout. gRPC logs are therefore implemented, not an optional placeholder.
+`run logs` selects the current runner Pod, preferring a live Pod over failed attempts. Kube mode forwards all the
+listed switches to `kubectl logs`. In gRPC mode only `--follow` is supported by `StreamAgentRunLogs`; messages tagged
+`stderr` are written to stderr, the rest to stdout.
 
-`run cancel` calls `CancelAgentRun` in gRPC mode. In kube mode it deletes workflow or job resources associated with the
-run and prints `cancelled` (or `job not found` for a missing named job). Kube cancellation does not patch the AgentRun
-status. Temporal and custom runtimes have no kube cancellation path and return `No cancellable runtime found for this
-AgentRun`.
+`run wait` defaults to a two-hour timeout and a two-second kube polling interval. Durations accept seconds or one
+of `ms`, `s`, `m`, or `h` (for example, `--timeout 10m --interval 500ms`). Kube mode honors a terminal CR first.
+If it has not caught up, a completed or failed Job (or unambiguous Pod evidence) can end the wait. A workflow Job
+does not end a run early if steps, loops, or retries can still change the outcome. Fallbacks are reported separately
+from the raw CR; the command never patches it. Failed or cancelled runs and timeouts exit nonzero. gRPC mode uses a
+deadline on `StreamAgentRunStatus` and does not accept `--interval`.
 
-`run codex` is implemented. It prompts for a Codex prompt, agent, and runtime when omitted (runtime defaults to
-`workflow`), calls the workspace Codex package for a JSON ImplementationSpec shaped as summary/text/acceptance
-criteria/labels, creates or applies that spec, and then submits an AgentRun using the resulting name. It uses the
-current process working directory and does not expose `--file`; source data is not generated by this command.
+`run cancel` calls `CancelAgentRun` in gRPC mode. In kube mode it requests deletion of the current run's live Jobs,
+ignoring Jobs already removed and leaving terminal Jobs and the AgentRun CR intact. It reports the request, not a
+confirmed terminal run state. A run queued without a Job or using Temporal/custom runtime cannot be cancelled this
+way; a workflow controller can also reconcile another attempt. Inspect status to confirm the outcome.
 
 ## Resource names and API identity
 
@@ -345,19 +355,18 @@ logs and local help/config/auth messages retain their command-specific text.
 - A list with `json` or `yaml` prints the raw list object, including its `items`; `yaml-stream` prints each item as a
   separate `---` YAML document; `text` prints one `kind/name` per item.
 - `apply` and init apply results use an array for `json`/`yaml`; `yaml-stream` emits one document per result.
-- Table columns are `NAME NAMESPACE STATUS`.
-- Wide columns are `NAME NAMESPACE KIND AGE STATUS LABELS DETAILS`.
+- Generic table columns are `NAME NAMESPACE STATUS`; wide columns are `NAME NAMESPACE KIND AGE STATUS LABELS DETAILS`.
+- AgentRun table columns are `NAME AGENT PHASE POD_PHASE NODE HEAD AGE`; wide adds `SA DESYNC JOB`. The head branch
+  comes from VCS status, falling back to the submitted parameter. `DESYNC` shows CR phase → workload phase; a dash
+  means no observed mismatch, not that absent evidence was verified.
 
 Status text for resource rows is selected in this order: `status.phase`, `status.status`, `status.state`,
 `status.result`, then the `Ready` condition status. Details are populated for AgentRun runtime type, ImplementationSpec
 summary, ImplementationSource provider, Schedule schedule, ToolRun tool reference, and Agent provider reference.
 
-`describe` uses YAML unless the caller explicitly provides `--output`; `get`, `list`, and `watch` use the resolved
-default table format.
+### Status, diagnose, and fleet
 
-### Status and diagnose
-
-`status` and `diagnose` are identical one-shot commands. Both use the selected namespace. In gRPC mode, the CLI calls
+In gRPC mode both `status` and `diagnose` call
 `GetControlPlaneStatus` and the JSON/YAML payload has this exact field family from the proto:
 
 ```json
@@ -413,53 +422,32 @@ payload. For non-JSON/non-YAML status output, the table columns are `COMPONENT N
 entries, controllers, runtime adapters (prefixed `runtime:`), database, and gRPC are rendered as rows. An empty gRPC
 message falls back to its address in the table.
 
-Kube mode does not synthesize the gRPC payload. It probes the namespace, the first deployment labeled
-`app.kubernetes.io/name=agents`, and the required CRDs, and emits this different JSON/YAML shape:
+Kube `status` reports observed health of the selected namespace and the split-mode deployments `agents`,
+`agents-controllers`, `agents-auto-ontology-mcp-gateway`, and `agents-shell`. It shows the controller leader Lease
+holder and renew time, optional CNPG Cluster `agents-db-next`, Agents CRD readiness, the CR/runtime mismatch count,
+and Running Pods per node in that namespace. `status -o wide` and structured output enumerate all 20 required CRDs,
+including `versioncontrolproviders.agents.proompteng.ai` and `swarms.swarm.proompteng.ai`. See
+[the chart's CRDs](../../charts/agents/crds) for the installed names and schemas.
 
-```json
-{
-  "mode": "kube",
-  "generated_at": "2026-08-30T00:00:00.000Z",
-  "namespace": "agents",
-  "deployment": {
-    "name": "agents",
-    "status": "healthy",
-    "message": "ready 1/1 available 1 image ghcr.io/example/agents:tag"
-  },
-  "crds": {
-    "status": "healthy",
-    "missing": []
-  },
-  "namespace_status": {
-    "status": "healthy",
-    "message": ""
-  }
-}
+Kube `diagnose` adds targeted remediation for persistent phase desyncs, missing CRDs, unhealthy deployments, database
+degradation, leader Lease issues, and incomplete reads. It does not restart or patch anything. For example:
+
+```bash
+agentctl --context galactic -n agents status
+agentctl --context galactic -n agents diagnose -o wide
+agentctl --context galactic -n agents run list --stale -o wide
 ```
 
-Kube status tables use the same four columns and the rows `namespace`, `deployment/<name>`, and `crds`. The exact
-required CRD names are:
+Kube health JSON/YAML reports `components`, `leader`, `crds`, `runs`, `nodes`, and `unavailable` for the selected
+namespace; diagnose adds `hints`. These snapshots replace the kube-only single-`deployment` payload. A denied read
+is unknown, not a missing resource or a zero count.
 
-```text
-agents.agents.proompteng.ai
-agentruns.agents.proompteng.ai
-agentproviders.agents.proompteng.ai
-implementationspecs.agents.proompteng.ai
-implementationsources.agents.proompteng.ai
-memories.agents.proompteng.ai
-orchestrations.orchestration.proompteng.ai
-orchestrationruns.orchestration.proompteng.ai
-approvalpolicies.approvals.proompteng.ai
-budgets.budgets.proompteng.ai
-secretbindings.security.proompteng.ai
-signals.signals.proompteng.ai
-signaldeliveries.signals.proompteng.ai
-tools.tools.proompteng.ai
-toolruns.tools.proompteng.ai
-schedules.schedules.proompteng.ai
-artifacts.artifacts.proompteng.ai
-workspaces.workspaces.proompteng.ai
-```
+`agentctl fleet` (alias `capacity`) shows total/active/pending/stale run counts, namespace Pod counts by node, node
+architecture and allocatable CPU/RAM/Pods, and configured concurrency/rate limits for `deployment/agents-controllers`.
+Pending is a subset of active; stale can overlap either. Pod counts are for the selected namespace, while
+allocatable quantities are node-wide Kubernetes values, not remaining headroom. The CLI shows the allowlisted
+deployment limits; entries sourced through `valueFrom` are identified without resolving their values. These views
+require kube access to Jobs, Pods, AgentRuns and the named health resources; node and CRD lists are cluster-scoped.
 
 ## Configuration and environment
 
@@ -549,7 +537,6 @@ The following are proposals, not shipped commands or endpoints:
   [`agentctl-grpc-coverage.md`](agentctl-grpc-coverage.md).
 - CLI TLS certificate and server-name flags; the current supported certificate path is environment variables listed
   above.
-- A fully Node-only Kubernetes subprocess implementation; the current kube backend uses `Bun.spawn`.
 
 Do not use examples from those Draft documents as current CLI syntax until the command tree, proto, and tests are
 updated and this contract is reverified.
@@ -571,7 +558,9 @@ The implementation anchors for this document are:
   [`services/agents/agentctl/src/cli/global-flags.ts`](../../services/agents/agentctl/src/cli/global-flags.ts):
   configuration and precedence.
 - [`services/agents/agentctl/src/runtime.ts`](../../services/agents/agentctl/src/runtime.ts): resource registry data,
-  renderers, status payloads, waits, and gRPC client.
+  generic renderers and gRPC client.
+- [`src/kube/runs.ts`](../../services/agents/agentctl/src/kube/runs.ts) and
+  [`src/kube/fleet.ts`](../../services/agents/agentctl/src/kube/fleet.ts): workload joins, phase evidence, and fleet health.
 - [`services/agents/src/routes/v1/control-plane/stream.ts`](../../services/agents/src/routes/v1/control-plane/stream.ts):
   the separate Agents HTTP stream route, which is not consumed by agentctl.
 - [`services/agents/agentctl/src/__tests__`](../../services/agents/agentctl/src/__tests__): config, flag, output,

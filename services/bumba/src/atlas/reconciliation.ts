@@ -22,7 +22,7 @@ export type AtlasCurrentFile = {
   gitObjectId: string | null
 }
 
-export type AtlasIndexedFile = {
+type AtlasIndexedFile = {
   path: string
   repositoryCommit: string | null
   gitObjectId: string | null

@@ -2,9 +2,10 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: torghut-ws-sip-config
-  namespace: torghut
+  namespace: bayn
 data:
   ALPACA_MARKET_TYPE: "equity"
+  ALPACA_MARKET_DATA_PROXY_URL: "http://bayn-egress-proxy.bayn.svc.cluster.local:3130"
   ALPACA_FEED: "sip"
   ALPACA_MARKET_DATA_ENTITLEMENT: "algo_trader_plus"
   ALPACA_MARKET_DATA_CHANNELS: "bars,quotes,trades"

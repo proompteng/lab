@@ -891,7 +891,7 @@ const runtimeSettings = (): RuntimeSettings => ({
   torghutNamespace: process.env.TORGHUT_NAMESPACE ?? 'torghut',
   httpProbeMode: parseHttpProbeMode(process.env.TORGHUT_MARKET_DATA_HTTP_MODE),
   httpExecTarget: process.env.TORGHUT_MARKET_DATA_HTTP_EXEC_TARGET ?? 'deploy/torghut-ta',
-  wsReadyzUrl: process.env.TORGHUT_WS_READYZ_URL ?? 'http://torghut-ws.torghut.svc.cluster.local/readyz',
+  wsReadyzUrl: process.env.TORGHUT_WS_READYZ_URL ?? 'http://torghut-ws.bayn.svc.cluster.local/readyz',
   tradingStatusUrl: process.env.TORGHUT_STATUS_URL ?? 'http://torghut.torghut.svc.cluster.local/trading/status',
   taConfigMapName: process.env.TORGHUT_TA_CONFIGMAP ?? 'torghut-ta-config',
   taFlinkExecTarget: process.env.TORGHUT_TA_FLINK_EXEC_TARGET ?? 'deploy/torghut-ta',
