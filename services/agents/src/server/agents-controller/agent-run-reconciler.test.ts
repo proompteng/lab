@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createAgentRunReconciler, resolveProviderReadinessBlock } from './agent-run-reconciler'
 import { PROVIDER_CAPACITY_EXHAUSTED_REASON } from './provider-capacity'
 import { RESOURCE_MAP } from '../kube-types'
+import { AgentRunIndex } from './queue-state'
 
 describe('agents controller agent-run reconciler', () => {
   const createBaseDependencies = (overrides: Partial<Parameters<typeof createAgentRunReconciler>[0]> = {}) => ({
@@ -23,7 +24,6 @@ describe('agents controller agent-run reconciler', () => {
     isAgentRunIdempotencyEnabled: () => false,
     parseQueueLimits: () => ({ perNamespace: 0, perRepo: 0, cluster: 0 }),
     parseRateLimits: () => ({ perNamespace: 0, perRepo: 0, cluster: 0, windowSeconds: 60 }),
-    getControllerSnapshot: () => null,
     getControllerRateState: () => ({
       cluster: { count: 0, resetAt: 0 },
       perNamespace: new Map(),
@@ -117,15 +117,13 @@ describe('agents controller agent-run reconciler', () => {
       },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       {
         perNamespace: 10,
         perAgent: 10,
         cluster: 10,
         repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
       },
-      { total: 0, perAgent: new Map(), perRepository: new Map() },
-      0,
     )
 
     expect(submitJobRun).not.toHaveBeenCalled()
@@ -198,15 +196,13 @@ describe('agents controller agent-run reconciler', () => {
       },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       {
         perNamespace: 10,
         perAgent: 10,
         cluster: 10,
         repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
       },
-      { total: 0, perAgent: new Map(), perRepository: new Map() },
-      0,
     )
 
     expect(resolveJobImage).toHaveBeenCalledWith({}, expect.objectContaining({ metadata: { name: 'anypi' } }))
@@ -271,15 +267,13 @@ describe('agents controller agent-run reconciler', () => {
       },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       {
         perNamespace: 10,
         perAgent: 10,
         cluster: 10,
         repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
       },
-      { total: 0, perAgent: new Map(), perRepository: new Map() },
-      0,
     )
 
     expect(submitJobRun).not.toHaveBeenCalled()
@@ -344,15 +338,13 @@ describe('agents controller agent-run reconciler', () => {
       },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       {
         perNamespace: 10,
         perAgent: 10,
         cluster: 10,
         repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
       },
-      { total: 0, perAgent: new Map(), perRepository: new Map() },
-      0,
     )
 
     expect(kube.get).toHaveBeenCalledWith('job', 'run-1-job', 'agents')
@@ -413,15 +405,13 @@ describe('agents controller agent-run reconciler', () => {
         },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         {
           perNamespace: 10,
           perAgent: 10,
           cluster: 10,
           repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
         },
-        { total: 0, perAgent: new Map(), perRepository: new Map() },
-        0,
       )
     } finally {
       infoSpy.mockRestore()
@@ -473,15 +463,13 @@ describe('agents controller agent-run reconciler', () => {
       },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       {
         perNamespace: 10,
         perAgent: 10,
         cluster: 10,
         repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
       },
-      { total: 0, perAgent: new Map(), perRepository: new Map() },
-      0,
     )
 
     expect(kube.get).toHaveBeenCalledWith('job', 'run-1-job', 'agents')
@@ -536,15 +524,13 @@ describe('agents controller agent-run reconciler', () => {
       },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       {
         perNamespace: 10,
         perAgent: 10,
         cluster: 10,
         repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
       },
-      { total: 0, perAgent: new Map(), perRepository: new Map() },
-      0,
     )
 
     expect(kube.get).toHaveBeenCalledWith('job', 'run-1-job', 'agents')

@@ -27,7 +27,7 @@ export default Effect.gen(function* () {
         AND state.reason IS NULL;
       IF target_generation_hash IS NULL THEN RETURN; END IF;
     IF NOT COALESCE((
-      SELECT position_count = 0 AND observed_at BETWEEN clock_timestamp() - interval '60 seconds' AND clock_timestamp()
+      SELECT position_count = 0 AND observed_at BETWEEN clock_timestamp() - interval '120 seconds' AND clock_timestamp()
         AND observed_at >= COALESCE((SELECT max(m.occurred_at) FROM mutation_events m
           JOIN intents i USING (intent_id) WHERE i.account_id=p.account_id), '-infinity'::timestamptz)
       FROM position_snapshots p WHERE p.account_id=target_account_id
@@ -68,7 +68,7 @@ export default Effect.gen(function* () {
         WHERE latest.status IS DISTINCT FROM 'EXACT'
           OR latest.reconciled_at IS NULL
           OR latest.reconciled_at > clock_timestamp()
-          OR latest.reconciled_at < clock_timestamp() - interval '60 seconds'
+          OR latest.reconciled_at < clock_timestamp() - interval '120 seconds'
           OR latest.reconciled_at < (SELECT max(occurred_at) FROM mutation_events m JOIN intents i USING (intent_id) WHERE i.account_id = g.account_id)
       )
       OR EXISTS (

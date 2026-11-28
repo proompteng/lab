@@ -144,9 +144,9 @@ source. The root router also duplicated those path rules, but did not invoke the
   they affect the resolved Jangar workspace graph or lockfile settings.
 - `ci-pr` requires the selected reusable workflow to succeed. A missing impact decision or a selected workflow that
   failed, was cancelled, or skipped fails the gate. Merge-queue guardrails remain in place.
-- The [`jangar-inventory` target](../../.github/ci/impact-map.yml) runs the lightweight Bun inventory check for the
-  generated document and its Jangar and Agents source inputs. Agents or observability configuration still goes to its
-  owning manifest and service checks; it does not schedule the Jangar runtime jobs. Jangar publishing is unchanged.
+- The generated Jangar architecture inventory (`docs/jangar/architecture-inventory.md`) and its `jangar-inventory`
+  validation target were retired. Agents or observability configuration goes directly to its owning manifest and
+  service checks without scheduling Jangar runtime jobs. Jangar publishing is unchanged.
 
 ## Proposed config-only fast path
 

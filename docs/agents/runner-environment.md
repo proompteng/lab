@@ -12,6 +12,14 @@ app-server it links the bundled skills into the pod's writable `$CODEX_HOME/skil
 preserving any existing entries. The runner uses the bundle when present. `AGENTS_RUNNER_PSTACK_ENABLED=true`
 requires the bundle at startup; `false` skips linking.
 
+Before launching app-server, the runner validates the run payload and prompt, checks the executable and workspace, and
+checks the managed Codex auth file or API key. A VCS checkout needs a configured workspace and Git remote; read-write
+HTTP(S) runs also need credentials. Checkout commands are noninteractive and time out rather than waiting for input.
+
+On `SIGTERM` (`143`) or `SIGINT` (`130`), the runner stops subprocesses and gives terminal telemetry and retained logs
+a bounded best-effort flush before writing cancelled status. The shutdown deadline is five seconds even if remote
+storage stalls. Runner-owned structured logs and status redact URL userinfo and common authorization tokens.
+
 Headless Chromium is pinned to Playwright 1.59.1 and revision 1217 on AMD64 and ARM64. Browser archives are hash-checked
 and their ELF dependencies are resolved at build time. The image provides fonts and fontconfig, the Playwright browser
 cache path and `PLATFORM_UI_CHROMIUM`. Browser downloads are disabled. Update both architecture hashes and the version

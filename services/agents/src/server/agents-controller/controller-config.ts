@@ -1,6 +1,7 @@
 import { createKubeGateway, type KubeGateway } from '../kube-gateway'
 import { parseBooleanEnv, parseEnvRecord, parseNumberEnv, parseOptionalNumber } from './env-config'
-import { normalizeRepositoryKey, type RepoConcurrencyConfig } from './queue-state'
+import type { RepoConcurrencyConfig } from './queue-state'
+import { normalizeRepository } from './run-utils'
 
 type EnvSource = Record<string, string | undefined>
 
@@ -35,7 +36,7 @@ export const parseRepoConcurrencyOverrides = () => {
   for (const [repo, rawLimit] of Object.entries(rawOverrides)) {
     const parsed = parseOptionalNumber(rawLimit)
     if (parsed === undefined || parsed <= 0) continue
-    overrides.set(normalizeRepositoryKey(repo), Math.floor(parsed))
+    overrides.set(normalizeRepository(repo), Math.floor(parsed))
   }
   return overrides
 }

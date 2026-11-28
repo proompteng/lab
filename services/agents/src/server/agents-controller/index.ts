@@ -60,12 +60,14 @@ import {
 } from './mutable-state'
 import {
   type ControllerState,
+  type RunObservation,
+  createControllerState,
   ensureNamespaceState,
   listItems,
   snapshotNamespace,
   updateStateMap,
 } from './namespace-state'
-import { buildInFlightCounts } from './queue-state'
+import type { AgentRunIndex } from './queue-state'
 import { resetControllerRateState as resetControllerRateStateMaps } from './rate-limits'
 import { createResourceReconcilers } from './resource-reconcilers'
 import {
@@ -76,7 +78,7 @@ import {
 import { resolveWorkloadImage } from './workload-image'
 import { parseRunnerTerminalStatus, runnerStatusToTerminalOutcome, type RunnerTerminalStatus } from './runner-status'
 import { reconcileRuntimeDebris } from './runtime-debris'
-import { isQueuedRun, resolveParam, resolveParameters } from './run-utils'
+import { isAgentRunTerminalPhase, isQueuedRun, resolveParam, resolveParameters } from './run-utils'
 import { createTemporalRuntimeTools } from './temporal-runtime'
 import { resolveVcsAuthMethod, validateVcsAuthConfig } from './vcs-auth'
 import {
@@ -106,8 +108,6 @@ const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'agents.controller.enabled'
-const isAgentRunTerminalPhase = (phase: string | null): phase is 'Succeeded' | 'Failed' | 'Cancelled' =>
-  phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled'
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -366,9 +366,19 @@ const getAgentRunCreationTimestampMs = (agentRun: Record<string, unknown>) => {
   return Number.isNaN(parsed) ? null : parsed
 }
 
-const getListResourceVersion = (payload: Record<string, unknown>) => {
+const getResourceVersion = (payload: Record<string, unknown>) => {
   const resourceVersion = asString(readNested(payload, ['metadata', 'resourceVersion']))
   return resourceVersion?.trim() ? resourceVersion : null
+}
+
+const numericResourceVersion = /^[1-9][0-9]*$/
+const isCoveredByRunList = (resource: Record<string, unknown>, listVersion: string | null) => {
+  const version = getResourceVersion(resource)
+  if (!version || !listVersion || !numericResourceVersion.test(version) || !numericResourceVersion.test(listVersion)) {
+    return false
+  }
+  // Compare native AgentRun revisions as arbitrary-length decimals (never round them to JS numbers).
+  return version.length < listVersion.length || (version.length === listVersion.length && version <= listVersion)
 }
 
 const isKubeNotFoundError = (error: unknown) => {
@@ -781,39 +791,29 @@ const getAgentRunRetentionDecision = (agentRun: Record<string, unknown>, nowMs: 
 const sweepExpiredAgentRunsForNamespace = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
-  runs: Record<string, unknown>[],
+  runs: Map<string, Record<string, unknown>>,
   nowMs: number,
   reason: 'periodic' | 'watch_restart' | 'manual',
+  hasChanged: (name: string) => boolean,
 ) => {
   const maxDeletes = resolveAgentsControllerBehaviorConfig(process.env).agentRunRetentionMaxDeletesPerNamespace
-  if (maxDeletes <= 0) return { runs, deleted: 0, errors: 0, eligibleRemaining: 0 }
+  if (maxDeletes <= 0) return
 
-  const retainedRuns: Record<string, unknown>[] = []
   let deleted = 0
   let errors = 0
   let eligibleRemaining = 0
 
-  for (const run of runs) {
-    const name = asString(readNested(run, ['metadata', 'name']))
-    if (!name) {
-      retainedRuns.push(run)
-      continue
-    }
-
-    const decision = getAgentRunRetentionDecision(run, nowMs)
-    if (!decision.eligible) {
-      retainedRuns.push(run)
-      continue
-    }
+  for (const [name, run] of runs) {
+    if (hasChanged(name) || !getAgentRunRetentionDecision(run, nowMs).eligible) continue
 
     if (deleted >= maxDeletes) {
       eligibleRemaining += 1
-      retainedRuns.push(run)
       continue
     }
 
     try {
       await kube.delete(RESOURCE_MAP.AgentRun, name, namespace, { wait: false })
+      runs.delete(name)
       deleted += 1
       logAgentsControllerDebug('agentrun_retention_deleted', {
         namespace,
@@ -823,7 +823,6 @@ const sweepExpiredAgentRunsForNamespace = async (
       })
     } catch (error) {
       errors += 1
-      retainedRuns.push(run)
       logAgentsControllerWarn('agentrun_retention_delete_failed', {
         namespace,
         runName: name,
@@ -845,8 +844,6 @@ const sweepExpiredAgentRunsForNamespace = async (
       maxDeletes,
     })
   }
-
-  return { runs: retainedRuns, deleted, errors, eligibleRemaining }
 }
 
 const resetControllerRateState = () => {
@@ -866,12 +863,22 @@ const shouldDependencyEventTriggerFullReconcile = (
   return buildResourceFingerprint(existing) !== buildResourceFingerprint(resource)
 }
 
-const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
+const DEPENDENCY_RECONCILE = Symbol('dependency-reconcile')
+const RUN_RESYNC = Symbol('run-resync')
+
+const enqueueNamespaceTask = (namespace: string, key: string | symbol, task: () => Promise<void>) => {
+  const runtime = runtimeMutableState
+  const lifecycleToken = runtime.lifecycleToken
+  const queue = runtime.namespaceQueues.get(namespace) ?? { pending: new Map(), tail: Promise.resolve() }
+  const existing = queue.pending.get(key)
+  if (existing) return existing
+
   logAgentsControllerDebug('namespace_task_enqueued', { namespace })
-  const current = runtimeMutableState.namespaceQueues.get(namespace) ?? Promise.resolve()
-  const next = current
-    .catch(() => undefined)
+  const next = queue.tail
     .then(async () => {
+      // An update during reconciliation schedules a follow-up; updates before it starts are coalesced.
+      queue.pending.delete(key)
+      if (runtime !== runtimeMutableState || lifecycleToken !== runtime.lifecycleToken) return
       const startedAt = Date.now()
       logAgentsControllerDebug('namespace_task_started', { namespace })
       try {
@@ -889,9 +896,81 @@ const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
         ...toLogError(error),
       })
     })
-  runtimeMutableState.namespaceQueues.set(namespace, next)
+    .finally(() => {
+      if (queue.tail === next && runtime.namespaceQueues.get(namespace) === queue) {
+        runtime.namespaceQueues.delete(namespace)
+      }
+    })
+  queue.pending.set(key, next)
+  queue.tail = next
+  runtime.namespaceQueues.set(namespace, queue)
   return next
 }
+
+const readWhileWatchingRuns = async <T>(
+  state: ControllerState,
+  namespace: string,
+  read: (changes: Map<string, RunObservation>) => Promise<T>,
+) => {
+  const ns = ensureNamespaceState(state, namespace)
+  const changes = new Map<string, RunObservation>()
+  ns.runChangesDuringRead = changes
+  try {
+    return await read(changes)
+  } finally {
+    ns.runChangesDuringRead = null
+  }
+}
+
+const enqueueRun = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  name: string,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+  options: { lookupMissing?: boolean; terminalReceipt?: Record<string, unknown> } = {},
+) => {
+  const { lookupMissing, terminalReceipt } = options
+  const receiptUid = asString(readNested(terminalReceipt, ['metadata', 'uid']))
+  const key = terminalReceipt ? `terminal/${name}/${receiptUid ?? ''}` : name
+  return enqueueNamespaceTask(namespace, key, async () => {
+    const lifecycleToken = runtimeMutableState.lifecycleToken
+    let run = state.runs.get(namespace, name)
+    if (!run && lookupMissing) {
+      await readWhileWatchingRuns(state, namespace, async (changes) => {
+        const loaded = await kube.get(RESOURCE_MAP.AgentRun, name, namespace)
+        if (lifecycleToken === runtimeMutableState.lifecycleToken && !changes.has(name) && loaded) {
+          state.runs.update(namespace, name, loaded)
+        }
+      })
+      run = state.runs.get(namespace, name)
+    }
+    if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
+    // Terminal idempotency is an edge, not just a level. A later deletion or replacement must not erase it.
+    if (
+      terminalReceipt &&
+      (!run ||
+        asString(readNested(run, ['metadata', 'uid'])) !== receiptUid ||
+        readNested(run, ['metadata', 'deletionTimestamp']) ||
+        !isAgentRunTerminalPhase(asString(readNested(run, ['status', 'phase']))))
+    ) {
+      await recordTerminalIdempotency(namespace, terminalReceipt)
+      return
+    }
+    if (!run) return
+    // Always use the latest observation, even if an earlier revision queued this task.
+    const memories = Array.from(ensureNamespaceState(state, namespace).memories.values())
+    await reconcileAgentRunWithMetrics(kube, run, namespace, memories, state.runs, concurrency)
+  })
+}
+
+const getTerminalIdempotencyReceipt = (run: Record<string, unknown>) =>
+  !readNested(run, ['metadata', 'deletionTimestamp']) &&
+  isAgentRunTerminalPhase(asString(readNested(run, ['status', 'phase']))) &&
+  isAgentRunIdempotencyEnabled() &&
+  asString(readNested(run, ['spec', 'idempotencyKey']))
+    ? run
+    : undefined
 
 const resyncAgentRunsForNamespace = async (
   kube: ReturnType<typeof createKubernetesClient>,
@@ -900,29 +979,65 @@ const resyncAgentRunsForNamespace = async (
   concurrency: ReturnType<typeof parseConcurrency>,
   reason: 'periodic' | 'watch_restart' | 'manual',
 ) => {
-  const nsState = ensureNamespaceState(state, namespace)
   const lifecycleToken = runtimeMutableState.lifecycleToken
   const now = Date.now()
-  const retentionSweep = await sweepExpiredAgentRunsForNamespace(
-    kube,
-    namespace,
-    listItems(await kube.list(RESOURCE_MAP.AgentRun, namespace)),
-    now,
-    reason,
-  )
-  if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
-  const runList = retentionSweep.runs
-  const refreshedRuns = new Map<string, Record<string, unknown>>()
-  const candidateRuns: Array<{ run: Record<string, unknown>; reasons: string[] }> = []
+  const syncResult = await readWhileWatchingRuns(state, namespace, async (changes) => {
+    const list = await kube.list(RESOURCE_MAP.AgentRun, namespace)
+    if (lifecycleToken !== runtimeMutableState.lifecycleToken) return null
+    const listVersion = getResourceVersion(list)
+    const byName = new Map<string, Record<string, unknown>>()
+    for (const run of listItems(list)) {
+      const name = asString(readNested(run, ['metadata', 'name']))
+      if (name) byName.set(name, run)
+    }
+    const changedNonTerminalRuns = new Set<string>()
+    const terminalReceipts: Array<{ name: string; receipt: Record<string, unknown> }> = []
+    for (const [name, run] of byName) {
+      const previous = state.runs.get(namespace, name)
+      const previousUid = asString(readNested(previous, ['metadata', 'uid']))
+      const currentUid = asString(readNested(run, ['metadata', 'uid']))
+      const sameObject = previous !== undefined && previousUid === currentUid
+      const currentPhase = asString(readNested(run, ['status', 'phase']))
+      const receipt = getTerminalIdempotencyReceipt(run)
+      if (receipt) {
+        const wasTerminal = sameObject && isAgentRunTerminalPhase(asString(readNested(previous, ['status', 'phase'])))
+        if (!wasTerminal) {
+          terminalReceipts.push({ name, receipt })
+        }
+      } else if (
+        currentPhase !== 'Template' &&
+        !isAgentRunTerminalPhase(currentPhase) &&
+        (!sameObject || getResourceVersion(previous) !== getResourceVersion(run))
+      ) {
+        // Relist observed a new or mutated non-terminal revision whose watch event will be covered by listVersion.
+        changedNonTerminalRuns.add(name)
+      }
+    }
+    // Only listed resources are eligible for this sweep. Defer any whose watch observation changed.
+    await sweepExpiredAgentRunsForNamespace(kube, namespace, byName, now, reason, (name) => {
+      const change = changes.get(name)
+      return change !== undefined && !isCoveredByRunList(change.resource, listVersion)
+    })
+    if (lifecycleToken !== runtimeMutableState.lifecycleToken) return null
+    for (const [name, change] of changes) {
+      if (isCoveredByRunList(change.resource, listVersion)) continue
+      if (change.deleted) byName.delete(name)
+      else byName.set(name, change.resource)
+    }
+    ensureNamespaceState(state, namespace).runListVersion = listVersion
+    state.runs.replaceNamespace(namespace, byName)
+    return { refreshedRuns: byName, changedNonTerminalRuns, terminalReceipts }
+  })
+  if (!syncResult || lifecycleToken !== runtimeMutableState.lifecycleToken) return
+  const { refreshedRuns, changedNonTerminalRuns, terminalReceipts } = syncResult
+  const candidateRuns: Array<{ name: string; reasons: string[] }> = []
+  const retryRuns: string[] = []
   let untouchedRunCount = 0
   let oldestUntouchedAgeSeconds: number | null = null
   let activeRuns = 0
   let queuedRuns = 0
 
-  for (const run of runList) {
-    const name = asString(readNested(run, ['metadata', 'name']))
-    if (!name) continue
-    refreshedRuns.set(name, run)
+  for (const [name, run] of refreshedRuns) {
     if (readNested(run, ['status', 'phase']) === 'Running') activeRuns += 1
     if (isQueuedRun(run)) queuedRuns += 1
     const reasons = getAgentRunUntouchedReasons(run)
@@ -936,12 +1051,29 @@ const resyncAgentRunsForNamespace = async (
           oldestUntouchedAgeSeconds === null ? ageSeconds : Math.max(oldestUntouchedAgeSeconds, ageSeconds)
       }
     }
+    const finalizers = readNested(run, ['metadata', 'finalizers'])
+    const hasRuntimeFinalizer = Array.isArray(finalizers) && finalizers.includes('agents.proompteng.ai/runtime-cleanup')
+    const workflowSteps = readNested(run, ['status', 'workflow', 'steps'])
+    const hasPendingWorkflowStep =
+      readNested(run, ['status', 'phase']) === 'Running' &&
+      Array.isArray(workflowSteps) &&
+      workflowSteps.some((step) => {
+        const stepPhase = asString(readNested(step, ['phase']))
+        return stepPhase === 'Pending' || stepPhase === 'Retrying'
+      })
     if (reasons.length > 0) {
-      candidateRuns.push({ run, reasons })
+      candidateRuns.push({ name, reasons })
+    } else if (
+      changedNonTerminalRuns.has(name) ||
+      (readNested(run, ['metadata', 'deletionTimestamp']) && hasRuntimeFinalizer) ||
+      hasPendingWorkflowStep ||
+      (isQueuedRun(run) && !readNested(run, ['status', 'runtimeRef']))
+    ) {
+      // Relists may advance runListVersion past watch events for updated non-terminal runs,
+      // deletions, pending/retrying workflow steps, or unblocked queued runs.
+      retryRuns.push(name)
     }
   }
-
-  nsState.runs = refreshedRuns
 
   const ingestionState = getAgentRunIngestionRuntimeState(namespace)
   ingestionState.lastResyncAtMs = now
@@ -1050,17 +1182,18 @@ const resyncAgentRunsForNamespace = async (
     ingestionState.lastResyncSummarySignature = resyncSummarySignature
   }
 
-  for (const candidate of candidateRuns) {
-    const runName = asString(readNested(candidate.run, ['metadata', 'name'])) ?? 'unknown'
+  for (const { name, reasons } of candidateRuns) {
     logAgentsControllerDebug('agentrun_resync_adopted', {
       namespace,
-      runName,
+      runName: name,
       reason,
-      adoptionReasons: candidate.reasons,
+      adoptionReasons: reasons,
     })
-    await enqueueNamespaceTask(namespace, () =>
-      reconcileRunWithState(kube, namespace, candidate.run, state, concurrency),
-    )
+    void enqueueRun(kube, namespace, name, state, concurrency)
+  }
+  for (const name of retryRuns) void enqueueRun(kube, namespace, name, state, concurrency)
+  for (const { name, receipt } of terminalReceipts) {
+    void enqueueRun(kube, namespace, name, state, concurrency, { terminalReceipt: receipt })
   }
 }
 
@@ -1070,15 +1203,16 @@ const queueAgentRunResync = (
   state: ControllerState,
   concurrency: ReturnType<typeof parseConcurrency>,
   reason: 'periodic' | 'watch_restart' | 'manual',
-) => {
-  void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, reason).catch((error) => {
-    logAgentsControllerWarn('agentrun_resync_failed', {
-      namespace,
-      reason,
-      ...toLogError(error),
-    })
-  })
-}
+) =>
+  enqueueNamespaceTask(namespace, RUN_RESYNC, () =>
+    resyncAgentRunsForNamespace(kube, namespace, state, concurrency, reason).catch((error) => {
+      logAgentsControllerWarn('agentrun_resync_failed', {
+        namespace,
+        reason,
+        ...toLogError(error),
+      })
+    }),
+  )
 
 const {
   reconcileAgent,
@@ -1136,7 +1270,7 @@ const { reconcileWorkflowRun } = createWorkflowReconciler({
   isJobFailed,
 })
 
-const { reconcileAgentRun } = createAgentRunReconciler({
+const { reconcileAgentRun, recordTerminalIdempotency } = createAgentRunReconciler({
   setStatus,
   nowIso,
   isKubeNotFoundError,
@@ -1154,7 +1288,6 @@ const { reconcileAgentRun } = createAgentRunReconciler({
   isAgentRunIdempotencyEnabled,
   parseQueueLimits,
   parseRateLimits,
-  getControllerSnapshot: () => runtimeMutableState.controllerSnapshot,
   getControllerRateState: () => runtimeMutableState.controllerRateState,
   validateImplementationContract,
   buildContractStatus,
@@ -1172,28 +1305,29 @@ const reconcileAgentRunWithMetrics = async (
   agentRun: Record<string, unknown>,
   namespace: string,
   memories: Record<string, unknown>[],
-  existingRuns: Record<string, unknown>[],
+  runs: AgentRunIndex,
   concurrency: ReturnType<typeof parseConcurrency>,
-  inFlight: { total: number; perAgent: Map<string, number>; perRepository: Map<string, number> },
-  globalInFlight: number,
 ) => {
   const reconcileStartedAt = Date.now()
   try {
-    await reconcileAgentRun(kube, agentRun, namespace, memories, existingRuns, concurrency, inFlight, globalInFlight)
+    await reconcileAgentRun(kube, agentRun, namespace, memories, runs, concurrency)
   } finally {
     const durationMs = Date.now() - reconcileStartedAt
     recordReconcileDurationMs(durationMs, { kind: 'agentrun', namespace })
   }
 }
 
-const reconcileNamespaceSnapshot = async (
+const reconcileNamespaceState = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
-  snapshot: ReturnType<typeof snapshotNamespace>,
   state: ControllerState,
   concurrency: ReturnType<typeof parseConcurrency>,
 ) => {
-  const { agents, providers, specs, sources, vcsProviders, memories, runs } = snapshot
+  const lifecycleToken = runtimeMutableState.lifecycleToken
+  const { agents, providers, specs, sources, vcsProviders, memories } = snapshotNamespace(
+    ensureNamespaceState(state, namespace),
+  )
+  const runs = state.runs.list(namespace)
 
   for (const memory of memories) {
     await reconcileMemory(kube, memory, namespace)
@@ -1221,52 +1355,13 @@ const reconcileNamespaceSnapshot = async (
     }
   }
 
-  const counts = buildInFlightCounts(state, namespace)
-  const inFlight = {
-    total: counts.total,
-    perAgent: counts.perAgent,
-    perRepository: counts.perRepository,
-  }
-
+  if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
   for (const run of runs) {
-    await reconcileAgentRunWithMetrics(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
+    const name = asString(readNested(run, ['metadata', 'name']))
+    if (!name) continue
+    const terminalReceipt = getTerminalIdempotencyReceipt(run)
+    void enqueueRun(kube, namespace, name, state, concurrency, terminalReceipt ? { terminalReceipt } : undefined)
   }
-}
-
-const reconcileRunWithState = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  namespace: string,
-  run: Record<string, unknown>,
-  state: ControllerState,
-  concurrency: ReturnType<typeof parseConcurrency>,
-) => {
-  const snapshot = snapshotNamespace(ensureNamespaceState(state, namespace))
-  const counts = buildInFlightCounts(state, namespace)
-  const inFlight = {
-    total: counts.total,
-    perAgent: counts.perAgent,
-    perRepository: counts.perRepository,
-  }
-  await reconcileAgentRunWithMetrics(
-    kube,
-    run,
-    namespace,
-    snapshot.memories,
-    snapshot.runs,
-    concurrency,
-    inFlight,
-    counts.cluster,
-  )
-}
-
-const reconcileNamespaceState = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  namespace: string,
-  state: ControllerState,
-  concurrency: ReturnType<typeof parseConcurrency>,
-) => {
-  const snapshot = snapshotNamespace(ensureNamespaceState(state, namespace))
-  await reconcileNamespaceSnapshot(kube, namespace, snapshot, state, concurrency)
 }
 
 const _reconcileAll = async (
@@ -1307,7 +1402,6 @@ const seedNamespaceState = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
   state: ControllerState,
-  concurrency: ReturnType<typeof parseConcurrency>,
 ) => {
   const nsState = ensureNamespaceState(state, namespace)
   const memoryList = await kube.list(RESOURCE_MAP.Memory, namespace)
@@ -1333,14 +1427,13 @@ const seedNamespaceState = async (
   for (const resource of sources) updateStateMap(nsState.sources, 'ADDED', resource)
   for (const resource of vcsProviders) updateStateMap(nsState.vcsProviders, 'ADDED', resource)
   for (const resource of providers) updateStateMap(nsState.providers, 'ADDED', resource)
-  for (const resource of runs) updateStateMap(nsState.runs, 'ADDED', resource)
-
-  void enqueueNamespaceTask(namespace, () =>
-    reconcileNamespaceSnapshot(kube, namespace, snapshotNamespace(nsState), state, concurrency),
-  )
+  for (const run of runs) {
+    const name = asString(readNested(run, ['metadata', 'name']))
+    if (name) state.runs.update(namespace, name, run)
+  }
 
   return {
-    agentRunResourceVersion: getListResourceVersion(runList),
+    agentRunResourceVersion: getResourceVersion(runList),
   }
 }
 
@@ -1353,22 +1446,30 @@ const startNamespaceWatches = async (
   options?: { agentRunResourceVersion?: string | null },
 ) => {
   const nsState = ensureNamespaceState(state, namespace)
+  nsState.runListVersion = options?.agentRunResourceVersion ?? null
   const enqueueFull = () =>
-    enqueueNamespaceTask(namespace, () => reconcileNamespaceState(kube, namespace, state, concurrency))
+    enqueueNamespaceTask(namespace, DEPENDENCY_RECONCILE, () =>
+      reconcileNamespaceState(kube, namespace, state, concurrency),
+    )
 
   const handleAgentRunEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource) return
-    const runName = asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown'
+    const runName = asString(readNested(resource, ['metadata', 'name']))
+    if (!runName) return
     recordAgentRunWatchEventSeen(namespace)
     logAgentsControllerDebug('agentrun_watch_event_seen', {
       namespace,
       runName,
       eventType: event.type ?? 'UNKNOWN',
     })
-    updateStateMap(nsState.runs, event.type, resource)
-    if (event.type === 'DELETED') return
-    void enqueueNamespaceTask(namespace, () => reconcileRunWithState(kube, namespace, resource, state, concurrency))
+    if (isCoveredByRunList(resource, nsState.runListVersion)) return
+    const deleted = event.type === 'DELETED'
+    nsState.runChangesDuringRead?.set(runName, { resource, deleted })
+    state.runs.update(namespace, runName, deleted ? null : resource)
+    if (deleted) return
+    const terminalReceipt = getTerminalIdempotencyReceipt(resource)
+    void enqueueRun(kube, namespace, runName, state, concurrency, { terminalReceipt })
   }
 
   const handleAgentEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
@@ -1424,13 +1525,7 @@ const startNamespaceWatches = async (
     if (!resource) return
     const runName = asString(readNested(resource, ['metadata', 'labels', 'agents.proompteng.ai/agent-run']))
     if (!runName) return
-    void enqueueNamespaceTask(namespace, async () => {
-      const existing = nsState.runs.get(runName)
-      const run = existing ?? (await kube.get(RESOURCE_MAP.AgentRun, runName, namespace))
-      if (!run) return
-      nsState.runs.set(runName, run)
-      await reconcileRunWithState(kube, namespace, run, state, concurrency)
-    })
+    void enqueueRun(kube, namespace, runName, state, concurrency, { lookupMissing: true })
   }
 
   handles.push(
@@ -1530,7 +1625,8 @@ const startNamespaceWatches = async (
 
   // The initial resync can be large in production. Watches are already live here, so run it
   // in the background instead of blocking controller startup and readiness.
-  queueAgentRunResync(kube, namespace, state, concurrency, 'manual')
+  void enqueueFull()
+  void queueAgentRunResync(kube, namespace, state, concurrency, 'manual')
 }
 
 const stopWatchHandles = (handles: Array<{ stop: () => void }>) => {
@@ -1602,10 +1698,10 @@ const startAgentsControllerInternal = async () => {
     logAgentsControllerInfo('startup_namespace_scope', { namespaces })
     const kube = createKubernetesClient()
     const concurrency = parseConcurrency()
-    const state: ControllerState = { namespaces: new Map() }
+    const state = createControllerState()
     const namespaceSeedResults = new Map<string, { agentRunResourceVersion: string | null }>()
     for (const namespace of namespaces) {
-      namespaceSeedResults.set(namespace, await seedNamespaceState(kube, namespace, state, concurrency))
+      namespaceSeedResults.set(namespace, await seedNamespaceState(kube, namespace, state))
       if (runtimeMutableState.lifecycleToken !== token) return
     }
     for (const namespace of namespaces) {
@@ -1725,7 +1821,10 @@ export const __test = {
   shouldDependencyEventTriggerFullReconcile,
   getAgentRunRetentionDecision,
   getAgentRunUntouchedReasons,
-  resyncAgentRunsForNamespace,
+  resyncAgentRunsForNamespace: async (...args: Parameters<typeof queueAgentRunResync>) => {
+    await queueAgentRunResync(...args)
+    await runtimeMutableState.namespaceQueues.get(args[1])?.tail
+  },
   startNamespaceWatches,
   syncControllerAgentRunIngestionHealth,
   assessAgentRunIngestion,

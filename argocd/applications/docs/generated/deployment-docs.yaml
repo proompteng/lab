@@ -4,6 +4,7 @@ metadata:
   name: docs
   namespace: docs
 spec:
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app: docs

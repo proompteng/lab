@@ -38,6 +38,10 @@ allowLoopDevices: false
 # Keep OBC provisioning fail-closed, but do not interrupt healthy admin lookups.
 cephCommandsTimeoutSeconds: "120"
 
+# Allow GitOps to manage artifact lifecycle through the bucket claim. Keep
+# custom bucket policies, ownership changes, and bucket-wide quotas disabled.
+obcAllowAdditionalConfigFields: "maxObjects,maxSize,bucketLifecycle"
+
 csi:
   installCsiOperator: true
   # The cluster is Kubernetes v1.37 with

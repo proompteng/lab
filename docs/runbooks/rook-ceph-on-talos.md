@@ -21,6 +21,9 @@ host-local IPAM, and applications must be recovered in dependency order, use
 [`galactic-storage-and-workload-recovery.md`](galactic-storage-and-workload-recovery.md) first. Return here only if the
 incident requires Ceph-specific OSD or performance work.
 
+For read-only diagnosis of Argo `Degraded`, PG recovery, or AgentRun artifact storage, start with
+[Rook-Ceph degraded triage](rook-ceph-degraded-triage.md).
+
 ## Safety
 
 Ceph will **wipe** any disks listed under `cephClusterSpec.storage.nodes[].devices`.

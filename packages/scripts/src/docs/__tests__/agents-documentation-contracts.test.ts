@@ -252,7 +252,6 @@ describe('Agents documentation contracts', () => {
     const scriptsWorkflow = readRepoFile('.github/workflows/scripts-ci.yml')
     const agentctlWorkflow = readRepoFile('.github/workflows/agentctl-ci.yml')
     const impactMap = readRepoFile('.github/ci/impact-map.yml')
-    const inventory = loadImpactMap(join(repoRoot, '.github/ci/impact-map.yml')).targets['jangar-inventory']
 
     for (const path of [
       "- 'docs/agents/primitives/**'",
@@ -268,22 +267,8 @@ describe('Agents documentation contracts', () => {
     expect(
       agentctlWorkflow.split('\n').filter((line) => line.trim() === "- 'docs/agents/agentctl-cli-design.md'"),
     ).toHaveLength(2)
-    expect(inventory.kind).toBe('validation')
-    for (const path of [
-      'docs/jangar/architecture-inventory.md',
-      'services/agents/src/app-routes/**',
-      'services/agents/src/components/control-plane/**',
-      'services/agents/src/control-plane/**',
-      'services/agents/src/routes/**',
-      'services/agents/src/server/agents-controller/**',
-      'services/agents/src/server/control-plane*.ts',
-      'services/agents/src/server/v1/control-plane-*.ts',
-      'services/agents/src/server/health.ts',
-      'services/agents/src/server/orchestration-controller.ts',
-    ]) {
-      expect(inventory.paths).toContain(path)
-    }
-    expect(inventory.exclude).toContain('services/agents/src/**/*.test.ts')
+    expect(loadImpactMap(join(repoRoot, '.github/ci/impact-map.yml')).targets['jangar-inventory']).toBeUndefined()
+    expect(existsSync(join(repoRoot, 'docs/jangar/architecture-inventory.md'))).toBe(false)
     expect(scriptsWorkflow.split('\n').filter((line) => line.trim() === "- 'scripts/jangar/**'")).toHaveLength(2)
     expect(scriptsWorkflow).toContain('bun test scripts/jangar/validate-primitives.test.ts')
     expect(impactMap).toContain('- docs/agents/agentctl-cli-design.md')

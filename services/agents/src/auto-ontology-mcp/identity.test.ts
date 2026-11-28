@@ -16,37 +16,34 @@ const review: TokenReviewIdentity = {
   audiences: [config.audience],
   username: `system:serviceaccount:agents:${config.expectedServiceAccount}`,
   groups: ['system:serviceaccounts:agents'],
-  extra: {
-    'authentication.kubernetes.io/pod-name': ['run-pod'],
-    'authentication.kubernetes.io/pod-uid': ['pod-uid'],
-  },
+  extra: {},
   error: null,
 }
 
-const fixture = (overrides: Partial<TokenReviewIdentity> = {}) => {
+const fixture = (overrides: Partial<TokenReviewIdentity> = {}, name = 'run') => {
   const pod = {
     metadata: {
-      uid: 'pod-uid',
-      ownerReferences: [{ apiVersion: 'batch/v1', kind: 'Job', name: 'run-job', uid: 'job-uid' }],
+      uid: `${name}-pod-uid`,
+      ownerReferences: [{ apiVersion: 'batch/v1', kind: 'Job', name: `${name}-job`, uid: `${name}-job-uid` }],
     },
     spec: { serviceAccountName: config.expectedServiceAccount },
   }
   const job = {
     metadata: {
-      uid: 'job-uid',
+      uid: `${name}-job-uid`,
       ownerReferences: [
         {
           apiVersion: 'agents.proompteng.ai/v1alpha1',
           kind: 'AgentRun',
-          name: 'run',
-          uid: 'run-uid',
+          name,
+          uid: `${name}-uid`,
         },
       ],
-      labels: { 'agents.proompteng.ai/agent-run': 'run', 'agents.proompteng.ai/provider': 'codex' },
+      labels: { 'agents.proompteng.ai/agent-run': name, 'agents.proompteng.ai/provider': 'codex' },
     },
   }
   const run = {
-    metadata: { uid: 'run-uid', deletionTimestamp: '' },
+    metadata: { uid: `${name}-uid`, deletionTimestamp: '' },
     spec: { agentRef: { name: 'any-agent-using-codex' } },
     status: { phase: 'Running' },
   }
@@ -60,9 +57,9 @@ const fixture = (overrides: Partial<TokenReviewIdentity> = {}) => {
     },
   }
   const resources = new Map<string, Record<string, unknown>>([
-    ['pod/run-pod', pod],
-    ['job/run-job', job],
-    [`${RESOURCE_MAP.AgentRun}/run`, run],
+    [`pod/${name}-pod`, pod],
+    [`job/${name}-job`, job],
+    [`${RESOURCE_MAP.AgentRun}/${name}`, run],
     [`${RESOURCE_MAP.Agent}/any-agent-using-codex`, agent],
     [`${RESOURCE_MAP.AgentProvider}/codex`, provider],
   ])
@@ -70,9 +67,17 @@ const fixture = (overrides: Partial<TokenReviewIdentity> = {}) => {
     expect(namespace).toBe(config.namespace)
     return resources.get(`${kind}/${name}`) ?? null
   })
-  const reviewToken = vi.fn(async () => ({ ...review, ...overrides }))
+  const identity = {
+    ...review,
+    extra: {
+      'authentication.kubernetes.io/pod-name': [`${name}-pod`],
+      'authentication.kubernetes.io/pod-uid': [pod.metadata.uid],
+    },
+    ...overrides,
+  }
+  const reviewToken = vi.fn(async () => identity)
   const verify = createAutoOntologyIdentityVerifier(config, { get }, reviewToken)
-  return { pod, job, run, agent, provider, get, reviewToken, verify }
+  return { pod, job, run, agent, provider, get, reviewToken, verify, resources, identity }
 }
 
 describe('Auto Ontology MCP projected identity', () => {
@@ -157,6 +162,33 @@ describe('Auto Ontology MCP projected identity', () => {
     const state = fixture()
     change(state)
     await expect(state.verify('projected-token')).rejects.toMatchObject({ status: 403, code: 'identity_denied' })
+  })
+
+  it('reviews 120 concurrent Pod identities independently and checks every owner chain', async () => {
+    const reviewsReleased = Promise.withResolvers<void>()
+    const pods = Array.from({ length: 120 }, (_, i) => [`pod-${i}`, fixture({}, `run-${i}`)] as const)
+    const identities = new Map<string, TokenReviewIdentity>(pods.map(([token, { identity }]) => [token, identity]))
+    const resources = new Map(pods.flatMap(([, { resources }]) => [...resources]))
+    const reviewToken = vi.fn(async (token: string, audience: string) => {
+      expect(audience).toBe(config.audience)
+      await reviewsReleased.promise
+      return identities.get(token)!
+    })
+    const get = vi.fn(async (kind: string, name: string, namespace: string) => {
+      expect(namespace).toBe(config.namespace)
+      return resources.get(`${kind}/${name}`) ?? null
+    })
+    const verify = createAutoOntologyIdentityVerifier(config, { get }, reviewToken)
+    const results = Promise.all(pods.map(([token]) => verify(token)))
+    const concurrentReviews = reviewToken.mock.calls.length
+    expect(get).not.toHaveBeenCalled()
+    reviewsReleased.resolve()
+    await results
+    expect(concurrentReviews).toBe(120)
+    expect(get).toHaveBeenCalledTimes(120 * 5)
+    expect(
+      new Set(get.mock.calls.filter(([kind]) => kind === RESOURCE_MAP.AgentRun).map(([, name]) => name)).size,
+    ).toBe(120)
   })
 
   it('rechecks active phase on each request', async () => {

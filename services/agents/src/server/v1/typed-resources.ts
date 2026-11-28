@@ -44,13 +44,11 @@ export class TypedResourceKubernetesService extends Context.Service<
   TypedResourceKubernetesServiceShape
 >()('agents/TypedResourceKubernetesService') {}
 
-export type TypedResourceDeps = {
+export type TypedResourceApiDependencies = {
   kubeClient?: KubernetesClient
 }
 
-export type TypedResourceApiDependencies = TypedResourceDeps
-
-export const makeTypedResourceLayer = (deps: TypedResourceDeps = {}) =>
+export const makeTypedResourceLayer = (deps: TypedResourceApiDependencies = {}) =>
   Layer.succeed(TypedResourceKubernetesService, { client: deps.kubeClient ?? createKubernetesClient() })
 
 const parseLimit = (value: string | null) => {
@@ -199,7 +197,7 @@ const normalizeTypedResourcePayload = (expectedKind: string, payload: Record<str
 
   const namespace = normalizeNamespace(asString(metadataInput.namespace), 'agents')
   const labels = {
-    ...(asRecord(metadataInput.labels) ?? {}),
+    ...asRecord(metadataInput.labels),
     ...buildDeliveryIdLabels(deliveryId),
   }
 
@@ -238,7 +236,7 @@ const describeTypedResourceError = (error: TypedResourceError) => {
 
 const runTypedResourceEffect = async <A>(
   effect: Effect.Effect<A, TypedResourceError, TypedResourceKubernetesService>,
-  deps: TypedResourceDeps,
+  deps: TypedResourceApiDependencies,
 ) => Effect.runPromise(effect.pipe(Effect.provide(makeTypedResourceLayer(deps)), Effect.result))
 
 export const listTypedResourceEffect = (
@@ -373,7 +371,7 @@ export const postTypedResourceEffect = (
 
 export const typedResourceResponse = async (
   effect: Effect.Effect<Record<string, unknown>, TypedResourceError, TypedResourceKubernetesService>,
-  deps: TypedResourceDeps,
+  deps: TypedResourceApiDependencies,
   successStatus = 200,
 ) => {
   const result = await runTypedResourceEffect(effect, deps)

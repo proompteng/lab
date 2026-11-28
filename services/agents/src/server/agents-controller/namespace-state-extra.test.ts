@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  type ControllerState,
+  createControllerState,
   createNamespaceState,
   ensureNamespaceState,
   listItems,
@@ -12,7 +12,7 @@ import {
 
 describe('agents controller namespace-state module', () => {
   it('creates and ensures namespace state instances', () => {
-    const state: ControllerState = { namespaces: new Map() }
+    const state = createControllerState()
     const first = ensureNamespaceState(state, 'agents')
     const second = ensureNamespaceState(state, 'agents')
 
@@ -25,7 +25,8 @@ describe('agents controller namespace-state module', () => {
       sources: new Map(),
       vcsProviders: new Map(),
       memories: new Map(),
-      runs: new Map(),
+      runListVersion: null,
+      runChangesDuringRead: null,
     })
   })
 
@@ -59,7 +60,6 @@ describe('agents controller namespace-state module', () => {
     expect(snapshot.sources).toEqual([])
     expect(snapshot.vcsProviders).toEqual([])
     expect(snapshot.memories).toEqual([])
-    expect(snapshot.runs).toEqual([])
   })
 
   it('lists items safely from list responses', () => {

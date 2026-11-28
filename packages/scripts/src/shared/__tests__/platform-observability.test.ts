@@ -27,7 +27,7 @@ test('Loki bounds push decoding and reserves a 2 MiB envelope for intact log rec
   }
 })
 
-test('Mimir reserves ingester memory without imposing a hard cgroup cap or raising tenant limits', () => {
+test('Mimir doubles tenant series headroom without imposing a hard ingester memory cap', () => {
   const values = readValues('mimir')
   expect(values.ingester).toMatchObject({
     replicas: 3,
@@ -38,7 +38,7 @@ test('Mimir reserves ingester memory without imposing a hard cgroup cap or raisi
   expect(values.runtimeConfig.overrides.anonymous).toMatchObject({
     ingestion_rate: 20000,
     ingestion_burst_size: 400000,
-    max_global_series_per_user: 300000,
+    max_global_series_per_user: 600_000,
   })
 })
 

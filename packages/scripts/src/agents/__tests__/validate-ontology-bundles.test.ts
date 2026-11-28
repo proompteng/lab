@@ -116,6 +116,16 @@ describe('discovery and JSON contracts', () => {
     expect(runCli().exitCode).toBe(0)
   })
 
+  test('checks CI audit relations against Agents migrations', async () => {
+    const ciKnowledge = 'docs/ci/ontology/ci-release-knowledge.json'
+    await put(`${agentsMigrations}/0001.sql`, 'CREATE TABLE ci_audit.workflow_runs (run_id bigint)')
+    await json(ciKnowledge, bundle('SELECT run_id FROM ci_audit.workflow_runs'))
+    expect(await validateOntologyBundles(root)).toEqual({ files: 1, errors: [] })
+
+    await json(ciKnowledge, bundle('SELECT run_id FROM ci_audit.workflow_run'))
+    expect((await validateOntologyBundles(root)).errors[0]).toContain('not declared by the owning service')
+  })
+
   test('reports every invalid file in deterministic order and exits nonzero', async () => {
     await put('docs/zeta/ontology/z-knowledge.json', '{')
     await put('docs/alpha/ontology/knowledge-delta.json', '{')

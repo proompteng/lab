@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/component: cluster-metrics
 spec:
   replicas: 1
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: observability-cluster-metrics-alloy

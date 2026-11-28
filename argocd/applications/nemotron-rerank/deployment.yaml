@@ -4,6 +4,7 @@ metadata:
   name: nemotron-rerank
 spec:
   replicas: 1
+  revisionHistoryLimit: 2
   strategy:
     type: Recreate
   progressDeadlineSeconds: 3600

@@ -1,15 +1,20 @@
 #!/usr/bin/env bun
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { chmod, readFile, writeFile } from 'node:fs/promises'
+import { chmod, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
+import { finished } from 'node:stream/promises'
 
 import { runAgyCliAdapter } from '../../src/runner/agy-cli'
 import { uploadOutputArtifacts } from '../../src/runner/artifact-upload'
-import { runCodexAppServerAdapter } from '../../src/runner/codex-app-server'
+import { describeRunnerError, runCodexAppServerAdapter } from '../../src/runner/codex-app-server'
+import { readRunnerInputFile } from '../../src/runner/preflight'
+import { detachRunnerProcess, waitForRunnerProcess } from '../../src/runner/process-command'
 import { installPstackSkills } from '../../src/runner/pstack'
+import { stringifyRunnerOutput } from '../../src/runner/redact'
+import { runnerSignalExitCode, withRunnerSignalHandlers } from '../../src/runner/shutdown'
 import {
   buildTemplateContext,
   type AgentProviderInputFile,
@@ -35,7 +40,7 @@ type ExecAgentRunnerStatus = {
   signal?: string | null
   startedAt: string
   finishedAt: string
-  status: 'succeeded' | 'failed'
+  status: 'succeeded' | 'failed' | 'cancelled'
   artifacts: {
     statusPath?: string
     logPath?: string
@@ -44,47 +49,26 @@ type ExecAgentRunnerStatus = {
   error?: string
 }
 
-const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
-
 const timestampUtc = (): string => new Date().toISOString().replace(/\.\d+Z$/, 'Z')
 
-const loadSpecFromPath = async (path: string): Promise<AgentRunnerSpec> => {
-  const raw = await readFile(path, 'utf8')
+const parseRunnerSpec = (json: string, source: string): unknown => {
   try {
-    return JSON.parse(raw) as AgentRunnerSpec
-  } catch (error) {
-    throw new Error(`Failed to parse agent-runner spec at ${path}: ${toErrorMessage(error)}`)
+    return JSON.parse(json)
+  } catch {
+    throw new Error(`Failed to parse agent-runner spec from ${source}: expected valid JSON`)
   }
 }
 
-const loadSpecFromEnv = async (): Promise<AgentRunnerSpec | null> => {
-  const specJson = process.env.AGENT_RUNNER_SPEC
-  if (!specJson) {
-    return null
+const loadAgentRunnerSpec = async (argv: string[], signal: AbortSignal): Promise<AgentRunnerSpec> => {
+  const path = argv[0] || process.env.AGENT_RUNNER_SPEC_PATH
+  if (path) {
+    const json = await readRunnerInputFile(path, signal).catch((cause: unknown) => {
+      throw new Error(`Unable to read agent-runner spec at ${path}: ${describeRunnerError(cause)}`)
+    })
+    return normalizeRunnerSpec(parseRunnerSpec(json, path))
   }
-  try {
-    return JSON.parse(specJson) as AgentRunnerSpec
-  } catch (error) {
-    throw new Error(`Failed to parse AGENT_RUNNER_SPEC: ${toErrorMessage(error)}`)
-  }
-}
-
-const loadAgentRunnerSpec = async (argv: string[]): Promise<AgentRunnerSpec> => {
-  const [specPath] = argv
-  if (specPath) {
-    return loadSpecFromPath(specPath)
-  }
-
-  const specFromPath = process.env.AGENT_RUNNER_SPEC_PATH
-  if (specFromPath) {
-    return loadSpecFromPath(specFromPath)
-  }
-
-  const specFromEnv = await loadSpecFromEnv()
-  if (specFromEnv) {
-    return specFromEnv
-  }
-
+  const json = process.env.AGENT_RUNNER_SPEC
+  if (json) return normalizeRunnerSpec(parseRunnerSpec(json, 'AGENT_RUNNER_SPEC'))
   throw new Error('agent-runner requires a JSON spec via file argument, AGENT_RUNNER_SPEC_PATH, or AGENT_RUNNER_SPEC')
 }
 
@@ -135,7 +119,7 @@ const writeStatus = async (statusPath: string | undefined, status: ExecAgentRunn
     return
   }
   await ensureFileDirectory(statusPath)
-  await writeFile(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8')
+  await writeFile(statusPath, `${stringifyRunnerOutput(status, 2)}\n`, 'utf8')
 }
 
 const spawnWithLogs = async (
@@ -143,50 +127,44 @@ const spawnWithLogs = async (
   args: string[],
   env: Record<string, string>,
   logPath: string | undefined,
+  signal: AbortSignal,
 ): Promise<{ exitCode: number; signal?: string | null }> => {
+  signal.throwIfAborted()
   if (!logPath) {
-    const child = spawn(command, args, { stdio: 'inherit', env })
-    return new Promise((resolve, reject) => {
-      child.on('error', reject)
-      child.on('exit', (code, signal) => {
-        resolve({ exitCode: code ?? 1, signal })
-      })
-    })
+    const child = spawn(command, args, { stdio: 'inherit', env, detached: detachRunnerProcess })
+    return waitForRunnerProcess(child, { signal })
   }
 
   await ensureFileDirectory(logPath)
+  signal.throwIfAborted()
   const logStream = createWriteStream(logPath, { flags: 'a' })
-  const child = spawn(command, args, { stdio: ['inherit', 'pipe', 'pipe'], env })
-
-  const forward = (chunk: Buffer, target: NodeJS.WriteStream) => {
-    try {
-      target.write(chunk)
-    } catch {
-      // best-effort terminal forwarding
-    }
-    try {
+  const logClosed = finished(logStream, { cleanup: true }).catch((error: unknown) => error)
+  let result: Awaited<ReturnType<typeof waitForRunnerProcess>>
+  let logError: unknown
+  try {
+    const child = spawn(command, args, { stdio: ['inherit', 'pipe', 'pipe'], env, detached: detachRunnerProcess })
+    child.stdout.on('data', (chunk: Buffer) => {
+      process.stdout.write(chunk)
       logStream.write(chunk)
-    } catch {
-      // best-effort persistent logging
-    }
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      process.stderr.write(chunk)
+      logStream.write(chunk)
+    })
+    result = await waitForRunnerProcess(child, { signal })
+  } finally {
+    logStream.end()
+    logError = await logClosed
   }
-
-  child.stdout?.on('data', (chunk) => forward(chunk as Buffer, process.stdout))
-  child.stderr?.on('data', (chunk) => forward(chunk as Buffer, process.stderr))
-
-  return new Promise((resolve, reject) => {
-    child.on('error', (error) => {
-      logStream.end()
-      reject(error)
-    })
-    child.on('exit', (code, signal) => {
-      logStream.end()
-      resolve({ exitCode: code ?? 1, signal })
-    })
-  })
+  if (logError) throw logError
+  return result
 }
 
-const runExecAdapter = async (spec: AgentRunnerSpec, provider: AgentProviderSpec & { binary: string }) => {
+const runExecAdapter = async (
+  spec: AgentRunnerSpec,
+  provider: AgentProviderSpec & { binary: string },
+  abortSignal: AbortSignal,
+) => {
   const startedAt = timestampUtc()
   let finishedAt = startedAt
   let exitCode = 1
@@ -209,16 +187,20 @@ const runExecAdapter = async (spec: AgentRunnerSpec, provider: AgentProviderSpec
     } as Record<string, string>
     await configureGitAskpass(env)
 
-    const result = await spawnWithLogs(provider.binary, renderedArgs, env, logPath)
+    const result = await spawnWithLogs(provider.binary, renderedArgs, env, logPath, abortSignal)
     exitCode = result.exitCode
     signal = result.signal
     if (exitCode === 0) {
-      outputArtifacts = await uploadOutputArtifacts(outputArtifacts, { env })
+      outputArtifacts = await uploadOutputArtifacts(outputArtifacts, { env, signal: abortSignal })
     }
   } catch (error) {
-    errorMessage = toErrorMessage(error)
+    errorMessage = describeRunnerError(error)
     exitCode = 1
   } finally {
+    if (abortSignal.aborted) {
+      signal = String(abortSignal.reason)
+      exitCode = runnerSignalExitCode(signal)
+    }
     finishedAt = timestampUtc()
     await writeStatus(statusPath, {
       provider: spec.provider,
@@ -229,7 +211,7 @@ const runExecAdapter = async (spec: AgentRunnerSpec, provider: AgentProviderSpec
       signal,
       startedAt,
       finishedAt,
-      status: exitCode === 0 ? 'succeeded' : 'failed',
+      status: abortSignal.aborted ? 'cancelled' : exitCode === 0 ? 'succeeded' : 'failed',
       artifacts: {
         statusPath,
         logPath,
@@ -246,43 +228,37 @@ const runExecAdapter = async (spec: AgentRunnerSpec, provider: AgentProviderSpec
   return exitCode
 }
 
-const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> => {
-  const spec = normalizeRunnerSpec(rawSpec)
+const runAgentRunner = async (spec: AgentRunnerSpec, signal: AbortSignal): Promise<number> => {
   const adapter = resolveAdapter(spec)
-  if (adapter.type === 'codex-app-server' || adapter.type === 'agy-cli') {
-    const abortController = new AbortController()
-    const abort = (signal: NodeJS.Signals) => {
-      if (!abortController.signal.aborted) {
-        abortController.abort({ signal })
-      }
-    }
-    process.once('SIGTERM', abort)
-    process.once('SIGINT', abort)
-    try {
-      if (adapter.type === 'agy-cli') {
-        return await runAgyCliAdapter(spec, adapter.agy, { abortSignal: abortController.signal })
-      }
-      installPstackSkills({
-        codexHome: process.env.CODEX_HOME || join(homedir(), '.codex'),
-        enabled: process.env.AGENTS_RUNNER_PSTACK_ENABLED,
-      })
-      return await runCodexAppServerAdapter(spec, adapter.codex, { abortSignal: abortController.signal })
-    } finally {
-      process.off('SIGTERM', abort)
-      process.off('SIGINT', abort)
-    }
+  if (adapter.type === 'agy-cli') {
+    return runAgyCliAdapter(spec, adapter.agy, { abortSignal: signal })
   }
-  return runExecAdapter(spec, adapter.provider)
+  if (adapter.type === 'codex-app-server') {
+    installPstackSkills({
+      codexHome: process.env.CODEX_HOME || join(homedir(), '.codex'),
+      enabled: process.env.AGENTS_RUNNER_PSTACK_ENABLED,
+    })
+    return runCodexAppServerAdapter(spec, adapter.codex, { abortSignal: signal })
+  }
+  return runExecAdapter(spec, adapter.provider, signal)
 }
 
 if (import.meta.main) {
-  try {
-    const spec = await loadAgentRunnerSpec(process.argv.slice(2))
-    // eslint-disable-next-line unicorn/no-process-exit
-    process.exit(await runAgentRunner(spec))
-  } catch (error) {
-    console.error(toErrorMessage(error))
-    // eslint-disable-next-line unicorn/no-process-exit
-    process.exit(1)
-  }
+  const exitCode = await withRunnerSignalHandlers(async (signal) => {
+    let code = 1
+    try {
+      const spec = await loadAgentRunnerSpec(process.argv.slice(2), signal)
+      code = await runAgentRunner(spec, signal)
+    } catch (error) {
+      process.stderr.write(`${describeRunnerError(error)}\n`)
+    }
+    await Promise.all(
+      [process.stdout, process.stderr].map(
+        (stream) => new Promise<void>((resolve) => stream.write('', () => resolve())),
+      ),
+    )
+    return code
+  })
+  // eslint-disable-next-line unicorn/no-process-exit
+  process.exit(exitCode)
 }

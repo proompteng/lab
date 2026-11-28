@@ -2,6 +2,7 @@ import { resolveRuntimeServiceName } from './runtime-identity'
 import { resolveControlPlaneCacheConfig } from './controller-runtime-config'
 import { isRuntimeTestEnv } from './control-plane-cache-config'
 import {
+  CONTROL_PLANE_CACHE_BATCH_SIZE,
   createControlPlaneCacheStore,
   type ControlPlaneCacheKey,
   type ControlPlaneCacheStore,
@@ -130,7 +131,6 @@ const createControlPlaneCacheWriter = ({
     if (!pending.has(key)) {
       pending.set(key, { ...operation, attempts: operation.attempts + 1 } as CacheWriteOperation)
     }
-    scheduleDrain(retryDelayMs)
   }
 
   const drain = () => {
@@ -138,21 +138,44 @@ const createControlPlaneCacheWriter = ({
     draining = true
     void (async () => {
       try {
-        while (!stopped && pending.size > 0) {
-          const next = pending.entries().next().value as [string, CacheWriteOperation] | undefined
-          if (!next) return
-          const [key, operation] = next
+        let entries = pending.entries()
+        let next = entries.next()
+        while (!stopped && !next.done) {
+          const [key, operation] = next.value
+          next = entries.next()
+          // A newer event can replace the look-ahead entry during the preceding write.
+          if (pending.get(key) !== operation) continue
           pending.delete(key)
-
+          let batch: CacheWriteOperation[] = [operation]
           try {
             if (operation.type === 'delete') {
               await store.markDeleted(operation.key)
             } else {
-              await store.upsertResource(operation.input)
+              const upserts = [operation]
+              batch = upserts
+              while (
+                operation.attempts === 0 &&
+                upserts.length < CONTROL_PLANE_CACHE_BATCH_SIZE &&
+                !next.done &&
+                next.value[1].type === 'upsert' &&
+                next.value[1].attempts === 0
+              ) {
+                pending.delete(next.value[0])
+                upserts.push(next.value[1])
+                next = entries.next()
+              }
+              await store.upsertResources(upserts.map(({ input }) => input))
             }
           } catch (error) {
-            requeueAfterFailure(operation, error)
+            // Retry failed batches as individual writes so a bad row cannot strand unrelated rows.
+            for (const item of batch) requeueAfterFailure(item, error)
+            if (pending.size) scheduleDrain(retryDelayMs)
             return
+          }
+          // Map iterators stay live until done; events may arrive during the final write.
+          if (next.done && pending.size) {
+            entries = pending.entries()
+            next = entries.next()
           }
         }
       } finally {
@@ -269,6 +292,13 @@ const extractFields = (resourceKind: CacheKind, summary: ReturnType<typeof toSum
   }
 }
 
+const buildUpsert = (key: ControlPlaneCacheKey & { kind: CacheKind }, resource: ReturnType<typeof toSummary>) => ({
+  key,
+  resource,
+  fingerprint: buildResourceFingerprint(resource),
+  ...extractFields(key.kind, resource),
+})
+
 const listOnce = async (namespace: string, store: ControlPlaneCacheStore) => {
   const kube = createKubernetesClient()
   const cluster = resolveClusterId()
@@ -283,36 +313,13 @@ const listOnce = async (namespace: string, store: ControlPlaneCacheStore) => {
       if (resourceVersion) {
         resourceVersions.set(cacheResourceVersionKey(namespace, entry.resource), resourceVersion)
       }
-      for (const item of items) {
+      const projections = items.flatMap((item) => {
         const summary = toSummary(asRecord(item) ?? {})
-        const metadata = asRecord(summary.metadata) ?? {}
-        const name = asString(metadata.name)
-        const resourceNamespace = asString(metadata.namespace) ?? namespace
-        if (!name) continue
-        const fingerprint = buildResourceFingerprint(summary)
-        const fields = extractFields(entry.kind, summary)
-        await store.upsertResource({
-          key: { cluster: resolveClusterId(), kind: entry.kind, namespace: resourceNamespace, name },
-          uid: fields.uid,
-          apiVersion: fields.apiVersion,
-          resourceVersion: fields.resourceVersion,
-          generation: fields.generation,
-          labels: fields.labels,
-          annotations: fields.annotations,
-          resource: summary,
-          fingerprint,
-          resourceCreatedAt: fields.resourceCreatedAt,
-          resourceUpdatedAt: fields.resourceUpdatedAt,
-          statusPhase: fields.statusPhase,
-          specRuntimeType: fields.specRuntimeType,
-          specAgentRefName: fields.specAgentRefName,
-          specImplementationSpecRefName: fields.specImplementationSpecRefName,
-          specSourceProvider: fields.specSourceProvider,
-          specSourceExternalId: fields.specSourceExternalId,
-          specSummary: fields.specSummary,
-          specLabels: fields.specLabels,
-        })
-      }
+        const name = asString(summary.metadata.name)
+        const resourceNamespace = asString(summary.metadata.namespace) ?? namespace
+        return name ? [buildUpsert({ cluster, kind: entry.kind, namespace: resourceNamespace, name }, summary)] : []
+      })
+      if (projections.length) await store.upsertResources(projections, syncStartedAt)
 
       await store.markNotSeenSince({
         cluster,
@@ -361,29 +368,7 @@ const startNamespaceWatches = (
             return
           }
 
-          const fingerprint = buildResourceFingerprint(summary)
-          const fields = extractFields(entry.kind, summary)
-          writer.enqueueUpsert({
-            key,
-            uid: fields.uid,
-            apiVersion: fields.apiVersion,
-            resourceVersion: fields.resourceVersion,
-            generation: fields.generation,
-            labels: fields.labels,
-            annotations: fields.annotations,
-            resource: summary,
-            fingerprint,
-            resourceCreatedAt: fields.resourceCreatedAt,
-            resourceUpdatedAt: fields.resourceUpdatedAt,
-            statusPhase: fields.statusPhase,
-            specRuntimeType: fields.specRuntimeType,
-            specAgentRefName: fields.specAgentRefName,
-            specImplementationSpecRefName: fields.specImplementationSpecRefName,
-            specSourceProvider: fields.specSourceProvider,
-            specSourceExternalId: fields.specSourceExternalId,
-            specSummary: fields.specSummary,
-            specLabels: fields.specLabels,
-          })
+          writer.enqueueUpsert(buildUpsert(key, summary))
         },
         onError: (error) => {
           console.warn(`${getLogPrefix()} watch failed`, { kind: entry.kind, namespace, error })
