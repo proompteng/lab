@@ -39,9 +39,11 @@ import { sha256 } from './research-orb-zab-data'
 
 const evidence = 'docs/bayn/evidence/2026-11-27-10yr-intraday-voltarget-moc'
 const freezePath = evidence + '/freeze.json'
+const runnerPath = 'services/bayn/tools/research-10yr-intraday-voltarget-moc.ts'
+const transportPath = evidence + '/transport-erratum.json'
 const locked = [
   evidence + '/protocol.md',
-  'services/bayn/tools/research-10yr-intraday-voltarget-moc.ts',
+  runnerPath,
   'services/bayn/tools/noise-area-study-data.ts',
   'services/bayn/tools/noise-area-study-replay.ts',
   'services/bayn/tools/noise-area-study-statistics.ts',
@@ -641,10 +643,19 @@ enum Mode {
 }
 const decodeMode = Schema.decodeUnknownSync(Schema.Tuple([Schema.Enum(Mode)]))
 const decodeReceipt = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))
+const digest = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
 const envelope = Schema.decodeUnknownSync(
   Schema.Struct({
     schema: Schema.Literal(freezeVersion),
-    files: Schema.Record(Schema.String, Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))),
+    files: Schema.Record(Schema.String, digest),
+  }),
+)
+const decodeTransport = Schema.decodeUnknownSync(
+  Schema.Struct({
+    schema: Schema.Literal('bayn.research.wave-11b.transport-erratum.v1'),
+    freezeSha256: digest,
+    frozenRunnerSha256: digest,
+    correctedRunnerSha256: digest,
   }),
 )
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n'
@@ -655,6 +666,25 @@ export const verifyFileHashes = (receipt: unknown, files: Readonly<Record<string
   for (const [path, digest] of Object.entries(files)) {
     if (digest !== frozen[path]) throw new Error(`Freeze SHA-256 mismatch: ${path}`)
   }
+}
+// Only this runner's verified formatting transport may differ from the original receipt.
+export const verifyTransport = (
+  receipt: unknown,
+  files: Readonly<Record<string, string>>,
+  freezeSha256: string,
+  rawTransport: string,
+) => {
+  const erratum = decodeTransport(decodeReceipt(rawTransport))
+  if (
+    freezeSha256 !== erratum.freezeSha256 ||
+    files[runnerPath] !== erratum.correctedRunnerSha256 ||
+    erratum.frozenRunnerSha256 === erratum.correctedRunnerSha256
+  ) {
+    throw new Error('Transport erratum does not bind this freeze and corrected runner')
+  }
+  const frozenFiles = { ...files, [runnerPath]: erratum.frozenRunnerSha256 }
+  verifyFileHashes(receipt, frozenFiles)
+  return frozenFiles
 }
 export const openAfterFreeze = <A>(receipt: unknown, recomputed: unknown, open: () => Promise<A>) => {
   if (JSON.stringify(receipt) !== JSON.stringify(recomputed))
@@ -715,7 +745,17 @@ const program = Effect.gen(function* () {
     })
   const receipt =
     receiptBytes === null ? null : yield* verify(() => decodeReceipt(new TextDecoder().decode(receiptBytes)))
-  if (mode === Mode.Score) yield* verify(() => verifyFileHashes(receipt, files))
+  let frozenFiles = files
+  if (receiptBytes !== null) {
+    if (yield* fs.exists(transportPath)) {
+      const erratum = yield* verifiedBytes(transportPath)
+      frozenFiles = yield* verify(() =>
+        verifyTransport(receipt, files, sha256(receiptBytes), new TextDecoder().decode(erratum)),
+      )
+    } else {
+      yield* verify(() => verifyFileHashes(receipt, files))
+    }
+  }
   const result = yield* withArchive(async (archive) => {
     const rosters = await readIntradayRosters(archive)
     for (const roster of Object.values(rosters)) {
@@ -723,7 +763,7 @@ const program = Effect.gen(function* () {
         throw new Error('Frozen roster differs from preregistered ETF availability')
     }
     const development = await loadDevelopment(archive)
-    const freeze = makeFreeze(development, rosters, files)
+    const freeze = makeFreeze(development, rosters, frozenFiles)
     if (receiptBytes === null) return { path: freezePath, data: freeze }
     return openAfterFreeze(receipt, freeze, async () => {
       const holdout = await loadHoldout(archive)
@@ -736,7 +776,7 @@ const program = Effect.gen(function* () {
   })
   const encoded = json(result.data)
   const output = yield* commandOutput(
-    ChildProcess.make('bun', ['node_modules/oxfmt/bin/oxfmt', '--stdin-filepath', result.path], {
+    ChildProcess.make('node', ['node_modules/oxfmt/bin/oxfmt', '--stdin-filepath', result.path], {
       stdin: Stream.make(new TextEncoder().encode(encoded)),
       stderr: 'ignore',
     }),

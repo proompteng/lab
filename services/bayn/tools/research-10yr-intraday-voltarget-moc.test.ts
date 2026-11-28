@@ -11,6 +11,7 @@ import {
   select,
   targetScale,
   verifyFileHashes,
+  verifyTransport,
 } from './research-10yr-intraday-voltarget-moc'
 
 const bar = (open: number, close = open): Bar => ({
@@ -214,5 +215,27 @@ describe('Wave 11B research replay', () => {
     expect(() => openAfterFreeze(receipt, { ...receipt, selection: ['B'] }, open)).toThrow('Holdout unopened')
     expect(opened).toBe(0)
     expect(await openAfterFreeze(receipt, { ...receipt }, open)).toBe(1)
+  })
+
+  test('a committed transport erratum can bind only the exact runner and exact original freeze', () => {
+    const runner = 'services/bayn/tools/research-10yr-intraday-voltarget-moc.ts'
+    const freeze = 'a'.repeat(64)
+    const frozenRunner = 'b'.repeat(64)
+    const corrected = 'c'.repeat(64)
+    const files = { 'protocol.md': 'd'.repeat(64), [runner]: frozenRunner }
+    const receipt = { schema: 'bayn.research.wave-11b.freeze.v1', files }
+    const erratum = JSON.stringify({
+      schema: 'bayn.research.wave-11b.transport-erratum.v1',
+      freezeSha256: freeze,
+      frozenRunnerSha256: frozenRunner,
+      correctedRunnerSha256: corrected,
+    })
+    const installed = { ...files, [runner]: corrected }
+    expect(verifyTransport(receipt, installed, freeze, erratum)).toEqual(files)
+    expect(() => verifyTransport(receipt, installed, corrected, erratum)).toThrow('does not bind')
+    expect(() => verifyTransport(receipt, files, freeze, erratum)).toThrow('does not bind')
+    expect(() => verifyTransport(receipt, { ...installed, 'protocol.md': corrected }, freeze, erratum)).toThrow(
+      'Freeze SHA-256 mismatch: protocol.md',
+    )
   })
 })
