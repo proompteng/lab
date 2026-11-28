@@ -1,0 +1,129 @@
+{
+  "acronyms": [
+    {
+      "description": "Border Gateway Protocol, the routing protocol peers use to exchange reachability for network prefixes.",
+      "name": "BGP"
+    },
+    {
+      "description": "Container Network Interface, the plugin interface for configuring container network attachments. Galactic uses Flannel with the CNI network name cbr0.",
+      "name": "CNI"
+    },
+    {
+      "description": "The DNS server that resolves Kubernetes Service names and forwards other queries according to its configured zones.",
+      "name": "CoreDNS"
+    },
+    {
+      "description": "A Kubernetes resource that maps HTTP and HTTPS hosts and paths to Services. Its IngressClass selects the controller that implements the routes.",
+      "name": "Ingress"
+    },
+    {
+      "description": "IP Address Management, the allocation and release of IP addresses. Galactic's Flannel delegates pod address allocation to host-local IPAM, whose node-local lease files are under /var/lib/cni/networks/cbr0.",
+      "name": "IPAM"
+    },
+    {
+      "description": "The Kubernetes load balancer that assigns virtual IPs to LoadBalancer Services and advertises them to the network. Galactic configures Layer 2 advertisements.",
+      "name": "MetalLB"
+    },
+    {
+      "description": "Maximum Transmission Unit, the largest network-layer packet an interface can send without fragmentation. The pod interface MTU is distinct from the physical underlay MTU.",
+      "name": "MTU"
+    },
+    {
+      "description": "Network Address Translation, the rewriting of source or destination IP addresses and, where applicable, transport ports as packets cross a network boundary.",
+      "name": "NAT"
+    },
+    {
+      "description": "The Classless Inter-Domain Routing (CIDR) block assigned to a Kubernetes Node for pod IPs, recorded in spec.podCIDR for the primary address family. The block size is not the count of usable pod leases.",
+      "name": "PodCIDR"
+    },
+    {
+      "description": "A cluster-scoped Tailscale Operator resource that customizes proxy configuration such as pod placement, resources, and metrics. It does not consolidate standalone proxies.",
+      "name": "ProxyClass"
+    },
+    {
+      "description": "Server Name Indication, the TLS ClientHello extension that carries the requested hostname for certificate selection or routing of a passthrough TLS connection.",
+      "name": "SNI"
+    },
+    {
+      "description": "Virtual Extensible LAN, an overlay that encapsulates Ethernet frames in UDP. Galactic's Flannel uses VXLAN on UDP port 4789 for cross-node pod networking.",
+      "name": "VXLAN"
+    }
+  ],
+  "customAnalyses": [],
+  "dataSource": "network",
+  "rules": [
+    {
+      "description": "Check each node's assigned PodCIDR before raising maxPods. An IPv4 /23 has 512 total addresses before Flannel and IPAM reservations. A maxPods value of 500 is a kubelet ceiling; free leases or compute resources can run out first. Changing the controller mask does not resize an existing Node allocation.",
+      "name": "Budget pod slots against usable addresses",
+      "provenance": {
+        "sourceCommit": "5dcf15d87aeb60e3ae2f05d4c08513568733fd1a",
+        "verificationNote": "docs/runbooks/galactic-turin-podcidr-23-migration-plan.md distinguishes total addresses, kubelet limits, and assigned CIDRs; devices/galactic/omni/cluster-template.yaml sets the IPv4 allocation mask and kubelet caps."
+      },
+      "searchTerm": "PodCIDR"
+    },
+    {
+      "description": "In authorized IPAM recovery, prove each candidate cbr0 lease has no owner among nonterminal pods across all namespaces or live node runtime allocations. Hold an exclusive flock on /var/lib/cni/networks/cbr0/lock while rechecking the lease and deleting only the proven orphan. Never remove the lock or allocation directory. Align PodCIDR and maxPods to correct a capacity mismatch.",
+      "name": "Recover only proven orphan cbr0 leases",
+      "provenance": {
+        "sourceCommit": "5dcf15d87aeb60e3ae2f05d4c08513568733fd1a",
+        "verificationNote": "Phase 5 of docs/runbooks/galactic-storage-and-workload-recovery.md requires exact lease, pod, and runtime ownership checks and serializes deletion with the host-local allocator lock."
+      },
+      "searchTerm": "IPAM"
+    },
+    {
+      "description": "Keep Talos as owner of the Flannel DaemonSet and Argo CD as owner of the kube-flannel-cfg guard. Preserve the CNI delegate MTU of 1400 and VXLAN on UDP 4789 through upgrades. Verify MTU on a fresh pod on each node and exercise cross-node traffic; backend MTU and Node Ready are not pod-network proof.",
+      "name": "Preserve the Flannel pod MTU guard",
+      "provenance": {
+        "sourceCommit": "5dcf15d87aeb60e3ae2f05d4c08513568733fd1a",
+        "verificationNote": "argocd/applications/flannel-cni/kube-flannel-cfg.yaml pins the delegate MTU and backend port; devices/galactic/releases/README.md and devices/galactic/docs/troubleshooting-networking.md describe ownership and fresh-pod verification."
+      },
+      "searchTerm": "MTU"
+    },
+    {
+      "description": "Use Omni's cluster template for the Talos Tailscale extension and per-machine ExtensionServiceConfig, not direct application of retained Talos patches. Use the documented secret-safe render, validation, and dry-run before an authorized rollout. Verify node tailnet reachability and an approved private registry pull through the node runtime.",
+      "name": "Manage node Tailscale through Omni",
+      "provenance": {
+        "sourceCommit": "5dcf15d87aeb60e3ae2f05d4c08513568733fd1a",
+        "verificationNote": "devices/galactic/docs/tailscale.md identifies the Omni source and separates configuration completion from per-node runtime acceptance."
+      },
+      "searchTerm": "Tailscale"
+    },
+    {
+      "description": "Manage the Tailscale Operator and subnet-router Connector through Argo CD, separately from the Omni node extension. Keep advertised routes aligned with the actual pod and Service CIDRs. Verify routing from an authorized tailnet client and CoreDNS forwarding for ts.net separately; route advertisement is not authorization.",
+      "name": "Keep Operator Connector routes aligned",
+      "provenance": {
+        "sourceCommit": "5dcf15d87aeb60e3ae2f05d4c08513568733fd1a",
+        "verificationNote": "argocd/applications/tailscale/README.md documents Connector route ownership; base/connector-subnet-router.yaml and base/coredns-custom.yaml in that application declare the routes and DNS forwarding."
+      },
+      "searchTerm": "Connector"
+    },
+    {
+      "description": "Reuse the shared Traefik edge for ordinary HTTP(S) routes when it meets their access requirements. Do not add a standalone Tailscale Ingress for every service: each uses its own proxy pod and tailnet endpoint. Require an explicit tailnet-only access or identity need for a dedicated endpoint and verify application authorization independently.",
+      "name": "Prefer shared Traefik over standalone proxy sprawl",
+      "provenance": {
+        "sourceCommit": "5dcf15d87aeb60e3ae2f05d4c08513568733fd1a",
+        "verificationNote": "argocd/applications/traefik/values.yaml declares the shared default class; docs/runbooks/buzz-production.md documents a separate tailnet admin endpoint, and the linked Tailscale Operator ingress guide describes the cost of standalone ingress."
+      },
+      "searchTerm": "Ingress"
+    },
+    {
+      "description": "Keep Knative's configured external and cluster-local Istio gateways distinct from the default Traefik edge. The external HTTPS listener passes TLS through. Test the intended hostname with SNI, verify its certificate and backend response, and exercise the cluster-local route from inside the cluster.",
+      "name": "Preserve Knative Istio gateway boundaries",
+      "provenance": {
+        "sourceCommit": "5dcf15d87aeb60e3ae2f05d4c08513568733fd1a",
+        "verificationNote": "argocd/applications/knative-serving/knative-serving.yaml selects net-istio and names both gateways; argocd/applications/istio-ingress/external-gateway.yaml configures TLS PASSTHROUGH."
+      },
+      "searchTerm": "Istio"
+    },
+    {
+      "description": "A Service EXTERNAL-IP is an allocation, not proof that a MetalLB speaker advertises it. For an unreachable Galactic IPv4 VIP, verify the configured Layer 2 advertisement and an eligible speaker, check the ARP reply from the intended LAN, and then send a request through the Service.",
+      "name": "Verify MetalLB advertisement separately from allocation",
+      "provenance": {
+        "sourceCommit": "5dcf15d87aeb60e3ae2f05d4c08513568733fd1a",
+        "verificationNote": "argocd/applications/metallb-system/l2advertisement.yaml defines the advertised pools; devices/galactic/docs/troubleshooting-networking.md distinguishes an allocated VIP from Layer 2 reachability."
+      },
+      "searchTerm": "MetalLB"
+    }
+  ],
+  "version": 1
+}
