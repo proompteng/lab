@@ -1,6 +1,6 @@
-import type { MutationEvidence } from '../../broker/alpaca-mutations'
+import type { MutationEvidence } from '../../broker/alpaca-mutations/model'
 import type { TerminalOutcome } from '../../execution/contracts'
-import type { MutationEvent } from '../../execution/mutations'
+import type { MutationEvent } from '../../execution/mutations/model'
 
 export type RecoverySelection =
   | { readonly _tag: 'RecoveryComplete'; readonly event: MutationEvent }

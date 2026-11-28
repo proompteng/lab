@@ -13,17 +13,16 @@
     "tsc": "bunx tsc --noEmit"
   },
   "dependencies": {
-    "@effect/schema": "^0.75.5",
     "@proompteng/codex": "workspace:*",
     "@proompteng/otel": "workspace:*",
-    "effect": "^3.21.2",
+    "effect": "4.1.4",
     "handlebars": "^4.7.9",
     "yaml": "^2.8.4"
   },
   "devDependencies": {
-    "@types/bun": "1.4.0",
+    "@types/bun": "1.4.2",
     "@types/node": "^25.6.0",
     "typescript": "^7.0.2"
   },
-  "packageManager": "bun@1.4.0"
+  "packageManager": "bun@1.4.2"
 }

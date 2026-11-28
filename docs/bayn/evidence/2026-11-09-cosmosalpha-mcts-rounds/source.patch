@@ -1,0 +1,14 @@
+--- a/src/cosmosalpha/pipeline/mcts/controller.py
++++ b/src/cosmosalpha/pipeline/mcts/controller.py
+@@ -506,10 +506,9 @@
+             len(tree.all_nodes),
+             remaining_budget,
+         )
+-        actual_iterations = iteration  # 捕获循环终止时的实际值
+         return MCTSResult(
+             tree=tree,
+-            iterations=actual_iterations,
++            iterations=completed_rounds,
+             best_rank_ic=(
+                 tree.root.best_reward if tree.root.best_reward > float("-inf") else None
+             ),

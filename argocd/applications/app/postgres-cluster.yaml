@@ -5,6 +5,10 @@ metadata:
   namespace: app
 spec:
   instances: 1
+  postgresql:
+    parameters:
+      wal_buffers: 16MB
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
   primaryUpdateStrategy: unsupervised
   storage:
     storageClass: rook-ceph-block
@@ -15,6 +19,10 @@ spec:
       owner: app
       encoding: "UTF8"
       dataChecksums: true
+  backup:
+    volumeSnapshot:
+      className: rook-ceph-block
+      snapshotOwnerReference: backup
   inheritedMetadata:
     annotations:
       reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
@@ -24,4 +32,18 @@ spec:
   monitoring:
     enablePodMonitor: true
 # CNPG will emit application credentials in the secret `app-db-app`
-
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: app-db-pre-18-7
+  namespace: app
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: app-db
+  method: volumeSnapshot
+  online: true
+  target: prefer-standby

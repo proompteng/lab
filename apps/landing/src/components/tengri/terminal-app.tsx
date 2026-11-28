@@ -1,19 +1,22 @@
 'use client'
 
+import { reportBrowserFailure } from '@/lib/observability/client'
+
 import '@xterm/xterm/css/xterm.css'
 
 import type { SearchAddon } from '@xterm/addon-search'
-import type { Terminal } from '@xterm/xterm'
+import type { ITerminalAddon, Terminal } from '@xterm/xterm'
 import { AlertTriangle, ChevronDown, ChevronUp, LoaderCircle, RotateCw, Search, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import type { TengriTerminalSession, TengriTerminalTicket } from '@/lib/tengri/types'
+import { TENGRI_UNARY_TIMEOUT_MS } from '@/lib/tengri/limits'
 
 import { runTengriAction } from './client'
+import styles from './terminal-app.module.css'
 import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
-  parseLegacyTerminalResumeState,
   parseTerminalCleanupState,
   parseTerminalControlFrame,
   parseTerminalOutputFrame,
@@ -21,7 +24,6 @@ import {
   safelyDisposeTerminal,
   settleTerminalCreation,
   terminalCreationId,
-  terminalCreationScope,
   terminalHeartbeatAction,
   terminalPlainText,
   terminalReconciliationCandidate,
@@ -38,6 +40,7 @@ type ConnectionState = {
 }
 
 const encoder = new TextEncoder()
+const TERMINAL_BACKGROUND = '#1e1e1e'
 const claimedTerminalSessionIds = new Set<string>()
 
 export function TerminalApp({
@@ -57,16 +60,14 @@ export function TerminalApp({
   const reconnectNowRef = useRef<() => void>(() => undefined)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const creationId = terminalCreationId(agentId, desktopId, windowId)
-  const creationScope = terminalCreationScope(agentId, desktopId)
   const storageKey = `tengri:terminal:${agentId}:${desktopId}:${windowId}`
-  const legacyStorageKey = `tengri:terminal:${agentId}:${windowId}`
   const cleanupStorageKey = `tengri:terminal-cleanup:${agentId}`
   const [connection, setConnection] = useState<ConnectionState>({
     phase: 'initializing',
     message: 'Starting Terminal…',
     action: null,
   })
-  const [renderer, setRenderer] = useState<'canvas' | 'dom' | 'loading'>('loading')
+  const [renderer, setRenderer] = useState<'webgl' | 'dom' | 'loading'>('loading')
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchValue, setSearchValue] = useState('')
   const [run, setRun] = useState(0)
@@ -101,10 +102,14 @@ export function TerminalApp({
     let resumeChecked = false
     let claimedSessionId: string | null = null
     let creationPromise: Promise<TengriTerminalSession> | null = null
-    let releaseLegacyMigration: () => void = () => {}
     const controller = new AbortController()
     const disposables: Array<{ dispose(): void }> = []
-    const requestSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])
+    const terminalAddons: ITerminalAddon[] = []
+    const requestSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS)])
+    const setInputEnabled = (enabled: boolean) => {
+      const terminal = terminalRef.current
+      if (terminal) terminal.options.disableStdin = !enabled
+    }
 
     const updateConnection = (next: ConnectionState) => {
       if (!disposed) setConnection(next)
@@ -118,56 +123,6 @@ export function TerminalApp({
       } catch {
         return null
       }
-    }
-
-    const migrateLegacyResumeState = async (): Promise<TerminalResumeState | null> => {
-      let legacy: TerminalResumeState | null = null
-      try {
-        legacy = parseLegacyTerminalResumeState(sessionStorage.getItem(legacyStorageKey), agentId, desktopId)
-      } catch {
-        return null
-      }
-      if (!legacy) return null
-
-      const persistMigration = () => {
-        try {
-          sessionStorage.setItem(storageKey, JSON.stringify(legacy))
-          sessionStorage.removeItem(legacyStorageKey)
-        } catch {
-          // The validated in-memory state can still reconnect this document.
-        }
-        return legacy
-      }
-      if (!navigator.locks) return persistMigration()
-
-      return await new Promise<TerminalResumeState | null>((resolve) => {
-        let settled = false
-        const settle = (state: TerminalResumeState | null) => {
-          if (settled) return
-          settled = true
-          resolve(state)
-        }
-        let release: () => void = () => {}
-        const released = new Promise<void>((releaseLock) => {
-          release = releaseLock
-        })
-        void navigator.locks
-          .request(`tengri-terminal-migration:${agentId}:${legacy.sessionId}`, { ifAvailable: true }, async (lock) => {
-            if (!lock || disposed) {
-              try {
-                sessionStorage.removeItem(legacyStorageKey)
-              } catch {
-                // The duplicate tab cannot claim the legacy session without the migration lock.
-              }
-              settle(null)
-              return
-            }
-            releaseLegacyMigration = release
-            settle(persistMigration())
-            await released
-          })
-          .catch(() => settle(persistMigration()))
-      })
     }
 
     const pendingCleanupIds = (): string[] => {
@@ -326,7 +281,7 @@ export function TerminalApp({
         cleanupChecked = true
       }
       if (!resumeChecked) {
-        const stored = resumeState() ?? (await migrateLegacyResumeState())
+        const stored = resumeState()
         if (stored) {
           const sessions = await runTengriAction<TengriTerminalSession[]>(
             { action: 'list-terminals', agentId },
@@ -351,12 +306,7 @@ export function TerminalApp({
           { action: 'list-terminals', agentId },
           requestSignal(),
         )
-        const candidate = terminalReconciliationCandidate(
-          sessions,
-          creationId,
-          creationScope,
-          claimedTerminalSessionIds,
-        )
+        const candidate = terminalReconciliationCandidate(sessions, creationId, claimedTerminalSessionIds)
         if (candidate && claimSession(candidate)) {
           session = candidate
           reconnectToken = ''
@@ -371,11 +321,11 @@ export function TerminalApp({
             agentId,
             creationId,
             // Nanoagent confines `/` to the guest's physical `/workspace`; callers never address the guest rootfs.
-            cwd: '/',
+            cwd: '/workspace',
             columns,
             rows,
           },
-          { signal: AbortSignal.timeout(130_000) },
+          { signal: AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS) },
         )
         creationPromise = pending
         try {
@@ -410,7 +360,7 @@ export function TerminalApp({
         )
         const existing = current
           ? sessions.find((candidate) => candidate.id === current.id)
-          : terminalReconciliationCandidate(sessions, creationId, creationScope, claimedTerminalSessionIds)
+          : terminalReconciliationCandidate(sessions, creationId, claimedTerminalSessionIds)
         if (existing) {
           if (!claimSession(existing)) return
           session = existing
@@ -433,7 +383,7 @@ export function TerminalApp({
       try {
         const sessions = await runTengriAction<TengriTerminalSession[]>(
           { action: 'list-terminals', agentId },
-          AbortSignal.timeout(30_000),
+          AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS),
         )
         const created = sessions.find((candidate) => candidate.creationId === creationId)
         if (!created) return
@@ -446,7 +396,9 @@ export function TerminalApp({
     }
 
     function scheduleReconnect(reason = '') {
-      if (disposed || terminalEnded || reconnectTimer !== null) return
+      if (disposed) return
+      setInputEnabled(false)
+      if (terminalEnded || reconnectTimer !== null) return
       reconnectAttempt += 1
       updateConnection({
         phase: 'reconnecting',
@@ -460,7 +412,10 @@ export function TerminalApp({
     }
 
     function reconnectNow() {
-      if (disposed || terminalEnded) return
+      if (disposed) return
+      setInputEnabled(false)
+      if (terminalEnded) return
+      updateConnection({ phase: 'reconnecting', message: 'Reconnecting Terminal…', action: 'reconnect' })
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       reconnectTimer = null
       if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
@@ -476,6 +431,7 @@ export function TerminalApp({
       const terminal = terminalRef.current
       if (disposed || terminalEnded || connecting || !terminal) return
       if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return
+      setInputEnabled(false)
       connecting = true
       updateConnection({
         phase: reconnectAttempt ? 'reconnecting' : 'connecting',
@@ -514,10 +470,12 @@ export function TerminalApp({
         nextSocket.addEventListener('open', () => {
           if (disposed || socket !== nextSocket) return
           if (nextSocket.protocol !== protocol) {
+            setInputEnabled(false)
             nextSocket.close(1_002, 'Terminal ticket protocol was not acknowledged')
             return
           }
           sendResize()
+          setInputEnabled(true)
           startHeartbeat(nextSocket)
         })
         nextSocket.addEventListener('message', (event) => {
@@ -540,11 +498,13 @@ export function TerminalApp({
             } else if (control.type === 'pong') {
               markAlive()
             } else if (control.type === 'error') {
+              reportBrowserFailure('terminal.control')
               const message = control.message || 'Terminal reported an error'
               updateConnection({ phase: 'error', message, action: 'reconnect' })
               terminal.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`)
             } else if (control.type === 'exit') {
               terminalEnded = true
+              setInputEnabled(false)
               const current = session
               session = null
               if (current) clearPendingCleanup(current.id)
@@ -569,17 +529,21 @@ export function TerminalApp({
         })
         nextSocket.addEventListener('close', () => {
           if (socket !== nextSocket) return
+          setInputEnabled(false)
           socket = null
           stopHeartbeat()
           if (!disposed && !terminalEnded) scheduleReconnect()
         })
         nextSocket.addEventListener('error', () => {
           if (disposed || socket !== nextSocket) return
+          setInputEnabled(false)
+          reportBrowserFailure('terminal.websocket')
           updateConnection({ phase: 'error', message: 'Terminal connection failed', action: 'reconnect' })
           nextSocket.close()
         })
       } catch (cause) {
         if (disposed || controller.signal.aborted) return
+        setInputEnabled(false)
         await reconcileSession()
         const message = terminalPlainText(cause instanceof Error ? cause.message : '') || 'Terminal could not connect'
         updateConnection({ phase: 'error', message, action: 'reconnect' })
@@ -598,19 +562,24 @@ export function TerminalApp({
         import('@xterm/addon-unicode11'),
       ])
       if (disposed || !hostRef.current) return
+      const fontFamily = getComputedStyle(hostRef.current).getPropertyValue('--font-terminal').trim()
+      const fontsReady = document.fonts.load(`13px ${fontFamily}`, 'M\ue5ff\uf115\u{f031e}').catch((cause) => {
+        console.warn('[tengri-terminal] terminal font unavailable; using monospace fallback', cause)
+      })
       const terminal = new xterm.Terminal({
         allowProposedApi: true,
+        disableStdin: true,
         cursorBlink: true,
         cursorInactiveStyle: 'outline',
-        cursorStyle: 'bar',
-        fontFamily: 'JetBrains Mono, SFMono-Regular, Menlo, monospace',
+        cursorStyle: 'block',
+        fontFamily,
         fontSize: 13,
         letterSpacing: 0,
-        lineHeight: 1.2,
+        lineHeight: 18 / 13,
         rightClickSelectsWord: true,
         scrollback: 10_000,
         theme: {
-          background: '#0a0c10',
+          background: TERMINAL_BACKGROUND,
           foreground: '#d9e0ee',
           cursor: '#9ccfd8',
           selectionBackground: '#3e4c76aa',
@@ -625,64 +594,79 @@ export function TerminalApp({
         },
       })
       terminalRef.current = terminal
+      const loadAddon = (addon: ITerminalAddon) => {
+        terminalAddons.push(addon)
+        terminal.loadAddon(addon)
+      }
       const fitAddon = new fitModule.FitAddon()
       const searchAddon = new search.SearchAddon()
       searchAddonRef.current = searchAddon
-      terminal.loadAddon(fitAddon)
-      terminal.loadAddon(searchAddon)
+      loadAddon(fitAddon)
+      loadAddon(searchAddon)
       const unicodeAddon = new unicode.Unicode11Addon()
-      terminal.loadAddon(unicodeAddon)
+      loadAddon(unicodeAddon)
       terminal.unicode.activeVersion = '11'
       terminal.open(hostRef.current)
 
-      const [canvasModule, clipboardModule, imageModule, webLinksModule] = await Promise.allSettled([
-        import('@xterm/addon-canvas'),
-        import('@xterm/addon-clipboard'),
-        import('@xterm/addon-image'),
-        import('@xterm/addon-web-links'),
-      ])
-      if (disposed) return
-      if (canvasModule.status === 'fulfilled') {
-        try {
-          terminal.loadAddon(new canvasModule.value.CanvasAddon())
-          setRenderer('canvas')
-        } catch (cause) {
-          console.warn('[tengri-terminal] canvas renderer unavailable; using DOM fallback', cause)
+      void (async () => {
+        const [webglModule, clipboardModule, imageModule, webLinksModule] = await Promise.allSettled([
+          import('@xterm/addon-webgl'),
+          import('@xterm/addon-clipboard'),
+          import('@xterm/addon-image'),
+          import('@xterm/addon-web-links'),
+        ])
+        if (disposed) return
+        if (webglModule.status === 'fulfilled') {
+          try {
+            const webgl = new webglModule.value.WebglAddon()
+            disposables.push(
+              webgl.onContextLoss(() => {
+                webgl.dispose()
+                setRenderer('dom')
+              }),
+            )
+            loadAddon(webgl)
+            setRenderer('webgl')
+          } catch (cause) {
+            console.warn('[tengri-terminal] WebGL renderer unavailable; using DOM fallback', cause)
+            setRenderer('dom')
+          }
+        } else {
+          console.warn('[tengri-terminal] WebGL renderer unavailable; using DOM fallback', webglModule.reason)
           setRenderer('dom')
         }
-      } else {
-        console.warn('[tengri-terminal] canvas renderer unavailable; using DOM fallback', canvasModule.reason)
-        setRenderer('dom')
-      }
-      if (clipboardModule.status === 'fulfilled') {
-        try {
-          terminal.loadAddon(new clipboardModule.value.ClipboardAddon())
-        } catch (cause) {
-          console.warn('[tengri-terminal] clipboard addon unavailable', cause)
+        if (clipboardModule.status === 'fulfilled') {
+          try {
+            loadAddon(new clipboardModule.value.ClipboardAddon())
+          } catch (cause) {
+            console.warn('[tengri-terminal] clipboard addon unavailable', cause)
+          }
+        } else {
+          console.warn('[tengri-terminal] clipboard addon unavailable', clipboardModule.reason)
         }
-      } else {
-        console.warn('[tengri-terminal] clipboard addon unavailable', clipboardModule.reason)
-      }
-      if (imageModule.status === 'fulfilled') {
-        try {
-          terminal.loadAddon(new imageModule.value.ImageAddon())
-        } catch (cause) {
-          console.warn('[tengri-terminal] image addon unavailable', cause)
+        if (imageModule.status === 'fulfilled') {
+          try {
+            loadAddon(new imageModule.value.ImageAddon())
+          } catch (cause) {
+            console.warn('[tengri-terminal] image addon unavailable', cause)
+          }
+        } else {
+          console.warn('[tengri-terminal] image addon unavailable', imageModule.reason)
         }
-      } else {
-        console.warn('[tengri-terminal] image addon unavailable', imageModule.reason)
-      }
-      if (webLinksModule.status === 'fulfilled') {
-        try {
-          terminal.loadAddon(
-            new webLinksModule.value.WebLinksAddon((_event, uri) => window.open(uri, '_blank', 'noopener,noreferrer')),
-          )
-        } catch (cause) {
-          console.warn('[tengri-terminal] web links addon unavailable', cause)
+        if (webLinksModule.status === 'fulfilled') {
+          try {
+            loadAddon(
+              new webLinksModule.value.WebLinksAddon((_event, uri) =>
+                window.open(uri, '_blank', 'noopener,noreferrer'),
+              ),
+            )
+          } catch (cause) {
+            console.warn('[tengri-terminal] web links addon unavailable', cause)
+          }
+        } else {
+          console.warn('[tengri-terminal] web links addon unavailable', webLinksModule.reason)
         }
-      } else {
-        console.warn('[tengri-terminal] web links addon unavailable', webLinksModule.reason)
-      }
+      })()
 
       const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
       terminal.attachCustomKeyEventHandler((event) => {
@@ -712,16 +696,24 @@ export function TerminalApp({
       const host = hostRef.current
       host.addEventListener('pointerdown', focusTerminal)
       host.addEventListener('focus', focusTerminal)
+      if (host.contains(document.activeElement)) focusTerminal()
       disposables.push(
         { dispose: () => host.removeEventListener('pointerdown', focusTerminal) },
         { dispose: () => host.removeEventListener('focus', focusTerminal) },
         terminal.onData((data) => {
-          if (socket?.readyState === WebSocket.OPEN) socket.send(encoder.encode(data))
+          if (terminal.options.disableStdin || socket?.readyState !== WebSocket.OPEN) return
+          socket?.send(encoder.encode(data))
         }),
         terminal.onResize(sendResize),
       )
 
       fit(fitAddon)
+      void fontsReady.then(() => {
+        if (disposed) return
+        terminal.clearTextureAtlas()
+        fit(fitAddon)
+        terminal.refresh(0, terminal.rows - 1)
+      })
       resizeObserver = new ResizeObserver(() => {
         if (resizeFrame !== null) return
         resizeFrame = requestAnimationFrame(() => {
@@ -730,18 +722,13 @@ export function TerminalApp({
         })
       })
       resizeObserver.observe(host)
-      if ('fonts' in document) {
-        void document.fonts
-          .load('13px "JetBrains Mono"')
-          .then(() => !disposed && fit(fitAddon))
-          .catch(() => undefined)
-      }
       await connect()
     }
 
     const handleOnline = () => reconnectNow()
     const unregisterCloseHandler = registerCloseHandler(windowId, () => {
       closeRequested = true
+      setInputEnabled(false)
       const current = session
       if (current) {
         recordPendingCleanup(current.id)
@@ -769,12 +756,13 @@ export function TerminalApp({
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
       if (persistFrame !== null) cancelAnimationFrame(persistFrame)
       resizeObserver?.disconnect()
+      setInputEnabled(false)
       socket?.close(1_000, closeRequested ? 'Terminal window closed' : 'Terminal view disconnected')
       for (const disposable of disposables) disposable.dispose()
       searchAddonRef.current = null
       const terminal = terminalRef.current
       terminalRef.current = null
-      safelyDisposeTerminal(terminal)
+      safelyDisposeTerminal(terminal, terminalAddons)
       const current = session
       if (current && !terminalEnded && !closeRequested) {
         storeSession(current, false)
@@ -782,20 +770,8 @@ export function TerminalApp({
         void cleanupCreatedTerminal()
       }
       releaseSessionClaim()
-      releaseLegacyMigration()
     }
-  }, [
-    agentId,
-    cleanupStorageKey,
-    creationId,
-    creationScope,
-    desktopId,
-    legacyStorageKey,
-    registerCloseHandler,
-    run,
-    storageKey,
-    windowId,
-  ])
+  }, [agentId, cleanupStorageKey, creationId, desktopId, registerCloseHandler, run, storageKey, windowId])
 
   function find(direction: 'next' | 'previous') {
     const value = searchValue.trim()
@@ -806,10 +782,15 @@ export function TerminalApp({
 
   const busy = ['connecting', 'initializing', 'reconnecting'].includes(connection.phase)
   return (
-    <div className="relative h-full bg-[#0a0c10] p-2" data-shortcuts="native">
+    <div
+      className={`relative h-full p-3 ${styles.terminal}`}
+      style={{ backgroundColor: TERMINAL_BACKGROUND }}
+      data-shortcuts="native"
+    >
       <div
         ref={hostRef}
-        className="h-full w-full outline-none [&_.xterm]:h-full [&_.xterm]:p-[0.3rem] [&_.xterm-viewport]:[scrollbar-color:rgb(255_255_255/0.2)_transparent]"
+        data-window-default-focus
+        className="h-full w-full bg-inherit outline-none"
         aria-label="Interactive Tengri terminal"
         data-renderer={renderer}
         role="application"
@@ -817,7 +798,12 @@ export function TerminalApp({
       />
 
       <div
-        className="absolute top-2 right-3 flex max-w-[min(70%,28rem)] items-center gap-1.5 rounded-full border border-white/7 bg-black/55 px-2 py-1 text-[10px] text-white/58 shadow-lg backdrop-blur-md"
+        className={
+          connection.phase === 'connected'
+            ? 'sr-only'
+            : 'absolute top-2 right-3 flex max-w-[min(70%,28rem)] items-center gap-1.5 rounded-full border border-white/7 bg-black/55 px-2 py-1 text-[10px] text-white/58 shadow-lg backdrop-blur-md'
+        }
+        data-connection-state={connection.phase}
         role="status"
         aria-live="polite"
       >

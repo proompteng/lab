@@ -1,19 +1,14 @@
 # Saigak To Flamingo GPU Pod Migration
 
 This runbook records the hard migration where completion traffic moves to the
-`flamingo` Kubernetes GPU pod and `saigak` becomes embeddings-only on the RTX
-3090.
+`flamingo` Kubernetes GPU pod and `saigak` serves embeddings.
 
 ## Current Roles
 
 `saigak` is a Kubernetes `StatefulSet` serving Ollama through an embeddings-only
-proxy on port `11434`; it must not expose chat completion endpoints. Its current
-active PVC is `saigak-altra-data`, a local-path cache that binds on first
-consumer to the ARM64 Altra node (`talos-192-168-1-85`) so the old Turin-bound
-`saigak-data` cache cannot pin the pod away from the RTX 3090. The pod must use
-`runtimeClassName: nvidia`, request and limit `nvidia.com/gpu: "1"`, and keep
-`SAIGAK_REQUIRE_GPU_RESIDENCY=true` so readiness fails unless the 4096-dimensional
-embedding model is resident in GPU VRAM.
+proxy on port `11434`. It requests one `amd.com/gpu` on Ryzen
+(`talos-192-168-1-194`) and stores the model in its local `saigak-ryzen-data`
+claim. Readiness requires the model to be resident in GPU memory.
 
 `flamingo` is a normal Kubernetes Deployment pinned to Turin's Blackwell GPU. It
 serves a vLLM OpenAI-compatible API on:
@@ -26,12 +21,12 @@ http://flamingo.ide-newton.ts.net/v1
 The served completion model name is:
 
 ```text
-qwen36-flamingo
+qwen38-flamingo
 ```
 
 ## Embedding Contract
 
-Keep embedding traffic on `saigak` with the existing 4096-dimensional model:
+Saigak defaults OpenAI requests to 2,048 dimensions. Consumers with 4,096-dimensional indexes request their width explicitly.
 
 ```text
 OPENAI_EMBEDDING_API_BASE_URL=http://saigak.saigak.svc.cluster.local:11434/v1
@@ -60,8 +55,8 @@ Configure the harness to use the OpenAI-compatible endpoint:
 ```text
 OPENAI_API_BASE_URL=http://flamingo.ide-newton.ts.net/v1
 OPENAI_BASE_URL=http://flamingo.ide-newton.ts.net/v1
-OPENAI_COMPLETION_MODEL=qwen36-flamingo
-OPENAI_MODEL=qwen36-flamingo
+OPENAI_COMPLETION_MODEL=qwen38-flamingo
+OPENAI_MODEL=qwen38-flamingo
 OPENAI_API_KEY=flamingo-local
 ```
 
@@ -73,7 +68,7 @@ Smoke:
 curl -fsS http://flamingo.ide-newton.ts.net/v1/models
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen36-flamingo","messages":[{"role":"user","content":"Return only ready."}],"max_tokens":8,"temperature":0}'
+  -d '{"model":"qwen38-flamingo","messages":[{"role":"user","content":"Return only ready."}],"max_tokens":8,"temperature":0}'
 ```
 
 ## In-Cluster Consumers
@@ -82,7 +77,7 @@ Use the ClusterIP URL:
 
 ```text
 OPENAI_API_BASE_URL=http://flamingo.flamingo.svc.cluster.local/v1
-OPENAI_COMPLETION_MODEL=qwen36-flamingo
+OPENAI_COMPLETION_MODEL=qwen38-flamingo
 ```
 
 Keep embedding variables pointed at `saigak`.
@@ -99,7 +94,7 @@ Flamingo first and the Jangar gateway second as a separate hosted-model path:
 ```text
 OPENAI_API_BASE_URLS=http://flamingo.flamingo.svc.cluster.local/v1;http://jangar.jangar.svc.cluster.local/openai/v1
 OPENAI_API_KEYS=;
-DEFAULT_MODELS=qwen36-flamingo
+DEFAULT_MODELS=qwen38-flamingo
 ENABLE_OLLAMA_API=false
 ```
 
@@ -114,7 +109,7 @@ kubectl -n jangar exec open-webui-0 -- printenv OPENAI_API_BASE_URLS DEFAULT_MOD
 ## Failure Handling
 
 This is a hard completion migration. Do not restore old Flamingo model aliases
-as normal desired state. If the Qwen3.6 endpoint fails:
+as normal desired state. If the Qwen3.8 endpoint fails:
 
 - fix the vLLM serving profile,
 - reduce concurrency before reducing context,
@@ -139,7 +134,7 @@ For Kubernetes consumers:
 
 ```bash
 kubectl -n <namespace> rollout status deploy/<deployment> --timeout=10m
-kubectl -n <namespace> logs deploy/<deployment> --tail=200 | rg -i 'flamingo|qwen36|error|tool'
+kubectl -n <namespace> logs deploy/<deployment> --tail=200 | rg -i 'flamingo|qwen38|error|tool'
 ```
 
 For host-side consumers:
@@ -155,7 +150,7 @@ Do not treat completion migration as complete until all of these are true:
 - No completion consumer depends on Saigak's Ollama model store.
 - OpenWebUI, Jangar, Bumba, Agents, Torghut, and Synthesis configs have been audited.
 - Saigak rejects `/v1/chat/completions` and `/api/generate`.
-- Saigak `/v1/embeddings` returns 4096 dimensions, and `/api/ps` shows the
-  embedding model with non-zero `size_vram` on the Altra RTX 3090. CPU-only
+- Saigak `/v1/embeddings` returns 2,048 dimensions by default and 4,096 when requested. `/api/ps` shows the
+  embedding model with non-zero `size_vram` on the Ryzen Radeon 8060S. CPU-only
   residency is not an acceptable steady state.
 - A stability window has passed with Flamingo stable under normal agent load.

@@ -1,17 +1,18 @@
+import { validIntradayPerformanceVolumeEvidence } from './intraday-volume'
+import { verifyForwardNativeProtection } from './native-protection'
 import { DateTime, Option, Result } from 'effect'
 
-import { alpacaBuyNotionalMicros } from '../broker/alpaca-mutations'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type {
   ForwardPerformanceEvidenceInput,
   ForwardPerformanceExecutionEvidence,
   ForwardPerformanceExecutionQualityReasonCode,
+  ForwardPerformanceMarketVolumeEvidence,
   ForwardPerformanceObservedCapacityReasonCode,
   ForwardPerformanceReceiptMaterial,
   ForwardPerformanceTransactionEvidence,
 } from './model'
 
-const MICROS = 1_000_000n
 const SIGNED_MICROS_MIN = -(1n << 127n)
 const SIGNED_MICROS_MAX = (1n << 127n) - 1n
 const RATIO_DECIMAL_PLACES = 12
@@ -23,9 +24,53 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/
 type ExecutionQuality = ForwardPerformanceReceiptMaterial['executionQuality']
 type ObservedCapacity = ForwardPerformanceReceiptMaterial['observedCapacity']
 
+export enum ExecutionDiagnosticEvaluation {
+  NotEvaluated = 'NOT_EVALUATED',
+  NoExecutionEvidence = 'NO_EXECUTION_EVIDENCE',
+  Evaluated = 'EVALUATED',
+}
+
+const newExecutionDiagnostics = (): {
+  schemaVersion: 'bayn.forward-performance-execution-diagnostics.v1'
+  evaluation: ExecutionDiagnosticEvaluation
+  inputExecutionCount: number
+  inputTransactionCount: number | null
+  evaluatedFillCount: number | null
+  reasonOccurrences: Record<
+    Exclude<ForwardPerformanceExecutionQualityReasonCode, 'PROTECTIVE_REFERENCE_PRICE_EVIDENCE_GAP'>,
+    number
+  > &
+    Partial<Record<'PROTECTIVE_REFERENCE_PRICE_EVIDENCE_GAP', number>>
+} => ({
+  schemaVersion: 'bayn.forward-performance-execution-diagnostics.v1',
+  evaluation: ExecutionDiagnosticEvaluation.NotEvaluated,
+  inputExecutionCount: 0,
+  inputTransactionCount: null,
+  evaluatedFillCount: null,
+  reasonOccurrences: {
+    ACCOUNT_LEDGER_RECONCILIATION_GAP: 0,
+    ACCOUNTING_FILL_BINDING_GAP: 0,
+    DUPLICATE_EXECUTION_EVIDENCE: 0,
+    EXPLICIT_COST_EVIDENCE_GAP: 0,
+    FILL_EVIDENCE_GAP: 0,
+    FILL_IDENTITY_DRIFT: 0,
+    FILL_QUANTITY_MISMATCH: 0,
+    FILL_TIMESTAMP_GAP: 0,
+    INVALID_EXECUTION_MICROS: 0,
+    PLANNED_DECISION_EVIDENCE_GAP: 0,
+    REFERENCE_PRICE_EVIDENCE_GAP: 0,
+    TERMINAL_ORDER_EVIDENCE_GAP: 0,
+    TERMINAL_PRICE_EVIDENCE_GAP: 0,
+    ZERO_COMPLETED_EXECUTIONS: 0,
+  },
+})
+
+export type ForwardPerformanceExecutionDiagnostics = Readonly<ReturnType<typeof newExecutionDiagnostics>>
+
 export interface ForwardPerformanceExecutionMeasurements {
   readonly executionQuality: ExecutionQuality
   readonly observedCapacity: ObservedCapacity
+  readonly diagnostics: ForwardPerformanceExecutionDiagnostics
 }
 
 interface ExecutionContribution {
@@ -53,8 +98,8 @@ const checkedAdd = (left: bigint, right: bigint): bigint | undefined => {
   return inSignedRange(value) ? value : undefined
 }
 
-const roundHalfUp = (quantity: bigint, price: bigint): bigint | undefined => {
-  const value = (quantity * price + MICROS / 2n) / MICROS
+const roundHalfUp = (quantity: bigint, price: bigint, denominator = 1_000_000_000n): bigint | undefined => {
+  const value = (quantity * price + denominator / 2n) / denominator
   return inSignedRange(value) ? value : undefined
 }
 
@@ -96,6 +141,17 @@ const fillSortKey = (fill: ForwardPerformanceExecutionEvidence['fills'][number])
 const volumeSortKey = (volume: NonNullable<ForwardPerformanceEvidenceInput['marketVolumeEvidence']>[number]): string =>
   JSON.stringify([volume.cycleId, volume.symbol, volume.windowOpenedAt, volume.windowClosedAt, volume.contentHash])
 
+const groupMarketVolumes = (volumes: readonly ForwardPerformanceMarketVolumeEvidence[]) => {
+  const groups = new Map<string, ForwardPerformanceMarketVolumeEvidence[]>()
+  for (const volume of volumes) {
+    const key = JSON.stringify([volume.cycleId, volume.symbol])
+    const group = groups.get(key)
+    if (group === undefined) groups.set(key, [volume])
+    else group.push(volume)
+  }
+  return groups
+}
+
 const sourceEvidenceHash = (
   input: ForwardPerformanceEvidenceInput,
   executionEvidence: readonly ForwardPerformanceExecutionEvidence[],
@@ -109,10 +165,17 @@ const sourceEvidenceHash = (
     ledgerExact: input.ledgerExact,
     missingLedgerAccountCount: input.missingLedgerAccountCount,
     ledgerTotals: input.ledgerTotals ?? null,
-    executions: executionEvidence.map((evidence) => ({
-      ...evidence,
-      fills: [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right))),
-    })),
+    ...((input.brokerFees?.length ?? 0) === 0
+      ? {}
+      : { brokerFees: [...(input.brokerFees ?? [])].sort((a, b) => compareStrings(a.activityId, b.activityId)) }),
+    ...((input.brokerFeeAccruals?.length ?? 0) === 0
+      ? {}
+      : {
+          brokerFeeAccruals: [...(input.brokerFeeAccruals ?? [])].sort((a, b) =>
+            compareStrings(a.accrualId, b.accrualId),
+          ),
+        }),
+    executions: executionEvidence,
     transactions,
   })
 
@@ -142,6 +205,7 @@ const emptyObservedCapacity = (
 const identityMatches = (
   input: ForwardPerformanceEvidenceInput,
   evidence: ForwardPerformanceExecutionEvidence,
+  completedCycleIds: ReadonlySet<string>,
 ): boolean => {
   const intent = evidence.intent
   if (intent === undefined) return false
@@ -150,7 +214,7 @@ const identityMatches = (
     SHA256_PATTERN.test(evidence.decisionDocumentHash) &&
     SHA256_PATTERN.test(evidence.decisionHash) &&
     SHA256_PATTERN.test(evidence.intentId) &&
-    input.cycles.some((cycle) => cycle.cycleId === evidence.cycleId && cycle.state === 'COMPLETED') &&
+    completedCycleIds.has(evidence.cycleId) &&
     evidence.accountId === input.account.accountId &&
     intent.intentId === evidence.intentId &&
     intent.accountId === evidence.accountId &&
@@ -158,21 +222,8 @@ const identityMatches = (
     intent.decisionHash === evidence.decisionHash &&
     intent.symbol === evidence.symbol &&
     intent.side === evidence.side &&
-    intent.quantityMicros === evidence.plannedQuantityMicros &&
+    intent.quantityAtoms === evidence.plannedQuantityAtoms &&
     intent.createdAt === evidence.decisionCreatedAt
-  )
-}
-
-const notionalOrderMatchesIntent = (
-  intent: NonNullable<ForwardPerformanceExecutionEvidence['intent']>,
-  orderNotionalMicros: string,
-): boolean => {
-  if (intent.notionalLimitMicros === undefined) return false
-  if (intent.side !== 'BUY') return orderNotionalMicros === intent.notionalLimitMicros
-  const currentNotional = alpacaBuyNotionalMicros(intent.notionalLimitMicros)
-  return (
-    orderNotionalMicros === intent.notionalLimitMicros ||
-    (Result.isSuccess(currentNotional) && orderNotionalMicros === currentNotional.success)
   )
 }
 
@@ -181,9 +232,7 @@ const orderMatches = (evidence: ForwardPerformanceExecutionEvidence): boolean =>
   const order = evidence.terminalOrder
   if (intent === undefined || order === undefined) return false
   const representationMatches =
-    order.quantityMicros !== undefined
-      ? order.quantityMicros === evidence.plannedQuantityMicros && order.notionalMicros === undefined
-      : order.notionalMicros !== undefined && notionalOrderMatchesIntent(intent, order.notionalMicros)
+    order.quantityAtoms === evidence.plannedQuantityAtoms && order.notionalMicros === undefined
   return (
     SHA256_PATTERN.test(order.eventId) &&
     order.intentId === evidence.intentId &&
@@ -216,15 +265,18 @@ const transactionMatchesFill = (
   transaction.cycleId === evidence.cycleId &&
   transaction.symbol === evidence.symbol &&
   transaction.side === evidence.side &&
-  transaction.quantityMicros === fill.quantityMicros &&
-  transaction.priceMicros === fill.priceMicros &&
+  transaction.quantityAtoms === fill.quantityAtoms &&
+  transaction.priceAtoms === fill.priceAtoms &&
   transaction.feeMicros === fill.feeMicros &&
   transaction.occurredAt === fill.occurredAt
 
 const validMarketVolumeEvidence = (
   volume: NonNullable<ForwardPerformanceEvidenceInput['marketVolumeEvidence']>[number],
 ): Result.Result<boolean, CanonicalHashFailure> => {
-  const marketVolume = parseUnsigned(volume.quantityMicros, true)
+  if (volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2') {
+    return Result.succeed(validIntradayPerformanceVolumeEvidence(volume))
+  }
+  const marketVolume = parseUnsigned(volume.quantityAtoms, true)
   const closePrice = parseUnsigned(volume.closePriceMicros, true)
   const { contentHash, ...material } = volume
   return Result.map(canonicalHashV1Result(material), (expectedHash) =>
@@ -267,7 +319,7 @@ const validMarketVolumeEvidence = (
 }
 
 const validTerminalReferencePrice = (
-  input: ForwardPerformanceEvidenceInput,
+  matchingVolumes: readonly ForwardPerformanceMarketVolumeEvidence[] | undefined,
   evidence: ForwardPerformanceExecutionEvidence,
   terminalOccurredAt: string,
   terminalObservedAt: string,
@@ -275,10 +327,7 @@ const validTerminalReferencePrice = (
 ): Result.Result<bigint | undefined, CanonicalHashFailure> => {
   const terminal = evidence.terminalReferencePrice
   if (terminal === undefined) return Result.succeed(undefined)
-  const matchingVolumes = (input.marketVolumeEvidence ?? []).filter(
-    (volume) => volume.cycleId === evidence.cycleId && volume.symbol === evidence.symbol,
-  )
-  const volume = matchingVolumes.length === 1 ? matchingVolumes[0] : undefined
+  const volume = matchingVolumes?.length === 1 ? matchingVolumes[0] : undefined
   if (volume === undefined) return Result.succeed(undefined)
   return Result.flatMap(validMarketVolumeEvidence(volume), (validVolume) => {
     const terminalPrice = parseUnsigned(terminal.priceMicros, true)
@@ -306,6 +355,7 @@ const validTerminalReferencePrice = (
 
 const measureExecutionQuality = (
   input: ForwardPerformanceEvidenceInput,
+  diagnostics: ReturnType<typeof newExecutionDiagnostics>,
 ): Result.Result<
   {
     readonly executionQuality: ExecutionQuality
@@ -316,10 +366,30 @@ const measureExecutionQuality = (
   const executions = [...(input.executionEvidence ?? [])].sort((left, right) =>
     compareStrings(executionSortKey(left), executionSortKey(right)),
   )
+  diagnostics.inputExecutionCount = executions.length
+  if ((input.unverifiedDecisionHashes?.length ?? 0) > 0) {
+    diagnostics.reasonOccurrences.PLANNED_DECISION_EVIDENCE_GAP = 1
+    const unverifiedDecisionHashes = [...new Set(input.unverifiedDecisionHashes)].sort()
+    return Result.map(canonicalHashV1Result({ unverifiedDecisionHashes }), (evidenceHash) => ({
+      executionQuality: {
+        ...emptyExecutionQuality('UNDETERMINED', ['PLANNED_DECISION_EVIDENCE_GAP']),
+        evidenceHash,
+        unverifiedDecisionHashes,
+      },
+      contributions: [],
+    }))
+  }
   if (executions.length === 0) {
+    const transactionCount = input.transactions.length
+    diagnostics.evaluation = ExecutionDiagnosticEvaluation.NoExecutionEvidence
+    diagnostics.inputTransactionCount = transactionCount
+    diagnostics.evaluatedFillCount = 0
+    diagnostics.reasonOccurrences[
+      transactionCount === 0 ? 'ZERO_COMPLETED_EXECUTIONS' : 'PLANNED_DECISION_EVIDENCE_GAP'
+    ] = 1
     return Result.succeed({
       executionQuality:
-        input.transactions.length === 0
+        transactionCount === 0
           ? emptyExecutionQuality('NOT_ELIGIBLE', ['ZERO_COMPLETED_EXECUTIONS'])
           : emptyExecutionQuality('UNDETERMINED', ['PLANNED_DECISION_EVIDENCE_GAP']),
       contributions: [],
@@ -329,17 +399,45 @@ const measureExecutionQuality = (
   const transactions = [...input.transactions].sort((left, right) =>
     compareStrings(transactionSortKey(left), transactionSortKey(right)),
   )
-  const evidenceHash = sourceEvidenceHash(input, executions, transactions)
+  const orderedExecutions = executions.map((evidence) => ({
+    ...evidence,
+    fills: [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right))),
+    ...(evidence.nativeProtection === undefined
+      ? {}
+      : {
+          nativeProtection: {
+            ...evidence.nativeProtection,
+            orders: [...evidence.nativeProtection.orders].sort((a, b) =>
+              compareStrings(a.order.brokerOrderId, b.order.brokerOrderId),
+            ),
+            fills: [...evidence.nativeProtection.fills].sort((a, b) => compareStrings(fillSortKey(a), fillSortKey(b))),
+          },
+        }),
+  }))
+  const evidenceHash = sourceEvidenceHash(input, orderedExecutions, transactions)
   if (Result.isFailure(evidenceHash)) return Result.fail(evidenceHash.failure)
+  diagnostics.evaluation = ExecutionDiagnosticEvaluation.Evaluated
+  diagnostics.inputTransactionCount = transactions.length
+  diagnostics.evaluatedFillCount = 0
 
+  const volumeGroups = groupMarketVolumes(input.marketVolumeEvidence ?? [])
+  const completedCycleIds = new Set<string>()
+  for (const cycle of input.cycles) {
+    if (cycle.state === 'COMPLETED') completedCycleIds.add(cycle.cycleId)
+  }
   const reasons = new Set<ForwardPerformanceExecutionQualityReasonCode>()
+  // Count the existing predicate failures, not unique rows or independent root causes.
+  const recordReason = (reason: ForwardPerformanceExecutionQualityReasonCode) => {
+    diagnostics.reasonOccurrences[reason] = (diagnostics.reasonOccurrences[reason] ?? 0) + 1
+    reasons.add(reason)
+  }
   const seenIntents = new Set<string>()
   const seenFillEvents = new Set<string>()
   const transactionByBrokerEvent = new Map<string, ForwardPerformanceTransactionEvidence>()
   for (const transaction of transactions) {
     const brokerEventId = transaction.brokerEventId
     if (brokerEventId === undefined || transactionByBrokerEvent.has(brokerEventId)) {
-      reasons.add('ACCOUNTING_FILL_BINDING_GAP')
+      recordReason('ACCOUNTING_FILL_BINDING_GAP')
       continue
     }
     transactionByBrokerEvent.set(brokerEventId, transaction)
@@ -351,12 +449,12 @@ const measureExecutionQuality = (
     !input.ledgerExact ||
     input.missingLedgerAccountCount > 0
   ) {
-    reasons.add('ACCOUNT_LEDGER_RECONCILIATION_GAP')
+    recordReason('ACCOUNT_LEDGER_RECONCILIATION_GAP')
   }
 
   const brokerFees = parseUnsigned(input.ledgerTotals?.brokerExecutionFeesMicros, false)
-  const otherCosts = parseUnsigned(input.ledgerTotals?.otherChargedCostsMicros, false)
-  if (brokerFees === undefined || otherCosts === undefined) reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
+  const otherCosts = parseUnsigned(input.ledgerTotals?.otherChargedCostsMicros ?? undefined, false)
+  if (brokerFees === undefined || otherCosts === undefined) recordReason('EXPLICIT_COST_EVIDENCE_GAP')
 
   let plannedQuantity = 0n
   let filledQuantity = 0n
@@ -372,19 +470,34 @@ const measureExecutionQuality = (
   let fillCount = 0
   const contributions: ExecutionContribution[] = []
 
-  for (const evidence of executions) {
-    if (seenIntents.has(evidence.intentId)) reasons.add('DUPLICATE_EXECUTION_EVIDENCE')
+  for (const evidence of orderedExecutions) {
+    if (seenIntents.has(evidence.intentId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
     seenIntents.add(evidence.intentId)
 
-    const planned = parseUnsigned(evidence.plannedQuantityMicros, true)
+    const blocked = blockedIntentMatches(evidence)
+    const protective = verifyForwardNativeProtection(evidence, input, transactionByBrokerEvent, blocked)
+    for (const reason of protective.reasons) recordReason(reason)
+    for (const fill of protective.fills) {
+      fillCount += 1
+      diagnostics.evaluatedFillCount = fillCount
+      if (seenFillEvents.has(fill.brokerEventId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
+      seenFillEvents.add(fill.brokerEventId)
+      const fee = parseUnsigned(fill.feeMicros, false)
+      const next = fee === undefined ? undefined : checkedAdd(observedFillFees, fee)
+      if (next === undefined) recordReason('INVALID_EXECUTION_MICROS')
+      else observedFillFees = next
+    }
+    // A conditional stop/profit limit is not an unconditional strategy reference price.
+    if (protective.fills.length > 0) recordReason('PROTECTIVE_REFERENCE_PRICE_EVIDENCE_GAP')
+
+    const planned = parseUnsigned(evidence.plannedQuantityAtoms, true)
     const referencePrice = parseUnsigned(evidence.referencePriceMicros, true)
-    if (planned === undefined) reasons.add('PLANNED_DECISION_EVIDENCE_GAP')
-    if (referencePrice === undefined) reasons.add('REFERENCE_PRICE_EVIDENCE_GAP')
-    if (!identityMatches(input, evidence)) reasons.add('FILL_IDENTITY_DRIFT')
+    if (planned === undefined) recordReason('PLANNED_DECISION_EVIDENCE_GAP')
+    if (referencePrice === undefined) recordReason('REFERENCE_PRICE_EVIDENCE_GAP')
+    if (!identityMatches(input, evidence, completedCycleIds)) recordReason('FILL_IDENTITY_DRIFT')
 
     const order = evidence.terminalOrder
-    const blocked = blockedIntentMatches(evidence)
-    if (!blocked && (order === undefined || !orderMatches(evidence))) reasons.add('TERMINAL_ORDER_EVIDENCE_GAP')
+    if (!blocked && (order === undefined || !orderMatches(evidence))) recordReason('TERMINAL_ORDER_EVIDENCE_GAP')
     const terminalOccurredAt = blocked ? evidence.intent?.updatedAt : order?.occurredAt
     const terminalObservedAt = blocked ? evidence.intent?.updatedAt : order?.observedAt
     if (
@@ -396,13 +509,13 @@ const measureExecutionQuality = (
       terminalObservedAt < terminalOccurredAt ||
       terminalObservedAt < evidence.decisionCreatedAt
     ) {
-      reasons.add('FILL_TIMESTAMP_GAP')
+      recordReason('FILL_TIMESTAMP_GAP')
     }
 
-    const fills = [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right)))
-    const reportedFilledQuantity = parseUnsigned(order?.filledQuantityMicros, false)
+    const fills = evidence.fills
+    const reportedFilledQuantity = parseUnsigned(order?.filledQuantityAtoms, false)
     if (reportedFilledQuantity !== undefined && reportedFilledQuantity > 0n && fills.length === 0) {
-      reasons.add('FILL_EVIDENCE_GAP')
+      recordReason('FILL_EVIDENCE_GAP')
     }
 
     let executionFilledQuantity = 0n
@@ -413,14 +526,15 @@ const measureExecutionQuality = (
 
     for (const fill of fills) {
       fillCount += 1
-      if (seenFillEvents.has(fill.brokerEventId)) reasons.add('DUPLICATE_EXECUTION_EVIDENCE')
+      diagnostics.evaluatedFillCount = fillCount
+      if (seenFillEvents.has(fill.brokerEventId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
       seenFillEvents.add(fill.brokerEventId)
 
-      const quantity = parseUnsigned(fill.quantityMicros, true)
-      const price = parseUnsigned(fill.priceMicros, true)
+      const quantity = parseUnsigned(fill.quantityAtoms, true)
+      const price = parseUnsigned(fill.priceAtoms, true)
       const fee = parseUnsigned(fill.feeMicros, false)
       if (quantity === undefined || price === undefined || fee === undefined) {
-        reasons.add('INVALID_EXECUTION_MICROS')
+        recordReason('INVALID_EXECUTION_MICROS')
         continue
       }
       if (
@@ -433,7 +547,7 @@ const measureExecutionQuality = (
         fill.clientOrderId !== evidence.intent?.clientOrderId ||
         fill.brokerOrderId !== order?.brokerOrderId
       ) {
-        reasons.add('FILL_IDENTITY_DRIFT')
+        recordReason('FILL_IDENTITY_DRIFT')
       }
       if (
         !SOURCE_TIMESTAMP_PATTERN.test(fill.sourceTimestamp) ||
@@ -443,12 +557,12 @@ const measureExecutionQuality = (
         fill.occurredAt < evidence.decisionCreatedAt ||
         (order !== undefined && fill.occurredAt > order.occurredAt)
       ) {
-        reasons.add('FILL_TIMESTAMP_GAP')
+        recordReason('FILL_TIMESTAMP_GAP')
       }
 
       const transaction = transactionByBrokerEvent.get(fill.brokerEventId)
       const transactionNotional = parseUnsigned(transaction?.notionalMicros, true)
-      const expectedNotional = roundHalfUp(quantity, price)
+      const expectedNotional = roundHalfUp(quantity, price, 1_000_000_000_000n)
       if (
         transaction === undefined ||
         transactionNotional === undefined ||
@@ -456,12 +570,12 @@ const measureExecutionQuality = (
         transactionNotional !== expectedNotional ||
         !transactionMatchesFill(transaction, evidence, fill)
       ) {
-        reasons.add('ACCOUNTING_FILL_BINDING_GAP')
+        recordReason('ACCOUNTING_FILL_BINDING_GAP')
         continue
       }
       const referenceNotional = referencePrice === undefined ? undefined : roundHalfUp(quantity, referencePrice)
       if (referenceNotional === undefined) {
-        reasons.add('INVALID_EXECUTION_MICROS')
+        recordReason('INVALID_EXECUTION_MICROS')
         continue
       }
 
@@ -482,7 +596,7 @@ const measureExecutionQuality = (
         nextObservedFees === undefined ||
         nextPriceShortfall === undefined
       ) {
-        reasons.add('INVALID_EXECUTION_MICROS')
+        recordReason('INVALID_EXECUTION_MICROS')
         continue
       }
       executionFilledQuantity = nextExecutionFilled
@@ -507,26 +621,20 @@ const measureExecutionQuality = (
       const nextPlanNotional =
         planNotional === undefined ? undefined : checkedAdd(plannedReferenceNotional, planNotional)
       if (planNotional === undefined || nextPlannedQuantity === undefined || nextPlanNotional === undefined) {
-        reasons.add('INVALID_EXECUTION_MICROS')
+        recordReason('INVALID_EXECUTION_MICROS')
       } else {
         plannedQuantity = nextPlannedQuantity
         plannedReferenceNotional = nextPlanNotional
       }
 
-      const orderFilled = blocked ? 0n : parseUnsigned(order?.filledQuantityMicros, false)
+      const orderFilled = blocked ? 0n : parseUnsigned(order?.filledQuantityAtoms, false)
       const orderQuantity = blocked
         ? planned
-        : order?.quantityMicros === undefined
+        : order?.quantityAtoms === undefined
           ? undefined
-          : parseUnsigned(order.quantityMicros, true)
+          : parseUnsigned(order.quantityAtoms, true)
       const orderNotional = order?.notionalMicros === undefined ? undefined : parseUnsigned(order.notionalMicros, true)
-      const representationMatches = blocked
-        ? true
-        : orderQuantity !== undefined
-          ? orderQuantity === planned && orderNotional === undefined
-          : orderNotional !== undefined &&
-            evidence.intent !== undefined &&
-            notionalOrderMatchesIntent(evidence.intent, orderNotional.toString())
+      const representationMatches = blocked || (orderQuantity === planned && orderNotional === undefined)
       if (
         orderFilled === undefined ||
         !representationMatches ||
@@ -534,7 +642,7 @@ const measureExecutionQuality = (
         (orderQuantity !== undefined && executionFilledQuantity > planned) ||
         (orderQuantity !== undefined && order?.status === 'FILLED' && executionFilledQuantity !== planned)
       ) {
-        reasons.add('FILL_QUANTITY_MISMATCH')
+        recordReason('FILL_QUANTITY_MISMATCH')
       }
 
       const unfilled = planned >= executionFilledQuantity ? planned - executionFilledQuantity : 0n
@@ -542,21 +650,27 @@ const measureExecutionQuality = (
         const terminalPriceResult =
           terminalOccurredAt === undefined || terminalObservedAt === undefined
             ? Result.succeed<bigint | undefined>(undefined)
-            : validTerminalReferencePrice(input, evidence, terminalOccurredAt, terminalObservedAt, blocked)
+            : validTerminalReferencePrice(
+                volumeGroups.get(JSON.stringify([evidence.cycleId, evidence.symbol])),
+                evidence,
+                terminalOccurredAt,
+                terminalObservedAt,
+                blocked,
+              )
         if (Result.isFailure(terminalPriceResult)) return Result.fail(terminalPriceResult.failure)
         const terminalPrice = terminalPriceResult.success
         if (terminalPrice === undefined) {
-          reasons.add('TERMINAL_PRICE_EVIDENCE_GAP')
+          recordReason('TERMINAL_PRICE_EVIDENCE_GAP')
         } else {
           const terminalNotional = roundHalfUp(unfilled, terminalPrice)
           const unfilledReference = roundHalfUp(unfilled, referencePrice)
           if (terminalNotional === undefined || unfilledReference === undefined) {
-            reasons.add('INVALID_EXECUTION_MICROS')
+            recordReason('INVALID_EXECUTION_MICROS')
           } else {
             const opportunity =
               evidence.side === 'BUY' ? terminalNotional - unfilledReference : unfilledReference - terminalNotional
             const nextOpportunity = checkedAdd(opportunityShortfall, opportunity)
-            if (nextOpportunity === undefined) reasons.add('INVALID_EXECUTION_MICROS')
+            if (nextOpportunity === undefined) recordReason('INVALID_EXECUTION_MICROS')
             else opportunityShortfall = nextOpportunity
           }
         }
@@ -564,7 +678,7 @@ const measureExecutionQuality = (
     }
 
     const nextExecutedNotional = checkedAdd(executedNotional, executionActualNotional)
-    if (nextExecutedNotional === undefined) reasons.add('INVALID_EXECUTION_MICROS')
+    if (nextExecutedNotional === undefined) recordReason('INVALID_EXECUTION_MICROS')
     else executedNotional = nextExecutedNotional
 
     if (
@@ -601,8 +715,47 @@ const measureExecutionQuality = (
     }
   }
 
-  if (seenFillEvents.size !== transactions.length) reasons.add('ACCOUNTING_FILL_BINDING_GAP')
-  if (brokerFees === undefined || observedFillFees !== brokerFees) reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
+  const seenFees = new Set<string>()
+  for (const fee of input.brokerFees ?? []) {
+    if (
+      !/^(?:0|-?[1-9][0-9]*)$/.test(fee.netAmountMicros) ||
+      fee.accountId !== input.account.accountId ||
+      seenFees.has(fee.activityId) ||
+      !validIsoDate(fee.date)
+    ) {
+      recordReason('EXPLICIT_COST_EVIDENCE_GAP')
+      continue
+    }
+    seenFees.add(fee.activityId)
+    const net = BigInt(fee.netAmountMicros)
+    const inventoryCost =
+      fee.inventoryCostMicros === undefined
+        ? fee.coinDebit === undefined
+          ? 0n
+          : undefined
+        : parseUnsigned(fee.inventoryCostMicros, false)
+    const next =
+      inSignedRange(net) && inventoryCost !== undefined ? checkedAdd(observedFillFees, -net + inventoryCost) : undefined
+    if (next === undefined) recordReason('INVALID_EXECUTION_MICROS')
+    else observedFillFees = next
+  }
+
+  const seenAccruals = new Set<string>()
+  for (const accrual of input.brokerFeeAccruals ?? []) {
+    const expense = parseUnsigned(accrual.expenseMicros, false)
+    const next = expense === undefined ? undefined : checkedAdd(observedFillFees, expense)
+    if (
+      next === undefined ||
+      accrual.accountId !== input.account.accountId ||
+      seenAccruals.has(accrual.accrualId) ||
+      !accrual.settled
+    )
+      recordReason('EXPLICIT_COST_EVIDENCE_GAP')
+    if (next !== undefined) observedFillFees = next
+    seenAccruals.add(accrual.accrualId)
+  }
+  if (seenFillEvents.size !== transactions.length) recordReason('ACCOUNTING_FILL_BINDING_GAP')
+  if (brokerFees === undefined || observedFillFees !== brokerFees) recordReason('EXPLICIT_COST_EVIDENCE_GAP')
 
   const reasonCodes = [...reasons].sort()
   if (
@@ -631,6 +784,7 @@ const measureExecutionQuality = (
       ? undefined
       : checkedAdd(priceAndOpportunity, explicitCosts)
   if (explicitCosts === undefined || total === undefined) {
+    recordReason('INVALID_EXECUTION_MICROS')
     return Result.succeed({
       executionQuality: {
         status: 'UNDETERMINED',
@@ -650,9 +804,9 @@ const measureExecutionQuality = (
       implementationShortfall: {
         plannedOrderCount: executions.length,
         fillCount,
-        plannedQuantityMicros: plannedQuantity.toString(),
-        filledQuantityMicros: filledQuantity.toString(),
-        unfilledQuantityMicros: (plannedQuantity >= filledQuantity ? plannedQuantity - filledQuantity : 0n).toString(),
+        plannedQuantityAtoms: plannedQuantity.toString(),
+        filledQuantityAtoms: filledQuantity.toString(),
+        unfilledQuantityAtoms: (plannedQuantity >= filledQuantity ? plannedQuantity - filledQuantity : 0n).toString(),
         plannedReferenceNotionalMicros: plannedReferenceNotional.toString(),
         executedNotionalMicros: executedNotional.toString(),
         executionPriceShortfallMicros: executionPriceShortfall.toString(),
@@ -709,13 +863,7 @@ const measureObservedCapacity = (
     if (group === undefined) contributionGroups.set(key, [contribution])
     else group.push(contribution)
   }
-  const volumeGroups = new Map<string, typeof volumes>()
-  for (const volume of volumes) {
-    const key = JSON.stringify([volume.cycleId, volume.symbol])
-    const group = volumeGroups.get(key)
-    if (group === undefined) volumeGroups.set(key, [volume])
-    else volumeGroups.set(key, [...group, volume])
-  }
+  const volumeGroups = groupMarketVolumes(volumes)
 
   let boundedReferenceNotional = 0n
   let boundedExecutedNotional = 0n
@@ -730,12 +878,19 @@ const measureObservedCapacity = (
       reasons.add(matchingVolumes.length === 0 ? 'MARKET_VOLUME_EVIDENCE_GAP' : 'INVALID_MARKET_VOLUME_EVIDENCE')
       continue
     }
-    const marketVolume = parseUnsigned(volume.quantityMicros, true)
+    const marketVolume = parseUnsigned(volume.quantityAtoms, true)
     const validVolume = validMarketVolumeEvidence(volume)
     if (Result.isFailure(validVolume)) return Result.fail(validVolume.failure)
     if (marketVolume === undefined || !validVolume.success) {
       reasons.add('INVALID_MARKET_VOLUME_EVIDENCE')
       continue
+    }
+
+    if (
+      volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2' &&
+      volume.missingMinutes.length > 0
+    ) {
+      reasons.add('MARKET_VOLUME_EVIDENCE_GAP')
     }
 
     let filled = 0n
@@ -785,11 +940,20 @@ const measureObservedCapacity = (
       symbol,
       windowOpenedAt: volume.windowOpenedAt,
       windowClosedAt: volume.windowClosedAt,
-      filledQuantityMicros: filled.toString(),
-      marketVolumeQuantityMicros: marketVolume.toString(),
+      filledQuantityAtoms: filled.toString(),
+      marketVolumeQuantityAtoms: marketVolume.toString(),
+      ...(volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2'
+        ? {
+            intradaySource: {
+              feed: volume.sourceFeed,
+              volumeScope: volume.volumeScope,
+              evidenceHash: volume.contentHash,
+            },
+          }
+        : {}),
       participationRate: {
-        numeratorQuantityMicros: filled.toString(),
-        denominatorQuantityMicros: marketVolume.toString(),
+        numeratorQuantityAtoms: filled.toString(),
+        denominatorQuantityAtoms: marketVolume.toString(),
         decimal: formatRatio(filled, marketVolume),
       },
     })
@@ -803,6 +967,7 @@ const measureObservedCapacity = (
     return Result.succeed({
       ...emptyObservedCapacity('UNDETERMINED', reasonCodes),
       evidenceHash: evidenceHash.success,
+      observations: observations.filter((observation) => observation.intradaySource !== undefined),
     })
   }
 
@@ -814,8 +979,8 @@ const measureObservedCapacity = (
     boundedObservedReferenceNotionalMicros: boundedReferenceNotional.toString(),
     boundedObservedExecutedNotionalMicros: boundedExecutedNotional.toString(),
     maximumParticipationRate: {
-      numeratorQuantityMicros: maximumNumerator.toString(),
-      denominatorQuantityMicros: maximumDenominator.toString(),
+      numeratorQuantityAtoms: maximumNumerator.toString(),
+      denominatorQuantityAtoms: maximumDenominator.toString(),
       decimal: formatRatio(maximumNumerator, maximumDenominator),
     },
   })
@@ -823,10 +988,22 @@ const measureObservedCapacity = (
 
 export const makeForwardPerformanceExecutionMeasurements = (
   input: ForwardPerformanceEvidenceInput,
-): Result.Result<ForwardPerformanceExecutionMeasurements, CanonicalHashFailure> =>
-  Result.flatMap(measureExecutionQuality(input), ({ executionQuality, contributions }) =>
-    Result.map(measureObservedCapacity(input, executionQuality, contributions), (observedCapacity) => ({
-      executionQuality,
-      observedCapacity,
-    })),
+): Result.Result<ForwardPerformanceExecutionMeasurements, CanonicalHashFailure> => {
+  const diagnostics = newExecutionDiagnostics()
+  return Result.flatMap(measureExecutionQuality(input, diagnostics), ({ executionQuality, contributions }) =>
+    Result.map(measureObservedCapacity(input, executionQuality, contributions), (observedCapacity) => {
+      const intradaySources = (input.marketVolumeEvidence ?? [])
+        .filter((volume) => volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2')
+        .filter(validIntradayPerformanceVolumeEvidence)
+        .toSorted((left, right) => compareStrings(volumeSortKey(left), volumeSortKey(right)))
+      return {
+        diagnostics,
+        executionQuality,
+        observedCapacity: {
+          ...observedCapacity,
+          ...(intradaySources.length === 0 ? {} : { intradaySources }),
+        },
+      }
+    }),
   )
+}

@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Result } from 'effect'
 
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { OperationalError } from './errors'
 import { stableU128 } from './hash'
 import {
@@ -18,7 +18,6 @@ import {
   type LedgerTransferRecord,
 } from './ledger-plan'
 import {
-  accountReconciliationQueries,
   assembleAccountPlan,
   classifyAccountCreateBatch,
   classifyTransferCreateBatch,
@@ -26,13 +25,13 @@ import {
   runPlanQueries,
   transactionTransferQuery,
 } from './ledger/decisions'
+import { readAccountLedger } from './ledger/account-read'
 import {
   makeTigerBeetleRequestClient,
   type JournalDependencies,
   type TigerBeetleRequestClient,
 } from './tigerbeetle-client'
 import type { ReconciliationResult } from './types'
-import { Pipeable } from './pipeable'
 
 export class JournalValidationError extends OperationalError {
   readonly validation: LedgerValidationError
@@ -64,7 +63,7 @@ export class Journal extends Context.Service<Journal, JournalService>()('@proomp
 const validationBoundary = <A>(decision: Result.Result<A, LedgerValidationError>) =>
   Effect.fromResult(decision).pipe(Effect.mapError((validation) => new JournalValidationError(validation)))
 
-const createAndVerifyAccounts = (
+export const createAndVerifyAccounts = (
   client: TigerBeetleRequestClient,
   accounts: readonly LedgerAccountRecord[],
 ): Effect.Effect<void, JournalError> =>
@@ -81,7 +80,7 @@ const createAndVerifyAccounts = (
     )
   })
 
-const createAndVerifyTransfers = (
+export const createAndVerifyTransfers = (
   client: TigerBeetleRequestClient,
   transfers: readonly LedgerTransferRecord[],
 ): Effect.Effect<void, JournalError> =>
@@ -169,18 +168,13 @@ const verifyAccount = (
 ): Effect.Effect<boolean, JournalError> =>
   Effect.gen(function* () {
     const expected = yield* validationBoundary(assembleAccountPlan(accountId, plans))
-    const queries = yield* validationBoundary(accountReconciliationQueries(expected, ledger))
-    const [accounts, transfers] = yield* Effect.all(
-      [
-        client.request('verify-account-accounts', (active) => active.queryAccounts(queries.accounts)),
-        client.request('verify-account-transfers', (active) => active.queryTransfers(queries.transfers)),
-      ],
-      { concurrency: 'unbounded' },
+    const { accounts, transfers } = yield* readAccountLedger(client, expected, ledger).pipe(
+      Effect.catchTag('LedgerValidationError', (error) => Effect.fail(new JournalValidationError(error))),
     )
     return Result.isSuccess(reconcileLedgerPlan(expected, accounts, transfers, 'verify-account'))
   })
 
-const JournalLiveDataFirst = (
+export const JournalLive = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   dependencies?: JournalDependencies,
 ): Layer.Layer<Journal, OperationalError> =>
@@ -200,16 +194,6 @@ const JournalLiveDataFirst = (
       ),
     ),
   )
-
-export const JournalLive = Pipeable.by<
-  (
-    dependencies?: JournalDependencies,
-  ) => (config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>) => ReturnType<typeof JournalLiveDataFirst>,
-  typeof JournalLiveDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'tigerBeetle' in arguments_[0],
-  JournalLiveDataFirst,
-)
 
 export {
   assembleAccountPlan,

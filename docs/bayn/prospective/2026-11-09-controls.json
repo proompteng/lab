@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "bayn.prospective-control-commitment.v1",
+  "scope": "Prospective descriptive policy comparison; no economic qualification or capital authority",
+  "sessionDate": "2026-11-09",
+  "interval": {
+    "startAt": "2026-11-09T14:30:00.000Z",
+    "endAt": "2026-11-09T21:00:00.000Z"
+  },
+  "candidate": {
+    "sourceRevision": "7881563863ea86a31683c6c14d007988626faf67",
+    "image": {
+      "repository": "registry.ide-newton.ts.net/lab/bayn",
+      "digest": "sha256:90c2ecc17b891f44890df5052949cfa31a3c51f82da64b6b8b46e9437703474f"
+    },
+    "brokerIdentityHash": "5a5ed043a1db1cf851f9d8905b5a1116dfd6ccb3ea9a3267b314357cbcb19b54",
+    "requestHash": "248b6bf277de4008709d20f527f0481e0968813c4c6b2898c92eb872b9f1a40c",
+    "authorityGenerationHash": "8382cb68502f2e2ec59f0febcb34c20fb6be30cf78c53087ba5cb6e74bd74bc1",
+    "riskPolicyHash": "047536c139eb1544bb47c0bdbd47eed3a10eba877da5491683a622eae495a27a",
+    "strategyBehaviorHash": "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67",
+    "strategyParameterHash": "6b47647a539b3a35971cfbc596c0a431300cababddea3d50ea460b4308a671bb"
+  },
+  "artifacts": {
+    "planSha256": "37b4a023fa94285196382a57ab7271f88f492528bb940ed96a202e3c0b9ea093",
+    "designSha256": "7ff705867b7df23c2a6b029ad4c4ff99b9250b3430c7e31989e55588d91c62a2",
+    "providerMetadataSha256": "5d25c56a3ffd6cd3cee3289698fcba1464ec303c8bbcecf80a376f0d21aea30c",
+    "sourceInventoryQuerySha256": "b54f6a5cb1924b9bce0d67bc1173ca35ede68d6a5aac5a219d352026b13b4965",
+    "commands": {
+      "controlStudySha256": "296e7a2d2297a745a0b7a5f155359765a7e0262eb5625bfb57042dc7c854447f",
+      "nativeExportSha256": "b58c38372e55d87f15a6c637e35c9a6176a7efc7eb966f60c14c23c5fa8f0926",
+      "openingSha256": "9fd1010b532ca6ae1579ada15a4653078f38cd0c6170599fb8fb08fa13bd848c",
+      "forwardReportSha256": "b5d42f4c3710c507986bdea72a6bb5726beb8e0c98605b4807a22b492b81ce88"
+    },
+    "binderToolSha256": "af6988372f58811d83ce295bf45e0af6b7c9e6b1d544a94041d85b022f9764a1",
+    "definitionHash": "7a15e8c9837e791c8b86bcb0904c5cea6b0f18b2d9c25bc76eb959ab2af0a308"
+  },
+  "controls": ["RETAINED_BREAKOUT_CLOSE", "REPEATED_BREAKOUT", "REPEATED_RELATIVE_MOMENTUM", "CASH"],
+  "sourceRule": "Retain every current-build native consumer epoch that starts before open and survives through close. Export each from ordinal zero through the first durable chunk bracketing close. Keep all markets and dispositions. No restart stitching, market filtering, replacement days or outcome-based epoch selection. Missing or terminated epochs remain incomplete. Report every eligible replica and require dominance over the strongest control across replicas.",
+  "capitalRule": "Require a flat reconciled candidate at the first session boundary. Bind controls to the same retained opening cash and risk profile before reading policy outcomes. Carry cash, inventory, cumulative external costs and peaks across any later registered sessions. A non-flat or unverified opening cannot be silently replaced by a fresh account.",
+  "cashRule": "No-order cash reference has zero trading P&L. Remove external funding from all arms. Passive cash yield is excluded from the trading endpoint and must be separately reported, never assumed to be zero.",
+  "executionScope": "Candidate outcomes come only from real sandbox broker/PostgreSQL/TigerBeetle receipts. Counterfactual controls are model outputs, never broker fills. Zero decision latency, 100ms routing, 1bp slippage and displayed size are declared uncalibrated scenarios. Retained breakout has its documented sizing and close lifecycle differences. No claim of a causal Jev-only effect or qualified live capacity.",
+  "costTreatment": {
+    "EXECUTION": "Actual candidate fills and fees; native quote-side modeled control fills and fees",
+    "INFERENCE": "Actual candidate metered expenses, including abstentions and failures. Deterministic controls make no provider calls. The shared native input retains the current published tariff for protocol validation, without charging nonexistent usage.",
+    "DATA": "UNKNOWN, no zero imputation",
+    "INFRASTRUCTURE": "UNKNOWN, no zero imputation",
+    "RESEARCH": "UNKNOWN, no zero imputation"
+  },
+  "inferenceRule": "Keep the existing financial qualification gate unchanged. This one-session pilot is not evidence of positive expected all-cost profit. No p-value, confidence bound or PASS until the original registered conditional-mean, support, complete-cost and familywise conditions are actually satisfied. Report INCONCLUSIVE for unknown costs, calibration or evidence. Preserve all failed attempts, no-trade and incomplete outcomes. Do not clip returns or substitute risk limits for hard P&L bounds.",
+  "statisticalDesign": {
+    "unit": "One complete regular equity session; every eligible epoch is retained as a replica, not an independent session",
+    "analysis": "Prospective descriptive pilot; do not estimate positive expected all-cost profit or report a significance test from this one session",
+    "qualification": "Keep the original native conditional-mean, support, complete-cost and familywise requirements unchanged. Missing qualification evidence yields INCONCLUSIVE, never a relaxed PASS."
+  },
+  "timestampProof": "Independent pre-open existence must bind this exact design and plan SHA-256 through a repository commitment and its GitHub CI run createdAt/head SHA. Local timestamps do not supply that proof."
+}

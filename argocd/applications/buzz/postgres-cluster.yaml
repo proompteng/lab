@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/name: buzz-db
     app.kubernetes.io/part-of: buzz
   annotations:
-    argocd.argoproj.io/sync-wave: "-7"
+    argocd.argoproj.io/sync-wave: '-7'
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   description: Buzz relay state
@@ -14,7 +14,7 @@ spec:
     annotations:
       argocd.argoproj.io/sync-options: Prune=false,Delete=false
   instances: 3
-  imageName: ghcr.io/cloudnative-pg/postgresql:17.7-system-trixie@sha256:08775f8bdeb112878b8f2ef63578c47959ee332fc9e076d5d6735a710c4500e2
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
   imagePullPolicy: IfNotPresent
   enablePDB: true
   enableSuperuserAccess: false
@@ -23,14 +23,14 @@ spec:
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   affinity:
-    podAntiAffinityType: required
+    podAntiAffinityType: preferred
     topologyKey: kubernetes.io/hostname
   resources:
     requests:
       cpu: 250m
       memory: 512Mi
     limits:
-      cpu: "2"
+      cpu: '2'
       memory: 2Gi
   storage:
     storageClass: rook-ceph-block
@@ -45,6 +45,7 @@ spec:
   postgresql:
     parameters:
       password_encryption: scram-sha-256
+      wal_buffers: 16MB
       ssl_min_protocol_version: TLSv1.3
   plugins:
     - name: barman-cloud.cloudnative-pg.io
@@ -54,4 +55,9 @@ spec:
       isWALArchiver: true
       parameters:
         barmanObjectName: buzz-db
-        serverName: buzz-db-live
+        serverName: buzz-db-pg18
+
+  backup:
+    volumeSnapshot:
+      className: rook-ceph-block
+      snapshotOwnerReference: backup

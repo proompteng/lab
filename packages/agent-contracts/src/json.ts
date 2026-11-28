@@ -66,13 +66,12 @@ export const canonicalizeForJsonHash = (value: unknown): unknown => {
   const record = asRecord(value)
   if (!record) return value
 
-  const output: JsonRecord = {}
-  for (const key of Object.keys(record).sort()) {
-    const entry = record[key]
-    if (entry === undefined) continue
-    output[key] = canonicalizeForJsonHash(entry)
-  }
-  return output
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .filter((key) => record[key] !== undefined)
+      .map((key): [string, unknown] => [key, canonicalizeForJsonHash(record[key])]),
+  )
 }
 
 export const stableJsonStringifyForHash = (value: unknown) => JSON.stringify(canonicalizeForJsonHash(value))

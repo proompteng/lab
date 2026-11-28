@@ -19,6 +19,8 @@ The production contract and acceptance gates are in `../../docs/atlas/production
   repository-scoped Temporal workflow ID, and GitHub events are serialized per repository.
 - The activity has a 90-second Temporal heartbeat timeout and sends progress every 15 seconds. A worker crash therefore
   becomes a retry instead of leaving a dead 24-hour activity. Retries reuse heartbeat state and already committed batches.
+- Progress heartbeats run independently of batch preparation. The indexing loop does not wait for the SDK's heartbeat
+  throttle after each committed batch. One final acknowledged heartbeat checks cancellation before publishing readiness.
 - The final transaction verifies every path, Git object ID, commit, chunk, and configured embedding before changing the
   repository to `ready`. Any failure leaves Atlas unavailable with an explicit error; there is no fallback corpus.
 
@@ -29,6 +31,14 @@ After live `atlas:verify` passes, enable the same consumer through GitOps. Relev
 `BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS`, and `BUMBA_ATLAS_PREPARE_CONCURRENCY`.
 
 ## Worker deployment routing
+
+Bumba, Jangar and the workspace Temporal SDK use the same Effect 4.1.4 runtime. Image builds compile the SDK and
+verify both the runtime identity and a real Bumba workflow activation.
+
+Effect 3 histories cannot replay on this worker. Before the major-version cutover, quiesce workflow producers and
+verify that the old Bumba task queue has no open executions. Promote the new worker only after those executions drain,
+then resume producers. `AUTO_UPGRADE` remains the policy within the Effect 4 runtime; changing a build ID alone does not
+make an Effect 3 history compatible.
 
 The worker starts its Temporal poller, aligns the Worker Deployment to its configured `TEMPORAL_WORKER_BUILD_ID`, and
 waits for `routingConfigUpdateState=COMPLETED`. Only then does it report ready or start the GitHub event consumer. Routing

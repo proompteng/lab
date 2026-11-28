@@ -1,12 +1,22 @@
+import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Turn } from '@proompteng/codex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  CodexAppServerBootstrapTimeoutError,
+  type CodexAppServerOptions,
+  type CodexAppServerTurnOptions,
+  type StreamDelta,
+  type Turn,
+} from '@proompteng/codex'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { extractRunnerStatusFromJobPods } from '../server/agents-controller/runner-status'
+import { RUNNER_STATUS_EVENT, RUNNER_TERMINATION_BYTES } from '../runner-status'
+import { resolveWorkspaceMirrorPath } from '../workspace-cache'
 
 import {
   CodexRunnerArtifactError,
@@ -14,11 +24,18 @@ import {
   CodexRunnerClientError,
   CodexRunnerInputError,
   CodexRunnerTurnError,
+  CodexRunnerWorkspaceError,
   DEFAULT_CODEX_BINARY_PATH,
+  readRunnerWorkspaceTmpfsBytes,
   resolveCodexBinaryPath,
   runCodexAppServerAdapter,
   type CodexAppServerRunnerClient,
+  type RunCodexAppServerAdapterOptions,
 } from './codex-app-server'
+
+it('omits tmpfs usage when the workspace mount is unavailable', async () => {
+  expect(await readRunnerWorkspaceTmpfsBytes('/dev/null/not-a-workspace')).toBeUndefined()
+})
 
 const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
   yield { type: 'message', delta: 'done' }
@@ -27,6 +44,7 @@ const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, 
 
 const makeTurn = (status: Turn['status'], error: Turn['error'] = null): Turn => ({
   id: `turn-${status}`,
+  rootTurnId: null,
   items: [],
   itemsView: 'full',
   status,
@@ -49,24 +67,153 @@ const deferred = <T = void>() => {
 }
 
 const NORMALIZED_PROMPT = 'run the normalized Codex adapter contract'
-const systemPromptEnvKeys = [
+const runnerEnvKeys = [
+  'AGENT_RUN_UID', // Unit tests must not write telemetry to the enclosing AgentRun's object.
+  'AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT',
   'CODEX_SYSTEM_PROMPT_PATH',
   'CODEX_SYSTEM_PROMPT_EXPECTED_HASH',
   'CODEX_SYSTEM_PROMPT_REQUIRED',
 ]
-const originalSystemPromptEnv = Object.fromEntries(systemPromptEnvKeys.map((key) => [key, process.env[key]]))
+const originalRunnerEnv = Object.fromEntries(runnerEnvKeys.map((key) => [key, process.env[key]]))
 
 describe('codex app-server runner adapter', () => {
   beforeEach(() => {
-    for (const key of systemPromptEnvKeys) delete process.env[key]
+    for (const key of runnerEnvKeys) delete process.env[key]
   })
 
   afterEach(() => {
-    for (const key of systemPromptEnvKeys) {
-      const value = originalSystemPromptEnv[key]
+    for (const key of runnerEnvKeys) {
+      const value = originalRunnerEnv[key]
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
     }
+  })
+
+  it('retains a completed structured log and telemetry when workspace preparation fails', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'runner-failed-log-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    const logPath = join(dir, 'runner.log')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(
+      runPath,
+      JSON.stringify({ implementation: { text: 'task' }, parameters: { repository: 'proompteng/lab', base: 'main' } }),
+    )
+    const uploadArtifacts = vi.fn(async (artifacts) => {
+      expect(await readFile(logPath, 'utf8')).toContain('"state":"finished"')
+      return artifacts.map((artifact: { name: string; key?: string }) => ({
+        ...artifact,
+        url: `s3://agents-artifacts/${artifact.key}`,
+      }))
+    })
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath, logPath },
+          providerSpec: {
+            outputArtifacts: [
+              { name: 'runner-result', path: join(dir, 'result.json'), key: 'runs/result.json' },
+              { name: 'runner-log', path: logPath },
+            ],
+          },
+        },
+        { prompt: 'task', cwd: join(dir, 'workspace') },
+        {
+          runCommand: async () => {
+            throw new Error('checkout unavailable')
+          },
+          uploadArtifacts,
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerWorkspaceError)
+    expect(uploadArtifacts).toHaveBeenCalledOnce()
+    const status = JSON.parse(await readFile(statusPath, 'utf8'))
+    expect(status).toMatchObject({
+      status: 'failed',
+      telemetry: { state: 'finished' },
+      artifacts: {
+        outputArtifacts: [
+          { name: 'runner-result' },
+          {
+            name: 'runner-log',
+            key: 'runs/result.json.events.jsonl',
+            url: 's3://agents-artifacts/runs/result.json.events.jsonl',
+          },
+        ],
+      },
+    })
+    const log = await readFile(logPath, 'utf8')
+    expect(log).toContain('checkout unavailable')
+    expect(log).toContain('"phase":"git_checkout","outcome":"failed"')
+  })
+
+  it('keeps long artifact references and Unicode previews within the termination byte limit', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'runner-status-budget-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    await writeFile(runPath, JSON.stringify({ implementation: { text: 'task' } }))
+    const statusPath = join(dir, 'status.json')
+    const logPath = join(dir, 'runner.log')
+    const stdout = vi.spyOn(process.stdout, 'write')
+    onTestFinished(() => stdout.mockRestore())
+    await runCodexAppServerAdapter(
+      {
+        provider: 'codex',
+        payloads: { eventFilePath: runPath },
+        artifacts: { statusPath, logPath },
+        providerSpec: {
+          outputArtifacts: [
+            { name: 'runner-result', path: join(dir, 'result.json'), key: 'r'.repeat(512) },
+            { name: 'runner-log', path: logPath },
+            { name: 'extra', path: join(dir, 'extra.json'), key: 'e'.repeat(512) },
+          ],
+        },
+      },
+      { prompt: 'task' },
+      {
+        createClient: () => ({
+          runTurnStream: async () => ({
+            threadId: 'thread',
+            turnId: 'turn',
+            stream: (async function* () {
+              yield { type: 'message' as const, delta: '界'.repeat(256) }
+              return makeTurn('completed')
+            })(),
+          }),
+        }),
+        uploadArtifacts: async (artifacts) =>
+          artifacts.map((artifact) => ({ ...artifact, url: `s3://agents-artifacts/${artifact.key}` })),
+      },
+    )
+    const message = await readFile(statusPath, 'utf8')
+    expect(Buffer.byteLength(message)).toBeLessThanOrEqual(RUNNER_TERMINATION_BYTES)
+    expect(JSON.parse(message)).toHaveProperty('runnerStatusDigest')
+    const logs = stdout.mock.calls.map(([line]) => String(line)).join('')
+    expect(logs).toContain(RUNNER_STATUS_EVENT)
+    const kube = {
+      list: vi.fn(async () => ({
+        items: [
+          {
+            metadata: { name: 'pod' },
+            status: { containerStatuses: [{ name: 'agent-runner', state: { terminated: { message } } }] },
+          },
+        ],
+      })),
+      logs: vi.fn(async () => `${logs}later diagnostic\n`),
+    }
+    const retained = await extractRunnerStatusFromJobPods(kube, 'agents', 'job')
+    expect(retained).toMatchObject({
+      status: 'succeeded',
+      telemetry: { state: 'finished' },
+      result: { text: '界'.repeat(256) },
+    })
+    expect(retained?.artifacts?.outputArtifacts).toHaveLength(3)
+    expect(retained?.artifacts?.outputArtifacts?.[0]?.url).toBe(`s3://agents-artifacts/${'r'.repeat(512)}`)
+    expect(kube.logs).toHaveBeenCalledWith(
+      expect.objectContaining({ pod: 'pod', namespace: 'agents', container: 'agent-runner', limitBytes: 1_048_576 }),
+    )
   })
 
   it('uses an absolute Codex binary path by default for Bun child-process spawning', () => {
@@ -76,6 +223,134 @@ describe('codex app-server runner adapter', () => {
     expect(resolveCodexBinaryPath({ binaryPath: '/adapter/codex' }, { AGENTS_CODEX_BINARY: '/env/codex' })).toBe(
       '/adapter/codex',
     )
+  })
+
+  describe('app-server bootstrap', () => {
+    let runPath: string
+    beforeEach(async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'agents-codex-bootstrap-'))
+      onTestFinished(() => rm(dir, { recursive: true, force: true }))
+      runPath = join(dir, 'run.json')
+      await writeFile(runPath, '{}')
+    })
+
+    const run = (options: RunCodexAppServerAdapterOptions) =>
+      runCodexAppServerAdapter(
+        { provider: 'codex', payloads: { eventFilePath: runPath } },
+        { prompt: NORMALIZED_PROMPT, bootstrapTimeoutMs: 123 },
+        options,
+      )
+
+    it('stops the timed-out child before creating a replacement and starts exactly one turn', async () => {
+      const stopStarted = deferred()
+      const shutdown = deferred()
+      const runUnreadyTurn = vi.fn()
+      const runTurnStream = vi.fn(async () => ({ stream: makeStream(), threadId: 'thread-1', turnId: 'turn-1' }))
+      const stopAndWait = vi.fn(async () => {
+        stopStarted.resolve()
+        await shutdown.promise
+      })
+      const stop = vi.fn()
+      const createClient = vi
+        .fn()
+        .mockReturnValueOnce({
+          ensureReady: async () => {
+            throw new CodexAppServerBootstrapTimeoutError(123)
+          },
+          stopAndWait,
+          runTurnStream: runUnreadyTurn,
+        })
+        .mockReturnValueOnce({ ensureReady: async () => {}, runTurnStream, stop })
+
+      const result = run({ createClient })
+      await stopStarted.promise
+      expect(createClient).toHaveBeenCalledTimes(1)
+      expect(createClient).toHaveBeenCalledWith(expect.objectContaining({ bootstrapTimeoutMs: 123 }))
+      shutdown.resolve()
+
+      await expect(result).resolves.toBe(0)
+      expect(createClient).toHaveBeenCalledTimes(2)
+      expect(stopAndWait).toHaveBeenCalledTimes(1)
+      expect(runUnreadyTurn).not.toHaveBeenCalled()
+      expect(runTurnStream).toHaveBeenCalledTimes(1)
+      expect(stop).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      { description: 'two initialize timeouts', cause: new CodexAppServerBootstrapTimeoutError(123), attempts: 2 },
+      { description: 'a non-timeout initialize failure', cause: new Error('initialize request rejected'), attempts: 1 },
+    ])('fails after $description without starting a turn', async ({ cause, attempts }) => {
+      const stop = vi.fn()
+      const runTurnStream = vi.fn()
+      const createClient = vi.fn(() => ({
+        ensureReady: async () => {
+          throw cause
+        },
+        runTurnStream,
+        stop,
+      }))
+
+      await expect(run({ createClient })).rejects.toMatchObject({ operation: 'create-client', cause })
+      expect(createClient).toHaveBeenCalledTimes(attempts)
+      expect(stop).toHaveBeenCalledTimes(attempts)
+      expect(runTurnStream).not.toHaveBeenCalled()
+    })
+
+    it('never retries a turn request after successful initialization', async () => {
+      const cause = new CodexAppServerBootstrapTimeoutError(123)
+      const stop = vi.fn()
+      const runTurnStream = vi.fn().mockRejectedValue(cause)
+      const createClient = vi.fn(() => ({ ensureReady: async () => {}, runTurnStream, stop }))
+
+      await expect(run({ createClient })).rejects.toMatchObject({ operation: 'start-turn', cause })
+      expect(createClient).toHaveBeenCalledTimes(1)
+      expect(runTurnStream).toHaveBeenCalledTimes(1)
+      expect(stop).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops the unready child on cancellation without waiting for the bootstrap deadline', async () => {
+      const controller = new AbortController()
+      const initializing = deferred()
+      const handshake = deferred()
+      const stop = vi.fn(() => handshake.reject(new Error('child stopped')))
+      const runTurnStream = vi.fn()
+      const createClient = vi.fn(() => ({
+        ensureReady: () => {
+          initializing.resolve()
+          return handshake.promise
+        },
+        runTurnStream,
+        stop,
+      }))
+
+      const result = run({ createClient, abortSignal: controller.signal })
+      await initializing.promise
+      controller.abort('SIGTERM')
+      await expect(result).rejects.toBeInstanceOf(CodexRunnerCancellationError)
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect(createClient).toHaveBeenCalledTimes(1)
+      expect(runTurnStream).not.toHaveBeenCalled()
+    })
+
+    it('honors cancellation during retry backoff without launching a replacement', async () => {
+      const controller = new AbortController()
+      const stop = vi.fn(() => setImmediate(() => controller.abort('SIGTERM')))
+      const runTurnStream = vi.fn()
+      const createClient = vi.fn(() => ({
+        ensureReady: async () => {
+          throw new CodexAppServerBootstrapTimeoutError(123)
+        },
+        runTurnStream,
+        stop,
+      }))
+
+      await expect(run({ createClient, abortSignal: controller.signal })).rejects.toBeInstanceOf(
+        CodexRunnerCancellationError,
+      )
+      expect(createClient).toHaveBeenCalledTimes(1)
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect(runTurnStream).not.toHaveBeenCalled()
+    })
   })
 
   it('maps run.json and runner adapter config into a Codex app-server turn', async () => {
@@ -102,6 +377,10 @@ describe('codex app-server runner adapter', () => {
     const fakeClient: CodexAppServerRunnerClient = {
       runTurnStream: async (prompt, options) => {
         prompts.push(prompt)
+        createdClients.at(-1)?.onNotification?.({
+          method: 'item/agentMessage/delta',
+          params: { threadId: 'thread-1', turnId: 'turn-1', delta: 'done' },
+        })
         turnOptions.push(options ?? {})
         return {
           stream: makeStream(),
@@ -123,6 +402,7 @@ describe('codex app-server runner adapter', () => {
         },
         artifacts: {
           statusPath,
+          resultPath: join(dir, 'result.json'),
           logPath,
         },
         providerSpec: {
@@ -136,7 +416,7 @@ describe('codex app-server runner adapter', () => {
         },
       },
       {
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.2-sol',
         effort: 'high',
         sandbox: 'danger-full-access',
         approval: 'never',
@@ -161,7 +441,7 @@ describe('codex app-server runner adapter', () => {
     expect(prompts).toEqual(['implement the feature'])
     expect(createdClients[0]).toMatchObject({
       binaryPath: DEFAULT_CODEX_BINARY_PATH,
-      defaultModel: 'gpt-5.6-sol',
+      defaultModel: 'gpt-6.2-sol',
       defaultEffort: 'high',
       sandbox: 'danger-full-access',
       approval: 'never',
@@ -169,7 +449,7 @@ describe('codex app-server runner adapter', () => {
       threadConfig: { web_search: 'live', mcp_servers: {} },
     })
     expect(turnOptions[0]).toMatchObject({
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6.2-sol',
       effort: 'high',
       cwd,
       baseInstructions: 'system instructions',
@@ -188,6 +468,7 @@ describe('codex app-server runner adapter', () => {
       threadId: 'thread-1',
       turnId: 'turn-1',
     })
+    expect(status.result).toEqual({ text: 'done', truncated: false })
     expect(status.artifacts).toMatchObject({
       outputArtifacts: [
         {
@@ -199,63 +480,114 @@ describe('codex app-server runner adapter', () => {
       ],
     })
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"done"')
-  })
-
-  it('waits for the app-server thread to settle before reporting success', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
-    const runPath = join(dir, 'run.json')
-    const statusPath = join(dir, 'status.json')
-    await writeFile(
-      runPath,
-      `${JSON.stringify({
-        implementation: { text: 'continue until the session is actually done' },
-        agentRun: { name: 'run-continuation' },
-      })}\n`,
-      'utf8',
-    )
-
-    let waitedForThreadId: string | null = null
-    const fakeClient: CodexAppServerRunnerClient = {
-      runTurnStream: async () => ({
-        stream: makeStream(),
-        turnId: 'turn-initial',
-        threadId: 'thread-continuation',
-      }),
-      waitForThreadIdle: async (threadId) => {
-        waitedForThreadId = threadId
-        return { lastTurn: makeTurn('completed') }
-      },
-      stop: () => undefined,
-    }
-
-    const exitCode = await runCodexAppServerAdapter(
-      {
-        provider: 'codex-runner',
-        payloads: {
-          eventFilePath: runPath,
-        },
-        artifacts: {
-          statusPath,
-        },
-      },
-      {
-        prompt: 'continue until the session is actually done',
-      },
-      {
-        createClient: () => fakeClient,
-        uploadArtifacts: async (artifacts) => artifacts,
-      },
-    )
-
-    expect(exitCode).toBe(0)
-    expect(waitedForThreadId).toBe('thread-continuation')
-    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
-    expect(status).toMatchObject({
-      status: 'succeeded',
-      threadId: 'thread-continuation',
-      turnStatus: 'completed',
+    expect(JSON.parse(await readFile(join(dir, 'result.json'), 'utf8'))).toMatchObject({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      responseText: 'done',
+      responseTruncated: false,
     })
   })
+
+  it.each(['full', 'notLoaded'] as const)(
+    'retains the settled continuation result with %s items',
+    async (itemsView) => {
+      const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+      const runPath = join(dir, 'run.json')
+      const statusPath = join(dir, 'status.json')
+      await writeFile(
+        runPath,
+        `${JSON.stringify({
+          implementation: { text: 'continue until the session is actually done' },
+          agentRun: { name: 'run-continuation' },
+        })}\n`,
+        'utf8',
+      )
+
+      let waitedForThreadId: string | null = null
+      const fakeClient: CodexAppServerRunnerClient = {
+        runTurnStream: async () => ({
+          stream: makeStream(),
+          turnId: 'turn-initial',
+          threadId: 'thread-continuation',
+        }),
+        waitForThreadIdle: async (threadId) => {
+          waitedForThreadId = threadId
+          return {
+            lastTurn: {
+              ...makeTurn('completed'),
+              itemsView,
+              items:
+                itemsView === 'full'
+                  ? [
+                      {
+                        type: 'agentMessage',
+                        moderation: null,
+                        id: 'final-message',
+                        text: 'completed after continuation',
+                        phase: 'final_answer',
+                        memoryCitation: null,
+                        delivery: null,
+                        questions: null,
+                      },
+                    ]
+                  : [],
+            },
+          }
+        },
+        getTurnItems: async (threadId, turnId) => {
+          expect([threadId, turnId]).toEqual(['thread-continuation', 'turn-completed'])
+          return [
+            {
+              type: 'agentMessage',
+              moderation: null,
+              id: 'final-message',
+              text: 'completed after continuation',
+              phase: 'final_answer',
+              memoryCitation: null,
+              delivery: null,
+              questions: null,
+            },
+          ]
+        },
+        stop: () => undefined,
+      }
+
+      const exitCode = await runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: {
+            eventFilePath: runPath,
+          },
+          artifacts: {
+            statusPath,
+            resultPath: join(dir, 'result.json'),
+          },
+        },
+        {
+          prompt: 'continue until the session is actually done',
+        },
+        {
+          createClient: () => fakeClient,
+          uploadArtifacts: async (artifacts) => artifacts,
+        },
+      )
+
+      expect(exitCode).toBe(0)
+      expect(waitedForThreadId).toBe('thread-continuation')
+      const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+      expect(status).toMatchObject({
+        status: 'succeeded',
+        threadId: 'thread-continuation',
+        turnId: 'turn-completed',
+        turnStatus: 'completed',
+      })
+      expect(JSON.parse(await readFile(join(dir, 'result.json'), 'utf8'))).toMatchObject({
+        turnId: 'turn-completed',
+        responseText: 'completed after continuation',
+        responseTruncated: false,
+      })
+    },
+  )
 
   it('fails when an automatic app-server continuation fails before the thread settles', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
@@ -281,6 +613,7 @@ describe('codex app-server runner adapter', () => {
           message: 'automatic continuation failed',
           codexErrorInfo: null,
           additionalDetails: null,
+          misalignment: null,
         }),
       }),
       stop: () => undefined,
@@ -419,7 +752,7 @@ describe('codex app-server runner adapter', () => {
 
     const exitCode = await runCodexAppServerAdapter(
       {
-        provider: 'codex-spark-smoke',
+        provider: 'codex-smoke',
         payloads: { eventFilePath: runPath },
         artifacts: { statusPath, logPath },
         providerSpec: {
@@ -443,7 +776,7 @@ describe('codex app-server runner adapter', () => {
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"OK\\n"')
     const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
     expect(status).toMatchObject({
-      provider: 'codex-spark-smoke',
+      provider: 'codex-smoke',
       adapter: 'codex-app-server',
       exitCode: 0,
       status: 'succeeded',
@@ -651,65 +984,334 @@ describe('codex app-server runner adapter', () => {
     expect((await stat(cwd)).isDirectory()).toBe(true)
   })
 
-  it('checks out VCS-backed runs into the adapter cwd before starting Codex app-server', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
-    const runPath = join(dir, 'run.json')
+  it('resolves mirror paths only for safe owner and repository components', () => {
+    const root = '/var/cache/agents-shared'
+    expect(resolveWorkspaceMirrorPath(root, 'proompteng/lab')).toBe(`${root}/git/proompteng/lab.git`)
+    expect(resolveWorkspaceMirrorPath(root, 'some-owner/my_repo.v2')).toBe(`${root}/git/some-owner/my_repo.v2.git`)
+    for (const slug of [
+      '../lab',
+      'proompteng/..',
+      './lab',
+      'proompteng/.',
+      'proompteng/lab/other',
+      'proompteng//lab',
+      '/lab',
+      'owner/%2e%2e',
+      'proompteng\\lab',
+      'proompteng/lab\n',
+    ]) {
+      expect(resolveWorkspaceMirrorPath(root, slug)).toBeNull()
+    }
+  })
+
+  it.each(['missing', 'stale', 'invalid', 'escaped', 'current', 'clone failure'] as const)(
+    'checks out VCS-backed runs with a %s shared mirror before starting Codex',
+    async (mirrorState) => {
+      const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+      onTestFinished(() => rm(dir, { recursive: true, force: true }))
+      const runPath = join(dir, 'run.json')
+      const cwd = join(dir, 'lab')
+      const cacheRoot = join(dir, 'shared-cache')
+      const mirror = join(cacheRoot, 'git/proompteng/lab.git')
+      const slot = `${mirror}.0`
+      if (mirrorState !== 'missing') {
+        // A ready stamp does not override a stale snapshot, invalid Git repo, or escaped symlink.
+        if (mirrorState === 'escaped') {
+          const outside = join(dir, 'outside')
+          await mkdir(outside)
+          await mkdir(join(cacheRoot, 'git/proompteng'), { recursive: true })
+          await symlink(outside, mirror)
+        } else {
+          await mkdir(slot, { recursive: true })
+          await symlink('lab.git.0', mirror)
+        }
+        const stamp = join(mirror, '.refreshed')
+        await writeFile(stamp, '')
+        if (mirrorState === 'stale') await utimes(stamp, 0, 0)
+      }
+      await writeFile(
+        runPath,
+        `${JSON.stringify({
+          implementation: { text: 'check startup' },
+          vcs: {
+            repository: 'proompteng/lab',
+            cloneBaseUrl: 'https://github.com',
+            baseBranch: 'main',
+            headBranch: 'codex/test',
+            mode: 'read-write',
+            writeEnabled: true,
+          },
+        })}\n`,
+        'utf8',
+      )
+
+      const commands: string[] = []
+      const cloneArgs: string[][] = []
+      let freshCloneDestination = true
+      await runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: {
+            eventFilePath: runPath,
+          },
+        },
+        {
+          cwd,
+          prompt: NORMALIZED_PROMPT,
+        },
+        {
+          sharedCachePath: cacheRoot,
+          runCommand: async (command, args) => {
+            commands.push([command, ...args].join(' '))
+            if (command === 'git' && args[0] === '--git-dir') {
+              return { exitCode: 0, stdout: mirrorState === 'invalid' ? 'false\n' : 'true\n', stderr: '' }
+            }
+            if (command === 'git' && args[0] === 'clone') {
+              cloneArgs.push(args)
+              freshCloneDestination &&= !existsSync(join(cwd, '.git'))
+              await mkdir(join(cwd, '.git'), { recursive: true })
+              if (mirrorState === 'clone failure' && args.includes('--reference')) {
+                return { exitCode: 128, stdout: '', stderr: 'missing alternate object' }
+              }
+            }
+            return { exitCode: 0, stdout: '', stderr: '' }
+          },
+          createClient: () => ({
+            runTurnStream: async () => ({
+              stream: makeStream(),
+              turnId: 'turn-1',
+              threadId: 'thread-1',
+            }),
+          }),
+        },
+      )
+
+      expect(freshCloneDestination).toBe(true)
+      const normalClone = ['clone', '--filter=blob:none', '--no-checkout', 'https://github.com/proompteng/lab.git', cwd]
+      const cachedClone = [
+        ...normalClone.slice(0, 3),
+        '--depth=1',
+        '--branch',
+        'main',
+        '--reference',
+        mirrorState === 'current' || mirrorState === 'clone failure' ? await realpath(slot) : slot,
+        '--dissociate',
+        ...normalClone.slice(3),
+      ]
+      expect(cloneArgs).toEqual(
+        mirrorState === 'current'
+          ? [cachedClone]
+          : mirrorState === 'clone failure'
+            ? [cachedClone, normalClone]
+            : [normalClone],
+      )
+      expect(commands.filter((command) => command.startsWith('git fetch '))).toEqual(
+        mirrorState === 'current'
+          ? ['git fetch --prune --depth=1 origin +refs/heads/codex/test:refs/remotes/origin/codex/test']
+          : [],
+      )
+      expect(commands).toContain('git checkout -B codex/test refs/remotes/origin/codex/test')
+    },
+  )
+
+  it.each([
+    { name: 'warm with a stale upstream tip in the mirror', warm: true, head: 'codex/existing', fetches: 1 },
+    { name: 'cold with an existing head', warm: false, head: 'codex/existing', fetches: 0 },
+    { name: 'cold with a new head', warm: false, head: 'codex/new', fetches: 0 },
+    { name: 'cold with only a symbolic origin/HEAD', warm: false, head: 'HEAD', readOnly: true, fetches: 0 },
+    { name: 'reused checkout with an updated head', warm: false, head: 'codex/existing', reused: true, fetches: 2 },
+  ])('uses authoritative Git refs and an independent checkout when $name', async (testCase) => {
+    const { warm, head, reused, readOnly, fetches } = testCase
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-git-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const upstream = join(dir, 'upstream')
     const cwd = join(dir, 'lab')
+    const cacheRoot = join(dir, 'shared')
+    const mirror = join(cacheRoot, 'git/proompteng/lab.git')
+    const env = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }
+    const git = (args: string[], path = dir) =>
+      spawnSync('git', ['-c', `url.file://${upstream}.insteadOf=https://github.com/proompteng/lab.git`, ...args], {
+        cwd: path,
+        env,
+        encoding: 'utf8',
+      })
+    const ok = (args: string[], path?: string) => {
+      const result = git(args, path)
+      expect(result.status, result.stderr).toBe(0)
+      return result.stdout.trim()
+    }
+    ok(['init', '-b', 'main', upstream])
+    ok(['config', 'uploadpack.allowFilter', 'true'], upstream)
+    const commit = async (value: string) => {
+      await writeFile(join(upstream, 'tip.txt'), value)
+      ok(['add', 'tip.txt'], upstream)
+      ok(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', value], upstream)
+      return ok(['rev-parse', 'HEAD'], upstream)
+    }
+    await writeFile(join(upstream, 'stable.txt'), 'present in the mirror')
+    ok(['add', 'stable.txt'], upstream)
+    await commit('old base')
+    if (warm) {
+      await mkdir(join(cacheRoot, 'git/proompteng'), { recursive: true })
+      ok(['clone', '--mirror', upstream, `${mirror}.0`])
+      await writeFile(join(`${mirror}.0`, '.refreshed'), '')
+      await symlink('lab.git.0', mirror)
+    }
+    if (reused) ok(['clone', `file://${upstream}`, cwd])
+    const base = await commit('new base')
+    ok(['switch', '-c', 'codex/existing'], upstream)
+    const existing = await commit('existing head')
+
+    const runPath = join(dir, 'run.json')
     await writeFile(
       runPath,
-      `${JSON.stringify({
-        implementation: { text: 'check startup' },
-        vcs: {
-          repository: 'proompteng/lab',
-          cloneBaseUrl: 'https://github.com',
-          baseBranch: 'main',
-          headBranch: 'codex/test',
-          mode: 'read-write',
-          writeEnabled: true,
-        },
-      })}\n`,
-      'utf8',
+      JSON.stringify({ vcs: { repository: 'proompteng/lab', headBranch: head, writeEnabled: !readOnly } }),
     )
-
     const commands: string[] = []
-    await runCodexAppServerAdapter(
-      {
-        provider: 'codex-runner',
-        payloads: {
-          eventFilePath: runPath,
-        },
-      },
-      {
-        cwd,
-        prompt: NORMALIZED_PROMPT,
-      },
-      {
-        runCommand: async (command, args) => {
-          commands.push([command, ...args].join(' '))
-          if (command === 'git' && args[0] === 'clone') {
-            await mkdir(join(cwd, '.git'), { recursive: true })
-          }
-          return { exitCode: 0, stdout: '', stderr: '' }
-        },
-        createClient: () => ({
-          runTurnStream: async () => ({
-            stream: makeStream(),
-            turnId: 'turn-1',
-            threadId: 'thread-1',
+    expect(
+      await runCodexAppServerAdapter(
+        { provider: 'codex', payloads: { eventFilePath: runPath } },
+        { cwd, prompt: NORMALIZED_PROMPT },
+        {
+          sharedCachePath: cacheRoot,
+          runCommand: async (command, args, options) => {
+            expect(command).toBe('git')
+            commands.push(args[0])
+            const result = git(args, options?.cwd)
+            return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr }
+          },
+          createClient: () => ({
+            runTurnStream: async () => ({ stream: makeStream(), turnId: 'turn-1', threadId: 'thread-1' }),
           }),
-        }),
-      },
+        },
+      ),
+    ).toBe(0)
+    await rm(`${mirror}.0`, { recursive: true, force: true })
+    expect(existsSync(join(cwd, '.git/objects/info/alternates'))).toBe(false)
+    expect(ok(['rev-parse', 'refs/remotes/origin/main'], cwd)).toBe(base)
+    expect(ok(['rev-parse', 'HEAD'], cwd)).toBe(head === 'codex/existing' ? existing : base)
+    expect(ok(['branch', '--show-current'], cwd)).toBe(readOnly ? '' : head)
+    expect(await readFile(join(cwd, 'tip.txt'), 'utf8')).toBe(head === 'codex/existing' ? 'existing head' : 'new base')
+    expect(ok(['-c', 'protocol.file.allow=never', 'show', 'HEAD:tip.txt'], cwd)).toBe(
+      head === 'codex/existing' ? 'existing head' : 'new base',
     )
-
-    expect(commands).toContain(
-      'git clone --filter=blob:none --no-checkout https://github.com/proompteng/lab.git ' + cwd,
-    )
-    expect(commands).toContain('git fetch --prune --depth=1 origin +refs/heads/main:refs/remotes/origin/main')
-    expect(commands).toContain(
-      'git fetch --prune --depth=1 origin +refs/heads/codex/test:refs/remotes/origin/codex/test',
-    )
-    expect(commands).toContain('git checkout -B codex/test refs/remotes/origin/codex/test')
+    expect(ok(['-c', 'protocol.file.allow=never', 'show', 'HEAD:stable.txt'], cwd)).toBe('present in the mirror')
+    expect(commands.filter((command) => command === 'fetch')).toHaveLength(fetches)
   })
+
+  it.each(['hit', 'miss', 'cold', 'timeout', 'already installed'] as const)(
+    'bootstraps the memories workspace before turn one on a Bun cache %s',
+    async (cacheState) => {
+      const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+      onTestFinished(() => rm(dir, { recursive: true, force: true }))
+      const cwd = join(dir, 'lab')
+      const runPath = join(dir, 'run.json')
+      const logPath = join(dir, 'runner.log')
+      const cacheRoot = join(dir, 'shared')
+      const bunCache = join(cacheRoot, 'bun-cache')
+      await mkdir(cacheState === 'cold' ? cacheRoot : bunCache, { recursive: true })
+      if (cacheState !== 'cold') {
+        await mkdir(join(bunCache, 'cached-package'))
+        await mkdir(join(bunCache, '.tmp'))
+      }
+      await writeFile(
+        runPath,
+        JSON.stringify({ vcs: { repository: 'proompteng/lab', cloneBaseUrl: 'https://github.com' } }),
+      )
+
+      const installs: { args: string[]; cacheDir?: string }[] = []
+      let cachedPackageTarget: string | undefined
+      let linkedTmpDir = false
+      let installsBeforeClient = -1
+      await runCodexAppServerAdapter(
+        { provider: 'codex-runner', payloads: { eventFilePath: runPath }, artifacts: { logPath } },
+        { cwd, prompt: NORMALIZED_PROMPT },
+        {
+          sharedCachePath: cacheRoot,
+          runCommand: async (command, args, options) => {
+            if (command === 'git' && args[0] === 'checkout') {
+              await mkdir(join(cwd, 'services/memories'), { recursive: true })
+              await writeFile(join(cwd, 'bun.lock'), '{}')
+              await writeFile(join(cwd, 'services/memories/package.json'), '{"name":"memories"}')
+              if (cacheState === 'already installed') await mkdir(join(cwd, 'node_modules'))
+            }
+            if (command === 'timeout') {
+              expect(options?.cwd).toBe(cwd)
+              const cacheDir = options?.env?.BUN_INSTALL_CACHE_DIR
+              if (cacheDir) {
+                cachedPackageTarget = await readlink(join(cacheDir, 'cached-package'))
+                linkedTmpDir = existsSync(join(cacheDir, '.tmp'))
+              }
+              installs.push({ args, cacheDir })
+              const exitCode =
+                cacheState === 'timeout' ? 124 : cacheState === 'miss' && args.includes('--offline') ? 1 : 0
+              return { exitCode, stdout: '', stderr: '' }
+            }
+            return { exitCode: 0, stdout: '', stderr: '' }
+          },
+          createClient: () => {
+            installsBeforeClient = installs.length
+            return {
+              runTurnStream: async () => ({ stream: makeStream(), turnId: 'turn-1', threadId: 'thread-1' }),
+            }
+          },
+        },
+      )
+
+      const install = [
+        'bun',
+        'install',
+        '--frozen-lockfile',
+        '--production',
+        '--omit=peer',
+        '--ignore-scripts',
+        '--filter',
+        'memories',
+      ]
+      const offline = {
+        args: ['-k', '5s', '20s', ...install, '--offline', '--backend=copyfile'],
+        cacheDir: expect.stringContaining('agents-bun-cache-'),
+      }
+      const local = { args: ['-k', '5s', '30s', ...install, '--prefer-offline'] }
+      expect(installs).toEqual(
+        cacheState === 'already installed'
+          ? []
+          : cacheState === 'hit'
+            ? [offline]
+            : cacheState === 'cold'
+              ? [local]
+              : [offline, local],
+      )
+      if (cacheState !== 'already installed' && cacheState !== 'cold') {
+        expect(cachedPackageTarget).toBe(join(bunCache, 'cached-package'))
+        expect(linkedTmpDir).toBe(false)
+        expect(existsSync(installs[0]?.cacheDir ?? '')).toBe(false)
+      }
+      expect(installsBeforeClient).toBe(installs.length)
+      const phases = (await readFile(logPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line).event)
+        .filter((event) => event.type === 'startup_phase')
+      const bunOutcome = {
+        hit: 'shared',
+        miss: 'local',
+        cold: 'local',
+        timeout: 'failed',
+        'already installed': 'skipped',
+      }
+      expect(phases.map(({ phase, outcome }) => [phase, outcome])).toEqual([
+        ['git_checkout', 'origin'],
+        ['bun_bootstrap', bunOutcome[cacheState]],
+        ['app_server_ready', 'ok'],
+        ['first_turn_started', 'ok'],
+      ])
+      for (const { durationMs, elapsedMs } of phases) {
+        expect(durationMs).toBeGreaterThanOrEqual(0)
+        expect(elapsedMs).toBeGreaterThanOrEqual(durationMs)
+      }
+    },
+  )
 
   it('writes failed status and throws a typed input error when run payload JSON is invalid', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
@@ -832,6 +1434,7 @@ describe('codex app-server runner adapter', () => {
         message: 'policy denied',
         codexErrorInfo: null,
         additionalDetails: 'approval mode rejected the command',
+        misalignment: null,
       })
     }
 
@@ -973,7 +1576,7 @@ describe('codex app-server runner adapter', () => {
     const stop = vi.fn()
     const stream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
       streamEntered.resolve()
-      await new Promise<never>(() => undefined)
+      yield await new Promise<StreamDelta>(() => undefined)
       return null
     }
 

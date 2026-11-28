@@ -96,7 +96,51 @@ export const sendOtlpHttp = async (
   }
 }
 
+class OtlpGrpcStatusError extends Error {
+  constructor(
+    readonly grpcStatus: string,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+const retryableGrpcStatuses = new Set(['1', '4', '10', '11', '14', '15'])
+
 export const sendOtlpGrpc = async (
+  config: OtlpTransportConfig,
+  payload: Uint8Array,
+  path: string,
+  label: string,
+): Promise<void> => {
+  const deadline = performance.now() + Math.max(1, config.timeoutMillis ?? 30_000)
+  let backoffMillis = 1_000
+  let attempt = 1
+  for (;;) {
+    try {
+      const remainingMillis = Math.floor(deadline - performance.now())
+      if (remainingMillis <= 0) throw new Error(`OTLP ${label} gRPC export timed out`)
+      await sendOtlpGrpcOnce({ ...config, timeoutMillis: remainingMillis }, payload, path, label)
+      return
+    } catch (error) {
+      const delayMillis = Math.floor(backoffMillis * (0.8 + Math.random() * 0.4))
+      if (
+        !(error instanceof OtlpGrpcStatusError) ||
+        !retryableGrpcStatuses.has(error.grpcStatus) ||
+        performance.now() + delayMillis >= deadline
+      ) {
+        diag.error(`otlp ${label} export failed`, error)
+        throw error
+      }
+      diag.warn(`otlp ${label} export retrying`, { grpcStatus: error.grpcStatus, attempt, delayMillis })
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMillis))
+      backoffMillis = Math.min(backoffMillis * 2, 5_000)
+      attempt += 1
+    }
+  }
+}
+
+const sendOtlpGrpcOnce = async (
   config: OtlpTransportConfig,
   payload: Uint8Array,
   path: string,
@@ -143,7 +187,6 @@ export const sendOtlpGrpc = async (
       }
       settled = true
       cleanup()
-      diag.error(`otlp ${label} export failed`, error)
       reject(error)
     }
 
@@ -212,7 +255,7 @@ export const sendOtlpGrpc = async (
             message = decodeURIComponent(grpcMessage)
           } catch {}
         }
-        fail(new Error(`OTLP ${label} gRPC export failed: ${grpcStatus} ${message}`))
+        fail(new OtlpGrpcStatusError(grpcStatus, `OTLP ${label} gRPC export failed: ${grpcStatus} ${message}`))
         return
       }
       succeed()

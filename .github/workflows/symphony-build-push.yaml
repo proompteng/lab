@@ -9,10 +9,9 @@ on:
       - main
     paths:
       - 'services/symphony/**'
+      - 'patches/effect@4.1.4.patch'
       - 'nix/images/symphony.nix'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/symphony-post-deploy-verify.yml'
-      - 'nix/oci-push.sh'
+      - 'nix/images/openai-codex-cli.nix'
       - 'argocd/applications/symphony/**'
       - 'argocd/applications/symphony-jangar/**'
       - 'argocd/applications/symphony-torghut/**'
@@ -30,6 +29,7 @@ jobs:
     with:
       image_name: symphony
       package_attr: symphony-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}

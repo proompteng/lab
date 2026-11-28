@@ -2,14 +2,16 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: ci-pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
@@ -19,20 +21,24 @@ jobs:
       targets: ${{ steps.impact.outputs.targets }}
       delegated: ${{ steps.impact.outputs.delegated }}
       changed_files: ${{ steps.impact.outputs.changed_files }}
-      changed_manifests: ${{ steps.active_files.outputs.changed_manifests }}
+      changed_manifests: ${{ steps.active_files.outputs.changed_manifests || '[]' }}
+      pr_affected: ${{ steps.pr_inputs.outputs.affected }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - name: Set up Bun
+        if: github.event_name == 'merge_group'
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Derive changed files from Git
         id: files
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -45,18 +51,146 @@ jobs:
           printf 'changed_files=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
           printf 'changed_manifests=%s\n' "${changed_manifests}" >> "${GITHUB_OUTPUT}"
 
+      - name: Resolve PR service inputs
+        id: pr_inputs
+        if: github.event_name == 'pull_request'
+        uses: ./.github/actions/affected-inputs
+        with:
+          workspaces: |
+            jangar: ['services/jangar', 'packages/cx-tools']
+            bumba: ['', 'services/bumba', 'packages/temporal-bun-sdk']
+            froussard: ['', 'apps/froussard']
+            oirat: ['', 'services/oirat']
+            signal-publisher: ['', 'services/signal-publisher', 'packages/scripts']
+            ofz: ['', 'apps/landing', 'packages/backend', 'packages/design']
+          filters: |
+            jangar:
+              - 'services/jangar/**'
+              - 'services/bumba/src/**'
+              - 'services/bumba/tsconfig.json'
+              - 'packages/agent-contracts/**'
+              - 'packages/codex/src/**'
+              - 'packages/codex/scripts/**'
+              - 'packages/codex/tsconfig.json'
+              - 'packages/cx-tools/src/**'
+              - 'packages/cx-tools/tsconfig.json'
+              - 'packages/design/**'
+              - 'packages/discord/**'
+              - 'packages/otel/src/**'
+              - 'packages/otel/tsconfig.json'
+              - 'packages/temporal-bun-sdk/src/**'
+              - 'packages/temporal-bun-sdk/tsconfig.json'
+              - '!packages/**/*.test.*'
+              - '!packages/**/*.spec.*'
+              - '!packages/**/__tests__/**'
+              - '!packages/**/__snapshots__/**'
+              - 'packages/scripts/src/jangar/**'
+              - 'argocd/applications/jangar/**'
+              - 'argocd/bootstrap/jangar/**'
+              - 'nix/images/jangar.nix'
+              - 'patches/effect@4.1.4.patch'
+              - 'tsconfig.base.json'
+              - 'bunfig.toml'
+              - '.npmrc'
+              - '.github/workflows/jangar-ci.yml'
+              - '.github/workflows/common-monorepo.yml'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+            bumba:
+              - 'services/bumba/**'
+              - 'packages/temporal-bun-sdk/**'
+              - 'nix/images/bumba.nix'
+              - '.github/workflows/bumba-ci.yml'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/bun-workspace-deps-source.nix'
+              - 'nix/images/bun-workspace-deps-source.test.sh'
+              - 'nix/images/prune-bun-dependency-metadata.sh'
+              - 'bunfig.toml'
+              - '.npmrc'
+              - 'patches/**'
+              - 'argocd/applications/bumba/**'
+            froussard:
+              - 'apps/froussard/**'
+              - 'packages/agent-contracts/**'
+              - 'nix/images/froussard.nix'
+              - '.github/workflows/froussard-ci.yml'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/bun-workspace-deps-source.nix'
+              - 'nix/images/bun-workspace-deps-source.test.sh'
+              - 'nix/images/prune-bun-dependency-metadata.sh'
+              - 'bunfig.toml'
+              - '.npmrc'
+              - 'patches/**'
+              - 'argocd/applications/froussard/**'
+            oirat:
+              - 'services/oirat/**'
+              - 'packages/discord/**'
+              - 'nix/images/oirat.nix'
+              - '.github/workflows/oirat-ci.yml'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/bun-workspace-deps-source.nix'
+              - 'nix/images/bun-workspace-deps-source.test.sh'
+              - 'nix/images/prune-bun-dependency-metadata.sh'
+              - 'bunfig.toml'
+              - '.npmrc'
+              - 'patches/**'
+              - 'argocd/applications/oirat/**'
+            signal-publisher:
+              - 'services/signal-publisher/**'
+              - 'packages/scripts/src/signal/**'
+              - 'argocd/applications/torghut/clickhouse/**'
+              - 'nix/images/signal-publisher.nix'
+              - 'flake.nix'
+              - '.github/workflows/signal-publisher-*.yml'
+            ofz:
+              - 'services/ofz/**'
+              - 'argocd/applications/ofz/**'
+              - 'proto/proompteng/authz/**'
+              - 'services/relay/**'
+              - 'packages/platform-client/**'
+              - 'proto/proompteng/relay/**'
+              - 'apps/landing/src/lib/platform/**'
+              - 'apps/landing/src/app/api/platform/**'
+              - 'services/tengri/**'
+              - 'services/nanoagent/**'
+              - 'apps/landing/src/app/api/tengri/**'
+              - 'apps/landing/src/app/api/auth/**'
+              - 'apps/landing/src/lib/tengri/**'
+              - 'apps/landing/src/components/tengri/**'
+              - 'apps/landing/src/components/platform/**'
+              - 'argocd/applications/keycloak/tengri/**'
+              - 'argocd/applications/proompteng/ingressroute.yaml'
+              - 'apps/landing/package.json'
+              - '.github/scripts/install-tengri-chromium.mjs'
+              - '.github/workflows/ofz.yaml'
+              - 'nix/images/ofz.nix'
+              - 'nix/images/ofz-fixture-tools.nix'
+              - 'nix/images/agentrun-tools.nix'
+              - 'nix/tengri-schema-hash.py'
+              - 'nix/packages.nix'
+              - 'flake.nix'
+              - 'flake.lock'
+
       - name: Resolve impact targets
         id: impact
         env:
           CHANGED_FILES: ${{ steps.files.outputs.changed_files }}
-        run: >-
-          bun run packages/scripts/src/ci/impact-router.ts
-          --files "${CHANGED_FILES}"
-          --map .github/ci/impact-map.yml
-          --github-output "${GITHUB_OUTPUT}"
+          FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          input=(--full)
+          if [[ "${FULL_VALIDATION}" == false ]]; then
+            input=(--files "${CHANGED_FILES}")
+          fi
+          bun run packages/scripts/src/ci/impact-router.ts "${input[@]}" \
+            --map .github/ci/impact-map.yml --github-output "${GITHUB_OUTPUT}"
 
       - name: Serialize active changed files
         id: active_files
+        if: github.event_name == 'pull_request'
         env:
           CHANGED_MANIFESTS: ${{ steps.files.outputs.changed_manifests }}
         run: |
@@ -67,31 +201,113 @@ jobs:
         env:
           TARGETS: ${{ steps.impact.outputs.targets }}
           DELEGATED: ${{ steps.impact.outputs.delegated }}
+          PR_AFFECTED: ${{ steps.pr_inputs.outputs.affected }}
         run: |
           {
-            echo '### PR impact plan'
+            echo '### CI validation plan'
             echo
             echo "- Router validations: \`${TARGETS}\`"
             echo "- Delegated service workflows: \`${DELEGATED}\`"
+            echo "- PR service inputs: \`${PR_AFFECTED:-not evaluated}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+  landing:
+    name: PR validation (landing)
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.targets), 'landing') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Set up editor acceptance Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
+
+      - name: Set up editor acceptance Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Cache editor acceptance Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: landing-editor-acceptance
+          save-if: false
+          workspaces: |
+            services/tengri -> target
+            services/ofz -> target
+
+      - name: Install editor acceptance prerequisites
+        run: sudo apt-get install --yes --no-install-recommends protobuf-compiler iproute2
+
+      - name: Run landing validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
+          node .github/scripts/install-tengri-chromium.mjs
+          bun run --cwd apps/landing test
+          PLATFORM_UI_SCREENSHOT_DIR=/tmp/admin-portal-screenshots bun run --cwd apps/landing test:admin
+          bun run --filter landing build
+          bun run --cwd apps/landing test:e2e
+          bun run --cwd apps/landing format:check
+          bun run --cwd apps/landing lint:oxlint
+          bun run --cwd apps/landing lint:oxlint:type
+          TENGRI_EDITOR_NEXT_MODE=start bash services/nanoagent/test-vscode-browser.sh
+
+      - name: Upload landing browser artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: landing-browser-${{ github.run_attempt }}
+          path: |
+            /tmp/admin-portal-screenshots
+            apps/landing/playwright-report
+            apps/landing/test-results
+            /tmp/tengri-vscode.*/guest.log
+            /tmp/tengri-vscode.*/gateway.log
+            /tmp/tengri-vscode.*/desktop.log
+            /tmp/tengri-vscode.*/proxy.log
+            /tmp/tengri-vscode.*/vscode.log
+            /tmp/tengri-vscode.*/browser.log
+            /tmp/tengri-vscode.*/browser-results
+          if-no-files-found: ignore
+          retention-days: 7
 
   validate:
     name: PR validation (${{ matrix.target }})
     needs: plan
-    if: ${{ needs.plan.result == 'success' }}
+    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.targets != '["landing"]' }}
     strategy:
       fail-fast: false
       matrix:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
+        exclude:
+          - target: landing
+          # Design already runs App's consumer checks.
+          - target: ${{ contains(fromJSON(needs.plan.outputs.targets), 'design') && 'app' || 'landing' }}
     runs-on: >-
       ${{
-        matrix.target == 'landing' && 'arc-amd64' ||
-        (matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' ||
+        (matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'ubuntu-24.04-arm' ||
         'ubuntu-latest'
       }}
     env:
       CHANGED_FILES_JSON: ${{ needs.plan.outputs.changed_files }}
       CHANGED_MANIFESTS_JSON: ${{ needs.plan.outputs.changed_manifests }}
+      FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -100,13 +316,15 @@ jobs:
         if: ${{ matrix.target != 'shellcheck' && matrix.target != 'workflow-lint' && matrix.target != 'argo-lint' && matrix.target != 'kubeconform' }}
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
-      - name: Install build tools
-        if: ${{ matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
+      - name: Verify preinstalled ARM64 build tools
+        if: ${{ matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design' }}
+        shell: bash
+        run: >-
+          dpkg-checkbuilddeps -d
+          'dpkg-dev (>= 1.17.11), g++ (>= 4:12.3), gcc (>= 4:12.3), libc6-dev | libc-dev, make'
+          /dev/null
 
       - name: Set up Nix toolchain
         if: ${{ matrix.target == 'shared-compat' || matrix.target == 'argo-lint' || matrix.target == 'kubeconform' || matrix.target == 'cdk8s' }}
@@ -116,37 +334,10 @@ jobs:
           extra-nix-config: |
             experimental-features = nix-command flakes
 
-      - name: Run landing validation
-        if: ${{ matrix.target == 'landing' }}
+      - name: Run selected validation
         shell: bash
         env:
-          CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
-          CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
-        run: |
-          set -euo pipefail
-          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
-          bunx playwright install --with-deps chromium
-          bun run --cwd apps/landing test
-          bun run --cwd apps/landing test:e2e
-          bun run --cwd apps/landing format:check
-          bun run --cwd apps/landing lint:oxlint
-          bun run --cwd apps/landing lint:oxlint:type
-          bun run --filter landing build
-
-      - name: Upload landing browser artifacts
-        if: ${{ always() && matrix.target == 'landing' }}
-        uses: actions/upload-artifact@v5
-        with:
-          name: landing-browser-${{ github.run_attempt }}
-          path: |
-            apps/landing/playwright-report
-            apps/landing/test-results
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Run selected validation
-        if: ${{ matrix.target != 'landing' }}
-        shell: bash
+          APP_VALIDATION_SELECTED: ${{ contains(fromJSON(needs.plan.outputs.targets), 'app') }}
         run: |
           set -euo pipefail
           target="${{ matrix.target }}"
@@ -160,11 +351,21 @@ jobs:
               bun run --cwd apps/docs lint:oxlint:type
               bun run --filter docs build
               ;;
-            app)
+            app | design)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter app --filter @proompteng/design
-              bun run --cwd apps/app lint:oxlint
-              bun run --cwd apps/app lint:oxlint:type
-              bun run --filter app build
+              status=0
+              if [[ "${target}" == design ]]; then
+                bunx oxfmt --check packages/design || status=1
+                bun run --cwd packages/design lint:oxlint || status=1
+                bun run --cwd packages/design lint:oxlint:type || status=1
+                bun run --filter @proompteng/design build || status=1
+              fi
+              if [[ "${APP_VALIDATION_SELECTED}" == true ]]; then
+                bun run --cwd apps/app lint:oxlint || status=1
+              fi
+              bun run --cwd apps/app lint:oxlint:type || status=1
+              bun run --filter app build || status=1
+              exit "${status}"
               ;;
             olden)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter olden --filter @proompteng/design
@@ -173,15 +374,6 @@ jobs:
               bun run --cwd apps/olden lint:oxlint:type
               bun run --filter olden test
               bun run --filter olden build
-              ;;
-            design)
-              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/design --filter app
-              bunx oxfmt --check packages/design
-              bun run --cwd packages/design lint:oxlint
-              bun run --cwd packages/design lint:oxlint:type
-              bun run --filter @proompteng/design build
-              bun run --cwd apps/app lint:oxlint:type
-              bun run --filter app build
               ;;
             cms)
               PAYLOAD_SECRET=ci-build-secret bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter cms
@@ -220,14 +412,53 @@ jobs:
               ;;
             root-scripts)
               bun install --frozen-lockfile
-              bun run lint:flamingo-hard-migration
-              bun run scripts/hermes/validate-production.ts
-              bun test scripts/hermes/*.test.ts
-              bun run scripts/kube-router/validate-production.ts
-              bun test scripts/kube-router/*.test.ts
-              bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
-              bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
-              bun test scripts/seal-tengri-runtime.test.ts
+              input=(--full)
+              if [[ "${FULL_VALIDATION}" == false ]]; then
+                jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${RUNNER_TEMP}/root-script-files.txt"
+                input=(--files "${RUNNER_TEMP}/root-script-files.txt")
+              fi
+              plan=$(bun run packages/scripts/src/ci/impact-router.ts \
+                "${input[@]}" --map .github/ci/root-script-map.yml)
+              if [[ "${FULL_VALIDATION}" == false ]] && jq -e '.validationTargets | index("all") != null' <<< "${plan}" >/dev/null; then
+                plan=$(bun run packages/scripts/src/ci/impact-router.ts --full --map .github/ci/root-script-map.yml)
+              fi
+              suites=$(jq -r '.validationTargets[] | select(. != "all")' <<< "${plan}")
+              printf 'Root script suites: %s\n' "${suites}" | tee -a "${GITHUB_STEP_SUMMARY}"
+              while IFS= read -r suite; do
+                case "${suite}" in
+                  flamingo)
+                    bun run lint:flamingo-hard-migration
+                    ;;
+                  hermes)
+                    bun run scripts/hermes/validate-production.ts
+                    bun test scripts/hermes/*.test.ts
+                    ;;
+                  kube-router)
+                    bun run scripts/kube-router/validate-production.ts
+                    bun test scripts/kube-router/*.test.ts
+                    ;;
+                  cluster-upgrades)
+                    bunx oxlint --config .oxlintrc.json scripts/cluster-upgrades/*.test.ts
+                    bunx oxfmt --check scripts/cluster-upgrades/*.test.ts
+                    bun test scripts/cluster-upgrades/*.test.ts
+                    python3 -m unittest discover -s scripts/cluster-upgrades -p 'ceph*_test.py'
+                    python3 scripts/cluster-upgrades/temporal_cassandra_gate_test.py
+                    python3 scripts/cluster-upgrades/temporal_cassandra_verifier_test.py
+                    python3 scripts/cluster-upgrades/temporal_elasticsearch_snapshot_test.py
+                    python3 scripts/cluster-upgrades/postgres_upgrade_gate_test.py
+                    ;;
+                  forgejo)
+                    python3 -m unittest discover -s scripts/forgejo -p '*_test.py'
+                    ;;
+                  tengri-secrets)
+                    bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
+                    bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
+                    bun test scripts/seal-tengri-runtime.test.ts
+                    ;;
+                  planner) echo 'No root script suite owns these changes.' ;;
+                  *) echo "Unknown root script suite: ${suite}" >&2; exit 1 ;;
+                esac
+              done <<< "${suites}"
               ;;
             sag)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/sag
@@ -239,19 +470,57 @@ jobs:
               ;;
             shared-compat)
               bun install --frozen-lockfile --ignore-scripts
-              if jq -e 'any(.[]; . == "flake.lock" or . == "flake.nix" or startswith("nix/") or startswith(".github/actions/setup-nix-toolchain/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; . == "flake.lock" or . == "flake.nix" or startswith("nix/") or startswith(".github/actions/setup-nix-toolchain/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix flake check --no-build
               fi
+              ;;
+            jangar-inventory)
+              bun run --cwd services/jangar docs:inventory:check
               ;;
             argo-lint)
               nix run .#lint-argo-workflows
               ;;
             kubeconform)
-              mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_MANIFESTS_JSON}")
-              if [ "${#changed_manifests[@]}" -gt 0 ]; then
-                nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/bayn/") or . == "scripts/test-bayn-secret-file-mode.sh" or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c bash scripts/test-bayn-secret-file-mode.sh
+              fi
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/prepared/") or startswith("argocd/applications/ofz/") or startswith("argocd/applications/keycloak/") or startswith("argocd/applications/cloudflare/") or startswith("argocd/applications/tengri/") or startswith("argocd/applications/proompteng/") or . == "services/ofz/test-ha-manifests.sh" or . == "services/ofz/tests/ha_manifests.py" or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c bash services/ofz/test-ha-manifests.sh
+              fi
+              if [[ "${FULL_VALIDATION}" == true ]]; then
+                git ls-files -z -- ':(glob)argocd/**/*.yaml' ':(glob)argocd/**/*.yml' \
+                  ':(glob)kubernetes/**/*.yaml' ':(glob)kubernetes/**/*.yml' > "${RUNNER_TEMP}/all-manifests"
+                mapfile -d '' -t changed_manifests < "${RUNNER_TEMP}/all-manifests"
               else
-                nix develop -c scripts/kubeconform.sh argocd
+                mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_MANIFESTS_JSON}")
+              fi
+              if [ "${#changed_manifests[@]}" -gt 0 ]; then
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${changed_manifests[@]}"
+              else
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh argocd
+              fi
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/auto-ontology/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c bun test argocd/applications/auto-ontology/oauth-discovery.test.ts
+              fi
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c kustomize build --enable-helm argocd/applications/temporal >"${RUNNER_TEMP}/temporal-render.yaml"
+                nix develop -c yq eval-all -o=json -I=0 '[.]' "${RUNNER_TEMP}/temporal-render.yaml" |
+                  python3 scripts/cluster-upgrades/temporal_manifest_check.py
+              fi
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/rook-ceph/") or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                rendered="${RUNNER_TEMP}/rook-ceph-render.yaml"
+                nix develop -c kustomize build --enable-helm argocd/applications/rook-ceph >"${rendered}"
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${rendered}"
+                nix develop -c yq eval-all -o=json -I=0 '[.]' "${rendered}" | jq -e '
+                  any(.[]; .kind == "ObjectBucketClaim" and .metadata.name == "bayn-research-captures"
+                    and .spec == {generateBucketName: "bayn-research-captures", storageClassName: "rook-ceph-bucket"})
+                  and all(.[]; ((.kind == "Job" or .kind == "ConfigMap")
+                    and (.metadata.name | startswith("bayn-research-storage-bootstrap"))) | not)
+                '
+                if grep -Eq 'bootstrap\.sh|bayn-research-storage-policy\.json' "${rendered}"; then
+                  echo 'Obsolete Bayn bootstrap code must not remain in the shared Rook render' >&2
+                  exit 1
+                fi
               fi
               ;;
             cdk8s)
@@ -264,15 +533,14 @@ jobs:
               bun run --filter @proompteng/k8s imports:check
               git diff --exit-code -- packages/k8s/src/imports
               bun run --filter @proompteng/k8s synth:check -- --all
-              bun run --filter @proompteng/k8s synth:check -- --all
               git diff --exit-code -- ':(glob)argocd/applications/*/generated/**'
               mapfile -t applications < <(bun run packages/k8s/src/cli.ts list)
               test "${#applications[@]}" -gt 0
               for application in "${applications[@]}"; do
                 rendered="${RUNNER_TEMP}/${application}.yaml"
-                nix develop -c scripts/kubeconform.sh "argocd/applications/${application}/generated"
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "argocd/applications/${application}/generated"
                 nix develop -c kustomize build "argocd/applications/${application}" >"${rendered}"
-                nix develop -c scripts/kubeconform.sh "${rendered}"
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${rendered}"
               done
               if grep -R -E '^kind: (Namespace|Secret)$' argocd/applications/{docs,analysis}/generated; then
                 echo 'Generated applications must not contain Namespace or plaintext Secret resources' >&2
@@ -290,8 +558,14 @@ jobs:
               if [ "${#shell_scripts[@]}" -gt 0 ]; then shellcheck "${shell_scripts[@]}"; fi
               ;;
             workflow-lint)
-              go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-              "$(go env GOPATH)/bin/actionlint" -shellcheck '' -pyflakes ''
+              actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"
+              curl --fail --silent --show-error --location \
+                https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+                --output "${actionlint_archive}"
+              printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "${actionlint_archive}" \
+                | sha256sum -c -
+              tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint
+              "${RUNNER_TEMP}/actionlint" -shellcheck '' -pyflakes ''
               ;;
             *)
               echo "Unknown impact target: ${target}" >&2
@@ -302,11 +576,111 @@ jobs:
   agents:
     name: Agents CI
     needs: plan
-    if: ${{ needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.delegated), 'agents-ci') }}
+    if: ${{ github.event_name == 'pull_request' && needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.delegated), 'agents-ci') }}
     uses: ./.github/workflows/agents-ci.yml
     with:
       changed_files_json: ${{ needs.plan.outputs.changed_files }}
-    secrets: inherit
+    secrets:
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+
+  agents-full:
+    name: Agents full CI
+    needs: plan
+    if: github.event_name == 'merge_group' && needs.plan.result == 'success'
+    uses: ./.github/workflows/agents-ci.yml
+    with:
+      changed_files_json: ${{ needs.plan.outputs.changed_files }}
+
+  jangar:
+    name: Jangar CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').jangar == true
+    uses: ./.github/workflows/jangar-ci.yml
+
+  bumba:
+    name: Bumba CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').bumba == true
+    uses: ./.github/workflows/bumba-ci.yml
+
+  froussard:
+    name: Froussard CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').froussard == true
+    uses: ./.github/workflows/froussard-ci.yml
+
+  oirat:
+    name: Oirat CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').oirat == true
+    uses: ./.github/workflows/oirat-ci.yml
+
+  signal-publisher:
+    name: Signal publisher CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').signal-publisher == true
+    uses: ./.github/workflows/signal-publisher-ci.yml
+
+  ofz-pr:
+    name: Ofz PR authorization
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').ofz == true
+    uses: ./.github/workflows/ofz.yaml
+
+  bayn:
+    name: Bayn CI
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/bayn-ci.yml
+
+  ofz:
+    name: Ofz authorization
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/ofz.yaml
+
+  relay:
+    name: Relay platform
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/relay.yml
+
+  tengri:
+    name: Tengri and Nanoagent
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/tengri-validation.yml
+
+  buf:
+    name: Protobuf validation
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/buf-ci.yml
+
+  scripts:
+    name: Repository scripts
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/scripts-ci.yml
+
+  torghut:
+    name: Torghut CI
+    if: github.event_name == 'merge_group'
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/torghut-ci.yml
+
+  torghut-schema:
+    name: Torghut ClickHouse schema
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/torghut-schema.yml
+
+  torghut-notebooks:
+    name: Torghut notebooks
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/torghut-notebooks-ci.yml
+
+  queue-services:
+    name: Queue service validation
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/queue-service-validation.yml
 
   ci-pr:
     name: ci-pr
@@ -314,23 +688,102 @@ jobs:
     needs:
       - plan
       - validate
+      - landing
       - agents
+      - agents-full
+      - jangar
+      - bumba
+      - froussard
+      - oirat
+      - signal-publisher
+      - ofz-pr
+      - bayn
+      - ofz
+      - relay
+      - tengri
+      - buf
+      - scripts
+      - torghut
+      - torghut-schema
+      - torghut-notebooks
+      - queue-services
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
-          AGENTS_RESULT: ${{ needs.agents.result }}
+          VALIDATE_EXPECTED: ${{ github.event_name == 'pull_request' && needs.plan.outputs.targets == '["landing"]' && 'skipped' || 'success' }}
+          LANDING_RESULT: ${{ needs.landing.result }}
+          LANDING_EXPECTED: ${{ (github.event_name == 'merge_group' || contains(fromJSON(needs.plan.outputs.targets || '[]'), 'landing')) && 'success' || 'skipped' }}
+          AGENTS_RESULT: ${{ github.event_name == 'merge_group' && needs.agents-full.result || needs.agents.result }}
+          BAYN_RESULT: ${{ needs.bayn.result }}
+          OFZ_RESULT: ${{ needs.ofz.result }}
+          RELAY_RESULT: ${{ needs.relay.result }}
+          TENGRI_RESULT: ${{ needs.tengri.result }}
+          BUF_RESULT: ${{ needs.buf.result }}
+          SCRIPTS_RESULT: ${{ needs.scripts.result }}
+          TORGHUT_RESULT: ${{ needs.torghut.result }}
+          TORGHUT_SCHEMA_RESULT: ${{ needs.torghut-schema.result }}
+          TORGHUT_NOTEBOOKS_RESULT: ${{ needs.torghut-notebooks.result }}
+          QUEUE_SERVICES_RESULT: ${{ needs.queue-services.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
+          FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
           set -euo pipefail
-          if [ "${PLAN_RESULT}" != success ] || [ "${VALIDATE_RESULT}" != success ]; then
-            echo "PR validation failed: plan=${PLAN_RESULT}, validate=${VALIDATE_RESULT}" >&2
+          if [ "${PLAN_RESULT}" != success ] || [ "${VALIDATE_RESULT}" != "${VALIDATE_EXPECTED}" ]; then
+            echo "CI validation failed: plan=${PLAN_RESULT}, validate=${VALIDATE_RESULT}, expected=${VALIDATE_EXPECTED}" >&2
             exit 1
           fi
-          if [ "${AGENTS_RESULT}" != success ] && [ "${AGENTS_RESULT}" != skipped ]; then
+          if [ "${LANDING_RESULT}" != "${LANDING_EXPECTED}" ]; then
+            echo "Landing validation failed: landing=${LANDING_RESULT}, expected=${LANDING_EXPECTED}" >&2
+            exit 1
+          fi
+          if [[ "${AGENTS_RESULT}" != success && ( "${FULL_VALIDATION}" == true || "${AGENTS_RESULT}" != skipped ) ]]; then
             echo "Agents validation failed: agents=${AGENTS_RESULT}" >&2
             exit 1
           fi
-          echo "Router validation passed: agents=${AGENTS_RESULT}. Delegated workflows: ${DELEGATED}"
+          if [[ "${FULL_VALIDATION}" == true && "${BAYN_RESULT}" != success ]]; then
+            echo "Bayn validation failed: bayn=${BAYN_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && ( "${OFZ_RESULT}" != success || "${RELAY_RESULT}" != success || "${TENGRI_RESULT}" != success ) ]]; then
+            echo "Platform validation failed: ofz=${OFZ_RESULT}, relay=${RELAY_RESULT}, tengri=${TENGRI_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && ( "${BUF_RESULT}" != success || "${SCRIPTS_RESULT}" != success ) ]]; then
+            echo "Tooling validation failed: buf=${BUF_RESULT}, scripts=${SCRIPTS_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && ( "${TORGHUT_RESULT}" != success || "${TORGHUT_SCHEMA_RESULT}" != success || "${TORGHUT_NOTEBOOKS_RESULT}" != success ) ]]; then
+            echo "Torghut validation failed: core=${TORGHUT_RESULT}, schema=${TORGHUT_SCHEMA_RESULT}, notebooks=${TORGHUT_NOTEBOOKS_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && "${QUEUE_SERVICES_RESULT}" != success ]]; then
+            echo "Queue service validation failed: ${QUEUE_SERVICES_RESULT}" >&2
+            exit 1
+          fi
+          echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
+
+      - name: Enforce selected PR service results
+        if: github.event_name == 'pull_request'
+        env:
+          AFFECTED: ${{ needs.plan.outputs.pr_affected }}
+          RESULTS: |-
+            jangar=${{ needs.jangar.result }}
+            bumba=${{ needs.bumba.result }}
+            froussard=${{ needs.froussard.result }}
+            oirat=${{ needs.oirat.result }}
+            signal-publisher=${{ needs.signal-publisher.result }}
+            ofz=${{ needs.ofz-pr.result }}
+        run: |
+          set -euo pipefail
+          while IFS='=' read -r target result; do
+            affected="$(jq -er --arg target "${target}" '.[$target] | if type == "boolean" then tostring else error("Missing PR impact decision: \($target)") end' <<< "${AFFECTED}")"
+            expected=skipped
+            if [[ "${affected}" == true ]]; then expected=success; fi
+            if [[ "${result}" != "${expected}" ]]; then
+              echo "PR service validation failed: ${target}=${result}, expected=${expected}" >&2
+              exit 1
+            fi
+          done <<< "${RESULTS}"

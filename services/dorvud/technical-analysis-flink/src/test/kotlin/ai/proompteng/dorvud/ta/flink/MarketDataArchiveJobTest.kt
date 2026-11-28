@@ -6,13 +6,29 @@ import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
+import org.apache.flink.streaming.api.graph.StreamGraphHasherV2
+import org.apache.flink.streaming.runtime.partitioner.KeyGroupStreamPartitioner
 import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.HexFormat
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+
+private const val SIP_SHADOW_ID = "torghut-core-equity-sip-v1"
+private const val SIP_SHADOW_HASH = "89de937a84155ab0cffdfbc5687edf0ace82f68dcd07ffcdc724c58efb28960b"
+private const val SIP_SHADOW_BARS = "bayn.market-data.sip.bars.1m.v1"
+private const val SIP_SHADOW_QUOTES = "bayn.market-data.sip.quotes.v1"
+private const val SIP_SHADOW_TRADES = "bayn.market-data.sip.trades.v1"
 
 class MarketDataArchiveJobTest {
   private val observationSymbols = setOf("DBC", "EFA", "IEF", "SPY", "VNQ")
@@ -32,6 +48,73 @@ class MarketDataArchiveJobTest {
         ArchiveRoute("delayed_sip", observationUniverse, ArchiveRecordKind.Trade),
       "bayn.market-data.overnight.bars.1m.v1" to ArchiveRoute("overnight", observationUniverse),
     )
+
+  // The same 46 equities and 27 ETFs as the Wave 4H audit and the Wave 7B forwarder.
+  private val sipSymbols =
+    (
+      "AAPL,ALAB,AMAT,AMD,AMZN,ANET,APP,ARM,ASML,AVGO,CEG,COHR,COIN,CRDO,CRWD,GEV,GOOGL,HOOD,INTC,KLAC,LITE,LRCX," +
+        "META,MRVL,MSFT,MSTR,MU,NET,NFLX,NOW,NVDA,ORCL,PANW,PLTR,SHOP,SMCI,SNDK,SNOW,SOFI,SPOT,TSLA,TSM,UBER,VRT,VST,WDC," +
+        "DBC,EEM,EFA,GLD,HYG,IEF,IWM,LQD,QQQ,SHY,SLV,SMH,SPY,TLT,USO,VNQ,XLB,XLC,XLE,XLF,XLI,XLK,XLP,XLRE,XLU,XLV,XLY"
+    ).split(",").sorted()
+  private val sipShadowEnv =
+    mapOf(
+      "ARCHIVE_SIP_SHADOW_UNIVERSE_ID" to SIP_SHADOW_ID,
+      "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS" to sipSymbols.joinToString(","),
+      "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOL_HASH" to SIP_SHADOW_HASH,
+      "ARCHIVE_SIP_SHADOW_BARS_TOPIC" to SIP_SHADOW_BARS,
+      "ARCHIVE_SIP_SHADOW_QUOTES_TOPIC" to SIP_SHADOW_QUOTES,
+      "ARCHIVE_SIP_SHADOW_TRADES_TOPIC" to SIP_SHADOW_TRADES,
+    )
+
+  @Test
+  fun `adding features retains raw source and sink savepoint identities`() {
+    fun hashes(
+      features: Boolean,
+      technical: Boolean = false,
+    ): Map<String, String> {
+      val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+      val variables = validEnvironment() + if (features) mapOf("ARCHIVE_FEATURES_TOPIC" to "torghut.market-features.v1") else emptyMap()
+      configureMarketDataArchiveJob(
+        environment,
+        MarketDataArchiveConfig.fromEnv(variables).copy(
+          technicalFeaturesTopic = if (technical) "torghut.technical-features.v1" else null,
+        ),
+      )
+      val graph = environment.streamGraph
+      val hashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(graph)
+      return graph.streamNodes
+        .filter { it.operatorName == "Source: market-data-bars-source" || it.operatorName.endsWith(": Writer") }
+        .associate { it.operatorName to hashes.getValue(it.id).contentToString() }
+    }
+    val existing = hashes(false)
+    val extended = hashes(true)
+    val technical = hashes(true, true)
+    extended.forEach { (name, hash) -> assertEquals(hash, technical[name], "technical archive preserves: $name") }
+    assertEquals(4, existing.size)
+    assertTrue(extended.size > existing.size)
+    existing.forEach { (name, hash) -> assertEquals(hash, extended[name], "savepoint operator: $name") }
+  }
+
+  @Test
+  fun `raw archive operators retain the deployed savepoint identities`() {
+    val expected =
+      mapOf(
+        "Source: market-data-bars-source" to "d618a97df21bbd4bb61c79cdeca965b4",
+        "signal-intraday-bars-archive: Writer" to "b44d1e67369ec08bf6e68aa027449b4b",
+        "signal-intraday-quotes-archive: Writer" to "e9779db5592ff21254bf256adf667700",
+        "signal-intraday-trades-archive: Writer" to "e8d2cf76684903e35fd2637619d8c5be",
+      )
+    for (variables in listOf(validEnvironment(), iexEnvironment(), iexEnvironment() + sipShadowEnv)) {
+      val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+      configureMarketDataArchiveJob(environment, MarketDataArchiveConfig.fromEnv(variables))
+      val graph = environment.streamGraph
+      val hashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(graph)
+      expected.forEach { (name, hash) ->
+        val node = graph.streamNodes.single { it.operatorName == name }
+        assertEquals(hash, HexFormat.of().formatHex(hashes.getValue(node.id)), "deployed savepoint operator: $name")
+      }
+    }
+  }
 
   @Test
   fun `decodes enriched bars with source-offset lineage and cross-feed separation`() {
@@ -171,15 +254,46 @@ class MarketDataArchiveJobTest {
   }
 
   @Test
-  fun `rejects crossed quotes invalid trades and channel-topic mismatches`() {
-    assertFailsWith<IllegalArgumentException> {
-      decodeArchiveQuote(
-        quoteRecord(
-          "torghut.quotes.v1",
-          quoteEnvelope("sip", "real_time_consolidated", bidPrice = 101.0, askPrice = 100.0, symbol = "NVDA"),
-        ),
-        routes,
-      )
+  fun `retains withdrawn quote sides with their original source lineage`() {
+    listOf(279.67 to 0.0, 0.0 to 279.67, 0.0 to 0.0).forEach { (bid, ask) ->
+      val quote =
+        decodeArchiveQuote(
+          quoteRecord(
+            "torghut.quotes.v1",
+            quoteEnvelope(
+              "sip",
+              "real_time_consolidated",
+              bidPrice = bid,
+              askPrice = ask,
+              bidSize = if (bid == 0.0) 0.0 else 480.0,
+              askSize = if (ask == 0.0) 0.0 else 480.0,
+              symbol = "NVDA",
+            ),
+            partition = 4,
+            offset = 87886365,
+          ),
+          routes,
+        )
+      assertEquals(bid, quote.bidPrice)
+      assertEquals(ask, quote.askPrice)
+      assertEquals("torghut.quotes.v1", quote.sourceTopic)
+      assertEquals(4, quote.sourcePartition)
+      assertEquals(87886365, quote.sourceOffset)
+    }
+  }
+
+  @Test
+  fun `rejects negative or crossed quote prices invalid trades and channel-topic mismatches`() {
+    listOf(-1.0 to 100.0, 100.0 to -1.0, 101.0 to 100.0, 0.0 to 100.0, 100.0 to 0.0).forEach { (bid, ask) ->
+      assertFailsWith<IllegalArgumentException> {
+        decodeArchiveQuote(
+          quoteRecord(
+            "torghut.quotes.v1",
+            quoteEnvelope("sip", "real_time_consolidated", bidPrice = bid, askPrice = ask, symbol = "NVDA"),
+          ),
+          routes,
+        )
+      }
     }
     assertFailsWith<IllegalArgumentException> {
       decodeArchiveTrade(
@@ -202,55 +316,59 @@ class MarketDataArchiveJobTest {
   }
 
   @Test
-  fun `archive configuration rejects duplicate topics and unbounded values`() {
-    val valid =
-      mapOf(
-        "ARCHIVE_CORE_FEED" to "sip",
-        "ARCHIVE_CORE_BARS_TOPIC" to "torghut.bars.1m.v1",
-        "ARCHIVE_CORE_QUOTES_TOPIC" to "torghut.quotes.v1",
-        "ARCHIVE_CORE_TRADES_TOPIC" to "torghut.trades.v1",
-        "ARCHIVE_DELAYED_SIP_BARS_TOPIC" to "bayn.market-data.delayed-sip.bars.1m.v1",
-        "ARCHIVE_DELAYED_SIP_QUOTES_TOPIC" to "bayn.market-data.delayed-sip.quotes.v1",
-        "ARCHIVE_DELAYED_SIP_TRADES_TOPIC" to "bayn.market-data.delayed-sip.trades.v1",
-        "ARCHIVE_OVERNIGHT_BARS_TOPIC" to "bayn.market-data.overnight.bars.1m.v1",
-        "ARCHIVE_CLICKHOUSE_URL" to "jdbc:clickhouse://clickhouse:8123/signal",
-        "ARCHIVE_CLICKHOUSE_PASSWORD" to "clickhouse-password",
-        "ARCHIVE_KAFKA_PASSWORD" to "password",
-        "ARCHIVE_OFFSET_RESET" to "latest",
-        "ARCHIVE_CORE_UNIVERSE_ID" to coreUniverse.id,
-        "ARCHIVE_CORE_UNIVERSE_SYMBOLS" to coreUniverse.symbols.sorted().joinToString(","),
-        "ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to coreUniverse.symbolHash,
-        "UNIVERSE_ID" to observationUniverse.id,
-        "UNIVERSE_SYMBOLS" to observationUniverse.symbols.sorted().joinToString(","),
-        "UNIVERSE_SYMBOL_HASH" to observationUniverse.symbolHash,
+  fun `quote recovery requires complete original records and binds the existing route`() {
+    val range = QuoteArchiveRecoveryRange("torghut.quotes.v1", 4, 87886364, 87886366)
+    val record =
+      quoteRecord(
+        range.topic,
+        quoteEnvelope("sip", "real_time_consolidated", bidPrice = 279.67, askPrice = 0.0, askSize = 0.0, symbol = "NVDA"),
+        partition = range.partition,
+        offset = range.firstOffset,
       )
-    val config = MarketDataArchiveConfig.fromEnv(valid)
+    val records = listOf(record, record.copy(offset = range.firstOffset + 1))
+    val (manifest, quotes) = quoteArchiveRecoveryPlan(range, routes, records)
+    assertEquals(listOf(87886364L, 87886365L), manifest.records.map { it.offset })
+    assertEquals(records.map { it.offset }, quotes.map { it.sourceOffset })
+    assertEquals(listOf(0.0, 0.0), quotes.map { it.askPrice })
+    assertEquals(listOf(0.0, 0.0), quotes.map { it.askSize })
+    assertEquals("sip", manifest.feed)
+    assertEquals(coreUniverse.symbolHash, manifest.universeSymbolHash)
+    val hash = quoteArchiveRecoveryHash(manifest)
+    assertEquals(hash, quoteArchiveRecoveryHash(quoteArchiveRecoveryPlan(range, routes, records).first))
+    assertTrue(hash != quoteArchiveRecoveryHash(manifest.copy(universeId = "other-universe")))
+    assertTrue(hash != quoteArchiveRecoveryHash(manifest.copy(records = manifest.records.reversed())))
+    listOf(
+      records.dropLast(1),
+      records.reversed(),
+      listOf(record, record),
+      records.map { it.copy(partition = 5) },
+      records.map { it.copy(value = "{}") },
+    ).forEach { changed ->
+      assertFailsWith<IllegalArgumentException> { quoteArchiveRecoveryPlan(range, routes, changed) }
+    }
+    val changed = records.map { it.copy(value = it.value.replace("279.67", "279.68")) }
+    assertTrue(hash != quoteArchiveRecoveryHash(quoteArchiveRecoveryPlan(range, routes, changed).first))
+    assertFailsWith<IllegalArgumentException> { quoteArchiveRecoveryPlan(range, emptyMap(), records) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, -1, 0, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, -1, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, 1, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, 0, 10001) }
+  }
+
+  @Test
+  fun `archive configuration rejects duplicate topics and unbounded values`() {
+    val valid = validEnvironment()
+    val config = MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_PARALLELISM" to "16"))
     assertEquals(7, config.routes.size)
     assertEquals(coreUniverse, config.routes.getValue("torghut.bars.1m.v1").universe)
     assertEquals(
       observationUniverse,
       config.routes.getValue("bayn.market-data.delayed-sip.bars.1m.v1").universe,
     )
-    assertEquals(100, config.clickhouseBatchSize)
+    assertEquals(1_000, config.clickhouseBatchSize)
     assertEquals("signal_publisher", config.clickhouseUsername)
     assertEquals(OffsetResetStrategy.LATEST, config.offsetResetStrategy)
-
-    val legacy =
-      MarketDataArchiveConfig.fromEnv(
-        valid
-          .minus(
-            listOf(
-              "ARCHIVE_CORE_FEED",
-              "ARCHIVE_CORE_BARS_TOPIC",
-              "ARCHIVE_CORE_QUOTES_TOPIC",
-              "ARCHIVE_CORE_TRADES_TOPIC",
-              "ARCHIVE_DELAYED_SIP_QUOTES_TOPIC",
-              "ARCHIVE_DELAYED_SIP_TRADES_TOPIC",
-            ),
-          ).plus("ARCHIVE_IEX_BARS_TOPIC" to "torghut.bars.1m.v1"),
-      )
-    assertEquals(3, legacy.routes.size)
-    assertEquals("iex", legacy.routes.getValue("torghut.bars.1m.v1").feed)
+    assertEquals(16, config.parallelism)
 
     assertFailsWith<IllegalStateException> {
       MarketDataArchiveConfig.fromEnv(
@@ -261,7 +379,10 @@ class MarketDataArchiveJobTest {
       MarketDataArchiveConfig.fromEnv(valid - "ARCHIVE_DELAYED_SIP_TRADES_TOPIC")
     }
     assertFailsWith<IllegalArgumentException> {
-      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "1001"))
+      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "10001"))
+    }
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_PARALLELISM" to "17"))
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_OFFSET_RESET" to "middle"))
@@ -279,6 +400,218 @@ class MarketDataArchiveJobTest {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to "0".repeat(64)))
     }
   }
+
+  @Test
+  fun `leaving shadow unset preserves both IEX route contracts`() {
+    val enriched = MarketDataArchiveConfig.fromEnv(iexEnvironment())
+    val expectedIexRoutes = routes.mapValues { (_, route) -> if (route.feed == "sip") route.copy(feed = "iex") else route }
+    assertEquals(expectedIexRoutes, enriched.routes)
+
+    val legacy =
+      MarketDataArchiveConfig.fromEnv(
+        iexEnvironment()
+          .minus(
+            listOf(
+              "ARCHIVE_CORE_FEED",
+              "ARCHIVE_CORE_BARS_TOPIC",
+              "ARCHIVE_CORE_QUOTES_TOPIC",
+              "ARCHIVE_CORE_TRADES_TOPIC",
+              "ARCHIVE_DELAYED_SIP_QUOTES_TOPIC",
+              "ARCHIVE_DELAYED_SIP_TRADES_TOPIC",
+            ),
+          ).plus("ARCHIVE_IEX_BARS_TOPIC" to "torghut.bars.1m.v1"),
+      )
+    assertEquals(enriched.copy(routes = expectedIexRoutes.filterValues { it.kind == ArchiveRecordKind.Bar }), legacy)
+  }
+
+  @Test
+  fun `rejects missing or blank shadow configuration and invalid universe metadata`() {
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(iexEnvironment() + sipShadowEnv.mapValues { "" })
+    }
+    for (key in sipShadowEnv.keys) {
+      for (shadow in listOf(sipShadowEnv - key, sipShadowEnv + (key to " "))) {
+        val error = assertFailsWith<IllegalArgumentException> { MarketDataArchiveConfig.fromEnv(iexEnvironment() + shadow) }
+        assertContains(error.message.orEmpty(), key)
+      }
+    }
+
+    val configured = iexEnvironment() + sipShadowEnv
+    for ((key, value) in listOf(
+      "ARCHIVE_SIP_SHADOW_UNIVERSE_ID" to "Invalid-ID",
+      "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS" to "AAPL,AAPL",
+      "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS" to sipSymbols.reversed().joinToString(","),
+      "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS" to sipSymbols.joinToString(",").lowercase(),
+      "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS" to sipSymbols.joinToString(",") + ",",
+      "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOL_HASH" to "0".repeat(64),
+    )) {
+      val error = assertFailsWith<IllegalArgumentException> { MarketDataArchiveConfig.fromEnv(configured + (key to value)) }
+      assertContains(error.message.orEmpty(), key)
+    }
+  }
+
+  @Test
+  fun `rejects shadow topic collisions and concurrent SIP core`() {
+    val coreSip = assertFailsWith<IllegalArgumentException> { MarketDataArchiveConfig.fromEnv(validEnvironment() + sipShadowEnv) }
+    assertContains(coreSip.message.orEmpty(), "ARCHIVE_CORE_FEED=sip")
+
+    val optionalTopics =
+      mapOf(
+        "ARCHIVE_FEATURES_TOPIC" to "torghut.market-features.v1",
+        "ARCHIVE_TECHNICAL_FEATURES_TOPIC" to "torghut.technical-features.v1",
+        "ARCHIVE_CRYPTO_TOPIC" to "dorvud.crypto.v1",
+        "ARCHIVE_CRYPTO_FEATURES_TOPIC" to "dorvud.crypto-features.v1",
+        "ARCHIVE_WEBULL_TOPIC" to "dorvud.webull.raw.v1",
+      )
+    val configured = iexEnvironment() + sipShadowEnv + optionalTopics + ("ARCHIVE_CRYPTO_SYMBOLS" to "BTC/USD")
+    val reservedTopics = routes.keys + optionalTopics.values + listOf(SIP_SHADOW_BARS, SIP_SHADOW_TRADES)
+    for (topic in reservedTopics) {
+      val error =
+        assertFailsWith<IllegalArgumentException> {
+          MarketDataArchiveConfig.fromEnv(configured + ("ARCHIVE_SIP_SHADOW_QUOTES_TOPIC" to topic))
+        }
+      assertContains(error.message.orEmpty(), topic)
+    }
+  }
+
+  @Test
+  fun `archives Wave 7B SIP wire records alongside live IEX routes`() {
+    assertEquals(73, sipSymbols.size)
+    assertEquals(SIP_SHADOW_HASH, canonicalSymbolHash(sipSymbols))
+    val config = MarketDataArchiveConfig.fromEnv(iexEnvironment() + sipShadowEnv)
+    val inputs = sipShadowRecords()
+    val (barRecord, quoteRecord, tradeRecord) = inputs
+    assertEquals(10, config.routes.size)
+    assertEquals(
+      MarketDataArchiveConfig.fromEnv(iexEnvironment()),
+      config.copy(routes = config.routes - inputs.map { it.topic }),
+    )
+    val universe = ArchiveUniverse(SIP_SHADOW_ID, SIP_SHADOW_HASH, sipSymbols.toSet())
+    for ((input, kind) in inputs.zip(listOf(ArchiveRecordKind.Bar, ArchiveRecordKind.Quote, ArchiveRecordKind.Trade))) {
+      assertEquals(ArchiveRoute("sip", universe, kind, sipShadow = true), config.routes.getValue(input.topic))
+    }
+
+    val bar = decodeArchiveBar(barRecord, config.routes)
+    val quote = decodeArchiveQuote(quoteRecord, config.routes)
+    val trade = decodeArchiveTrade(tradeRecord, config.routes)
+    assertEquals(listOf("sip", "sip", "sip"), listOf(bar.feed, quote.feed, trade.feed))
+    assertEquals(listOf(SIP_SHADOW_ID, SIP_SHADOW_ID, SIP_SHADOW_ID), listOf(bar.universeId, quote.universeId, trade.universeId))
+    assertEquals(
+      listOf(SIP_SHADOW_HASH, SIP_SHADOW_HASH, SIP_SHADOW_HASH),
+      listOf(bar.universeSymbolHash, quote.universeSymbolHash, trade.universeSymbolHash),
+    )
+    assertEquals(List(3) { "real_time_consolidated" }, listOf(bar.delayClass, quote.delayClass, trade.delayClass))
+    assertEquals(List(3) { "AAPL" }, listOf(bar.symbol, quote.symbol, trade.symbol))
+    assertEquals(
+      listOf(SIP_SHADOW_BARS, SIP_SHADOW_QUOTES, SIP_SHADOW_TRADES),
+      listOf(bar.sourceTopic, quote.sourceTopic, trade.sourceTopic),
+    )
+
+    val iex = decodeArchiveBar(record("torghut.bars.1m.v1", envelope("iex", "real_time_exchange_only", symbol = "NVDA")), config.routes)
+    assertEquals("iex", iex.feed)
+    assertEquals(coreUniverse.id, iex.universeId)
+  }
+
+  @Test
+  fun `rejects spoofed or missing SIP provenance across all record kinds`() {
+    val shadowRoutes = MarketDataArchiveConfig.fromEnv(iexEnvironment() + sipShadowEnv).routes
+    val invalidFields =
+      listOf(
+        Triple("feed", JsonPrimitive("iex"), "feed does not match"),
+        Triple("delay_class", JsonPrimitive("real_time_exchange_only"), "delayClass does not match"),
+        Triple("delay_class", null, "delay_class"),
+        Triple("symbol", JsonPrimitive("ZZZZ"), "outside the configured universe"),
+        Triple("universe_id", JsonPrimitive(coreUniverse.id), "universe_id"),
+        Triple("universe_id", null, "universe_id"),
+        Triple("universe_symbol_hash", JsonPrimitive(coreUniverse.symbolHash), "universe_symbol_hash"),
+        Triple("universe_symbol_hash", null, "universe_symbol_hash"),
+        Triple("delayClass", JsonPrimitive("real_time_consolidated"), "delayClass"),
+      )
+    for (record in sipShadowRecords()) {
+      for ((field, value, message) in invalidFields) {
+        val wire = Json.parseToJsonElement(record.value).jsonObject
+        val input = record.copy(value = JsonObject(if (value == null) wire - field else wire + (field to value)).toString())
+        val error =
+          assertFailsWith<IllegalArgumentException>("${record.topic}: $field") {
+            when (shadowRoutes.getValue(record.topic).kind) {
+              ArchiveRecordKind.Bar -> decodeArchiveBar(input, shadowRoutes)
+              ArchiveRecordKind.Quote -> decodeArchiveQuote(input, shadowRoutes)
+              ArchiveRecordKind.Trade -> decodeArchiveTrade(input, shadowRoutes)
+            }
+          }
+        assertContains(error.message.orEmpty(), message)
+      }
+    }
+  }
+
+  @Test
+  fun `partitions every archive stream by Kafka lineage before synchronous ClickHouse writes`() {
+    val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+    configureMarketDataArchiveJob(environment, MarketDataArchiveConfig.fromEnv(validEnvironment()))
+
+    val graph = environment.streamGraph
+    val archiveSinks = graph.streamNodes.filter { node -> node.operatorName.endsWith(": Writer") }
+
+    assertEquals(3, archiveSinks.size)
+    archiveSinks.forEach { sink ->
+      assertIs<KeyGroupStreamPartitioner<*, *>>(sink.inEdges.single().partitioner)
+    }
+  }
+
+  @Test
+  fun `retained quote recovery admits bounded ten thousand row batches`() {
+    val config =
+      MarketDataArchiveConfig.fromEnv(validEnvironment() + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "10000"))
+    assertEquals(10_000, config.clickhouseBatchSize)
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(validEnvironment() + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "10001"))
+    }
+  }
+
+  internal fun validEnvironment(): Map<String, String> =
+    mapOf(
+      "ARCHIVE_CORE_FEED" to "sip",
+      "ARCHIVE_CORE_BARS_TOPIC" to "torghut.bars.1m.v1",
+      "ARCHIVE_CORE_QUOTES_TOPIC" to "torghut.quotes.v1",
+      "ARCHIVE_CORE_TRADES_TOPIC" to "torghut.trades.v1",
+      "ARCHIVE_DELAYED_SIP_BARS_TOPIC" to "bayn.market-data.delayed-sip.bars.1m.v1",
+      "ARCHIVE_DELAYED_SIP_QUOTES_TOPIC" to "bayn.market-data.delayed-sip.quotes.v1",
+      "ARCHIVE_DELAYED_SIP_TRADES_TOPIC" to "bayn.market-data.delayed-sip.trades.v1",
+      "ARCHIVE_OVERNIGHT_BARS_TOPIC" to "bayn.market-data.overnight.bars.1m.v1",
+      "ARCHIVE_CLICKHOUSE_URL" to "jdbc:clickhouse://clickhouse:8123/signal",
+      "ARCHIVE_CLICKHOUSE_PASSWORD" to "clickhouse-password",
+      "ARCHIVE_KAFKA_PASSWORD" to "password",
+      "ARCHIVE_OFFSET_RESET" to "latest",
+      "ARCHIVE_CORE_UNIVERSE_ID" to coreUniverse.id,
+      "ARCHIVE_CORE_UNIVERSE_SYMBOLS" to coreUniverse.symbols.sorted().joinToString(","),
+      "ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to coreUniverse.symbolHash,
+      "UNIVERSE_ID" to observationUniverse.id,
+      "UNIVERSE_SYMBOLS" to observationUniverse.symbols.sorted().joinToString(","),
+      "UNIVERSE_SYMBOL_HASH" to observationUniverse.symbolHash,
+    )
+
+  private fun iexEnvironment(): Map<String, String> = validEnvironment() + ("ARCHIVE_CORE_FEED" to "iex")
+
+  private fun sipShadowRecords(): List<ArchiveKafkaRecord> =
+    listOf(
+      record(SIP_SHADOW_BARS, envelope("sip", "real_time_consolidated", symbol = "AAPL")),
+      quoteRecord(SIP_SHADOW_QUOTES, quoteEnvelope("sip", "real_time_consolidated", symbol = "AAPL")),
+      tradeRecord(SIP_SHADOW_TRADES, tradeEnvelope("sip", "real_time_consolidated", symbol = "AAPL")),
+    ).map { record ->
+      val wire = Json.parseToJsonElement(record.value).jsonObject
+      // Wave 7B replaces delayClass on the SIP wire and adds the two universe fields.
+      record.copy(
+        value =
+          JsonObject(
+            wire - "delayClass" +
+              mapOf(
+                "delay_class" to wire.getValue("delayClass"),
+                "universe_id" to JsonPrimitive(SIP_SHADOW_ID),
+                "universe_symbol_hash" to JsonPrimitive(SIP_SHADOW_HASH),
+              ),
+          ).toString(),
+      )
+    }
 
   private fun record(
     topic: String,
@@ -347,6 +680,8 @@ class MarketDataArchiveJobTest {
     symbol: String = "SPY",
     bidPrice: Double = 100.0,
     askPrice: Double = 100.1,
+    bidSize: Double = 20.0,
+    askSize: Double = 30.0,
   ): Envelope<QuotePayload> {
     val eventTime = Instant.parse("2026-07-21T14:00:00Z")
     return Envelope(
@@ -356,7 +691,7 @@ class MarketDataArchiveJobTest {
       channel = channel,
       symbol = symbol,
       seq = 2,
-      payload = QuotePayload(bp = bidPrice, bs = 20.0, ap = askPrice, `as` = 30.0, t = eventTime),
+      payload = QuotePayload(bp = bidPrice, bs = bidSize, ap = askPrice, `as` = askSize, t = eventTime),
       provider = "alpaca",
       marketSession = "regular",
       delayClass = delayClass,

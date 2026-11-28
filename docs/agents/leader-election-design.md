@@ -1,235 +1,293 @@
 # Leader Election Design (Agents Controllers)
 
-Status: Current (2026-05-19)
+Status: Current, source-verified 2026-08-30
 
 Docs index: [README](README.md)
 
-## Purpose
+This document describes the active Agents leader-election contract. The implementation and chart are authoritative;
+this document is an operational design note, not a second configuration source.
 
-Define how Agents controllers use Kubernetes leader election to support safe horizontal scaling, prevent double
-reconciliation, and provide predictable failover behavior.
+## Purpose and scope
 
-## Implementation
+Agents uses one Kubernetes Lease to ensure that only one replica runs the leader-gated controller work for a
+configured Agents installation. Followers continue serving the process and read-only APIs, but their controller
+runtimes are stopped and their mutating APIs reject requests with a retryable response.
 
-- Code: Leader election runtime lives in `services/agents/src/server/leader-election.ts`.
-- Code: Controllers are started/stopped by `services/agents/src/server/controller-runtime.ts`.
-- Code: Lease CRUD is implemented via `kubectl get/create/replace lease` to remain Bun-compatible (avoids TLS issues
-  with the Kubernetes client in some environments).
-- HTTP readiness: `/ready` exists and reports controller health, not leadership. See `services/agents/src/routes/ready.tsx`.
-- HTTP readiness: `/ready` includes `leaderElection` status in the response body for debuggability.
-- Mutation gating: HTTP mutation routes can use `requireLeaderForMutationHttp()` from `services/agents/src/server/leader-election.ts`.
-- Mutation gating: gRPC mutation methods are gated in `services/agents/src/server/agentctl-grpc.ts`.
-- Chart: Values are `controller.leaderElection.*` in `charts/agents/values.yaml` with schema in `charts/agents/values.schema.json`.
-- Chart: Env wiring is in `charts/agents/templates/deployment.yaml` and `charts/agents/templates/deployment-controllers.yaml`.
-- Chart: RBAC is in `charts/agents/templates/rbac.yaml` (Lease permissions in the namespace).
-- Cluster (GitOps desired state): `argocd/applications/agents/values.yaml` runs control plane with `replicaCount: 1`.
-- Cluster (GitOps desired state): `argocd/applications/agents/values.yaml` runs controllers HA with `controllers.replicaCount: 2`.
+The contract covers:
 
-## Goals
+- Lease acquisition, renewal, expiry, release, and identity.
+- The controller-runtime callback boundary.
+- HTTP/gRPC mutation gates and readiness/status reporting.
+- Helm values, environment-variable wiring, RBAC, and validation.
 
-- Ensure exactly one active reconciler across the controller loops in a given Agents release at any time.
-- Provide fast, deterministic failover on leader loss.
-- Keep webhook and gRPC mutation paths leader-gated to avoid duplicate writes.
-- Surface clear status and metrics around leadership changes.
+It does not provide sharding, multiple active reconcilers, cross-cluster coordination, or multi-region election.
 
-## Non-Goals
+## Current implementation and topology
 
-- Sharding reconciliation across multiple active leaders.
-- Cross-cluster coordination or multi-region leader election.
-- Replacing Kubernetes coordination primitives.
+The active code paths are:
 
-## Design Summary
+- `services/agents/src/server/leader-election.ts:11-18,20-48` — configuration, status, callbacks, and service API.
+- `services/agents/src/server/leader-election-config.ts:12-68` — environment parsing, defaults, and the
+  `required` decision.
+- `services/agents/src/server/controller-runtime.ts:82-148` — controller start/stop callbacks and lifecycle.
+- `services/agents/src/server/kube-types.ts:301-319,381-410` and
+  `services/agents/src/server/kube-gateway.ts:561-568` — Kubernetes client and Lease operations.
+- `services/agents/src/server/ready.ts:55-206` and `services/agents/src/app-routes/ready.ts:1-10` — readiness.
+- `services/agents/src/server/control-plane-status.ts:174-185,345-410` and
+  `services/agents/src/routes/v1/control-plane/status.ts:1-10` — status.
+- `charts/agents/values.yaml:38-40,368-382,441-449` and
+  `charts/agents/templates/deployment.yaml:271-305,387-408` — control-plane defaults and wiring.
+- `charts/agents/templates/deployment-controllers.yaml:271-305,387-408` — controller-workload wiring.
+- `charts/agents/templates/rbac.yaml:325-335,357-373` — Lease RBAC and ServiceAccount binding.
 
-- Use a single Kubernetes Lease to elect one leader across all controller loops running in the Agents controllers
-  process (the `Deployment/agents-controllers` workload).
-- Only the leader runs reconciliation loops and accepts mutating requests (webhooks, gRPC mutation endpoints).
-- Non-leaders stay alive, remain ready, and serve read-only endpoints. Mutation endpoints are rejected with retry
-  semantics, and controller loops are stopped on leadership loss.
+There are two supported chart shapes:
 
-Note: This design is intentionally "one leader per release per namespace". If we later add sharding, this document
-becomes the baseline and a sharding design should explicitly replace the "single Lease" contract.
+1. The chart defaults to `controllers.enabled=false`, `controller.enabled=true`, and one control-plane replica. In
+   this shape the control-plane process has controller flags enabled and therefore owns the Lease.
+2. The production Argo values enable `controllers.enabled=true` with `controllers.replicaCount: 2` while keeping the
+   control-plane at `replicaCount: 1` (`argocd/applications/agents/values.yaml:1-5,201-209`). The chart sets the
+   controller flags to `0` in the control-plane and runs the controller loops in `Deployment/agents-controllers`.
+   The controller workload then owns the Lease.
 
-## Lease Details
+Both deployments receive the leader-election environment variables. Only a process whose controller-workload flags
+make election `required` should participate. Accidentally enabling controller flags in both workloads makes them
+contend for the same Lease and is a configuration error.
 
-- Resource: `coordination.k8s.io/v1` Lease in the controller namespace.
-- Default lease name: `agents-controller-leader`.
-- Namespace: release namespace (same as the deployment), configurable.
-- Owner identity: `<pod-name>_<uid>`.
-- Timing defaults:
-  - `leaseDurationSeconds=30`
-  - `renewDeadlineSeconds=20`
-  - `retryPeriodSeconds=5`
+## Runtime contract
 
-Timing must satisfy `retryPeriod < renewDeadline < leaseDuration`.
+`startControllerRuntimes()` starts the Agents controller, orchestration controller, primitives reconciler,
+supporting controller, and control-plane cache (`services/agents/src/server/controller-runtime.ts:82-88`).
+`stopControllerRuntimes()` cancels/stops all five (`:90-100`). When election is required, the runtime passes these
+functions as `onLeader` and `onFollower` callbacks to `ensureRuntime` (`:102-124`). When election is not required,
+the runtime starts the controllers directly.
 
-### Naming And Collision Avoidance
+An active election process starts in follower state and calls `onFollower` before its first asynchronous Lease
+attempt (`services/agents/src/server/leader-election.ts:313-336,343-347,460-462`). A successful acquisition calls
+`onLeader`; losing leadership calls `onFollower`. This makes the controller-loop boundary explicit: a follower must
+not keep watches or reconciliation work running while it waits for the Lease.
 
-The lease name must be stable across rollouts (to prevent a "double leader" during an upgrade) and unique within the
-namespace (to prevent unrelated installs fighting over leadership). Recommended options:
+Election is bypassed for test environments (`NODE_ENV=test` or a Vitest environment) and whenever `required` is
+false (`services/agents/src/server/leader-election-config.ts:25-26,54-59`;
+`services/agents/src/server/leader-election.ts:277-305`). In the bypass path, status reports `isLeader: true` and
+the callback starts the configured controller work.
 
-- Default: a fixed name like `agents-controller-leader` when there is one `agents-controllers` deployment per namespace.
-- Alternative: include the Helm release name if multiple releases may share a namespace.
+## Lease contract
 
-## Controller Gating
+The resource is a `coordination.k8s.io/v1` `Lease` (`services/agents/src/server/leader-election.ts:147-161`):
 
-Gate all controller loops behind the leader election guard. At minimum:
+- Name: `agents-controller-leader` by default.
+- Namespace: `AGENTS_LEADER_ELECTION_LEASE_NAMESPACE` when set; otherwise the pod namespace. The chart resolves an
+  empty `controller.leaderElection.leaseNamespace` to the Helm release namespace.
+- Holder identity: `<HOSTNAME>_<pod UID>` when the downward-API UID is available. If the UID is unavailable, the
+  runtime appends a random UUID; if the hostname is unavailable it uses `unknown_<UUID>`
+  (`services/agents/src/server/leader-election.ts:83-90`; chart injection at
+  `charts/agents/templates/deployment.yaml:271-278` and `deployment-controllers.yaml:271-278`).
+- Spec on creation: `holderIdentity`, `leaseDurationSeconds`, `acquireTime`, `renewTime`, and
+  `leaseTransitions: 0`.
 
-- `startAgentsController`
-- `startOrchestrationController`
-- `startSupportingPrimitivesController`
-- `startPrimitivesReconciler`
+The current defaults are `leaseDurationSeconds: 30`, `renewDeadlineSeconds: 20`, and `retryPeriodSeconds: 5`
+(`services/agents/src/server/leader-election.ts:52-59`). Configuration is normalized at runtime so that
+`retryPeriodSeconds < renewDeadlineSeconds < leaseDurationSeconds`. If the first inequality is invalid, renew and
+retry values reset to 20/5; if the second remains invalid, all three reset to 30/20/5
+(`services/agents/src/server/leader-election-config.ts:28-50`). The Helm schema enforces positive integers but does
+not encode the cross-field ordering (`charts/agents/values.schema.json:1005-1020`), so runtime normalization remains
+the final guard.
 
-On leadership loss, stop watches and reconcile loops cleanly before returning not-ready.
+### Acquire and renew algorithm
 
-### Implementation Sketch (Lease Acquire/Renew)
+The runtime uses the Kubernetes client through `KubeGateway`; it does not shell out to `kubectl`
+(`services/agents/src/server/kube-types.ts:301-319,381-410`; `services/agents/src/server/kube-gateway.ts:561-568`).
 
-Agents controllers are implemented in TypeScript, so this is not using `controller-runtime`'s built-in leader election.
-The intended behavior is still the Kubernetes standard:
+On each attempt (`services/agents/src/server/leader-election.ts:350-421`):
 
-1. Try to read the Lease.
-2. If missing, create it with `spec.holderIdentity=<identity>` and `spec.renewTime=now`.
-3. If present:
-   - If `holderIdentity` is unset or the `renewTime` is older than `leaseDurationSeconds`, try to acquire.
-   - If `holderIdentity` matches our identity, renew.
-   - Otherwise, remain follower.
-4. Write updates using optimistic concurrency (`metadata.resourceVersion`) to avoid clobbering other contenders.
-5. Run renew attempts every `retryPeriodSeconds`. If we fail to renew for longer than `renewDeadlineSeconds`, we must
-   stop all leader-gated work and transition to follower immediately.
+1. Read the named Lease.
+2. If it is absent, create it with this identity. If creation races and returns `AlreadyExists`, read it again.
+3. Treat an empty holder, an expired Lease, or this identity as acquirable. Otherwise remain follower.
+4. Acquire or renew by preserving the current object and replacing it with its `metadata.resourceVersion`, the
+   current holder, duration, `renewTime`, and `acquireTime` when absent. A holder change increments
+   `leaseTransitions` (`:163-183`).
+5. On a replace conflict, remain follower with no election error so the next retry can observe the winner. Other
+   Kubernetes errors transition to follower with the formatted error. A missing Lease after read/create is an error.
+6. Schedule the next attempt after `retryPeriodSeconds`.
 
-Important: Use server time semantics (`renewTime` set to "now" from this pod) but be robust to modest clock skew by
-comparing times with a safety margin (for example, treat a lease as expired only after `leaseDurationSeconds + 2s`).
+Expiry is computed from the local process clock and `spec.renewTime`. A missing or invalid renew time is expired; a
+valid Lease expires only when elapsed time is greater than `leaseDurationSeconds + 2s`
+(`services/agents/src/server/leader-election.ts:128-145`). The two-second safety margin is deliberate; this code does
+not claim Kubernetes server-time synchronization.
 
-## Traffic And Readiness
+When a leader has not successfully replaced the Lease within `renewDeadlineSeconds`, it transitions to follower with
+`lastError: "renew deadline exceeded (<N>s)"` and invokes `onFollower` (`:389-418,405-408`). The implementation is
+best-effort around shutdown: on `SIGTERM` or `SIGINT` it stops the timer, sets follower status with `terminating` or
+`interrupt`, invokes `onFollower`, and attempts to clear its holder only if the Lease still names this identity
+(`:423-457`). Release failure is ignored; Lease expiry remains the recovery path.
 
-- Readiness probe reports process/controller health, not leadership. This prevents readiness flapping when leadership
-  changes and avoids removing non-leader pods from Service endpoints.
-- Non-leader behavior:
-  - HTTP mutation endpoints return `503` with `Retry-After` via `requireLeaderForMutationHttp()`.
-  - gRPC mutation methods return `Unavailable` via `requireLeaderForMutation()` in `agentctl-grpc.ts`.
-  - Read-only status endpoints remain available.
+## Traffic gates
 
-### Readiness Implications
+`requireLeaderForMutationHttp()` is a no-op when election is disabled, not required, or currently leader. Otherwise
+it returns HTTP `503`, JSON `{ok:false,error:"Not leader; retry on the elected controller replica."}`, and
+`Retry-After: 5` (`services/agents/src/server/leader-election.ts:253-270`). The control plane wires this gate to the
+HTTP mutation dependencies (`services/agents/src/server/control-plane.ts:294-348,379-405`), including Agent/AgentRun,
+rerun, memory, orchestration, and implementation-source webhook mutation paths. This is a configured mutation gate,
+not a claim that every HTTP route is leader-only.
 
-Because followers remain ready, Services may still route traffic to non-leaders. This is safe because mutation paths
-are explicitly leader-gated and return retryable errors on followers.
+The gRPC mutating handlers use the same status and return gRPC `UNAVAILABLE` with the same retry message
+(`services/agents/src/server/agentctl-grpc.ts:182-187,220-254,922-926`). Read/list/get handlers remain available to
+followers. The gRPC path does not add an HTTP `Retry-After` header.
 
-## Configuration
+## Readiness and status
 
-Add a `controller.leaderElection` section to `charts/agents/values.yaml`:
+### `/ready`
 
-- `enabled` (default `true`)
-- `leaseName` (default `jangar-controller-leader`)
-- `leaseNamespace` (default release namespace)
-- `leaseDurationSeconds` (default `30`)
-- `renewDeadlineSeconds` (default `20`)
-- `retryPeriodSeconds` (default `5`)
+The route is `services/agents/src/app-routes/ready.ts:1-10`; the control plane handles `/ready` before generic route
+dispatch (`services/agents/src/server/control-plane.ts:400-405`). The default chart readiness probe is `/ready` on
+the HTTP container (`charts/agents/values.yaml:368-382`; deployment probes in
+`charts/agents/templates/deployment.yaml:515-557` and `deployment-controllers.yaml:512-541`).
 
-Map values into env vars consumed by the controller runtime, for example:
+Readiness is not a simple leader boolean:
 
-- `AGENTS_LEADER_ELECTION_ENABLED`
-- `AGENTS_LEADER_ELECTION_LEASE_NAME`
-- `AGENTS_LEADER_ELECTION_LEASE_NAMESPACE`
-- `AGENTS_LEADER_ELECTION_LEASE_DURATION_SECONDS`
-- `AGENTS_LEADER_ELECTION_RENEW_DEADLINE_SECONDS`
-- `AGENTS_LEADER_ELECTION_RETRY_PERIOD_SECONDS`
+- An active leader is ready only when controller CRD checks pass and its AgentRun ingestion is not degraded.
+- A follower/standby is HTTP-ready after at least one clean election attempt (`lastAttemptAt != null` and
+  `lastError == null`), even though its controller loops are stopped. Its AgentRun ingestion entry is `unknown` with
+  `AgentRun ingestion is owned by the active controller leader`.
+- Before the first attempt, or after a missing Lease/Kubernetes error/termination, readiness is HTTP `503` with
+  `leader_election_not_ready` in `reason_codes`.
+- The response body has schema `agents.proompteng.ai/ready/v1`, camelCase `leaderElection`, `httpReady`, and
+  `agentrun_ingestion` fields (`services/agents/src/server/ready.ts:68-70,110-124,148-196`). The top-level
+  `status` can be `degraded` while HTTP remains 200 when only AgentRun ingestion health is degraded.
 
-### Defaults And Backwards Compatibility
+Do not remove follower pods from Service endpoints solely because they are followers. Safety comes from stopping their
+controller loops and gating mutations; the readiness endpoint deliberately keeps a clean standby available.
 
-- When `enabled=false`, controllers behave as they do today (no gating, always ready). This is for emergencies only.
-- When `replicaCount=1`, leader election still runs but should be effectively no-op: the single pod should always
-  acquire leadership and stay ready. This avoids a "different behavior in prod vs dev".
+### `/v1/control-plane/status`
 
-## Failure Modes And Recovery
+The status route is `services/agents/src/routes/v1/control-plane/status.ts:1-10`. Its `leader_election` object uses
+snake_case keys: `enabled`, `required`, `is_leader`, `lease_name`, `lease_namespace`, `identity`,
+`last_transition_at`, `last_attempt_at`, `last_success_at`, and `last_error`
+(`services/agents/src/server/control-plane-status.ts:174-185,394-410`). `/ready` and this status endpoint therefore
+expose the same state with intentionally different field casing; do not document `leaderElection` as the status
+endpoint key.
 
-- Leader crash: a standby replica should acquire the lease within one lease duration.
-- Network partition: if the leader cannot renew before `renewDeadlineSeconds`, it must stop reconciling and become
-  not-ready so a new leader can take over.
-- Split brain: rely on Lease semantics; controllers must stop all reconcile loops on leadership loss.
+## Configuration and chart wiring
 
-### Termination/Drain Behavior
+The values live under `controller.leaderElection` (`charts/agents/values.yaml:441-449`):
 
-To reduce "gap time" during rolling updates:
+| Helm value                                       |                            Default | Environment variable                            |
+| ------------------------------------------------ | ---------------------------------: | ----------------------------------------------- |
+| `controller.leaderElection.enabled`              |                             `true` | `AGENTS_LEADER_ELECTION_ENABLED`                |
+| `controller.leaderElection.leaseName`            |         `agents-controller-leader` | `AGENTS_LEADER_ELECTION_LEASE_NAME`             |
+| `controller.leaderElection.leaseNamespace`       | empty (release namespace in chart) | `AGENTS_LEADER_ELECTION_LEASE_NAMESPACE`        |
+| `controller.leaderElection.leaseDurationSeconds` |                               `30` | `AGENTS_LEADER_ELECTION_LEASE_DURATION_SECONDS` |
+| `controller.leaderElection.renewDeadlineSeconds` |                               `20` | `AGENTS_LEADER_ELECTION_RENEW_DEADLINE_SECONDS` |
+| `controller.leaderElection.retryPeriodSeconds`   |                                `5` | `AGENTS_LEADER_ELECTION_RETRY_PERIOD_SECONDS`   |
 
-- On `SIGTERM`, the leader should stop renewing immediately and fail readiness quickly (for example, within 1-2
-  seconds), so another replica can acquire leadership before the terminating pod exits.
-- Ensure termination grace is long enough for controllers to stop watches and in-flight work cleanly.
+Both deployment templates render this table and inject `AGENTS_POD_NAMESPACE` and `AGENTS_POD_UID`
+(`charts/agents/templates/deployment.yaml:271-305`; `deployment-controllers.yaml:271-305`). The resolver computes
+`required` as true when any of `AGENTS_CONTROLLER_ENABLED`, `AGENTS_ORCHESTRATION_CONTROLLER_ENABLED`,
+`AGENTS_SUPPORTING_CONTROLLER_ENABLED`, or `AGENTS_PRIMITIVES_RECONCILER` is true, except in test environments
+(`services/agents/src/server/leader-election-config.ts:52-67`).
+
+`enabled=false` bypasses Lease coordination and reports the process as leader so configured controller loops run. It
+is an emergency compatibility switch, not a safe read-only mode. `controllers.replicaCount: 1` does not disable
+election: when `required=true`, the single process still performs the normal acquire/renew loop. Production HA is
+the `controllers.enabled=true` / `controllers.replicaCount: 2` overlay, not a special single-replica algorithm.
 
 ## Observability
 
-- Log leadership acquisition/loss with lease name and namespace.
-- Metrics:
-  - `jangar_leader_changes_total` (counter) is emitted on leader<->follower transitions.
-- Status:
-  - `services/jangar/src/server/control-plane-status.ts` reports leader status.
-  - `/ready` includes leader status in the response body (for quick in-cluster inspection).
+On each leader/follower transition the runtime logs the service name, transition, Lease namespace/name, identity, and
+optional error (`services/agents/src/server/leader-election.ts:198-221`). It creates the OpenTelemetry counter
+`agents_leader_changes_total` with `to=leader|follower` (`:104-114,206-220`). There is no current
+`agents_leader_elected` gauge in the Agents source, and no active alert rule for this counter was found in the
+repository as of this status date. Any flapping/no-leader alerts are future work and must not be described as
+deployed. Alert proposals should use status/readiness and transition data only after the metric export and alert
+rule are verified in the target environment.
 
-### Alerts (Future)
+## RBAC
 
-Once metrics exist, add alerting for:
+The chart grants the workload ServiceAccount `get`, `list`, `watch`, `create`, `update`, and `patch` on
+`leases` in API group `coordination.k8s.io` (`charts/agents/templates/rbac.yaml:325-335`). It intentionally does not
+grant `delete`; shutdown clears `holderIdentity` through an update. With `rbac.clusterScoped=false`, the chart emits a
+Role/RoleBinding in the release namespace. With `rbac.clusterScoped=true`, it emits a ClusterRole/ClusterRoleBinding,
+while the subject remains the chart-selected ServiceAccount in the release namespace
+(`charts/agents/templates/rbac.yaml:1-14,357-373`).
 
-- Leadership flapping (`jangar_leader_changes_total` increasing rapidly).
-- No leader present (all replicas `jangar_leader_elected=0` for > 1 minute).
+## Rollout and recovery expectations
 
-## RBAC Requirements
-
-Jangar service account must be able to manage Leases in its namespace:
-
-- `get`, `list`, `watch`, `create`, `update`, `patch` on `leases.coordination.k8s.io`.
-
-## Rollout Plan
-
-- Default is enabled. To disable in an emergency, set `controller.leaderElection.enabled=false` in values.
-- HA is enabled by scaling the controllers deployment, for example `controllers.replicaCount: 2`.
+- Keep the Lease name stable across rollouts and unique to the Agents installation/namespace. Changing it creates a
+  new election domain and must be an intentional migration.
+- Keep `retryPeriodSeconds < renewDeadlineSeconds < leaseDurationSeconds`; rely on the runtime normalization and
+  validate the effective values in rendered manifests.
+- During a leader crash or partition, the standby can acquire after the old Lease expires. The exact delay is bounded
+  by the configured duration plus retry scheduling and Kubernetes API availability; do not promise a fixed one-second
+  failover.
+- On a normal leadership loss, the old leader stops controller work and remains an HTTP-ready standby only after a
+  clean election attempt. On termination it becomes not-ready because `lastError` is set.
+- Restore normal election and verify the current holder, controller health, readiness, and mutation behavior before
+  calling recovery complete.
 
 ## Validation
 
-- Kill the leader pod and verify another pod becomes leader within 30 seconds (validated in the `agents` namespace on
-  2026-02-08).
-- Confirm webhooks and gRPC mutation calls are rejected by non-leaders.
-- Confirm read-only endpoints remain available during leadership transitions.
+### Local source and chart checks
 
-### Validation Commands (In Cluster)
-
-Assuming namespace `agents` and release `agents`:
+Run from the repository root:
 
 ```bash
-kubectl -n agents get lease jangar-controller-leader -o yaml
-kubectl -n agents get pods -l app.kubernetes.io/name=agents-controllers -o wide
-
-# Observe leadership transitions
-kubectl -n agents logs deploy/agents-controllers --tail=200 | rg -n \"leader|lease\" -S
+bun run --cwd services/agents test -- src/server/leader-election.test.ts src/server/ready.test.ts src/server/control-plane-status.test.ts
+bun run --cwd services/agents tsc
+helm lint charts/agents
+scripts/agents/validate-agents.sh
 ```
 
-## Operational Considerations
+The chart validation must inspect both the control-plane and controller deployment renders and confirm the six
+`AGENTS_LEADER_ELECTION_*` variables, `AGENTS_POD_NAMESPACE`, `AGENTS_POD_UID`, controller flags, readiness path, and
+Lease RBAC. The source tests cover Lease/config helpers, readiness states, and snake_case status mapping. If the local
+Helm binary is not the supported version, use the repository's pinned Helm 3 toolchain (`mise exec helm@3 -- ...`).
 
-- Keep configuration in the appropriate control plane (Helm values, CI, or code) and document overrides.
-- Update runbooks with enable/disable steps, rollback guidance, and expected failure modes.
+### In-cluster checks
 
-## Risks And Mitigations
+Assuming the production namespace is `agents` and the controller workload is enabled:
 
-- Misconfiguration can cause deployment or runtime regressions; mitigate with schema validation and safe defaults.
-- Additional load or latency can impact controller throughput; mitigate with caps and monitoring.
+```bash
+kubectl -n agents get lease agents-controller-leader -o yaml
+kubectl -n agents get deploy/agents-controllers -o jsonpath='{.spec.replicas}{"\n"}'
+kubectl -n agents get pods -l app.kubernetes.io/name=agents-controllers -o wide
+kubectl -n agents logs deployment/agents-controllers --tail=200 | rg -n 'leader election|lease'
+```
 
-## Related Docs
+For endpoint checks, port-forward the chart Service (`service.port` defaults to 80 and targets HTTP 8080):
 
+```bash
+kubectl -n agents port-forward service/agents 8080:80
+curl -fsS 'http://127.0.0.1:8080/ready' | jq '{status,httpReady,reason_codes,leaderElection,agentrun_ingestion}'
+curl -fsS 'http://127.0.0.1:8080/v1/control-plane/status?namespace=agents' | jq '.leader_election'
+```
+
+When testing a follower, identify the current holder from the Lease and send a representative mutating request to
+the other pod. Expect HTTP 503 plus `Retry-After: 5`, or gRPC `UNAVAILABLE`; verify read/list/get requests still work.
+Do not treat a green `/ready` response alone as proof that a controller is the active reconciler: correlate it with
+`leaderElection.isLeader`/`leader_election.is_leader`, Lease holder identity, controller logs, and controller health.
+
+## Related docs
+
+- `docs/agents/README.md`
 - `docs/agents/agents-helm-chart-implementation.md`
-- `docs/agents/jangar-controller-design.md`
+- `docs/agents/jangar-controller-design.md` (historical naming context; active code paths above are authoritative)
 - `docs/agents/production-readiness-design.md`
-- `docs/agents/designs/leader-election-ha.md` (includes repo/chart/cluster handoff appendix)
+- `docs/agents/runbooks.md`
 
 ## Diagram
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant P1 as Pod A
-  participant P2 as Pod B
-  participant L as Lease (coordination.k8s.io)
+  participant P1 as Controller pod A
+  participant P2 as Controller pod B
+  participant L as Lease agents-controller-leader
 
-  P1->>L: acquire/renew lease
-  P2-->>L: observe lease held
-  Note over P2: follower stays ready; controller loops are stopped
-  P1-->>L: renew until crash/partition
-  P1-xL: stop renewing
-  P2->>L: acquire lease after timeout
+  P1->>L: read/create/replace via Kubernetes client
+  P2-->>L: observe holder and remain follower
+  Note over P2: clean standby stays HTTP-ready; controller loops are stopped
+  P1-->>L: renew every retryPeriodSeconds
+  P1-xL: crash, partition, or renew deadline exceeded
+  P2->>L: acquire after lease expiry
+  P2-->>P2: start controller runtimes and accept mutations
 ```

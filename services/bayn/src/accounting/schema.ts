@@ -13,35 +13,50 @@ import {
   UtcInstantSchema as UtcInstant,
   strictParseOptions,
 } from '../schemas'
-import { Pipeable } from '../pipeable'
+
 import { legacyAccountingTransactionSchemaVersion } from '../execution/legacy-wire'
 
+export const equityShortAccountingSchemaVersion = 'bayn.equity-short-accounting-transaction.v1' as const
+
 export const AccountingTransactionSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyAccountingTransactionSchemaVersion),
+  schemaVersion: Schema.Literals([legacyAccountingTransactionSchemaVersion, equityShortAccountingSchemaVersion]),
   transactionId: Sha256,
   brokerEventId: Sha256,
   intentId: Schema.optionalKey(Sha256),
   accountId: NonEmptyString,
   symbol: SymbolName,
   side: Schema.Enum(OrderSide),
-  quantityMicros: PositiveMicros,
-  priceMicros: PositiveMicros,
+  quantityAtoms: PositiveMicros,
+  priceAtoms: PositiveMicros,
   notionalMicros: PositiveMicros,
   feeMicros: UnsignedMicros,
   costBasisMicros: UnsignedMicros,
   realizedPnlMicros: SignedMicros,
-  quantityDeltaMicros: SignedMicros,
+  quantityDeltaAtoms: SignedMicros,
   costBasisDeltaMicros: SignedMicros,
   cashDeltaMicros: SignedMicros,
   ledgerPlanHash: Sha256,
   contentHash: Sha256,
   occurredAt: UtcInstant,
-})
+}).check(
+  Schema.makeFilter((transaction) => {
+    if (transaction.schemaVersion !== equityShortAccountingSchemaVersion) return []
+    const quantity = BigInt(transaction.quantityAtoms)
+    const notional = BigInt(transaction.notionalMicros)
+    const basis = BigInt(transaction.costBasisMicros)
+    const fee = BigInt(transaction.feeMicros)
+    const opening = transaction.side === OrderSide.Sell
+    const valid =
+      !transaction.symbol.includes('/') &&
+      BigInt(transaction.quantityDeltaAtoms) === (opening ? -quantity : quantity) &&
+      BigInt(transaction.costBasisDeltaMicros) === (opening ? -basis : basis) &&
+      BigInt(transaction.cashDeltaMicros) === (opening ? notional - fee : -(notional + fee)) &&
+      BigInt(transaction.realizedPnlMicros) === (opening ? 0n : basis - notional) &&
+      (!opening || basis === notional)
+    return valid ? [] : [{ path: [], issue: 'equity short inventory, proceeds and cover accounting must agree' }]
+  }),
+)
 
 export type AccountingTransaction = typeof AccountingTransactionSchema.Type
 
-const decodeAccountingTransactionDataFirst = Schema.decodeUnknownResult(AccountingTransactionSchema, strictParseOptions)
-
-export const decodeAccountingTransaction = Pipeable.dual(1, (input: unknown) =>
-  decodeAccountingTransactionDataFirst(input),
-)
+export const decodeAccountingTransaction = Schema.decodeUnknownResult(AccountingTransactionSchema, strictParseOptions)

@@ -27,9 +27,8 @@ is not a blanket replacement for Temporal's official SDK support contract.
      continue-as-new, signal, query, update, cancellation, failure, search
      attributes, payload codec, versioning, side effect, and workflow-task
      failure;
-   - report includes feature tags, Bun version, SDK version, Temporal Server
-     version, payload codec profile, event counts, expected command counts, and
-     mismatch counts.
+   - report includes feature tags, SDK version, Temporal Server version, payload
+     codec profile, event counts, expected command counts, and mismatch counts.
 2. Command/event compatibility:
    - checked-in matrix mapping every supported `WorkflowCommandIntent` to
      Temporal command type and expected history event families;

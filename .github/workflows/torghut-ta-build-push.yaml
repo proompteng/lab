@@ -29,30 +29,52 @@ on:
       - 'nix/images/torghut-ws.nix'
       - 'nix/images/signal-publisher.nix'
       - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'nix/images/prune-bun-dependency-metadata.sh'
       - 'services/torghut/uv.lock'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
+      - '**/package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
       - 'package.json'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/torghut-post-deploy-verify.yml'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
       - 'argocd/applications/torghut-hyperliquid-runtime/**'
   workflow_dispatch:
 
-concurrency:
-  group: torghut-ta-build-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/torghut-ta-build-push.yaml
+          dependency-aware-push: 'true'
+          workspaces: |
+            service: ['', 'services/signal-publisher']
+
   nix-image:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: changes
+    if: needs.changes.outputs.changed == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    concurrency:
+      group: torghut-ta-build-${{ github.ref }}
+      cancel-in-progress: true
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: torghut-ta
       package_attr: torghut-ta-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}

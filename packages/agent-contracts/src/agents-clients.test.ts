@@ -87,14 +87,14 @@ describe('agents typed service clients', () => {
     const effectResult = await Effect.runPromise(
       fetchAgentsJsonEffect<{ status: string }>('/health', env).pipe(
         Effect.provide(makeAgentsHttpClientLayer({ fetch: fetchMock as unknown as typeof fetch })),
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    expect(effectResult._tag).toBe('Left')
-    if (effectResult._tag === 'Left') {
-      expect(effectResult.left).toBeInstanceOf(AgentsTransportError)
-      expect(effectResult.left).toMatchObject({
+    expect(effectResult._tag).toBe('Failure')
+    if (effectResult._tag === 'Failure') {
+      expect(effectResult.failure).toBeInstanceOf(AgentsTransportError)
+      expect(effectResult.failure).toMatchObject({
         method: 'GET',
         url: 'http://agents.test/health',
       })
@@ -121,14 +121,14 @@ describe('agents typed service clients', () => {
     const effectResult = await Effect.runPromise(
       fetchAgentsJsonEffect<{ ok: false; error: string }>('/ready', env).pipe(
         Effect.provide(makeAgentsHttpClientLayer({ fetch: fetchMock as unknown as typeof fetch })),
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    expect(effectResult._tag).toBe('Left')
-    if (effectResult._tag === 'Left') {
-      expect(effectResult.left).toBeInstanceOf(AgentsHttpStatusError)
-      expect(effectResult.left).toMatchObject({
+    expect(effectResult._tag).toBe('Failure')
+    if (effectResult._tag === 'Failure') {
+      expect(effectResult.failure).toBeInstanceOf(AgentsHttpStatusError)
+      expect(effectResult.failure).toMatchObject({
         method: 'GET',
         url: 'http://agents.test/ready',
         status: 503,
@@ -709,6 +709,10 @@ describe('agents typed service clients', () => {
         namespace: 'demo',
         query: 'find me',
         limit: 50,
+        repository: undefined,
+        model: undefined,
+        tags: [],
+        includeRetired: false,
       },
     })
     expect(parseRetrieveMemoryNotesInput({ namespace: 'demo' })).toEqual({ ok: false, message: 'Query is required.' })
@@ -776,7 +780,7 @@ describe('agents typed service clients', () => {
     const calls = fetchMock.mock.calls as unknown as [URL, RequestInit][]
     expect(calls.map(([url]) => url.toString())).toEqual([
       'http://agents.test/v1/memory-notes',
-      'http://agents.test/v1/memory-notes?query=hello&limit=12&namespace=demo',
+      'http://agents.test/v1/memory-notes?query=hello&namespace=demo&limit=12',
       'http://agents.test/v1/memory-notes/count?namespace=demo',
       'http://agents.test/v1/memory-notes/stats?namespace=demo&days=7&topNamespaces=3',
     ])

@@ -1,0 +1,40 @@
+{
+  "recordedAt": "2026-11-08T06:41:01.067222+00:00",
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "changes": [
+    {
+      "path": "src/cosmosalpha/factors/expression.py",
+      "beforeSha256": "59090cde67c110737bf8b0011348a80f28ef1d9a4eeaf2b80ad2ad1f4251d001",
+      "afterSha256": "8126f3ec2adb04dd1d85bf2b84935d392dd25a2919ecbcdb5ea33c61c2c3cdf7"
+    },
+    {
+      "path": "src/cosmosalpha/pipeline/graph/controller.py",
+      "beforeSha256": "4a36ac727e558307149d4439cd9821d0c97b222a591676598c61ab9cdce51819",
+      "afterSha256": "05ced7871bbfc1f48721e72263bffe57fb5bb92368d03246e6635d315846e61b"
+    }
+  ],
+  "patch": "source.patch",
+  "patchSha256": "4fe1f6e55043c58208d8af0667565514da2b64d81f69a7c8b1b0c433451fe305",
+  "validation": {
+    "originalSource": {
+      "command": "python -m pytest -q test_source_repair.py -k \"small_number_roundtrip or batch_duplicate_loser or real_failing_batch_normalized_literal\"",
+      "exitCode": 1,
+      "failed": 3,
+      "deselected": 13
+    },
+    "repairedSource": {
+      "command": "python -m pytest -q test_source_repair.py reference-tests/tests",
+      "exitCode": 0,
+      "passed": 29,
+      "repairCases": 16,
+      "pinnedUpstreamCases": 13
+    },
+    "ruff": "New repair cases pass ruff check and ruff format --check. Both repaired source files pass ruff check. The upstream controller has an unrelated existing formatting difference, left unchanged."
+  },
+  "sourceInventory": {
+    "unchangedAuthorFiles": 99,
+    "patchedFiles": 2
+  },
+  "testFileSha256": "707e9efe39eee3c4c5915d0b69eb1153d8a7bb0ecf9793fa33fd6b79a36053af",
+  "interpretation": "Mechanical source repairs only; no completed six-arm comparison, prospective observations, economic qualification or capital authority."
+}

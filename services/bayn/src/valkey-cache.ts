@@ -1,0 +1,314 @@
+import { isNativeError } from 'node:util/types'
+import { NodeRedis, NodeServices } from '@effect/platform-node'
+import {
+  Clock,
+  Config,
+  Context,
+  Data,
+  Effect,
+  FileSystem,
+  Layer,
+  Metric,
+  Option,
+  Redacted,
+  Schema,
+  Semaphore,
+} from 'effect'
+import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
+import { withObservedStage } from './telemetry'
+import { withValkeyStartupRetry } from './valkey-startup'
+
+const reads = Metric.counter('bayn_valkey_reads_total', { incremental: true })
+const failures = Metric.counter('bayn_valkey_failures_total', { incremental: true })
+const lastFailure = Metric.gauge('bayn_valkey_last_failure_timestamp_seconds')
+const replicaWaits = Metric.counter('bayn_valkey_unacknowledged_waits_total', { incremental: true })
+type CacheOperation = 'get' | 'put' | 'remove'
+
+export enum ValkeyFailureCategory {
+  ReplicaAcknowledgement = 'replica_acknowledgement',
+  OperationDeadline = 'operation_deadline',
+  NativeTimeout = 'native_timeout',
+  Transport = 'transport',
+  CommandFailed = 'command_failed',
+}
+
+class ReplicaAcknowledgementError extends Error {}
+
+const commandFailureCategory = (cause: unknown): ValkeyFailureCategory => {
+  // Native identity avoids reading messages, accessors or hostile prototype chains.
+  if (!isNativeError(cause)) return ValkeyFailureCategory.CommandFailed
+  const prototype = Object.getPrototypeOf(cause)
+  if (prototype === ReplicaAcknowledgementError.prototype) return ValkeyFailureCategory.ReplicaAcknowledgement
+  if (
+    prototype === TimeoutError.prototype ||
+    prototype === ConnectionTimeoutError.prototype ||
+    prototype === SocketTimeoutError.prototype
+  )
+    return ValkeyFailureCategory.NativeTimeout
+  if (prototype === SocketClosedUnexpectedlyError.prototype) return ValkeyFailureCategory.Transport
+  return ValkeyFailureCategory.CommandFailed
+}
+
+export class ValkeyCacheError extends Data.TaggedError('ValkeyCacheError')<{
+  readonly operation: string
+  readonly category?: ValkeyFailureCategory
+  readonly causeCategory?: ValkeyFailureCategory
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+export class ValkeyCacheInputError extends Data.TaggedError('ValkeyCacheInputError')<{
+  readonly operation: string
+  readonly message: string
+}> {}
+
+export const maximumValkeyValueLength = 8 * 1024 * 1024
+export const ValkeyKey = Schema.String.check(Schema.isPattern(/^bayn:.{1,250}$/))
+export const ValkeyWrite = Schema.Struct({
+  key: ValkeyKey,
+  value: Schema.String.check(Schema.isMaxLength(maximumValkeyValueLength)),
+  ttlMs: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(300_000)),
+})
+const ValkeyWriteBatch = Schema.NonEmptyArray(ValkeyWrite).check(Schema.isMaxLength(2))
+
+export class ValkeyCache extends Context.Service<
+  ValkeyCache,
+  {
+    readonly get: (key: string) => Effect.Effect<Option.Option<string>, ValkeyCacheError | ValkeyCacheInputError>
+    readonly put: (input: typeof ValkeyWrite.Type) => Effect.Effect<void, ValkeyCacheError | ValkeyCacheInputError>
+    readonly putAll: (
+      input: readonly (typeof ValkeyWrite.Type)[],
+    ) => Effect.Effect<void, ValkeyCacheError | ValkeyCacheInputError>
+    readonly remove: (key: string) => Effect.Effect<void, ValkeyCacheError | ValkeyCacheInputError>
+  }
+>()('bayn/ValkeyCache') {}
+
+export const valkeyConfig = Config.all({
+  host: Config.NonEmptyString('VALKEY_HOST'),
+  port: Config.Port('VALKEY_PORT').pipe(Config.withDefault(6379)),
+  username: Config.NonEmptyString('VALKEY_USERNAME').pipe(Config.withDefault('default')),
+  password: Config.Redacted('VALKEY_PASSWORD'),
+  serverName: Config.NonEmptyString('VALKEY_TLS_SERVER_NAME'),
+  tlsDirectory: Config.NonEmptyString('BAYN_VALKEY_TLS_DIRECTORY').pipe(
+    Config.withDefault('/var/run/secrets/bayn/valkey'),
+  ),
+})
+
+type ValkeyClientOptions = NonNullable<Parameters<typeof NodeRedis.layer>[0]>
+
+export const makeValkeyCache = Effect.gen(function* () {
+  const { client } = yield* NodeRedis.NodeRedis
+  const commands = yield* Semaphore.make(1)
+  const destroy = Effect.sync(() => {
+    if (client.isOpen) client.destroy()
+  })
+  // Native close waits for replies; cache scope exit and cancellation must abort stalled sockets.
+  yield* Effect.addFinalizer(() => destroy)
+  const invoke = <A>(operation: CacheOperation, run: (signal: AbortSignal) => Promise<A>) =>
+    Effect.tryPromise({
+      try: run,
+      catch: (cause) =>
+        new ValkeyCacheError({
+          operation,
+          category: commandFailureCategory(cause),
+          message: 'Valkey command failed',
+          cause,
+        }),
+    })
+  const command = <A>(
+    operation: CacheOperation,
+    run: Effect.Effect<A, ValkeyCacheError>,
+    deadlineCause?: () => Error | undefined,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Register release before observing acquisition; diagnostics cannot strand a permit.
+        yield* Effect.acquireRelease(commands.take(1), () => commands.release(1), { interruptible: true }).pipe(
+          withObservedStage('bayn.valkey.queue', { dependency: 'valkey', operation, diagnosticOnly: true }),
+        )
+        return yield* invoke(operation, async () => {
+          if (!client.isOpen) await client.connect()
+        }).pipe(
+          withObservedStage('bayn.valkey.connect', { dependency: 'valkey', operation, diagnosticOnly: true }),
+          Effect.andThen(run),
+          Effect.onInterrupt(() => destroy),
+          Effect.tapError(() => destroy),
+        )
+      }),
+    ).pipe(
+      Effect.timeoutOrElse({
+        duration: '1 second',
+        orElse: () => {
+          const cause = deadlineCause?.()
+          return Effect.fail(
+            new ValkeyCacheError({
+              operation,
+              category: ValkeyFailureCategory.OperationDeadline,
+              ...(cause === undefined ? {} : { causeCategory: commandFailureCategory(cause) }),
+              message: 'Valkey command exceeded its deadline',
+              cause,
+            }),
+          )
+        },
+      }),
+      Effect.tapError((error) => {
+        const attributes = {
+          namespace: 'bayn',
+          operation,
+          category: error.category ?? ValkeyFailureCategory.CommandFailed,
+          cause_category: error.causeCategory ?? error.category ?? ValkeyFailureCategory.CommandFailed,
+        }
+        return Effect.gen(function* () {
+          yield* Metric.update(failures.pipe(Metric.withAttributes(attributes)), 1)
+          // The first exported counter sample can already be one; retain its event time without needing a prior zero.
+          const now = yield* Clock.currentTimeMillis
+          yield* Metric.update(lastFailure.pipe(Metric.withAttributes(attributes)), now / 1000)
+        })
+      }),
+      withObservedStage(`bayn.valkey.${operation}`, { dependency: 'valkey', slowAfterMs: 250 }),
+    )
+
+  const key = (operation: string, input: string) =>
+    Schema.decodeUnknownEffect(ValkeyKey)(input).pipe(
+      Effect.mapError(() => new ValkeyCacheInputError({ operation, message: 'Cache keys must use the bayn: prefix' })),
+    )
+
+  const putAll = (input: readonly (typeof ValkeyWrite.Type)[]) =>
+    Schema.decodeUnknownEffect(ValkeyWriteBatch)(input).pipe(
+      Effect.mapError(
+        () =>
+          new ValkeyCacheInputError({
+            operation: 'put',
+            message: 'Cache writes require one or two bayn: keys, bounded values and TTLs of 1–300000 ms',
+          }),
+      ),
+      Effect.flatMap((writes) => {
+        let acknowledgementFailure: Error | undefined
+        return command(
+          'put',
+          // One connection owns both writes and the barrier acknowledging its latest write offset.
+          // A failed or interrupted SET is never replayed, even when its outcome is uncertain.
+          Effect.forEach(
+            writes,
+            ({ key, value, ttlMs }) =>
+              invoke('put', (signal) => client.withAbortSignal(signal).set(key, value, { PX: ttlMs })),
+            { concurrency: 2, discard: true },
+          ).pipe(
+            withObservedStage('bayn.valkey.set', { dependency: 'valkey', slowAfterMs: 250 }),
+            Effect.andThen(
+              Effect.gen(function* () {
+                while ((yield* invoke('put', (signal) => client.withAbortSignal(signal).wait(1, 250))) < 1) {
+                  acknowledgementFailure ??= new ReplicaAcknowledgementError(
+                    'Valkey replica did not acknowledge publication',
+                  )
+                  yield* Metric.update(replicaWaits.pipe(Metric.withAttributes({ namespace: 'bayn' })), 1)
+                }
+              }).pipe(withObservedStage('bayn.valkey.replica-ack', { dependency: 'valkey', slowAfterMs: 250 })),
+            ),
+          ),
+          () => acknowledgementFailure,
+        )
+      }),
+      Effect.asVoid,
+    )
+
+  return ValkeyCache.of({
+    get: (input) =>
+      key('get', input).pipe(
+        Effect.flatMap((key) =>
+          command(
+            'get',
+            invoke('get', (signal) => client.withAbortSignal(signal).get(key)),
+          ),
+        ),
+        Effect.map(Option.fromNullishOr),
+        Effect.tap((value) =>
+          Metric.update(
+            reads.pipe(
+              Metric.withAttributes({
+                namespace: 'bayn',
+                outcome: Option.isSome(value) ? 'hit' : 'miss',
+              }),
+            ),
+            1,
+          ),
+        ),
+      ),
+    put: (input) => putAll([input]),
+    putAll,
+    remove: (input) =>
+      key('remove', input).pipe(
+        Effect.flatMap((key) =>
+          command(
+            'remove',
+            invoke('remove', (signal) => client.withAbortSignal(signal).del(key)),
+          ),
+        ),
+        Effect.asVoid,
+      ),
+  })
+})
+
+export const valkeyClientOptions = Effect.gen(function* () {
+  const config = yield* valkeyConfig.pipe(
+    Effect.mapError(
+      (cause) =>
+        new ValkeyCacheError({ operation: 'configure', message: 'Valkey configuration is unavailable', cause }),
+    ),
+  )
+  const files = yield* FileSystem.FileSystem
+  const readTls = (name: string) =>
+    files
+      .readFileString(`${config.tlsDirectory}/${name}`)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ValkeyCacheError({ operation: 'configure', message: 'Cannot read Valkey TLS material', cause }),
+        ),
+      )
+  const { ca, cert, key } = yield* Effect.all({
+    ca: readTls('ca.crt'),
+    cert: readTls('tls.crt'),
+    key: readTls('tls.key'),
+  })
+  return {
+    username: config.username,
+    password: Redacted.value(config.password),
+    disableOfflineQueue: true,
+    commandOptions: { timeout: 500 },
+    socket: {
+      host: config.host,
+      port: config.port,
+      tls: true,
+      servername: config.serverName,
+      ca,
+      cert,
+      key,
+      connectTimeout: 1000,
+      reconnectStrategy: false,
+    },
+  } satisfies ValkeyClientOptions
+})
+
+export const ValkeyRedisLive = Layer.unwrap(
+  Effect.map(valkeyClientOptions, (options) =>
+    withValkeyStartupRetry((signal) => {
+      const socket = { ...options.socket, signal }
+      return NodeRedis.layer({ ...options, socket })
+    }),
+  ),
+).pipe(
+  Layer.provide(NodeServices.layer),
+  Layer.catch((cause) =>
+    Layer.effect(
+      NodeRedis.NodeRedis,
+      Effect.fail(
+        cause instanceof ValkeyCacheError
+          ? cause
+          : new ValkeyCacheError({ operation: 'connect', message: 'Cannot acquire required Valkey connection', cause }),
+      ),
+    ),
+  ),
+)
+
+export const ValkeyCacheLive = Layer.effect(ValkeyCache, makeValkeyCache).pipe(Layer.provide(ValkeyRedisLive))

@@ -84,29 +84,24 @@ def _json_safe(value: object) -> str:
 class LiveDataAdapter:
     """Bounded live reads using dedicated PostgreSQL and ClickHouse principals."""
 
-    postgres_host: str
+    postgres_host: str | None
     postgres_port: int
-    postgres_database: str
-    postgres_user: str
-    postgres_password: str
+    postgres_database: str | None
+    postgres_user: str | None
+    postgres_password: str | None
     clickhouse_url: str
     clickhouse_database: str
     clickhouse_user: str
     clickhouse_password: str
-    status_url: str
+    status_url: str | None
     mode: str = "live"
 
     @classmethod
     def from_environment(cls) -> LiveDataAdapter:
         required = {
-            "PGHOST": os.getenv("PGHOST"),
-            "PGDATABASE": os.getenv("PGDATABASE"),
-            "PGUSER": os.getenv("PGUSER"),
-            "PGPASSWORD": os.getenv("PGPASSWORD"),
             "CLICKHOUSE_URL": os.getenv("CLICKHOUSE_URL"),
             "CLICKHOUSE_USER": os.getenv("CLICKHOUSE_USER"),
             "CLICKHOUSE_PASSWORD": os.getenv("CLICKHOUSE_PASSWORD"),
-            "TORGHUT_STATUS_URL": os.getenv("TORGHUT_STATUS_URL"),
         }
         missing = sorted(name for name, value in required.items() if not value)
         if missing:
@@ -114,16 +109,16 @@ class LiveDataAdapter:
                 "live notebook configuration is incomplete: " + ", ".join(missing)
             )
         return cls(
-            postgres_host=str(required["PGHOST"]),
+            postgres_host=os.getenv("PGHOST"),
             postgres_port=int(os.getenv("PGPORT", "5432")),
-            postgres_database=str(required["PGDATABASE"]),
-            postgres_user=str(required["PGUSER"]),
-            postgres_password=str(required["PGPASSWORD"]),
+            postgres_database=os.getenv("PGDATABASE"),
+            postgres_user=os.getenv("PGUSER"),
+            postgres_password=os.getenv("PGPASSWORD"),
             clickhouse_url=str(required["CLICKHOUSE_URL"]).rstrip("/"),
             clickhouse_database=os.getenv("CLICKHOUSE_DATABASE", "torghut"),
             clickhouse_user=str(required["CLICKHOUSE_USER"]),
             clickhouse_password=str(required["CLICKHOUSE_PASSWORD"]),
-            status_url=str(required["TORGHUT_STATUS_URL"]),
+            status_url=os.getenv("TORGHUT_STATUS_URL"),
         )
 
     def postgres(
@@ -136,6 +131,17 @@ class LiveDataAdapter:
     ) -> QueryResult:
         limit = _bounded_limit(row_limit)
         assert_query_contract(query_identifier, sql)
+        if not all(
+            (
+                self.postgres_host,
+                self.postgres_database,
+                self.postgres_user,
+                self.postgres_password,
+            )
+        ):
+            raise NotebookDataError(
+                "PostgreSQL notebook source is unavailable; connection settings are not configured."
+            )
         query_parameters = dict(parameters)
         query_parameters["limit"] = limit
         try:
@@ -246,6 +252,10 @@ class LiveDataAdapter:
         return tuple(cast(Record, item) for item in data)
 
     def status(self, query_identifier: str) -> QueryResult:
+        if not self.status_url:
+            raise NotebookDataError(
+                "Torghut runtime status is unavailable; TORGHUT_STATUS_URL is not configured."
+            )
         request = urllib.request.Request(
             self.status_url,
             method="GET",

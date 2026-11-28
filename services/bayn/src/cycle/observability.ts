@@ -1,9 +1,10 @@
 import { Result } from 'effect'
 
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
-import { Pipeable } from '../pipeable'
+
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from '../time'
-import { CycleState, CycleTerminalReason } from './model'
+import { CycleState, CycleTerminalReason, type ExecutionCalendarObservation } from './model'
+import { EntryAllocationReason } from './entry-allocation-observation'
 
 export interface CycleOperationsThresholds {
   readonly cycleStallThresholdMs: number
@@ -16,10 +17,12 @@ export interface CycleOperationsSnapshot {
   readonly accountId: string
   readonly signalSessionDate: string
   readonly executionSessionDate: string
+  readonly executionCalendarSchemaVersion: ExecutionCalendarObservation['executionCalendarSchemaVersion']
   readonly phase: CycleState
   readonly snapshotId: string | null
   readonly decisionHash: string | null
   readonly terminalReason: CycleTerminalReason | null
+  readonly publicationDeadlineAt: string | null
   readonly submissionOpenAt: string
   readonly submissionCutoffAt: string
   readonly executionOpenAt: string
@@ -27,6 +30,8 @@ export interface CycleOperationsSnapshot {
   readonly createdAt: string
   readonly updatedAt: string
   readonly terminalAt: string | null
+  /** A read-only explanation; the immutable target-plan reason and trading policy are unchanged. */
+  readonly entryAllocationReason?: EntryAllocationReason | null
 }
 
 export interface DurableAuthorityObservation {
@@ -104,7 +109,12 @@ export interface CycleExecutionFunnelObservation {
   readonly latestIntentAt: string | null
   readonly latestOrderAt: string | null
   readonly latestFillAt: string | null
+  readonly maximumIntentToSubmitLatencyMs: number | null
   readonly maximumOrderAcknowledgementLatencyMs: number | null
+  readonly maximumOrderObservationLatencyMs: number | null
+  readonly maximumIntentToBrokerFillLatencyMs: number | null
+  readonly maximumFillIngestionLatencyMs: number | null
+  readonly latencyClockRegressionCount: number
   readonly maximumFillLatencyMs: number | null
   /** Null means no complete broker position snapshot has been observed. */
   readonly positionSnapshotObservedAt: string | null
@@ -119,19 +129,28 @@ export interface CycleExecutionFunnelObservation {
 }
 
 export interface AccountingEconomicsObservation {
+  /** Cumulative retained account history across authority generations, not a session or runtime cohort. */
+  readonly scope: 'ACCOUNT_HISTORY'
   readonly fillCount: number
   readonly transactionCount: number
   readonly receiptCount: number
+  /** SELL accounting transactions, including partial fills; not completed position episodes. */
   readonly realizedCloseCount: number
   readonly unaccountedFillCount: number
   readonly unreceiptedTransactionCount: number
   readonly grossRealizedPnlMicros: string
+  /** Fill fees and posted broker fee effects; unposted fees and operating expenses are excluded. */
   readonly executionFeesMicros: string
   readonly netRealizedPnlAfterExecutionFeesMicros: string
 }
 
 export interface ForwardPerformanceObservation {
   readonly createdAt: string
+  readonly authorityGenerationHash: string
+  /** The retained receipt's source binding, never the current runtime revision. */
+  readonly sourceRevision: string | null
+  readonly windowOpenedAt: string | null
+  readonly windowClosedAt: string | null
   readonly evidenceStatus: 'SUFFICIENT' | 'INSUFFICIENT_EVIDENCE'
   readonly profitability: 'PROFITABLE' | 'NOT_PROFITABLE' | 'UNDETERMINED'
   readonly grossRealizedPnlMicros: string | null
@@ -145,9 +164,14 @@ export interface ForwardPerformanceObservation {
   readonly ledgerExact: boolean
 }
 
+export enum ForwardPerformanceUnavailableReason {
+  NoPersistedReceipt = 'NO_PERSISTED_RECEIPT',
+}
+
 export interface CycleEconomicsObservation {
   readonly accounting: AccountingEconomicsObservation
   readonly forwardPerformance: ForwardPerformanceObservation | null
+  readonly forwardPerformanceUnavailableReason: ForwardPerformanceUnavailableReason | null
 }
 
 export interface CycleOperationsProjection {
@@ -179,7 +203,9 @@ export enum CycleOperationsReason {
   Active = 'ACTIVE',
   LastCycleCompleted = 'LAST_CYCLE_COMPLETED',
   LastCycleNoTrade = 'LAST_CYCLE_NO_TRADE',
+  TurnoverBudgetExhausted = 'TURNOVER_BUDGET_EXHAUSTED',
   LastCycleBlocked = 'LAST_CYCLE_BLOCKED',
+  UnusedEntryExpired = 'UNUSED_ENTRY_EXPIRED',
   MissedPublicationDeadline = 'MISSED_PUBLICATION_DEADLINE',
   MissedSubmissionCutoff = 'MISSED_SUBMISSION_CUTOFF',
   MissedExecutionClose = 'MISSED_EXECUTION_CLOSE',
@@ -193,6 +219,7 @@ export enum CycleOperationsReason {
   ReconciliationDiscrepancy = 'RECONCILIATION_DISCREPANCY',
   ReconciliationPredatesMutation = 'RECONCILIATION_PREDATES_MUTATION',
   ReconciliationStale = 'RECONCILIATION_STALE',
+  CashFeesPending = 'CASH_FEES_PENDING',
   ResearchCapitalBootstrapRecovered = 'RESEARCH_CAPITAL_BOOTSTRAP_RECOVERED',
 }
 
@@ -285,8 +312,14 @@ const lifecycleCondition = (
   const current = projection.current
   if (current === null) {
     if (projection.last?.phase === CycleState.Blocked) {
+      if (projection.last.terminalReason === CycleTerminalReason.UnusedEntryExpired)
+        return [CycleOperationsCondition.Waiting, CycleOperationsReason.UnusedEntryExpired]
       return [
-        maximumAuthority === Authority.Execution ? CycleOperationsCondition.Failed : CycleOperationsCondition.Waiting,
+        maximumAuthority !== Authority.Execution ||
+        (projection.last.terminalReason === CycleTerminalReason.Authority &&
+          nowMs >= Date.parse(projection.last.executionCloseAt))
+          ? CycleOperationsCondition.Waiting
+          : CycleOperationsCondition.Failed,
         CycleOperationsReason.LastCycleBlocked,
       ]
     }
@@ -294,7 +327,12 @@ const lifecycleCondition = (
       return [CycleOperationsCondition.Waiting, CycleOperationsReason.LastCycleCompleted]
     }
     if (projection.last?.phase === CycleState.NoTrade) {
-      return [CycleOperationsCondition.Waiting, CycleOperationsReason.LastCycleNoTrade]
+      return [
+        CycleOperationsCondition.Waiting,
+        projection.last.entryAllocationReason === EntryAllocationReason.TurnoverBudgetExhausted
+          ? CycleOperationsReason.TurnoverBudgetExhausted
+          : CycleOperationsReason.LastCycleNoTrade,
+      ]
     }
     return [CycleOperationsCondition.Waiting, CycleOperationsReason.NoCycleRecorded]
   }
@@ -304,8 +342,13 @@ const lifecycleCondition = (
       return [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedSubmissionCutoff]
     }
     if (current.snapshotId === null) {
-      return nowMs >= Date.parse(current.submissionOpenAt)
-        ? [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedPublicationDeadline]
+      if (current.publicationDeadlineAt !== null)
+        return nowMs >= Date.parse(current.publicationDeadlineAt)
+          ? [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedPublicationDeadline]
+          : [CycleOperationsCondition.Waiting, CycleOperationsReason.AwaitingSignalPublication]
+      const startedAt = Math.max(Date.parse(current.createdAt), Date.parse(current.submissionOpenAt))
+      return nowMs - startedAt >= cycleStallThresholdMs
+        ? [CycleOperationsCondition.Stalled, CycleOperationsReason.AttemptStale]
         : [CycleOperationsCondition.Waiting, CycleOperationsReason.AwaitingSignalPublication]
     }
     if (nowMs < Date.parse(current.submissionOpenAt)) {
@@ -345,6 +388,7 @@ interface CycleOperationsDecisionFacts {
   readonly reconciliationDiscrepancy: boolean
   readonly reconciliationPredatesMutation: boolean
   readonly reconciliationStale: boolean
+  readonly awaitingCashFees: boolean
 }
 
 const decideCycleOperationsCondition = (
@@ -381,10 +425,16 @@ const decideCycleOperationsCondition = (
   if (facts.reconciliationPredatesMutation) {
     return [CycleOperationsCondition.Failed, CycleOperationsReason.ReconciliationPredatesMutation]
   }
+  const lifecycle = lifecycleCondition(projection, nowMs, cycleStallThresholdMs, maximumAuthority)
+  if (facts.awaitingCashFees) {
+    return lifecycle[0] === CycleOperationsCondition.Stalled || lifecycle[0] === CycleOperationsCondition.Failed
+      ? lifecycle
+      : [CycleOperationsCondition.Waiting, CycleOperationsReason.CashFeesPending]
+  }
   if (facts.reconciliationStale) {
     return [CycleOperationsCondition.Failed, CycleOperationsReason.ReconciliationStale]
   }
-  return lifecycleCondition(projection, nowMs, cycleStallThresholdMs, maximumAuthority)
+  return lifecycle
 }
 
 const deriveCycleOperationsStatusWithCheckedAt = (
@@ -393,6 +443,7 @@ const deriveCycleOperationsStatusWithCheckedAt = (
   maximumAuthority: Authority,
   thresholds: CycleOperationsThresholds,
   checkedAt: string,
+  awaitingCashFees: boolean,
 ): CycleOperationsStatus => {
   const attemptAgeMs = ageAt(projection.current?.updatedAt ?? null, nowMs)
   const oldestUnresolvedMutationAgeMs = ageAt(projection.mutations.oldestUnresolvedAt, nowMs)
@@ -411,7 +462,11 @@ const deriveCycleOperationsStatusWithCheckedAt = (
     reconciliationAgeMs !== null &&
     reconciliationAgeMs >= thresholds.reconciliationStaleThresholdMs
   const reconciliationBlocked =
-    reconciliationMissing || reconciliationDiscrepancy || reconciliationPredatesMutation || reconciliationStale
+    awaitingCashFees ||
+    reconciliationMissing ||
+    reconciliationDiscrepancy ||
+    reconciliationPredatesMutation ||
+    reconciliationStale
   const unknownMutationStale =
     projection.mutations.unresolvedCount > 0 &&
     oldestUnresolvedMutationAgeMs !== null &&
@@ -429,6 +484,7 @@ const deriveCycleOperationsStatusWithCheckedAt = (
       reconciliationDiscrepancy,
       reconciliationPredatesMutation,
       reconciliationStale,
+      awaitingCashFees,
     },
   )
 
@@ -455,28 +511,25 @@ const deriveCycleOperationsStatusWithCheckedAt = (
   }
 }
 
-const deriveCycleOperationsStatusResultDataFirst = (
+export const deriveCycleOperationsStatusResult = (
   projection: CycleOperationsProjection,
   nowMs: number,
   maximumAuthority: Authority,
   thresholds: CycleOperationsThresholds,
+  awaitingCashFees = false,
 ): Result.Result<CycleOperationsStatus, CycleOperationsStatusFailure> =>
   Result.map(
     Result.mapError(
       utcInstantFromEpochMillisResult(nowMs),
       (cause): CycleOperationsStatusFailure => ({ _tag: 'CycleOperationsClockInvalid', nowMs, cause }),
     ),
-    (checkedAt) => deriveCycleOperationsStatusWithCheckedAt(projection, nowMs, maximumAuthority, thresholds, checkedAt),
+    (checkedAt) =>
+      deriveCycleOperationsStatusWithCheckedAt(
+        projection,
+        nowMs,
+        maximumAuthority,
+        thresholds,
+        checkedAt,
+        awaitingCashFees,
+      ),
   )
-
-export const deriveCycleOperationsStatusResult = Pipeable.dual(4, deriveCycleOperationsStatusResultDataFirst)
-
-const deriveCycleOperationsStatusDataFirst = (
-  projection: CycleOperationsProjection,
-  nowMs: number,
-  maximumAuthority: Authority,
-  thresholds: CycleOperationsThresholds,
-): CycleOperationsStatus =>
-  Result.getOrThrow(deriveCycleOperationsStatusResult(projection, nowMs, maximumAuthority, thresholds))
-
-export const deriveCycleOperationsStatus = Pipeable.dual(4, deriveCycleOperationsStatusDataFirst)

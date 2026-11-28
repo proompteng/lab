@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { Cause, Effect, Exit, Layer } from 'effect'
+import { Cause, Deferred, Effect, Exit, Layer } from 'effect'
 
 import { createObservabilityStub, createTestTemporalConfig } from './helpers/observability'
 import type { TemporalConfig } from '../src/config'
@@ -102,7 +102,7 @@ describe('worker layers', () => {
         Effect.provide(
           Effect.gen(function* () {
             const failureSignal = yield* WorkerRuntimeFailureSignal
-            return yield* failureSignal
+            return yield* Deferred.await(failureSignal)
           }),
           workerLayer,
         ),

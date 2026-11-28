@@ -1,9 +1,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: local-path-storage
+# The pinned upstream manifests already declare local-path-storage. A global
+# namespace also namespaces the cluster-scoped admission policies in Kustomize.
 resources:
   - github.com/rancher/local-path-provisioner/deploy?ref=v0.0.37
-  - storageclasses-turin-nvme.yaml
+  - storageclass-ci-amd64.yaml
+  - storageclass-bayn-wal.yaml
+  - compute-local-admission.yaml
+  - bayn-ledger-retention.yaml
 images:
   - name: rancher/local-path-provisioner
     newName: docker.io/rancher/local-path-provisioner

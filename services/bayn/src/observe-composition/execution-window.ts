@@ -1,9 +1,12 @@
 import { Result } from 'effect'
+import type { AutonomousCycle } from '../cycle/model'
+import type { JevProtocol } from '../jev/protocol'
+import { continuousExecutionPolicy, isContinuousMarket, regularEquitySessions, type MarketHours } from '../market-hours'
+import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
+import { isPureEtfPolicy } from '../strategy/intraday-alpha/policy'
+import { IntradayAlphaPhase } from '../strategy/intraday-alpha/constants'
 
-import { utcInstantFromEpochMillisResult } from '../time'
-
-export const everySessionCloseStartLeadMs = 60 * 60_000
-export const everySessionCloseSubmitLeadMs = 15 * 60_000
+import { utcInstantFromEpochMillis, utcInstantFromEpochMillisResult } from '../time'
 
 export interface ExecutionCycleCloseWindow {
   readonly startAt: string
@@ -12,23 +15,20 @@ export interface ExecutionCycleCloseWindow {
 }
 
 export interface ExecutionCycleCloseWindowFacts {
+  readonly executionCalendarSchemaVersion: MarketHours['schemaVersion']
+  readonly observedAt: string
   readonly executionCloseAt: string
+  readonly recoveryExpiresAt: string | null
   /** Strategy-bound lead from the session close to the start of forced flattening. */
-  readonly sessionCloseStartLeadMs?: number
+  readonly sessionCloseStartLeadMs: number
   /** Strategy-bound lead from the session close to the final close submission. */
-  readonly sessionCloseSubmitLeadMs?: number
-  /** Global end of entry authority and start of forced flattening. */
-  readonly mandateForceCloseAt?: string
-  readonly mandateCloseSubmitCutoffAt?: string
-  readonly mandateCloseExpiresAt?: string
+  readonly sessionCloseSubmitLeadMs: number
 }
 
 export type ExecutionCycleCloseWindowFailure = {
   readonly _tag: 'ExecutionCycleCloseWindowInvalid'
   readonly reason: string
 }
-
-const earlierInstant = (left: string, right: string): string => (left < right ? left : right)
 
 const decodeInstant = (value: string, field: string): Result.Result<string, ExecutionCycleCloseWindowFailure> =>
   Result.mapError(
@@ -39,50 +39,75 @@ const decodeInstant = (value: string, field: string): Result.Result<string, Exec
     }),
   )
 
-const decodeLead = (
-  value: number | undefined,
-  fallback: number,
-  field: string,
-): Result.Result<number, ExecutionCycleCloseWindowFailure> => {
-  const lead = value ?? fallback
-  return Number.isSafeInteger(lead) && lead > 0
-    ? Result.succeed(lead)
+const decodeLead = (value: number, field: string): Result.Result<number, ExecutionCycleCloseWindowFailure> => {
+  return Number.isSafeInteger(value) && value >= 0
+    ? Result.succeed(value)
     : Result.fail({
         _tag: 'ExecutionCycleCloseWindowInvalid',
-        reason: `${field} must be a positive safe integer`,
+        reason: `${field} must be a nonnegative safe integer`,
       })
+}
+
+/** The same RTH deadline gates both native protection release and the position-mark fallback. */
+export const executionCycleCloseSchedule = (
+  cycle: AutonomousCycle,
+  document: ExecutionDecisionDocument,
+  protocol: Pick<JevProtocol, 'flattenBeforeCloseMinutes' | 'hardFlatBeforeCloseMinutes'>,
+) => {
+  const calendar = document.executionSession?.calendar
+  const regular =
+    calendar === undefined || isContinuousMarket(calendar)
+      ? undefined
+      : regularEquitySessions(calendar).find(({ date }) => date === cycle.identity.executionSessionDate)
+  const executionCloseAt =
+    regular !== undefined && regular.closeAt < cycle.window.executionCloseAt
+      ? regular.closeAt
+      : cycle.window.executionCloseAt
+  const target = document.strategyDecision
+  const sessionCloseSubmitLeadMs = protocol.hardFlatBeforeCloseMinutes * 60_000
+  let sessionCloseStartLeadMs = protocol.flattenBeforeCloseMinutes * 60_000
+  if (target?.schemaVersion === 'bayn.intraday-alpha-target.v3' && isPureEtfPolicy(target.policy)) {
+    sessionCloseStartLeadMs = target.policy.noiseArea.flattenBeforeCloseMinutes * 60_000
+  } else if (
+    target?.schemaVersion === 'bayn.intraday-alpha-target.v2' &&
+    !isPureEtfPolicy(target.policy) &&
+    regular !== undefined
+  ) {
+    const flattenMinute =
+      target.phase === IntradayAlphaPhase.NoiseAreaTrend
+        ? target.policy.noiseArea.flattenMinuteFromOpen
+        : target.phase === IntradayAlphaPhase.MorningOrb
+          ? target.policy.morningOrb.hardExitMinuteFromOpen
+          : target.policy.middayReversion.flattenMinuteFromOpen
+    const flattenAt = Date.parse(regular.openAt) + flattenMinute * 60_000
+    const minimumLeadMs =
+      target.phase === IntradayAlphaPhase.NoiseAreaTrend
+        ? Math.max(1, 390 - target.policy.noiseArea.flattenMinuteFromOpen) * 60_000
+        : sessionCloseStartLeadMs
+    sessionCloseStartLeadMs = Math.max(minimumLeadMs, Date.parse(executionCloseAt) - flattenAt)
+  }
+  return {
+    executionCalendarSchemaVersion: cycle.window.executionCalendarSchemaVersion,
+    executionCloseAt,
+    sessionCloseStartLeadMs,
+    sessionCloseSubmitLeadMs,
+  }
 }
 
 export const resolveExecutionCycleCloseWindow = (
   facts: ExecutionCycleCloseWindowFacts,
-): Result.Result<ExecutionCycleCloseWindow | undefined, ExecutionCycleCloseWindowFailure> =>
+): Result.Result<ExecutionCycleCloseWindow, ExecutionCycleCloseWindowFailure> =>
   Result.gen(function* () {
-    if (
-      facts.mandateForceCloseAt === undefined ||
-      facts.mandateCloseSubmitCutoffAt === undefined ||
-      facts.mandateCloseExpiresAt === undefined
-    ) {
-      return undefined
-    }
-    const mandateForceCloseAt = yield* decodeInstant(facts.mandateForceCloseAt, 'mandate force-close instant')
-    const mandateCloseSubmitCutoffAt = yield* decodeInstant(
-      facts.mandateCloseSubmitCutoffAt,
-      'mandate close submit-cutoff instant',
-    )
-    const mandateCloseExpiresAt = yield* decodeInstant(facts.mandateCloseExpiresAt, 'mandate close expiry instant')
     const executionCloseAt = yield* decodeInstant(facts.executionCloseAt, 'execution close instant')
 
+    const observedAt = yield* decodeInstant(facts.observedAt, 'close observation instant')
     const closeAt = Date.parse(executionCloseAt)
-    const startLeadMs = yield* decodeLead(
-      facts.sessionCloseStartLeadMs,
-      everySessionCloseStartLeadMs,
-      'session close start lead',
-    )
-    const submitLeadMs = yield* decodeLead(
-      facts.sessionCloseSubmitLeadMs,
-      everySessionCloseSubmitLeadMs,
-      'session close submit lead',
-    )
+    const sessionStartLeadMs = yield* decodeLead(facts.sessionCloseStartLeadMs, 'session close start lead')
+    const startLeadMs =
+      facts.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+        ? continuousExecutionPolicy.closeRecoveryMs
+        : sessionStartLeadMs
+    const submitLeadMs = yield* decodeLead(facts.sessionCloseSubmitLeadMs, 'session close submit lead')
     if (startLeadMs <= submitLeadMs) {
       return yield* Result.fail({
         _tag: 'ExecutionCycleCloseWindowInvalid' as const,
@@ -103,16 +128,38 @@ export const resolveExecutionCycleCloseWindow = (
         reason: 'execution close instant is invalid',
       }),
     )
-    const window = {
-      startAt: earlierInstant(mandateForceCloseAt, sessionStartAt),
-      submitCutoffAt: earlierInstant(mandateCloseSubmitCutoffAt, sessionSubmitCutoffAt),
-      expiresAt: earlierInstant(mandateCloseExpiresAt, executionCloseAt),
+    const recovery = facts.recoveryExpiresAt !== null && observedAt >= executionCloseAt
+    if (recovery && submitLeadMs >= continuousExecutionPolicy.closeRecoveryMs)
+      return yield* Result.fail({
+        _tag: 'ExecutionCycleCloseWindowInvalid' as const,
+        reason: 'close recovery must retain a bounded submission window',
+      })
+    const expiresAt = recovery
+      ? yield* decodeInstant(facts.recoveryExpiresAt ?? executionCloseAt, 'recovery close expiry')
+      : executionCloseAt
+    if (
+      recovery &&
+      (expiresAt <= observedAt ||
+        Date.parse(expiresAt) > Date.parse(observedAt) + continuousExecutionPolicy.closeRecoveryMs)
+    )
+      return yield* Result.fail({
+        _tag: 'ExecutionCycleCloseWindowInvalid' as const,
+        reason: 'close recovery lease exceeds its bounded lifetime',
+      })
+    return {
+      startAt: sessionStartAt,
+      submitCutoffAt: recovery ? new Date(Date.parse(expiresAt) - submitLeadMs).toISOString() : sessionSubmitCutoffAt,
+      expiresAt,
     }
-
-    return window.startAt < window.submitCutoffAt && window.submitCutoffAt <= window.expiresAt
-      ? window
-      : yield* Result.fail({
-          _tag: 'ExecutionCycleCloseWindowInvalid' as const,
-          reason: 'execution close window must contain ordered start, submit-cutoff, and expiry instants',
-        })
   })
+
+export const boundExecutionCycleCloseWindow = (
+  window: ExecutionCycleCloseWindow,
+  document: { readonly expiresAt: string },
+): ExecutionCycleCloseWindow => ({
+  ...window,
+  expiresAt: document.expiresAt,
+  submitCutoffAt: utcInstantFromEpochMillis(
+    Date.parse(document.expiresAt) - (Date.parse(window.expiresAt) - Date.parse(window.submitCutoffAt)),
+  ),
+})

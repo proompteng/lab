@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ofz-observability
+data:
+  SENTRY_DSN: http://52b546338f8c4d6a9bf7a3daff087940@glitchtip-web.glitchtip.svc.cluster.local/7
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://observability-tempo-v3-distributor.observability.svc.cluster.local:4318/v1/traces

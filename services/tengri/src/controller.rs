@@ -1,1727 +1,3411 @@
 use std::{sync::Arc, time::Duration};
 
-use chrono::{DateTime, Utc};
+use anyhow::{Context, ensure};
+use chrono::Utc;
 use futures::StreamExt;
-use k8s_openapi::api::core::v1::{ContainerStatus, PersistentVolumeClaim, Pod, Secret};
+use k8s_openapi::api::{
+    coordination::v1::Lease,
+    core::v1::{PersistentVolumeClaim, Pod, Secret},
+};
 use kube::{
-    Api, Client, Resource, ResourceExt,
-    api::{DeleteParams, Patch, PatchParams, Preconditions},
-    runtime::{
-        Controller,
-        controller::Action,
-        wait::{await_condition, conditions},
-        watcher,
-    },
+    Api, Client, ResourceExt,
+    api::{DeleteParams, ListParams, Patch, PatchParams, PostParams, Preconditions},
+    runtime::{Controller, controller::Action, watcher},
 };
 use serde_json::json;
-use thiserror::Error;
-use tracing::{error, info, warn};
 
 use crate::{
-    activity::{RESUME_STARTED_AT_ANNOTATION, idle_deadline_passed, last_activity_at},
-    crd::{MicroVM, MicroVMCondition, MicroVMDesiredState, MicroVMPhase, MicroVMStatus},
+    activity::{AgentWorkMonitor, idle_deadline_passed, last_activity_at},
+    crd::{
+        MicroVM, MicroVMArchitecture, MicroVMCondition, MicroVMDesiredState, MicroVMPhase,
+        MicroVMSlot, MicroVMStatus,
+    },
+    identity::WorkloadIdentity,
     metrics,
     pod::{
-        FINALIZER_NAME, MANAGER_NAME, bootstrap_secret_name, build_pod, ensure_bootstrap_secret,
-        ensure_pvc, has_current_storage_layout, is_controlled_by_microvm, pvc_name,
+        self, FINALIZER_NAME, HOME_NAME_ANNOTATION, HOME_UID_ANNOTATION, IMAGE_ANNOTATION,
+        POD_UID_ANNOTATION, SLOT_SELECTOR,
+    },
+    slot::{
+        Allocation, REPLAY_STARTUP_FENCE_MS, SlotState,
+        client::{SlotClient, allocation_for, claim_for},
     },
     tickets::TicketStore,
 };
 
-const BOOTSTRAP_SECRET_REJECTED: &str = "BootstrapSecretRejected";
-const UNSCHEDULABLE_FAILURE_GRACE_SECONDS: i64 = 30;
+const SLOT_COUNT: usize = 6;
+const LIFECYCLE_KIND_ANNOTATION: &str = "runtime.proompteng.ai/lifecycle-kind";
+const SPARE_POD_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+const STOPPED_POD_ANNOTATION: &str = "runtime.proompteng.ai/stopped-slot-pod-uid";
+const RETIRING_ANNOTATION: &str = "runtime.proompteng.ai/retiring-slot";
 
 #[derive(Clone)]
 pub struct ControllerContext {
     pub client: Client,
     pub namespace: String,
     pub tickets: TicketStore,
+    pub guest_image: Arc<str>,
+    pub runtime_image: Arc<str>,
+    pub architecture: MicroVMArchitecture,
+    pub identity: WorkloadIdentity,
+    pub authorization: crate::authz::WorkspaceAuthorization,
+    pub leadership: Option<crate::leadership::Guard>,
+    pub agent_work: AgentWorkMonitor,
 }
 
-#[derive(Debug, Error)]
-pub enum ReconcileError {
-    #[error("Kubernetes API request failed: {0}")]
-    Kubernetes(#[from] kube::Error),
-    #[error("MicroVM {0} is missing a namespace")]
-    MissingNamespace(String),
-    #[error("Tengri capability cleanup failed: {0}")]
-    TicketStore(String),
-    #[error("timed out deleting owned resource {0}")]
-    CleanupTimeout(String),
-    #[error("failed waiting for owned resource deletion: {0}")]
-    CleanupWait(#[from] kube::runtime::wait::Error),
+impl ControllerContext {
+    fn leader(&self) -> anyhow::Result<&crate::leadership::Guard> {
+        let guard = self
+            .leadership
+            .as_ref()
+            .context("controller is not the elected leader")?;
+        guard.fence()?;
+        Ok(guard)
+    }
 }
 
 pub async fn run(context: ControllerContext) {
-    let client = context.client.clone();
-    let namespace = context.namespace.clone();
-    let microvms: Api<MicroVM> = Api::namespaced(client.clone(), &namespace);
-    let pods: Api<Pod> = Api::namespaced(client, &namespace);
-
-    Controller::new(microvms, watcher::Config::default())
-        .owns(pods, watcher::Config::default())
-        .run(reconcile, error_policy, Arc::new(context))
-        .for_each(|result| async move {
-            match result {
-                Ok(reference) => info!(?reference, "reconciled MicroVM"),
-                Err(reconcile_error) => {
-                    error!(error = %reconcile_error, "MicroVM reconciliation failed")
-                }
+    let maintenance = context.clone();
+    let pool = async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            if let Err(error) = maintain_pool(&maintenance).await {
+                tracing::warn!(error = %error, "slot pool maintenance will retry");
             }
-        })
-        .await;
+        }
+    };
+    let microvms = Api::<MicroVM>::namespaced(context.client.clone(), &context.namespace);
+    let pods = Api::<Pod>::namespaced(context.client.clone(), &context.namespace);
+    let reconciliation = Controller::new(microvms, watcher::Config::default())
+        .owns(pods, watcher::Config::default())
+        .run(
+            reconcile,
+            |_, error: &ReconcileError, _| {
+                tracing::warn!(error = %error, "MicroVM reconciliation will retry");
+                Action::requeue(Duration::from_secs(2))
+            },
+            Arc::new(context),
+        )
+        .for_each(|result| async move {
+            if let Err(error) = result
+                && !matches!(error, kube::runtime::controller::Error::ReconcilerFailed(..))
+            {
+                tracing::error!(operation = "controller.queue", error = %error, "MicroVM controller queue failed");
+            }
+        });
+    tokio::pin!(pool, reconciliation);
+    tokio::select! { _ = &mut pool => {}, _ = &mut reconciliation => {} }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("MicroVM lifecycle failed: {0}")]
+struct ReconcileError(#[from] anyhow::Error);
+
+#[tracing::instrument(
+    name = "controller.microvm.reconcile",
+    skip_all,
+    err,
+    fields(operation = "controller.microvm.reconcile")
+)]
 async fn reconcile(
     microvm: Arc<MicroVM>,
     context: Arc<ControllerContext>,
 ) -> Result<Action, ReconcileError> {
-    let name = microvm.name_any();
-    let namespace = microvm
-        .namespace()
-        .ok_or_else(|| ReconcileError::MissingNamespace(name.clone()))?;
-    let microvms: Api<MicroVM> = Api::namespaced(context.client.clone(), &namespace);
-    let pods: Api<Pod> = Api::namespaced(context.client.clone(), &namespace);
-
-    if microvm.meta().deletion_timestamp.is_some() {
-        let status = terminating_status(&microvm, Utc::now());
-        if microvm.status.as_ref() != Some(&status) {
-            patch_status(&microvms, &microvm, status).await?;
-        }
-        cleanup(&context.client, &namespace, &microvm, &context.tickets).await?;
-        let current = microvms.get(&name).await?;
-        remove_finalizer(&microvms, &current).await?;
-        return Ok(Action::await_change());
-    }
-
-    if !microvm
-        .finalizers()
-        .iter()
-        .any(|value| value == FINALIZER_NAME)
-    {
-        add_finalizer(&microvms, &microvm).await?;
-        return Ok(Action::requeue(Duration::from_secs(1)));
-    }
-
-    let now = Utc::now();
-    if deadline_passed(&microvm.spec.expires_at, now) {
-        info!(microvm = %name, "hard expiry reached; deleting MicroVM and persistent state");
-        metrics::global().record_expiry_deletion();
-        microvms.delete(&name, &DeleteParams::default()).await?;
-        return Ok(Action::await_change());
-    }
-
-    let idle = idle_deadline_passed(&microvm, now);
-    if idle && microvm.spec.desired_state != MicroVMDesiredState::Sleeping {
-        patch_desired_state(&microvms, &microvm, MicroVMDesiredState::Sleeping).await?;
-        return Ok(Action::requeue(Duration::from_secs(1)));
-    }
-
-    if microvm.spec.desired_state == MicroVMDesiredState::Sleeping {
-        context
-            .tickets
-            .remove_agent(&name)
-            .map_err(|error| ReconcileError::TicketStore(error.to_string()))?;
-        metrics::global().clear_pty_sessions(&name);
-        // Sleeping is observable only after the Firecracker guest is gone. Waiting for
-        // foreground deletion also prevents a resume from racing a terminating Pod.
-        delete_owned_and_wait(&pods, &name, &microvm).await?;
-        let status = sleeping_status(&microvm, idle, now);
-        if microvm.status.as_ref() != Some(&status) {
-            patch_status(&microvms, &microvm, status).await?;
-        }
-        return Ok(Action::requeue(next_requeue(&microvm, now)));
-    }
-
-    let bootstrap_secret =
-        match ensure_bootstrap_secret(context.client.clone(), &namespace, &microvm).await {
-            Ok(secret) => secret,
-            Err(error) => {
-                report_provisioning_failure(
-                    &microvms,
-                    &pods,
-                    &microvm,
-                    BOOTSTRAP_SECRET_REJECTED,
-                    "Bootstrap Secret",
-                    &error,
-                    now,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
-    let home_claim = match ensure_pvc(context.client.clone(), &namespace, &microvm).await {
-        Ok(claim) => claim,
-        Err(error) => {
-            report_provisioning_failure(
-                &microvms,
-                &pods,
-                &microvm,
-                "PersistentVolumeClaimRejected",
-                "persistent home claim",
-                &error,
-                now,
-            )
-            .await;
-            return Err(error.into());
-        }
-    };
-    let pod = match ensure_runtime_pod(&pods, &microvm, &namespace, &bootstrap_secret, &home_claim)
-        .await
-    {
-        Ok(pod) => pod,
-        Err(error) => {
-            report_provisioning_failure(
-                &microvms,
-                &pods,
-                &microvm,
-                "MicroVMPodRejected",
-                "Firecracker Pod",
-                &error,
-                now,
-            )
-            .await;
-            return Err(error.into());
-        }
-    };
-    let status = derive_status(&microvm, &pod, &home_claim, now);
-
-    let ready_transition = status.phase == MicroVMPhase::Ready
-        && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Ready);
-    let latency = ready_transition.then(|| readiness_latency(&microvm, now));
-    if status.phase == MicroVMPhase::Failed
-        && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Failed)
-    {
-        metrics::global().record_guest_failure();
-    }
-
-    if microvm.status.as_ref() != Some(&status) {
-        patch_status(&microvms, &microvm, status.clone()).await?;
-    }
-    if let Some(latency) = latency {
-        match latency {
-            ReadinessLatency::Boot(millis) => metrics::global().observe_boot(millis),
-            ReadinessLatency::Resume(millis) => metrics::global().observe_resume(millis),
-        }
-    }
-    if status.phase == MicroVMPhase::Ready && resume_started_at(&microvm).is_some() {
-        clear_resume_started_at(&microvms, &microvm).await?;
-    }
-
-    Ok(Action::requeue(next_requeue(&microvm, now)))
-}
-
-async fn ensure_runtime_pod(
-    pods: &Api<Pod>,
-    microvm: &MicroVM,
-    namespace: &str,
-    bootstrap_secret: &str,
-    home_claim: &str,
-) -> Result<Pod, kube::Error> {
-    let name = microvm.name_any();
-    if let Some(existing) = pods.get_opt(&name).await? {
-        if is_controlled_by_microvm(&existing, microvm) {
-            // Pod templates are immutable. Keep the current Firecracker guest through a
-            // controller rollout; the next normal sleep/resume boundary creates the new
-            // template without disrupting an active or still-booting agent.
-            return Ok(existing);
-        }
-        return Err(kube::Error::Api(
-            kube::core::Status {
-                code: 422,
-                reason: "Invalid".to_owned(),
-                message: format!(
-                    "Pod {name} already exists and is not controlled by MicroVM {}",
-                    microvm.name_any()
-                ),
-                ..kube::core::Status::default()
-            }
-            .boxed(),
-        ));
-    }
-
-    if !has_current_storage_layout(microvm) {
-        return Err(kube::Error::Api(
-            kube::core::Status {
-                code: 422,
-                reason: "Invalid".to_owned(),
-                message: format!(
-                    "MicroVM {name} uses an unsupported storage layout; delete and recreate the agent"
-                ),
-                ..kube::core::Status::default()
-            }
-            .boxed(),
-        ));
-    }
-
-    let desired = build_pod(microvm, namespace, bootstrap_secret, home_claim);
-    pods.patch(
-        &name,
-        &PatchParams::apply(MANAGER_NAME).force(),
-        &Patch::Apply(&desired),
-    )
-    .await
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum ReadinessLatency {
-    Boot(u64),
-    Resume(u64),
-}
-
-fn readiness_latency(microvm: &MicroVM, now: DateTime<Utc>) -> ReadinessLatency {
-    if let Some(started_at) = resume_started_at(microvm) {
-        return ReadinessLatency::Resume(elapsed_millis(started_at, now).unwrap_or_default());
-    }
-    ReadinessLatency::Boot(elapsed_millis(&microvm.spec.created_at, now).unwrap_or_default())
-}
-
-fn resume_started_at(microvm: &MicroVM) -> Option<&str> {
-    microvm
-        .metadata
-        .annotations
-        .as_ref()
-        .and_then(|annotations| annotations.get(RESUME_STARTED_AT_ANNOTATION))
-        .map(String::as_str)
-}
-
-async fn clear_resume_started_at(api: &Api<MicroVM>, microvm: &MicroVM) -> Result<(), kube::Error> {
-    let mut patch = json!({"metadata": {"annotations": {}}});
-    patch["metadata"]["annotations"][RESUME_STARTED_AT_ANNOTATION] = serde_json::Value::Null;
-    api.patch(
-        &microvm.name_any(),
-        &PatchParams::default(),
-        &Patch::Merge(&patch),
-    )
-    .await?;
-    Ok(())
-}
-
-fn elapsed_millis(value: &str, now: DateTime<Utc>) -> Option<u64> {
-    let started = DateTime::parse_from_rfc3339(value)
-        .ok()?
-        .with_timezone(&Utc);
-    u64::try_from((now - started).num_milliseconds().max(0)).ok()
-}
-
-fn error_policy(
-    _microvm: Arc<MicroVM>,
-    error: &ReconcileError,
-    _context: Arc<ControllerContext>,
-) -> Action {
-    error!(error = %error, "requeueing failed MicroVM reconciliation");
-    Action::requeue(Duration::from_secs(10))
-}
-
-async fn cleanup(
-    client: &Client,
-    namespace: &str,
-    microvm: &MicroVM,
-    tickets: &TicketStore,
-) -> Result<(), ReconcileError> {
-    tickets
-        .remove_agent(&microvm.name_any())
-        .map_err(|error| ReconcileError::TicketStore(error.to_string()))?;
-    metrics::global().clear_pty_sessions(&microvm.name_any());
-    let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-    let secrets: Api<Secret> = Api::namespaced(client.clone(), namespace);
-    let claims: Api<PersistentVolumeClaim> = Api::namespaced(client.clone(), namespace);
-    delete_owned_and_wait(&pods, &microvm.name_any(), microvm).await?;
-    delete_owned_and_wait(&secrets, &bootstrap_secret_name(microvm), microvm).await?;
-    delete_owned_and_wait(&claims, &pvc_name(microvm), microvm).await?;
-    Ok(())
-}
-
-async fn delete_owned_and_wait<K>(
-    api: &Api<K>,
-    name: &str,
-    microvm: &MicroVM,
-) -> Result<(), ReconcileError>
-where
-    K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + Resource + Send + 'static,
-    <K as Resource>::DynamicType: Default,
-{
-    let Some(resource) = api.get_opt(name).await? else {
-        return Ok(());
-    };
-    if !is_controlled_by_microvm(&resource, microvm) {
-        warn!(
-            resource = name,
-            microvm = %microvm.name_any(),
-            "skipping cleanup of resource not controlled by MicroVM"
-        );
-        return Ok(());
-    }
-    let Some(uid) = resource.uid() else {
-        warn!(
-            resource = name,
-            microvm = %microvm.name_any(),
-            "skipping cleanup of owned resource without a Kubernetes UID"
-        );
-        return Ok(());
-    };
-    let params = DeleteParams::foreground().preconditions(Preconditions {
-        uid: Some(uid.clone()),
-        resource_version: resource.resource_version(),
-    });
-    match api.delete(name, &params).await {
-        Ok(_) => {}
-        Err(kube::Error::Api(response)) if response.code == 404 => return Ok(()),
-        Err(error) => return Err(error.into()),
-    }
-    tokio::time::timeout(
-        Duration::from_secs(45),
-        await_condition(api.clone(), name, conditions::is_deleted(&uid)),
-    )
-    .await
-    .map_err(|_| ReconcileError::CleanupTimeout(name.to_owned()))??;
-    Ok(())
-}
-
-async fn add_finalizer(api: &Api<MicroVM>, microvm: &MicroVM) -> Result<(), kube::Error> {
-    let name = microvm.name_any();
-    api.patch(
-        &name,
-        &PatchParams::default(),
-        &Patch::Merge(json!({
-            "metadata": {
-                "finalizers": finalizers_with_tengri(microvm),
-                "resourceVersion": microvm.resource_version(),
-            }
-        })),
-    )
-    .await?;
-    Ok(())
-}
-
-async fn remove_finalizer(api: &Api<MicroVM>, microvm: &MicroVM) -> Result<(), kube::Error> {
-    let name = microvm.name_any();
-    api.patch(
-        &name,
-        &PatchParams::default(),
-        &Patch::Merge(json!({
-            "metadata": {
-                "finalizers": finalizers_without_tengri(microvm),
-                "resourceVersion": microvm.resource_version(),
-            }
-        })),
-    )
-    .await?;
-    Ok(())
-}
-
-async fn patch_desired_state(
-    api: &Api<MicroVM>,
-    microvm: &MicroVM,
-    state: MicroVMDesiredState,
-) -> Result<(), kube::Error> {
-    let name = microvm.name_any();
-    api.patch(
-        &name,
-        &PatchParams::default(),
-        &Patch::Merge(json!({
-            "metadata": {"resourceVersion": microvm.resource_version()},
-            "spec": {"desiredState": state},
-        })),
-    )
-    .await?;
-    Ok(())
-}
-
-pub async fn patch_status(
-    api: &Api<MicroVM>,
-    microvm: &MicroVM,
-    status: MicroVMStatus,
-) -> Result<(), kube::Error> {
-    let name = microvm.name_any();
-    // The controller is the sole status writer. Do not precondition status patches on the
-    // resource version because authenticated activity updates metadata independently and can
-    // otherwise make every reconcile fail with a harmless but noisy 409 conflict.
-    api.patch_status(
-        &name,
-        &PatchParams::default(),
-        &Patch::Merge(json!({
-            "apiVersion": "runtime.proompteng.ai/v1alpha1",
-            "kind": "MicroVM",
-            "status": status,
-        })),
-    )
-    .await?;
-    Ok(())
-}
-
-fn finalizers_with_tengri(microvm: &MicroVM) -> Vec<String> {
-    let mut finalizers = microvm.finalizers().to_vec();
-    if !finalizers.iter().any(|value| value == FINALIZER_NAME) {
-        finalizers.push(FINALIZER_NAME.to_owned());
-    }
-    finalizers
-}
-
-fn finalizers_without_tengri(microvm: &MicroVM) -> Vec<String> {
-    microvm
-        .finalizers()
-        .iter()
-        .filter(|value| value.as_str() != FINALIZER_NAME)
-        .cloned()
-        .collect()
-}
-
-fn sleeping_status(microvm: &MicroVM, idle: bool, now: DateTime<Utc>) -> MicroVMStatus {
-    let reason = if idle { "IdleTimeout" } else { "Requested" };
-    let message = if idle {
-        "Agent slept after 60 minutes without authenticated activity"
+    let leadership = context.leader()?;
+    let result = if microvm.metadata.deletion_timestamp.is_some() {
+        cleanup(&context, &microvm).await.map(|_| ())
     } else {
-        "Agent is sleeping; persistent home and workspace are retained"
+        converge(&context, &microvm, leadership).await.map(|_| ())
     };
-    MicroVMStatus {
-        phase: MicroVMPhase::Sleeping,
-        pvc_name: Some(pvc_name(microvm)),
-        message: Some(message.to_owned()),
-        last_activity_at: last_activity_at(microvm),
-        conditions: vec![condition(microvm, "Ready", "False", reason, message, now)],
-        observed_generation: microvm.meta().generation.unwrap_or_default(),
-        ..MicroVMStatus::default()
+    if let Err(error) = &result
+        && let Ok(Some(current)) =
+            Api::<MicroVM>::namespaced(context.client.clone(), &context.namespace)
+                .get_opt(&microvm.name_any())
+                .await
+        && current.uid() == microvm.uid()
+        && current.metadata.generation == microvm.metadata.generation
+    {
+        let status = failure_status(&current, error);
+        let _ = patch_status(
+            &context.client,
+            &context.namespace,
+            &current,
+            &status,
+            metrics::global(),
+            leadership,
+        )
+        .await;
     }
+    result?;
+    Ok(Action::requeue(Duration::from_secs(5)))
 }
 
-fn terminating_status(microvm: &MicroVM, now: DateTime<Utc>) -> MicroVMStatus {
-    let message = "Agent is terminating; owned runtime and persistent state are being deleted";
+fn failure_status(microvm: &MicroVM, error: &anyhow::Error) -> MicroVMStatus {
     let mut status = microvm.status.clone().unwrap_or_default();
-    status.phase = MicroVMPhase::Terminating;
+    if error.chain().any(|cause| {
+        cause.downcast_ref::<tonic::Status>().is_some_and(|error| {
+            matches!(
+                error.code(),
+                tonic::Code::Aborted
+                    | tonic::Code::Cancelled
+                    | tonic::Code::DeadlineExceeded
+                    | tonic::Code::Unavailable
+                    | tonic::Code::ResourceExhausted
+            )
+        }) || cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|error| {
+                error.is_timeout()
+                    || error.is_connect()
+                    || error.status().is_some_and(|status| {
+                        status.is_server_error()
+                            || matches!(
+                                status,
+                                reqwest::StatusCode::CONFLICT | reqwest::StatusCode::TOO_MANY_REQUESTS
+                            )
+                    })
+            })
+            || matches!(cause.downcast_ref::<kube::Error>(), Some(kube::Error::Api(error)) if error.code == 409 || error.code == 429 || error.code >= 500)
+    }) {
+        status.guest_ready = false;
+        status.failure_reason = None;
+        status.message = Some("Runtime status cannot be confirmed. Retrying.".into());
+        let last_transition_at = status
+            .conditions
+            .first()
+            .filter(|condition| condition.reason == "ReconcileUnavailable")
+            .map(|condition| condition.last_transition_at.clone())
+            .unwrap_or_else(|| Utc::now().to_rfc3339());
+        status.conditions = vec![MicroVMCondition {
+            type_: "Ready".into(),
+            status: "Unknown".into(),
+            reason: "ReconcileUnavailable".into(),
+            message: status.message.clone().expect("retry message"),
+            last_transition_at,
+        }];
+        return status;
+    }
+    let capacity = error.downcast_ref::<NoPreparedSlot>().is_some();
+    let phase = if capacity {
+        MicroVMPhase::Pending
+    } else {
+        MicroVMPhase::Failed
+    };
+    let last_transition_at = status
+        .conditions
+        .first()
+        .filter(|_| status.phase == phase)
+        .map(|condition| condition.last_transition_at.clone())
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
+    status.phase = phase;
     status.guest_ready = false;
-    status.failure_reason = None;
-    status.message = Some(message.to_owned());
-    status.conditions = vec![condition(
-        microvm,
-        "Ready",
-        "False",
-        "Terminating",
-        message,
-        now,
-    )];
-    status.observed_generation = microvm.meta().generation.unwrap_or_default();
+    status.failure_reason = Some(
+        if capacity {
+            "PoolPreparing"
+        } else {
+            "SnapshotLifecycleFailed"
+        }
+        .into(),
+    );
+    status.message = Some(error.to_string());
+    status.conditions = vec![MicroVMCondition {
+        type_: "Ready".into(),
+        status: "False".into(),
+        reason: status.failure_reason.clone().expect("failure reason"),
+        message: error.to_string(),
+        last_transition_at,
+    }];
+    status.observed_generation = microvm.metadata.generation.unwrap_or_default();
     status
 }
 
-async fn report_provisioning_failure(
-    api: &Api<MicroVM>,
-    pods: &Api<Pod>,
+pub async fn converge(
+    context: &ControllerContext,
     microvm: &MicroVM,
-    reason: &str,
-    resource: &str,
-    error: &kube::Error,
-    now: DateTime<Utc>,
-) {
-    if !is_terminal_provisioning_error(error) {
-        return;
-    }
-
-    if reason != BOOTSTRAP_SECRET_REJECTED
-        && microvm
-            .status
-            .as_ref()
-            .is_some_and(|status| status.phase == MicroVMPhase::Ready && status.guest_ready)
-    {
-        match existing_guest_is_usable(pods, microvm).await {
-            Ok(true) => {
-                preserve_ready_status(api, microvm, reason).await;
-                warn!(
-                    microvm = %microvm.name_any(),
-                    reason,
-                    error = %error,
-                    "preserving ready agent status after desired resource re-apply was rejected"
-                );
-                return;
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<MicroVM> {
+    let ControllerContext {
+        client,
+        namespace,
+        identity,
+        tickets,
+        authorization,
+        agent_work,
+        runtime_image,
+        ..
+    } = context;
+    ensure!(
+        microvm.metadata.deletion_timestamp.is_none(),
+        "agent is terminating"
+    );
+    let api = Api::<MicroVM>::namespaced(client.clone(), namespace);
+    leadership.fence()?;
+    let authority = match authorization.runtime_state(microvm).await {
+        Ok(authority) => Some(authority),
+        Err(error) if error.code() == tonic::Code::NotFound => {
+            leadership.fence()?;
+            if let Err(error) = authorization.begin_enrollment(microvm).await {
+                if error.downcast_ref::<tonic::Status>().is_some_and(|status| {
+                    status.code() == tonic::Code::FailedPrecondition
+                        && status.message() == "workspace reservation expired"
+                }) {
+                    leadership.fence()?;
+                    api.delete(&microvm.name_any(), &delete_metadata(&microvm.metadata)?)
+                        .await?;
+                    return api.get(&microvm.name_any()).await.map_err(Into::into);
+                }
+                return Err(error);
             }
-            Ok(false) => {}
-            Err(lookup_error) => {
-                warn!(
-                    microvm = %microvm.name_any(),
-                    reason,
-                    error = %lookup_error,
-                    "could not verify the existing ready guest; preserving its last known usable status"
-                );
-                return;
+            None
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let microvm = ensure_slot(client, namespace, microvm, identity, leadership).await?;
+    let authority = match authority {
+        Some(authority) => authority,
+        None => {
+            leadership.fence()?;
+            authorization.enroll(&microvm).await?;
+            authorization.runtime_state(&microvm).await?
+        }
+    };
+    let binding = microvm
+        .spec
+        .slot
+        .as_ref()
+        .context("missing retained home")?;
+    ensure!(
+        authority.home_uid == binding.pvc_uid
+            && authority.reservation_id == microvm.spec.reservation_id,
+        "Ofz retained-home binding changed"
+    );
+    if matches!(authority.state.as_str(), "removing" | "removed") {
+        leadership.fence()?;
+        api.delete(
+            &microvm.name_any(),
+            &DeleteParams {
+                preconditions: Some(Preconditions {
+                    uid: microvm.uid(),
+                    resource_version: microvm.resource_version(),
+                }),
+                ..Default::default()
+            },
+        )
+        .await?;
+        return api.get(&microvm.name_any()).await.map_err(Into::into);
+    }
+    if crate::activity::has_idle_sleep_claim(&microvm)
+        && authority.runtime_epoch == microvm.spec.runtime_epoch
+        && authority.running
+    {
+        leadership.fence()?;
+        authorization.stop_runtime(&microvm).await?;
+        return api.get(&microvm.name_any()).await.map_err(Into::into);
+    }
+    let authorization_paused =
+        authority.running && authority.state == "active" && !authority.runtime_allowed;
+    let desired = if authority.runtime_allowed {
+        MicroVMDesiredState::Running
+    } else {
+        MicroVMDesiredState::Sleeping
+    };
+    if microvm.spec.desired_state != desired
+        || microvm.spec.runtime_epoch != authority.runtime_epoch
+        || microvm.spec.owner_hash != authority.owner_id
+        || microvm.spec.policy_version != authority.policy_version
+    {
+        leadership.fence()?;
+        ensure!(
+            crate::ofz::now_ms()? < authority.valid_until_unix_ms,
+            "Ofz runtime authority expired"
+        );
+        let mut patch = json!({
+            "metadata": {"resourceVersion": microvm.resource_version()},
+            "spec": {"desiredState": desired, "runtimeEpoch": authority.runtime_epoch,
+                    "policyVersion": authority.policy_version, "ownerHash": authority.owner_id},
+        });
+        if desired == MicroVMDesiredState::Running
+            && (microvm.spec.desired_state != MicroVMDesiredState::Running
+                || microvm.spec.runtime_epoch != authority.runtime_epoch)
+            && microvm
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|a| a.get(crate::activity::ACTIVE_RUN_ANNOTATION))
+                .is_some_and(|value| crate::activity::is_idle_sleep_claim(value))
+        {
+            patch["metadata"]["annotations"][crate::activity::ACTIVE_RUN_ANNOTATION] =
+                serde_json::Value::Null;
+        }
+        if desired == MicroVMDesiredState::Running
+            && (microvm.spec.desired_state != desired
+                || microvm.spec.runtime_epoch != authority.runtime_epoch)
+        {
+            let now = Utc::now();
+            patch["spec"]["idleDeadline"] = json!(
+                (now + chrono::Duration::minutes(i64::from(
+                    microvm.spec.power.idle_timeout_minutes
+                )))
+                .to_rfc3339()
+            );
+            patch["metadata"]["annotations"][crate::activity::RESUME_STARTED_AT_ANNOTATION] =
+                json!(now.to_rfc3339());
+            patch["metadata"]["annotations"][LIFECYCLE_KIND_ANNOTATION] =
+                json!(lifecycle_kind(&microvm));
+        }
+        api.patch(
+            &microvm.name_any(),
+            &PatchParams::default(),
+            &Patch::Merge(patch),
+        )
+        .await?;
+        return api.get(&microvm.name_any()).await.map_err(Into::into);
+    }
+    let pod = bound_pod(client, namespace, &microvm).await?;
+    let binding = microvm.spec.slot.as_ref().context("missing slot binding")?;
+    let supervisor = SlotClient::new(
+        identity,
+        namespace,
+        &pod,
+        &binding.pvc_uid,
+        &microvm.spec.image,
+    )?;
+    let allocation = allocation_for(&microvm)?;
+    supervisor.install_fence(leadership.fence()?).await?;
+    let status = supervisor.status().await?;
+    ensure!(
+        matches!(
+            status.state,
+            SlotState::Preparing | SlotState::Vacant { .. }
+        ) || status
+            .state
+            .claim()
+            .is_some_and(|claim| claim.allocation() == allocation),
+        "slot owner or epoch changed"
+    );
+    if microvm.spec.desired_state == MicroVMDesiredState::Running
+        && status.state.serves(&claim_for(&microvm)?)
+        && idle_deadline_passed(&microvm, Utc::now())
+        && match agent_work.permits_sleep(&microvm).await {
+            Ok(permitted) => permitted,
+            Err(error) => {
+                tracing::warn!(agent_id = %microvm.name_any(), error = %error, "automatic sleep deferred: agent work state cannot be confirmed");
+                false
             }
         }
+    {
+        let current = api.get(&microvm.name_any()).await?;
+        if current.resource_version() != microvm.resource_version()
+            || !idle_deadline_passed(&current, Utc::now())
+        {
+            return Ok(current);
+        }
+        leadership.fence()?;
+        let claimed =
+            crate::activity::claim_idle_sleep(client.clone(), namespace, &current).await?;
+        leadership.fence()?;
+        authorization.stop_runtime(&claimed).await?;
+        return api.get(&microvm.name_any()).await.map_err(Into::into);
     }
-
-    let message = provisioning_failure_message(resource, error);
-    let status = provisioning_failure_status(microvm, reason, &message, now);
-    if microvm.status.as_ref() == Some(&status) {
-        return;
-    }
-    if let Err(status_error) = patch_status(api, microvm, status).await {
-        warn!(
-            microvm = %microvm.name_any(),
-            reason,
-            error = %status_error,
-            "failed to publish terminal provisioning error"
-        );
-    }
-}
-
-async fn preserve_ready_status(api: &Api<MicroVM>, microvm: &MicroVM, reason: &str) {
-    let Some(mut status) = microvm.status.clone() else {
-        return;
+    let cold_recovery = microvm.spec.desired_state == MicroVMDesiredState::Running
+        && status.state.lifecycle_fenced();
+    let state = match (&status.state, microvm.spec.desired_state) {
+        (_, MicroVMDesiredState::Running) if cold_recovery => {
+            let runner = pod
+                .spec
+                .as_ref()
+                .and_then(|spec| {
+                    spec.containers
+                        .iter()
+                        .find(|container| container.name == "runner")
+                })
+                .context("claimed slot has no runner")?;
+            // The fenced runner has reaped Firecracker. Upgrade only that runner,
+            // leaving its already attached home, private root, and slot identity in place.
+            let image_configured = runner.image.as_deref() == Some(runtime_image.as_ref());
+            if !image_configured {
+                update_slot_image(client, namespace, &pod, "runner", runtime_image, leadership)
+                    .await?;
+            }
+            let running_image = pod
+                .status
+                .as_ref()
+                .and_then(|status| status.container_statuses.as_ref())
+                .and_then(|containers| {
+                    containers
+                        .iter()
+                        .find(|container| container.name == "runner")
+                })
+                .filter(|container| {
+                    container
+                        .state
+                        .as_ref()
+                        .is_some_and(|state| state.running.is_some())
+                })
+                .map(|container| container.image_id.trim_start_matches("docker-pullable://"));
+            // An observed Pod spec can still have its previous runner serving the socket.
+            if image_configured && running_image == Some(runtime_image.as_ref()) {
+                supervisor
+                    .restore(&microvm, authorization, leadership)
+                    .await?
+            } else {
+                crate::slot::runner::SlotStatus {
+                    state: SlotState::ColdBooting {
+                        claim: claim_for(&microvm)?,
+                    },
+                    ..status
+                }
+            }
+        }
+        (SlotState::Preparing | SlotState::Failed { .. } | SlotState::Stopped { .. }, _) => status,
+        (_, MicroVMDesiredState::Running) => {
+            let claim = claim_for(&microvm)?;
+            if status.state.serves(&claim) {
+                status
+            } else {
+                if let SlotState::Awake { claim: previous }
+                | SlotState::Saving { claim: previous } = &status.state
+                {
+                    supervisor
+                        .lifecycle("sleep", previous, leadership.fence()?)
+                        .await?;
+                }
+                supervisor
+                    .restore(&microvm, authorization, leadership)
+                    .await?
+            }
+        }
+        (_, MicroVMDesiredState::Sleeping) => {
+            tickets
+                .remove_agent(&microvm.uid().context("workspace UID required")?)
+                .await?;
+            metrics::global().clear_pty_sessions(&microvm.name_any());
+            if matches!(
+                status.state,
+                SlotState::Sleeping { .. } | SlotState::Vacant { .. }
+            ) {
+                status
+            } else {
+                supervisor
+                    .lifecycle(
+                        "sleep",
+                        status
+                            .state
+                            .claim()
+                            .context("missing current runtime claim")?,
+                        leadership.fence()?,
+                    )
+                    .await?
+            }
+        }
     };
-    status.observed_generation = microvm.meta().generation.unwrap_or_default();
-    if microvm.status.as_ref() == Some(&status) {
-        return;
+    if microvm.spec.desired_state == MicroVMDesiredState::Sleeping
+        && authority.running
+        && !authorization_paused
+    {
+        leadership.fence()?;
+        authorization.stop_runtime(&microvm).await?;
     }
-    if let Err(error) = patch_status(api, microvm, status).await {
-        warn!(
-            microvm = %microvm.name_any(),
-            reason,
-            error = %error,
-            "failed to advance the observed generation of the preserved ready agent"
+    let mut current = api.get(&microvm.name_any()).await?;
+    for _ in 0..3 {
+        ensure!(
+            current.uid() == microvm.uid() && current.spec.slot == microvm.spec.slot,
+            "agent incarnation changed during its lifecycle"
         );
+        ensure!(
+            current.metadata.generation == microvm.metadata.generation,
+            "agent desired state changed during its lifecycle; retry"
+        );
+        ensure!(
+            current.metadata.deletion_timestamp.is_none(),
+            "agent is terminating"
+        );
+        let status = status_for(&current, &pod, &state.state, authorization_paused);
+        match patch_status(
+            client,
+            namespace,
+            &current,
+            &status,
+            metrics::global(),
+            leadership,
+        )
+        .await
+        {
+            Ok(updated) => {
+                if !cold_recovery
+                    && status.phase == MicroVMPhase::Ready
+                    && current.status.as_ref().is_none_or(|s| !s.guest_ready)
+                    && let Some((resume, millis)) = lifecycle_latency(&current, Utc::now())
+                {
+                    if resume {
+                        metrics::global().observe_resume(millis);
+                    } else {
+                        metrics::global().observe_boot(millis);
+                    }
+                }
+                return Ok(updated);
+            }
+            Err(error) if matches!(error.downcast_ref::<kube::Error>(), Some(kube::Error::Api(response)) if response.code == 409) =>
+            {
+                current = api.get(&microvm.name_any()).await?;
+            }
+            Err(error) => return Err(error),
+        }
     }
+    anyhow::bail!("agent status changed concurrently; retry the request")
 }
 
-async fn existing_guest_is_usable(pods: &Api<Pod>, microvm: &MicroVM) -> Result<bool, kube::Error> {
-    let Some(pod_name) = microvm
+fn lifecycle_kind(microvm: &MicroVM) -> &str {
+    if let Some(status) = &microvm.status {
+        if status
+            .conditions
+            .iter()
+            .any(|condition| condition.reason == "AuthorizationPaused")
+        {
+            return "recovery";
+        }
+        if status.phase == MicroVMPhase::Ready
+            || status.ready_at.is_some()
+            || status
+                .conditions
+                .iter()
+                .any(|condition| condition.reason == "GuestStopped")
+        {
+            return "resume";
+        }
+        if status
+            .conditions
+            .iter()
+            .any(|condition| condition.reason == "GuestNotStarted")
+        {
+            return "boot";
+        }
+    }
+    microvm
+        .annotations()
+        .get(LIFECYCLE_KIND_ANNOTATION)
+        .map(String::as_str)
+        .unwrap_or(if microvm.spec.runtime_epoch.is_empty() {
+            "boot"
+        } else {
+            "unknown"
+        })
+}
+
+fn lifecycle_latency(microvm: &MicroVM, now: chrono::DateTime<Utc>) -> Option<(bool, u64)> {
+    // A recovered readiness probe is not a new boot. Persisted intent survives retries
+    // and controller failover; the duration excludes admission before that intent.
+    if microvm.status.as_ref().is_some_and(|s| {
+        s.phase == MicroVMPhase::Ready
+            || s.conditions
+                .iter()
+                .any(|condition| condition.reason == "AuthorizationPaused")
+    }) {
+        return None;
+    }
+    // This identity is written with the intent CAS, so a Failed reconciliation
+    // cannot turn a resume into a boot. Skip unknown legacy attempts instead.
+    let resume = match microvm
+        .annotations()
+        .get(LIFECYCLE_KIND_ANNOTATION)
+        .map(String::as_str)
+    {
+        Some("resume") => true,
+        Some("boot") => false,
+        None if microvm.status.is_none() && microvm.spec.runtime_epoch.is_empty() => false,
+        _ => return None,
+    };
+    let started = if resume {
+        chrono::DateTime::parse_from_rfc3339(
+            microvm
+                .annotations()
+                .get(crate::activity::RESUME_STARTED_AT_ANNOTATION)?,
+        )
+        .ok()?
+        .with_timezone(&Utc)
+    } else {
+        chrono::DateTime::<Utc>::from_timestamp_millis(
+            microvm
+                .metadata
+                .creation_timestamp
+                .as_ref()?
+                .0
+                .as_millisecond(),
+        )?
+    };
+    if microvm
         .status
         .as_ref()
-        .and_then(|status| status.pod_name.as_deref())
-    else {
-        return Ok(false);
-    };
-    Ok(pods
-        .get_opt(pod_name)
-        .await?
-        .as_ref()
-        .is_some_and(|pod| pod_is_usable(pod, microvm)))
-}
-
-fn pod_is_usable(pod: &Pod, microvm: &MicroVM) -> bool {
-    pod.meta().deletion_timestamp.is_none()
-        && is_controlled_by_microvm(pod, microvm)
-        && pod_is_ready(pod)
-}
-
-fn is_terminal_provisioning_error(error: &kube::Error) -> bool {
-    matches!(error, kube::Error::Api(response) if (400..500).contains(&response.code) && !is_retryable_provisioning_response(response))
-}
-
-fn is_retryable_provisioning_response(response: &kube::core::Status) -> bool {
-    matches!(response.code, 401 | 408 | 409 | 429)
-        || (response.code == 403
-            && [response.reason.as_str(), response.message.as_str()]
-                .iter()
-                .any(|value| value.to_ascii_lowercase().contains("quota")))
-}
-
-fn provisioning_failure_message(resource: &str, error: &kube::Error) -> String {
-    let detail = match error {
-        kube::Error::Api(response) => {
-            let reason = if response.reason.is_empty() {
-                "Kubernetes admission rejected the resource"
-            } else {
-                response.reason.as_str()
-            };
-            if response.message.is_empty() {
-                format!("{reason} (HTTP {})", response.code)
-            } else {
-                format!("{reason} (HTTP {}): {}", response.code, response.message)
-            }
-        }
-        _ => "Kubernetes API request failed".to_owned(),
-    };
-    format!("{resource} provisioning failed: {detail}")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(1_024)
-        .collect()
-}
-
-fn provisioning_failure_status(
-    microvm: &MicroVM,
-    reason: &str,
-    message: &str,
-    now: DateTime<Utc>,
-) -> MicroVMStatus {
-    let previous = microvm.status.clone().unwrap_or_default();
-    MicroVMStatus {
-        phase: MicroVMPhase::Failed,
-        guest_ready: false,
-        failure_reason: Some(reason.to_owned()),
-        message: Some(message.to_owned()),
-        ready_at: None,
-        last_activity_at: last_activity_at(microvm),
-        conditions: vec![condition(microvm, "Ready", "False", reason, message, now)],
-        observed_generation: microvm.meta().generation.unwrap_or_default(),
-        ..previous
+        .and_then(|status| status.ready_at.as_deref())
+        .and_then(|ready| chrono::DateTime::parse_from_rfc3339(ready).ok())
+        .is_some_and(|ready| ready >= started)
+    {
+        return None;
     }
+    let elapsed = now.signed_duration_since(started).to_std().ok()?;
+    Some((resume, u64::try_from(elapsed.as_millis()).ok()?))
 }
 
-fn derive_status(
+fn status_for(
     microvm: &MicroVM,
     pod: &Pod,
-    home_claim: &str,
-    now: DateTime<Utc>,
+    state: &SlotState,
+    authorization_paused: bool,
 ) -> MicroVMStatus {
-    let pod_status = pod.status.as_ref();
-    let ready = pod_is_ready(pod);
-    let failed = pod_status.and_then(|status| {
-        status
-            .init_container_statuses
-            .iter()
-            .flatten()
-            .chain(status.container_statuses.iter().flatten())
-            .find_map(container_failure)
-    });
-    let scheduling_failure = unschedulable_failure_is_terminal(pod, now)
-        .then(|| {
-            pod_status
-                .and_then(|status| status.conditions.as_ref())
-                .and_then(|conditions| {
-                    conditions.iter().find(|condition| {
-                        condition.type_ == "PodScheduled" && condition.status == "False"
-                    })
-                })
-                .and_then(|condition| {
-                    let reason = condition.reason.as_deref().unwrap_or_default();
-                    (reason == "Unschedulable").then(|| {
-                        (
-                            reason.to_owned(),
-                            condition.message.clone().unwrap_or_else(|| {
-                                "No proven Firecracker node can schedule this agent".to_owned()
-                            }),
-                        )
-                    })
-                })
-        })
-        .flatten();
-    let pod_phase = pod_status.and_then(|status| status.phase.as_deref());
-
-    let (phase, reason, message, ready_at) = if let Some((reason, message)) = failed {
-        (MicroVMPhase::Failed, reason, message, None)
-    } else if let Some((reason, message)) = scheduling_failure {
-        (MicroVMPhase::Failed, reason, message, None)
-    } else if ready {
-        (
-            MicroVMPhase::Ready,
-            "GuestReady".to_owned(),
-            "Firecracker guest and Nanoagent are ready".to_owned(),
+    let now = Utc::now();
+    let fenced = state.lifecycle_fenced();
+    let phase = match state {
+        SlotState::Awake { .. } => MicroVMPhase::Ready,
+        SlotState::Sleeping { .. } => MicroVMPhase::Sleeping,
+        SlotState::Vacant { .. } if microvm.spec.desired_state == MicroVMDesiredState::Sleeping => {
+            MicroVMPhase::Sleeping
+        }
+        SlotState::Failed { .. } if fenced => match microvm.spec.desired_state {
+            MicroVMDesiredState::Running => MicroVMPhase::Booting,
+            MicroVMDesiredState::Sleeping => MicroVMPhase::Sleeping,
+        },
+        SlotState::Failed { .. } | SlotState::Stopped { .. } => MicroVMPhase::Failed,
+        _ => MicroVMPhase::Booting,
+    };
+    let ready = phase == MicroVMPhase::Ready;
+    let (reason, message) = match state {
+        _ if authorization_paused && phase == MicroVMPhase::Sleeping => (
+            "AuthorizationPaused",
+            "Authorization is temporarily unavailable; the saved workspace will resume automatically.",
+        ),
+        SlotState::Awake { .. } => (
+            "GuestReady",
+            "Files, terminal, and initialized Codex passed the guest readiness checks",
+        ),
+        SlotState::ColdBooting { .. } | SlotState::Failed { .. }
+            if phase == MicroVMPhase::Booting =>
+        {
+            (
+                "RetainedDiskBootInProgress",
+                "Restarting the workspace from its retained disks",
+            )
+        }
+        SlotState::Failed { .. } if fenced => (
+            "RetainedDisksStopped",
+            "The workspace is stopped and can resume from its retained disks",
+        ),
+        SlotState::Sleeping { .. } => (
+            "GuestStopped",
+            "Guest process is stopped and snapshot pages are evicted",
+        ),
+        SlotState::Vacant { .. } if microvm.spec.desired_state == MicroVMDesiredState::Sleeping => {
+            (
+                "GuestNotStarted",
+                "Prepared snapshot is stopped; no runtime has been authorized",
+            )
+        }
+        SlotState::Failed { message, .. } => ("SnapshotLifecycleFailed", message.as_str()),
+        SlotState::Stopped { .. } => ("GuestTerminated", "Guest process termination is proven"),
+        _ => (
+            "SnapshotLifecycleInProgress",
+            "Slot preparation or lifecycle operation is in progress",
+        ),
+    };
+    let binding = microvm.spec.slot.as_ref().expect("bound MicroVM");
+    let condition_status = if ready { "True" } else { "False" };
+    let previous_transition = microvm
+        .status
+        .as_ref()
+        .filter(|s| s.phase == phase)
+        .and_then(|s| s.conditions.first())
+        .filter(|c| c.type_ == "Ready" && c.status == condition_status && c.reason == reason)
+        .map(|c| c.last_transition_at.clone());
+    MicroVMStatus {
+        observed_policy_version: microvm.spec.policy_version,
+        runtime_epoch: microvm.spec.runtime_epoch.clone(),
+        phase,
+        pod_name: Some(binding.name.clone()),
+        pod_uid: Some(binding.pod_uid.clone()),
+        pvc_name: Some(binding.pvc_name.clone()),
+        pod_ip: pod.status.as_ref().and_then(|s| s.pod_ip.clone()),
+        node_name: pod.spec.as_ref().and_then(|s| s.node_name.clone()),
+        guest_ready: ready,
+        failure_reason: (phase == MicroVMPhase::Failed).then(|| reason.into()),
+        message: (phase == MicroVMPhase::Failed).then(|| message.into()),
+        ready_at: ready.then(|| {
             microvm
                 .status
                 .as_ref()
-                .and_then(|status| status.ready_at.clone())
-                .or_else(|| Some(now.to_rfc3339())),
-        )
-    } else if pod_phase == Some("Failed") {
-        (
-            MicroVMPhase::Failed,
-            pod_status
-                .and_then(|status| status.reason.clone())
-                .unwrap_or_else(|| "PodFailed".to_owned()),
-            pod_status
-                .and_then(|status| status.message.clone())
-                .unwrap_or_else(|| "MicroVM Pod failed".to_owned()),
-            None,
-        )
-    } else {
-        (
-            MicroVMPhase::Booting,
-            "GuestBooting".to_owned(),
-            "Starting the Firecracker guest".to_owned(),
-            None,
-        )
-    };
-    let condition_status = if ready { "True" } else { "False" };
-
-    MicroVMStatus {
-        phase,
-        pod_name: pod.metadata.name.clone(),
-        pvc_name: Some(home_claim.to_owned()),
-        pod_ip: pod_status.and_then(|status| status.pod_ip.clone()),
-        node_name: pod.spec.as_ref().and_then(|spec| spec.node_name.clone()),
-        guest_ready: ready,
-        failure_reason: (phase == MicroVMPhase::Failed).then_some(reason.clone()),
-        message: Some(message.clone()),
-        ready_at,
+                .and_then(|s| s.ready_at.clone())
+                .unwrap_or_else(|| now.to_rfc3339())
+        }),
         last_activity_at: last_activity_at(microvm),
-        conditions: vec![condition(
-            microvm,
-            "Ready",
-            condition_status,
-            &reason,
-            &message,
-            now,
-        )],
-        observed_generation: microvm.meta().generation.unwrap_or_default(),
+        observed_generation: microvm.metadata.generation.unwrap_or_default(),
+        conditions: vec![MicroVMCondition {
+            type_: "Ready".into(),
+            status: condition_status.into(),
+            reason: reason.into(),
+            message: message.into(),
+            last_transition_at: previous_transition.unwrap_or_else(|| now.to_rfc3339()),
+        }],
+        ..Default::default()
     }
 }
 
-fn unschedulable_failure_is_terminal(pod: &Pod, now: DateTime<Utc>) -> bool {
-    let Some(created_at) = pod.metadata.creation_timestamp.as_ref() else {
-        return true;
-    };
-
-    now.timestamp().saturating_sub(created_at.0.as_second()) >= UNSCHEDULABLE_FAILURE_GRACE_SECONDS
-}
-
-fn pod_is_ready(pod: &Pod) -> bool {
-    pod.status
-        .as_ref()
-        .and_then(|status| status.conditions.as_ref())
-        .and_then(|conditions| {
-            conditions
-                .iter()
-                .find(|condition| condition.type_ == "Ready")
-        })
-        .is_some_and(|condition| condition.status == "True")
-}
-
-fn condition(
+async fn patch_status(
+    client: &Client,
+    namespace: &str,
     microvm: &MicroVM,
-    type_: &str,
-    status: &str,
-    reason: &str,
-    message: &str,
-    now: DateTime<Utc>,
-) -> MicroVMCondition {
-    let previous = microvm
-        .status
+    status: &MicroVMStatus,
+    metrics: &metrics::Metrics,
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<MicroVM> {
+    if microvm.status.as_ref() == Some(status) {
+        return Ok(microvm.clone());
+    }
+    leadership.fence()?;
+    let updated = Api::<MicroVM>::namespaced(client.clone(), namespace)
+        .patch_status(
+            &microvm.name_any(),
+            &PatchParams::default(),
+            &Patch::Merge(json!({"metadata": {"resourceVersion": microvm.resource_version()}, "status": status})),
+        )
+        .await?;
+    if status.phase == MicroVMPhase::Failed
+        && microvm
+            .status
+            .as_ref()
+            .is_none_or(|s| s.phase != MicroVMPhase::Failed)
+    {
+        metrics.record_guest_failure();
+    }
+    Ok(updated)
+}
+
+pub async fn ensure_slot(
+    client: &Client,
+    namespace: &str,
+    microvm: &MicroVM,
+    identity: &WorkloadIdentity,
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<MicroVM> {
+    let api = Api::<MicroVM>::namespaced(client.clone(), namespace);
+    let leases = Api::<Lease>::namespaced(client.clone(), namespace);
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
+    let mut current = microvm.clone();
+    for _ in 0..SLOT_COUNT + 1 {
+        leadership.fence()?;
+        ensure!(
+            current.metadata.deletion_timestamp.is_none(),
+            "agent is terminating"
+        );
+        if let Some(binding) = &current.spec.slot {
+            let mut lease = leases.get(&binding.name).await?;
+            let expected = allocation_for(&current)?;
+            if let Some(holder) = lease.spec.as_ref().and_then(|s| s.holder_identity.as_ref()) {
+                let holder: Allocation = serde_json::from_str(holder)?;
+                if holder != expected {
+                    // This candidate lost the Lease CAS before any guest could be started.
+                    let pod = pods.get(&binding.name).await?;
+                    let status = SlotClient::new(
+                        identity,
+                        namespace,
+                        &pod,
+                        &binding.pvc_uid,
+                        &current.spec.image,
+                    )?
+                    .status()
+                    .await?;
+                    ensure!(
+                        status
+                            .state
+                            .claim()
+                            .is_none_or(|claim| claim.allocation() != expected),
+                        "slot claim changed after execution; retain disks for fenced recovery"
+                    );
+                    ensure!(
+                        current
+                            .status
+                            .as_ref()
+                            .is_none_or(|s| s.pod_uid.as_ref() != Some(&binding.pod_uid)),
+                        "active slot Lease was reassigned; retain disks for fenced recovery"
+                    );
+                    leadership.fence()?;
+                    current = api.patch(&current.name_any(), &PatchParams::default(), &Patch::Merge(json!({"metadata": {"resourceVersion": current.resource_version()}, "spec": {"slot": null}}))).await?;
+                    continue;
+                }
+            } else {
+                let spec = lease.spec.get_or_insert_default();
+                ensure!(
+                    u64::try_from(spec.lease_transitions.unwrap_or_default())?.checked_add(1)
+                        == Some(expected.epoch),
+                    "slot candidate was cancelled"
+                );
+                spec.holder_identity = Some(serde_json::to_string(&expected)?);
+                spec.lease_transitions = Some(i32::try_from(expected.epoch)?);
+                lease.metadata = pod::owned_metadata(lease.metadata, &current);
+                leadership.fence()?;
+                match leases
+                    .replace(&binding.name, &PostParams::default(), &lease)
+                    .await
+                {
+                    Ok(claimed) => lease = claimed,
+                    Err(kube::Error::Api(error)) if error.code == 409 => {
+                        current = api.get(&current.name_any()).await?;
+                        continue;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            if current.status.as_ref().and_then(|s| s.pod_uid.as_ref()) == Some(&binding.pod_uid) {
+                ensure!(
+                    lease.annotations().get(POD_UID_ANNOTATION) == Some(&binding.pod_uid)
+                        && lease.annotations().get(HOME_UID_ANNOTATION) == Some(&binding.pvc_uid)
+                        && lease.annotations().get(HOME_NAME_ANNOTATION) == Some(&binding.pvc_name),
+                    "slot Pod or home binding changed"
+                );
+                return Ok(current);
+            }
+            return bind_microvm(client, namespace, &current, &lease, leadership).await;
+        }
+        let enrolled = leases
+            .list(&ListParams::default().labels(SLOT_SELECTOR))
+            .await?
+            .items
+            .into_iter()
+            .filter(|lease| {
+                lease
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.holder_identity.as_ref())
+                    .is_some_and(|holder| {
+                        serde_json::from_str::<Allocation>(holder).is_ok_and(|claim| {
+                            claim.microvm_id == current.name_any()
+                                && Some(claim.microvm_uid) == current.uid()
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            enrolled.len() <= 1,
+            "agent has multiple slot claims; retain all homes for recovery"
+        );
+        if let Some(lease) = enrolled.first() {
+            return bind_microvm(client, namespace, &current, lease, leadership).await;
+        }
+        ensure!(
+            current
+                .status
+                .as_ref()
+                .and_then(|s| s.pvc_name.as_ref())
+                .is_none(),
+            "retained home requires explicit slot enrollment; refusing to replace its PVC"
+        );
+        let candidate = prepared_slot(client, namespace, &current.spec.image, identity).await?;
+        // Bind the MicroVM first. Its resourceVersion prevents two slots for the same UID.
+        leadership.fence()?;
+        match api.patch(&current.name_any(), &PatchParams::default(), &Patch::Merge(json!({"metadata": {"resourceVersion": current.resource_version()}, "spec": {"slot": candidate}}))).await {
+            Ok(bound) => current = bound,
+            Err(kube::Error::Api(error)) if error.code == 409 => current = api.get(&current.name_any()).await?,
+            Err(error) => return Err(error.into()),
+        }
+        ensure!(
+            current.uid() == microvm.uid(),
+            "agent incarnation changed while claiming a slot"
+        );
+    }
+    anyhow::bail!("slot claims changed concurrently; retry the request")
+}
+
+pub async fn prepared_slot(
+    client: &Client,
+    namespace: &str,
+    image: &str,
+    identity: &WorkloadIdentity,
+) -> anyhow::Result<MicroVMSlot> {
+    let leases = Api::<Lease>::namespaced(client.clone(), namespace);
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
+    let list = leases
+        .list(&ListParams::default().labels(SLOT_SELECTOR))
+        .await?;
+    let mut candidate = None;
+    for lease in list.items {
+        if lease
+            .spec
+            .as_ref()
+            .and_then(|s| s.holder_identity.as_ref())
+            .is_some()
+        {
+            continue;
+        }
+        let annotations = lease.annotations();
+        if annotations.get(IMAGE_ANNOTATION).map(String::as_str) != Some(image) {
+            continue;
+        }
+        let Some(pod) = pods.get_opt(&lease.name_any()).await? else {
+            continue;
+        };
+        if pod.metadata.deletion_timestamp.is_some() {
+            continue;
+        }
+        let Some(pod_uid) = annotations.get(POD_UID_ANNOTATION) else {
+            continue;
+        };
+        ensure!(
+            pod.uid().as_ref() == Some(pod_uid),
+            "slot Pod identity changed"
+        );
+        if !pod
+            .status
+            .as_ref()
+            .and_then(|s| s.conditions.as_ref())
+            .is_some_and(|conditions| {
+                conditions
+                    .iter()
+                    .any(|c| c.type_ == "Ready" && c.status == "True")
+            })
+        {
+            continue;
+        }
+        let pvc_uid = annotations
+            .get(HOME_UID_ANNOTATION)
+            .context("slot has no home UID")?;
+        let status = match async {
+            SlotClient::new(identity, namespace, &pod, pvc_uid, image)?
+                .status()
+                .await
+        }
+        .await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                tracing::warn!(slot = %lease.name_any(), error = %error, "prepared slot is unreachable");
+                continue;
+            }
+        };
+        if !matches!(status.state, SlotState::Vacant { .. }) {
+            continue;
+        }
+        candidate = Some(MicroVMSlot {
+            name: lease.name_any(),
+            pod_uid: pod_uid.clone(),
+            pvc_name: annotations
+                .get(HOME_NAME_ANNOTATION)
+                .context("slot has no home name")?
+                .clone(),
+            pvc_uid: pvc_uid.clone(),
+            epoch: u64::try_from(
+                lease
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.lease_transitions)
+                    .unwrap_or_default(),
+            )?
+            .checked_add(1)
+            .context("slot epoch exhausted")?,
+        });
+        break;
+    }
+    candidate.ok_or_else(|| NoPreparedSlot.into())
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("no prepared slot is available; pool capacity is full or still preparing")]
+pub struct NoPreparedSlot;
+
+async fn bind_microvm(
+    client: &Client,
+    namespace: &str,
+    microvm: &MicroVM,
+    lease: &Lease,
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<MicroVM> {
+    let claim: Allocation = serde_json::from_str(
+        lease
+            .spec
+            .as_ref()
+            .and_then(|s| s.holder_identity.as_deref())
+            .context("slot has no owner")?,
+    )?;
+    ensure!(
+        claim.microvm_uid == microvm.uid().context("MicroVM has no UID")?
+            && claim.microvm_id == microvm.name_any(),
+        "slot is claimed by another agent"
+    );
+    let annotations = lease.annotations();
+    let slot = binding_for(lease, &claim)?;
+    ensure!(
+        annotations.get(IMAGE_ANNOTATION) == Some(&microvm.spec.image),
+        "slot boot image differs from its agent"
+    );
+    let api = Api::<MicroVM>::namespaced(client.clone(), namespace);
+    let current = api.get(&microvm.name_any()).await?;
+    ensure!(
+        current.uid() == microvm.uid()
+            && current
+                .spec
+                .slot
+                .as_ref()
+                .is_none_or(|existing| existing == &slot),
+        "agent slot changed concurrently"
+    );
+    let bound = if current.spec.slot.is_none() {
+        leadership.fence()?;
+        api.patch(&current.name_any(), &PatchParams::default(), &Patch::Merge(json!({"metadata": {"resourceVersion": current.resource_version()}, "spec": {"slot": slot}}))).await?
+    } else {
+        current
+    };
+    adopt_resources(client, namespace, &bound, leadership).await?;
+    Ok(bound)
+}
+
+fn binding_for(lease: &Lease, claim: &Allocation) -> anyhow::Result<MicroVMSlot> {
+    claim.validate()?;
+    let annotations = lease.annotations();
+    Ok(MicroVMSlot {
+        name: lease.name_any(),
+        pod_uid: annotations
+            .get(POD_UID_ANNOTATION)
+            .context("missing slot Pod UID")?
+            .clone(),
+        pvc_name: annotations
+            .get(HOME_NAME_ANNOTATION)
+            .context("missing home name")?
+            .clone(),
+        pvc_uid: annotations
+            .get(HOME_UID_ANNOTATION)
+            .context("missing home UID")?
+            .clone(),
+        epoch: claim.epoch,
+    })
+}
+
+async fn adopt_resources(
+    client: &Client,
+    namespace: &str,
+    microvm: &MicroVM,
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<()> {
+    let slot = microvm.spec.slot.as_ref().context("missing slot")?;
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
+    let pod = pods.get(&slot.name).await?;
+    ensure!(
+        pod.uid().as_deref() == Some(&slot.pod_uid),
+        "slot Pod changed during adoption"
+    );
+    let owner = pod::owned_metadata(Default::default(), microvm).owner_references;
+    ensure_adoptable(&pod.metadata, microvm)?;
+    leadership.fence()?;
+    pods.patch(&slot.name, &PatchParams::default(), &Patch::Merge(json!({"metadata": {"resourceVersion": pod.resource_version(), "ownerReferences": owner}}))).await?;
+    let homes = Api::<PersistentVolumeClaim>::namespaced(client.clone(), namespace);
+    let home = homes.get(&slot.pvc_name).await?;
+    ensure_adoptable(&home.metadata, microvm)?;
+    pod::validate_home(&home)?;
+    ensure!(
+        home.uid().as_deref() == Some(&slot.pvc_uid),
+        "home PVC changed during adoption"
+    );
+    leadership.fence()?;
+    homes.patch(&slot.pvc_name, &PatchParams::default(), &Patch::Merge(json!({"metadata": {"resourceVersion": home.resource_version(), "ownerReferences": owner,
+        "annotations": {pod::PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION: "complete"}}}))).await?;
+    let secrets = Api::<Secret>::namespaced(client.clone(), namespace);
+    let secret_name = pod::bootstrap_secret_name(&slot.name);
+    let secret = secrets.get(&secret_name).await?;
+    ensure_adoptable(&secret.metadata, microvm)?;
+    leadership.fence()?;
+    secrets.patch(&secret_name, &PatchParams::default(), &Patch::Merge(json!({"metadata": {"resourceVersion": secret.resource_version(), "ownerReferences": owner}}))).await?;
+    Ok(())
+}
+
+fn ensure_adoptable(metadata: &kube::api::ObjectMeta, microvm: &MicroVM) -> anyhow::Result<()> {
+    ensure!(
+        metadata
+            .owner_references
+            .as_ref()
+            .is_none_or(|owners| owners.iter().all(|owner| owner.kind == "MicroVM"
+                && Some(owner.uid.as_str()) == microvm.metadata.uid.as_deref())),
+        "slot resource belongs to another owner"
+    );
+    Ok(())
+}
+
+async fn bound_pod(client: &Client, namespace: &str, microvm: &MicroVM) -> anyhow::Result<Pod> {
+    let slot = microvm.spec.slot.as_ref().context("agent has no slot")?;
+    let lease = Api::<Lease>::namespaced(client.clone(), namespace)
+        .get(&slot.name)
+        .await?;
+    let claim: Allocation = serde_json::from_str(
+        lease
+            .spec
+            .as_ref()
+            .and_then(|s| s.holder_identity.as_deref())
+            .context("slot owner is missing")?,
+    )?;
+    ensure!(
+        claim == allocation_for(microvm)?,
+        "slot Lease owner or epoch changed"
+    );
+    let pod = Api::<Pod>::namespaced(client.clone(), namespace)
+        .get(&slot.name)
+        .await?;
+    ensure!(
+        pod.uid().as_deref() == Some(&slot.pod_uid) && pod.metadata.deletion_timestamp.is_none(),
+        "slot Pod is missing or replaced; retain its claim until the old VMM and storage writer are fenced"
+    );
+    Ok(pod)
+}
+
+async fn cleanup(context: &ControllerContext, microvm: &MicroVM) -> anyhow::Result<()> {
+    context.leader()?;
+    let enrolled = context
+        .authorization
+        .require_removing(microvm)
+        .await
+        .context("remove workspace authorization")?;
+    context
+        .tickets
+        .remove_agent(&microvm.uid().context("workspace UID required")?)
+        .await?;
+    metrics::global().clear_pty_sessions(&microvm.name_any());
+    let client = &context.client;
+    let namespace = &context.namespace;
+    let api = Api::<MicroVM>::namespaced(client.clone(), namespace);
+    let unclaimed = if microvm.annotations().contains_key(STOPPED_POD_ANNOTATION) {
+        false
+    } else if let Some(slot) = &microvm.spec.slot {
+        release_unclaimed_slot(client, namespace, microvm, slot, context.leader()?).await?
+    } else {
+        false
+    };
+    ensure!(
+        enrolled || !microvm.annotations().contains_key(STOPPED_POD_ANNOTATION),
+        "stopped retained home is missing from Ofz; retain it for fenced recovery"
+    );
+    ensure!(
+        !enrolled || !unclaimed,
+        "enrolled retained-home claim changed; retain it for fenced recovery"
+    );
+    ensure!(
+        enrolled || unclaimed || microvm.spec.slot.is_none(),
+        "claimed retained home requires Ofz enrollment before approved removal"
+    );
+    if !unclaimed && let Some(slot) = &microvm.spec.slot {
+        if microvm.annotations().get(STOPPED_POD_ANNOTATION) != Some(&slot.pod_uid) {
+            let pod = bound_pod(client, namespace, microvm).await?;
+            let supervisor = SlotClient::new(
+                &context.identity,
+                namespace,
+                &pod,
+                &slot.pvc_uid,
+                &microvm.spec.image,
+            )?;
+            let status = supervisor
+                .stop(&allocation_for(microvm)?, context.leader()?.fence()?)
+                .await?;
+            ensure!(
+                matches!(status.state, SlotState::Stopped { .. }),
+                "VMM termination is not proven; retain owner and disks"
+            );
+            // Persist the receipt before deleting the only process that can prove termination.
+            context.leader()?;
+            api.patch(
+                &microvm.name_any(),
+                &PatchParams::default(),
+                &Patch::Merge(json!({
+                    "metadata": {"resourceVersion": microvm.resource_version(),
+                        "annotations": {STOPPED_POD_ANNOTATION: slot.pod_uid}}
+                })),
+            )
+            .await?;
+        }
+        delete_slot_assets(client, namespace, slot, Some(microvm), context.leader()?).await?;
+        let leases = Api::<Lease>::namespaced(client.clone(), namespace);
+        if let Some(lease) = leases.get_opt(&slot.name).await? {
+            let claim: Allocation = serde_json::from_str(
+                lease
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.holder_identity.as_deref())
+                    .context("missing deletion claim")?,
+            )?;
+            ensure!(
+                claim == allocation_for(microvm)?,
+                "slot owner changed during deletion"
+            );
+            context.leader()?;
+            leases
+                .delete(&slot.name, &delete_metadata(&lease.metadata)?)
+                .await?;
+        }
+    } else if microvm.spec.slot.is_none() {
+        ensure!(
+            microvm
+                .status
+                .as_ref()
+                .and_then(|s| s.pvc_name.as_ref())
+                .is_none(),
+            "retained home must be enrolled before owner-scoped deletion"
+        );
+        let leases = Api::<Lease>::namespaced(client.clone(), namespace)
+            .list(&ListParams::default().labels(SLOT_SELECTOR))
+            .await?;
+        ensure!(
+            !leases.items.iter().any(|lease| lease
+                .spec
+                .as_ref()
+                .and_then(|s| s.holder_identity.as_ref())
+                .is_some_and(|holder| serde_json::from_str::<Allocation>(holder)
+                    .is_ok_and(|c| Some(c.microvm_uid) == microvm.uid()))),
+            "interrupted slot claim must be recovered before deleting the agent"
+        );
+    }
+    context.leader()?;
+    if !enrolled {
+        context.authorization.release_reservation(microvm).await?;
+    }
+    if !unclaimed && let Some(slot) = &microvm.spec.slot {
+        ensure!(
+            Api::<PersistentVolumeClaim>::namespaced(client.clone(), namespace)
+                .get_opt(&slot.pvc_name)
+                .await?
+                .is_none(),
+            "retained home deletion is still pending; keep quota and finalizer"
+        );
+        context.leader()?;
+        context.authorization.complete_removal(microvm).await?;
+    }
+    let current = api.get(&microvm.name_any()).await?;
+    ensure!(
+        current.uid() == microvm.uid(),
+        "agent replaced during deletion"
+    );
+    let finalizers: Vec<_> = current
+        .finalizers()
+        .iter()
+        .filter(|f| f.as_str() != FINALIZER_NAME)
+        .collect();
+    context.leader()?;
+    api.patch(
+        &current.name_any(),
+        &PatchParams::default(),
+        &Patch::Merge(json!({
+            "metadata": {"resourceVersion": current.resource_version(), "finalizers": finalizers}
+        })),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn release_unclaimed_slot(
+    client: &Client,
+    namespace: &str,
+    microvm: &MicroVM,
+    slot: &MicroVMSlot,
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<bool> {
+    let leases = Api::<Lease>::namespaced(client.clone(), namespace);
+    let mut lease = leases.get(&slot.name).await?;
+    let holder = lease
+        .spec
         .as_ref()
-        .and_then(|value| value.conditions.iter().find(|value| value.type_ == type_));
-    let last_transition_at = previous
-        .filter(|value| value.status == status && value.reason == reason)
-        .map(|value| value.last_transition_at.clone())
-        .unwrap_or_else(|| now.to_rfc3339());
-    MicroVMCondition {
-        type_: type_.to_owned(),
-        status: status.to_owned(),
-        reason: reason.to_owned(),
-        message: message.to_owned(),
-        last_transition_at,
+        .and_then(|spec| spec.holder_identity.as_deref())
+        .map(serde_json::from_str::<Allocation>)
+        .transpose()?;
+    let expected = allocation_for(microvm)?;
+    if holder.as_ref() == Some(&expected) {
+        return Ok(false);
+    }
+    ensure!(
+        microvm
+            .status
+            .as_ref()
+            .is_none_or(|status| status.pod_uid.is_none() && status.pvc_name.is_none()),
+        "active slot claim changed; retain owner and disks"
+    );
+    if let Some(holder) = holder {
+        ensure!(
+            holder.epoch > slot.epoch
+                || (holder.epoch == slot.epoch && holder.microvm_uid != expected.microvm_uid),
+            "slot is claimed by another agent"
+        );
+        // Another UID at this epoch won the claim CAS; a later epoch follows cancellation.
+        return Ok(true);
+    }
+    ensure_asset_owner(&lease.metadata, None)?;
+    let spec = lease.spec.get_or_insert_default();
+    let epoch = u64::try_from(spec.lease_transitions.unwrap_or_default())?;
+    ensure!(
+        epoch == slot.epoch || epoch.checked_add(1) == Some(slot.epoch),
+        "slot candidate epoch changed"
+    );
+    if epoch != slot.epoch {
+        // CAS against a concurrent claim, then make its stale candidate unusable.
+        spec.lease_transitions = Some(i32::try_from(slot.epoch)?);
+        leadership.fence()?;
+        leases
+            .replace(&slot.name, &PostParams::default(), &lease)
+            .await?;
+    }
+    Ok(true)
+}
+
+fn delete_uid(uid: &str) -> DeleteParams {
+    DeleteParams {
+        preconditions: Some(Preconditions {
+            uid: Some(uid.into()),
+            ..Default::default()
+        }),
+        ..Default::default()
     }
 }
 
-fn deadline_passed(value: &str, now: DateTime<Utc>) -> bool {
-    DateTime::parse_from_rfc3339(value)
-        .map(|value| value.with_timezone(&Utc) <= now)
-        .unwrap_or(false)
+fn delete_metadata(metadata: &kube::api::ObjectMeta) -> anyhow::Result<DeleteParams> {
+    let mut parameters = delete_uid(metadata.uid.as_deref().context("resource has no UID")?);
+    parameters
+        .preconditions
+        .as_mut()
+        .expect("UID precondition")
+        .resource_version = Some(
+        metadata
+            .resource_version
+            .clone()
+            .context("resource has no version")?,
+    );
+    Ok(parameters)
 }
 
-fn next_requeue(microvm: &MicroVM, now: DateTime<Utc>) -> Duration {
-    let until_expiry = DateTime::parse_from_rfc3339(&microvm.spec.expires_at)
-        .ok()
-        .map(|value| {
-            value
-                .with_timezone(&Utc)
-                .signed_duration_since(now)
-                .num_seconds()
-        })
-        .unwrap_or(30)
-        .clamp(1, 30);
-    Duration::from_secs(until_expiry as u64)
-}
-
-fn container_failure(status: &ContainerStatus) -> Option<(String, String)> {
-    let state = status.state.as_ref()?;
-    if let Some(waiting) = &state.waiting {
-        let reason = waiting.reason.as_deref().unwrap_or_default();
-        if matches!(
-            reason,
-            "CrashLoopBackOff"
-                | "CreateContainerConfigError"
-                | "CreateContainerError"
-                | "ErrImageNeverPull"
-                | "ErrImagePull"
-                | "ImagePullBackOff"
-                | "InvalidImageName"
-                | "RunContainerError"
-        ) {
-            return Some((
-                reason.to_owned(),
-                waiting.message.clone().unwrap_or_else(|| reason.to_owned()),
-            ));
+fn ensure_asset_owner(
+    metadata: &kube::api::ObjectMeta,
+    owner: Option<&MicroVM>,
+) -> anyhow::Result<()> {
+    match owner {
+        Some(owner) => ensure_adoptable(metadata, owner),
+        None => {
+            ensure!(
+                metadata.owner_references.as_ref().is_none_or(Vec::is_empty),
+                "prepared slot asset was adopted; refusing retirement"
+            );
+            Ok(())
         }
     }
-    if let Some(terminated) = &state.terminated
-        && terminated.exit_code != 0
-    {
-        let reason = terminated
-            .reason
-            .clone()
-            .unwrap_or_else(|| "GuestExited".to_owned());
-        let message = terminated.message.clone().unwrap_or_else(|| {
-            format!(
-                "Container {} exited with code {}",
-                status.name, terminated.exit_code
-            )
-        });
-        return Some((reason, message));
+}
+
+async fn delete_slot_assets(
+    client: &Client,
+    namespace: &str,
+    slot: &MicroVMSlot,
+    owner: Option<&MicroVM>,
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<()> {
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
+    if let Some(pod) = pods.get_opt(&slot.name).await? {
+        ensure!(
+            pod.uid().as_ref() == Some(&slot.pod_uid),
+            "slot Pod replaced during deletion"
+        );
+        ensure_asset_owner(&pod.metadata, owner)?;
+        if pod.metadata.deletion_timestamp.is_none() {
+            leadership.fence()?;
+            pods.delete(&slot.name, &delete_metadata(&pod.metadata)?)
+                .await?;
+        }
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            kube::runtime::wait::await_condition(
+                pods,
+                &slot.name,
+                kube::runtime::wait::conditions::is_deleted(&slot.pod_uid),
+            ),
+        )
+        .await
+        .context("slot Pod deletion is still pending; retain its home")??;
     }
-    None
+    let homes = Api::<PersistentVolumeClaim>::namespaced(client.clone(), namespace);
+    if let Some(home) = homes.get_opt(&slot.pvc_name).await? {
+        ensure!(
+            home.uid().as_ref() == Some(&slot.pvc_uid),
+            "home replaced during deletion"
+        );
+        ensure_asset_owner(&home.metadata, owner)?;
+        leadership.fence()?;
+        homes
+            .delete(&slot.pvc_name, &delete_metadata(&home.metadata)?)
+            .await?;
+    }
+    let secrets = Api::<Secret>::namespaced(client.clone(), namespace);
+    let name = pod::bootstrap_secret_name(&slot.name);
+    if let Some(secret) = secrets.get_opt(&name).await? {
+        ensure_asset_owner(&secret.metadata, owner)?;
+        leadership.fence()?;
+        secrets
+            .delete(&name, &delete_metadata(&secret.metadata)?)
+            .await?;
+    }
+    Ok(())
+}
+
+#[tracing::instrument(
+    name = "controller.pool.maintain",
+    skip_all,
+    err,
+    fields(operation = "controller.pool.maintain")
+)]
+async fn maintain_pool(context: &ControllerContext) -> anyhow::Result<()> {
+    context.leader()?;
+    let leases = Api::<Lease>::namespaced(context.client.clone(), &context.namespace);
+    let list = leases
+        .list(&ListParams::default().labels(SLOT_SELECTOR))
+        .await?;
+    for lease in &list.items {
+        context.leader()?;
+        if let Err(error) = maintain_slot(context, lease).await {
+            tracing::error!(operation = "controller.slot.maintain", slot = lease.name_any(), error = %error, "slot preparation or retirement failed");
+        }
+    }
+    for _ in list.items.len()..SLOT_COUNT {
+        context.leader()?;
+        let name = format!("tengri-slot-{}", uuid::Uuid::new_v4().simple());
+        let lease = Lease {
+            metadata: pod::metadata(&context.namespace, &name),
+            spec: Some(Default::default()),
+        };
+        let lease = leases.create(&PostParams::default(), &lease).await?;
+        prepare_slot(context, &lease).await?;
+    }
+    Ok(())
+}
+
+async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Result<()> {
+    if lease.annotations().contains_key(RETIRING_ANNOTATION) {
+        return retire_slot(context, lease).await;
+    }
+    if let Some(holder) = lease.spec.as_ref().and_then(|s| s.holder_identity.as_ref()) {
+        if let Some(uid) = lease.annotations().get(POD_UID_ANNOTATION) {
+            let allocation: Allocation = serde_json::from_str(holder)?;
+            let pods = Api::<Pod>::namespaced(context.client.clone(), &context.namespace);
+            let pod = pods.get(&lease.name_any()).await?;
+            ensure!(
+                pod.uid().as_ref() == Some(uid),
+                "claimed slot Pod was replaced"
+            );
+            ensure!(
+                pod.metadata
+                    .owner_references
+                    .as_ref()
+                    .is_some_and(|owners| owners.iter().any(|owner| owner.uid
+                        == allocation.microvm_uid
+                        && owner.name == allocation.microvm_id
+                        && owner.kind == "MicroVM"
+                        && owner.controller == Some(true))),
+                "claimed slot Pod ownership changed"
+            );
+            let supervisor = pod
+                .spec
+                .as_ref()
+                .and_then(|spec| {
+                    spec.containers
+                        .iter()
+                        .find(|container| container.name == "supervisor")
+                })
+                .context("claimed slot has no supervisor")?;
+            if supervisor.image.as_deref() != Some(context.runtime_image.as_ref()) {
+                update_slot_image(
+                    &context.client,
+                    &context.namespace,
+                    &pod,
+                    "supervisor",
+                    &context.runtime_image,
+                    context.leader()?,
+                )
+                .await?;
+            }
+        }
+        return prepare_slot(context, lease).await;
+    }
+    if let Some(uid) = lease.annotations().get(POD_UID_ANNOTATION) {
+        let pod = Api::<Pod>::namespaced(context.client.clone(), &context.namespace)
+            .get(&lease.name_any())
+            .await?;
+        ensure!(
+            pod.uid().as_ref() == Some(uid),
+            "prepared slot Pod was replaced"
+        );
+        if spare_slot_is_starting(&pod) {
+            return Ok(());
+        }
+        let image = lease
+            .annotations()
+            .get(IMAGE_ANNOTATION)
+            .context("slot has no image")?;
+        let status = SlotClient::new(
+            &context.identity,
+            &context.namespace,
+            &pod,
+            lease
+                .annotations()
+                .get(HOME_UID_ANNOTATION)
+                .context("slot has no home UID")?,
+            image,
+        )?
+        .status()
+        .await?;
+        let unused = matches!(
+            status.state,
+            SlotState::Vacant { .. } | SlotState::Failed { claim: None, .. }
+        );
+        let runtime = pod
+            .spec
+            .as_ref()
+            .and_then(|s| s.containers.iter().find(|c| c.name == "runner"))
+            .and_then(|c| c.image.as_deref());
+        if unused
+            && (image.as_str() != context.guest_image.as_ref()
+                || runtime != Some(context.runtime_image.as_ref())
+                || matches!(status.state, SlotState::Failed { .. }))
+        {
+            ensure_asset_owner(&pod.metadata, None)?;
+            let claim = Allocation {
+                microvm_id: lease.name_any(),
+                microvm_uid: lease.uid().context("Lease has no UID")?,
+                epoch: u64::try_from(
+                    lease
+                        .spec
+                        .as_ref()
+                        .and_then(|s| s.lease_transitions)
+                        .unwrap_or_default(),
+                )?
+                .checked_add(1)
+                .context("slot epoch exhausted")?,
+            };
+            let mut reserved = lease.clone();
+            let spec = reserved.spec.get_or_insert_default();
+            spec.holder_identity = Some(serde_json::to_string(&claim)?);
+            spec.lease_transitions = Some(i32::try_from(claim.epoch)?);
+            reserved
+                .annotations_mut()
+                .insert(RETIRING_ANNOTATION.into(), claim.microvm_uid.clone());
+            context.leader()?;
+            let reserved = Api::<Lease>::namespaced(context.client.clone(), &context.namespace)
+                .replace(&lease.name_any(), &PostParams::default(), &reserved)
+                .await?;
+            return retire_slot(context, &reserved).await;
+        }
+    }
+    prepare_slot(context, lease).await
+}
+
+async fn update_slot_image(
+    client: &Client,
+    namespace: &str,
+    pod: &Pod,
+    container: &str,
+    image: &str,
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<()> {
+    leadership.fence()?;
+    Api::<Pod>::namespaced(client.clone(), namespace)
+        .patch(&pod.name_any(), &PatchParams::default(), &Patch::Strategic(json!({
+            "metadata": {"uid": pod.uid().context("slot Pod has no UID")?, "resourceVersion": pod.resource_version().context("slot Pod has no version")?},
+            "spec": {"containers": [{"name": container, "image": image}]}
+        }))).await?;
+    Ok(())
+}
+
+fn spare_slot_is_starting(pod: &Pod) -> bool {
+    let now = k8s_openapi::jiff::Timestamp::now().as_millisecond();
+    let Some(created) = &pod.metadata.creation_timestamp else {
+        return false;
+    };
+    if !(0..SPARE_POD_STARTUP_TIMEOUT.as_millis() as i64)
+        .contains(&now.saturating_sub(created.0.as_millisecond()))
+    {
+        return false;
+    }
+    let Some(status) = &pod.status else {
+        return true;
+    };
+    if matches!(
+        status.phase.as_deref(),
+        Some("Failed" | "Succeeded" | "Unknown")
+    ) {
+        return false;
+    }
+    let supervisor = status.container_statuses.as_ref().and_then(|containers| {
+        containers
+            .iter()
+            .find(|container| container.name == "supervisor")
+    });
+    if let Some(state) = supervisor.and_then(|container| container.state.as_ref()) {
+        if state.terminated.is_some() {
+            return false;
+        }
+        if let Some(waiting) = &state.waiting
+            && !matches!(
+                waiting.reason.as_deref(),
+                None | Some("ContainerCreating" | "PodInitializing")
+            )
+        {
+            return false;
+        }
+    }
+    if status.pod_ip.is_none() {
+        return true;
+    }
+    let Some(supervisor) = supervisor else {
+        return true;
+    };
+    if supervisor.ready {
+        return false;
+    }
+    let started = supervisor
+        .state
+        .as_ref()
+        .and_then(|state| state.running.as_ref())
+        .and_then(|running| running.started_at.as_ref());
+    let Some(started) = started else {
+        return true;
+    };
+    let grace =
+        Duration::from_millis(REPLAY_STARTUP_FENCE_MS) + crate::slot::supervisor::READINESS_TIMEOUT;
+    (0..grace.as_millis() as i64).contains(&now.saturating_sub(started.0.as_millisecond()))
+}
+
+async fn retire_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Result<()> {
+    let leases = Api::<Lease>::namespaced(context.client.clone(), &context.namespace);
+    let claim: Allocation = serde_json::from_str(
+        lease
+            .spec
+            .as_ref()
+            .and_then(|s| s.holder_identity.as_deref())
+            .context("retiring slot has no claim")?,
+    )?;
+    ensure!(
+        lease.annotations().get(RETIRING_ANNOTATION) == Some(&claim.microvm_uid)
+            && lease.uid().as_ref() == Some(&claim.microvm_uid)
+            && claim.microvm_id == lease.name_any(),
+        "retiring slot claim changed"
+    );
+    let slot = binding_for(lease, &claim)?;
+    if lease.annotations().get(STOPPED_POD_ANNOTATION) != Some(&slot.pod_uid) {
+        let pod = Api::<Pod>::namespaced(context.client.clone(), &context.namespace)
+            .get(&slot.name)
+            .await?;
+        ensure!(
+            pod.uid().as_ref() == Some(&slot.pod_uid),
+            "retiring slot Pod changed"
+        );
+        ensure_asset_owner(&pod.metadata, None)?;
+        let status = SlotClient::new(
+            &context.identity,
+            &context.namespace,
+            &pod,
+            &slot.pvc_uid,
+            lease
+                .annotations()
+                .get(IMAGE_ANNOTATION)
+                .context("retiring slot has no image")?,
+        )?
+        .stop(&claim, context.leader()?.fence()?)
+        .await?;
+        ensure!(
+            matches!(status.state, SlotState::Stopped { .. }),
+            "prepared VMM stop is unproven"
+        );
+        context.leader()?;
+        leases.patch(&slot.name, &PatchParams::default(), &Patch::Merge(json!({
+            "metadata": {"resourceVersion": lease.resource_version(), "annotations": {STOPPED_POD_ANNOTATION: slot.pod_uid}}
+        }))).await?;
+    }
+    delete_slot_assets(
+        &context.client,
+        &context.namespace,
+        &slot,
+        None,
+        context.leader()?,
+    )
+    .await?;
+    let current = leases.get(&slot.name).await?;
+    ensure!(
+        current
+            .spec
+            .as_ref()
+            .and_then(|s| s.holder_identity.as_ref())
+            == lease.spec.as_ref().and_then(|s| s.holder_identity.as_ref())
+            && current.annotations().get(STOPPED_POD_ANNOTATION) == Some(&slot.pod_uid),
+        "retirement claim changed"
+    );
+    context.leader()?;
+    leases
+        .delete(&slot.name, &delete_metadata(&current.metadata)?)
+        .await?;
+    Ok(())
+}
+
+async fn prepare_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Result<()> {
+    if lease
+        .spec
+        .as_ref()
+        .and_then(|s| s.holder_identity.as_ref())
+        .is_some()
+        && lease.annotations().contains_key(POD_UID_ANNOTATION)
+    {
+        return Ok(());
+    }
+    let client = &context.client;
+    let namespace = &context.namespace;
+    let name = lease.name_any();
+    let homes = Api::<PersistentVolumeClaim>::namespaced(client.clone(), namespace);
+    let home_name = lease
+        .annotations()
+        .get(HOME_NAME_ANNOTATION)
+        .cloned()
+        .unwrap_or_else(|| pod::pvc_name(&name));
+    let home = match homes.get_opt(&home_name).await? {
+        Some(home) => {
+            pod::validate_home(&home)?;
+            home
+        }
+        None => {
+            ensure!(
+                !lease.annotations().contains_key(HOME_NAME_ANNOTATION),
+                "retained home is missing; refusing replacement"
+            );
+            context.leader()?;
+            homes
+                .create(&PostParams::default(), &pod::build_pvc(namespace, &name))
+                .await?
+        }
+    };
+    ensure!(
+        lease
+            .annotations()
+            .get(HOME_UID_ANNOTATION)
+            .is_none_or(|uid| home.uid().as_ref() == Some(uid)),
+        "retained home identity changed; refusing replacement"
+    );
+    let secrets = Api::<Secret>::namespaced(client.clone(), namespace);
+    let secret_name = pod::bootstrap_secret_name(&name);
+    if secrets.get_opt(&secret_name).await?.is_none() {
+        context.leader()?;
+        secrets
+            .create(&PostParams::default(), &pod::build_secret(namespace, &name))
+            .await?;
+    }
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
+    let image = lease
+        .annotations()
+        .get(IMAGE_ANNOTATION)
+        .map(String::as_str)
+        .unwrap_or(&context.guest_image);
+    let pod = match pods.get_opt(&name).await? {
+        Some(pod) => pod,
+        None => {
+            ensure!(
+                !lease.annotations().contains_key(POD_UID_ANNOTATION),
+                "slot Pod was lost; retain home and require explicit fenced recovery"
+            );
+            context.leader()?;
+            pods.create(
+                &PostParams::default(),
+                &pod::build_slot_pod(
+                    namespace,
+                    &name,
+                    image,
+                    &context.runtime_image,
+                    context.architecture,
+                    &home,
+                ),
+            )
+            .await?
+        }
+    };
+    ensure!(
+        lease
+            .annotations()
+            .get(POD_UID_ANNOTATION)
+            .is_none_or(|uid| pod.uid().as_ref() == Some(uid)),
+        "slot Pod identity changed; refusing adoption"
+    );
+    let mut annotations = lease.annotations().clone();
+    annotations.insert(HOME_NAME_ANNOTATION.into(), home.name_any());
+    annotations.insert(
+        HOME_UID_ANNOTATION.into(),
+        home.uid().context("home PVC has no UID")?,
+    );
+    annotations.insert(
+        POD_UID_ANNOTATION.into(),
+        pod.uid().context("slot Pod has no UID")?,
+    );
+    annotations.insert(IMAGE_ANNOTATION.into(), image.into());
+    if &annotations != lease.annotations() {
+        context.leader()?;
+        Api::<Lease>::namespaced(client.clone(), namespace)
+            .patch(
+                &name,
+                &PatchParams::default(),
+                &Patch::Merge(json!({"metadata": {
+                    "resourceVersion": lease.resource_version(), "annotations": annotations
+                }})),
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crd::{IDLE_MINUTES, MicroVMArchitecture, MicroVMResources, MicroVMSpec};
-    use http::{Request, Response, StatusCode};
-    use k8s_openapi::api::core::v1::{
-        ContainerState, ContainerStateTerminated, ContainerStateWaiting, PodCondition, PodStatus,
-    };
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
-    use kube::client::Body as KubeBody;
+    use crate::crd::{MicroVMResources, MicroVMSpec};
+    use crate::slot::Claim;
+    use http::{Method, Request, Response};
+    use kube::client::Body;
+    use std::{collections::VecDeque, sync::Mutex};
 
-    fn test_microvm(now: DateTime<Utc>) -> MicroVM {
+    struct Exchange {
+        method: Method,
+        path: &'static str,
+        code: u16,
+        response: serde_json::Value,
+        body: Option<serde_json::Value>,
+    }
+
+    fn mock(exchanges: Vec<Exchange>) -> (Client, Arc<Mutex<VecDeque<Exchange>>>) {
+        let pending = Arc::new(Mutex::new(VecDeque::from(exchanges)));
+        let requests = pending.clone();
+        let service = tower::service_fn(move |request: Request<Body>| {
+            let exchange = requests
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("unexpected Kubernetes request");
+            async move {
+                assert_eq!(request.method(), exchange.method);
+                assert_eq!(request.uri().path(), exchange.path);
+                if let Some(expected) = exchange.body {
+                    let body: serde_json::Value =
+                        serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                            .unwrap();
+                    assert_eq!(body, expected);
+                }
+                Ok::<_, std::io::Error>(
+                    Response::builder()
+                        .status(exchange.code)
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&exchange.response).unwrap()))
+                        .unwrap(),
+                )
+            }
+        });
+        (Client::new(service, "tengri"), pending)
+    }
+
+    fn agent() -> MicroVM {
         let mut microvm = MicroVM::new(
-            "agent",
+            "agent-test",
             MicroVMSpec {
-                display_name: "Agent".to_owned(),
-                owner_hash: "owner".to_owned(),
+                reservation_id: "33333333-3333-4333-8333-333333333333".into(),
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+                policy_version: 0,
+                display_name: "test".into(),
+                owner_hash: "a".repeat(64),
                 desired_state: MicroVMDesiredState::Running,
-                image: format!("registry.example/nanoagent@sha256:{}", "a".repeat(64)),
+                image: "guest-image".into(),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
-                created_at: now.to_rfc3339(),
-                idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
-                expires_at: (now + chrono::Duration::hours(4)).to_rfc3339(),
+                power: Default::default(),
+                created_at: Utc::now().to_rfc3339(),
+                idle_deadline: (Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                slot: Some(MicroVMSlot {
+                    name: "slot-test".into(),
+                    pod_uid: "original-pod".into(),
+                    pvc_name: "original-home".into(),
+                    pvc_uid: "original-pvc".into(),
+                    epoch: 2,
+                }),
             },
         );
-        microvm.metadata.uid = Some("microvm-uid".to_owned());
+        microvm.metadata.uid = Some("11111111-1111-4111-8111-111111111111".into());
+        microvm.metadata.resource_version = Some("10".into());
+        microvm.metadata.generation = Some(2);
+        microvm.metadata.finalizers = Some(vec![FINALIZER_NAME.into()]);
         microvm
     }
 
-    #[tokio::test]
-    async fn owned_cleanup_uses_uid_and_resource_version_preconditions() {
-        let microvm = test_microvm(Utc::now());
-        let (service, mut handle) =
-            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let client = Client::new(service, "tengri");
-        let pods: Api<Pod> = Api::namespaced(client, "tengri");
-        let cleanup =
-            tokio::spawn(async move { delete_owned_and_wait(&pods, "agent", &microvm).await });
-
-        let (request, response) = handle.next_request().await.expect("owned Pod lookup");
-        assert_eq!(request.method(), http::Method::GET);
-        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri","uid":"pod-uid","resourceVersion":"17","ownerReferences":[{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent","uid":"microvm-uid","controller":true}]}}"#
-                        .to_vec(),
-                ))
-                .expect("owned Pod response"),
-        );
-
-        let (request, response) = handle.next_request().await.expect("owned Pod deletion");
-        assert_eq!(request.method(), http::Method::DELETE);
-        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
-        let body: serde_json::Value = serde_json::from_slice(
-            &request
-                .into_body()
-                .collect_bytes()
-                .await
-                .expect("delete request body"),
-        )
-        .expect("delete options JSON");
-        assert_eq!(body["propagationPolicy"], "Foreground");
-        assert_eq!(body["preconditions"]["uid"], "pod-uid");
-        assert_eq!(body["preconditions"]["resourceVersion"], "17");
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    br#"{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","message":"Pod agent was already deleted","code":404}"#
-                        .to_vec(),
-                ))
-                .expect("Pod not found response"),
-        );
-
-        cleanup
-            .await
-            .expect("owned cleanup task")
-            .expect("owned cleanup result");
-    }
-
-    #[tokio::test]
-    async fn cleanup_skips_a_same_named_resource_not_owned_by_the_microvm() {
-        let microvm = test_microvm(Utc::now());
-        let (service, mut handle) =
-            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let client = Client::new(service, "tengri");
-        let secrets: Api<Secret> = Api::namespaced(client, "tengri");
-        let cleanup = tokio::spawn(async move {
-            delete_owned_and_wait(&secrets, "agent-bootstrap", &microvm).await
-        });
-
-        let (request, response) = handle.next_request().await.expect("foreign Secret lookup");
-        assert_eq!(request.method(), http::Method::GET);
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    br#"{"apiVersion":"v1","kind":"Secret","metadata":{"name":"agent-bootstrap","namespace":"tengri","uid":"foreign-secret-uid","ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"foreign","uid":"foreign-uid","controller":true}]}}"#
-                        .to_vec(),
-                ))
-                .expect("foreign Secret response"),
-        );
-
-        cleanup
-            .await
-            .expect("foreign cleanup task")
-            .expect("foreign resource is skipped");
-        if let Ok(Some(_)) =
-            tokio::time::timeout(Duration::from_millis(25), handle.next_request()).await
-        {
-            panic!("foreign resource must not be deleted");
-        }
-    }
-
     #[test]
-    fn reports_image_pull_failure_precisely() {
+    fn lifecycle_timing_includes_retries_and_rejects_probe_recovery_or_invalid_clocks() {
         let now = Utc::now();
-        let pod = Pod {
-            status: Some(PodStatus {
-                phase: Some("Pending".to_owned()),
-                container_statuses: Some(vec![ContainerStatus {
-                    name: "nanoagent".to_owned(),
-                    image: "registry.example/nanoagent".to_owned(),
-                    image_id: "".to_owned(),
-                    ready: false,
-                    restart_count: 0,
-                    state: Some(ContainerState {
-                        waiting: Some(ContainerStateWaiting {
-                            reason: Some("ImagePullBackOff".to_owned()),
-                            message: Some("unable to pull image".to_owned()),
-                        }),
-                        ..ContainerState::default()
-                    }),
-                    ..ContainerStatus::default()
-                }]),
-                ..PodStatus::default()
-            }),
-            ..Pod::default()
-        };
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
-        assert_eq!(status.phase, MicroVMPhase::Failed);
-        assert_eq!(status.failure_reason.as_deref(), Some("ImagePullBackOff"));
-        assert_eq!(status.message.as_deref(), Some("unable to pull image"));
-    }
+        let mut microvm = agent();
+        microvm.metadata.creation_timestamp =
+            Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                (now - chrono::Duration::seconds(12))
+                    .to_rfc3339()
+                    .parse()
+                    .unwrap(),
+            ));
+        microvm.status = None;
+        microvm.spec.runtime_epoch.clear();
+        let (resume, elapsed) = lifecycle_latency(&microvm, now).unwrap();
+        assert!(!resume);
+        assert!((12_000..12_002).contains(&elapsed));
 
-    #[test]
-    fn reports_unschedulable_firecracker_guest_precisely() {
-        let now = Utc::now();
-        let pod = Pod {
-            metadata: kube::core::ObjectMeta {
-                creation_timestamp: Some(Time(
-                    k8s_openapi::jiff::Timestamp::from_second(
-                        now.timestamp() - UNSCHEDULABLE_FAILURE_GRACE_SECONDS - 1,
-                    )
-                    .expect("old Pod creation timestamp"),
-                )),
-                ..kube::core::ObjectMeta::default()
-            },
-            status: Some(PodStatus {
-                phase: Some("Pending".to_owned()),
-                conditions: Some(vec![PodCondition {
-                    type_: "PodScheduled".to_owned(),
-                    status: "False".to_owned(),
-                    reason: Some("Unschedulable".to_owned()),
-                    message: Some("0/3 nodes match the proven runtime selector".to_owned()),
-                    ..PodCondition::default()
-                }]),
-                ..PodStatus::default()
-            }),
-            ..Pod::default()
-        };
-
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
-        assert_eq!(status.phase, MicroVMPhase::Failed);
-        assert_eq!(status.failure_reason.as_deref(), Some("Unschedulable"));
-        assert_eq!(
-            status.message.as_deref(),
-            Some("0/3 nodes match the proven runtime selector")
-        );
-    }
-
-    #[test]
-    fn keeps_new_pod_booting_while_its_pvc_binds() {
-        let now = Utc::now();
-        let pod = Pod {
-            metadata: kube::core::ObjectMeta {
-                creation_timestamp: Some(Time(
-                    k8s_openapi::jiff::Timestamp::from_second(now.timestamp())
-                        .expect("new Pod creation timestamp"),
-                )),
-                ..kube::core::ObjectMeta::default()
-            },
-            status: Some(PodStatus {
-                phase: Some("Pending".to_owned()),
-                conditions: Some(vec![PodCondition {
-                    type_: "PodScheduled".to_owned(),
-                    status: "False".to_owned(),
-                    reason: Some("Unschedulable".to_owned()),
-                    message: Some("pod has unbound immediate PersistentVolumeClaims".to_owned()),
-                    ..PodCondition::default()
-                }]),
-                ..PodStatus::default()
-            }),
-            ..Pod::default()
-        };
-
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
-        assert_eq!(status.phase, MicroVMPhase::Booting);
-        assert_eq!(status.failure_reason, None);
-        assert_eq!(
-            status.message.as_deref(),
-            Some("Starting the Firecracker guest")
-        );
-    }
-
-    #[test]
-    fn reports_container_configuration_failure_precisely() {
-        let now = Utc::now();
-        let pod = Pod {
-            status: Some(PodStatus {
-                phase: Some("Pending".to_owned()),
-                container_statuses: Some(vec![ContainerStatus {
-                    name: "nanoagent".to_owned(),
-                    image: "registry.example/nanoagent".to_owned(),
-                    image_id: "".to_owned(),
-                    ready: false,
-                    restart_count: 0,
-                    state: Some(ContainerState {
-                        waiting: Some(ContainerStateWaiting {
-                            reason: Some("CreateContainerConfigError".to_owned()),
-                            message: Some("bootstrap Secret is missing".to_owned()),
-                        }),
-                        ..ContainerState::default()
-                    }),
-                    ..ContainerStatus::default()
-                }]),
-                ..PodStatus::default()
-            }),
-            ..Pod::default()
-        };
-
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
-        assert_eq!(status.phase, MicroVMPhase::Failed);
-        assert_eq!(
-            status.failure_reason.as_deref(),
-            Some("CreateContainerConfigError")
-        );
-        assert_eq!(
-            status.message.as_deref(),
-            Some("bootstrap Secret is missing")
-        );
-    }
-
-    #[test]
-    fn reports_init_container_failure_precisely() {
-        let now = Utc::now();
-        let pod = Pod {
-            status: Some(PodStatus {
-                phase: Some("Pending".to_owned()),
-                init_container_statuses: Some(vec![ContainerStatus {
-                    name: "prepare-runtime-identity".to_owned(),
-                    image: "registry.example/nanoagent".to_owned(),
-                    image_id: "registry.example/nanoagent@sha256:abc".to_owned(),
-                    ready: false,
-                    restart_count: 1,
-                    state: Some(ContainerState {
-                        terminated: Some(ContainerStateTerminated {
-                            exit_code: 1,
-                            reason: Some("Error".to_owned()),
-                            ..ContainerStateTerminated::default()
-                        }),
-                        ..ContainerState::default()
-                    }),
-                    ..ContainerStatus::default()
-                }]),
-                ..PodStatus::default()
-            }),
-            ..Pod::default()
-        };
-
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
-        assert_eq!(status.phase, MicroVMPhase::Failed);
-        assert_eq!(status.failure_reason.as_deref(), Some("Error"));
-        assert_eq!(
-            status.message.as_deref(),
-            Some("Container prepare-runtime-identity exited with code 1")
-        );
-    }
-
-    #[test]
-    fn idle_timeout_sleeps_after_sixty_minutes() {
-        let now = Utc::now();
-        let microvm = test_microvm(now - chrono::Duration::minutes(61));
-        assert!(idle_deadline_passed(&microvm, now));
-    }
-
-    #[test]
-    fn refreshed_idle_deadline_prevents_sleep_even_when_status_is_stale() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
         microvm.status = Some(MicroVMStatus {
-            last_activity_at: Some((now - chrono::Duration::hours(2)).to_rfc3339()),
-            ..MicroVMStatus::default()
+            phase: MicroVMPhase::Sleeping,
+            ..Default::default()
         });
-        assert!(!idle_deadline_passed(&microvm, now));
-    }
-
-    #[test]
-    fn hard_expiry_is_independent_of_activity() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now - chrono::Duration::hours(5));
-        microvm.status = Some(MicroVMStatus {
-            last_activity_at: Some(now.to_rfc3339()),
-            ..MicroVMStatus::default()
-        });
-        assert!(deadline_passed(&microvm.spec.expires_at, now));
-    }
-
-    #[test]
-    fn resume_latency_uses_the_persisted_wake_marker_after_booting_status() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now - chrono::Duration::hours(2));
-        microvm.status = Some(MicroVMStatus {
-            phase: MicroVMPhase::Booting,
-            ..MicroVMStatus::default()
-        });
-        microvm.metadata.annotations = Some(std::collections::BTreeMap::from([(
-            RESUME_STARTED_AT_ANNOTATION.to_owned(),
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "resume".into());
+        microvm.annotations_mut().insert(
+            crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
             (now - chrono::Duration::seconds(3)).to_rfc3339(),
-        )]));
+        );
+        assert_eq!(lifecycle_latency(&microvm, now), Some((true, 3_000)));
+        microvm.status.as_mut().unwrap().phase = MicroVMPhase::Ready;
+        microvm.status.as_mut().unwrap().guest_ready = false;
+        assert!(lifecycle_latency(&microvm, now).is_none());
 
-        assert_eq!(
-            readiness_latency(&microvm, now),
-            ReadinessLatency::Resume(3_000)
+        microvm.status.as_mut().unwrap().phase = MicroVMPhase::Sleeping;
+        microvm.annotations_mut().insert(
+            crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
+            "invalid".into(),
         );
-        microvm.metadata.annotations = None;
-        assert_eq!(
-            readiness_latency(&microvm, now),
-            ReadinessLatency::Boot(7_200_000)
+        assert!(lifecycle_latency(&microvm, now).is_none());
+        microvm.annotations_mut().insert(
+            crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
+            (now + chrono::Duration::seconds(3)).to_rfc3339(),
         );
+        assert!(lifecycle_latency(&microvm, now).is_none());
     }
 
     #[test]
-    fn deletion_publishes_terminating_without_discarding_resource_identity() {
+    fn lifecycle_identity_survives_failed_reconciliation_and_skips_unknown_legacy_state() {
         let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.metadata.generation = Some(9);
-        microvm.status = Some(MicroVMStatus {
-            phase: MicroVMPhase::Ready,
-            pod_name: Some("agent-1234".to_owned()),
-            pvc_name: Some("agent-1234-home".to_owned()),
-            guest_ready: true,
-            failure_reason: Some("OldFailure".to_owned()),
-            ..MicroVMStatus::default()
-        });
-
-        let status = terminating_status(&microvm, now);
-        assert_eq!(status.phase, MicroVMPhase::Terminating);
-        assert!(!status.guest_ready);
-        assert_eq!(status.pod_name.as_deref(), Some("agent-1234"));
-        assert_eq!(status.pvc_name.as_deref(), Some("agent-1234-home"));
-        assert_eq!(status.failure_reason, None);
-        assert_eq!(status.conditions[0].reason, "Terminating");
-        assert_eq!(status.observed_generation, 9);
-    }
-
-    #[test]
-    fn tengri_finalizer_updates_preserve_other_controllers() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.metadata.finalizers = Some(vec!["storage.example/finalizer".to_owned()]);
-
-        assert_eq!(
-            finalizers_with_tengri(&microvm),
-            vec![
-                "storage.example/finalizer".to_owned(),
-                FINALIZER_NAME.to_owned(),
-            ]
-        );
-
-        microvm.metadata.finalizers = Some(finalizers_with_tengri(&microvm));
-        assert_eq!(
-            finalizers_without_tengri(&microvm),
-            vec!["storage.example/finalizer".to_owned()]
-        );
-    }
-
-    #[tokio::test]
-    async fn status_patch_is_not_invalidated_by_independent_metadata_updates() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.metadata.namespace = Some("tengri".to_owned());
-        microvm.metadata.resource_version = Some("17".to_owned());
-        let response_microvm = microvm.clone();
-        let status = MicroVMStatus {
-            phase: MicroVMPhase::Ready,
-            guest_ready: true,
-            last_activity_at: Some(now.to_rfc3339()),
-            ..MicroVMStatus::default()
-        };
-        let (service, mut handle) =
-            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let client = Client::new(service, "tengri");
-        let microvms = Api::namespaced(client, "tengri");
-
-        let update = tokio::spawn(async move { patch_status(&microvms, &microvm, status).await });
-        let (request, response) = handle.next_request().await.expect("status patch");
-        assert_eq!(request.method(), http::Method::PATCH);
-        assert_eq!(
-            request.uri().path(),
-            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent/status"
-        );
-        let body: serde_json::Value = serde_json::from_slice(
-            &request
-                .into_body()
-                .collect_bytes()
-                .await
-                .expect("status patch body"),
-        )
-        .expect("status patch JSON");
-        assert!(body.pointer("/metadata/resourceVersion").is_none());
-        assert_eq!(body["status"]["phase"], "Ready");
-        assert_eq!(body["status"]["guestReady"], true);
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    serde_json::to_vec(&response_microvm).expect("MicroVM response JSON"),
-                ))
-                .expect("status patch response"),
-        );
-
-        update
-            .await
-            .expect("status patch task")
-            .expect("status patch result");
-    }
-
-    #[test]
-    fn terminal_admission_errors_become_precise_failed_statuses() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.metadata.generation = Some(7);
-        let error = kube::Error::Api(
-            kube::core::Status {
-                code: 422,
-                message: "runtimeClassName kata-fc is not available\nfor this architecture"
-                    .to_owned(),
-                reason: "Invalid".to_owned(),
-                ..kube::core::Status::default()
-            }
-            .boxed(),
-        );
-
-        assert!(is_terminal_provisioning_error(&error));
-        let message = provisioning_failure_message("Firecracker Pod", &error);
-        assert_eq!(
-            message,
-            "Firecracker Pod provisioning failed: Invalid (HTTP 422): runtimeClassName kata-fc is not available for this architecture"
-        );
-        let status = provisioning_failure_status(&microvm, "MicroVMPodRejected", &message, now);
-        assert_eq!(status.phase, MicroVMPhase::Failed);
-        assert!(!status.guest_ready);
-        assert_eq!(status.failure_reason.as_deref(), Some("MicroVMPodRejected"));
-        assert_eq!(status.observed_generation, 7);
-        assert_eq!(status.conditions[0].reason, "MicroVMPodRejected");
-    }
-
-    #[tokio::test]
-    async fn rejected_reapply_preserves_a_usable_ready_guest_at_the_current_generation() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.metadata.namespace = Some("tengri".to_owned());
-        microvm.metadata.generation = Some(8);
-        microvm.status = Some(MicroVMStatus {
-            phase: MicroVMPhase::Ready,
-            pod_name: Some("agent".to_owned()),
-            guest_ready: true,
-            ready_at: Some(now.to_rfc3339()),
-            observed_generation: 7,
-            ..MicroVMStatus::default()
-        });
-        let response_microvm = microvm.clone();
-        let error = kube::Error::Api(
-            kube::core::Status {
-                code: 422,
-                reason: "Invalid".to_owned(),
-                message: "immutable field changed".to_owned(),
-                ..kube::core::Status::default()
-            }
-            .boxed(),
-        );
-        let (service, mut handle) =
-            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let client = Client::new(service, "tengri");
-        let microvms = Api::namespaced(client.clone(), "tengri");
-        let pods = Api::namespaced(client, "tengri");
-
-        let report = tokio::spawn(async move {
-            report_provisioning_failure(
-                &microvms,
-                &pods,
-                &microvm,
-                "MicroVMPodRejected",
-                "Firecracker Pod",
-                &error,
-                now,
-            )
-            .await;
-        });
-        let (request, response) = handle.next_request().await.expect("existing Pod lookup");
-        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri","ownerReferences":[{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent","uid":"microvm-uid","controller":true}]},"status":{"conditions":[{"status":"True","type":"Ready"}]}}"#
-                        .to_vec(),
-                ))
-                .expect("ready Pod response"),
-        );
-
-        let (request, response) = handle
-            .next_request()
-            .await
-            .expect("status generation update");
-        assert_eq!(request.method(), http::Method::PATCH);
-        assert_eq!(
-            request.uri().path(),
-            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent/status"
-        );
-        let body: serde_json::Value = serde_json::from_slice(
-            &request
-                .into_body()
-                .collect_bytes()
-                .await
-                .expect("status patch body"),
-        )
-        .expect("status patch JSON");
-        assert_eq!(body["status"]["phase"], "Ready");
-        assert_eq!(body["status"]["guestReady"], true);
-        assert_eq!(body["status"]["observedGeneration"], 8);
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    serde_json::to_vec(&response_microvm).expect("MicroVM response JSON"),
-                ))
-                .expect("status patch response"),
-        );
-
-        tokio::time::timeout(Duration::from_millis(100), report)
-            .await
-            .expect("ready guest status must be preserved at the current generation")
-            .expect("provisioning report task");
-    }
-
-    #[tokio::test]
-    async fn same_named_foreign_ready_pod_is_not_a_usable_guest() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.status = Some(MicroVMStatus {
-            phase: MicroVMPhase::Ready,
-            pod_name: Some("agent".to_owned()),
-            guest_ready: true,
-            ..MicroVMStatus::default()
-        });
-        let (service, mut handle) =
-            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let client = Client::new(service, "tengri");
-        let pods = Api::namespaced(client, "tengri");
-        let check = tokio::spawn(async move { existing_guest_is_usable(&pods, &microvm).await });
-
-        let (request, response) = handle.next_request().await.expect("existing Pod lookup");
-        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri","ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"foreign","uid":"foreign-uid","controller":true}]},"status":{"conditions":[{"status":"True","type":"Ready"}]}}"#
-                        .to_vec(),
-                ))
-                .expect("foreign ready Pod response"),
-        );
-
-        assert!(!check.await.expect("guest check task").expect("Pod lookup"));
-    }
-
-    #[tokio::test]
-    async fn controller_rollout_preserves_an_owned_booting_pod() {
-        let now = Utc::now();
-        let microvm = test_microvm(now);
-        let response_pod: Pod = serde_json::from_value(json!({
-            "apiVersion": "v1",
-            "kind": "Pod",
-            "metadata": {
-                "name": "agent",
-                "namespace": "tengri",
-                "ownerReferences": [{
-                    "apiVersion": "runtime.proompteng.ai/v1alpha1",
-                    "kind": "MicroVM",
-                    "name": "agent",
-                    "uid": "microvm-uid",
-                    "controller": true,
-                }],
-            },
-            "status": {"phase": "Pending"},
-        }))
-        .expect("booting Pod");
-        let (service, mut handle) =
-            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let client = Client::new(service, "tengri");
-        let pods = Api::namespaced(client, "tengri");
-        let ensure = tokio::spawn(async move {
-            ensure_runtime_pod(&pods, &microvm, "tengri", "agent-bootstrap", "agent-home").await
-        });
-
-        let (request, response) = handle.next_request().await.expect("existing Pod lookup");
-        assert_eq!(request.method(), http::Method::GET);
-        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    serde_json::to_vec(&response_pod).expect("Pod response JSON"),
-                ))
-                .expect("Pod response"),
-        );
-
-        let pod = ensure
-            .await
-            .expect("ensure task")
-            .expect("owned Pod is preserved");
-        assert_eq!(
-            pod.status.and_then(|status| status.phase).as_deref(),
-            Some("Pending")
-        );
-        if let Ok(Some((request, _))) =
-            tokio::time::timeout(Duration::from_millis(25), handle.next_request()).await
-        {
-            panic!(
-                "owned Pod must not be reapplied: {} {}",
-                request.method(),
-                request.uri()
-            );
-        }
-    }
-
-    #[test]
-    fn terminating_owned_ready_pod_is_not_a_usable_guest() {
-        let now = Utc::now();
-        let microvm = test_microvm(now);
+        let mut microvm = agent();
+        microvm.metadata.creation_timestamp =
+            Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                (now - chrono::Duration::days(7))
+                    .to_rfc3339()
+                    .parse()
+                    .unwrap(),
+            ));
+        // Use the real sleep transition, not a hand-written condition: it clears
+        // ready_at and must override the preceding boot's persisted identity.
+        microvm.spec.desired_state = MicroVMDesiredState::Sleeping;
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "boot".into());
         let pod: Pod = serde_json::from_value(json!({
-            "apiVersion": "v1",
-            "kind": "Pod",
-            "metadata": {
-                "name": "agent",
-                "namespace": "tengri",
-                "deletionTimestamp": now.to_rfc3339(),
-                "ownerReferences": [{
-                    "apiVersion": "runtime.proompteng.ai/v1alpha1",
-                    "kind": "MicroVM",
-                    "name": "agent",
-                    "uid": "microvm-uid",
-                    "controller": true,
-                }],
-            },
-            "status": {"conditions": [{"status": "True", "type": "Ready"}]},
+            "metadata":{"name":"slot-test", "uid":"original-pod"},
+            "status":{"podIP":"127.0.0.1"}
         }))
-        .expect("terminating ready Pod");
-
-        assert!(!pod_is_usable(&pod, &microvm));
-    }
-
-    #[tokio::test]
-    async fn rejected_reapply_does_not_advance_an_unverified_ready_guest() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.metadata.namespace = Some("tengri".to_owned());
-        microvm.metadata.generation = Some(8);
-        microvm.status = Some(MicroVMStatus {
-            phase: MicroVMPhase::Ready,
-            pod_name: Some("agent".to_owned()),
-            guest_ready: true,
-            ready_at: Some(now.to_rfc3339()),
-            observed_generation: 7,
-            ..MicroVMStatus::default()
-        });
-        let error = kube::Error::Api(
-            kube::core::Status {
-                code: 422,
-                reason: "Invalid".to_owned(),
-                message: "immutable field changed".to_owned(),
-                ..kube::core::Status::default()
-            }
-            .boxed(),
-        );
-        let (service, mut handle) =
-            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let client = Client::new(service, "tengri");
-        let microvms = Api::namespaced(client.clone(), "tengri");
-        let pods = Api::namespaced(client, "tengri");
-
-        let report = tokio::spawn(async move {
-            report_provisioning_failure(
-                &microvms,
-                &pods,
-                &microvm,
-                "MicroVMPodRejected",
-                "Firecracker Pod",
-                &error,
-                now,
-            )
-            .await;
-        });
-        let (request, response) = handle.next_request().await.expect("existing Pod lookup");
-        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    br#"{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"InternalError","message":"Pod lookup failed","code":500}"#
-                        .to_vec(),
-                ))
-                .expect("Pod lookup failure response"),
-        );
-
-        tokio::time::timeout(Duration::from_millis(100), report)
-            .await
-            .expect("unverified guest must retain its previous generation")
-            .expect("provisioning report task");
-        if let Ok(Some(_)) =
-            tokio::time::timeout(Duration::from_millis(25), handle.next_request()).await
-        {
-            panic!("unverified guest must not receive a status generation update");
-        }
-    }
-
-    #[tokio::test]
-    async fn bootstrap_secret_rejection_does_not_preserve_a_ready_pod() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.metadata.namespace = Some("tengri".to_owned());
-        microvm.metadata.generation = Some(4);
-        microvm.status = Some(MicroVMStatus {
-            phase: MicroVMPhase::Ready,
-            pod_name: Some("agent".to_owned()),
-            guest_ready: true,
-            ready_at: Some(now.to_rfc3339()),
-            observed_generation: 3,
-            ..MicroVMStatus::default()
-        });
-        let response_microvm = microvm.clone();
-        let error = kube::Error::Api(
-            kube::core::Status {
-                code: 422,
-                reason: "Invalid".to_owned(),
-                message: "bootstrap Secret is unavailable".to_owned(),
-                ..kube::core::Status::default()
-            }
-            .boxed(),
-        );
-        let (service, mut handle) =
-            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let client = Client::new(service, "tengri");
-        let microvms = Api::namespaced(client.clone(), "tengri");
-        let pods = Api::namespaced(client, "tengri");
-
-        let report = tokio::spawn(async move {
-            report_provisioning_failure(
-                &microvms,
-                &pods,
-                &microvm,
-                "BootstrapSecretRejected",
-                "Bootstrap Secret",
-                &error,
-                now,
-            )
-            .await;
-        });
-
-        let (request, response) = handle.next_request().await.expect("failed status update");
-        assert_eq!(request.method(), http::Method::PATCH);
+        .unwrap();
+        let sleeping = SlotState::Sleeping {
+            claim: claim_for(&microvm).unwrap(),
+            snapshot: crate::slot::Snapshot { generation: 1 },
+        };
+        microvm.status = Some(status_for(&microvm, &pod, &sleeping, false));
+        assert!(microvm.status.as_ref().unwrap().ready_at.is_none());
         assert_eq!(
-            request.uri().path(),
-            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent/status"
+            microvm.status.as_ref().unwrap().conditions[0].reason,
+            "GuestStopped"
         );
-        let body: serde_json::Value = serde_json::from_slice(
-            &request
-                .into_body()
-                .collect_bytes()
-                .await
-                .expect("failed status patch body"),
-        )
-        .expect("failed status patch JSON");
-        assert_eq!(body["status"]["phase"], "Failed");
-        assert_eq!(body["status"]["guestReady"], false);
-        assert_eq!(body["status"]["failureReason"], "BootstrapSecretRejected");
-        assert_eq!(body["status"]["observedGeneration"], 4);
-        response.send_response(
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(
-                    serde_json::to_vec(&response_microvm).expect("MicroVM response JSON"),
-                ))
-                .expect("failed status patch response"),
+        assert_eq!(lifecycle_kind(&microvm), "resume");
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "resume".into());
+        microvm.annotations_mut().insert(
+            crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
+            (now - chrono::Duration::seconds(4)).to_rfc3339(),
         );
+        microvm.status = Some(failure_status(
+            &microvm,
+            &anyhow::anyhow!("supervisor response unavailable"),
+        ));
+        assert_eq!(microvm.status.as_ref().unwrap().phase, MicroVMPhase::Failed);
+        assert_eq!(lifecycle_kind(&microvm), "resume");
+        assert_eq!(lifecycle_latency(&microvm, now), Some((true, 4_000)));
 
-        tokio::time::timeout(Duration::from_millis(100), report)
-            .await
-            .expect("bootstrap rejection must publish Failed")
-            .expect("provisioning report task");
+        microvm.status.as_mut().unwrap().ready_at =
+            Some((now - chrono::Duration::seconds(1)).to_rfc3339());
+        assert!(
+            lifecycle_latency(&microvm, now).is_none(),
+            "already completed attempt cannot be counted twice"
+        );
+        microvm.status.as_mut().unwrap().ready_at = None;
+        microvm.annotations_mut().remove(LIFECYCLE_KIND_ANNOTATION);
+        assert_eq!(lifecycle_kind(&microvm), "unknown");
+        assert!(lifecycle_latency(&microvm, now).is_none());
+
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "boot".into());
+        microvm.metadata.creation_timestamp =
+            Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                (now - chrono::Duration::seconds(9))
+                    .to_rfc3339()
+                    .parse()
+                    .unwrap(),
+            ));
+        let (resume, elapsed) = lifecycle_latency(&microvm, now).unwrap();
+        assert!(!resume);
+        assert!((9_000..9_002).contains(&elapsed));
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "recovery".into());
+        assert!(lifecycle_latency(&microvm, now).is_none());
     }
 
     #[test]
-    fn transient_kubernetes_failures_remain_retryable() {
-        for code in [401, 408, 409, 429, 500] {
-            let error = kube::Error::Api(
-                kube::core::Status {
-                    code,
-                    reason: "Retryable".to_owned(),
-                    ..kube::core::Status::default()
-                }
-                .boxed(),
-            );
-            assert!(!is_terminal_provisioning_error(&error));
+    fn a_new_runtime_epoch_cannot_reuse_an_awake_runtime_claim() {
+        let mut microvm = agent();
+        let original = claim_for(&microvm).unwrap();
+        let awake = SlotState::Awake { claim: original };
+        microvm.spec.runtime_epoch = "55555555-5555-4555-8555-555555555555".into();
+        assert!(
+            !awake.serves(&claim_for(&microvm).unwrap()),
+            "an earlier runtime epoch must not serve the newly authorized incarnation"
+        );
+    }
+
+    #[test]
+    fn a_never_started_workspace_retains_its_home_without_a_runtime_claim() {
+        let mut microvm = agent();
+        microvm.spec.desired_state = MicroVMDesiredState::Sleeping;
+        microvm.spec.runtime_epoch.clear();
+        assert!(allocation_for(&microvm).is_ok());
+        assert!(claim_for(&microvm).is_err());
+        let pod: Pod = serde_json::from_value(json!({
+            "metadata":{"name":"slot-test", "uid":"original-pod"},
+            "status":{"podIP":"127.0.0.1"}
+        }))
+        .unwrap();
+        let state = SlotState::Vacant {
+            snapshot: crate::slot::Snapshot { generation: 1 },
+        };
+        assert_eq!(
+            status_for(&microvm, &pod, &state, false).phase,
+            MicroVMPhase::Sleeping
+        );
+        assert!(state.claim().is_none());
+    }
+
+    fn context(client: Client) -> ControllerContext {
+        ControllerContext {
+            agent_work: AgentWorkMonitor::new(
+                crate::guest::GuestPool::new(
+                    client.clone(),
+                    "tengri",
+                    WorkloadIdentity::Fixture(8080),
+                ),
+                crate::guest::authorization::GuestAuthority::fixture(),
+                crate::activity::ActivityTracker::new(client.clone(), "tengri".into()),
+            ),
+            client,
+            namespace: "tengri".into(),
+            tickets: TicketStore::new(
+                "https://tengri.example".into(),
+                Arc::new(crate::control::Database::unconnected_fixture()),
+            )
+            .unwrap(),
+            identity: WorkloadIdentity::Fixture(8080),
+            authorization: crate::authz::WorkspaceAuthorization::Fixture,
+            guest_image: Arc::from("guest-image"),
+            runtime_image: Arc::from("runtime-image"),
+            architecture: MicroVMArchitecture::Amd64,
+            leadership: Some(crate::leadership::Guard::fixture().1),
         }
+    }
 
-        let exhausted_quota = kube::Error::Api(
-            kube::core::Status {
-                code: 403,
-                reason: "Forbidden".to_owned(),
-                message: "exceeded quota: tengri-agents".to_owned(),
-                ..kube::core::Status::default()
-            }
-            .boxed(),
-        );
-        assert!(!is_terminal_provisioning_error(&exhausted_quota));
+    async fn shared_context(client: Client) -> ControllerContext {
+        let mut context = context(client);
+        context.tickets = TicketStore::new(
+            "https://tengri.example".into(),
+            Arc::new(crate::control::Database::shared_fixture().await),
+        )
+        .unwrap();
+        context
+    }
 
-        let forbidden = kube::Error::Api(
-            kube::core::Status {
-                code: 403,
-                reason: "Forbidden".to_owned(),
-                message: "service account cannot create pods".to_owned(),
-                ..kube::core::Status::default()
+    fn get(path: &'static str, response: serde_json::Value) -> Exchange {
+        Exchange {
+            method: Method::GET,
+            path,
+            code: 200,
+            response,
+            body: None,
+        }
+    }
+
+    fn missing(path: &'static str) -> Exchange {
+        Exchange {
+            method: Method::GET,
+            path,
+            code: 404,
+            response: json!({"apiVersion":"v1", "kind":"Status", "status":"Failure", "reason":"NotFound", "message":"not found", "code":404}),
+            body: None,
+        }
+    }
+
+    fn claimed_upgrade_fixture() -> (Lease, serde_json::Value) {
+        let allocation = allocation_for(&agent()).unwrap();
+        let lease = serde_json::from_value(json!({
+            "apiVersion":"coordination.k8s.io/v1", "kind":"Lease",
+            "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod"}},
+            "spec":{"holderIdentity":serde_json::to_string(&allocation).unwrap()}
+        }))
+        .unwrap();
+        let pod = json!({
+            "apiVersion":"v1", "kind":"Pod",
+            "metadata":{"name":"slot-test","uid":"original-pod","resourceVersion":"11","ownerReferences":[{
+                "apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM",
+                "name":allocation.microvm_id,"uid":allocation.microvm_uid,"controller":true
+            }]},
+            "spec":{"containers":[{"name":"supervisor","image":"old-runtime"},{"name":"runner","image":"old-runtime"}]}
+        });
+        (lease, pod)
+    }
+
+    #[tokio::test]
+    async fn spare_slot_startup_waits_without_contacting_an_unstarted_supervisor() {
+        for status in [
+            json!({"phase":"Pending"}),
+            json!({"phase":"Running","podIP":"127.0.0.1","containerStatuses":[{
+                "name":"supervisor","image":"runtime-image","imageID":"runtime-image",
+                "ready":false,"restartCount":0,"state":{"running":{"startedAt":Utc::now().to_rfc3339()}}
+            }]}),
+        ] {
+            let lease: Lease = serde_json::from_value(json!({
+                "metadata":{"name":"slot-test","annotations":{
+                    POD_UID_ANNOTATION:"original-pod", HOME_UID_ANNOTATION:"original-home",
+                    IMAGE_ANNOTATION:"guest-image"
+                }},"spec":{}
+            }))
+            .unwrap();
+            let (client, pending) = mock(vec![get(
+                "/api/v1/namespaces/tengri/pods/slot-test",
+                json!({"metadata":{"name":"slot-test","uid":"original-pod","creationTimestamp":Utc::now().to_rfc3339()},"status":status}),
+            )]);
+            maintain_slot(&context(client), &lease).await.unwrap();
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn spare_slot_startup_does_not_hide_failed_pods_or_expired_startup() {
+        for (uid, status) in [
+            ("replaced-pod", json!({"phase":"Pending"})),
+            ("original-pod", json!({"phase":"Failed"})),
+            (
+                "original-pod",
+                json!({"phase":"Running","podIP":"127.0.0.1","containerStatuses":[{
+                    "name":"supervisor","image":"runtime-image","imageID":"runtime-image",
+                    "ready":false,"restartCount":1,"state":{"waiting":{"reason":"CrashLoopBackOff"}}
+                }]}),
+            ),
+            (
+                "original-pod",
+                json!({"phase":"Running","podIP":"127.0.0.1","containerStatuses":[{
+                    "name":"supervisor","image":"runtime-image","imageID":"runtime-image",
+                    "ready":false,"restartCount":0,"state":{"running":{
+                        "startedAt":(Utc::now()-chrono::Duration::seconds(20)).to_rfc3339()
+                    }}
+                }]}),
+            ),
+        ] {
+            let lease: Lease = serde_json::from_value(json!({
+                "metadata":{"name":"slot-test","annotations":{
+                    POD_UID_ANNOTATION:"original-pod", HOME_UID_ANNOTATION:"original-home",
+                    IMAGE_ANNOTATION:"guest-image"
+                }},"spec":{}
+            }))
+            .unwrap();
+            let (client, pending) = mock(vec![get(
+                "/api/v1/namespaces/tengri/pods/slot-test",
+                json!({"metadata":{"name":"slot-test","uid":uid,"creationTimestamp":Utc::now().to_rfc3339()},"status":status}),
+            )]);
+            assert!(maintain_slot(&context(client), &lease).await.is_err());
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn spare_slot_startup_budget_expires_before_network_or_status_arrives() {
+        for status in [
+            json!({"phase":"Pending"}),
+            json!({"phase":"Running","podIP":"127.0.0.1"}),
+            json!({"phase":"Running","podIP":"127.0.0.1","containerStatuses":[{
+                "name":"supervisor","image":"runtime-image","imageID":"runtime-image",
+                "ready":false,"restartCount":10,"state":{"running":{"startedAt":Utc::now().to_rfc3339()}}
+            }]}),
+        ] {
+            let lease: Lease = serde_json::from_value(json!({
+                "metadata":{"name":"slot-test","annotations":{
+                    POD_UID_ANNOTATION:"original-pod", HOME_UID_ANNOTATION:"original-home",
+                    IMAGE_ANNOTATION:"guest-image"
+                }},"spec":{}
+            }))
+            .unwrap();
+            let (client, pending) = mock(vec![get(
+                "/api/v1/namespaces/tengri/pods/slot-test",
+                json!({"metadata":{"name":"slot-test","uid":"original-pod",
+                    "creationTimestamp":(Utc::now()-chrono::Duration::minutes(5)).to_rfc3339()},"status":status}),
+            )]);
+            assert!(maintain_slot(&context(client), &lease).await.is_err());
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn claimed_supervisor_upgrade_preserves_the_vmm_and_is_idempotent() {
+        let (lease, pod) = claimed_upgrade_fixture();
+        let mut updated = pod.clone();
+        updated["spec"]["containers"][0]["image"] = json!("runtime-image");
+        let (client, pending) = mock(vec![
+            get("/api/v1/namespaces/tengri/pods/slot-test", pod),
+            Exchange {
+                method: Method::PATCH,
+                path: "/api/v1/namespaces/tengri/pods/slot-test",
+                code: 200,
+                body: Some(
+                    json!({"metadata":{"uid":"original-pod","resourceVersion":"11"},
+                    "spec":{"containers":[{"name":"supervisor","image":"runtime-image"}]}}),
+                ),
+                response: updated.clone(),
+            },
+            get("/api/v1/namespaces/tengri/pods/slot-test", updated),
+        ]);
+        let context = context(client);
+        maintain_slot(&context, &lease).await.unwrap();
+        maintain_slot(&context, &lease).await.unwrap();
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn claimed_supervisor_upgrade_rejects_replaced_pods_and_changed_owners() {
+        for changed_owner in [false, true] {
+            let (lease, mut pod) = claimed_upgrade_fixture();
+            if changed_owner {
+                pod["metadata"]["ownerReferences"][0]["uid"] = json!("another-owner");
+            } else {
+                pod["metadata"]["uid"] = json!("another-pod");
             }
-            .boxed(),
+            let (client, pending) =
+                mock(vec![get("/api/v1/namespaces/tengri/pods/slot-test", pod)]);
+            assert!(maintain_slot(&context(client), &lease).await.is_err());
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_reservation_is_deleted_before_any_slot_is_claimed() {
+        let mut microvm = agent();
+        microvm.spec.slot = None;
+        let mut deleting = microvm.clone();
+        deleting.metadata.deletion_timestamp =
+            Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                k8s_openapi::jiff::Timestamp::now(),
+            ));
+        let (client, pending) = mock(vec![
+            Exchange {
+                method: Method::DELETE,
+                path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                code: 200,
+                response: json!(deleting),
+                body: Some(json!({"preconditions":{"uid":microvm.uid(),"resourceVersion":"10"}})),
+            },
+            get(
+                "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                json!(deleting),
+            ),
+        ]);
+        let mut context = context(client);
+        context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(Arc::new(
+            std::sync::atomic::AtomicU8::new(5),
+        ));
+        let result = converge(&context, &microvm, context.leader().unwrap())
+            .await
+            .unwrap();
+        assert!(result.metadata.deletion_timestamp.is_some());
+        assert!(result.spec.slot.is_none());
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn idle_sleep_reservation_survives_reconciliation_without_reprobing_or_restoring() {
+        for (mode, desired) in [
+            (6, MicroVMDesiredState::Running),
+            (6, MicroVMDesiredState::Sleeping),
+            (10, MicroVMDesiredState::Running),
+            (10, MicroVMDesiredState::Sleeping),
+        ] {
+            let mut microvm = agent();
+            microvm.spec.desired_state = desired;
+            microvm.status = Some(MicroVMStatus {
+                pod_uid: Some("original-pod".into()),
+                ..Default::default()
+            });
+            microvm.spec.idle_deadline = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+            microvm.metadata.annotations.get_or_insert_default().insert(
+                crate::activity::ACTIVE_RUN_ANNOTATION.into(),
+                format!("idle-sleep/{}", microvm.spec.runtime_epoch),
+            );
+            let allocation = claim_for(&microvm).unwrap().allocation();
+            let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
+                "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
+                "spec":{"holderIdentity":serde_json::to_string(&allocation).unwrap()}});
+            let (client, pending) = mock(vec![
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    lease,
+                ),
+                get(
+                    "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    json!(microvm),
+                ),
+            ]);
+            let mut context = context(client);
+            let authority = Arc::new(std::sync::atomic::AtomicU8::new(mode));
+            context.authorization =
+                crate::authz::WorkspaceAuthorization::ControlledFixture(authority.clone());
+            let result = converge(&context, &microvm, context.leader().unwrap()).await;
+            assert!(crate::activity::has_idle_sleep_claim(&result.unwrap()));
+            assert!(pending.lock().unwrap().is_empty());
+            assert_eq!(
+                authority.load(std::sync::atomic::Ordering::SeqCst),
+                11,
+                "committed idle sleep must clear the run intent even during an authorization pause"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_authorization_pause_preserves_run_intent_but_quarantine_still_stops_it()
+     {
+        use crate::slot::runner::SlotStatus;
+        use axum::{
+            Json, Router,
+            routing::{get as route_get, post},
+        };
+        use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
+        for (mode, expected) in [(10, 10), (12, 11)] {
+            let authority = Arc::new(AtomicU8::new(mode));
+            let sleeps = Arc::new(AtomicUsize::new(0));
+            let mut microvm = agent();
+            microvm.spec.desired_state = MicroVMDesiredState::Sleeping;
+            microvm.status = Some(MicroVMStatus {
+                pod_uid: Some("original-pod".into()),
+                ..Default::default()
+            });
+            let claim = claim_for(&microvm).unwrap();
+            let awake = SlotStatus {
+                identity: crate::slot::SlotIdentity {
+                    pod_uid: "original-pod".into(),
+                    pvc_uid: "original-pvc".into(),
+                    image: "guest-image".into(),
+                    kernel_sha256: "fixture-kernel".into(),
+                    firecracker_version: crate::slot::FIRECRACKER_VERSION.into(),
+                    cpu: "fixture-cpu".into(),
+                },
+                state: SlotState::Awake {
+                    claim: claim.clone(),
+                },
+            };
+            let mut stopped = awake.clone();
+            stopped.state = SlotState::Sleeping {
+                claim: claim.clone(),
+                snapshot: crate::slot::Snapshot { generation: 1 },
+            };
+            let calls = sleeps.clone();
+            let router = Router::new()
+                .route("/slot/fence", post(|| async { axum::http::StatusCode::OK }))
+                .route(
+                    "/slot/status",
+                    route_get(move || {
+                        let status = awake.clone();
+                        async move { Json(status) }
+                    }),
+                )
+                .route(
+                    "/slot/sleep",
+                    post(move |Json(requested): Json<Claim>| {
+                        assert_eq!(requested, claim);
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        let status = stopped.clone();
+                        async move { Json(status) }
+                    }),
+                );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let allocation = claim_for(&microvm).unwrap().allocation();
+            let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
+                "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
+                "spec":{"holderIdentity":serde_json::to_string(&allocation).unwrap()}});
+            let (client, pending) = mock(vec![
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    lease.clone(),
+                ),
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    lease,
+                ),
+                get(
+                    "/api/v1/namespaces/tengri/pods/slot-test",
+                    json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"slot-test","uid":"original-pod"},"status":{"podIP":"127.0.0.1"}}),
+                ),
+                get(
+                    "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    json!(microvm),
+                ),
+                Exchange {
+                    method: Method::PATCH,
+                    path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test/status",
+                    code: 200,
+                    response: json!(microvm),
+                    body: None,
+                },
+            ]);
+            let mut context = shared_context(client).await;
+            context.identity = WorkloadIdentity::Fixture(port);
+            context.authorization =
+                crate::authz::WorkspaceAuthorization::ControlledFixture(authority.clone());
+            converge(&context, &microvm, context.leader().unwrap())
+                .await
+                .unwrap();
+            server.abort();
+            assert_eq!(
+                sleeps.load(Ordering::SeqCst),
+                1,
+                "denied execution must be stopped"
+            );
+            assert_eq!(
+                authority.load(Ordering::SeqCst),
+                expected,
+                "temporary denial must preserve running intent; quarantine must clear it"
+            );
+            assert!(pending.lock().unwrap().is_empty());
+            if mode == 10 {
+                let mut paused = microvm.clone();
+                let stopped = SlotState::Sleeping {
+                    claim: claim_for(&paused).unwrap(),
+                    snapshot: crate::slot::Snapshot { generation: 1 },
+                };
+                let status = status_for(&paused, &Pod::default(), &stopped, true);
+                assert_eq!(status.phase, MicroVMPhase::Sleeping);
+                assert_eq!(status.conditions[0].reason, "AuthorizationPaused");
+                paused.status = Some(status);
+                authority.store(6, Ordering::SeqCst);
+                let mut resuming = paused.clone();
+                resuming.spec.desired_state = MicroVMDesiredState::Running;
+                let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
+                    "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
+                    "spec":{"holderIdentity":serde_json::to_string(&allocation).unwrap()}});
+                let (client, pending) = mock(vec![
+                    get(
+                        "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                        lease,
+                    ),
+                    Exchange {
+                        method: Method::PATCH,
+                        path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                        code: 200,
+                        response: json!(resuming),
+                        body: None,
+                    },
+                    get(
+                        "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                        json!(resuming),
+                    ),
+                ]);
+                let mut recovered_context = self::context(client);
+                recovered_context.authorization =
+                    crate::authz::WorkspaceAuthorization::ControlledFixture(authority);
+                let recovered = converge(
+                    &recovered_context,
+                    &paused,
+                    recovered_context.leader().unwrap(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(recovered.spec.desired_state, MicroVMDesiredState::Running);
+                assert_eq!(recovered.spec.runtime_epoch, paused.spec.runtime_epoch);
+                assert!(pending.lock().unwrap().is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_rechecks_authority_after_a_slow_slot_status() {
+        use crate::slot::runner::SlotStatus;
+        use axum::{
+            Json, Router,
+            routing::{get as route_get, post},
+        };
+        use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
+        #[derive(Clone, Copy)]
+        enum ObservedSlot {
+            Sleeping,
+            PreviousAwake,
+            Preparing,
+            Failed,
+            TimedOut,
+            TimedOutWithOldRunner,
+            Stopped,
+        }
+        use ObservedSlot::*;
+
+        for (after_status, observed_slot) in [
+            (7, Sleeping),
+            (8, Sleeping),
+            (9, Sleeping),
+            (6, Sleeping),
+            (6, PreviousAwake),
+            (6, Preparing),
+            (6, Failed),
+            (6, TimedOut),
+            (6, TimedOutWithOldRunner),
+            (7, TimedOut),
+            (6, Stopped),
+        ] {
+            let old_awake = matches!(observed_slot, PreviousAwake);
+            let mode = Arc::new(AtomicU8::new(6));
+            let restores = Arc::new(AtomicUsize::new(0));
+            let sleeps = Arc::new(AtomicUsize::new(0));
+            let mut microvm = agent();
+            microvm.status = Some(MicroVMStatus {
+                pod_uid: Some("original-pod".into()),
+                ..Default::default()
+            });
+            let claim = claim_for(&microvm).unwrap();
+            let mut previous = claim.clone();
+            if old_awake {
+                previous.runtime_epoch = "33333333-3333-4333-8333-333333333333".into();
+            }
+            let status = SlotStatus {
+                identity: crate::slot::SlotIdentity {
+                    pod_uid: "original-pod".into(),
+                    pvc_uid: "original-pvc".into(),
+                    image: "guest-image".into(),
+                    kernel_sha256: "fixture-kernel".into(),
+                    firecracker_version: crate::slot::FIRECRACKER_VERSION.into(),
+                    cpu: "fixture-cpu".into(),
+                },
+                state: match observed_slot {
+                    Preparing => SlotState::Preparing,
+                    Failed => SlotState::Failed {
+                        claim: Some(claim.clone()),
+                        message: "disk flush failed".into(),
+                    },
+                    TimedOut | TimedOutWithOldRunner => SlotState::Failed {
+                        claim: Some(claim.clone()),
+                        message: crate::slot::GUEST_LIFECYCLE_TIMEOUT.into(),
+                    },
+                    Stopped => SlotState::Stopped {
+                        claim: claim.clone(),
+                    },
+                    PreviousAwake => SlotState::Awake {
+                        claim: previous.clone(),
+                    },
+                    Sleeping => SlotState::Sleeping {
+                        claim: previous.clone(),
+                        snapshot: crate::slot::Snapshot { generation: 1 },
+                    },
+                },
+            };
+            let before_restore = status.clone();
+            let mut stopped = status.clone();
+            stopped.state = SlotState::Sleeping {
+                claim: previous.clone(),
+                snapshot: crate::slot::Snapshot { generation: 2 },
+            };
+            let sleep_calls = sleeps.clone();
+            let changed = mode.clone();
+            let mut restored = status;
+            restored.state = SlotState::Awake {
+                claim: claim.clone(),
+            };
+            let calls = restores.clone();
+            let router = Router::new()
+                .route("/slot/fence", post(|| async { axum::http::StatusCode::OK }))
+                .route(
+                    "/slot/status",
+                    route_get(move || {
+                        let changed = changed.clone();
+                        let status = before_restore.clone();
+                        async move {
+                            tokio::time::sleep(Duration::from_millis(2100)).await;
+                            changed.store(after_status, Ordering::SeqCst);
+                            Json(status)
+                        }
+                    }),
+                )
+                .route(
+                    "/slot/sleep",
+                    post(move |Json(requested): Json<Claim>| {
+                        assert_eq!(requested, previous);
+                        sleep_calls.fetch_add(1, Ordering::SeqCst);
+                        let status = stopped.clone();
+                        async move { Json(status) }
+                    }),
+                )
+                .route(
+                    "/slot/restore",
+                    post(move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        let status = restored.clone();
+                        async move { Json(status) }
+                    }),
+                );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let lease = json!({
+                "apiVersion":"coordination.k8s.io/v1", "kind":"Lease",
+                "metadata":{"name":"slot-test", "annotations":{
+                    POD_UID_ANNOTATION:"original-pod", HOME_UID_ANNOTATION:"original-pvc", HOME_NAME_ANNOTATION:"original-home"
+                }},
+                "spec":{"holderIdentity":serde_json::to_string(&claim.allocation()).unwrap()}
+            });
+            let runtime_image = "registry.test/tengri@sha256:new";
+            let runner_image_id = if matches!(observed_slot, TimedOutWithOldRunner) {
+                "registry.test/tengri@sha256:old"
+            } else {
+                runtime_image
+            };
+            let (client, pending) = mock(vec![
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    lease.clone(),
+                ),
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    lease,
+                ),
+                get(
+                    "/api/v1/namespaces/tengri/pods/slot-test",
+                    json!({
+                        "apiVersion":"v1", "kind":"Pod", "metadata":{"name":"slot-test", "uid":"original-pod"},
+                        "spec":{"containers":[{"name":"runner","image":runtime_image}]},
+                        "status":{"podIP":"127.0.0.1","containerStatuses":[{
+                            "name":"runner","image":runtime_image,"imageID":runner_image_id,
+                            "ready":true,"restartCount":1,"state":{"running":{}}
+                        }]}
+                    }),
+                ),
+                get(
+                    "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    json!(microvm),
+                ),
+                Exchange {
+                    method: Method::PATCH,
+                    path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test/status",
+                    code: 200,
+                    response: json!(microvm),
+                    body: None,
+                },
+            ]);
+            let mut context = context(client);
+            context.runtime_image = Arc::from(runtime_image);
+            context.identity = WorkloadIdentity::Fixture(port);
+            context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(mode);
+            let result = converge(&context, &microvm, context.leader().unwrap()).await;
+            server.abort();
+            if after_status == 6 {
+                result.expect("fresh unchanged authority must still restore after the initial decision expires");
+                assert_eq!(
+                    restores.load(Ordering::SeqCst),
+                    usize::from(matches!(observed_slot, Sleeping | PreviousAwake | TimedOut)),
+                    "a fenced timeout must wait for the new runner even after its image is set in the Pod spec"
+                );
+                assert_eq!(sleeps.load(Ordering::SeqCst), usize::from(old_awake));
+                assert!(pending.lock().unwrap().is_empty());
+            } else {
+                assert_eq!(
+                    restores.load(Ordering::SeqCst),
+                    0,
+                    "changed or expired authority restored the guest: fixture {after_status}"
+                );
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("Ofz runtime authority")
+                );
+                assert_eq!(pending.lock().unwrap().len(), 2);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_deleting_agent_cannot_start_another_restore() {
+        let mut microvm = agent();
+        microvm.metadata.deletion_timestamp =
+            Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                k8s_openapi::jiff::Timestamp::now(),
+            ));
+        let (client, pending) = mock(vec![]);
+        let context = context(client);
+        let error = converge(&context, &microvm, context.leader().unwrap())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("agent is terminating"));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn retained_home_cannot_be_replaced_without_explicit_enrollment() {
+        let mut microvm = agent();
+        microvm.spec.slot = None;
+        microvm.status = Some(MicroVMStatus {
+            pvc_name: Some("retained-home".into()),
+            ..Default::default()
+        });
+        let (client, pending) = mock(vec![get(
+            "/apis/coordination.k8s.io/v1/namespaces/tengri/leases",
+            json!({"apiVersion":"coordination.k8s.io/v1", "kind":"LeaseList", "items":[]}),
+        )]);
+        let error = ensure_slot(
+            &client,
+            "tengri",
+            &microvm,
+            &WorkloadIdentity::Fixture(8080),
+            &crate::leadership::Guard::fixture().1,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("retained home requires explicit slot enrollment")
         );
-        assert!(is_terminal_provisioning_error(&forbidden));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_authorization_removal_keeps_the_slot_and_home() {
+        let (client, pending) = mock(vec![]);
+        let mut context = context(client);
+        let fixture = crate::authz::tests::OfzFixture::new().await;
+        context.authorization = fixture.authorization.clone();
+        fixture.mode.store(4, std::sync::atomic::Ordering::SeqCst);
+        let error = cleanup(&context, &agent()).await.unwrap_err();
+        assert!(error.to_string().contains("remove workspace authorization"));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_deletion_before_claim_fences_the_candidate_and_keeps_prepared_assets()
+     {
+        let microvm = agent();
+        let lease = json!({
+            "metadata": {"name":"slot-test", "uid":"lease-uid", "resourceVersion":"20"},
+            "spec": {"leaseTransitions":1}
+        });
+        let fenced = json!({
+            "metadata": {"name":"slot-test", "uid":"lease-uid", "resourceVersion":"21"},
+            "spec": {"leaseTransitions":2}
+        });
+        let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                lease,
+            ),
+            Exchange {
+                method: Method::PUT,
+                path: "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                code: 200,
+                response: fenced,
+                body: Some(json!({
+                    "apiVersion":"coordination.k8s.io/v1", "kind":"Lease",
+                    "metadata":{"name":"slot-test", "uid":"lease-uid", "resourceVersion":"20"},
+                    "spec":{"leaseTransitions":2}
+                })),
+            },
+            get(
+                "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                serde_json::to_value(&microvm).unwrap(),
+            ),
+            Exchange {
+                method: Method::PATCH,
+                path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                code: 200,
+                response: serde_json::to_value(&microvm).unwrap(),
+                body: Some(json!({"metadata":{"resourceVersion":"10", "finalizers":[]}})),
+            },
+        ]);
+        let mut context = shared_context(client).await;
+        context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(Arc::new(
+            std::sync::atomic::AtomicU8::new(5),
+        ));
+        cleanup(&context, &microvm).await.unwrap();
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_candidate_cannot_claim_the_vacant_slot() {
+        let microvm = agent();
+        let (client, pending) = mock(vec![get(
+            "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+            json!({"metadata":{"uid":"lease-uid", "resourceVersion":"21"}, "spec":{"leaseTransitions":2}}),
+        )]);
+        let error = ensure_slot(
+            &client,
+            "tengri",
+            &microvm,
+            &WorkloadIdentity::Fixture(8080),
+            &crate::leadership::Guard::fixture().1,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("slot candidate was cancelled"));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_unenrolled_claimed_home_is_retained_for_recovery() {
+        let microvm = agent();
+        let (client, pending) = mock(vec![get(
+            "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+            json!({"metadata":{"name":"slot-test", "uid":"lease-uid", "resourceVersion":"20"}, "spec":{
+                "holderIdentity":serde_json::to_string(&allocation_for(&microvm).unwrap()).unwrap(), "leaseTransitions":2
+            }}),
+        )]);
+        let mut context = shared_context(client).await;
+        context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(Arc::new(
+            std::sync::atomic::AtomicU8::new(5),
+        ));
+        let error = cleanup(&context, &microvm).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("claimed retained home requires Ofz enrollment")
+        );
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_cancellation_without_a_slot_releases_only_the_empty_candidate() {
+        let mut microvm = agent();
+        microvm.spec.slot = None;
+        let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases",
+                json!({"apiVersion":"coordination.k8s.io/v1", "kind":"LeaseList", "metadata":{}, "items":[]}),
+            ),
+            get(
+                "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                serde_json::to_value(&microvm).unwrap(),
+            ),
+            Exchange {
+                method: Method::PATCH,
+                path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                code: 200,
+                response: serde_json::to_value(&microvm).unwrap(),
+                body: Some(json!({"metadata":{"resourceVersion":"10", "finalizers":[]}})),
+            },
+        ]);
+        let mut context = shared_context(client).await;
+        context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(Arc::new(
+            std::sync::atomic::AtomicU8::new(5),
+        ));
+        cleanup(&context, &microvm).await.unwrap();
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_a_concurrent_claim_keeps_the_deleting_agents_finalizer() {
+        let microvm = agent();
+        let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                json!({"metadata":{"name":"slot-test", "uid":"lease-uid", "resourceVersion":"20"}, "spec":{"leaseTransitions":1}}),
+            ),
+            Exchange {
+                method: Method::PUT,
+                path: "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                code: 409,
+                response: json!({"apiVersion":"v1", "kind":"Status", "status":"Failure", "reason":"Conflict", "message":"slot claimed concurrently", "code":409}),
+                body: None,
+            },
+        ]);
+        let error = cleanup(&shared_context(client).await, &microvm)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("slot claimed concurrently"));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_unclaimed_losers_finalize_without_touching_another_owners_assets()
+    {
+        let microvm = agent();
+        for holder in [
+            None,
+            Some(Allocation {
+                microvm_id: "winning-agent".into(),
+                microvm_uid: "winning-owner".into(),
+                epoch: 2,
+            }),
+            Some(Allocation {
+                microvm_id: "next-agent".into(),
+                microvm_uid: "next-owner".into(),
+                epoch: 3,
+            }),
+        ] {
+            let (client, pending) = mock(vec![
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    json!({"metadata":{"name":"slot-test", "uid":"lease-uid", "resourceVersion":"21"}, "spec":{
+                        "leaseTransitions": holder.as_ref().map_or(2, |claim| claim.epoch),
+                        "holderIdentity": holder.map(|claim| serde_json::to_string(&claim).unwrap())
+                    }}),
+                ),
+                get(
+                    "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    serde_json::to_value(&microvm).unwrap(),
+                ),
+                Exchange {
+                    method: Method::PATCH,
+                    path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    code: 200,
+                    response: serde_json::to_value(&microvm).unwrap(),
+                    body: Some(json!({"metadata":{"resourceVersion":"10", "finalizers":[]}})),
+                },
+            ]);
+            let mut context = shared_context(client).await;
+            context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(
+                Arc::new(std::sync::atomic::AtomicU8::new(5)),
+            );
+            cleanup(&context, &microvm).await.unwrap();
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_a_reassigned_active_slot_keeps_the_home_and_finalizer() {
+        for status in [
+            MicroVMStatus {
+                pod_uid: Some("original-pod".into()),
+                ..Default::default()
+            },
+            MicroVMStatus {
+                pvc_name: Some("original-home".into()),
+                ..Default::default()
+            },
+        ] {
+            let mut microvm = agent();
+            microvm.status = Some(status);
+            let holder = Allocation {
+                microvm_id: "another-agent".into(),
+                microvm_uid: "another-owner".into(),
+                epoch: 2,
+            };
+            let (client, pending) = mock(vec![get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                json!({"metadata":{"uid":"lease-uid", "resourceVersion":"21"}, "spec":{
+                    "leaseTransitions":2, "holderIdentity":serde_json::to_string(&holder).unwrap()
+                }}),
+            )]);
+            let error = cleanup(&shared_context(client).await, &microvm)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("active slot claim changed"));
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_lost_pod_without_a_stop_receipt_keeps_the_home_and_finalizer() {
+        let microvm = agent();
+        let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                json!({"metadata":{"uid":"lease-uid"}, "spec":{"holderIdentity":serde_json::to_string(&allocation_for(&microvm).unwrap()).unwrap()}}),
+            ),
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                json!({"metadata":{"uid":"lease-uid"}, "spec":{"holderIdentity":serde_json::to_string(&allocation_for(&microvm).unwrap()).unwrap()}}),
+            ),
+            missing("/api/v1/namespaces/tengri/pods/slot-test"),
+        ]);
+        let error = cleanup(&shared_context(client).await, &microvm)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("not found"));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_cleanup_does_not_delete_a_replaced_home_after_the_pod_is_gone() {
+        let mut microvm = agent();
+        microvm
+            .annotations_mut()
+            .insert(STOPPED_POD_ANNOTATION.into(), "original-pod".into());
+        let (client, pending) = mock(vec![
+            missing("/api/v1/namespaces/tengri/pods/slot-test"),
+            get(
+                "/api/v1/namespaces/tengri/persistentvolumeclaims/original-home",
+                json!({"metadata":{"uid":"replacement-pvc"}}),
+            ),
+        ]);
+        let error = cleanup(&shared_context(client).await, &microvm)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("home replaced during deletion"));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_a_stop_receipt_makes_cleanup_retryable_after_all_assets_were_deleted()
+     {
+        let mut microvm = agent();
+        microvm
+            .annotations_mut()
+            .insert(STOPPED_POD_ANNOTATION.into(), "original-pod".into());
+        let (client, pending) = mock(vec![
+            missing("/api/v1/namespaces/tengri/pods/slot-test"),
+            missing("/api/v1/namespaces/tengri/persistentvolumeclaims/original-home"),
+            missing("/api/v1/namespaces/tengri/secrets/slot-test-bootstrap"),
+            missing("/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test"),
+            missing("/api/v1/namespaces/tengri/persistentvolumeclaims/original-home"),
+            get(
+                "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                serde_json::to_value(&microvm).unwrap(),
+            ),
+            Exchange {
+                method: Method::PATCH,
+                path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                code: 200,
+                response: serde_json::to_value(&microvm).unwrap(),
+                body: Some(json!({"metadata":{"resourceVersion":"10", "finalizers":[]}})),
+            },
+        ]);
+        cleanup(&shared_context(client).await, &microvm)
+            .await
+            .unwrap();
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn terminating_and_unreachable_vacancies_do_not_abort_the_pool_scan() {
+        let lease = |name: &str| {
+            json!({
+                "metadata": {"name": name, "annotations": {
+                    IMAGE_ANNOTATION: "guest-image",
+                    POD_UID_ANNOTATION: format!("{name}-pod"),
+                    HOME_UID_ANNOTATION: format!("{name}-home"),
+                    HOME_NAME_ANNOTATION: format!("{name}-pvc")
+                }}, "spec": {}
+            })
+        };
+        let mut terminating = lease("terminating");
+        // Skip terminating Pods before consulting their home or supervisor.
+        terminating["metadata"]["annotations"]
+            .as_object_mut()
+            .unwrap()
+            .remove(HOME_UID_ANNOTATION);
+        let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases",
+                json!({"metadata": {}, "items": [terminating, lease("unreachable"), lease("preparing")]}),
+            ),
+            get(
+                "/api/v1/namespaces/tengri/pods/terminating",
+                json!({"metadata":{
+                    "uid":"terminating-pod", "deletionTimestamp":"2026-10-07T00:00:00Z"
+                }, "status": {
+                    "podIP":"127.0.0.1", "conditions":[{"type":"Ready", "status":"True"}]
+                }}),
+            ),
+            get(
+                "/api/v1/namespaces/tengri/pods/unreachable",
+                json!({"metadata":{"uid":"unreachable-pod"}, "status": {
+                    "podIP":"127.0.0.1", "conditions":[{"type":"Ready", "status":"True"}]
+                }}),
+            ),
+            get(
+                "/api/v1/namespaces/tengri/pods/preparing",
+                json!({"metadata":{"uid":"preparing-pod"}, "status": {
+                    "conditions":[{"type":"Ready", "status":"False"}]
+                }}),
+            ),
+        ]);
+        let result = prepared_slot(
+            &client,
+            "tengri",
+            "guest-image",
+            &WorkloadIdentity::Fixture(8080),
+        )
+        .await;
+        assert!(
+            result
+                .unwrap_err()
+                .downcast_ref::<NoPreparedSlot>()
+                .is_some()
+        );
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn transport_failure_does_not_claim_the_running_guest_failed() {
+        let mut microvm = agent();
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            runtime_epoch: microvm.spec.runtime_epoch.clone(),
+            ..Default::default()
+        });
+        let status = failure_status(
+            &microvm,
+            &anyhow::Error::from(tonic::Status::cancelled("transport timeout")),
+        );
+        assert_eq!(status.phase, MicroVMPhase::Ready);
+        assert!(!status.guest_ready);
+        assert_eq!(status.conditions[0].status, "Unknown");
+        assert_eq!(status.conditions[0].reason, "ReconcileUnavailable");
+        assert!(status.failure_reason.is_none());
+        let failed = failure_status(&microvm, &anyhow::anyhow!("retained-home binding changed"));
+        assert_eq!(failed.phase, MicroVMPhase::Failed);
+        assert!(!failed.guest_ready);
+        assert_eq!(failed.conditions[0].status, "False");
+    }
+
+    #[tokio::test]
+    async fn persisted_failure_transitions_increment_the_counter_once() {
+        let metrics = metrics::Metrics::default();
+        let failures = || {
+            metrics
+                .render()
+                .lines()
+                .find_map(|line| line.strip_prefix("tengri_guest_failures_total "))
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+        };
+        let before = failures();
+        metrics::global().record_guest_failure();
+        let microvm = agent();
+        let mut failed = microvm.clone();
+        failed.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Failed,
+            message: Some("snapshot write failed".into()),
+            ..Default::default()
+        });
+        let mut still_failed = failed.clone();
+        still_failed.status.as_mut().unwrap().message = Some("snapshot retry failed".into());
+        let patch = |response: &MicroVM| Exchange {
+            method: Method::PATCH,
+            path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test/status",
+            code: 200,
+            response: serde_json::to_value(response).unwrap(),
+            body: None,
+        };
+        let (client, pending) = mock(vec![patch(&failed), patch(&still_failed)]);
+        let updated = patch_status(
+            &client,
+            "tengri",
+            &microvm,
+            failed.status.as_ref().unwrap(),
+            &metrics,
+            &crate::leadership::Guard::fixture().1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(failures(), before + 1);
+        patch_status(
+            &client,
+            "tengri",
+            &updated,
+            still_failed.status.as_ref().unwrap(),
+            &metrics,
+            &crate::leadership::Guard::fixture().1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(failures(), before + 1);
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn lost_leadership_prevents_status_mutation() {
+        let microvm = agent();
+        let (client, pending) = mock(vec![]);
+        let (authority, leadership) = crate::leadership::Guard::fixture();
+        authority.send_replace(None);
+        let status = failure_status(&microvm, &anyhow::anyhow!("runtime unavailable"));
+        assert!(
+            patch_status(
+                &client,
+                "tengri",
+                &microvm,
+                &status,
+                &metrics::Metrics::default(),
+                &leadership
+            )
+            .await
+            .is_err()
+        );
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unchanged_status_does_not_write_to_kubernetes() {
+        let mut microvm = agent();
+        let state = SlotState::Awake {
+            claim: claim_for(&microvm).unwrap(),
+        };
+        let status = status_for(&microvm, &Pod::default(), &state, false);
+        microvm.status = Some(status.clone());
+        assert_eq!(status_for(&microvm, &Pod::default(), &state, false), status);
+        let (client, pending) = mock(vec![]);
+        assert_eq!(
+            patch_status(
+                &client,
+                "tengri",
+                &microvm,
+                &status,
+                &metrics::Metrics::default(),
+                &crate::leadership::Guard::fixture().1,
+            )
+            .await
+            .unwrap()
+            .resource_version(),
+            Some("10".into())
+        );
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn runtime_recovery_records_the_condition_transition_once() {
+        let mut microvm = agent();
+        let state = SlotState::Awake {
+            claim: claim_for(&microvm).unwrap(),
+        };
+        microvm.status = Some(status_for(&microvm, &Pod::default(), &state, false));
+        let mut unknown = failure_status(
+            &microvm,
+            &anyhow::Error::from(tonic::Status::unavailable("dependency unavailable")),
+        );
+        unknown.conditions[0].last_transition_at = "2026-10-08T19:00:00Z".into();
+        microvm.status = Some(unknown.clone());
+        let repeated = failure_status(
+            &microvm,
+            &anyhow::Error::from(tonic::Status::aborted(
+                "runtime authority changed before disclosure",
+            )),
+        );
+        assert_eq!(repeated, unknown);
+        let recovered = status_for(&microvm, &Pod::default(), &state, false);
+        assert_eq!(recovered.conditions[0].status, "True");
+        assert_eq!(recovered.conditions[0].reason, "GuestReady");
+        assert_ne!(
+            recovered.conditions[0].last_transition_at,
+            unknown.conditions[0].last_transition_at
+        );
+        microvm.status = Some(recovered.clone());
+        assert_eq!(
+            status_for(&microvm, &Pod::default(), &state, false),
+            recovered
+        );
+    }
+
+    #[test]
+    fn a_fenced_workspace_preserves_its_reconnect_path() {
+        let mut microvm = agent();
+        let state = SlotState::Failed {
+            claim: Some(claim_for(&microvm).unwrap()),
+            message: crate::slot::LIFECYCLE_WITHDRAWN.into(),
+        };
+        let pod = Pod::default();
+        microvm.spec.desired_state = MicroVMDesiredState::Sleeping;
+        let paused = status_for(&microvm, &pod, &state, true);
+        assert_eq!(paused.phase, MicroVMPhase::Sleeping);
+        assert_eq!(paused.conditions[0].reason, "AuthorizationPaused");
+        assert!(!paused.guest_ready);
+        assert!(paused.failure_reason.is_none());
+
+        let sleeping = status_for(&microvm, &pod, &state, false);
+        assert_eq!(sleeping.phase, MicroVMPhase::Sleeping);
+        assert_eq!(sleeping.conditions[0].reason, "RetainedDisksStopped");
+
+        microvm.spec.desired_state = MicroVMDesiredState::Running;
+        for message in [
+            crate::slot::LIFECYCLE_WITHDRAWN,
+            crate::slot::GUEST_LIFECYCLE_TIMEOUT,
+        ] {
+            let stopped = SlotState::Failed {
+                claim: Some(claim_for(&microvm).unwrap()),
+                message: message.into(),
+            };
+            let booting = status_for(&microvm, &pod, &stopped, false);
+            assert_eq!(booting.phase, MicroVMPhase::Booting);
+            assert_eq!(booting.conditions[0].reason, "RetainedDiskBootInProgress");
+            assert!(!booting.guest_ready);
+        }
+    }
+
+    #[tokio::test]
+    async fn unchanged_failure_does_not_trigger_another_reconciliation() {
+        for error in [anyhow::anyhow!("slot unavailable"), NoPreparedSlot.into()] {
+            let mut microvm = agent();
+            let mut status = failure_status(&microvm, &error);
+            status.conditions[0].last_transition_at = "2026-10-08T19:00:00Z".into();
+            microvm.status = Some(status);
+            let next = failure_status(&microvm, &error);
+            let (client, pending) = mock(vec![]);
+            patch_status(
+                &client,
+                "tengri",
+                &microvm,
+                &next,
+                &metrics::Metrics::default(),
+                &crate::leadership::Guard::fixture().1,
+            )
+            .await
+            .unwrap();
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn preparing_and_failed_slots_cannot_claim_that_ram_was_released() {
+        let microvm = agent();
+        assert_eq!(
+            status_for(&microvm, &Pod::default(), &SlotState::Preparing, false).conditions[0]
+                .reason,
+            "SnapshotLifecycleInProgress"
+        );
+        let failed = status_for(
+            &microvm,
+            &Pod::default(),
+            &SlotState::Failed {
+                claim: Some(claim_for(&microvm).unwrap()),
+                message: "disk flush failed".into(),
+            },
+            false,
+        );
+        assert_eq!(failed.message.as_deref(), Some("disk flush failed"));
+        assert_eq!(failed.conditions[0].message, "disk flush failed");
+        assert!(!failed.guest_ready);
+    }
+
+    #[test]
+    fn retirement_refuses_assets_adopted_by_any_microvm() {
+        let microvm = agent();
+        let metadata = pod::owned_metadata(Default::default(), &microvm);
+        assert!(ensure_asset_owner(&metadata, None).is_err());
+        assert!(ensure_asset_owner(&metadata, Some(&microvm)).is_ok());
+        let mut other = microvm;
+        other.metadata.uid = Some("different-owner".into());
+        assert!(ensure_asset_owner(&metadata, Some(&other)).is_err());
     }
 }

@@ -1,25 +1,31 @@
-use std::{
-    collections::{HashMap, HashSet},
-    pin::Pin,
-    sync::{Arc, Mutex, MutexGuard, Weak},
-    time::Duration,
-};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use k8s_openapi::api::core::v1::Secret;
-use kube::{Api, Client, ResourceExt};
-use reqwest::{Method, StatusCode};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use kube::{Api, Client};
+use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
-use crate::crd::{MicroVM, MicroVMPhase};
+use crate::identity::WorkloadIdentity;
 
-const GUEST_API_PORT: u16 = 8080;
+pub(crate) mod authorization;
+mod codex_history;
+pub use codex_history::CodexHistoryPart;
+mod codex_options;
+mod pool;
+pub(crate) mod rpc;
+
+pub use codex_options::CodexOptions;
+pub use pool::GuestPool;
+
+pub(crate) const GUEST_API_PORT: u16 = 8443;
+pub const EDITOR_PORT: u16 = 13337;
+pub const BROWSER_PORT: u16 = 13339;
+pub const EDITOR_BRIDGE_PORT: u16 = 13338;
 const BOOTSTRAP_TOKEN_KEY: &str = "token";
-const MAX_GUEST_ERROR_BYTES: usize = 64 << 10;
 const MAX_GUEST_FILE_BYTES: usize = 4 << 20;
 const MAX_GUEST_JSON_BYTES: usize = 10 << 20;
 const MAX_GUEST_STREAM_LINE_BYTES: usize = 3 << 20;
@@ -28,228 +34,62 @@ const GUEST_UNARY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum GuestError {
+    #[error("Codex rejected the operation before dispatch")]
+    CodexOperationRejected,
     #[error("Kubernetes API request failed: {0}")]
     Kubernetes(#[from] kube::Error),
+    #[error("SPIFFE guest transport failed: {0}")]
+    Identity(#[from] anyhow::Error),
     #[error("MicroVM {0} is not ready")]
     NotReady(String),
     #[error("MicroVM {0} has no guest IP")]
     MissingGuestIp(String),
     #[error("bootstrap secret {0} is missing token data")]
     MissingToken(String),
-    #[error("Nanoagent API request failed: {0}")]
-    Transport(#[from] reqwest::Error),
     #[error("Nanoagent API returned {status}: {message}")]
     Api { status: StatusCode, message: String },
-    #[error("Nanoagent stream returned invalid UTF-8")]
-    InvalidUtf8,
+    #[error("Guest protocol {actual} requires an upgrade to protocol {required}")]
+    IncompatibleProtocol { actual: u32, required: u32 },
     #[error("Nanoagent returned invalid JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
-    #[error("Nanoagent does not support atomic Codex snapshot cursors")]
-    MissingCodexSnapshotCursor,
+    #[error("Nanoagent returned invalid Codex history: {0}")]
+    InvalidCodexHistory(&'static str),
+    #[error("Codex conversation history retrieval timed out")]
+    CodexHistoryTimeout,
+    #[error("Nanoagent returned terminal creation identity {actual:?}; expected {expected:?}")]
+    TerminalCreationIdentityMismatch {
+        expected: String,
+        actual: String,
+        created_terminal_id: Option<String>,
+    },
+    #[error("Nanoagent did not return a strong SHA-256 file revision")]
+    MissingFileRevision,
+    #[error("Nanoagent returned an invalid file revision")]
+    InvalidFileRevision,
+    #[error("Nanoagent file revision does not match the returned content")]
+    FileRevisionMismatch,
     #[error("Nanoagent response exceeded the {0}-byte limit")]
     ResponseTooLarge(usize),
 }
 
 #[derive(Clone)]
 pub struct GuestClient {
-    http: reqwest::Client,
     base_url: String,
     token: String,
-    agent_id: String,
-    terminal_identities: TerminalIdentityRegistry,
+    pub(crate) http: reqwest::Client,
+    pub(crate) preview_tls: Option<Arc<rustls::ClientConfig>>,
+    pub(crate) rpc: rpc::RpcClient,
+    pub(crate) claim_headers: reqwest::header::HeaderMap,
 }
 
-#[derive(Clone, Default)]
-pub struct TerminalIdentityRegistry {
-    state: Arc<Mutex<TerminalIdentityState>>,
-    legacy_creation_locks: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
-}
-
-#[derive(Default)]
-struct TerminalIdentityState {
-    agents: HashMap<String, AgentTerminalIdentities>,
-}
-
-#[derive(Default)]
-struct AgentTerminalIdentities {
-    creation_ids: HashMap<String, String>,
-    pending: HashMap<String, PendingLegacyCreation>,
-}
-
-struct PendingLegacyCreation {
-    existing_session_ids: HashSet<String>,
-    cwd: String,
-}
-
-impl TerminalIdentityRegistry {
-    async fn lock_legacy_creation(&self, agent_id: &str) -> OwnedMutexGuard<()> {
-        let lock = {
-            let mut locks = self
-                .legacy_creation_locks
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            locks.retain(|_, lock| lock.strong_count() > 0);
-            if let Some(lock) = locks.get(agent_id).and_then(Weak::upgrade) {
-                lock
-            } else {
-                let lock = Arc::new(AsyncMutex::new(()));
-                locks.insert(agent_id.to_owned(), Arc::downgrade(&lock));
-                lock
-            }
-        };
-        lock.lock_owned().await
-    }
-
-    fn begin_legacy_creation(
-        &self,
-        agent_id: &str,
-        creation_id: &str,
-        cwd: &str,
-        existing: &[TerminalSession],
-    ) {
-        let mut state = self.state();
-        state
-            .agents
-            .entry(agent_id.to_owned())
-            .or_default()
-            .pending
-            .insert(
-                creation_id.to_owned(),
-                PendingLegacyCreation {
-                    existing_session_ids: existing
-                        .iter()
-                        .map(|session| session.id.clone())
-                        .collect(),
-                    cwd: cwd.to_owned(),
-                },
-            );
-    }
-
-    fn finish_creation(&self, agent_id: &str, creation_id: &str, session_id: &str) {
-        let mut state = self.state();
-        let identities = state.agents.entry(agent_id.to_owned()).or_default();
-        identities.pending.remove(creation_id);
-        identities
-            .creation_ids
-            .insert(session_id.to_owned(), creation_id.to_owned());
-    }
-
-    pub(crate) fn restore_legacy_creation(
-        &self,
-        agent_id: &str,
-        creation_id: &str,
-        cwd: &str,
-        existing_session_ids: &[String],
-        terminal_id: Option<&str>,
-    ) {
-        let mut state = self.state();
-        let identities = state.agents.entry(agent_id.to_owned()).or_default();
-        if let Some(terminal_id) = terminal_id {
-            identities.pending.remove(creation_id);
-            identities
-                .creation_ids
-                .insert(terminal_id.to_owned(), creation_id.to_owned());
-            return;
-        }
-        identities.pending.insert(
-            creation_id.to_owned(),
-            PendingLegacyCreation {
-                existing_session_ids: existing_session_ids.iter().cloned().collect(),
-                cwd: cwd.to_owned(),
-            },
-        );
-    }
-
-    pub(crate) fn remove_creation(&self, agent_id: &str, creation_id: &str) {
-        let mut state = self.state();
-        let remove_agent = if let Some(identities) = state.agents.get_mut(agent_id) {
-            identities.pending.remove(creation_id);
-            identities
-                .creation_ids
-                .retain(|_, stored_creation_id| stored_creation_id != creation_id);
-            identities.creation_ids.is_empty() && identities.pending.is_empty()
-        } else {
-            false
-        };
-        if remove_agent {
-            state.agents.remove(agent_id);
-        }
-    }
-
-    pub(crate) fn reconcile(&self, agent_id: &str, sessions: &mut [TerminalSession]) {
-        let mut state = self.state();
-        let Some(identities) = state.agents.get_mut(agent_id) else {
-            return;
-        };
-        let active_session_ids = sessions
-            .iter()
-            .map(|session| session.id.clone())
-            .collect::<HashSet<_>>();
-        identities
-            .creation_ids
-            .retain(|session_id, _| active_session_ids.contains(session_id));
-        for session in sessions.iter() {
-            if !session.creation_id.is_empty() {
-                identities
-                    .creation_ids
-                    .insert(session.id.clone(), session.creation_id.clone());
-            }
-        }
-
-        let mut claimed_session_ids = identities
-            .creation_ids
-            .keys()
-            .cloned()
-            .collect::<HashSet<_>>();
-        let mut reconciled = Vec::new();
-        for (creation_id, pending) in &identities.pending {
-            let candidates = sessions
-                .iter()
-                .filter(|session| {
-                    session.creation_id.is_empty()
-                        && session.cwd == pending.cwd
-                        && !pending.existing_session_ids.contains(&session.id)
-                        && !claimed_session_ids.contains(&session.id)
-                })
-                .collect::<Vec<_>>();
-            if let [session] = candidates.as_slice() {
-                identities
-                    .creation_ids
-                    .insert(session.id.clone(), creation_id.clone());
-                claimed_session_ids.insert(session.id.clone());
-                reconciled.push(creation_id.clone());
-            }
-        }
-        for creation_id in reconciled {
-            identities.pending.remove(&creation_id);
-        }
-        for session in sessions {
-            if session.creation_id.is_empty()
-                && let Some(creation_id) = identities.creation_ids.get(&session.id)
-            {
-                session.creation_id.clone_from(creation_id);
-            }
-        }
-    }
-
-    fn remove_session(&self, agent_id: &str, session_id: &str) {
-        let mut state = self.state();
-        let remove_agent = if let Some(identities) = state.agents.get_mut(agent_id) {
-            identities.creation_ids.remove(session_id);
-            identities.creation_ids.is_empty() && identities.pending.is_empty()
-        } else {
-            false
-        };
-        if remove_agent {
-            state.agents.remove(agent_id);
-        }
-    }
-
-    fn state(&self) -> MutexGuard<'_, TerminalIdentityState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
+#[derive(Clone)]
+pub(super) struct GuestTransport {
+    base_url: String,
+    token: String,
+    http: reqwest::Client,
+    preview_tls: Option<Arc<rustls::ClientConfig>>,
+    channel: tonic::transport::Channel,
+    claim_headers: reqwest::header::HeaderMap,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -282,6 +122,7 @@ pub struct FileContent {
     pub path: String,
     pub content: Vec<u8>,
     pub content_type: String,
+    pub revision: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -289,6 +130,8 @@ pub struct FileContent {
 pub struct WriteResult {
     pub path: String,
     pub size: i64,
+    #[serde(default)]
+    pub revision: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -321,11 +164,6 @@ pub struct TerminalCreation {
     pub created: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct TerminalList {
-    sessions: Vec<TerminalSession>,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexEvent {
@@ -338,10 +176,20 @@ pub struct CodexEvent {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CodexCallResponse {
-    result: Value,
+pub(crate) struct CodexCallResponse {
+    pub(crate) result: Value,
     #[serde(default)]
-    event_sequence: Option<u64>,
+    event_sequence: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLoginSnapshot {
+    pub active: bool,
+    #[serde(default)]
+    pub result: Value,
+    #[serde(default)]
+    pub started_at: String,
 }
 
 #[derive(Debug)]
@@ -350,43 +198,21 @@ pub struct CodexCallResult {
     pub event_sequence: u64,
 }
 
-impl GuestClient {
-    pub async fn for_agent(
+impl GuestTransport {
+    async fn connect(
         client: Client,
         namespace: &str,
-        agent_id: &str,
+        target: pool::GuestTarget,
+        identity: &WorkloadIdentity,
+        issuer: authorization::GuestRequestIssuer,
     ) -> Result<Self, GuestError> {
-        Self::for_agent_with_terminal_identities(
-            client,
-            namespace,
-            agent_id,
-            TerminalIdentityRegistry::default(),
-        )
-        .await
-    }
-
-    pub async fn for_agent_with_terminal_identities(
-        client: Client,
-        namespace: &str,
-        agent_id: &str,
-        terminal_identities: TerminalIdentityRegistry,
-    ) -> Result<Self, GuestError> {
-        let microvms: Api<MicroVM> = Api::namespaced(client.clone(), namespace);
-        let microvm = microvms.get(agent_id).await?;
-        let status = microvm
-            .status
-            .as_ref()
-            .filter(|status| {
-                status.phase == MicroVMPhase::Ready
-                    && status.guest_ready
-                    && status.observed_generation >= microvm.metadata.generation.unwrap_or_default()
-            })
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        let guest_ip = status
-            .pod_ip
-            .as_ref()
-            .ok_or_else(|| GuestError::MissingGuestIp(agent_id.to_owned()))?;
-        let secret_name = format!("{}-bootstrap", microvm.name_any());
+        let pool::GuestTarget {
+            claim,
+            pod_uid,
+            address,
+            slot_name,
+        } = target;
+        let secret_name = crate::pod::bootstrap_secret_name(&slot_name);
         let secrets: Api<Secret> = Api::namespaced(client, namespace);
         let secret = secrets.get(&secret_name).await?;
         let token_bytes = secret
@@ -397,125 +223,135 @@ impl GuestClient {
         let token = String::from_utf8(token_bytes.0.clone())
             .map_err(|_| GuestError::MissingToken(secret_name))?;
 
+        let tls = identity.guest_tls(identity.guest_id(namespace, &pod_uid)?)?;
+        let channel = identity.guest_channel(address, tls.clone())?;
+        let preview_tls = tls.map(|config| {
+            let mut config = config.as_ref().clone();
+            config.alpn_protocols = vec![b"http/1.1".to_vec()];
+            Arc::new(config)
+        });
+        let mut claim_headers = reqwest::header::HeaderMap::new();
+        claim_headers.insert(
+            crate::slot::supervisor::CLAIM_UID_HEADER,
+            claim.microvm_uid.parse().map_err(anyhow::Error::from)?,
+        );
+        claim_headers.insert(
+            crate::slot::supervisor::CLAIM_EPOCH_HEADER,
+            claim
+                .epoch
+                .to_string()
+                .parse()
+                .map_err(anyhow::Error::from)?,
+        );
+        claim_headers.insert(
+            crate::slot::supervisor::RUNTIME_EPOCH_HEADER,
+            claim.runtime_epoch.parse().map_err(anyhow::Error::from)?,
+        );
+        let mut http = reqwest::Client::builder()
+            .default_headers(claim_headers.clone())
+            .redirect(reqwest::redirect::Policy::none())
+            .http1_only()
+            .connect_timeout(GUEST_CONNECT_TIMEOUT);
+        if let Some(config) = &preview_tls {
+            http = http.use_preconfigured_tls(config.as_ref().clone());
+        }
+        let http = http.build().map_err(anyhow::Error::from)?;
+        let scheme = if preview_tls.is_some() {
+            "https"
+        } else {
+            "http"
+        };
+        let base_url = format!("{scheme}://{address}");
+        let rpc = rpc::RpcClient::new(channel.clone(), &token, issuer)?;
+        rpc.verify_identity(&pod_uid).await?;
         Ok(Self {
-            http: reqwest::Client::builder()
-                .connect_timeout(GUEST_CONNECT_TIMEOUT)
-                .build()?,
-            base_url: format!("http://{guest_ip}:{GUEST_API_PORT}"),
+            base_url,
             token,
-            agent_id: agent_id.to_owned(),
-            terminal_identities,
+            http,
+            preview_tls,
+            channel,
+            claim_headers,
         })
+    }
+
+    fn authorize(
+        self,
+        issuer: authorization::GuestRequestIssuer,
+    ) -> Result<GuestClient, GuestError> {
+        Ok(GuestClient {
+            rpc: rpc::RpcClient::new(self.channel, &self.token, issuer)?,
+            base_url: self.base_url,
+            token: self.token,
+            http: self.http,
+            preview_tls: self.preview_tls,
+            claim_headers: self.claim_headers,
+        })
+    }
+}
+
+impl GuestClient {
+    pub async fn codex_activity(&self) -> Result<rpc::proto::CodexActivity, GuestError> {
+        self.rpc.codex_activity().await
     }
 
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
-
     pub fn token(&self) -> &str {
         &self.token
     }
+    pub async fn open_editor(&self) -> Result<(), GuestError> {
+        self.rpc.open_editor().await
+    }
 
+    pub async fn open_browser(&self) -> Result<(), GuestError> {
+        self.rpc.open_browser().await
+    }
+    pub async fn stat_file(&self, path: &str) -> Result<FileEntry, GuestError> {
+        self.rpc.stat_file(path).await
+    }
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
-        self.json(
-            self.request(Method::GET, "/v1/files")
-                .query(&[("path", path)]),
-        )
-        .await
+        self.rpc.list_files(path).await
     }
-
     pub async fn read_file(&self, path: &str) -> Result<FileContent, GuestError> {
-        let response = checked_response(
-            self.send_unary(
-                self.request(Method::GET, "/v1/files/content")
-                    .query(&[("path", path)]),
-            )
-            .await?,
-        )
-        .await?;
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_owned();
-        let content = bounded_response_body(response, MAX_GUEST_FILE_BYTES).await?;
-        Ok(FileContent {
-            path: path.to_owned(),
-            content,
-            content_type,
-        })
+        self.rpc.read_file(path).await
     }
-
-    pub async fn write_file(&self, path: &str, content: &[u8]) -> Result<WriteResult, GuestError> {
-        self.json(
-            self.request(Method::PUT, "/v1/files/content")
-                .json(&serde_json::json!({"path": path, "content": BASE64.encode(content)})),
-        )
-        .await
+    pub async fn write_file(
+        &self,
+        path: &str,
+        content: &[u8],
+        expected_revision: &str,
+    ) -> Result<WriteResult, GuestError> {
+        self.rpc.write_file(path, content, expected_revision).await
     }
-
     pub async fn create_directory(&self, path: &str) -> Result<FileEntry, GuestError> {
-        self.json(
-            self.request(Method::POST, "/v1/files/directory")
-                .json(&serde_json::json!({"path": path})),
-        )
-        .await
+        self.rpc.create_directory(path).await
     }
-
     pub async fn move_file(
         &self,
         source_path: &str,
         destination_path: &str,
     ) -> Result<FileEntry, GuestError> {
-        self.json(
-            self.request(Method::POST, "/v1/files/move")
-                .json(&serde_json::json!({
-                    "sourcePath": source_path,
-                    "destinationPath": destination_path,
-                })),
-        )
-        .await
+        self.rpc.move_file(source_path, destination_path).await
     }
-
     pub async fn delete_file(&self, path: &str, recursive: bool) -> Result<(), GuestError> {
-        checked_response(
-            self.send_unary(
-                self.request(Method::DELETE, "/v1/files")
-                    .json(&serde_json::json!({"path": path, "recursive": recursive})),
-            )
-            .await?,
-        )
-        .await?;
-        Ok(())
+        self.rpc.delete_file(path, recursive).await
     }
-
     pub async fn search_files(
         &self,
         query: &str,
         path: &str,
         limit: u32,
     ) -> Result<FileSearchResult, GuestError> {
-        self.json(self.request(Method::GET, "/v1/files/search").query(&[
-            ("query", query.to_owned()),
-            ("path", path.to_owned()),
-            ("limit", limit.to_string()),
-        ]))
-        .await
+        self.rpc.search_files(query, path, limit).await
     }
-
     pub async fn watch_files(
         &self,
         path: &str,
-        after: u64,
+        after: Option<u64>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<FileEvent, GuestError>> + Send>>, GuestError> {
-        self.ndjson(
-            self.request(Method::GET, "/v1/files/watch")
-                .query(&[("path", path.to_owned()), ("after", after.to_string())]),
-        )
-        .await
+        self.rpc.watch_files(path, after).await
     }
-
     pub async fn create_terminal(
         &self,
         creation_id: &str,
@@ -523,110 +359,13 @@ impl GuestClient {
         columns: u32,
         rows: u32,
     ) -> Result<TerminalCreation, GuestError> {
-        let response = match self
-            .send_unary(
-                self.request(Method::POST, "/v1/terminals")
-                    .json(&serde_json::json!({
-                        "creationId": creation_id,
-                        "cwd": cwd,
-                        "columns": columns,
-                        "rows": rows
-                    })),
-            )
+        match self
+            .rpc
+            .create_terminal(creation_id, cwd, columns, rows)
             .await
         {
-            Ok(response) => response,
-            Err(error) => {
-                return self
-                    .reconcile_terminal_creation_error(creation_id, error)
-                    .await;
-            }
-        };
-        match terminal_creation(response, creation_id).await {
-            Ok(creation) => {
-                self.terminal_identities.finish_creation(
-                    &self.agent_id,
-                    creation_id,
-                    &creation.session.id,
-                );
-                Ok(creation)
-            }
-            Err(error) if legacy_terminal_creation_id_rejection(&error) => {
-                self.create_legacy_terminal(creation_id, cwd, columns, rows)
-                    .await
-            }
-            Err(error) => {
-                self.reconcile_terminal_creation_error(creation_id, error)
-                    .await
-            }
-        }
-    }
-
-    async fn reconcile_terminal_creation_error(
-        &self,
-        creation_id: &str,
-        original_error: GuestError,
-    ) -> Result<TerminalCreation, GuestError> {
-        if let Ok(sessions) = self.list_terminals().await
-            && let Some(session) = sessions
-                .into_iter()
-                .find(|session| session.creation_id == creation_id)
-        {
-            return Ok(TerminalCreation {
-                session,
-                created: false,
-            });
-        }
-        Err(original_error)
-    }
-
-    async fn create_legacy_terminal(
-        &self,
-        creation_id: &str,
-        cwd: &str,
-        columns: u32,
-        rows: u32,
-    ) -> Result<TerminalCreation, GuestError> {
-        let _legacy_creation_guard = self
-            .terminal_identities
-            .lock_legacy_creation(&self.agent_id)
-            .await;
-        let existing = self.list_terminals().await?;
-        if let Some(session) = existing
-            .iter()
-            .find(|session| session.creation_id == creation_id)
-        {
-            return Ok(TerminalCreation {
-                session: session.clone(),
-                created: false,
-            });
-        }
-        self.terminal_identities
-            .begin_legacy_creation(&self.agent_id, creation_id, cwd, &existing);
-
-        let result = async {
-            let response =
-                self.send_unary(self.request(Method::POST, "/v1/terminals").json(
-                    &serde_json::json!({
-                        "cwd": cwd,
-                        "columns": columns,
-                        "rows": rows
-                    }),
-                ))
-                .await?;
-            terminal_creation(response, creation_id).await
-        }
-        .await;
-
-        match result {
-            Ok(creation) => {
-                self.terminal_identities.finish_creation(
-                    &self.agent_id,
-                    creation_id,
-                    &creation.session.id,
-                );
-                Ok(creation)
-            }
+            Ok(result) => Ok(result),
+            Err(error @ GuestError::TerminalCreationIdentityMismatch { .. }) => Err(error),
             Err(error) => {
                 if let Ok(sessions) = self.list_terminals().await
                     && let Some(session) = sessions
@@ -642,743 +381,191 @@ impl GuestClient {
             }
         }
     }
-
     pub async fn list_terminals(&self) -> Result<Vec<TerminalSession>, GuestError> {
-        let mut response: TerminalList = self
-            .json(self.request(Method::GET, "/v1/terminals"))
-            .await?;
-        self.terminal_identities
-            .reconcile(&self.agent_id, &mut response.sessions);
-        Ok(response.sessions)
+        self.rpc.list_terminals().await
     }
-
     pub async fn terminate_terminal(&self, id: &str) -> Result<(), GuestError> {
-        checked_response(
-            self.send_unary(self.request(Method::DELETE, &format!("/v1/terminals/{id}")))
-                .await?,
-        )
-        .await?;
-        self.terminal_identities.remove_session(&self.agent_id, id);
-        Ok(())
+        self.rpc.terminate_terminal(id).await
     }
-
     pub async fn codex_call(&self, method: &str, params: Value) -> Result<Value, GuestError> {
-        Ok(self.codex_call_response(method, params).await?.result)
+        Ok(self.rpc.codex_call(method, params).await?.result)
     }
-
+    pub async fn codex_login(&self) -> Result<CodexLoginSnapshot, GuestError> {
+        self.rpc.codex_login().await
+    }
     pub async fn codex_call_with_sequence(
         &self,
         method: &str,
         params: Value,
     ) -> Result<CodexCallResult, GuestError> {
-        let response = self.codex_call_response(method, params).await?;
+        let response = self.rpc.codex_call(method, params).await?;
         Ok(CodexCallResult {
             result: response.result,
-            event_sequence: response
-                .event_sequence
-                .ok_or(GuestError::MissingCodexSnapshotCursor)?,
+            event_sequence: response.event_sequence,
         })
     }
-
-    async fn codex_call_response(
-        &self,
-        method: &str,
-        params: Value,
-    ) -> Result<CodexCallResponse, GuestError> {
-        self.json(
-            self.request(Method::POST, "/v1/codex/call")
-                .json(&serde_json::json!({"method": method, "params": params})),
-        )
-        .await
-    }
-
-    pub async fn resolve_codex_approval(
-        &self,
-        approval_id: &str,
-        decision: &str,
-    ) -> Result<(), GuestError> {
-        checked_response(
-            self.send_unary(
-                self.request(Method::POST, &format!("/v1/codex/approvals/{approval_id}"))
-                    .json(&serde_json::json!({"decision": decision})),
-            )
-            .await?,
-        )
-        .await?;
-        Ok(())
-    }
-
     pub async fn watch_codex_events(
         &self,
         after: u64,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<CodexEvent, GuestError>> + Send>>, GuestError>
     {
-        self.ndjson(
-            self.request(Method::GET, "/v1/codex/events")
-                .query(&[("after", after.to_string())]),
-        )
-        .await
-    }
-
-    fn request(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
-        self.http
-            .request(method, format!("{}{path}", self.base_url))
-            .bearer_auth(&self.token)
-    }
-
-    async fn send_unary(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<reqwest::Response, GuestError> {
-        Ok(self.unary_request(request).send().await?)
-    }
-
-    fn unary_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request.timeout(GUEST_UNARY_TIMEOUT)
-    }
-
-    async fn json<T: DeserializeOwned>(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<T, GuestError> {
-        let response = checked_response(self.send_unary(request).await?).await?;
-        let body = bounded_response_body(response, MAX_GUEST_JSON_BYTES).await?;
-        Ok(serde_json::from_slice(&body)?)
-    }
-
-    async fn ndjson<T: DeserializeOwned + Send + 'static>(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<T, GuestError>> + Send>>, GuestError> {
-        let response = checked_response(request.send().await?).await?;
-        let mut bytes = response.bytes_stream();
-        let stream = async_stream::try_stream! {
-            let mut buffer = Vec::new();
-            while let Some(chunk) = bytes.next().await {
-                buffer.extend_from_slice(&chunk?);
-                for line in drain_ndjson_lines(&mut buffer, MAX_GUEST_STREAM_LINE_BYTES)? {
-                    let line = std::str::from_utf8(&line)
-                        .map_err(|_| GuestError::InvalidUtf8)?
-                        .trim();
-                    if !line.is_empty() {
-                        yield serde_json::from_str::<T>(line)?;
-                    }
-                }
-            }
-            if !buffer.is_empty() {
-                let line = std::str::from_utf8(&buffer).map_err(|_| GuestError::InvalidUtf8)?.trim();
-                if !line.is_empty() {
-                    yield serde_json::from_str::<T>(line)?;
-                }
-            }
-        };
-        Ok(Box::pin(stream))
+        self.rpc.watch_codex_events(after).await
     }
 }
 
-fn drain_ndjson_lines(buffer: &mut Vec<u8>, limit: usize) -> Result<Vec<Vec<u8>>, GuestError> {
-    let mut lines = Vec::new();
-    while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-        if newline > limit {
-            return Err(GuestError::ResponseTooLarge(limit));
-        }
-        let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
-        line.pop();
-        lines.push(line);
-    }
-    if buffer.len() > limit {
-        return Err(GuestError::ResponseTooLarge(limit));
-    }
-    Ok(lines)
+fn revision_for_content(content: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(content))
 }
 
-async fn checked_response(response: reqwest::Response) -> Result<reqwest::Response, GuestError> {
-    if response.status().is_success() {
-        return Ok(response);
-    }
-    let status = response.status();
-    let message = bounded_response_body(response, MAX_GUEST_ERROR_BYTES)
-        .await
-        .ok()
-        .and_then(|body| String::from_utf8(body).ok())
-        .unwrap_or_else(|| {
-            "Nanoagent request failed without a valid bounded response body".to_owned()
-        });
-    Err(GuestError::Api { status, message })
+fn is_file_revision(value: &str) -> bool {
+    value.len() == Sha256::output_size() * 2
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-async fn terminal_creation(
-    response: reqwest::Response,
-    requested_creation_id: &str,
-) -> Result<TerminalCreation, GuestError> {
-    let response = checked_response(response).await?;
-    let created = response.status() == StatusCode::CREATED;
-    let body = bounded_response_body(response, MAX_GUEST_JSON_BYTES).await?;
-    let mut session: TerminalSession = serde_json::from_slice(&body)?;
-    if session.creation_id.is_empty() {
-        session.creation_id = requested_creation_id.to_owned();
+fn validate_expected_revision(value: &str) -> Result<(), GuestError> {
+    if value != "missing" && !is_file_revision(value) {
+        return Err(GuestError::InvalidFileRevision);
     }
-    Ok(TerminalCreation { session, created })
-}
-
-fn legacy_terminal_creation_id_rejection(error: &GuestError) -> bool {
-    matches!(
-        error,
-        GuestError::Api { status, message }
-            if *status == StatusCode::BAD_REQUEST
-                && message.contains("unknown field")
-                && message.contains("creationId")
-    )
-}
-
-async fn bounded_response_body(
-    response: reqwest::Response,
-    limit: usize,
-) -> Result<Vec<u8>, GuestError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err(GuestError::ResponseTooLarge(limit));
-    }
-    let mut body = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        if body.len().saturating_add(chunk.len()) > limit {
-            return Err(GuestError::ResponseTooLarge(limit));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    };
-
-    use axum::{
-        Json, Router,
-        routing::{get, post},
-    };
-    use tokio::sync::Notify;
-
-    fn legacy_terminal_json() -> Value {
-        serde_json::json!({
-            "id": "abcdefghijklmnopqrstuvwx",
-            "cwd": "/workspace",
-            "createdAt": "2026-08-28T00:00:00Z",
-            "lastActivityAt": "2026-08-28T00:00:00Z",
-            "attached": false
-        })
-    }
-
-    fn terminal_json(creation_id: &str) -> Value {
-        serde_json::json!({
-            "id": "abcdefghijklmnopqrstuvwx",
-            "creationId": creation_id,
-            "cwd": "/workspace",
-            "createdAt": "2026-08-28T00:00:00Z",
-            "lastActivityAt": "2026-08-28T00:00:00Z",
-            "attached": false
-        })
-    }
-
     #[tokio::test]
-    async fn guest_response_body_is_bounded_before_and_during_streaming() {
-        let declared: reqwest::Response = http::Response::builder()
-            .header(http::header::CONTENT_LENGTH, "5")
-            .body("12345")
-            .expect("declared response")
-            .into();
-        assert!(matches!(
-            bounded_response_body(declared, 4).await,
-            Err(GuestError::ResponseTooLarge(4))
-        ));
+    async fn guest_connection_verifies_the_ready_pod_uid_instead_of_the_microvm_name() {
+        use rpc::test_server::TestService;
+        use std::sync::Arc;
+        use tokio_stream::wrappers::TcpListenerStream;
 
-        let streamed: reqwest::Response = http::Response::builder()
-            .body("12345")
-            .expect("streamed response")
-            .into();
-        assert!(matches!(
-            bounded_response_body(streamed, 4).await,
-            Err(GuestError::ResponseTooLarge(4))
-        ));
-    }
-
-    #[tokio::test]
-    async fn file_search_preserves_truncation_metadata() {
-        let router = Router::new().route(
-            "/v1/files/search",
-            get(|| async {
-                Json(serde_json::json!({
-                    "entries": [{
-                        "name": "main.rs",
-                        "path": "/workspace/main.rs",
-                        "directory": false,
-                        "size": 42,
-                        "modifiedAt": "2026-08-28T00:00:00Z"
-                    }],
-                    "truncated": true
-                }))
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
-            .expect("bind Nanoagent search fixture");
-        let address = listener.local_addr().expect("Nanoagent search address");
+            .unwrap();
+        let fixture_port = listener.local_addr().unwrap().port();
         let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .await
-                .expect("serve Nanoagent search fixture");
-        });
-        let client = GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-search".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
-        };
-
-        let result = client
-            .search_files("main", "/workspace", 100)
-            .await
-            .expect("search response");
-        assert!(result.truncated);
-        assert_eq!(result.entries.len(), 1);
-        assert_eq!(result.entries[0].path, "/workspace/main.rs");
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn legacy_codex_calls_without_snapshot_cursors_remain_compatible() {
-        let router = Router::new().route(
-            "/v1/codex/call",
-            post(|| async { Json(serde_json::json!({"result": {"authenticated": true}})) }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind legacy Nanoagent Codex fixture");
-        let address = listener
-            .local_addr()
-            .expect("legacy Nanoagent Codex address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .await
-                .expect("serve legacy Nanoagent Codex fixture");
-        });
-        let client = GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-legacy".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
-        };
-
-        let account = client
-            .codex_call("account/read", serde_json::json!({}))
-            .await
-            .expect("legacy non-snapshot call");
-        assert_eq!(account["authenticated"], true);
-        assert!(matches!(
-            client
-                .codex_call_with_sequence(
-                    "thread/resume",
-                    serde_json::json!({"threadId": "thread"})
+            tonic::transport::Server::builder()
+                .add_service(
+                    rpc::proto::nanoagent_service_server::NanoagentServiceServer::new(
+                        TestService {
+                            get_info: Some(Arc::new(|request| {
+                                assert_eq!(
+                                    request.metadata().get("authorization").unwrap(),
+                                    "Bearer fixture-token"
+                                );
+                                assert_eq!(
+                                    request.metadata().get("x-tengri-microvm-uid").unwrap(),
+                                    "11111111-1111-4111-8111-111111111111"
+                                );
+                                assert_eq!(
+                                    request.metadata().get("x-tengri-claim-epoch").unwrap(),
+                                    "1"
+                                );
+                                Ok(rpc::proto::GuestInfo {
+                                    microvm_id: "33333333-3333-4333-8333-333333333333".into(),
+                                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                                    ..Default::default()
+                                })
+                            })),
+                            ..Default::default()
+                        },
+                    ),
                 )
-                .await,
-            Err(GuestError::MissingCodexSnapshotCursor)
-        ));
-        server.abort();
-    }
-
-    #[test]
-    fn file_search_accepts_legacy_response_without_truncation_metadata() {
-        let result: FileSearchResult = serde_json::from_value(serde_json::json!({"entries": []}))
-            .expect("legacy Nanoagent search response");
-        assert!(!result.truncated);
-    }
-
-    #[tokio::test]
-    async fn terminal_creation_distinguishes_new_sessions_from_idempotent_replays() {
-        let body = r#"{
-            "id":"abcdefghijklmnopqrstuvwx",
-            "creationId":"terminal-creation-status",
-            "cwd":"/workspace",
-            "createdAt":"2026-08-28T00:00:00Z",
-            "lastActivityAt":"2026-08-28T00:00:00Z",
-            "attached":false
-        }"#;
-        for (status, expected_created) in [(StatusCode::CREATED, true), (StatusCode::OK, false)] {
-            let response: reqwest::Response = http::Response::builder()
-                .status(status)
-                .body(body)
-                .expect("terminal response")
-                .into();
-            let creation = terminal_creation(response, "terminal-creation-status")
+                .serve_with_incoming(TcpListenerStream::new(listener))
                 .await
-                .expect("valid terminal creation response");
-            assert_eq!(creation.created, expected_created);
-            assert_eq!(creation.session.creation_id, "terminal-creation-status");
-        }
-    }
-
-    #[tokio::test]
-    async fn terminal_creation_accepts_legacy_sessions_without_creation_identity() {
-        let response: reqwest::Response = http::Response::builder()
-            .status(StatusCode::CREATED)
-            .body(
-                r#"{
-                    "id":"abcdefghijklmnopqrstuvwx",
-                    "cwd":"/workspace",
-                    "createdAt":"2026-08-28T00:00:00Z",
-                    "lastActivityAt":"2026-08-28T00:00:00Z",
-                    "attached":false
-                }"#,
+                .unwrap();
+        });
+        for (pod_uid, ready) in [
+            (Some("33333333-3333-4333-8333-333333333333"), true),
+            (Some("previous-pod-uid"), false),
+            (None, false),
+        ] {
+            let service = tower::service_fn(
+                move |request: http::Request<kube::client::Body>| async move {
+                    let value = if request.uri().path().ends_with("/microvms/agent-fixture") {
+                        serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"agent-fixture","uid":"11111111-1111-4111-8111-111111111111","generation":1},"spec":{
+                        "reservationId":"55555555-5555-4555-8555-555555555555","policyVersion":1,"runtimeEpoch":"44444444-4444-4444-8444-444444444444","displayName":"Guest fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+                        "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-10-01T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z",
+                        "slot": {"name":"slot-fixture","podUid":"33333333-3333-4333-8333-333333333333","pvcName":"home-fixture","pvcUid":"home-uid","epoch":1}
+                    },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":pod_uid}})
+                    } else {
+                        assert!(
+                            request
+                                .uri()
+                                .path()
+                                .ends_with("/secrets/slot-fixture-bootstrap")
+                        );
+                        serde_json::json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"slot-fixture-bootstrap"},"data":{"token":"Zml4dHVyZS10b2tlbg=="}})
+                    };
+                    Ok::<_, std::io::Error>(
+                        http::Response::builder()
+                            .header(http::header::CONTENT_TYPE, "application/json")
+                            .body(kube::client::Body::from(value.to_string().into_bytes()))
+                            .unwrap(),
+                    )
+                },
+            );
+            let result = GuestPool::new(
+                Client::new(service, "tengri"),
+                "tengri",
+                WorkloadIdentity::Fixture(fixture_port),
             )
-            .expect("legacy terminal response")
-            .into();
-
-        let creation = terminal_creation(response, "terminal-creation-legacy")
-            .await
-            .expect("legacy response remains compatible");
-        assert!(creation.created);
-        assert_eq!(creation.session.creation_id, "terminal-creation-legacy");
-    }
-
-    #[test]
-    fn terminal_creation_retries_only_the_legacy_unknown_field_error() {
-        let legacy = GuestError::Api {
-            status: StatusCode::BAD_REQUEST,
-            message: r#"{"error":"json: unknown field \"creationId\""}"#.to_owned(),
-        };
-        assert!(legacy_terminal_creation_id_rejection(&legacy));
-        assert!(!legacy_terminal_creation_id_rejection(&GuestError::Api {
-            status: StatusCode::BAD_REQUEST,
-            message: "cwd is invalid".to_owned(),
-        }));
-        assert!(!legacy_terminal_creation_id_rejection(&GuestError::Api {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: r#"unknown field \"creationId\""#.to_owned(),
-        }));
-    }
-
-    #[tokio::test]
-    async fn terminal_creation_negotiates_with_a_legacy_guest() {
-        let attempts = Arc::new(AtomicUsize::new(0));
-        let created = Arc::new(AtomicBool::new(false));
-        let request_attempts = Arc::clone(&attempts);
-        let creation_state = Arc::clone(&created);
-        let list_state = Arc::clone(&created);
-        let router = Router::new().route(
-            "/v1/terminals",
-            get(move || {
-                let created = Arc::clone(&list_state);
-                async move {
-                    let sessions = if created.load(Ordering::SeqCst) {
-                        vec![legacy_terminal_json()]
-                    } else {
-                        Vec::new()
-                    };
-                    Json(serde_json::json!({"sessions": sessions}))
-                }
-            })
-            .post(move |Json(body): Json<Value>| {
-                let request_attempts = Arc::clone(&request_attempts);
-                let created = Arc::clone(&creation_state);
-                async move {
-                    request_attempts.fetch_add(1, Ordering::SeqCst);
-                    if body.get("creationId").is_some() {
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            Json(serde_json::json!({
-                                "error": "json: unknown field \"creationId\""
-                            })),
-                        );
-                    }
-                    created.store(true, Ordering::SeqCst);
-                    (StatusCode::CREATED, Json(legacy_terminal_json()))
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind legacy Nanoagent fixture");
-        let address = listener.local_addr().expect("legacy Nanoagent address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .await
-                .expect("serve legacy Nanoagent fixture");
-        });
-        let client = GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-legacy".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
-        };
-
-        let creation = client
-            .create_terminal("terminal-creation-legacy", "/workspace", 120, 32)
-            .await
-            .expect("legacy terminal creation succeeds");
-        assert_eq!(attempts.load(Ordering::SeqCst), 2);
-        assert!(creation.created);
-        assert_eq!(creation.session.creation_id, "terminal-creation-legacy");
-        let sessions = client
-            .list_terminals()
-            .await
-            .expect("legacy terminal listing succeeds");
-        assert_eq!(sessions[0].creation_id, "terminal-creation-legacy");
+            .for_agent(
+                "agent-fixture",
+                None,
+                authorization::GuestAuthority::fixture_authorization(),
+            )
+            .await;
+            assert_eq!(
+                result.is_ok(),
+                ready,
+                "pod UID {pod_uid:?}: {}",
+                result
+                    .err()
+                    .map(|error| error.to_string())
+                    .unwrap_or_default()
+            );
+        }
         server.abort();
     }
 
     #[tokio::test]
-    async fn terminal_creation_reconciliation_does_not_claim_a_new_session() {
-        const CREATION_ID: &str = "terminal-creation-timeout";
-        let created = Arc::new(AtomicBool::new(false));
-        let creation_state = Arc::clone(&created);
-        let list_state = Arc::clone(&created);
-        let router = Router::new().route(
-            "/v1/terminals",
-            get(move || {
-                let created = Arc::clone(&list_state);
-                async move {
-                    let sessions = if created.load(Ordering::SeqCst) {
-                        vec![terminal_json(CREATION_ID)]
-                    } else {
-                        Vec::new()
-                    };
-                    Json(serde_json::json!({"sessions": sessions}))
-                }
-            })
-            .post(move |Json(body): Json<Value>| {
-                let created = Arc::clone(&creation_state);
-                async move {
-                    assert_eq!(
-                        body.get("creationId").and_then(Value::as_str),
-                        Some(CREATION_ID)
-                    );
-                    created.store(true, Ordering::SeqCst);
-                    (StatusCode::CREATED, "unreadable terminal response")
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind Nanoagent reconciliation fixture");
-        let address = listener
-            .local_addr()
-            .expect("Nanoagent reconciliation address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .await
-                .expect("serve Nanoagent reconciliation fixture");
+    async fn an_editor_session_cannot_bind_to_a_recreated_microvm() {
+        let service = tower::service_fn(|request: http::Request<kube::client::Body>| async move {
+            assert!(
+                request.uri().path().ends_with("/microvms/editor-fixture"),
+                "stale session read a bootstrap secret"
+            );
+            let value = serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"new-incarnation"},"spec":{
+                "reservationId":"55555555-5555-4555-8555-555555555555","policyVersion":1,"runtimeEpoch":"44444444-4444-4444-8444-444444444444","displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+                "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
+            }});
+            Ok::<_, std::io::Error>(
+                http::Response::builder()
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(kube::client::Body::from(value.to_string().into_bytes()))
+                    .unwrap(),
+            )
         });
-        let client = GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-response-timeout".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
-        };
-
-        let creation = client
-            .create_terminal(CREATION_ID, "/workspace", 120, 32)
-            .await
-            .expect("created terminal is reconciled after its response times out");
-
-        assert!(!creation.created);
-        assert_eq!(creation.session.id, "abcdefghijklmnopqrstuvwx");
-        assert_eq!(creation.session.creation_id, CREATION_ID);
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn terminal_creation_reconciles_a_lost_replay_without_recounting_it() {
-        const CREATION_ID: &str = "terminal-creation-replay";
-        let router = Router::new().route(
-            "/v1/terminals",
-            get(|| async {
-                Json(serde_json::json!({
-                    "sessions": [terminal_json(CREATION_ID)]
-                }))
-            })
-            .post(|| async { (StatusCode::OK, "unreadable terminal replay") }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind Nanoagent replay fixture");
-        let address = listener.local_addr().expect("Nanoagent replay address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .await
-                .expect("serve Nanoagent replay fixture");
-        });
-        let client = GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-replayed-response".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
-        };
-
-        let replay = client
-            .create_terminal(CREATION_ID, "/workspace", 120, 32)
-            .await
-            .expect("existing terminal is reconciled after its replay response is lost");
-
-        assert!(!replay.created);
-        assert_eq!(replay.session.creation_id, CREATION_ID);
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn legacy_terminal_creation_reconciles_after_its_response_is_lost() {
-        let created = Arc::new(AtomicBool::new(false));
-        let legacy_posts = Arc::new(AtomicUsize::new(0));
-        let creation_state = Arc::clone(&created);
-        let list_state = Arc::clone(&created);
-        let post_attempts = Arc::clone(&legacy_posts);
-        let creation_started = Arc::new(Notify::new());
-        let handler_started = Arc::clone(&creation_started);
-        let hold_response = Arc::new(Notify::new());
-        let handler_hold = Arc::clone(&hold_response);
-        let router = Router::new().route(
-            "/v1/terminals",
-            get(move || {
-                let created = Arc::clone(&list_state);
-                async move {
-                    let sessions = if created.load(Ordering::SeqCst) {
-                        vec![legacy_terminal_json()]
-                    } else {
-                        Vec::new()
-                    };
-                    Json(serde_json::json!({"sessions": sessions}))
-                }
-            })
-            .post(move |Json(body): Json<Value>| {
-                let created = Arc::clone(&creation_state);
-                let creation_started = Arc::clone(&handler_started);
-                let hold_response = Arc::clone(&handler_hold);
-                let legacy_posts = Arc::clone(&post_attempts);
-                async move {
-                    if body.get("creationId").is_some() {
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            Json(serde_json::json!({
-                                "error": "json: unknown field \"creationId\""
-                            })),
-                        );
-                    }
-                    legacy_posts.fetch_add(1, Ordering::SeqCst);
-                    created.store(true, Ordering::SeqCst);
-                    creation_started.notify_one();
-                    hold_response.notified().await;
-                    (StatusCode::CREATED, Json(legacy_terminal_json()))
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind legacy Nanoagent fixture");
-        let address = listener.local_addr().expect("legacy Nanoagent address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .await
-                .expect("serve legacy Nanoagent fixture");
-        });
-        let client = GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-lost-response".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
-        };
-
-        let create_client = client.clone();
-        let create = tokio::spawn(async move {
-            create_client
-                .create_terminal("terminal-creation-lost", "/workspace", 120, 32)
-                .await
-        });
-        tokio::time::timeout(Duration::from_secs(2), creation_started.notified())
-            .await
-            .expect("legacy terminal was created before the response was lost");
-        create.abort();
-        let _ = create.await;
-
-        let sessions = client
-            .list_terminals()
-            .await
-            .expect("legacy terminal can be reconciled after cancellation");
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].creation_id, "terminal-creation-lost");
-        let replayed = client
-            .create_terminal("terminal-creation-lost", "/workspace", 120, 32)
-            .await
-            .expect("legacy terminal retry reconciles instead of creating another PTY");
-        assert!(!replayed.created);
-        assert_eq!(replayed.session.id, sessions[0].id);
-        assert_eq!(legacy_posts.load(Ordering::SeqCst), 1);
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn legacy_terminal_creation_locks_are_scoped_per_agent() {
-        let registry = TerminalIdentityRegistry::default();
-        let first_agent = registry.lock_legacy_creation("agent-a").await;
-
-        let other_agent = tokio::time::timeout(
-            Duration::from_millis(100),
-            registry.lock_legacy_creation("agent-b"),
+        let result = GuestPool::new(
+            Client::new(service, "tengri"),
+            "tengri",
+            WorkloadIdentity::Fixture(8080),
         )
-        .await
-        .expect("an unrelated agent is not blocked by a legacy create");
-        let same_agent = tokio::time::timeout(
-            Duration::from_millis(25),
-            registry.lock_legacy_creation("agent-a"),
+        .for_agent(
+            "editor-fixture",
+            Some("old-incarnation"),
+            authorization::GuestAuthority::fixture_authorization(),
         )
         .await;
-        assert!(same_agent.is_err(), "the same agent must remain serialized");
-
-        drop(other_agent);
-        drop(first_agent);
-    }
-
-    #[test]
-    fn ndjson_limit_applies_to_remainder_after_complete_lines() {
-        let mut buffer = b"{}\n12345".to_vec();
         assert!(matches!(
-            drain_ndjson_lines(&mut buffer, 4),
-            Err(GuestError::ResponseTooLarge(4))
+            result,
+            Err(GuestError::Api {
+                status: StatusCode::GONE,
+                ..
+            })
         ));
-    }
-
-    #[test]
-    fn unary_guest_requests_have_a_deadline_while_streams_remain_long_lived() {
-        let client = GuestClient {
-            http: reqwest::Client::new(),
-            base_url: "http://127.0.0.1:8080".to_owned(),
-            token: "token".to_owned(),
-            agent_id: "agent-timeout".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
-        };
-        let unary = client
-            .unary_request(client.request(Method::GET, "/v1/files"))
-            .build()
-            .expect("unary request");
-        let stream = client
-            .request(Method::GET, "/v1/files/watch")
-            .build()
-            .expect("stream request");
-
-        assert_eq!(unary.timeout(), Some(&GUEST_UNARY_TIMEOUT));
-        assert_eq!(stream.timeout(), None);
     }
 }

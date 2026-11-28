@@ -1,0 +1,376 @@
+import { BigDecimal, Result, Schema } from 'effect'
+
+import { SymbolSchema } from '../schemas'
+import { instrumentMarket, MarketKind } from '../instruments'
+import type { NativeChartEvidence } from './chart-evidence'
+import type { ChartAssessmentsMaterial } from './/chart-assessments'
+import {
+  JevContractError,
+  jevModel,
+  retainedJevModel,
+  prepareJevRequest,
+  type JevRequest,
+  type JevResponse,
+} from './contract'
+import { EntrySetup, type EntryProposal } from './entry-proposals'
+import { jevInstructions } from './instructions'
+import { entryJudgmentThresholds } from './judgment-policy'
+import { WebullEntryContextSchema, webullEntryContextPolicy } from './webull-entry-context'
+import {
+  isShortEntryProposal,
+  nativeModeledGainMicros,
+  nativeModeledLossMicros,
+  type NativeEntryProposal,
+} from './native-entry-proposal'
+import type { JevProtocolMaterial } from './protocol'
+import { shortQuestionNames } from './short-entry-questions'
+
+const questionNames = (setup: EntrySetup, market: MarketKind, includeEquityObstruction = false) => {
+  const setupName = setup === EntrySetup.SupportRecovery ? 'support_recovery' : 'base_breakout'
+  const prefix = `${market === MarketKind.Equity ? 'equity' : 'crypto'}_${setupName}`
+  const common = { setup: `${prefix}_confirmed`, stop: `${prefix}_stop_invalidates` }
+  return market === MarketKind.Equity && !includeEquityObstruction
+    ? ({ market: MarketKind.Equity, ...common } as const)
+    : ({ market, ...common, obstruction: `${prefix}_target_obstructed` } as const)
+}
+
+export const entryJudgmentDefinitions = (setup: EntrySetup) => ({
+  setup: {
+    question:
+      setup === EntrySetup.SupportRecovery
+        ? 'Does the latest completed price sequence show recovery after a test of the identified support?'
+        : 'Does the latest completed price sequence show acceptance above the identified consolidation?',
+    criteria: {
+      true:
+        setup === EntrySetup.SupportRecovery
+          ? 'The support test is followed by an observable recovery in the newest price sequence.'
+          : 'Completed candles establish price above the base rather than a brief rejected excursion.',
+      false:
+        setup === EntrySetup.SupportRecovery
+          ? 'Price is still falling through the support area or has not begun a recovery after the test.'
+          : 'The newest candles remain inside the base or reject the attempted break above it.',
+    },
+  },
+  stop: {
+    question: 'Would reaching this proposed stop invalidate the identified setup?',
+    criteria: {
+      true: 'The stop lies beyond the support or base whose continued defense is essential to this setup.',
+      false:
+        'Ordinary movement within the same intact setup can reach the stop, or the selected level has no clear role in invalidating the setup.',
+    },
+  },
+})
+
+const cryptoTargetObstruction = {
+  question: 'Is there observed overhead resistance between the proposed entry and target?',
+  criteria: {
+    true: 'An identifiable resistance area in the supplied observations lies before the target.',
+    false:
+      'The supplied observations show clear space to the target, or their first identifiable overhead resistance is beyond it.',
+  },
+}
+
+const marketJudgmentPolicy = (market: MarketKind) => ({
+  costBasis: market === MarketKind.Equity ? 'equity-cash-fees' : 'crypto-received-asset-and-sell-fees',
+  setups: Object.fromEntries(
+    Object.values(EntrySetup).map((setup) => [
+      setup,
+      {
+        names: questionNames(setup, market),
+        judgments:
+          market === MarketKind.Equity
+            ? entryJudgmentDefinitions(setup)
+            : { ...entryJudgmentDefinitions(setup), obstruction: cryptoTargetObstruction },
+      },
+    ]),
+  ),
+})
+
+export const entryEvidenceStateDefinition = 'bayn.jev-proposal-evidence.v2' as const
+
+enum StructureCloseLocation {
+  Above = 'ABOVE',
+  Inside = 'INSIDE',
+  Below = 'BELOW',
+}
+
+export const retainedEntryJudgmentPolicy = {
+  stateDefinition: 'bayn.jev-proposal-evidence.v1',
+  model: retainedJevModel,
+  thresholds: entryJudgmentThresholds,
+  evidenceInstructions: jevInstructions.entry,
+  markets: {
+    [MarketKind.Equity]: marketJudgmentPolicy(MarketKind.Equity),
+    [MarketKind.Crypto]: marketJudgmentPolicy(MarketKind.Crypto),
+  },
+}
+
+export const entryJudgmentPolicy = {
+  ...retainedEntryJudgmentPolicy,
+  model: jevModel,
+  stateDefinition: entryEvidenceStateDefinition,
+  evidenceInstructions:
+    jevInstructions.entry +
+    ' Use available webullContext as an independent completed-minute observation for the same symbol and window. Keep its prices and volume separate from completedSourceBars. It is supplemental context, not an executable quote or proof of consolidated coverage.',
+  supplementalMarketData: webullEntryContextPolicy,
+}
+
+const symmetricMarketJudgmentPolicy = (market: MarketKind) => ({
+  costBasis: market === MarketKind.Equity ? 'equity-cash-fees' : 'crypto-received-asset-and-sell-fees',
+  setups: Object.fromEntries(
+    Object.values(EntrySetup).map((setup) => [
+      setup,
+      {
+        names: questionNames(setup, market, true),
+        judgments: { ...entryJudgmentDefinitions(setup), obstruction: cryptoTargetObstruction },
+      },
+    ]),
+  ),
+})
+
+export const symmetricEntryJudgmentPolicy = {
+  ...entryJudgmentPolicy,
+  markets: {
+    [MarketKind.Equity]: symmetricMarketJudgmentPolicy(MarketKind.Equity),
+    [MarketKind.Crypto]: symmetricMarketJudgmentPolicy(MarketKind.Crypto),
+  },
+}
+
+export const makeEntryJudgmentRequest = (input: {
+  readonly model?: JevRequest['model']
+  readonly includeEquityObstruction?: boolean
+  readonly numericalState: Readonly<Record<string, Schema.Json>>
+  readonly chart: NativeChartEvidence
+  readonly assessments: ChartAssessmentsMaterial
+  readonly proposals: readonly EntryProposal[]
+}) =>
+  Result.gen(function* () {
+    if (input.proposals.length === 0) return null
+    const state = yield* Schema.decodeUnknownResult(
+      Schema.Union([
+        Schema.Struct({ schemaVersion: Schema.Literals(['bayn.jev-entry-state.v22', 'bayn.jev-entry-state.v23']) }),
+        Schema.Struct({
+          schemaVersion: Schema.Literal('bayn.jev-entry-state.v24'),
+          webullContext: WebullEntryContextSchema,
+        }),
+      ]),
+    )(input.numericalState)
+    const candidate = yield* Schema.decodeUnknownResult(
+      Schema.Struct({ symbol: SymbolSchema, quote: Schema.optionalKey(Schema.Json) }),
+    )(input.numericalState['candidate'])
+    if (
+      candidate.symbol !== input.assessments.symbol ||
+      input.chart.barsHash !== input.assessments.barsHash ||
+      input.chart.pngHash !== input.assessments.pngHash ||
+      input.proposals.some(
+        (proposal) => proposal.symbol !== candidate.symbol || proposal.barsHash !== input.assessments.barsHash,
+      ) ||
+      new Set(input.proposals.map((proposal) => proposal.source.setup)).size !== input.proposals.length
+    )
+      return yield* Result.fail(
+        new JevContractError({ message: 'Entry judgments require one source-bound proposal per setup' }),
+      )
+    const proposalEvidence: Record<string, Schema.Json> = {}
+    const questions: Record<string, JevRequest['questions'][string]> = {}
+    const market = instrumentMarket(candidate.symbol)
+    const includeEquityObstruction = input.includeEquityObstruction === true
+    for (const proposal of input.proposals) {
+      const names = questionNames(proposal.source.setup, market, includeEquityObstruction)
+      const source = proposal.source
+      const selectedIds =
+        source.setup === EntrySetup.SupportRecovery
+          ? [source.supportBarId, source.resistanceBarId]
+          : [source.firstBarId, source.lastBarId]
+      if (selectedIds.some((id) => !input.chart.bars.some((bar) => bar.id === id)))
+        return yield* Result.fail(
+          new JevContractError({ message: 'Entry question references an anchor outside its chart' }),
+        )
+      const sourceEvidence =
+        source.setup === EntrySetup.SupportRecovery
+          ? input.chart.bars.filter((bar) => selectedIds.includes(bar.id))
+          : input.chart.bars.filter((bar) => bar.id >= source.firstBarId && bar.id <= source.lastBarId)
+      const structureBars = input.chart.bars.filter((bar) =>
+        source.setup === EntrySetup.SupportRecovery
+          ? bar.id === source.supportBarId
+          : bar.id >= source.firstBarId && bar.id <= source.lastBarId,
+      )
+      const firstStructure = structureBars[0]
+      if (firstStructure === undefined)
+        return yield* Result.fail(new JevContractError({ message: 'Entry evidence requires its selected structure' }))
+      const low = structureBars.reduce((minimum, bar) => Math.min(minimum, bar.low), firstStructure.low)
+      const high = structureBars.reduce((maximum, bar) => Math.max(maximum, bar.high), firstStructure.high)
+      const structureEndId = source.setup === EntrySetup.SupportRecovery ? source.supportBarId : source.lastBarId
+      const afterStructure = input.chart.bars.filter((bar) => bar.id > structureEndId)
+      const lowPrice = BigDecimal.fromNumberUnsafe(low)
+      const highPrice = BigDecimal.fromNumberUnsafe(high)
+      const stopPrice = BigDecimal.make(BigInt(proposal.stopPriceMicros), 6)
+      const completedCloses = afterStructure.map((bar) => ({
+        barId: bar.id,
+        closeRelativeToStructure: BigDecimal.isGreaterThan(BigDecimal.fromNumberUnsafe(bar.close), highPrice)
+          ? StructureCloseLocation.Above
+          : BigDecimal.isLessThan(BigDecimal.fromNumberUnsafe(bar.close), lowPrice)
+            ? StructureCloseLocation.Below
+            : StructureCloseLocation.Inside,
+      }))
+      let consecutiveAbove = 0
+      for (const close of completedCloses.toReversed()) {
+        if (close.closeRelativeToStructure !== StructureCloseLocation.Above) break
+        consecutiveAbove++
+      }
+      proposalEvidence[source.setup] = {
+        sourceEvidence,
+        chartAssessment:
+          source.setup === EntrySetup.SupportRecovery
+            ? { support: input.assessments.support, resistance: input.assessments.resistance }
+            : { base: input.assessments.base, resistance: input.assessments.resistance },
+        terms: {
+          setup: source.setup,
+          source,
+          entryPriceUsd: Number(proposal.maximumEntryPriceMicros) / 1_000_000,
+          stopPriceUsd: Number(proposal.stopPriceMicros) / 1_000_000,
+          targetPriceUsd: Number(proposal.profitLimitPriceMicros) / 1_000_000,
+          maximumHoldingMinutes: proposal.maximumHoldingMinutes,
+          targetBasis: source.targetBasis,
+        },
+        calculatedFacts: {
+          structureLowUsd: low,
+          structureHighUsd: high,
+          stopIsBelowStructureLow: BigDecimal.isLessThan(stopPrice, lowPrice),
+          entryIsAboveStructureHigh: BigDecimal.isGreaterThan(
+            BigDecimal.make(BigInt(proposal.maximumEntryPriceMicros), 6),
+            highPrice,
+          ),
+          completedBarsAfterStructure: afterStructure.length,
+          completedClosesAfterStructure: completedCloses,
+          consecutiveNewestClosesAboveStructure: consecutiveAbove,
+          stopTouchedInCompletedBarsAfterStructure: afterStructure.some((bar) =>
+            BigDecimal.isLessThanOrEqualTo(BigDecimal.fromNumberUnsafe(bar.low), stopPrice),
+          ),
+        },
+      }
+      const context = {
+        proposalEvidencePath: `proposals.${source.setup}`,
+        evidence:
+          state.schemaVersion === 'bayn.jev-entry-state.v24'
+            ? entryJudgmentPolicy.evidenceInstructions
+            : retainedEntryJudgmentPolicy.evidenceInstructions,
+      }
+      const definitions = entryJudgmentDefinitions(source.setup)
+      for (const key of ['setup', 'stop'] as const) {
+        const definition = definitions[key]
+        questions[names[key]] = {
+          type: 'noul',
+          instructions: { question: definition.question, ...context },
+          criteria: definition.criteria,
+        }
+      }
+      if ('obstruction' in names)
+        questions[names.obstruction] = {
+          type: 'noul',
+          instructions: { question: cryptoTargetObstruction.question, ...context },
+          criteria: cryptoTargetObstruction.criteria,
+        }
+    }
+    return yield* prepareJevRequest({
+      model: input.model ?? jevModel,
+      state: {
+        schemaVersion:
+          state.schemaVersion === 'bayn.jev-entry-state.v24'
+            ? entryEvidenceStateDefinition
+            : retainedEntryJudgmentPolicy.stateDefinition,
+        symbol: candidate.symbol,
+        windowEndAt: input.chart.windowEndAt,
+        completedSourceBars: input.chart.bars.map(({ id, minuteBeforeWindowEnd, open, high, low, close, volume }) => ({
+          id,
+          minuteBeforeWindowEnd,
+          open,
+          high,
+          low,
+          close,
+          volume,
+        })),
+        ...(candidate.quote === undefined ? {} : { observedQuote: candidate.quote }),
+        ...(state.schemaVersion === 'bayn.jev-entry-state.v24' ? { webullContext: state.webullContext } : {}),
+        proposals: proposalEvidence,
+      },
+      questions,
+    })
+  }).pipe(
+    Result.mapError(
+      (cause) => new JevContractError({ message: 'Proposal-specific Jev questions could not be constructed', cause }),
+    ),
+  )
+
+export const evaluateSupportedEntryProposals = (input: {
+  readonly proposals: readonly NativeEntryProposal[]
+  readonly response: JevResponse
+  readonly protocol?: Pick<JevProtocolMaterial, 'schemaVersion'>
+}) =>
+  Result.gen(function* () {
+    const includeEquityObstruction =
+      input.protocol?.schemaVersion === 'bayn.jev.protocol.v42' ||
+      input.protocol?.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol?.schemaVersion === 'bayn.jev.protocol.v44'
+    const supported: {
+      readonly proposal: NativeEntryProposal
+      readonly structuralSupport: number
+      readonly modeledGainMicros: bigint
+      readonly modeledLossMicros: bigint
+    }[] = []
+    const rejections: {
+      readonly proposalId: string
+      readonly reason: 'SETUP_UNSUPPORTED' | 'INVALIDATION_UNSUPPORTED' | 'OBJECTIVE_OBSTRUCTED' | 'JUDGMENT_UNCERTAIN'
+    }[] = []
+    for (const proposal of input.proposals) {
+      const isShort = isShortEntryProposal(proposal)
+      const names = isShort
+        ? { ...shortQuestionNames(proposal.source.setup), market: MarketKind.Equity as const }
+        : questionNames(proposal.source.setup, instrumentMarket(proposal.symbol), includeEquityObstruction)
+      const setup = input.response.answers[names.setup]
+      const stop = input.response.answers[names.stop]
+      if (setup?.type !== 'noul' || stop?.type !== 'noul')
+        return yield* Result.fail(
+          new JevContractError({ message: 'Entry proposal is missing a required typed judgment' }),
+        )
+      const { affirmativeAtLeast, negativeAtMost } = entryJudgmentThresholds
+      if (setup.noul < affirmativeAtLeast || stop.noul < affirmativeAtLeast) {
+        rejections.push({
+          proposalId: proposal.proposalId,
+          reason:
+            setup.noul <= negativeAtMost
+              ? 'SETUP_UNSUPPORTED'
+              : stop.noul <= negativeAtMost
+                ? 'INVALIDATION_UNSUPPORTED'
+                : 'JUDGMENT_UNCERTAIN',
+        })
+        continue
+      }
+      let structuralSupport = Math.min(setup.noul, stop.noul)
+      if ('obstruction' in names) {
+        const obstruction = input.response.answers[names.obstruction]
+        if (obstruction?.type !== 'noul')
+          return yield* Result.fail(
+            new JevContractError({
+              message: isShort
+                ? 'Short entry proposal is missing its downside-support judgment'
+                : 'Entry proposal is missing its target-obstruction judgment',
+            }),
+          )
+        if (obstruction.noul > negativeAtMost) {
+          rejections.push({
+            proposalId: proposal.proposalId,
+            reason: obstruction.noul >= affirmativeAtLeast ? 'OBJECTIVE_OBSTRUCTED' : 'JUDGMENT_UNCERTAIN',
+          })
+          continue
+        }
+        structuralSupport = Math.min(structuralSupport, 1 - obstruction.noul)
+      }
+      supported.push({
+        proposal,
+        structuralSupport,
+        modeledGainMicros: nativeModeledGainMicros(proposal),
+        modeledLossMicros: nativeModeledLossMicros(proposal),
+      })
+    }
+    return { supported, rejections }
+  })

@@ -1,0 +1,14 @@
+# Sentry-compatible DSNs are public ingest identifiers, not authentication
+# secrets. This ConfigMap contains no credentials; GlitchTip is tailnet-only
+# externally and NetworkPolicy limits which in-cluster pods can reach it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bayn-glitchtip-dsns
+  namespace: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+data:
+  bayn: http://591bd90be7b84b22856ec7c1bd456ec2@glitchtip-web.glitchtip.svc.cluster.local/1
+  bayn-execution: http://8731b10507a04c029414026eff307d5f@glitchtip-web.glitchtip.svc.cluster.local/3
+  bayn-research: http://77fce066fb6a41478f5141ca97327403@glitchtip-web.glitchtip.svc.cluster.local/2

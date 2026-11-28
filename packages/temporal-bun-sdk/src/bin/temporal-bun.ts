@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
-import { Cause, Effect, Exit } from 'effect'
+import { Cause, Effect, Exit, Schema } from 'effect'
 import { buildCodecsFromConfig, createDefaultDataConverter, type DataConverter } from '../common/payloads'
 import { makeDefaultClientInterceptors } from '../interceptors/client'
 import { makeDefaultWorkerInterceptors } from '../interceptors/worker'
@@ -408,7 +408,22 @@ export type Template = {
   contents: string
 }
 
-const SCAFFOLD_SDK_VERSION = '^0.7.1'
+const scaffoldDependencies = (): { '@proompteng/temporal-bun-sdk': string; effect: string } => {
+  for (const path of [
+    resolve(import.meta.dir, '../../package.json'),
+    resolve(import.meta.dir, '../../../package.json'),
+  ]) {
+    if (!existsSync(path)) continue
+    const metadata: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    if (typeof metadata !== 'object' || metadata === null || !('name' in metadata)) continue
+    if (metadata.name !== '@proompteng/temporal-bun-sdk') continue
+    const sdk = Schema.decodeUnknownSync(
+      Schema.Struct({ version: Schema.String, dependencies: Schema.Struct({ effect: Schema.String }) }),
+    )(metadata)
+    return { '@proompteng/temporal-bun-sdk': `^${sdk.version}`, effect: sdk.dependencies.effect }
+  }
+  throw new Error('Unable to resolve the installed Temporal Bun SDK version for scaffolding')
+}
 
 export function projectTemplates(name: string): Template[] {
   return [
@@ -425,12 +440,9 @@ export function projectTemplates(name: string): Template[] {
             'worker:start': 'bun run src/worker.ts',
             'docker:build': 'bun run scripts/build-docker.ts --tag temporal-worker:latest',
           },
-          dependencies: {
-            '@proompteng/temporal-bun-sdk': SCAFFOLD_SDK_VERSION,
-            effect: '^3.2.0',
-          },
+          dependencies: scaffoldDependencies(),
           devDependencies: {
-            'bun-types': '^1.4.0',
+            'bun-types': '^1.4.2',
           },
         },
         null,
@@ -451,6 +463,9 @@ peer = true
             module: 'esnext',
             target: 'es2022',
             moduleResolution: 'bundler',
+            lib: ['esnext', 'dom'],
+            types: ['bun-types'],
+            skipLibCheck: true,
             strict: true,
             noEmit: true,
           },
@@ -577,7 +592,7 @@ function parseArgs(argv: string[]) {
       path: 'Dockerfile',
       contents: `# syntax=docker/dockerfile:1.6
 
-FROM oven/bun:1.4.0
+FROM oven/bun:1.4.2
 WORKDIR /app
 
 COPY package.json bunfig.toml tsconfig.json ./

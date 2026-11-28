@@ -30,6 +30,13 @@ describe('json contracts', () => {
     expect(stableJsonStringifyForHash(left)).toBe(stableJsonStringifyForHash(right))
   })
 
+  it('preserves special JSON keys when computing a hash', () => {
+    const first = JSON.parse('{"metadata":{"__proto__":{"value":1}}}')
+    const second = JSON.parse('{"metadata":{"__proto__":{"value":2}}}')
+    expect(stableJsonStringifyForHash(first)).toContain('"__proto__"')
+    expect(stableJsonStringifyForHash(first)).not.toBe(stableJsonStringifyForHash(second))
+  })
+
   it('builds small JSON responses and validates request bodies', async () => {
     const ok = okResponse({ ok: true })
     expect(ok.headers.get('content-type')).toBe('application/json')

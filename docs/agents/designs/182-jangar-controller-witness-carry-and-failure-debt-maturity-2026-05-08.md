@@ -1,6 +1,6 @@
 # 182. Jangar Controller-Witness Carry And Failure-Debt Maturity (2026-05-08)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-08
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane reliability, controller witness truth, scheduled AgentRun admission, failure-debt maturity,
@@ -16,9 +16,6 @@ Companion Torghut contract:
 
 Extends:
 
-- `180-jangar-stage-clearance-exchange-and-scheduler-routability-contract-2026-05-08.md`
-- `180-jangar-evidence-settlement-reclocking-and-profit-gated-rollouts-2026-05-08.md`
-- `179-jangar-controller-witness-reconciliation-and-failure-debt-retirement-2026-05-08.md`
 - `177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`
 
 ## Decision

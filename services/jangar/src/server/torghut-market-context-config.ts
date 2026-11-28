@@ -1,3 +1,5 @@
+import { isTorghutLegacyRetired } from './torghut-retirement'
+
 type EnvSource = Record<string, string | undefined>
 
 const DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY = 'jangar.market_context.enabled'
@@ -35,6 +37,8 @@ const parseStringList = (value: string | undefined, fallback: string[]) => {
     .filter((item) => item.length > 0)
   return parsed.length > 0 ? parsed : [...fallback]
 }
+
+export const DEFAULT_MARKET_CONTEXT_PROVIDER = 'codex'
 
 export type MarketContextRuntimeConfig = {
   requireTechnicalsSourceHealth: boolean
@@ -93,11 +97,12 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
       maxStalenessSeconds,
     ),
     batchRequireOpenSession: parseBoolean(env.JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION, true),
-    batchTradingStatusUrl:
-      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL) ??
-      'http://torghut.torghut.svc.cluster.local/trading/status',
+    batchTradingStatusUrl: isTorghutLegacyRetired(env)
+      ? ''
+      : (normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL) ??
+        'http://torghut.torghut.svc.cluster.local/trading/status'),
     batchTradingStatusTimeoutMs: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS, 2_000),
-    providerChain: parseStringList(env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, ['codex-spark', 'codex']),
+    providerChain: parseStringList(env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, [DEFAULT_MARKET_CONTEXT_PROVIDER]),
     providerFailureThreshold: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD, 3),
     providerCooldownSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS, 900),
     onDemandDispatchEnabled: parseBoolean(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ENABLED, false),
@@ -145,7 +150,7 @@ export const resolveMarketContextIngestAuthConfig = (env: EnvSource = process.en
 
 export const validateMarketContextConfig = (env: EnvSource = process.env) => {
   const runtime = resolveMarketContextRuntimeConfig(env)
-  new URL(runtime.batchTradingStatusUrl)
+  if (runtime.batchTradingStatusUrl) new URL(runtime.batchTradingStatusUrl)
   new URL(runtime.onDemandDispatchCallbackUrl)
   resolveMarketContextIngestAuthConfig(env)
 }

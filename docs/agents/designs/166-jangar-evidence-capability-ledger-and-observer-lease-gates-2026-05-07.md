@@ -1,6 +1,6 @@
 # 166. Jangar Evidence Capability Ledger And Observer Lease Gates (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-07
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane observer capability, rollout confidence, least-privilege evidence access, material action
@@ -9,13 +9,6 @@ gates, Torghut capital observation bonds, validation, rollout, rollback, and sta
 Companion Torghut contract:
 
 - `docs/torghut/design-system/v6/170-torghut-data-witness-capability-bonds-and-capital-observation-gates-2026-05-07.md`
-
-Extends:
-
-- `165-jangar-proof-settlement-broker-and-profit-repair-packet-gates-2026-05-07.md`
-- `162-jangar-contract-witness-notary-and-material-action-gates-2026-05-07.md`
-- `143-jangar-least-privilege-evidence-escrow-and-capital-proof-settlement-2026-05-07.md`
-- `docs/torghut/design-system/v6/169-torghut-route-reacquisition-board-and-profit-repair-packets-2026-05-07.md`
 
 ## Decision
 

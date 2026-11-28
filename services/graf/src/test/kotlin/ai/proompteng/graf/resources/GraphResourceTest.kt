@@ -4,9 +4,11 @@ import ai.proompteng.graf.autoresearch.AutoResearchConfig
 import ai.proompteng.graf.autoresearch.AutoResearchLauncher
 import ai.proompteng.graf.codex.CodexResearchLaunchResult
 import ai.proompteng.graf.codex.CodexResearchService
+import ai.proompteng.graf.config.AgentsConfig
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.model.AutoResearchLaunchResponse
 import ai.proompteng.graf.model.AutoResearchRequest
+import ai.proompteng.graf.model.CodexResearchRequest
 import ai.proompteng.graf.services.GraphService
 import io.mockk.every
 import io.mockk.mockk
@@ -38,8 +40,27 @@ class GraphResourceTest {
       defaultOperatorGuidance = AutoResearchConfig.DEFAULT_OPERATOR_GUIDANCE,
       defaultGoalsText = AutoResearchConfig.DEFAULT_GOALS_TEXT,
     )
-  private val resource =
-    GraphResource(graphService, codexResearchService, minioConfig, autoResearchConfig, autoResearchService)
+
+  private fun resource(env: Map<String, String>) =
+    GraphResource(
+      graphService,
+      codexResearchService,
+      minioConfig,
+      autoResearchConfig,
+      autoResearchService,
+      AgentsConfig.fromEnvironment(env),
+    )
+
+  private val resource = resource(mapOf("AGENTS_GRAF_AGENT_NAME" to "test-research-agent"))
+
+  @Test
+  fun `both research routes reject requests before dispatch when no agent is configured`() {
+    val disabled = resource(emptyMap())
+    runBlocking {
+      assertEquals(503, disabled.startCodexResearch(CodexResearchRequest(prompt = "research")).status)
+      assertEquals(503, disabled.startAutoResearch(AutoResearchRequest()).status)
+    }
+  }
 
   @Test
   fun `POST autoresearch with user prompt returns accepted`() {

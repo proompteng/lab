@@ -8,20 +8,6 @@
 - Scope: cluster/state assessment, source risk mapping, database/data confidence baseline, and production contract for engineer/deployer implementation.
 - Mission objective: increase control-plane reliability while enabling measurable profitability improvements in Torghut quant under constrained evidence conditions.
 
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
-- Matched implementation area: Jangar/control-plane integration.
-- Current source evidence:
-  - `services/jangar/src/routes/ready.tsx`
-  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
-  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
-  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
-  - `argocd/applications/agents/kustomization.yaml`
-- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
-
-
 ## Objective and success metrics (runtime inputs)
 
 - swarmName: `torghut-quant`
@@ -217,14 +203,6 @@ This design is selected because it directly addresses both objectives from curre
   - one full shadow session + one enforced session executed with documented gate outcomes
   - rollback path confirmed and tested
   - hard rollout decisions remain reversible within agreed window
-
-## Merged document references (this architecture set)
-
-- `docs/torghut/design-system/v6/39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
-- `docs/torghut/design-system/v6/40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
-- `docs/torghut/design-system/v6/40-control-plane-resilience-and-safe-rollout-contract-2026-03-15.md`
-- `docs/torghut/design-system/v6/41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
-- `docs/torghut/design-system/v6/41-profitability-hypothesis-and-guardrail-contract-2026-03-15.md`
 
 ## Why this contract is the required merge artifact
 

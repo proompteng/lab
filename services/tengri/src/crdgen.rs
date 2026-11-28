@@ -33,8 +33,7 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         json!([
             {"name": "Phase", "type": "string", "jsonPath": ".status.phase"},
             {"name": "Node", "type": "string", "jsonPath": ".status.nodeName"},
-            {"name": "Guest Ready", "type": "boolean", "jsonPath": ".status.guestReady"},
-            {"name": "Expires", "type": "string", "jsonPath": ".spec.expiresAt"}
+            {"name": "Guest Ready", "type": "boolean", "jsonPath": ".status.guestReady"}
         ]),
     )?;
     insert(
@@ -42,13 +41,15 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         "/spec/versions/0/schema/openAPIV3Schema",
         "x-kubernetes-validations",
         json!([
-            {"rule": "self.spec.ownerHash == oldSelf.spec.ownerHash", "message": "ownerHash is immutable"},
-            {"rule": "self.spec.image == oldSelf.spec.image", "message": "the digest-pinned guest image is immutable"},
+            {"rule": "self.spec.reservationId == oldSelf.spec.reservationId", "message": "reservation identity is immutable"},
             {"rule": "self.spec.architecture == oldSelf.spec.architecture", "message": "the server-selected architecture is immutable"},
-            {"rule": "self.spec.resources == oldSelf.spec.resources", "message": "the v1 resource profile is immutable"},
             {
-                "rule": "self.spec.createdAt == oldSelf.spec.createdAt && self.spec.expiresAt == oldSelf.spec.expiresAt",
-                "message": "creation and hard-expiry timestamps are immutable"
+                "rule": "self.spec.resources.workspaceGib >= oldSelf.spec.resources.workspaceGib",
+                "message": "workspace size cannot shrink"
+            },
+            {
+                "rule": "self.spec.createdAt == oldSelf.spec.createdAt",
+                "message": "creation time is immutable"
             }
         ]),
     )?;
@@ -56,9 +57,9 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
     for pointer in [
         "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/createdAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/idleDeadline",
-        "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/expiresAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/readyAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/lastActivityAt",
+        "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/podSandboxTransitionAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/conditions/items/properties/lastTransitionAt",
     ] {
         insert(&mut crd, pointer, "format", json!("date-time"))?;
@@ -88,20 +89,44 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         json!(r"^[a-f0-9]{64}$"),
     )?;
 
+    let slot = "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/slot/properties";
+    for field in ["name", "podUid", "pvcName", "pvcUid"] {
+        insert(&mut crd, &format!("{slot}/{field}"), "minLength", json!(1))?;
+        insert(&mut crd, &format!("{slot}/{field}"), "maxLength", json!(63))?;
+        insert(
+            &mut crd,
+            &format!("{slot}/{field}"),
+            "pattern",
+            json!(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"),
+        )?;
+    }
+    insert(&mut crd, &format!("{slot}/epoch"), "minimum", json!(1))?;
+    insert(
+        &mut crd,
+        &format!("{slot}/epoch"),
+        "maximum",
+        json!(i32::MAX),
+    )?;
+
     let resources = "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources";
-    for (field, fixed) in [
-        ("cpuMillis", crd::CPU_MILLIS),
-        ("memoryMib", crd::MEMORY_MIB),
-        ("workspaceGib", crd::WORKSPACE_GIB),
+    insert(
+        &mut crd,
+        "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/power/properties/idleTimeoutMinutes",
+        "maximum",
+        json!(1440),
+    )?;
+    for (field, allowed) in [
+        ("cpuMillis", json!([crd::CPU_MILLIS])),
+        ("memoryMib", json!([crd::MEMORY_MIB])),
+        ("workspaceGib", json!([crd::WORKSPACE_GIB])),
     ] {
         insert(
             &mut crd,
             &format!("{resources}/properties/{field}"),
             "enum",
-            json!([fixed]),
+            allowed,
         )?;
     }
-
     serde_json::from_value(crd).context("deserialize production CRD")
 }
 
@@ -119,14 +144,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn production_schema_is_fixed_immutable_and_observable() {
+    fn production_schema_is_fixed_controller_owned_and_observable() {
         let crd = serde_json::to_value(production_crd().expect("generate production CRD"))
             .expect("serialize production CRD");
         assert_eq!(
             crd.pointer(
-                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/cpuMillis/enum/0"
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/cpuMillis/enum"
             ),
-            Some(&json!(2_000))
+            Some(&json!([4_000]))
+        );
+        assert_eq!(
+            crd.pointer(
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/memoryMib/enum"
+            ),
+            Some(&json!([8_192]))
+        );
+        assert_eq!(
+            crd.pointer(
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/workspaceGib/enum"
+            ),
+            Some(&json!([32]))
+        );
+        assert_eq!(
+            crd.pointer("/spec/versions/0/schema/openAPIV3Schema/x-kubernetes-validations/2/rule"),
+            Some(&json!(
+                "self.spec.resources.workspaceGib >= oldSelf.spec.resources.workspaceGib"
+            ))
         );
         assert_eq!(
             crd.pointer(
@@ -148,16 +191,44 @@ mod tests {
             Some(&json!(".status.guestReady"))
         );
         assert_eq!(
-            crd.pointer("/spec/versions/0/additionalPrinterColumns/3/type"),
-            Some(&json!("string")),
-            "future expiry timestamps must not use kubectl's age-oriented date renderer"
+            crd.pointer("/spec/versions/0/additionalPrinterColumns/3"),
+            None,
+            "retained agents do not expose a destructive expiry column"
         );
         assert_eq!(
             crd.pointer(
-                "/spec/versions/0/schema/openAPIV3Schema/x-kubernetes-validations/1/message"
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/expiresAt"
             ),
-            Some(&json!("the digest-pinned guest image is immutable"))
+            None,
+            "the single snapshot runtime has no legacy expiry field"
         );
+        assert!(
+            !crd.pointer("/spec/versions/0/schema/openAPIV3Schema/properties/spec/required")
+                .and_then(Value::as_array)
+                .is_some_and(|required| required.iter().any(|field| field == "expiresAt"))
+        );
+        let validations = crd
+            .pointer("/spec/versions/0/schema/openAPIV3Schema/x-kubernetes-validations")
+            .and_then(Value::as_array)
+            .expect("production validations");
+        assert!(
+            validations.iter().all(|validation| {
+                validation.get("rule").and_then(Value::as_str)
+                    != Some("self.spec.image == oldSelf.spec.image")
+            }),
+            "the controller must be able to adopt a configured digest at a safe boundary"
+        );
+        assert!(
+            validations.iter().all(|validation| {
+                validation.get("rule").and_then(Value::as_str)
+                    != Some("self.spec.ownerHash == oldSelf.spec.ownerHash")
+            }),
+            "the controller projects ownership transfers from current Ofz authority"
+        );
+        assert!(validations.iter().any(|validation| {
+            validation.get("rule").and_then(Value::as_str)
+                == Some("self.spec.reservationId == oldSelf.spec.reservationId")
+        }));
         assert_eq!(
             crd.pointer(
                 "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/displayName/maxLength"

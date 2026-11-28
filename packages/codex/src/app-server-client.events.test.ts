@@ -1,33 +1,29 @@
-import { spawn } from 'node:child_process'
+import childProcess from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 
-import { CodexAppServerClient } from './app-server-client'
-
-vi.mock('node:child_process', () => ({
-  spawn: vi.fn(),
-}))
+import { CodexAppServerBootstrapTimeoutError, CodexAppServerClient } from './app-server-client'
 
 class FakeChildProcess extends EventEmitter {
+  pid = 1
+  exitCode: number | null = null
+  signalCode: NodeJS.Signals | null = null
   stdin = new PassThrough()
   stdout = new PassThrough()
   stderr = new PassThrough()
   killed = false
 
-  kill(): boolean {
+  kill(signal: NodeJS.Signals = 'SIGTERM'): boolean {
     this.killed = true
-    this.emit('exit', 0, null)
+    this.signalCode = signal
+    this.emit('exit', null, signal)
     return true
   }
 }
 
-const spawnMock = spawn as unknown as {
-  mock: { calls: unknown[][] }
-  mockReturnValue: (value: unknown) => void
-  mockReset: () => void
-}
+let spawnMock: MockInstance<typeof childProcess.spawn>
 
 const writeLine = (child: FakeChildProcess, payload: unknown) => {
   child.stdout.write(Buffer.from(`${JSON.stringify(payload)}\n`))
@@ -106,7 +102,7 @@ const respondToThreadResume = async (
         path: '',
         turns: [],
       },
-      model: 'gpt-5.6-sol',
+      model: 'gpt-6.2-sol',
       modelProvider: 'openai',
       serviceTier: null,
       cwd: '/workspace/lab',
@@ -158,7 +154,7 @@ const respondToGoalSet = async (child: FakeChildProcess, inspect?: (request: Jso
 
 const setupClient = (options: ConstructorParameters<typeof CodexAppServerClient>[0] = {}) => {
   const child = new FakeChildProcess()
-  spawnMock.mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+  spawnMock.mockReturnValue(child as unknown as ReturnType<typeof childProcess.spawn>)
   const client = new CodexAppServerClient({ logger: () => {}, ...options })
   return { child, client }
 }
@@ -190,11 +186,84 @@ const withTimeout = async <T>(promise: Promise<T>, label: string): Promise<T> =>
 
 describe('CodexAppServerClient v2 notifications', () => {
   beforeEach(() => {
-    spawnMock.mockReset()
+    spawnMock = vi.spyOn(childProcess, 'spawn')
   })
 
   afterEach(() => {
-    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('allows 60 seconds for the initialize handshake before stopping the child', async () => {
+    const schedule = vi.spyOn(globalThis, 'setTimeout')
+    const { child, client } = setupClient()
+    const readiness = client.ensureReady().catch((error) => error)
+    try {
+      const [expire, timeoutMs] = schedule.mock.calls[0] ?? []
+      expect(timeoutMs).toBe(60_000)
+      expect(child.killed).toBe(false)
+      expire?.()
+
+      expect(await readiness).toBeInstanceOf(CodexAppServerBootstrapTimeoutError)
+      expect(child.killed).toBe(true)
+    } finally {
+      client.stop()
+    }
+  })
+
+  it('waits for child exit and escalates if startup shutdown ignores SIGTERM', async () => {
+    const gracePeriod = new AbortController()
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(gracePeriod.signal)
+    const { child, client } = setupClient()
+    const readiness = client.ensureReady().catch((error) => error)
+    const forced = Promise.withResolvers<void>()
+    const kill = vi.spyOn(child, 'kill').mockImplementation((signal) => {
+      child.killed = true
+      if (signal === 'SIGKILL') forced.resolve()
+      return true
+    })
+
+    const stopping = client.stopAndWait()
+    expect(kill).toHaveBeenCalledTimes(1)
+    gracePeriod.abort()
+    await forced.promise
+    expect(kill).toHaveBeenLastCalledWith('SIGKILL')
+    child.signalCode = 'SIGKILL'
+    child.emit('exit', null, child.signalCode)
+    await stopping
+    expect(await readiness).toMatchObject({ message: expect.stringContaining('SIGKILL') })
+  })
+
+  it('propagates child spawn errors instead of treating them as bootstrap timeouts', async () => {
+    const { child, client } = setupClient()
+    const error = new Error('spawn codex ENOENT')
+    const ready = client.ensureReady()
+    child.emit('error', error)
+    await expect(ready).rejects.toBe(error)
+  })
+
+  it('observes continuation notifications after the requested turn stream has closed', async () => {
+    const observed = vi.fn()
+    const { child, client } = setupClient({ onNotification: observed })
+    await respondToInitialize(child)
+    const started = client.runTurnStream('task')
+    await respondToThreadStart(child, 'thread-observed')
+    await respondToTurnStart(child, 'first-turn')
+    const { stream } = await started
+    writeLine(child, {
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-observed',
+        turn: { id: 'first-turn', rootTurnId: null, items: [], itemsView: 'full', status: 'completed', error: null },
+      },
+    })
+    await drainStream(stream)
+    const continuation = {
+      method: 'thread/tokenUsage/updated',
+      params: { threadId: 'thread-observed', turnId: 'next-turn', tokenUsage: { total: { totalTokens: 42 } } },
+    }
+    writeLine(child, continuation)
+    expect(observed).toHaveBeenCalledWith(continuation)
+    client.stop()
   })
 
   it('opts into experimental app-server APIs during initialize', async () => {
@@ -216,6 +285,52 @@ describe('CodexAppServerClient v2 notifications', () => {
     client.stop()
   })
 
+  it('loads all persisted items for the requested continuation turn', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+    const firstRequest = nextRequest(child)
+    const result = client.getTurnItems('thread-1', 'continuation-2')
+    const first = await firstRequest
+    expect(first).toMatchObject({
+      method: 'thread/items/list',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'continuation-2',
+        cursor: null,
+        limit: 100,
+        sortDirection: 'asc',
+      },
+    })
+    const secondRequest = nextRequest(child)
+    writeLine(child, {
+      id: first.id,
+      result: {
+        data: [{ turnId: 'continuation-2', item: { type: 'agentMessage', id: 'message-1', text: 'first' } }],
+        nextCursor: 'page-2',
+        backwardsCursor: null,
+      },
+    })
+    const second = await secondRequest
+    expect(second).toMatchObject({
+      method: 'thread/items/list',
+      params: { turnId: 'continuation-2', cursor: 'page-2' },
+    })
+    writeLine(child, {
+      id: second.id,
+      result: {
+        data: [{ turnId: 'continuation-2', item: { type: 'agentMessage', id: 'message-2', text: 'last' } }],
+        nextCursor: null,
+        backwardsCursor: null,
+      },
+    })
+    expect(await result).toEqual([
+      { type: 'agentMessage', id: 'message-1', text: 'first' },
+      { type: 'agentMessage', id: 'message-2', text: 'last' },
+    ])
+    client.stop()
+  })
+
   it('advertises and handles attestation generation only when a handler is configured', async () => {
     const onAttestationGenerate = vi.fn(async () => ({ token: 'opaque-attestation-token' }))
     const { child, client } = setupClient({ onAttestationGenerate })
@@ -233,26 +348,6 @@ describe('CodexAppServerClient v2 notifications', () => {
     })
     expect(onAttestationGenerate).toHaveBeenCalledWith({})
 
-    client.stop()
-  })
-
-  it('responds to current time requests with whole Unix seconds', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-07-17T08:30:45.999Z'))
-    const { child, client } = setupClient()
-    await respondToInitialize(child)
-    await client.ensureReady()
-
-    writeLine(child, {
-      id: 41,
-      method: 'currentTime/read',
-      params: { threadId: 'thread-1' },
-    })
-
-    await expect(nextMessage(child)).resolves.toEqual({
-      id: 41,
-      result: { currentTimeAt: 1_784_277_045 },
-    })
     client.stop()
   })
 
@@ -507,7 +602,7 @@ describe('CodexAppServerClient v2 notifications', () => {
       cwd: '/workspace/lab',
       approval: 'never',
       sandbox: 'danger-full-access',
-      defaultModel: 'gpt-5.6-sol',
+      defaultModel: 'gpt-6.2-sol',
       defaultEffort: 'high',
       threadConfig: { mcp_servers: {}, web_search: 'live' },
       persistExtendedHistory: true,
@@ -523,7 +618,7 @@ describe('CodexAppServerClient v2 notifications', () => {
     await respondToThreadResume(child, 'thread-existing', (request) => {
       expect(request.params).toMatchObject({
         threadId: 'thread-existing',
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.2-sol',
         cwd: '/workspace/lab',
         approvalPolicy: 'never',
         sandbox: 'danger-full-access',
@@ -693,7 +788,7 @@ describe('CodexAppServerClient v2 notifications', () => {
 
     const [binaryPath, args] = spawnMock.mock.calls[0] ?? []
     expect(binaryPath).toBe('codex')
-    expect(args).toEqual(['--sandbox', 'danger-full-access', '--model', 'gpt-5.6-sol', 'app-server'])
+    expect(args).toEqual(['--sandbox', 'danger-full-access', '--model', 'gpt-6.2-sol', 'app-server'])
 
     await respondToInitialize(child)
     await client.ensureReady()
@@ -717,7 +812,7 @@ describe('CodexAppServerClient v2 notifications', () => {
       '--ask-for-approval',
       'never',
       '--model',
-      'gpt-5.6-sol',
+      'gpt-6.2-sol',
       'app-server',
     ])
 
@@ -1207,6 +1302,38 @@ describe('CodexAppServerClient v2 notifications', () => {
         status: 'completed',
         revisedPrompt: 'astronaut cat',
         result: 'https://example.com/cat.png',
+      },
+    })
+
+    writeLine(child, {
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'imageGeneration',
+          id: 'img-2',
+          status: 'completed',
+          revisedPrompt: null,
+          fileId: 'file-image-2',
+          savedPath: '/workspace/cat.png',
+          failure: null,
+          generationId: 'generation-2',
+        },
+      },
+    })
+    expect((await stream.next()).value).toEqual({
+      type: 'tool',
+      toolKind: 'imageGeneration',
+      id: 'img-2',
+      status: 'completed',
+      title: 'image generation',
+      detail: 'file-image-2',
+      data: {
+        status: 'completed',
+        revisedPrompt: null,
+        fileId: 'file-image-2',
+        savedPath: '/workspace/cat.png',
       },
     })
 

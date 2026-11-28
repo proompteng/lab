@@ -38,3 +38,19 @@ kubectl -n <namespace> get secret <target-secret>
 ```
 
 Do not print secret values during verification. Compare presence, length, or hashes only.
+
+## Refresh and read budget
+
+Static API and SMTP credentials refresh daily. Codex OAuth credentials and the provider canary retain hourly
+refreshes. After rotating a credential, let the one-minute provider read cache expire, then explicitly refresh its
+ExternalSecret and verify the target value rather than waiting for the next periodic read. Kubernetes Secret
+projection can take additional time to reach consumers.
+
+Fetch a multi-field 1Password item once with `dataFrom.extract`. Keep `target.template.mergePolicy: Replace`
+and enumerate the existing consumer keys in the template so unrelated item fields cannot enter its Secret.
+Buzz reads its Redis password from the existing `buzz-redis-auth` Secret through its existing Kubernetes store.
+Its mixed-source runtime Secret keeps hourly reconciliation for database credential changes.
+
+Both SDK stores use a one-minute read cache for repeated reads during reconciliation bursts. This does not
+replace refresh policies or increase the account-wide 1Password quota. Include per-field `sourceRef.storeRef`
+overrides when calculating provider demand; the top-level store alone does not identify every 1Password read.

@@ -11,23 +11,32 @@ JupyterLab using the [Deno Jupyter kernel](https://docs.deno.com/runtime/manual/
 
 ## Prerequisites
 
-1. Install Deno **v1.45.4** or newer.
-2. Install the kernel once per machine:
+1. Install Deno **v2.5** or newer.
+2. Enter this notebook directory so Deno discovers its scoped configuration:
 
    ```bash
-   deno jupyter --unstable --install
+   cd books/anomalies
    ```
 
-3. Launch JupyterLab pointing at this workspace:
+3. Install the kernel once per machine:
+
+   ```bash
+   deno jupyter --install
+   ```
+
+4. Launch JupyterLab:
 
    ```bash
    jupyter lab
    ```
 
-4. From the notebook launcher, pick the **Deno** kernel (language: TypeScript).
+5. From the notebook launcher, pick the **Deno** kernel (language: TypeScript).
 
-The notebook loads Observable Plot and D3 from jsDelivr/CDN (`https://cdn.jsdelivr.net/...`), so no npm install is required. Ensure
-network access is available on the first execution so Deno can cache the modules.
+The notebook is self-contained from Deno's perspective, so its scoped `deno.json`
+disables lockfile generation instead of capturing the monorepo's npm graph. The
+rendered visualization loads an exact D3 release directly in the browser from
+jsDelivr, so no npm install is required. Ensure network access is available when
+rendering the chart.
 
 ## Notebook highlights
 

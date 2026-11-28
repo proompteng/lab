@@ -11,7 +11,8 @@ export const createKubectlTools = (): EffectTool[] => [
   {
     name: 'kubectl',
     title: 'Inspect Kubernetes with kubectl',
-    description: 'Run read-only kubectl inspection. Pass argv after kubectl.',
+    description:
+      'Inspect Kubernetes resources; pod exec (even read-only diagnostics) uses kubectl_admin. Pass argv after kubectl. No repo session.',
     inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
     annotations: openReadOnlyAnnotations,
@@ -27,6 +28,7 @@ export const createKubectlTools = (): EffectTool[] => [
               command: 'kubectl',
               args: kubectlArgs,
               cwd: args.cwd,
+              sessionId: args.sessionId,
               timeoutSeconds: args.timeoutSeconds,
               maxOutputBytes: args.maxOutputBytes,
               okExitCodes: kubectlArgs[0] === 'diff' ? [0, 1] : [0],
@@ -41,7 +43,8 @@ export const createKubectlTools = (): EffectTool[] => [
   {
     name: 'kubectl_admin',
     title: 'Run admin kubectl',
-    description: 'Run admin kubectl operations allowed by the agents-shell ServiceAccount. Pass argv after kubectl.',
+    description:
+      'Run kubectl exec (including read-only diagnostics) or authorized administration. Pass argv after kubectl. No repo session.',
     inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
     annotations: destructiveAnnotations,
@@ -56,6 +59,7 @@ export const createKubectlTools = (): EffectTool[] => [
               command: 'kubectl',
               args: kubectlArgs,
               cwd: args.cwd,
+              sessionId: args.sessionId,
               timeoutSeconds: args.timeoutSeconds,
               maxOutputBytes: args.maxOutputBytes,
               okExitCodes: kubectlArgs[0] === 'diff' ? [0, 1] : [0],

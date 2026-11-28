@@ -1,8 +1,8 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result } from 'effect'
-import type { SqlError } from 'effect/unstable/sql/SqlError'
+import type { SqlError } from 'effect/sql/SqlError'
 
-import { MutationOperation, type PartialMutationEvidence } from '../../../broker/alpaca-mutations'
+import { MutationOperation, type PartialMutationEvidence } from '../../../broker/alpaca-mutations/model'
 import { IntentState } from '../../contracts'
 import {
   decideAcknowledgedRecovery,
@@ -28,7 +28,8 @@ import { decodeAcknowledged, decodeIntentIds, decodeOutcomeIntentSnapshot } from
 import type { MutationEventPostgres } from './events'
 import { fromDecision } from './shared'
 import type { WriterFenceError, WriterFenceService } from '../../writer-fence'
-import { Pipeable } from '../../../pipeable'
+
+import type { SubmissionDenialReason } from '../../submission-denial'
 
 export interface MutationOutcomePostgres {
   readonly appendOutcome: (
@@ -38,10 +39,11 @@ export interface MutationOutcomePostgres {
     occurredAt: string,
     evidence?: PartialMutationEvidence,
     brokerOrderId?: string,
+    denialReason?: SubmissionDenialReason,
   ) => Effect.Effect<MutationEvent, MutationStoreError | SqlError | WriterFenceError>
 }
 
-const makeMutationOutcomePostgresDataFirst = (
+export const makeMutationOutcomePostgres = (
   sql: PgClient.PgClient,
   fence: WriterFenceService,
   events: MutationEventPostgres,
@@ -82,7 +84,10 @@ const makeMutationOutcomePostgresDataFirst = (
   const recoverUnknownSubmit = (operation: OutcomeStoreOperation, input: MutationOutcomeInput) =>
     sql<{ intent_id: string }>`
       UPDATE intents
-      SET state = ${IntentState.Recovered}, state_version = state_version + 1, updated_at = ${input.occurredAt}
+      SET
+        state = ${IntentState.Recovered},
+        state_version = state_version + 1,
+        updated_at = GREATEST(${input.occurredAt}::timestamptz, updated_at + interval '1 microsecond')
       WHERE intent_id = ${input.intentId} AND state = ${IntentState.Unknown}
       RETURNING intent_id
     `.pipe(
@@ -269,6 +274,7 @@ const makeMutationOutcomePostgresDataFirst = (
     occurredAt: string,
     evidence?: PartialMutationEvidence,
     brokerOrderId?: string,
+    denialReason?: SubmissionDenialReason,
   ) => {
     const operation = outcomeStoreOperation(definition)
     return fromDecision(() =>
@@ -279,6 +285,7 @@ const makeMutationOutcomePostgresDataFirst = (
           occurredAt,
           ...(evidence === undefined ? {} : { evidence }),
           ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+          ...(denialReason === undefined ? {} : { denialReason }),
         }),
         (input) => ({ definition, input }),
       ),
@@ -289,5 +296,3 @@ const makeMutationOutcomePostgresDataFirst = (
 
   return { appendOutcome }
 }
-
-export const makeMutationOutcomePostgres = Pipeable.dual(3, makeMutationOutcomePostgresDataFirst)

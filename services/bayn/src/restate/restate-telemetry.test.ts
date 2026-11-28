@@ -2,9 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import { createServer } from 'node:http'
 
 import type { Request as RestateRequest } from '@restatedev/restate-sdk'
-import { Effect } from 'effect'
+import { Effect, Option } from 'effect'
 
-import { acquireRestateTelemetry, currentOpenTelemetryLogAnnotations } from './restate-telemetry'
+import {
+  acquireRestateTelemetry,
+  currentOpenTelemetryLogAnnotations,
+  currentOpenTelemetryParentSpan,
+} from './restate-telemetry'
 
 const fakeRequest = {
   target: {
@@ -49,6 +53,8 @@ describe('Bayn Restate telemetry', () => {
 
     let traceparent: string | undefined
     let logAnnotations: Readonly<Record<string, string>> = {}
+    let childTraceId: string | undefined
+    let childParentId: string | undefined
     try {
       await Effect.runPromise(
         Effect.scoped(
@@ -62,10 +68,20 @@ describe('Bayn Restate telemetry', () => {
             if (provider === undefined) throw new Error('Restate tracing hook was not configured')
             const handler = provider({ request: fakeRequest }).interceptor?.handler
             if (handler === undefined) throw new Error('Restate tracing handler interceptor was not configured')
+            const services = yield* Effect.context<never>()
             yield* Effect.promise(() =>
               handler(async () => {
                 traceparent = telemetry.traceHeaders().traceparent
                 logAnnotations = currentOpenTelemetryLogAnnotations()
+                const parent = currentOpenTelemetryParentSpan()
+                if (parent === undefined) throw new Error('Native Restate parent span was missing')
+                await Effect.runPromiseWith(services)(
+                  Effect.gen(function* () {
+                    const span = yield* Effect.currentSpan.pipe(Effect.orDie)
+                    childTraceId = span.traceId
+                    childParentId = span.parent.pipe(Option.getOrUndefined)?.spanId
+                  }).pipe(Effect.withSpan('research-child'), Effect.withParentSpan(parent)),
+                )
               }),
             )
           }),
@@ -82,6 +98,8 @@ describe('Bayn Restate telemetry', () => {
       const [, traceId, spanId] = traceparent.split('-')
       expect(logAnnotations['trace_id']).toBe(traceId)
       expect(logAnnotations['span_id']).toBe(spanId)
+      expect(childTraceId).toBe(traceId)
+      expect(childParentId).toBe(spanId)
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((cause) => (cause === undefined ? resolve() : reject(cause))),

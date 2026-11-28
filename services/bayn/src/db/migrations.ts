@@ -1,3 +1,158 @@
+import executionQualityAuditViews from '../../migrations/0230_execution_quality_audit_views'
+import intradayAlphaV2PaperSettlement from '../../migrations/0229_intraday_alpha_v2_paper_settlement'
+import intradayAlphaV3Admission from '../../migrations/0228_intraday_alpha_v3_admission'
+import auditReaderViewGrant from '../../migrations/0227_audit_reader_view_grant'
+import auditReaderGrants from '../../migrations/0226_audit_reader_grants'
+import alphaBaselinePreparation from '../../migrations/0225_alpha_baseline_preparation'
+import strategyBoundQualification from '../../migrations/0224_strategy_bound_qualification'
+import intradayAlphaV1PaperSettlement from '../../migrations/0223_intraday_alpha_v1_paper_settlement'
+import intradayAlphaV2Admission from '../../migrations/0222_intraday_alpha_v2_admission'
+import v44PaperSettlement from '../../migrations/0221_v44_paper_settlement'
+import intradayAlphaAdmission from '../../migrations/0220_intraday_alpha_admission'
+import positiveNetTargetAdmission from '../../migrations/0219_positive_net_target_admission'
+import v43PaperSettlement from '../../migrations/0218_v43_paper_settlement'
+import stopFloorRewardRiskAdmission from '../../migrations/0217_stop_floor_reward_risk_admission'
+import stopFloorRewardRiskObserveCutover from '../../migrations/0216_stop_floor_reward_risk_observe_cutover'
+import executionExpectedSession from '../../migrations/0215_execution_expected_session'
+import singleControllerObservation from '../../migrations/0214_single_controller_observation'
+import riskSymmetryAdmission from '../../migrations/0213_risk_symmetry_admission'
+import riskSymmetryObserveCutover from '../../migrations/0212_risk_symmetry_observe_cutover'
+import durableBrokerActivities from '../../migrations/0211_durable_broker_activities'
+import pairedQualificationAdmission from '../../migrations/0210_paired_qualification_admission'
+import qualificationAuthorityWitness from '../../migrations/0209_qualification_authority_witness'
+import reconciliationSourceSnapshots from '../../migrations/0208_reconciliation_source_snapshots'
+import nativeQualificationCalendar from '../../migrations/0207_native_qualification_calendar'
+import durableBrokerSourceEvents from '../../migrations/0206_durable_broker_source_events'
+import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
+import protectionClosePlans from '../../migrations/0204_protection_close_plans'
+import protectionReadAllowance from '../../migrations/0203_protection_read_allowance'
+import protectionReleaseProofs from '../../migrations/0202_protection_release_proofs'
+import notDispatchedVisualEvidence from '../../migrations/0201_not_dispatched_visual_evidence'
+import nativeEquityShorts from '../../migrations/0200_native_equity_shorts'
+import equityShortObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
+import equityShortAccounting from '../../migrations/0198_equity_short_accounting'
+import inferenceExpenseWakeups from '../../migrations/0197_inference_expense_wakeups'
+import streamingOperationalController from '../../migrations/0196_streaming_operational_controller'
+import jevInferenceWork from '../../migrations/0195_jev_inference_work'
+import brokerNotificationReceipts from '../../migrations/0194_broker_notification_receipts'
+import uncappedPaperTurnover from '../../migrations/0192_uncapped_paper_turnover'
+import executionControllerAtomicRotation from '../../migrations/0191_execution_controller_atomic_rotation'
+import settleRetiredJevBatches from '../../migrations/0190_settle_retired_jev_batches'
+import nativeProtectionCancelReceipts from '../../migrations/0189_native_protection_cancel_receipts'
+import jevBoxInference from '../../migrations/0188_jev_box_inference'
+import inferenceRequestGenerationIndex from '../../migrations/0187_inference_request_generation_index'
+import jev114ObserveCutover from '../../migrations/0186_jev114_observe_cutover'
+import chartPresenceSkip from '../../migrations/0185_chart_presence_skip'
+import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
+import effectiveEntryObserveCutover from '../../migrations/0183_effective_entry_observe_cutover'
+import conditionalStatisticalQualification from '../../migrations/0182_conditional_statistical_qualification'
+import webullObserveCutover from '../../migrations/0179_webull_observe_cutover'
+import jevEntryWindowIndex from '../../migrations/0180_jev_entry_window_index'
+import operationalSafetyBaseline from '../../migrations/0181_operational_safety_baseline'
+import webullEntryContext from '../../migrations/0178_webull_entry_context'
+import riskClockRejection from '../../migrations/0177_risk_clock_rejection'
+import operationalSourceRecords from '../../migrations/0176_operational_source_records'
+import operationalControllerEvidence from '../../migrations/0175_operational_controller_evidence'
+import operationalPeriod from '../../migrations/0174_operational_period'
+import inferenceExpenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
+import jevOnlyInference from '../../migrations/0172_jev_only_inference'
+import datedExecutionFees from '../../migrations/0171_dated_execution_fees'
+import researchQualification from '../../migrations/0170_research_qualification'
+import economicQualification from '../../migrations/0169_economic_qualification'
+import registeredAssessmentWindow from '../../migrations/0168_registered_assessment_window'
+import chartStructureBeforeFunding from '../../migrations/0167_chart_structure_before_funding'
+import candidateEntryEvidence from '../../migrations/0166_candidate_entry_evidence'
+import observedResistance from '../../migrations/0165_observed_resistance'
+import focusedEntryEvidence from '../../migrations/0164_focused_entry_evidence'
+import jevObservationWindowIndex from '../../migrations/0163_jev_observation_window_index'
+import equityBenchmarkContext from '../../migrations/0162_equity_benchmark_context'
+import cryptoHistoryContext from '../../migrations/0161_crypto_history_context'
+import cryptoQuoteEvidence from '../../migrations/0160_crypto_quote_evidence'
+import equityEntryAskCap from '../../migrations/0158_equity_entry_ask_cap'
+import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
+import systemAssessment from '../../migrations/0159_system_assessment'
+import systemRegistration from '../../migrations/0156_system_registration'
+import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
+import stagedChartTransport from '../../migrations/0153_staged_chart_transport'
+import nativeControls from '../../migrations/0155_native_controls'
+import fundedSourceAnchors from '../../migrations/0152_funded_source_anchors'
+import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_checkpoints'
+import inferenceRequestVersion from '../../migrations/0150_inference_request_version'
+import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
+import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
+import sequentialEntryInference from '../../migrations/0147_sequential_entry_inference'
+import accountBoundEntryFees from '../../migrations/0146_account_bound_entry_fees'
+import currentQuoteBreakout from '../../migrations/0145_current_quote_breakout'
+import alignedSignalPeriods from '../../migrations/0144_aligned_signal_periods'
+import executableProfitLimits from '../../migrations/0143_executable_profit_limits'
+import nativeArrivalAppendLocality from '../../migrations/0142_native_arrival_append_locality'
+import fundedPlanCoverage from '../../migrations/0141_funded_plan_coverage'
+import economicTradePlans from '../../migrations/0140_economic_trade_plans'
+import jevGepaEditor from '../../migrations/0139_jev_gepa_editor'
+import jevEditorStructuredOutput from '../../migrations/0138_jev_editor_structured_output'
+import setupAndPlan from '../../migrations/0137_setup_and_plan'
+import currentAuthorityWrites from '../../migrations/0136_current_authority_writes'
+import jevEditorIdentity from '../../migrations/0135_jev_editor_identity'
+import completePlanChoice from '../../migrations/0133_complete_plan_choice'
+import removeUnusedSchema from '../../migrations/0134_remove_unused_schema'
+import jevHarness2 from '../../migrations/0132_jev_harness2'
+import modelSelectedTradePlan from '../../migrations/0131_model_selected_trade_plan'
+import feeSourceCreatedAt from '../../migrations/0130_fee_source_created_at'
+import harness2Research from '../../migrations/0129_harness2_research'
+import strategyNativeProtection from '../../migrations/0128_strategy_native_protection'
+import currentJevCycles from '../../migrations/0127_current_jev_cycles'
+import entryBoundExits from '../../migrations/0126_entry_bound_exits'
+import marketManagementJudgment from '../../migrations/0125_market_management_judgment'
+import focusedJevJudgments from '../../migrations/0124_focused_jev_judgments'
+import setupActionProtocol from '../../migrations/0123_setup_action_protocol'
+import explicitLimitDecisions from '../../migrations/0122_explicit_limit_decisions'
+import explicitLimitIntents from '../../migrations/0121_explicit_limit_intents'
+import mixedMarketReplay from '../../migrations/0120_mixed_market_replay'
+import nativeArrivalRetention from '../../migrations/0119_native_arrival_retention'
+import completedBarBenchmarks from '../../migrations/0118_completed_bar_benchmarks'
+import riskValuationIndexes from '../../migrations/0117_risk_valuation_indexes'
+import costSupportedEntry from '../../migrations/0116_cost_supported_entry'
+import requiredPositionCost from '../../migrations/0115_required_position_cost'
+import limitOrderCompletion from '../../migrations/0114_limit_order_completion'
+import extendedEquityHours from '../../migrations/0113_extended_equity_hours'
+import shadowDecisionGenerationIndex from '../../migrations/0104_shadow_decision_generation_index'
+import reclassifyExpiredNativeEntry from '../../migrations/0101_reclassify_expired_native_entry'
+import unusedEntryAdmission from '../../migrations/0100_unused_entry_admission'
+import submissionDenialReason from '../../migrations/0099_submission_denial_reason'
+import valkeyBrokerMaterializations from '../../migrations/0098_valkey_broker_materializations'
+import brokerObservationQuota from '../../migrations/0096_broker_observation_quota'
+import continuousCashSpot from '../../migrations/0097_continuous_cash_spot'
+import completionEvidenceIndexes from '../../migrations/0095_completion_evidence_indexes'
+import brokerObservationCaptures from '../../migrations/0094_broker_observation_captures'
+import researchInference from '../../migrations/0093_research_inference'
+import expiredZeroExecutionRearm from '../../migrations/0092_expired_zero_execution_rearm'
+import inferenceExpenseQuotes from '../../migrations/0091_inference_expense_quotes'
+import momentumFirstJevCompatibility from '../../migrations/0090_momentum_first_jev_compatibility'
+import researchCapture from '../../migrations/0089_research_capture'
+import preserveReconciliationRearmCycle from '../../migrations/0088_preserve_reconciliation_rearm_cycle'
+import brokerObservations from '../../migrations/0087_broker_observations'
+import executionWaitingStatus from '../../migrations/0074_execution_waiting_status'
+import candidateObservations from '../../migrations/0075_candidate_observations'
+import jevEvaluationEvidence from '../../migrations/0076_jev_evaluation_evidence'
+import jevEvaluationResolution from '../../migrations/0077_jev_evaluation_resolution'
+import jevBatches from '../../migrations/0078_jev_batches'
+import jevNativeStrategy from '../../migrations/0079_jev_native_strategy'
+import jevExitCommitDeadline from '../../migrations/0080_jev_exit_commit_deadline'
+import measuredSimulationClock from '../../migrations/0081_measured_simulation_clock'
+import openSessionFailureRearm from '../../migrations/0082_open_session_failure_rearm'
+import jevEntryBatchPlanV2 from '../../migrations/0083_jev_entry_batch_plan_v2'
+import jevEntryBatchPlanV3 from '../../migrations/0084_jev_entry_batch_plan_v3'
+import replaySourceClock from '../../migrations/0085_replay_source_clock'
+import settledObserveRecovery from '../../migrations/0086_settled_observe_recovery'
+import recoverIntradayAuthorityCycle from '../../migrations/0071_recover_intraday_authority_cycle'
+import intradayZeroFillRearm from '../../migrations/0072_intraday_zero_fill_rearm'
+import pacedIntradayEntryAttempts from '../../migrations/0073_paced_intraday_entry_attempts'
+import simulatedBrokerCheckpoints from '../../migrations/0070_simulated_broker_checkpoints'
+import simulatedExecutionClock from '../../migrations/0069_simulated_execution_clock'
+import simulatedSnapshotReferences from '../../migrations/0068_simulated_snapshot_references'
+import positionCostBasis from '../../migrations/0067_position_cost_basis'
+import streamingAuthorityProtocol from '../../migrations/0066_streaming_authority_protocol'
+import streamingSnapshotReferences from '../../migrations/0065_streaming_snapshot_references'
 import { PgMigrator } from '@effect/sql-pg'
 
 import initialSchema from '../../migrations/0001_initial_schema'
@@ -56,8 +211,181 @@ import fullSessionIntradayCycles from '../../migrations/0053_full_session_intrad
 import benignZeroFillIocCompletion from '../../migrations/0054_benign_zero_fill_ioc_completion'
 import intradaySnapshotReferences from '../../migrations/0055_intraday_snapshot_references'
 import intradayStrategyCutover from '../../migrations/0056_intraday_strategy_cutover'
+import recoverPreopenAuthorityCycle from '../../migrations/0057_recover_preopen_authority_cycle'
+import archiveReaderAvailability from '../../migrations/0058_archive_reader_availability'
+import regularSessionBoundaries from '../../migrations/0059_regular_session_boundaries'
+import materializedCompletionCutoff from '../../migrations/0060_materialized_completion_cutoff'
+import latestRearmPosition from '../../migrations/0061_latest_rearm_position'
+import discrepancyMandateRotation from '../../migrations/0062_discrepancy_mandate_rotation'
+import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
+import observedFeeAccruals from '../../migrations/0102_observed_fee_accruals'
+import cashFeeOpeningPrecision from '../../migrations/0103_cash_fee_opening_precision'
+import cryptoCashFeeSettlement from '../../migrations/0105_crypto_cash_fee_settlement'
+import cashFeeOverrelease from '../../migrations/0106_cash_fee_overrelease'
+import feePostingAcknowledgements from '../../migrations/0107_fee_posting_acknowledgements'
+import availableHistoryProtocol from '../../migrations/0108_available_history_protocol'
+import capitalSizingProtocol from '../../migrations/0109_capital_sizing_protocol'
+import capitalSizingRecovery from '../../migrations/0110_capital_sizing_recovery'
+import modelActionProtocol from '../../migrations/0111_model_action_protocol'
+import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements'
+import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '230_execution_quality_audit_views': executionQualityAuditViews,
+  '229_intraday_alpha_v2_paper_settlement': intradayAlphaV2PaperSettlement,
+  '228_intraday_alpha_v3_admission': intradayAlphaV3Admission,
+  '227_audit_reader_view_grant': auditReaderViewGrant,
+  '224_strategy_bound_qualification': strategyBoundQualification,
+  '226_audit_reader_grants': auditReaderGrants,
+  '225_alpha_baseline_preparation': alphaBaselinePreparation,
+  '223_intraday_alpha_v1_paper_settlement': intradayAlphaV1PaperSettlement,
+  '222_intraday_alpha_v2_admission': intradayAlphaV2Admission,
+  '221_v44_paper_settlement': v44PaperSettlement,
+  '220_intraday_alpha_admission': intradayAlphaAdmission,
+  '219_positive_net_target_admission': positiveNetTargetAdmission,
+  '218_v43_paper_settlement': v43PaperSettlement,
+  '217_stop_floor_reward_risk_admission': stopFloorRewardRiskAdmission,
+  '216_stop_floor_reward_risk_observe_cutover': stopFloorRewardRiskObserveCutover,
+  '215_execution_expected_session': executionExpectedSession,
+  '214_single_controller_observation': singleControllerObservation,
+  '213_risk_symmetry_admission': riskSymmetryAdmission,
+  '212_risk_symmetry_observe_cutover': riskSymmetryObserveCutover,
+  '211_durable_broker_activities': durableBrokerActivities,
+  '210_paired_qualification_admission': pairedQualificationAdmission,
+  '209_qualification_authority_witness': qualificationAuthorityWitness,
+  '208_reconciliation_source_snapshots': reconciliationSourceSnapshots,
+  '207_native_qualification_calendar': nativeQualificationCalendar,
+  '206_durable_broker_source_events': durableBrokerSourceEvents,
+  '205_inference_source_seals': inferenceSourceSeals,
+  '204_protection_close_plans': protectionClosePlans,
+  '203_protection_read_allowance': protectionReadAllowance,
+  '202_protection_release_proofs': protectionReleaseProofs,
+  '201_not_dispatched_visual_evidence': notDispatchedVisualEvidence,
+  '197_inference_expense_wakeups': inferenceExpenseWakeups,
+  '198_equity_short_accounting': equityShortAccounting,
+  '199_equity_short_observe_cutover': equityShortObserveCutover,
+  '200_native_equity_shorts': nativeEquityShorts,
+  '196_streaming_operational_controller': streamingOperationalController,
+  '195_jev_inference_work': jevInferenceWork,
+  '194_broker_notification_receipts': brokerNotificationReceipts,
+  '192_uncapped_paper_turnover': uncappedPaperTurnover,
+  '191_execution_controller_atomic_rotation': executionControllerAtomicRotation,
+  '190_settle_retired_jev_batches': settleRetiredJevBatches,
+  '189_native_protection_cancel_receipts': nativeProtectionCancelReceipts,
+  '188_jev_box_inference': jevBoxInference,
+  '187_inference_request_generation_index': inferenceRequestGenerationIndex,
+  '186_jev114_observe_cutover': jev114ObserveCutover,
+  '185_chart_presence_skip': chartPresenceSkip,
+  '184_effective_entry_allowance_input': effectiveEntryAllowanceInput,
+  '183_effective_entry_observe_cutover': effectiveEntryObserveCutover,
+  '179_webull_observe_cutover': webullObserveCutover,
+  '178_webull_entry_context': webullEntryContext,
+  '176_operational_source_records': operationalSourceRecords,
+  '180_jev_entry_window_index': jevEntryWindowIndex,
+  '181_operational_safety_baseline': operationalSafetyBaseline,
+  '182_conditional_statistical_qualification': conditionalStatisticalQualification,
+  '177_risk_clock_rejection': riskClockRejection,
+  '175_operational_controller_evidence': operationalControllerEvidence,
+  '164_focused_entry_evidence': focusedEntryEvidence,
+  '165_observed_resistance': observedResistance,
+  '166_candidate_entry_evidence': candidateEntryEvidence,
+  '168_registered_assessment_window': registeredAssessmentWindow,
+  '169_economic_qualification': economicQualification,
+  '170_research_qualification': researchQualification,
+  '171_dated_execution_fees': datedExecutionFees,
+  '172_jev_only_inference': jevOnlyInference,
+  '174_operational_period': operationalPeriod,
+  '173_inference_expense_source_queue': inferenceExpenseSourceQueue,
+  '167_chart_structure_before_funding': chartStructureBeforeFunding,
+  '163_jev_observation_window_index': jevObservationWindowIndex,
+  '160_crypto_quote_evidence': cryptoQuoteEvidence,
+  '161_crypto_history_context': cryptoHistoryContext,
+  '162_equity_benchmark_context': equityBenchmarkContext,
+  '157_crypto_entry_ask_cap': cryptoEntryAskCap,
+  '158_equity_entry_ask_cap': equityEntryAskCap,
+  '154_market_entry_questions': marketEntryQuestions,
+  '153_staged_chart_transport': stagedChartTransport,
+  '155_native_controls': nativeControls,
+  '156_system_registration': systemRegistration,
+  '159_system_assessment': systemAssessment,
+  '152_funded_source_anchors': fundedSourceAnchors,
+  '151_chart_dispatch_checkpoints': chartDispatchCheckpoints,
+  '150_inference_request_version': inferenceRequestVersion,
+  '148_relative_chart_volume': relativeChartVolume,
+  '149_conditional_base_anchors': conditionalBaseAnchors,
+  '145_current_quote_breakout': currentQuoteBreakout,
+  '147_sequential_entry_inference': sequentialEntryInference,
+  '146_account_bound_entry_fees': accountBoundEntryFees,
+  '143_executable_profit_limits': executableProfitLimits,
+  '144_aligned_signal_periods': alignedSignalPeriods,
+  '142_native_arrival_append_locality': nativeArrivalAppendLocality,
+  '140_economic_trade_plans': economicTradePlans,
+  '141_funded_plan_coverage': fundedPlanCoverage,
+  '137_setup_and_plan': setupAndPlan,
+  '138_jev_editor_structured_output': jevEditorStructuredOutput,
+  '139_jev_gepa_editor': jevGepaEditor,
+  '136_current_authority_writes': currentAuthorityWrites,
+  '134_remove_unused_schema': removeUnusedSchema,
+  '127_current_jev_cycles': currentJevCycles,
+  '126_entry_bound_exits': entryBoundExits,
+  '128_strategy_native_protection': strategyNativeProtection,
+  '135_jev_editor_identity': jevEditorIdentity,
+  '132_jev_harness2': jevHarness2,
+  '131_model_selected_trade_plan': modelSelectedTradePlan,
+  '133_complete_plan_choice': completePlanChoice,
+  '129_harness2_research': harness2Research,
+  '130_fee_source_created_at': feeSourceCreatedAt,
+  '123_setup_action_protocol': setupActionProtocol,
+  '124_focused_jev_judgments': focusedJevJudgments,
+  '125_market_management_judgment': marketManagementJudgment,
+  '122_explicit_limit_decisions': explicitLimitDecisions,
+  '121_explicit_limit_intents': explicitLimitIntents,
+  '120_mixed_market_replay': mixedMarketReplay,
+  '119_native_arrival_retention': nativeArrivalRetention,
+  '118_completed_bar_benchmarks': completedBarBenchmarks,
+  '117_risk_valuation_indexes': riskValuationIndexes,
+  '116_cost_supported_entry': costSupportedEntry,
+  '115_required_position_cost': requiredPositionCost,
+  '114_limit_order_completion': limitOrderCompletion,
+  '113_extended_equity_hours': extendedEquityHours,
+  '112_broker_cash_settlements': brokerCashSettlements,
+  '111_model_action_protocol': modelActionProtocol,
+  '109_capital_sizing_protocol': capitalSizingProtocol,
+  '110_capital_sizing_recovery': capitalSizingRecovery,
+  '107_fee_posting_acknowledgements': feePostingAcknowledgements,
+  '108_available_history_protocol': availableHistoryProtocol,
+  '106_cash_fee_overrelease': cashFeeOverrelease,
+  '104_shadow_decision_generation_index': shadowDecisionGenerationIndex,
+  '105_crypto_cash_fee_settlement': cryptoCashFeeSettlement,
+  '103_cash_fee_opening_precision': cashFeeOpeningPrecision,
+  '102_observed_fee_accruals': observedFeeAccruals,
+  '101_reclassify_expired_native_entry': reclassifyExpiredNativeEntry,
+  '100_unused_entry_admission': unusedEntryAdmission,
+  '99_submission_denial_reason': submissionDenialReason,
+  '98_valkey_broker_materializations': valkeyBrokerMaterializations,
+  '96_broker_observation_quota': brokerObservationQuota,
+  '97_continuous_cash_spot': continuousCashSpot,
+  '95_completion_evidence_indexes': completionEvidenceIndexes,
+  '94_broker_observation_captures': brokerObservationCaptures,
+  '93_research_inference': researchInference,
+  '92_expired_zero_execution_rearm': expiredZeroExecutionRearm,
+  '91_inference_expense_quotes': inferenceExpenseQuotes,
+  '90_momentum_first_jev_compatibility': momentumFirstJevCompatibility,
+  '89_research_capture': researchCapture,
+  '88_preserve_reconciliation_rearm_cycle': preserveReconciliationRearmCycle,
+  '87_broker_observations': brokerObservations,
+  '86_settled_observe_recovery': settledObserveRecovery,
+  '84_jev_entry_batch_plan_v3': jevEntryBatchPlanV3,
+  '85_replay_source_clock': replaySourceClock,
+  '83_jev_entry_batch_plan_v2': jevEntryBatchPlanV2,
+  '82_open_session_failure_rearm': openSessionFailureRearm,
+  '81_measured_simulation_clock': measuredSimulationClock,
+  '80_jev_exit_commit_deadline': jevExitCommitDeadline,
+  '79_jev_native_strategy': jevNativeStrategy,
+  '78_jev_batches': jevBatches,
+  '77_jev_evaluation_resolution': jevEvaluationResolution,
+  '76_jev_evaluation_evidence': jevEvaluationEvidence,
+  '67_position_cost_basis': positionCostBasis,
   '1_initial_schema': initialSchema,
   '2_paper_contracts': paperContracts,
   '3_intent_risk_clock': intentRiskClock,
@@ -114,4 +442,22 @@ export const migrationLoader = PgMigrator.fromRecord({
   '54_benign_zero_fill_ioc_completion': benignZeroFillIocCompletion,
   '55_intraday_snapshot_references': intradaySnapshotReferences,
   '56_intraday_strategy_cutover': intradayStrategyCutover,
+  '57_recover_preopen_authority_cycle': recoverPreopenAuthorityCycle,
+  '58_archive_reader_availability': archiveReaderAvailability,
+  '59_regular_session_boundaries': regularSessionBoundaries,
+  '60_materialized_completion_cutoff': materializedCompletionCutoff,
+  '61_latest_rearm_position': latestRearmPosition,
+  '62_discrepancy_mandate_rotation': discrepancyMandateRotation,
+  '63_broker_fee_accounting': brokerFeeAccounting,
+  '64_partial_ioc_completion': partialIocCompletion,
+  '65_streaming_snapshot_references': streamingSnapshotReferences,
+  '68_simulated_snapshot_references': simulatedSnapshotReferences,
+  '69_simulated_execution_clock': simulatedExecutionClock,
+  '70_simulated_broker_checkpoints': simulatedBrokerCheckpoints,
+  '66_streaming_authority_protocol': streamingAuthorityProtocol,
+  '71_recover_intraday_authority_cycle': recoverIntradayAuthorityCycle,
+  '72_intraday_zero_fill_rearm': intradayZeroFillRearm,
+  '73_paced_intraday_entry_attempts': pacedIntradayEntryAttempts,
+  '74_execution_waiting_status': executionWaitingStatus,
+  '75_candidate_observations': candidateObservations,
 })

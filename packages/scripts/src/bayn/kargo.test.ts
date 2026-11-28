@@ -1,0 +1,413 @@
+import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+
+import { expect, test } from 'bun:test'
+import YAML from 'yaml'
+
+const root = new URL('../../../../', import.meta.url)
+const read = (path: string) => YAML.parse(readFileSync(new URL(path, root), 'utf8'))
+const stages = YAML.parseAllDocuments(readFileSync(new URL('argocd/applications/kargo/stages.yaml', root), 'utf8'))
+const stage = stages.find((document) => document.getIn(['metadata', 'name']) === 'bayn')?.toJSON()
+const steps = stage.spec.promotionTemplate.spec.steps
+const build = read('.github/workflows/bayn-build-push.yml')
+
+test('installs error-tracking configuration before every runtime that consumes it', () => {
+  const config = read('argocd/applications/bayn/glitchtip-dsns.yaml')
+  expect(config.kind).toBe('ConfigMap')
+  expect(read('argocd/applications/bayn/kustomization.yaml').resources).toContain('glitchtip-dsns.yaml')
+  const configWave = Number(config.metadata.annotations?.['argocd.argoproj.io/sync-wave'] ?? 0)
+  for (const file of ['deployment', 'execution-controller', 'execution-activation', 'research-worker']) {
+    const runtime = read(`argocd/applications/bayn/${file}.yaml`)
+    const reference = runtime.spec.template.spec.containers[0].env.find(
+      (entry: { name: string }) => entry.name === 'BAYN_GLITCHTIP_DSN',
+    ).valueFrom.configMapKeyRef
+    expect(reference.name).toBe(config.metadata.name)
+    expect(Object.hasOwn(config.data, reference.key)).toBe(true)
+    expect(configWave).toBeLessThan(Number(runtime.metadata.annotations?.['argocd.argoproj.io/sync-wave'] ?? 0))
+  }
+})
+
+test('a newer unpublished main commit cannot hold a verified Bayn image or mix its source binding', () => {
+  const warehouses = YAML.parseAllDocuments(
+    readFileSync(new URL('argocd/applications/kargo/warehouses.yaml', root), 'utf8'),
+  )
+  const warehouse = warehouses.find((document) => document.getIn(['metadata', 'name']) === 'bayn')?.toJSON()
+  expect(warehouse.spec.subscriptions.some((subscription: { git?: unknown }) => subscription.git !== undefined)).toBe(
+    false,
+  )
+  expect(steps[0].config.checkout[0].commit).toBe(
+    "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}",
+  )
+  expect(JSON.stringify(steps)).not.toContain('commitFrom(vars.gitRepo)')
+})
+
+test('isolates the sole Jev inference credential to the worker while retaining independent recovery when absent', () => {
+  const secret = read('argocd/applications/bayn/jev-sealedsecret.yaml')
+  expect(secret.metadata).toMatchObject({
+    name: 'bayn-jev-auth',
+    namespace: 'bayn',
+    annotations: {
+      'argocd.argoproj.io/sync-wave': '-2',
+      'argocd.proompteng.ai/wait-for-sealed-secret': 'true',
+    },
+  })
+  expect(Object.keys(secret.spec.encryptedData)).toEqual(['api-key'])
+  expect(secret.spec.encryptedData['api-key'].length).toBeGreaterThan(100)
+  expect(read('argocd/applications/bayn/kustomization.yaml').resources).toContain('jev-sealedsecret.yaml')
+  for (const file of ['deployment', 'execution-controller', 'execution-activation']) {
+    const environment = read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env
+    const key = environment.filter((entry: { name: string }) => entry.name === 'BAYN_JEV_API_KEY')
+    expect(key).toEqual(
+      file === 'execution-controller'
+        ? [
+            {
+              name: 'BAYN_JEV_API_KEY',
+              valueFrom: { secretKeyRef: { name: 'bayn-jev-auth', key: 'api-key', optional: true } },
+            },
+          ]
+        : [],
+    )
+    expect(environment.filter((entry: { name: string }) => entry.name === 'BAYN_OPENAI_API_KEY')).toEqual([])
+    const brokerKeys = environment.filter((entry: { name: string }) =>
+      ['BAYN_ALPACA_KEY_ID', 'BAYN_ALPACA_SECRET_KEY'].includes(entry.name),
+    )
+    expect(brokerKeys).toHaveLength(2)
+    expect(
+      brokerKeys.every(
+        (entry: { valueFrom: { secretKeyRef: { optional?: boolean } } }) =>
+          entry.valueFrom.secretKeyRef.optional !== true,
+      ),
+    ).toBe(true)
+  }
+})
+
+test('binds PAPER authority to the sealed strategy and lineage, or requires explicit OBSERVE', () => {
+  const secret = read('argocd/applications/bayn/alpaca-sealedsecret.yaml')
+  const encodedIdentity = secret.metadata.annotations?.['proompteng.ai/bayn.mandate-identity']
+  const request = secret.spec.encryptedData['capital-activation-request']
+  const environments = ['deployment', 'execution-controller', 'execution-activation'].map(
+    (file) => read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env,
+  )
+  const requests = environments.map((environment) =>
+    environment.find((entry: { name: string }) => entry.name === 'BAYN_CAPITAL_ACTIVATION_REQUEST'),
+  )
+  if (requests.every((entry) => entry === undefined)) {
+    for (const environment of environments) {
+      const named = (name: string) => environment.find((entry: { name: string }) => entry.name === name)
+      expect(named('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
+      expect(named('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
+      expect(named('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')).toBeUndefined()
+    }
+    // A dormant request must remain internally consistent but is never mounted.
+    if (request === undefined) expect(encodedIdentity).toBeUndefined()
+    else expect(JSON.parse(encodedIdentity).ciphertextHash).toBe(createHash('sha256').update(request).digest('hex'))
+    return
+  }
+  for (const [index, reference] of requests.entries()) {
+    expect(reference).toEqual({
+      name: 'BAYN_CAPITAL_ACTIVATION_REQUEST',
+      valueFrom: { secretKeyRef: { name: 'bayn-alpaca-auth', key: 'capital-activation-request', optional: true } },
+    })
+    expect(
+      environments[index].find((entry: { name: string }) => entry.name === 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
+        ?.value,
+    ).toBe('{}')
+  }
+  expect(typeof encodedIdentity).toBe('string')
+  const identity = JSON.parse(encodedIdentity)
+  expect(identity.ciphertextHash).toBe(
+    createHash('sha256').update(secret.spec.encryptedData['capital-activation-request']).digest('hex'),
+  )
+  const nix = readFileSync(new URL('nix/images/bayn.nix', root), 'utf8')
+  for (const [field, constant] of [
+    ['name', 'strategyName'],
+    ['behaviorHash', 'strategyBehaviorHash'],
+    ['parameterHash', 'strategyParameterHash'],
+    ['protocolHash', 'strategyProtocolHash'],
+  ]) {
+    const matches = [...nix.matchAll(new RegExp(`^  ${constant} = "([^"]+)";`, 'gm'))]
+    expect(matches).toHaveLength(1)
+    expect(identity.strategy[field]).toBe(matches[0]?.[1])
+  }
+})
+
+test('keeps the reviewed GitOps identity consistent with the image build', () => {
+  // Each architecture's Nix build verifies these constants against its compiled executable.
+  // Check the matching GitOps inputs in PR CI instead of introducing a promotion hold.
+  const nix = readFileSync(new URL('nix/images/bayn.nix', root), 'utf8')
+  const identities = [
+    ['BAYN_STRATEGY_BEHAVIOR_HASH', 'strategyBehaviorHash'],
+    ['BAYN_STRATEGY_PARAMETER_HASH', 'strategyParameterHash'],
+    ['BAYN_STRATEGY_NAME', 'strategyName'],
+    ['BAYN_STRATEGY_PROTOCOL_HASH', 'strategyProtocolHash'],
+    ['BAYN_EXECUTION_RISK_POLICY_HASH', 'executionRiskPolicyHash'],
+  ] as const
+  const imageIdentity = new Map(
+    identities.map(([environmentName, constant]) => {
+      const matches = [...nix.matchAll(new RegExp(`^  ${constant} = "([^"]+)";`, 'gm'))]
+      expect(matches).toHaveLength(1)
+      return [environmentName, matches[0]?.[1]]
+    }),
+  )
+  for (const file of ['deployment', 'execution-controller', 'execution-activation']) {
+    const environment = new Map<string, string>(
+      read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env.map(
+        (entry: { name: string; value?: string }) => [entry.name, entry.value],
+      ),
+    )
+    for (const [name, expected] of imageIdentity) {
+      if (file === 'deployment' || name === 'BAYN_STRATEGY_BEHAVIOR_HASH' || name === 'BAYN_STRATEGY_PARAMETER_HASH') {
+        expect(environment.get(name)).toBe(expected)
+      }
+    }
+  }
+})
+
+test('discovers only immutable main-published Bayn images with matching source annotations', () => {
+  const warehouses = YAML.parseAllDocuments(
+    readFileSync(new URL('argocd/applications/kargo/warehouses.yaml', root), 'utf8'),
+  )
+  const warehouse = warehouses.find((document) => document.getIn(['metadata', 'name']) === 'bayn')?.toJSON()
+  expect(build.on.push.branches).toEqual(['main'])
+  expect(build.concurrency['cancel-in-progress']).toBe(false)
+  expect(build.jobs.image.with).toMatchObject({
+    publish_kargo_tag: false,
+    kargo_tag_include_run_id: true,
+    source_revision: '${{ github.sha }}',
+    tag: 'sha-${{ github.sha }}',
+  })
+  expect(build.jobs.image.with.publish_on_dispatch).toBe(false)
+  expect(build.on.push.paths).toEqual(
+    expect.arrayContaining([
+      'services/bayn/**',
+      'services/dorvud/websockets/**',
+      '!services/dorvud/websockets/src/test/**',
+      'nix/images/bayn.nix',
+      'nix/images/bayn-broker-feed.nix',
+      'argocd/applications/bayn/**',
+    ]),
+  )
+  expect(warehouse.spec.subscriptions).toHaveLength(3)
+  expect(warehouse.spec.subscriptions[0].image).toMatchObject({
+    repoURL: 'registry.ide-newton.ts.net/lab/bayn',
+    imageSelectionStrategy: 'NewestBuild',
+    allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'],
+    cacheByTag: true,
+  })
+  expect(build.jobs['research-image'].with).toMatchObject({
+    image_name: 'bayn-research',
+    package_attr: 'bayn-research-image',
+    publish_kargo_tag: false,
+    kargo_tag_include_run_id: true,
+  })
+  expect(build.jobs['publish-cohort'].needs).toEqual(['image', 'research-image', 'broker-feed-image'])
+  expect(warehouse.spec.subscriptions[1].image.repoURL).toBe('registry.ide-newton.ts.net/lab/bayn-research')
+  expect(build.jobs['broker-feed-image'].with).toMatchObject({
+    image_name: 'bayn-broker-feed',
+    package_attr: 'bayn-broker-feed-image',
+    publish_kargo_tag: false,
+    kargo_tag_include_run_id: true,
+    source_revision: '${{ github.sha }}',
+  })
+  for (const image of ['image', 'research-image', 'broker-feed-image']) {
+    expect(build.jobs[image].needs).toEqual(['validation', 'broker-feed-validation'])
+  }
+  expect(warehouse.spec.subscriptions[2].image.repoURL).toBe('registry.ide-newton.ts.net/lab/bayn-broker-feed')
+  const native = "imageFrom('registry.ide-newton.ts.net/lab/bayn')"
+  const research = "imageFrom('registry.ide-newton.ts.net/lab/bayn-research')"
+  const broker = "imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed')"
+  const expression = warehouse.spec.freightCreationCriteria.expression
+  expect(expression).toContain(`${native}.Tag == ${research}.Tag`)
+  expect(expression).toContain(
+    `${native}.Annotations['org.opencontainers.image.revision'] == ${research}.Annotations['org.opencontainers.image.revision']`,
+  )
+  expect(expression).toContain(`${research}.Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success'`)
+  expect(expression).toContain(`${broker}.Tag == ${research}.Tag`)
+  expect(expression).toContain(
+    `${broker}.Annotations['ai.proompteng.github-actions-run-id'] == ${research}.Annotations['ai.proompteng.github-actions-run-id']`,
+  )
+  expect(expression).toContain(
+    `${broker}.Annotations['org.opencontainers.image.revision'] == ${research}.Annotations['org.opencontainers.image.revision']`,
+  )
+  expect(expression).toContain(`${broker}.Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success'`)
+  const setImages = stage.spec.promotionTemplate.spec.steps.find(
+    (step: { uses: string }) => step.uses === 'kustomize-set-image',
+  )
+  expect(setImages.config.images).toContainEqual({
+    image: 'bayn-research',
+    newName: '${{ vars.researchImageRepo }}',
+    digest: '${{ imageFrom(vars.researchImageRepo).Digest }}',
+  })
+  expect(setImages.config.images).toContainEqual({
+    image: 'bayn-broker-feed',
+    newName: '${{ vars.brokerFeedImageRepo }}',
+    digest: '${{ imageFrom(vars.brokerFeedImageRepo).Digest }}',
+  })
+  expect(read('argocd/applications/bayn/research-worker.yaml').spec.template.spec.containers[0].image).toBe(
+    'bayn-research',
+  )
+})
+
+test('promotes the broker feed digest and its exact source into the Bayn application branch', () => {
+  const feed = read('argocd/applications/bayn/broker-feed.yaml')
+  expect(feed.spec.template.spec.containers[0].image).toBe('bayn-broker-feed')
+  const environment = feed.spec.template.spec.containers[0].env
+  const index = environment.findIndex((entry: { name: string }) => entry.name === 'DORVUD_SOURCE_REVISION')
+  expect(index).toBeGreaterThanOrEqual(0)
+  const parse = steps.find((step: { as?: string }) => step.as === 'baynBrokerFeed')
+  expect(parse.config.path).toBe('./src/argocd/applications/bayn/broker-feed.yaml')
+  expect(parse.config.outputs).toEqual([
+    {
+      name: 'sourceIndex',
+      fromExpression: "string(findIndex(spec.template.spec.containers[0].env, .name == 'DORVUD_SOURCE_REVISION'))",
+    },
+  ])
+  const update = steps.find(
+    (step: { uses: string; config: { path?: string } }) =>
+      step.uses === 'yaml-update' && step.config.path === './out/argocd/applications/bayn/broker-feed.yaml',
+  )
+  expect(update.config.updates).toEqual([
+    {
+      key: "${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynBrokerFeed.sourceIndex) + '.value' }}",
+      value: "${{ imageFrom(vars.brokerFeedImageRepo).Annotations['org.opencontainers.image.revision'] }}",
+    },
+  ])
+})
+
+test('activates broker observation ownership before waiting for broker feed readiness', () => {
+  const wave = (file: string) =>
+    Number(read(`argocd/applications/bayn/${file}.yaml`).metadata.annotations['argocd.argoproj.io/sync-wave'])
+  expect(wave('execution-controller')).toBeLessThan(wave('execution-activation'))
+  expect(wave('execution-activation')).toBeLessThan(wave('broker-feed'))
+})
+
+test('writes source, digest, and research lineage into the correct field in every runtime', () => {
+  const lineageValues: string[] = []
+  for (const file of ['deployment', 'execution-controller', 'execution-activation']) {
+    const path = `argocd/applications/bayn/${file}.yaml`
+    const manifest = read(path)
+    const environment = manifest.spec.template.spec.containers[0].env
+    const updates = steps.filter(
+      (step: { uses: string; config: { path: string } }) =>
+        step.uses === 'yaml-update' && step.config.path === `./out/${path}`,
+    )
+    const update = updates.find((step: { if?: string }) => step.if === undefined)
+    expect(update).toBeDefined()
+    const configuredLineage = environment.some(
+      (entry: { name: string }) => entry.name === 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+    )
+    const assignments = new Map<string, string>()
+    for (const change of updates
+      .filter((step: { if?: string }) => step.if === undefined || configuredLineage)
+      .flatMap((step: { config: { updates: { key: string; value: string }[] } }) => step.config.updates)) {
+      if (!change.key.includes('spec.template.spec.containers.0.env.')) continue
+      const match =
+        /^\$\{\{ 'spec\.template\.spec\.containers\.0\.env\.' \+ string\(outputs\.(\w+)\.(\w+)\) \+ '\.value' \}\}$/.exec(
+          change.key,
+        )
+      if (match === null) throw new Error(`Environment update must resolve its named source field: ${change.key}`)
+      const parse = steps.find(
+        (step: { uses: string; as?: string }) => step.uses === 'yaml-parse' && step.as === match[1],
+      )
+      expect(parse.config.path).toBe(`./src/${path}`)
+      expect(steps.indexOf(parse)).toBeLessThan(steps.indexOf(update))
+      const output = parse.config.outputs.find((candidate: { name: string }) => candidate.name === match[2])
+      const field = /^string\(findIndex\(spec\.template\.spec\.containers\[0\]\.env, \.name == '(\w+)'\)\)$/.exec(
+        output.fromExpression,
+      )
+      if (field === null)
+        throw new Error(`Environment index must persist as a string resolved by name: ${output.fromExpression}`)
+      expect(environment.filter((entry: { name: string }) => entry.name === field[1])).toHaveLength(1)
+      assignments.set(field[1], change.value)
+    }
+    expect(assignments.get('BAYN_CODE_REVISION')).toBe(
+      "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}",
+    )
+    expect(assignments.get('BAYN_IMAGE_DIGEST')).toBe('${{ imageFrom(vars.imageRepo).Digest }}')
+    const lineage = assignments.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
+    expect(typeof lineage).toBe(configuredLineage ? 'string' : 'undefined')
+    if (lineage) lineageValues.push(lineage)
+    expect(assignments.has('BAYN_BROKER_ACCESS')).toBe(false)
+    expect(assignments.has('BAYN_CAPITAL_AUTHORITY')).toBe(false)
+    expect(assignments.has('BAYN_CAPITAL_ACTIVATION_REQUEST')).toBe(false)
+    expect(assignments.has('BAYN_GLITCHTIP_DSN')).toBe(false)
+    if (file !== 'deployment') {
+      expect(update.config.updates).toContainEqual({
+        key: 'spec.template.spec.containers.0.image',
+        value: '${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}',
+      })
+    }
+    if (file === 'execution-activation') {
+      expect(assignments.get('BAYN_EXECUTION_ACTIVATION_GENERATION')).toBe(
+        "${{ trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}",
+      )
+      expect(
+        environment.find((entry: { name: string }) => entry.name === 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID'),
+      ).toEqual({
+        name: 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID',
+        valueFrom: {
+          fieldRef: { apiVersion: 'v1', fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" },
+        },
+      })
+      expect(assignments.has('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toBe(false)
+    }
+  }
+  const configured = read('argocd/applications/bayn/deployment.yaml').spec.template.spec.containers[0].env.some(
+    (entry: { name: string }) => entry.name === 'BAYN_CAPITAL_ACTIVATION_REQUEST',
+  )
+  expect(lineageValues).toHaveLength(configured ? 3 : 0)
+  expect(new Set(lineageValues).size).toBe(configured ? 1 : 0)
+})
+
+test('gets the mandate lineage from the account Secret during promotion', () => {
+  const parse = steps.find((step: { as?: string }) => step.as === 'baynLineage')
+  expect(parse.config).toEqual({
+    path: './src/argocd/applications/bayn/alpaca-sealedsecret.yaml',
+    outputs: [
+      {
+        name: 'mandate',
+        fromExpression: "metadata.annotations['proompteng.ai/bayn.mandate-identity'] ?? ''",
+      },
+    ],
+  })
+  const lineageUpdates = steps.filter(
+    (step: { uses: string; if?: string }) =>
+      step.uses === 'yaml-update' && step.if?.startsWith("${{ outputs.baynLineage.mandate != '' && outputs.") === true,
+  )
+  expect(lineageUpdates).toHaveLength(3)
+  for (const [index, step] of lineageUpdates.entries()) {
+    const owner = ['baynDeployment', 'baynController', 'baynActivation'][index]
+    expect(step.if).toBe(
+      `\${{ outputs.baynLineage.mandate != '' && outputs.${owner}.lineageIndex != nil && outputs.${owner}.lineageIndex != '' && outputs.${owner}.lineageIndex != '-1' && outputs.${owner}.lineageIndex != '<nil>' }}`,
+    )
+    expect(step.config.updates).toHaveLength(1)
+    expect(step.config.updates[0].value).toContain('fromJSON(outputs.baynLineage.mandate).requestHash')
+    expect(step.config.updates[0].value).toContain('fromJSON(outputs.baynLineage.mandate).authoredActivation')
+  }
+})
+
+test.each([
+  '231623095676dfd33097df91c6ca8406ebabeedd',
+  `012345678901${'a'.repeat(28)}`,
+  `1234567890e2${'b'.repeat(28)}`,
+])('keeps activation version labels as YAML strings for revision %s', (revision) => {
+  const activation = steps.find(
+    (step: { uses: string; if?: string; config: { path: string } }) =>
+      step.uses === 'yaml-update' &&
+      step.if === undefined &&
+      step.config.path === './out/argocd/applications/bayn/execution-activation.yaml',
+  )
+  const labels = activation.config.updates.filter((update: { key: string }) =>
+    update.key.endsWith('labels.app\\.kubernetes\\.io/version'),
+  )
+  expect(labels).toHaveLength(2)
+  for (const update of labels) {
+    const expanded = update.value.replace(
+      "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}",
+      revision.slice(0, 12),
+    )
+    const rendered = YAML.parse(`version: ${expanded}`).version
+    expect(typeof rendered).toBe('string')
+    expect(rendered).toBe(`sha-${revision.slice(0, 12)}`)
+  }
+})

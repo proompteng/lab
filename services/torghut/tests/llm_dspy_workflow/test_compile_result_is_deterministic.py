@@ -115,7 +115,7 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
         self.assertEqual(
             payload["policy"]["secretBindingRef"], "codex-whitepaper-github-token"
         )
-        self.assertEqual(payload["agentRef"]["name"], "codex-spark-agent")
+        self.assertEqual(payload["agentRef"]["name"], "codex-agent")
         self.assertEqual(payload["ttlSecondsAfterFinished"], 14400)
         self.assertIsInstance(payload["parameters"]["datasetRef"], str)
         self.assertEqual(payload["parameters"]["issueNumber"], "0")
@@ -182,7 +182,7 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
             session.add(
                 LLMDecisionReview(
                     trade_decision_id=decision.id,
-                    model="gpt-5.6-sol",
+                    model="gpt-6.2-sol",
                     prompt_version="v1",
                     input_json={
                         "decision": {"symbol": "AAPL", "action": "buy"},

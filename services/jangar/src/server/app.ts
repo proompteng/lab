@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { createJangarHttpRuntime, type JangarHttpRuntime, type JangarHttpRuntimeOptions } from './http-runtime'
 
 import { getPrometheusMetricsPath, isPrometheusMetricsEnabled, renderPrometheusMetrics } from './metrics'
+import { guardRetiredTorghutRoute } from './torghut-retirement'
 
 export type JangarRuntime = JangarHttpRuntime
 
@@ -53,6 +54,7 @@ export const createJangarRuntime = async (options: { serveClient?: boolean } = {
   createJangarHttpRuntime({
     routeModules: serverRouteModules as JangarHttpRuntimeOptions['routeModules'],
     routeSources: serverRouteSources,
+    routeGuard: guardRetiredTorghutRoute,
     serveClient: options.serveClient,
     clientOutputDirCandidates: getClientOutputDirCandidates,
     clientMissingMessage: 'Client build output missing. Run `bun run build` for services/jangar.',

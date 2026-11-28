@@ -90,9 +90,11 @@ const compareObservedOrder = (
         intent.side,
         intent.submittedOrderType,
         intent.timeInForce,
-        intent.submittedQuantityMicros ?? absent,
+        intent.submittedQuantityAtoms ?? absent,
         intent.submittedNotionalMicros ?? absent,
         intent.submittedLimitPriceMicros ?? absent,
+        intent.submittedStopPriceMicros ?? absent,
+        intent.parentBrokerOrderId ?? absent,
       ].join(':')
       const observedOrder = [
         order.brokerOrderId,
@@ -100,9 +102,11 @@ const compareObservedOrder = (
         order.side,
         order.orderType,
         order.timeInForce,
-        order.quantityMicros ?? absent,
+        order.quantityAtoms ?? absent,
         order.notionalMicros ?? absent,
         order.limitPriceMicros ?? absent,
+        order.stopPriceMicros ?? absent,
+        order.parentBrokerOrderId ?? absent,
       ].join(':')
       return pipe(
         Result.all({
@@ -113,13 +117,16 @@ const compareObservedOrder = (
             expectedOrder,
             observedOrder,
           ),
-          lifecycle: compareValue(
-            snapshot.accountId,
-            DiscrepancyKind.Order,
-            `${intent.clientOrderId}:lifecycle`,
-            intent.terminalOutcome ?? openOrder,
-            terminalOutcome(order.status) ?? openOrder,
-          ),
+          lifecycle:
+            intent.state === IntentState.Acknowledged
+              ? Result.succeed<readonly DiscrepancyInput[]>([])
+              : compareValue(
+                  snapshot.accountId,
+                  DiscrepancyKind.Order,
+                  `${intent.clientOrderId}:lifecycle`,
+                  intent.terminalOutcome ?? openOrder,
+                  terminalOutcome(order.status) ?? openOrder,
+                ),
         }),
         Result.map(({ content, lifecycle }) => [...content, ...lifecycle]),
       )
@@ -188,7 +195,7 @@ const fillQuantities = (fills: readonly Fill[]): ReconciliationDecision<HashMap.
   fills.reduce<ReconciliationDecision<HashMap.HashMap<string, bigint>>>(
     (totals, fill) =>
       pipe(
-        Result.all({ totals, quantity: integer('fill-quantity', fill.fillId, fill.quantityMicros) }),
+        Result.all({ totals, quantity: integer('fill-quantity', fill.fillId, fill.quantityAtoms) }),
         Result.map(({ quantity, totals }) =>
           HashMap.set(
             totals,
@@ -241,7 +248,7 @@ const compareOrderFillQuantity = (
   order: Order,
 ): ReconciliationDecision<readonly DiscrepancyInput[]> =>
   pipe(
-    integer('order-filled-quantity', order.brokerOrderId, order.filledQuantityMicros),
+    integer('order-filled-quantity', order.brokerOrderId, order.filledQuantityAtoms),
     Result.flatMap((expected) =>
       compareValue(
         snapshot.accountId,

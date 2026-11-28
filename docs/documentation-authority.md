@@ -35,7 +35,11 @@ When a design doc becomes stale:
 
 - delete it when it is superseded, orphaned, or only records a completed handoff or rollout;
 - move current operational guidance into a maintained README or runbook;
-- retain it only while live code, configuration, tests, a current document, or another retained contract cites it;
+- retain it only while a live external consumer (source, configuration, tests, or a maintained current document) needs
+  it,
+  or when it contains clearly unique historical rationale or provenance that cannot be reconstructed from Git history;
+- references solely from another archive document, generated catalog, or obsolete index do not establish a retention
+  need;
 - when retained, replace “implementation-ready/current/source of truth” wording with “historical rationale” wording
   and link to live desired state, service code, runtime APIs, and current runbooks.
 

@@ -5,6 +5,9 @@ metadata:
   namespace: golink
 spec:
   instances: 1
+  postgresql:
+    parameters:
+      wal_buffers: 16MB
   primaryUpdateStrategy: unsupervised
   storage:
     storageClass: rook-ceph-block

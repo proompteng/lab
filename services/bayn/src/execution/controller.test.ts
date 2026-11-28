@@ -1,18 +1,20 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
+import { maximumRetainedJevObservationReferences } from '../cycle/runner/pass-observation'
 
 import {
   completeExecutionControllerTick,
+  decodeExecutionControllerState,
   decodeExecutionAdvanceStepResult,
-  decodeExecutionControllerBootstrap,
+  decodeExecutionDeploymentActivation,
   decodeExecutionControllerTick,
   decideExecutionControllerActivation,
-  decideExecutionControllerBootstrap,
+  decideExecutionDeploymentActivation,
   decideExecutionControllerDeactivation,
   decideExecutionControllerTick,
   executionControllerMaximumRecoveryWindow,
-  resolveOptionalExecutionControllerBinding,
+  executionControllerSuccessorPassCompleted,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
   type ExecutionControllerState,
@@ -48,7 +50,207 @@ const completedResult: ExecutionAdvanceStepResult = {
 }
 
 describe('execution controller decisions', () => {
-  test('activates once and treats the same controller plan across worker revisions as idempotent', () => {
+  test.each([undefined, '2026-08-13T18:01:00.000Z'])(
+    'broker reconciliation market gate preserves explicit deadline %s',
+    (nextWakeAt) => {
+      const state = Result.getOrThrow(
+        completeExecutionControllerTick(
+          activated(),
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+          {
+            completedAt: '2026-08-13T18:00:00.000Z',
+            observation: {
+              result: 'FAILURE',
+              observedAt: '2026-08-13T18:00:00.000Z',
+              operation: 'reconcile',
+              failure: 'market-data',
+              message: 'Unavailable broker observation',
+            },
+            outcome: {
+              _tag: ExecutionControllerOutcome.Blocked,
+              receiptHash: '1'.repeat(64),
+              nextDelayMs: 1,
+              ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
+            },
+          },
+          sourceRevision,
+        ),
+      )
+      expect(state.nextDueAt).toBe(nextWakeAt)
+      expect(state.marketEligibleAt).toBe(nextWakeAt)
+      expect(Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))).toEqual(state)
+      const recovered = Result.getOrThrow(
+        completeExecutionControllerTick(
+          state,
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 1 },
+          completedResult,
+          sourceRevision,
+        ),
+      )
+      expect(recovered.marketEligibleAt).toBeUndefined()
+      expect(recovered.nextDueAt).toBeUndefined()
+    },
+  )
+  describe.each(['failed', 'pending', 'decision'] as const)(
+    'broker recovery deadline after a %s observation',
+    (kind) => {
+      const at = (seconds: number) => new Date(Date.parse('2026-08-13T18:00:00.000Z') + seconds * 1_000).toISOString()
+
+      test.each([
+        { name: 'early completion', completed: 12, previous: 30, candidate: 42, expected: 30 },
+        { name: 'completion at the deadline', completed: 30, previous: 30, candidate: 60, expected: 60 },
+        { name: 'completion after the deadline', completed: 35, previous: 30, candidate: 65, expected: 65 },
+        { name: 'earlier new obligation', completed: 12, previous: 30, candidate: 20, expected: 20 },
+        { name: 'same obligation', completed: 12, previous: 30, candidate: 30, expected: 30 },
+        { name: 'first obligation', completed: 12, previous: undefined, candidate: 42, expected: 42 },
+        { name: 'no new obligation', completed: 12, previous: 30, candidate: undefined, expected: undefined },
+      ])('$name', ({ completed, previous, candidate, expected }) => {
+        const completedAt = at(completed)
+        const state = Result.getOrThrow(
+          completeExecutionControllerTick(
+            {
+              ...activated(),
+              ...(previous === undefined ? {} : { nextDueAt: at(previous), marketEligibleAt: at(previous) }),
+              wakeScheduledSequence: 0,
+              wakeAcceptedAt: at(11),
+            },
+            { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+            {
+              completedAt,
+              observation:
+                kind !== 'pending'
+                  ? {
+                      result: 'FAILURE',
+                      observedAt: completedAt,
+                      operation: kind === 'decision' ? 'build-decision' : 'reconcile',
+                      failure: 'market-data',
+                      message: 'Broker observation is unavailable or invalidated by a mutation',
+                      ...(kind === 'decision' ? { brokerObservationFailure: 'NO_ADMISSIBLE_CUT' as const } : {}),
+                    }
+                  : {
+                      result: 'SUCCESS',
+                      observedAt: completedAt,
+                      outcome: 'RECOVERED',
+                      recoveryAction: 'WAITING',
+                      waitReason: 'BROKER_OBSERVATION_PENDING',
+                    },
+              outcome: {
+                _tag: kind !== 'pending' ? ExecutionControllerOutcome.Blocked : ExecutionControllerOutcome.Waiting,
+                receiptHash: '1'.repeat(64),
+                nextDelayMs: 30_000,
+                ...(candidate === undefined ? {} : { nextWakeAt: at(candidate) }),
+              },
+            },
+            sourceRevision,
+          ),
+        )
+        expect(state.nextDueAt).toBe(expected === undefined ? undefined : at(expected))
+        expect(state.marketEligibleAt).toBe(state.nextDueAt)
+        expect(state.nextSequence).toBe(1)
+        expect(state.wakeAcceptedAt).toBeUndefined()
+        expect(state.wakeScheduledSequence).toBeUndefined()
+        expect(Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))).toEqual(state)
+      })
+    },
+  )
+
+  test.each(['market-data', 'database', 'operational'] as const)(
+    'an unrelated %s decision failure remains eligible for a market wake',
+    (failure) => {
+      const nextWakeAt = '2026-08-13T18:00:30.000Z'
+      const state = Result.getOrThrow(
+        completeExecutionControllerTick(
+          activated(),
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+          {
+            completedAt: completedResult.completedAt,
+            observation: {
+              result: 'FAILURE',
+              observedAt: completedResult.completedAt,
+              operation: 'build-decision',
+              failure,
+              message: 'Broker observation is unavailable or invalidated by a mutation',
+            },
+            outcome: { ...completedResult.outcome, _tag: ExecutionControllerOutcome.Blocked, nextWakeAt },
+          },
+          sourceRevision,
+        ),
+      )
+      expect(state.nextDueAt).toBe(nextWakeAt)
+      expect(state.marketEligibleAt).toBeUndefined()
+    },
+  )
+
+  test('an expired close window is not awakened by market ticks', () => {
+    const observedAt = '2026-11-27T22:00:02.000Z'
+    const state = Result.getOrThrow(
+      completeExecutionControllerTick(
+        activated(),
+        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+        {
+          completedAt: observedAt,
+          observation: {
+            result: 'SUCCESS',
+            observedAt,
+            outcome: 'RECOVERED',
+            recoveryAction: 'WAITING',
+            waitReason: 'CLOSE_WINDOW_EXPIRED',
+          },
+          outcome: { ...completedResult.outcome, _tag: ExecutionControllerOutcome.Waiting },
+        },
+        sourceRevision,
+      ),
+    )
+    expect(state.nextDueAt).toBeUndefined()
+    expect(state.marketDataWakeSuppressed).toBe(true)
+  })
+
+  test('successful progress replaces an earlier broker recovery deadline', () => {
+    const nextWakeAt = '2026-08-13T18:00:42.000Z'
+    const state = Result.getOrThrow(
+      completeExecutionControllerTick(
+        { ...activated(), nextDueAt: '2026-08-13T18:00:30.000Z', marketEligibleAt: '2026-08-13T18:00:30.000Z' },
+        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+        {
+          completedAt: '2026-08-13T18:00:12.000Z',
+          observation: {
+            result: 'SUCCESS',
+            observedAt: '2026-08-13T18:00:12.000Z',
+            outcome: 'RECOVERED',
+            recoveryAction: 'ACTIVATED',
+          },
+          outcome: { ...completedResult.outcome, nextWakeAt },
+        },
+        sourceRevision,
+      ),
+    )
+    expect(state.nextDueAt).toBe(nextWakeAt)
+    expect(state.marketEligibleAt).toBeUndefined()
+  })
+
+  test('decodes bounded canonical Jev references while preserving unknown legacy evidence', () => {
+    const observation = { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: completedResult.completedAt }
+    expect(Result.isSuccess(decodeExecutionAdvanceStepResult({ ...completedResult, observation }))).toBe(true)
+    const decode = (hashes: readonly string[]) =>
+      decodeExecutionAdvanceStepResult({
+        ...completedResult,
+        observation: { ...observation, jevObservationReferences: { hashes, complete: true } },
+      })
+    expect(Result.isSuccess(decode([]))).toBe(true)
+    expect(Result.isSuccess(decode(['a'.repeat(64), 'b'.repeat(64)]))).toBe(true)
+    for (const hashes of [
+      ['invalid'],
+      ['b'.repeat(64), 'a'.repeat(64)],
+      ['a'.repeat(64), 'a'.repeat(64)],
+      Array.from({ length: maximumRetainedJevObservationReferences + 1 }, (_, index) =>
+        index.toString(16).padStart(64, '0'),
+      ),
+    ]) {
+      expect(Result.isFailure(decode(hashes))).toBe(true)
+    }
+  })
+
+  test('activates once and replays only the same controller plan and source revision', () => {
     const state = activated()
 
     expect(state).toEqual({
@@ -64,29 +266,26 @@ describe('execution controller decisions', () => {
       _tag: 'Replayed',
       state,
     })
-    expect(
-      Result.getOrThrow(decideExecutionControllerActivation(state, activation({ sourceRevision: nextSourceRevision }))),
-    ).toEqual({ _tag: 'Replayed', state })
     for (const conflicting of [
       activation({ epoch: 2 }),
       activation({ firstSequence: 1 }),
       activation({ planHash: nextPlanHash }),
+      activation({ sourceRevision: nextSourceRevision }),
     ]) {
       expect(Result.isFailure(decideExecutionControllerActivation(state, conflicting))).toBe(true)
     }
   })
 
-  test('requires an exact previous binding before rotating durable controller state', () => {
+  test.each([planHash, nextPlanHash])('requires the exact predecessor when rotating into plan %s', (targetPlanHash) => {
     const state = { ...activated(), nextSequence: 9 }
     const request = {
-      schemaVersion: 'bayn.execution-controller-bootstrap.v3' as const,
+      schemaVersion: 'bayn.execution-deployment-activation.v2' as const,
       controllerKey,
-      planHash: nextPlanHash,
+      planHash: targetPlanHash,
       sourceRevision: nextSourceRevision,
-      previousBinding: { planHash, sourceRevision },
     }
 
-    expect(Result.getOrThrow(decideExecutionControllerBootstrap(state, request))).toEqual({
+    expect(Result.getOrThrow(decideExecutionDeploymentActivation(state, request))).toEqual({
       _tag: 'Rotate',
       deactivation: {
         schemaVersion: 'bayn.execution-controller-deactivation.v1',
@@ -97,52 +296,32 @@ describe('execution controller decisions', () => {
       },
     })
     expect(
-      Result.getOrThrow(decideExecutionControllerBootstrap({ ...state, active: false, epoch: 2 }, request)),
+      Result.getOrThrow(decideExecutionDeploymentActivation({ ...state, active: false, epoch: 2 }, request)),
     ).toEqual({ _tag: 'Activate', state: { ...state, active: false, epoch: 2 } })
     expect(
       Result.getOrThrow(
-        decideExecutionControllerBootstrap(
-          { ...state, planHash: nextPlanHash, sourceRevision: nextSourceRevision },
+        decideExecutionDeploymentActivation(
+          { ...state, planHash: targetPlanHash, sourceRevision: nextSourceRevision },
           request,
         ),
       ),
     ).toMatchObject({ _tag: 'Activate' })
-
-    for (const conflicting of [
-      decideExecutionControllerBootstrap(state, {
-        ...request,
-        previousBinding: { ...request.previousBinding, planHash: 'f'.repeat(64) },
-      }),
-      decideExecutionControllerBootstrap(state, {
-        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
-        controllerKey,
-        planHash: nextPlanHash,
-        sourceRevision: nextSourceRevision,
-      }),
-      decideExecutionControllerBootstrap(null, request),
-    ]) {
-      expect(Result.isFailure(conflicting)).toBe(true)
-    }
   })
 
-  test('requires both previous-binding fields and rejects ambiguous bootstrap documents', () => {
-    expect(Result.getOrThrow(resolveOptionalExecutionControllerBinding(undefined, undefined))).toBeUndefined()
-    expect(Result.getOrThrow(resolveOptionalExecutionControllerBinding(planHash, sourceRevision))).toEqual({
+  test('rejects retired deployment activation contracts', () => {
+    const current = {
+      schemaVersion: 'bayn.execution-deployment-activation.v2',
+      controllerKey,
       planHash,
       sourceRevision,
-    })
-    expect(Result.isFailure(resolveOptionalExecutionControllerBinding(planHash, undefined))).toBe(true)
-    expect(Result.isFailure(resolveOptionalExecutionControllerBinding(undefined, sourceRevision))).toBe(true)
-    expect(
-      Result.isFailure(
-        decodeExecutionControllerBootstrap({
-          schemaVersion: 'bayn.execution-controller-bootstrap.v3',
-          controllerKey,
-          planHash: nextPlanHash,
-          sourceRevision: nextSourceRevision,
-        }),
-      ),
-    ).toBe(true)
+    }
+    expect(Result.isSuccess(decodeExecutionDeploymentActivation(current))).toBe(true)
+    for (const retired of [
+      { ...current, schemaVersion: 'bayn.execution-deployment-activation.v1' },
+      { ...current, previousBinding: { planHash, sourceRevision } },
+    ]) {
+      expect(Result.isFailure(decodeExecutionDeploymentActivation(retired))).toBe(true)
+    }
   })
 
   test('accepts only the active epoch and exact next sequence', () => {
@@ -152,8 +331,7 @@ describe('execution controller decisions', () => {
         state,
         { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
         controllerKey,
-        '2026-08-13T17:59:00.000Z',
-        nextSourceRevision,
+        sourceRevision,
       ),
     )
     expect(command).toEqual({
@@ -162,8 +340,7 @@ describe('execution controller decisions', () => {
         controllerKey,
         epoch: 1,
         sequence: 0,
-        issuedAt: '2026-08-13T17:59:00.000Z',
-        sourceRevision: nextSourceRevision,
+        sourceRevision,
       },
     })
     expect(
@@ -172,8 +349,7 @@ describe('execution controller decisions', () => {
           state,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 2, sequence: 0 },
           controllerKey,
-          '2026-08-13T17:59:00.000Z',
-          nextSourceRevision,
+          sourceRevision,
         ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'StaleEpoch' })
@@ -183,8 +359,7 @@ describe('execution controller decisions', () => {
           state,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 1 },
           controllerKey,
-          '2026-08-13T17:59:00.000Z',
-          nextSourceRevision,
+          sourceRevision,
         ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'StaleSequence' })
@@ -194,8 +369,7 @@ describe('execution controller decisions', () => {
           { ...state, active: false },
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
           controllerKey,
-          '2026-08-13T17:59:00.000Z',
-          nextSourceRevision,
+          sourceRevision,
         ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'Inactive' })
@@ -318,8 +492,7 @@ describe('execution controller decisions', () => {
         sequence: Number.MAX_SAFE_INTEGER,
       },
       controllerKey,
-      '2026-08-13T17:59:00.000Z',
-      nextSourceRevision,
+      sourceRevision,
     )
 
     expect(Result.isFailure(decision)).toBe(true)
@@ -343,7 +516,7 @@ describe('execution controller decisions', () => {
     }
   })
 
-  test('completes one tick, advances monotonically, and records the next due time', () => {
+  test('completes one tick monotonically and waits for a stream event without an explicit deadline', () => {
     const observation = {
       result: 'SUCCESS' as const,
       observedAt: completedResult.completedAt,
@@ -351,19 +524,18 @@ describe('execution controller decisions', () => {
     }
     const state = Result.getOrThrow(
       completeExecutionControllerTick(
-        activated(),
+        { ...activated(), nextDueAt: '2026-08-13T18:00:01.000Z' },
         { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
         { ...completedResult, observation },
-        nextSourceRevision,
+        sourceRevision,
       ),
     )
 
     expect(state).toMatchObject({
       active: true,
       epoch: 1,
-      sourceRevision: nextSourceRevision,
+      sourceRevision,
       nextSequence: 1,
-      nextDueAt: '2026-08-13T18:00:30.000Z',
       lastCompletion: {
         sequence: 0,
         outcome: 'Completed',
@@ -371,6 +543,7 @@ describe('execution controller decisions', () => {
         completedAt: completedResult.completedAt,
       },
     })
+    expect(state.nextDueAt).toBeUndefined()
     expect(state.lastCompletion).not.toHaveProperty('lastPass')
     expect(
       Result.isFailure(
@@ -378,13 +551,13 @@ describe('execution controller decisions', () => {
           state,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
           completedResult,
-          nextSourceRevision,
+          sourceRevision,
         ),
       ),
     ).toBe(true)
   })
 
-  test('persists blocked results as successful business completion', () => {
+  test.each([1_000, 5_000])('a retained %sms delay does not recreate ordinary polling after restart', (nextDelayMs) => {
     const state = Result.getOrThrow(
       completeExecutionControllerTick(
         activated(),
@@ -394,33 +567,97 @@ describe('execution controller decisions', () => {
           outcome: {
             _tag: ExecutionControllerOutcome.Blocked,
             receiptHash: '1'.repeat(64),
-            nextDelayMs: 5_000,
+            nextDelayMs,
           },
         },
-        nextSourceRevision,
+        sourceRevision,
       ),
     )
 
     expect(state.lastCompletion?.outcome).toBe(ExecutionControllerOutcome.Blocked)
-    expect(state.nextDueAt).toBe('2026-08-13T18:00:05.000Z')
+    expect(state.nextDueAt).toBeUndefined()
+    const resumed = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
+    expect(resumed).toEqual(state)
+    expect(
+      Result.getOrThrow(
+        decideExecutionControllerTick(
+          resumed,
+          {
+            schemaVersion: 'bayn.execution-controller-tick.v1',
+            epoch: 1,
+            sequence: resumed.nextSequence,
+          },
+          controllerKey,
+          sourceRevision,
+        ),
+      ),
+    ).toMatchObject({ _tag: 'Advance' })
   })
 
-  test('rejects a computed next due time outside the canonical UTC range', () => {
+  test.each([
+    { wakeAt: '2026-08-13T18:00:04.000Z', dueAt: '2026-08-13T18:00:04.000Z' },
+    { wakeAt: '2026-08-13T18:00:02.000Z', dueAt: '2026-08-13T18:00:02.000Z' },
+    { wakeAt: '2026-08-13T18:00:03.000Z', dueAt: '2026-08-13T18:00:03.000Z' },
+    { wakeAt: '2026-08-13T18:00:20.000Z', dueAt: '2026-08-13T18:00:20.000Z' },
+  ])('persists only the explicit absolute deadline across restart (%j)', ({ wakeAt, dueAt }) => {
+    const state = Result.getOrThrow(
+      completeExecutionControllerTick(
+        activated(),
+        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+        {
+          completedAt: '2026-08-13T18:00:03.000Z',
+          outcome: {
+            _tag: ExecutionControllerOutcome.Waiting,
+            receiptHash: '1'.repeat(64),
+            nextDelayMs: 4_000,
+            nextWakeAt: wakeAt,
+          },
+        },
+        sourceRevision,
+      ),
+    )
+
+    expect(state.nextDueAt).toBe(dueAt)
+    expect(Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))).toEqual(state)
+  })
+
+  test('rejects an explicit deadline outside the canonical UTC range', () => {
     const decision = completeExecutionControllerTick(
       activated(),
       { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
       {
         ...completedResult,
         completedAt: '9999-12-31T23:59:59.999Z',
-        outcome: { ...completedResult.outcome, nextDelayMs: 1 },
+        outcome: {
+          ...completedResult.outcome,
+          nextDelayMs: 1,
+          nextWakeAt: '+010000-01-01T00:00:00.000Z',
+        },
       },
-      nextSourceRevision,
+      sourceRevision,
     )
 
     expect(Result.isFailure(decision)).toBe(true)
     if (Result.isFailure(decision)) {
       expect(decision.failure).toMatchObject({ operation: 'complete', reason: 'invalid-time' })
     }
+  })
+
+  test('the first completed financial pass proves activation without requiring a polling successor', () => {
+    const state = Result.getOrThrow(
+      completeExecutionControllerTick(
+        activated(),
+        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+        completedResult,
+        sourceRevision,
+      ),
+    )
+    expect(executionControllerSuccessorPassCompleted(state, activation())).toBe(true)
+    expect(
+      executionControllerSuccessorPassCompleted({ ...state, sourceRevision: nextSourceRevision }, activation()),
+    ).toBe(false)
+    expect(executionControllerSuccessorPassCompleted({ ...state, epoch: 2 }, activation())).toBe(false)
+    expect(executionControllerSuccessorPassCompleted({ ...state, nextSequence: 2 }, activation())).toBe(false)
   })
 
   test('deactivates by advancing the epoch and permits one explicitly rebound controller', () => {

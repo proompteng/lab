@@ -1,3 +1,10 @@
 images:
   - path: data/NANOAGENT_IMAGE
     kind: ConfigMap
+  - path: spec/template/spec/containers/image
+    kind: RestateDeployment
+nameReference:
+  - kind: ConfigMap
+    fieldSpecs:
+      - kind: RestateDeployment
+        path: spec/template/spec/containers/env/valueFrom/configMapKeyRef/name

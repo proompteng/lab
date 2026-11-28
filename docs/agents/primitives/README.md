@@ -9,7 +9,7 @@ pluggable workflow runtime (no vendor coupling in the base chart).
 These documents describe:
 
 - Agent execution primitives (`Agent`, `AgentRun`, `AgentProvider`, and the `agent-runner` entrypoint)
-- Memory primitives (`Memory`, `MemoryStore`, and provider-backed datasets)
+- Memory primitive (`Memory`) and its backend connection/capability contract
 - Orchestration primitives (`Orchestration`, `OrchestrationRun`, and composable steps/DAGs)
 - Supporting primitives required for long-horizon runs (artifacts, signals, approvals, schedules, budgets)
 - Agents’ role as the control plane (policy, lifecycle, and unified API surface)

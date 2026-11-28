@@ -88,6 +88,14 @@ spec:
     # Keep a single active MDS until RWX benchmarks show metadata saturation.
     activeCount: 1
     activeStandby: true
+    placement:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: rook-ceph-mds
+                rook_file_system: cephfs
+            topologyKey: kubernetes.io/hostname
     resources:
       requests:
         cpu: "2"

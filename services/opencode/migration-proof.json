@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "opencode.research-state-migration-proof.v1",
+  "completedAt": "2026-10-24T03:30:38Z",
+  "sourceRevision": "5b603c8d46a5aa452358083d1587db6a77238769",
+  "migrationImplementationSha256": "a6b7f006ec599d69d009fb28a72056dbf3ede4b6e615115886369469b4e90e09",
+  "source": {
+    "pvc": "bayn/bayn-opencode-state",
+    "uid": "1a310eab-4868-4742-bc1e-b61abf37e4d9",
+    "retained": true
+  },
+  "target": {
+    "pvc": "opencode/opencode-research-state",
+    "uid": "e5b6bbcd-2881-4659-8c89-d4e5f884929b"
+  },
+  "archiveSha256": "de5a7f7be91b3557f800ac10aaba42eef513dbb4f1290c1f56d1ead48c1c0ab5",
+  "manifestSha256": "31ec31f5206317d8e13865826445b705dcda98d20e72df120126b342e8e3a149",
+  "filesVerifiedBeforeActivation": 15,
+  "nativeSessionIdentitiesSha256": "1dad85188cadac92aa15c4732cb5eba31e9a6348b73686f6aa438c230ab36970",
+  "retained": {
+    "nativeSessions": 2,
+    "nativeMessages": 6,
+    "studyMappings": 2,
+    "studyClaims": 2,
+    "exclusiveAttemptClaims": 2
+  },
+  "checks": {
+    "archiveBytesMatchFrozenSource": true,
+    "sqliteQuickChecksPassed": true,
+    "claimsUnchangedAfterStartup": true,
+    "nativeSessionIdentitiesUnchangedAfterStartup": true
+  }
+}

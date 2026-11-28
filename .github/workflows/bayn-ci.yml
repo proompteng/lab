@@ -6,162 +6,321 @@ permissions:
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: bayn-validation-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      bayn: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.bayn || steps.filter.outputs.bayn }}
-      image: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.image || steps.filter.outputs.image }}
+      fast: ${{ github.event_name == 'pull_request' && steps.filter.outputs.only_paths == 'true' }}
+      full: >-
+        ${{ github.event_name != 'pull_request' ||
+            (steps.filter.outputs.only_paths != 'true' && fromJSON(steps.filter.outputs.affected).full) }}
+      pr_checks: >-
+        ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
+            (fromJSON(steps.filter.outputs.affected).full || fromJSON(steps.filter.outputs.affected).contracts)) }}
+      postgres: >-
+        ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
+            (fromJSON(steps.filter.outputs.affected).full || fromJSON(steps.filter.outputs.affected).postgres)) }}
+      archive: >-
+        ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
+            (fromJSON(steps.filter.outputs.affected).full || fromJSON(steps.filter.outputs.affected).archive)) }}
+      formal: >-
+        ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
+            fromJSON(steps.filter.outputs.affected).formal) }}
+      gepa: >-
+        ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
+            fromJSON(steps.filter.outputs.affected).gepa) }}
     steps:
       - uses: actions/checkout@v5
+        if: github.event_name == 'pull_request'
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - name: Detect Bayn release inputs
         id: filter
         if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          bayn=false
-          image=false
-          while IFS= read -r path; do
-            case "${path}" in
-              services/bayn/* | \
-              packages/scripts/src/bayn/* | \
-              argocd/applications/bayn/* | \
-              argocd/applications/torghut/clickhouse/* | \
-              argocd/applicationsets/product.yaml | \
-              nix/images/bayn.nix | \
-              nix/images/bayn-runtime-root.nix | \
-              nix/images/bun-workspace-service.nix | \
-              nix/images/bun-workspace-deps-source.nix | \
-              nix/images/bun-workspace-deps-source.test.sh | \
-              nix/packages.nix | \
-              nix/cache-push.sh | \
-              nix/ci-nix-oci-summary.sh | \
-              nix/ci-run-timed.sh | \
-              nix/oci-inspect-archive.sh | \
-              nix/oci-push.sh | \
-              nix/oci-release-contract.sh | \
-              nix/verify-bayn-image-command.sh | \
-              nix/verify-bayn-image-command.test.sh | \
-              flake.nix | flake.lock | bun.lock | package.json | */package.json | \
-              .npmrc | bunfig.toml | patches/* | tsconfig.base.json | \
-              .github/actions/setup-nix-toolchain/* | \
-              .github/workflows/bayn-*.yml | \
-              .github/workflows/common-monorepo.yml | \
-              .github/workflows/nix-oci-build-common.yml)
-                bayn=true
-                ;;
-            esac
-            case "${path}" in
-              services/bayn/* | \
-              packages/scripts/src/bayn/update-manifests.ts | \
-              nix/images/bayn.nix | \
-              nix/images/bayn-runtime-root.nix | \
-              nix/images/bun-workspace-service.nix | \
-              nix/images/bun-workspace-deps-source.nix | \
-              nix/packages.nix | \
-              nix/cache-push.sh | \
-              nix/ci-nix-oci-summary.sh | \
-              nix/ci-run-timed.sh | \
-              nix/oci-inspect-archive.sh | \
-              nix/oci-push.sh | \
-              nix/verify-bayn-image-command.sh | \
-              nix/verify-bayn-image-command.test.sh | \
-              flake.nix | flake.lock | bun.lock | package.json | */package.json | \
-              .npmrc | bunfig.toml | patches/* | tsconfig.base.json)
-                image=true
-                ;;
-              .github/actions/setup-nix-toolchain/* | \
-              .github/workflows/bayn-*.yml | \
-              .github/workflows/nix-oci-build-common.yml)
-                image=true
-                ;;
-            esac
-          done < <(git diff --no-renames --name-only "${BASE_SHA}...${HEAD_SHA}")
-          {
-            echo "bayn=${bayn}"
-            echo "image=${image}"
-          } >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/affected-inputs
+        with:
+          only-paths: |
+            - 'services/bayn/tools/**'
+            - 'docs/bayn/**'
+            # CI drivers, image inputs, and tools that can mutate broker/Restate state are not offline inputs.
+            - '!services/bayn/tools/test-*.ts'
+            - '!services/bayn/tools/ci-*-timings.json'
+            - '!services/bayn/tools/postgres-*.ts'
+            - '!services/bayn/tools/**/*.integration.test.ts'
+            - '!services/bayn/tools/retire-broker-polls*.ts'
+            - '!services/bayn/tools/compile-frozen-control.ts'
+            - '!services/bayn/tools/frozen-control-*.ts'
+            - '!services/bayn/tools/*jev-compiler-dependencies*.ts'
+            - '!services/bayn/tools/*jev-instruction*.ts'
+            - '!services/bayn/tools/verify-image-metadata.ts'
+            - '!services/bayn/tools/macro-*-runner/**'
+            - '!services/bayn/tools/run-macro-*.ts'
+            - '!services/bayn/tools/multi-account-daily-sleeves/**'
+            - '!services/bayn/tools/run-multi-account-daily-sleeves.ts'
+            # Bayn imports this retained acceptance protocol as source.
+            - '!docs/bayn/jev-migration-acceptance-v2.json'
+          workspaces: |
+            full: ['', 'services/bayn']
+            contracts: ['', 'packages/scripts']
+            postgres: ['']
+            archive: ['']
+            formal: ['', 'services/bayn']
+            gepa: ['']
+          filters: |
+            full:
+              - 'services/bayn/**'
+              - '!services/bayn/**/*.md'
+              - '!services/bayn/**/*.mdx'
+              - '!services/bayn/formal/**'
+              - '!services/bayn/gepa/**'
+              - 'services/bayn/src/**'
+              - 'services/bayn/migrations/**'
+              - 'services/bayn/tools/**'
+              - 'docs/bayn/**'
+              - '.github/workflows/bayn-*.yml'
+              - '.github/workflows/common-monorepo.yml'
+              - '.github/actions/affected-inputs/**'
+              - 'services/dorvud/**'
+              - '!services/dorvud/**/*.md'
+              - '!services/dorvud/**/*.mdx'
+              - 'nix/images/bayn.nix'
+              - 'nix/images/bayn-runtime-root.nix'
+              - 'nix/images/bayn-frozen-control.nix'
+              - 'nix/images/normalize-bayn-bun-deps.sh'
+              - 'nix/images/normalize-bayn-bun-deps.test.sh'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/bun-workspace-deps-source.nix'
+              - 'nix/images/bun-workspace-deps-source.test.sh'
+              - 'nix/images/prune-bun-dependency-metadata.sh'
+              - 'nix/packages.nix'
+              - 'nix/verify-bayn-image-command.sh'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'package.json'
+              - 'services/bayn/package.json'
+              - '.npmrc'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - 'tsconfig.base.json'
+            contracts:
+              - 'services/bayn/**/*.md'
+              - 'services/bayn/**/*.mdx'
+              - '!services/bayn/README.md'
+              - '!services/bayn/formal/**'
+              - 'services/bayn/gepa/**'
+              - 'packages/scripts/src/bayn/**'
+              - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
+              - 'argocd/applications/bayn/**'
+              - 'argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml'
+              - 'argocd/applicationsets/product.yaml'
+            postgres:
+              # The PostgreSQL monitoring integration executes the deployed ConfigMap's queries.
+              - 'argocd/applications/bayn/postgres-monitoring.yaml'
+            archive:
+              # Only the ClickHouse DDL loaded by Bayn and Dorvud's archive fixtures.
+              - 'argocd/applications/torghut/clickhouse/schema/historical-datasets.sql'
+              - 'argocd/applications/torghut/clickhouse/schema/intraday-bars.sql'
+            formal:
+              - 'services/bayn/formal/**'
+              # Conformance exercises shared production code and the migrated database.
+              - 'services/bayn/src/**'
+              - '!services/bayn/src/health/**'
+              - '!services/bayn/src/http.ts'
+              - '!services/bayn/src/**/*.test.ts'
+              - 'services/bayn/src/db/entry-inference-postgres.integration.test.ts'
+              - 'services/bayn/src/db/risk-clock-rejection.integration.test.ts'
+              - 'services/bayn/src/db/candidate-observation-window.integration.test.ts'
+              - 'services/bayn/src/system-assessment/postgres.integration.test.ts'
+              - 'services/bayn/migrations/**'
+              - '!services/bayn/**/*.md'
+              - '!services/bayn/**/*.mdx'
+              - 'services/bayn/tsconfig*.json'
+              - 'tsconfig.base.json'
+              - '.npmrc'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - 'docs/bayn/jev-migration-acceptance-v2.json'
+              - '.github/workflows/bayn-ci.yml'
+              - '.github/workflows/bayn-formal.yml'
+            gepa:
+              - 'services/bayn/gepa/**'
+              - 'services/bayn/src/strategy.ts'
+              - 'services/bayn/src/strategy/**'
+              - 'services/bayn/src/jev/**'
+              - 'services/bayn/tools/*jev-instruction*.ts'
+              - 'services/bayn/tools/*jev-compiler-dependencies*.ts'
+              - '!services/bayn/**/*.md'
+              - '!services/bayn/**/*.mdx'
+              - '.github/workflows/bayn-ci.yml'
 
-      - name: Select all checks for manual validation
-        id: manual
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          {
-            echo 'bayn=true'
-            echo 'image=false'
-          } >> "$GITHUB_OUTPUT"
+  fast-checks:
+    needs: changes
+    if: needs.changes.outputs.fast == 'true'
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      # Match the full unit shard's isolated-file finalizers.
+      bun-version: 1.4.3
+      working-directory: services/bayn
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn
+      lint-command: bun run lint
+      oxlint-command: bun run lint:oxlint
+      oxlint-type-command: bun run lint:oxlint:type
+      test-command: >-
+        bun run tsc &&
+        env -u BAYN_ALPACA_ACCOUNT_ID -u BAYN_ALPACA_KEY_ID -u BAYN_ALPACA_SECRET_KEY
+        bun test ./tools
+        ./src/market-data/alpaca-history/backfill.test.ts
+        ./src/market-data/alpaca-history/history-export.test.ts
+        ./src/intraday-replay/control-binding-command.test.ts
+        ./src/intraday-replay/entry-timing-export.test.ts
+        --parallel=2 --timeout=15000 &&
+        python3 -B -m unittest discover -s tools
+
+  formal-verification:
+    needs: changes
+    if: needs.changes.outputs.formal == 'true'
+    uses: ./.github/workflows/bayn-formal.yml
 
   pr-checks:
     needs: changes
-    if: needs.changes.outputs.bayn == 'true'
+    if: needs.changes.outputs.pr_checks == 'true'
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.4.0
+      bun-version: 1.4.2
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn --filter @proompteng/scripts
-      lint-command: bunx oxfmt --check services/bayn argocd/applications/bayn argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml
+      lint-command: bunx oxfmt --check services/bayn argocd/applications/bayn argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml
       oxlint-command: bun run --cwd services/bayn lint:oxlint
       oxlint-type-command: bun run --cwd services/bayn lint:oxlint:type
-      test-command: bun run --cwd services/bayn tsc && bun run --cwd services/bayn test && bun test packages/scripts/src/bayn
-      build-command: bun run --cwd services/bayn build
-    secrets: inherit
+      test-command: bun run --cwd services/bayn tsc && bun test packages/scripts/src/bayn packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts && bash packages/scripts/src/bayn/verify-egress-proxy-restart.sh
+      build-command: >-
+        bun run --cwd services/bayn build &&
+        bun services/bayn/tools/verify-image-metadata.ts &&
+        bun run --cwd services/bayn build:research &&
+        bash packages/scripts/src/bayn/verify-research-commands.sh
 
-  effect-runtime-compatibility:
+  gepa:
     needs: changes
-    if: needs.changes.outputs.bayn == 'true'
+    if: needs.changes.outputs.gepa == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r services/bayn/gepa/requirements.txt
+      - run: python -m unittest discover -s services/bayn/gepa -p 'test_*.py' -v
+
+  unit-tests:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          # 1.4.3 fixes callbacks outliving isolated file globals under --parallel.
+          bun-version: 1.4.3
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.11.1
       - name: Install focused dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts
           --filter @proompteng/source
           --filter @proompteng/bayn
-      - name: Verify Effect runtime compatibility cohort
-        run: bun run --cwd services/bayn test:effect-runtime
-
-  broker-sandbox-contract:
-    needs: changes
-    if: needs.changes.outputs.bayn == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
-      - name: Install focused dependencies
-        run: >-
-          bun install --frozen-lockfile --ignore-scripts
-          --filter @proompteng/source
-          --filter @proompteng/bayn
-      - name: Verify OBSERVE sandbox contract without broker I/O
+      - name: Verify isolated unit shard without broker credentials
+        working-directory: services/bayn
         run: >-
           env -u BAYN_ALPACA_ACCOUNT_ID
           -u BAYN_ALPACA_KEY_ID
           -u BAYN_ALPACA_SECRET_KEY
-          bun run --cwd services/bayn test:broker-sandbox
+          bun test src tools --parallel=2 --shard=${{ matrix.shard }}/4 --timeout=15000
+          --timings=tools/ci-unit-timings.json --update-timings
+          --reporter=junit --reporter-outfile=unit-results.xml
+      - name: Retain test durations and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-unit-${{ matrix.shard }}
+          path: |
+            services/bayn/unit-results.xml
+            services/bayn/tools/ci-unit-timings.json
+
+  market-data-replay:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.11.1
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Verify market-data replay and controller recovery against disposable Kafka and Restate
+        run: timeout 8m bash services/bayn/scripts/test-market-data-replay.sh
+
+  streaming-integration:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.11.1
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Verify required integration result checks
+        run: python3 -m unittest discover -s services/bayn/scripts -p test_verify_integration_results.py -v
+      - name: Verify streaming failure boundaries against disposable services
+        run: timeout 12m bash services/bayn/scripts/test-streaming-integrations.sh
+      - name: Retain required integration results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-streaming-integration
+          path: .artifacts/bayn-streaming-integration/
 
   postgres-integration:
     needs: changes
-    if: needs.changes.outputs.bayn == 'true'
+    if: needs.changes.outputs.postgres == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:18-alpine
@@ -176,6 +335,41 @@ jobs:
           --health-interval 1s
           --health-timeout 5s
           --health-retries 30
+    env:
+      BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Verify isolated PostgreSQL persistence shard
+        env:
+          BAYN_CI_POSTGRES_TIMINGS_PATH: ${{ format('{0}/bayn-postgres-timings.json', runner.temp) }}
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          docker exec "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bayn -d bayn_test -c 'ALTER ROLE bayn SET jit TO off'
+          bun run --cwd services/bayn test:postgres "$SHARD/4"
+      - name: Record PostgreSQL test file durations
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-postgres-timings-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bayn-postgres-timings.json*
+          if-no-files-found: error
+          retention-days: 7
+
+  archive-integration:
+    needs: changes
+    if: needs.changes.outputs.archive == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
       clickhouse:
         image: altinity/clickhouse-server:25.3.6.10034.altinitystable
         env:
@@ -188,13 +382,12 @@ jobs:
           --health-timeout 5s
           --health-retries 30
     env:
-      BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
       BAYN_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
       - name: Install focused dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts
@@ -216,95 +409,269 @@ jobs:
             INSERT INTO bayn_ci_guard.endpoint_identity VALUES ('${guard_token}');
           "
           echo "BAYN_TEST_CLICKHOUSE_GUARD_TOKEN=${guard_token}" >> "${GITHUB_ENV}"
-      - name: Verify complete Bayn PostgreSQL persistence workflows
-        run: bun run --cwd services/bayn test:postgres
       - name: Verify Bayn ClickHouse Date query semantics
-        run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts
+        run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts services/bayn/src/market-data/crypto-archive.integration.test.ts
+      - name: Set up Java 25 for shared Dorvud features
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+      - name: Build the production Dorvud feature jar
+        working-directory: services/dorvud
+        run: ./gradlew :technical-analysis-flink:uberJar
+      - name: Verify production archive JDBC timestamp and crypto payload precision
+        working-directory: services/dorvud
+        env:
+          BAYN_TEST_JDBC_RETAIN_ARCHIVE: 'true'
+        run: |
+          ./gradlew :technical-analysis-flink:test --tests '*ArchiveTimestampPrecisionIntegrationTest' --tests '*CryptoMarketDataClickhouseIntegrationTest' --tests '*CryptoMarketFeatureClickhouseIntegrationTest' || {
+            cat technical-analysis-flink/build/test-results/test/TEST-*ArchiveTimestampPrecisionIntegrationTest.xml
+            cat technical-analysis-flink/build/test-results/test/TEST-*CryptoMarketDataClickhouseIntegrationTest.xml
+            cat technical-analysis-flink/build/test-results/test/TEST-*CryptoMarketFeatureClickhouseIntegrationTest.xml
+            exit 1
+          }
+          cat technical-analysis-flink/build/test-results/test/TEST-*ArchiveTimestampPrecisionIntegrationTest.xml
+          cat technical-analysis-flink/build/test-results/test/TEST-*CryptoMarketDataClickhouseIntegrationTest.xml
+          cat technical-analysis-flink/build/test-results/test/TEST-*CryptoMarketFeatureClickhouseIntegrationTest.xml
+      - name: Verify Bayn reads the actual JDBC archive fixture
+        run: bun test services/bayn/src/market-data/archive-jdbc-readback.integration.test.ts
+      - name: Verify historical storage and shared feature export
+        env:
+          BAYN_TEST_DORVUD_JAR: ${{ github.workspace }}/services/dorvud/technical-analysis-flink/build/libs/technical-analysis-flink-all.jar
+        run: bun test services/bayn/src/market-data/alpaca-history/history.integration.test.ts
 
-  dependency-input-invariant:
+  ledger-integration:
     needs: changes
-    if: needs.changes.outputs.bayn == 'true'
-    runs-on: arc-amd64
-    timeout-minutes: 5
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - runtime
+          - backtest
+          - latency-jev
+          - latency-ablation
+          - latency-momentum
+          - latency-momentum-trading
+          - frozen-control
+          - restart
+          - inference
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: bayn
+          POSTGRES_PASSWORD: bayn
+          POSTGRES_DB: bayn_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bayn -d bayn_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
+      BAYN_LEDGER_CONTAINER_PREFIX: bayn-ledger-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.group }}
     steps:
       - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.11.1
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Start isolated stores for durable replay acceptance
+        env:
+          LEDGER_GROUP: ${{ matrix.group }}
+          PRIMARY_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          shopt -s inherit_errexit
+          replay_tb_image='ghcr.io/tigerbeetle/tigerbeetle:0.17.9@sha256:48f623f9c1e9b6cc44d77ca93634595ae99cce3246ded418763eb1a62eee45e9'
+          start_tigerbeetle() {
+            local name="$1" directory="${RUNNER_TEMP}/$1" address
+            mkdir -p "$directory"
+            docker run --rm --security-opt seccomp=unconfined -v "$directory:/data" "$replay_tb_image" \
+              format --cluster=20912 --replica=0 --replica-count=1 --development /data/0_0.tigerbeetle >&2
+            docker run -d --name "$name" --security-opt seccomp=unconfined --memory 2g --cpus 2 \
+              -p 127.0.0.1::3000 -v "$directory:/data" "$replay_tb_image" \
+              start --addresses=0.0.0.0:3000 --development /data/0_0.tigerbeetle >&2
+            for _attempt in {1..30}; do
+              if [[ "$(docker logs "$name" 2>&1)" == *'listening on'* ]]; then
+                address="$(docker port "$name" 3000/tcp)"
+                [[ "$address" =~ ^127[.]0[.]0[.]1:[1-9][0-9]{0,4}$ ]]
+                printf '%s\n' "$address"
+                return
+              fi
+              sleep 1
+            done
+            docker logs "$name" >&2
+            return 1
+          }
+          primary_address="$(start_tigerbeetle "${BAYN_LEDGER_CONTAINER_PREFIX}-tb")"
+          echo "BAYN_TEST_TIGERBEETLE_ADDRESS=$primary_address" >> "$GITHUB_ENV"
+          if [[ "$LEDGER_GROUP" == runtime ]]; then
+            postgres_image="$(docker inspect --format '{{.Image}}' "$PRIMARY_POSTGRES_CONTAINER")"
+            second_postgres_container="${BAYN_LEDGER_CONTAINER_PREFIX}-pg-second"
+            docker run -d --name "$second_postgres_container" -p 127.0.0.1::5432 \
+              -e POSTGRES_USER=bayn -e POSTGRES_PASSWORD=bayn -e POSTGRES_DB=bayn_test "$postgres_image"
+            second_tigerbeetle="$(start_tigerbeetle "${BAYN_LEDGER_CONTAINER_PREFIX}-tb-second")"
+            for _attempt in {1..30}; do
+              if docker exec "$second_postgres_container" pg_isready -h 127.0.0.1 -U bayn -d bayn_test; then
+                second_postgres="$(docker port "$second_postgres_container" 5432/tcp)"
+                [[ "$second_postgres" =~ ^127[.]0[.]0[.]1:[1-9][0-9]{0,4}$ ]]
+                {
+                  echo "BAYN_TEST_SECOND_POSTGRES_URL=postgresql://bayn:bayn@$second_postgres/bayn_test"
+                  echo "BAYN_TEST_SECOND_TIGERBEETLE_ADDRESS=$second_tigerbeetle"
+                } >> "$GITHUB_ENV"
+                exit 0
+              fi
+              sleep 1
+            done
+            docker logs "$second_postgres_container"
+            exit 1
+          fi
+      - name: Verify replay accounting with PostgreSQL and TigerBeetle
+        run: bun run --cwd services/bayn test:ledger ${{ matrix.group }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && startsWith(matrix.group, 'latency-') }}
+        with:
+          name: bayn-${{ matrix.group }}-${{ github.sha }}
+          path: services/bayn/node_modules/.cache/bayn-latency
+          if-no-files-found: error
+      - name: Stop isolated replay stores
+        if: always()
+        run: |
+          docker rm -fv "${BAYN_LEDGER_CONTAINER_PREFIX}-tb" "${BAYN_LEDGER_CONTAINER_PREFIX}-tb-second" \
+            "${BAYN_LEDGER_CONTAINER_PREFIX}-pg-second" || true
+
+  replay-execution-observer:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Docker with platform manifest evidence
+        uses: docker/setup-docker-action@v5
+        with:
+          version: v29.9.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          require-preinstalled: 'true'
           install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
-            substituters = https://cache.nixos.org/
-      - name: Prove dependency source boundary
+      - name: Verify dependency boundaries and replay image execution
+        env:
+          BAYN_TEST_REPLAY_BASE_IMAGE: alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
+          BAYN_TEST_REGISTRY_IMAGE: registry@sha256:325b4b29b041e82803abeb703e201655e4e23ab83264ec1a7c9ddb0a5b14a6e0
+          BAYN_TEST_REPLAY_EXECUTION: '1'
+          BAYN_TEST_REPLAY_IMAGE: '1'
         run: |
+          nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
+          bash nix/images/normalize-bayn-bun-deps.test.sh
           bash nix/images/bun-workspace-deps-source.test.sh
-          bash nix/verify-bayn-image-command.test.sh
-
-  image:
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.image == 'true'
-    uses: ./.github/workflows/nix-oci-build-common.yml
-    with:
-      image_name: bayn
-      package_attr: bayn-image
-      tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
-      publish_kargo_tag: false
-      source_revision: ${{ github.event.pull_request.head.sha }}
-      pr_number: ''
-      latest: false
-      publish_on_dispatch: false
-    secrets: inherit
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
+          docker pull "${BAYN_TEST_REPLAY_BASE_IMAGE}"
+          docker pull "${BAYN_TEST_REGISTRY_IMAGE}"
+          bun test --isolate --no-orphans services/bayn/src/system-assessment/replay-image.integration.test.ts services/bayn/src/system-assessment/replay-execution.integration.test.ts
+          SCRIPT
 
   required:
     name: Bayn release gate
     if: always()
     needs:
       - changes
+      - fast-checks
       - pr-checks
-      - effect-runtime-compatibility
-      - broker-sandbox-contract
+      - formal-verification
+      - gepa
+      - unit-tests
+      - archive-integration
+      - ledger-integration
       - postgres-integration
-      - dependency-input-invariant
-      - image
+      - market-data-replay
+      - streaming-integration
+      - replay-execution-observer
     runs-on: ubuntu-latest
     steps:
       - name: Require every applicable Bayn release check
         env:
+          EXACT_REVISION: ${{ github.event_name != 'pull_request' }}
           CHANGES_RESULT: ${{ needs.changes.result }}
-          BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
-          IMAGE_RELEVANT: ${{ needs.changes.outputs.image }}
+          FULL_RELEVANT: ${{ needs.changes.outputs.full }}
+          FAST_RELEVANT: ${{ needs.changes.outputs.fast }}
+          FAST_RESULT: ${{ needs.fast-checks.result }}
+          PR_CHECKS_RELEVANT: ${{ needs.changes.outputs.pr_checks }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
-          EFFECT_RESULT: ${{ needs.effect-runtime-compatibility.result }}
-          BROKER_RESULT: ${{ needs.broker-sandbox-contract.result }}
+          POSTGRES_RELEVANT: ${{ needs.changes.outputs.postgres }}
+          ARCHIVE_RELEVANT: ${{ needs.changes.outputs.archive }}
+          FORMAL_RELEVANT: ${{ needs.changes.outputs.formal }}
+          FORMAL_RESULT: ${{ needs.formal-verification.result }}
+          GEPA_RELEVANT: ${{ needs.changes.outputs.gepa }}
+          GEPA_RESULT: ${{ needs.gepa.result }}
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          ARCHIVE_RESULT: ${{ needs.archive-integration.result }}
+          LEDGER_RESULT: ${{ needs.ledger-integration.result }}
           POSTGRES_RESULT: ${{ needs.postgres-integration.result }}
-          DEPENDENCY_INPUT_RESULT: ${{ needs.dependency-input-invariant.result }}
-          IMAGE_RESULT: ${{ needs.image.result }}
+          MARKET_DATA_REPLAY_RESULT: ${{ needs.market-data-replay.result }}
+          STREAMING_INTEGRATION_RESULT: ${{ needs.streaming-integration.result }}
+          REPLAY_EXECUTION_RESULT: ${{ needs.replay-execution-observer.result }}
         run: |
           set -euo pipefail
           if [[ "${CHANGES_RESULT}" != 'success' ]]; then
             echo "Bayn change detection failed: ${CHANGES_RESULT}" >&2
             exit 1
           fi
-          if [[ "${BAYN_RELEVANT}" != 'true' ]]; then
-            echo 'No Bayn release inputs changed; the required gate is satisfied without running Bayn-specific jobs.'
-            exit 0
-          fi
-          for result_name in \
-            PR_CHECKS_RESULT \
-            EFFECT_RESULT \
-            BROKER_RESULT \
-            POSTGRES_RESULT \
-            DEPENDENCY_INPUT_RESULT; do
-            result="${!result_name}"
-            if [[ "${result}" != 'success' ]]; then
-              echo "${result_name} must be success, got ${result}" >&2
-              exit 1
-            fi
-          done
-          if [[ "${IMAGE_RELEVANT}" == 'true' && "${IMAGE_RESULT}" != 'success' ]]; then
-            echo "IMAGE_RESULT must be success for image-affecting changes, got ${IMAGE_RESULT}" >&2
+          if [[ "${EXACT_REVISION}" == 'true' && "${FULL_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'true/true/true' ]]; then
+            echo 'Exact-revision validation requires the full Bayn tier, formal verification and GEPA.' >&2
             exit 1
           fi
-          echo 'All applicable Bayn unit, type, Effect, PostgreSQL, dependency-boundary, and multi-architecture image checks passed.'
+          if [[ "${FULL_RELEVANT}" == 'true' && "${FAST_RELEVANT}/${PR_CHECKS_RELEVANT}/${POSTGRES_RELEVANT}/${ARCHIVE_RELEVANT}" != 'false/true/true/true' ]]; then
+            echo 'The full Bayn tier must select every full-tier check and no fast checks.' >&2
+            exit 1
+          fi
+          if [[ "${FAST_RELEVANT}" == 'true' && "${FULL_RELEVANT}/${PR_CHECKS_RELEVANT}/${POSTGRES_RELEVANT}/${ARCHIVE_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'false/false/false/false/false/false' ]]; then
+            echo 'The fast Bayn tier must not select full-tier checks.' >&2
+            exit 1
+          fi
+          require_check() {
+            local selected="$1" result_name="$2" expected
+            case "${selected}" in
+              true) expected=success ;;
+              false) expected=skipped ;;
+              *) echo "Invalid change selection for ${result_name}: ${selected}" >&2; exit 1 ;;
+            esac
+            if [[ "${!result_name}" != "${expected}" ]]; then
+              echo "${result_name} must be ${expected}, got ${!result_name}" >&2
+              exit 1
+            fi
+          }
+          require_check "${FAST_RELEVANT}" FAST_RESULT
+          require_check "${PR_CHECKS_RELEVANT}" PR_CHECKS_RESULT
+          require_check "${POSTGRES_RELEVANT}" POSTGRES_RESULT
+          require_check "${ARCHIVE_RELEVANT}" ARCHIVE_RESULT
+          require_check "${FORMAL_RELEVANT}" FORMAL_RESULT
+          require_check "${GEPA_RELEVANT}" GEPA_RESULT
+          for result_name in \
+            UNIT_RESULT \
+            LEDGER_RESULT \
+            MARKET_DATA_REPLAY_RESULT \
+            STREAMING_INTEGRATION_RESULT \
+            REPLAY_EXECUTION_RESULT; do
+            require_check "${FULL_RELEVANT}" "${result_name}"
+          done
+          echo 'All applicable Bayn checks passed.'

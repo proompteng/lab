@@ -1687,7 +1687,7 @@ wheels = [
 
 [[package]]
 name = "jupyterhub"
-version = "5.5.0"
+version = "5.5.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alembic" },
@@ -1707,9 +1707,9 @@ dependencies = [
     { name = "tornado" },
     { name = "traitlets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f7/a7/1a02fb90161d71c3b8b7cedb434747973de9c0173527c72d2b8ca2923f88/jupyterhub-5.5.0.tar.gz", hash = "sha256:9b61bcb8175d6c6246f798581cdcac512759865bf53698f7832416f51735d0be", size = 18152661, upload-time = "2026-06-10T21:12:39.668Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/79/a0affd291d9ac3eaa959139e22e20ef99440c98671c16571db930aeef536/jupyterhub-5.5.5.tar.gz", hash = "sha256:ce6b769b13a956684ad8908d6a297c617a51f4ec7f52a24a76b4672295bec689", size = 18201678, upload-time = "2026-11-05T19:36:26.741Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/6f/01600881e9e6acf27b7c1c7132d0fc945078a906080ec1758dc24f479132/jupyterhub-5.5.0-py3-none-any.whl", hash = "sha256:2e38d1767742d41911cfc2160cad485eae2698f98ed291308c7d3be090c757a0", size = 14148977, upload-time = "2026-06-10T21:12:35.902Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/72/307bf167d9dd71d649915aed6e110ceda964c15cd8208aadddc10dfbc8ad/jupyterhub-5.5.5-py3-none-any.whl", hash = "sha256:b0fccd61b65d1b9f4e7b8cdb84e4ef5c167591a5317fc2e58d4b3215df222bf1", size = 14187553, upload-time = "2026-11-05T19:36:23.495Z" },
 ]
 
 [[package]]
@@ -3760,7 +3760,7 @@ requires-dist = [
     { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29.5,<7.0" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6.29.5,<7.0" },
     { name = "ipywidgets", marker = "extra == 'notebook'", specifier = ">=8.1.5,<9.0" },
-    { name = "jupyterhub", marker = "extra == 'notebook'", specifier = "==5.5.0" },
+    { name = "jupyterhub", marker = "extra == 'notebook'", specifier = "==5.5.5" },
     { name = "jupyterlab", marker = "extra == 'notebook'", specifier = ">=4.3.4,<5.0" },
     { name = "kafka-python", specifier = ">=2.2.0,<3.0" },
     { name = "lz4", specifier = ">=4.3.3,<5.0" },
@@ -3798,7 +3798,7 @@ provides-extras = ["dev", "notebook", "cuda-research"]
 notebook-runtime = [
     { name = "ipykernel", specifier = ">=6.29.5,<7.0" },
     { name = "ipywidgets", specifier = ">=8.1.5,<9.0" },
-    { name = "jupyterhub", specifier = "==5.5.0" },
+    { name = "jupyterhub", specifier = "==5.5.5" },
     { name = "jupyterlab", specifier = ">=4.3.4,<5.0" },
     { name = "nbclient", specifier = ">=0.10.2,<1.0" },
     { name = "nbformat", specifier = ">=5.10.4,<6.0" },

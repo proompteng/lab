@@ -29,19 +29,25 @@ on:
       - 'nix/images/torghut-ws.nix'
       - 'nix/images/signal-publisher.nix'
       - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'nix/images/prune-bun-dependency-metadata.sh'
       - 'services/torghut/uv.lock'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
+      - '**/package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
       - 'package.json'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/torghut-post-deploy-verify.yml'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
       - 'argocd/applications/torghut-hyperliquid-runtime/**'
   pull_request:
     paths:
+      - '.github/actions/affected-inputs/**'
+      - 'packages/scripts/src/ci/**'
       - 'services/torghut/**'
       - 'packages/scripts/src/torghut/**'
       - '!packages/scripts/src/torghut/__tests__/**'
@@ -63,28 +69,64 @@ on:
       - 'nix/images/torghut-ws.nix'
       - 'nix/images/signal-publisher.nix'
       - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'nix/images/prune-bun-dependency-metadata.sh'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
       - 'services/torghut/uv.lock'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
+      - '**/package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
       - 'package.json'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
       - 'argocd/applications/torghut-hyperliquid-runtime/**'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/signal-publisher-build-push.yml
+          dependency-aware-push: 'true'
+          workspaces: |
+            service: ['', 'services/signal-publisher']
+
+  dependency-closure:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
+    uses: ./.github/workflows/nix-bun-dependency-closure.yml
+    with:
+      service: signal-publisher
+    secrets: inherit
+
   image:
+    needs: dependency-closure
+    concurrency:
+      group: signal-publisher-publish-${{ github.ref }}
+      cancel-in-progress: false
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: signal-publisher
       package_attr: signal-publisher-image
+      tmpfs: true
       tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
       publish_kargo_tag: true
       pr_number: ''

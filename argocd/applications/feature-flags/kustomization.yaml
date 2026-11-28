@@ -6,19 +6,24 @@ resources:
   - tailscale-service.yaml
   - ingressroute-feature-flags-k8s-private.yaml
 
+configMapGenerator:
+  - name: feature-flags-git-cache-repair
+    files:
+      - repair-git-cache.sh
+
 helmCharts:
   - name: flipt-v2
     repo: https://helm.flipt.io
-    version: 2.11.0
+    version: 2.14.2
     releaseName: feature-flags
     namespace: feature-flags
     valuesFile: flipt-values.yaml
 
 images:
   - name: docker.flipt.io/flipt/flipt
-    newName: mirror.gcr.io/flipt/flipt
-    newTag: v2.11.0
-    digest: sha256:d20384874048ef6ac326f4937cee64f1db175a1878a87db32916cc8db46c740e
+    newName: docker.io/flipt/flipt
+    newTag: v2.14.2
+    digest: sha256:121830e237c3a0d2b875f73905944d6ff301fdd7881c5abdec5f24f5549537e8
 
 patches:
   - target:

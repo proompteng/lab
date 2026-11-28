@@ -1,0 +1,471 @@
+import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { Worker } from 'node:worker_threads'
+import { Cause, Effect, Exit, Fiber, Metric, Result, Schedule, Tracer } from 'effect'
+import { PrometheusMetrics } from 'effect/observability'
+import { TestClock } from 'effect/testing'
+
+import { constructObserveShadowDecision as constructObservation, type ExecutionDecisionInput } from './shadow-decision'
+import { decisionConstructionFixture } from './shadow-decision-worker.test-support'
+import { decodeCycleDecisionDocument, type ExecutionDecisionDocument } from './shadow-decision-contract'
+import { makeDecisionConstruction, type DecisionConstructionShape } from './decision-construction'
+
+let directory: string
+let input: ExecutionDecisionInput
+let expected: ExecutionDecisionDocument
+beforeAll(async () => {
+  directory = await mkdtemp(join(tmpdir(), 'bayn-decision-worker-'))
+  await Bun.write(join(directory, 'package.json'), JSON.stringify({ type: 'module' }))
+  const built = await Bun.build({
+    entrypoints: [
+      'decision-construction-worker.ts',
+      'shadow-decision.ts',
+      'decision-construction.ts',
+      'shadow-decision-worker.test-support.ts',
+    ].map((file) => join(import.meta.dir, file)),
+    outdir: directory,
+    target: 'node',
+  })
+  if (!built.success) throw new AggregateError(built.logs, 'Decision worker fixture could not build')
+  const fixture = await Effect.runPromise(decisionConstructionFixture)
+  input = fixture.input
+  expected = fixture.expected
+})
+afterAll(async () => {
+  if (directory !== undefined) await rm(directory, { recursive: true, force: true })
+})
+
+const spawn = () => new Worker(join(directory, 'decision-construction-worker.js'))
+const constructionTrace = (rejectLifecycle = false) => {
+  const spans: Tracer.NativeSpan[] = []
+  let annotations = 0
+  const tracer = Tracer.make({
+    span(options) {
+      const span = new (class extends Tracer.NativeSpan {
+        override attribute(key: string, value: unknown) {
+          if (key === 'bayn.decision.worker.lifecycle') {
+            annotations++
+            if (rejectLifecycle) throw new Error('Synthetic diagnostic sink failure')
+          }
+          super.attribute(key, value)
+        }
+      })(options)
+      if (span.name === 'bayn.execution.decision-build') spans.push(span)
+      return span
+    },
+  })
+  return {
+    tracer,
+    spans,
+    annotations: () => annotations,
+    lifecycle: () =>
+      spans.map((span) =>
+        Object.fromEntries([...span.attributes].filter(([key]) => key.startsWith('bayn.decision.worker.'))),
+      ),
+  }
+}
+const lifecycle = (value: 'cold' | 'reused') => ({ 'bayn.decision.worker.lifecycle': value })
+const usingBuilder = <A, E>(use: (builder: DecisionConstructionShape) => Effect.Effect<A, E>, makeWorker = spawn) =>
+  Effect.scoped(makeDecisionConstruction(makeWorker).pipe(Effect.flatMap(use)))
+
+test('real decision worker memory reaches parent metrics and clears on scoped termination', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const active = yield* usingBuilder((builder) =>
+        Effect.gen(function* () {
+          const document = yield* builder.execution(input)
+          yield* TestClock.adjust('15 seconds')
+          return { document, metrics: yield* PrometheusMetrics.format() }
+        }),
+      )
+      return { ...active, closed: yield* PrometheusMetrics.format() }
+    }).pipe(Effect.provide(TestClock.layer()), Effect.provideService(Metric.MetricRegistry, new Map())),
+  )
+  expect(result.document).toEqual(expected)
+  expect(result.metrics).toMatch(
+    /bayn_runtime_memory_bytes\{isolate="decision-construction",kind="heap_used"\} [1-9][0-9]*\n/,
+  )
+  expect(result.metrics).toMatch(
+    /bayn_runtime_memory_sample_timestamp_seconds\{isolate="decision-construction"\} [1-9]/,
+  )
+  expect(result.closed).toContain('bayn_runtime_memory_sample_timestamp_seconds{isolate="decision-construction"} 0\n')
+})
+const waitForStart = (signals: Int32Array) =>
+  Effect.sync(() => Atomics.load(signals, 0)).pipe(
+    Effect.repeat({ until: (value) => value === 1, schedule: Schedule.spaced('1 millis') }),
+    Effect.timeout('2 seconds'),
+  )
+const blockedWorker = (signals: Int32Array) =>
+  new Worker(
+    `
+  const { workerData } = require('node:worker_threads');
+  const signals = new Int32Array(workerData);
+  Atomics.store(signals, 0, 1);
+  Atomics.wait(signals, 1, 0);
+`,
+    { eval: true, workerData: signals.buffer },
+  )
+
+test('scoped worker reuse preserves independent documents, hashes and owned validation receipts', async () => {
+  const trace = constructionTrace()
+  let worker: Worker | undefined
+  let spawns = 0
+  const makeWorker = () => {
+    spawns++
+    worker = spawn()
+    return worker
+  }
+  await Effect.runPromise(
+    usingBuilder(
+      (builder) =>
+        Effect.gen(function* () {
+          for (let i = 0; i < 3; i++) {
+            const actual = yield* builder.execution(structuredClone(input))
+            expect(actual).toEqual(expected)
+            expect(Object.isFrozen(actual)).toBe(true)
+            expect(Object.isFrozen(actual.strategyDecision)).toBe(true)
+            expect(Result.getOrThrow(decodeCycleDecisionDocument(actual))).toBe(actual)
+            expect(worker?.threadId).not.toBe(-1)
+            expect(worker?.listenerCount('message')).toBe(0)
+            expect(worker?.listenerCount('error')).toBe(1)
+            expect(worker?.listenerCount('exit')).toBe(1)
+          }
+          expect(spawns).toBe(1)
+        }),
+      makeWorker,
+    ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
+  )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('reused'), lifecycle('reused')])
+  expect(worker?.threadId).toBe(-1)
+  expect(worker?.listenerCount('error')).toBe(0)
+  expect(worker?.listenerCount('exit')).toBe(0)
+}, 10_000)
+
+test('observation construction preserves its risk rejection across the thread boundary', async () => {
+  const trace = constructionTrace()
+  const { authorityGenerationHash: _generation, riskContext: _risk, executionSession: _session, ...observation } = input
+  const actual = await Effect.runPromise(
+    usingBuilder((builder) => builder.observe(observation)).pipe(
+      Effect.result,
+      Effect.provideService(Tracer.Tracer, trace.tracer),
+    ),
+  )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold')])
+  const expected = await Effect.runPromise(constructObservation(observation).pipe(Effect.result))
+  expect(Result.isFailure(actual)).toBe(true)
+  expect(Result.isFailure(expected)).toBe(true)
+  if (Result.isFailure(actual) && Result.isFailure(expected)) {
+    expect(actual.failure.failure).toBe(expected.failure.failure)
+    expect(actual.failure.message).toBe(expected.failure.message)
+  }
+}, 10_000)
+
+test('the production Node build keeps controller timers responsive while constructing the same decision', async () => {
+  const script = join(directory, 'check-responsiveness.mjs')
+  await Bun.write(
+    script,
+    `
+    import { Effect } from ${JSON.stringify(import.meta.resolve('effect'))};
+    import { constructExecutionDecision as direct } from ${JSON.stringify(join(directory, 'shadow-decision.js'))};
+    import { buildExecutionDecision, DecisionConstructionLive } from ${JSON.stringify(join(directory, 'decision-construction.js'))};
+    import { decisionConstructionFixture } from ${JSON.stringify(join(directory, 'shadow-decision-worker.test-support.js'))};
+    const { input } = await Effect.runPromise(decisionConstructionFixture);
+    async function measure(build) {
+      let constructing = true;
+      let timerDuringConstruction = false;
+      const probe = new Promise(resolve => setTimeout(() => {
+        timerDuringConstruction = constructing;
+        resolve();
+      }, 0));
+      const started = performance.now();
+      const result = await Effect.runPromise(build(input));
+      constructing = false;
+      await probe;
+      return { hash: result.contentHash, durationMs: performance.now() - started, timerDuringConstruction };
+    }
+    const threaded = input => buildExecutionDecision(input).pipe(Effect.provide(DecisionConstructionLive));
+    console.log(JSON.stringify({ direct: await measure(direct), threaded: await measure(threaded) }));
+  `,
+  )
+  const process = Bun.spawn(['node', script], { cwd: import.meta.dir, stdout: 'pipe', stderr: 'pipe' })
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ])
+  expect({ code, stderr }).toEqual({ code: 0, stderr: '' })
+  const measured = JSON.parse(stdout.trim().split('\n').at(-1) ?? '')
+  expect(measured.threaded.hash).toBe(measured.direct.hash)
+  expect(measured.direct.timerDuringConstruction).toBe(false)
+  expect(measured.threaded.timerDuringConstruction).toBe(true)
+}, 20_000)
+
+test('validation errors retain the domain failure and cause across the thread boundary', async () => {
+  const result = await Effect.runPromise(
+    usingBuilder((builder) =>
+      builder.execution({
+        ...input,
+        snapshot: { ...input.snapshot, contentHash: '0'.repeat(64) },
+      }),
+    ).pipe(Effect.result),
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) {
+    expect(result.failure).toMatchObject({ _tag: 'ShadowDecisionError', failure: 'binding' })
+    expect(result.failure.cause).toBeDefined()
+  }
+}, 10_000)
+
+test('controller timers advance during synchronous worker work and cancellation terminates that work', async () => {
+  const signals = new Int32Array(new SharedArrayBuffer(8))
+  let worker: Worker | undefined
+  const makeWorker = () => {
+    worker = blockedWorker(signals)
+    return worker
+  }
+  await Effect.runPromise(
+    usingBuilder(
+      (builder) =>
+        Effect.gen(function* () {
+          const running = yield* builder.execution(input).pipe(Effect.forkChild)
+          yield* waitForStart(signals)
+          yield* Effect.sleep('20 millis')
+          expect(worker?.threadId).not.toBe(-1)
+          yield* Fiber.interrupt(running)
+          expect(worker?.threadId).toBe(-1)
+        }),
+      makeWorker,
+    ),
+  )
+}, 10_000)
+
+test('only one construction runs and interruption releases the permit after termination', async () => {
+  const trace = constructionTrace()
+  const signals = new Int32Array(new SharedArrayBuffer(8))
+  const workers: Worker[] = []
+  const makeWorker = () => {
+    const worker = workers.length === 0 ? blockedWorker(signals) : spawn()
+    workers.push(worker)
+    return worker
+  }
+  await Effect.runPromise(
+    usingBuilder(
+      (builder) =>
+        Effect.gen(function* () {
+          const first = yield* builder.execution(input).pipe(Effect.forkChild)
+          yield* waitForStart(signals)
+          const second = yield* builder.execution(input).pipe(Effect.forkChild)
+          yield* Effect.sleep('20 millis')
+          expect(workers).toHaveLength(1)
+          yield* Fiber.interrupt(first)
+          expect(workers[0]?.threadId).toBe(-1)
+          expect(yield* Fiber.join(second)).toEqual(expected)
+          expect(workers).toHaveLength(2)
+          expect(workers[1]?.threadId).not.toBe(-1)
+        }),
+      makeWorker,
+    ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
+  )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('cold')])
+  expect(workers[1]?.threadId).toBe(-1)
+}, 10_000)
+
+test('a deadline kills synchronous work and leaves no worker alive', async () => {
+  const signals = new Int32Array(new SharedArrayBuffer(8))
+  let worker: Worker | undefined
+  const makeWorker = () => {
+    worker = blockedWorker(signals)
+    return worker
+  }
+  const exit = await Effect.runPromiseExit(
+    usingBuilder((builder) => builder.execution(input).pipe(Effect.timeout('100 millis')), makeWorker),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(worker?.threadId).toBe(-1)
+}, 10_000)
+
+test('spawn and premature-exit failures fail closed', async () => {
+  const startup = () => {
+    throw new Error('Synthetic spawn failure')
+  }
+  const exited = () => new Worker('', { eval: true })
+  for (const makeWorker of [startup, exited]) {
+    const trace = constructionTrace()
+    const result = await Effect.runPromise(
+      usingBuilder((builder) => builder.execution(input), makeWorker).pipe(
+        Effect.result,
+        Effect.provideService(Tracer.Tracer, trace.tracer),
+      ),
+    )
+    expect(trace.lifecycle()).toEqual([lifecycle('cold')])
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure.failure).toBe('contract')
+  }
+}, 10_000)
+
+test('worker defects remain defects rather than ordinary decision rejections', async () => {
+  const makeWorker = () =>
+    new Worker(
+      `
+    const {parentPort} = require('node:worker_threads');
+    parentPort.once('message', ({id}) => parentPort.postMessage({id, response: { _tag: 'Defect', cause: new Error('construction defect') }}));
+  `,
+      { eval: true },
+    )
+  const exit = await Effect.runPromiseExit(usingBuilder((builder) => builder.execution(input), makeWorker))
+  expect(Exit.isFailure(exit)).toBe(true)
+  if (Exit.isFailure(exit)) expect(Cause.hasDies(exit.cause)).toBe(true)
+}, 10_000)
+
+test('a rejected request is terminated before a fresh valid request is constructed', async () => {
+  const trace = constructionTrace()
+  const workers: Worker[] = []
+  await Effect.runPromise(
+    usingBuilder(
+      (builder) =>
+        Effect.gen(function* () {
+          const rejected = yield* builder
+            .execution({ ...input, snapshot: { ...input.snapshot, contentHash: '0'.repeat(64) } })
+            .pipe(Effect.result)
+          expect(Result.isFailure(rejected)).toBe(true)
+          expect(workers[0]?.threadId).toBe(-1)
+          expect(yield* builder.execution(structuredClone(input))).toEqual(expected)
+          expect(workers).toHaveLength(2)
+        }),
+      () => {
+        const worker = spawn()
+        workers.push(worker)
+        return worker
+      },
+    ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
+  )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('cold')])
+  expect(workers.every((worker) => worker.threadId === -1)).toBe(true)
+}, 10_000)
+
+test('an idle worker exit is detected and replaced without hanging the next request', async () => {
+  const trace = constructionTrace()
+  const workers: Worker[] = []
+  await Effect.runPromise(
+    usingBuilder(
+      (builder) =>
+        Effect.gen(function* () {
+          expect(yield* builder.execution(input)).toEqual(expected)
+          yield* Effect.promise(() => workers[0]!.terminate())
+          expect(yield* builder.execution(structuredClone(input)).pipe(Effect.timeout('5 seconds'))).toEqual(expected)
+          expect(workers).toHaveLength(2)
+        }),
+      () => {
+        const worker = spawn()
+        workers.push(worker)
+        return worker
+      },
+    ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
+  )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('cold')])
+  expect(workers.every((worker) => worker.threadId === -1)).toBe(true)
+}, 10_000)
+
+test('scope closure rejects reuse without starting a worker', async () => {
+  const trace = constructionTrace()
+  let spawns = 0
+  const builder = await Effect.runPromise(
+    Effect.scoped(
+      makeDecisionConstruction(() => {
+        spawns++
+        return spawn()
+      }),
+    ),
+  )
+  const rejected = await Effect.runPromise(
+    builder.execution(input).pipe(Effect.result, Effect.provideService(Tracer.Tracer, trace.tracer)),
+  )
+  expect(trace.lifecycle()).toEqual([{}])
+  expect(Result.isFailure(rejected)).toBe(true)
+  expect(spawns).toBe(0)
+})
+
+test.each(['success', 'failure', 'defect', 'interruption'] as const)(
+  'a throwing lifecycle annotation preserves %s and scoped worker cleanup',
+  async (outcome) => {
+    const trace = constructionTrace(true)
+    const signals = new Int32Array(new SharedArrayBuffer(8))
+    let worker: Worker | undefined
+    const makeWorker = () => {
+      worker =
+        outcome === 'interruption'
+          ? blockedWorker(signals)
+          : outcome === 'defect'
+            ? new Worker(
+                `const {parentPort} = require('node:worker_threads');
+                 parentPort.once('message', ({id}) => parentPort.postMessage({id, response: {_tag: 'Defect', cause: 'original defect'}}));`,
+                { eval: true },
+              )
+            : spawn()
+      return worker
+    }
+    const exit = await Effect.runPromiseExit(
+      usingBuilder(
+        (builder) =>
+          Effect.gen(function* () {
+            if (outcome === 'interruption') {
+              const running = yield* builder.execution(input).pipe(Effect.forkChild)
+              yield* waitForStart(signals)
+              yield* Fiber.interrupt(running)
+              return yield* Fiber.join(running)
+            }
+            return yield* builder.execution(
+              outcome === 'failure'
+                ? { ...input, snapshot: { ...input.snapshot, contentHash: '0'.repeat(64) } }
+                : input,
+            )
+          }),
+        makeWorker,
+      ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
+    )
+    expect(trace.annotations()).toBe(1)
+    expect(trace.lifecycle()).toEqual([{}])
+    expect(worker?.threadId).toBe(-1)
+    if (outcome === 'success') {
+      expect(Exit.isSuccess(exit)).toBe(true)
+      if (Exit.isSuccess(exit)) expect(exit.value).toEqual(expected)
+    } else {
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        expect(exit.cause.reasons).toHaveLength(1)
+        const reason = exit.cause.reasons[0]
+        if (outcome === 'failure') {
+          expect(reason?._tag).toBe('Fail')
+          if (reason?._tag === 'Fail') expect(reason.error).toMatchObject({ failure: 'binding' })
+        } else if (outcome === 'defect') {
+          expect(reason?._tag).toBe('Die')
+          if (reason?._tag === 'Die') expect(reason.defect).toBe('original defect')
+        } else expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+      }
+    }
+  },
+  10_000,
+)
+
+test('wrong request and mode replies fail closed and terminate the worker', async () => {
+  for (const response of ['null', '{id: id + 1, response: {_tag: "Executed"}}', '{id, response: {_tag: "Observed"}}']) {
+    let worker: Worker | undefined
+    const rejected = await Effect.runPromise(
+      usingBuilder(
+        (builder) => builder.execution(input),
+        () => {
+          worker = new Worker(
+            `const {parentPort} = require('node:worker_threads'); parentPort.once('message', ({id}) => parentPort.postMessage(${response}));`,
+            { eval: true },
+          )
+          return worker
+        },
+      ).pipe(Effect.result),
+    )
+    expect(Result.isFailure(rejected)).toBe(true)
+    if (Result.isFailure(rejected)) expect(rejected.failure.failure).toBe('contract')
+    expect(worker?.threadId).toBe(-1)
+  }
+}, 10_000)

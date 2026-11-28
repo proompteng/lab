@@ -49,14 +49,43 @@ const validContract = (overrides: Partial<NixRolloutReleaseContract> = {}): NixR
 describe('Nix rollout report', () => {
   it('audits live enabled-app inventory without counting reviewed upstream mirrors as deferred', () => {
     const report = buildNixRolloutReport({})
+    const forgejo = report.manifestOnlyImageApps.find((candidate) => candidate.name === 'forgejo')
     const hermes = report.manifestOnlyImageApps.find((candidate) => candidate.name === 'hermes')
     const tigresse = report.manifestOnlyImageApps.find((candidate) => candidate.name === 'tigresse')
 
     expect(report.nixImages.length).toBeGreaterThan(0)
     expect(report.deferredApps).toEqual([])
     expect(report.missingBuildContracts).toEqual([])
+    expect(forgejo?.deferredReason).toContain('code.forgejo.org/forgejo/forgejo')
+    expect(forgejo?.repoImages).toEqual([])
     expect(hermes?.deferredReason).toContain('NousResearch/hermes-agent')
     expect(tigresse?.deferredReason).toContain('proompteng/tigresse')
+    const app = report.nixImages.find((candidate) => candidate.name === 'app')
+    expect(app?.deployScriptPath).toBeUndefined()
+    expect(app?.workflowPaths).toContain('argocd/applications/kargo')
+    const bayn = report.nixImages.find((candidate) => candidate.name === 'bayn')
+    expect(bayn?.nixImageAttr).toBe('bayn-image')
+    expect(bayn?.deployScriptPath).toBeUndefined()
+    expect(bayn?.workflowPaths).toContain('argocd/applications/kargo')
+    const relay = report.nixImages.find((candidate) => candidate.name === 'relay')
+    expect(relay?.nixImageAttr).toBe('relay-image')
+    expect(relay?.workflowPaths).toContain('.github/workflows/relay.yml')
+    expect(relay?.workflowPaths).toContain('argocd/applications/kargo')
+  })
+
+  it('accepts an immutable Kargo image build without duplicate manual release wrappers', () => {
+    const report = buildNixRolloutReport({
+      inventory: inventory([
+        entry({
+          name: 'opencode',
+          class: 'nix-image',
+          nixImageAttr: 'opencode-image',
+          repoImages: ['registry.ide-newton.ts.net/lab/opencode'],
+          workflowPaths: ['.github/workflows/opencode-build-push.yml', 'argocd/applications/kargo'],
+        }),
+      ]),
+    })
+    expect(report.missingBuildContracts).toEqual([])
   })
 
   it('reports missing build contract pieces for Nix image apps', () => {
@@ -104,8 +133,7 @@ describe('Nix rollout report', () => {
           class: 'nix-image',
           nixImageAttr: 'app-image',
           buildScriptPath: 'packages/scripts/src/app/build-image.ts',
-          deployScriptPath: 'packages/scripts/src/app/deploy-service.ts',
-          workflowPaths: ['.github/workflows/product-nix-images.yml'],
+          workflowPaths: ['.github/workflows/product-nix-images.yml', 'argocd/applications/kargo'],
         }),
       ]),
       releaseContracts: [validContract()],
@@ -215,8 +243,7 @@ describe('Nix rollout report', () => {
           class: 'nix-image',
           nixImageAttr: 'app-image',
           buildScriptPath: 'packages/scripts/src/app/build-image.ts',
-          deployScriptPath: 'packages/scripts/src/app/deploy-service.ts',
-          workflowPaths: ['.github/workflows/product-nix-images.yml'],
+          workflowPaths: ['.github/workflows/product-nix-images.yml', 'argocd/applications/kargo'],
         }),
       ]),
       releaseContracts: [
@@ -245,8 +272,7 @@ describe('Nix rollout report', () => {
           name: 'app',
           nixImageAttr: 'app-image',
           buildScriptPath: 'packages/scripts/src/app/build-image.ts',
-          deployScriptPath: 'packages/scripts/src/app/deploy-service.ts',
-          workflowPaths: ['.github/workflows/product-nix-images.yml'],
+          workflowPaths: ['.github/workflows/product-nix-images.yml', 'argocd/applications/kargo'],
         }),
       ]),
       releaseContracts: [
@@ -298,8 +324,7 @@ describe('Nix rollout report', () => {
           class: 'nix-image',
           nixImageAttr: 'app-image',
           buildScriptPath: 'packages/scripts/src/app/build-image.ts',
-          deployScriptPath: 'packages/scripts/src/app/deploy-service.ts',
-          workflowPaths: ['.github/workflows/product-nix-images.yml'],
+          workflowPaths: ['.github/workflows/product-nix-images.yml', 'argocd/applications/kargo'],
         }),
       ]),
     })

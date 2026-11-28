@@ -13,12 +13,16 @@ configMapGenerator:
     options:
       disableNameSuffixHash: true
   - name: hermes-bootstrap
+    literals:
+      - runtime.env=
+      - managed-install=gitops
     files:
       - bootstrap.sh
       - bootstrap-lab-checkout.sh
       - bootstrap-github.sh
       - terminal-profile.sh
       - backup-once.sh
+      - backup-output-policy.sh
       - AGENTS.md=bootstrap/AGENTS.md
       - HEARTBEAT.md=bootstrap/HEARTBEAT.md
       - IDENTITY.md=bootstrap/IDENTITY.md
@@ -37,6 +41,7 @@ resources:
   - discord-sealed-secret.yaml
   - github-sealed-secret.yaml
   - service.yaml
+  - tailscale-ingress.yaml
   - egress-proxy.yaml
   - network-policy.yaml
   - statefulset.yaml

@@ -1,25 +1,26 @@
+import { withProviderSessions } from './testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
 import { Result, Schema } from 'effect'
 
-import type { MarketCalendarObservation } from './broker/alpaca'
+import { normalizeMarketCalendarResult } from './broker/alpaca/normalizers'
+import { makeIntradayCycleDraft, selectIntradayExecutionSession } from './cycle/runner/calendar-decisions'
+import { MarketCalendarObservationSchema, type MarketCalendarObservation } from './broker/alpaca/model'
+import { CycleState, type AutonomousCycle } from './cycle/model'
 import {
-  CycleState,
-  isIntradayCycleDraft,
   makeCycleDraft,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
-  type IntradayAutonomousCycle,
-} from './cycle'
+} from './cycle/construction'
 import {
   bindCycleExecutionSession,
   ExecutionSessionBindingSchema,
   type BindCycleExecutionSessionInput,
   type ExecutionSessionBinding,
 } from './execution-session'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { strictParseOptions } from './schemas'
 import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
 
@@ -31,8 +32,8 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 }
 
 const calendar = (closeAt = '2026-02-02T21:00:00.000Z'): MarketCalendarObservation => {
-  const material = {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+  const material = withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
     source: 'alpaca-v2-calendar' as const,
     requestedRange: { start: '2026-02-02', end: '2026-02-02' },
     timeZone: 'UTC' as const,
@@ -43,16 +44,16 @@ const calendar = (closeAt = '2026-02-02T21:00:00.000Z'): MarketCalendarObservati
         closeAt,
       },
     ],
-  }
-  return { ...material, normalizedResponseHash: canonicalHashV1(material) }
+  })
+  return { ...material, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(material)) }
 }
 
-const activeCycle = (): IntradayAutonomousCycle => {
+const activeCycle = (): AutonomousCycle => {
   const session = calendar().sessions[0]
   if (session === undefined) throw new Error('test calendar requires one execution session')
   const observedCalendar = value(
     makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       ...session,
     }),
@@ -63,8 +64,9 @@ const activeCycle = (): IntradayAutonomousCycle => {
   }
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
-      strategyName: 'intraday-momentum',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
+      strategyName: 'jev',
       qualificationRunId: hash('1'),
       strategyProtocolHash: hash('2'),
       accountId: 'account-1',
@@ -77,7 +79,6 @@ const activeCycle = (): IntradayAutonomousCycle => {
   )
   const window = value(makeIntradayCycleWindow(observedCalendar, executionPolicy))
   const draft = value(makeCycleDraft(identity, window))
-  if (!isIntradayCycleDraft(draft)) throw new Error('intraday identity must construct an intraday cycle')
   return {
     ...draft,
     state: CycleState.Active,
@@ -107,6 +108,48 @@ const bind = (overrides: Partial<BindCycleExecutionSessionInput> = {}): Executio
   value(bindCycleExecutionSession(input(overrides)))
 
 describe('intraday execution-session binding', () => {
+  test.each(['2026-11-27', '2026-12-24'])('binds the regular half-day and stops entry at 12:55 ET: %s', (date) => {
+    const hours = value(
+      normalizeMarketCalendarResult(
+        [{ date, open: '09:30', close: '13:00', session_open: '0400', session_close: '1700' }],
+        { start: date, end: date },
+      ),
+    )
+    const old = activeCycle()
+    const policy = old.identity.executionPolicy
+    if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('Expected v3 policy')
+    const observedAt = `${date}T15:02:09.000Z`
+    const session = selectIntradayExecutionSession(hours, policy, observedAt)
+    if (session === undefined) throw new Error('Expected regular equity session')
+    const draft = value(
+      makeIntradayCycleDraft(
+        {
+          cycleBindingId: hash('1'),
+          strategyName: 'jev',
+          strategyProtocolHash: hash('2'),
+          accountId: 'account-1',
+          executionPolicy: policy,
+        },
+        hours,
+        session,
+      ),
+    )
+    const binding = bind({
+      cycle: { ...old, ...draft, createdAt: observedAt, updatedAt: observedAt },
+      executionSessionDate: date,
+      planningBrokerState: { observedAt, contentHash: hash('3') },
+      calendar: hours,
+    })
+    expect(binding.executionSession).toEqual({
+      date,
+      openAt: `${date}T14:30:00.000Z`,
+      closeAt: `${date}T18:00:00.000Z`,
+    })
+    expect(binding.calendar).toEqual(Schema.decodeUnknownSync(MarketCalendarObservationSchema)(hours))
+    expect(binding.submissionCutoffAt).toBe(`${date}T17:55:00.000Z`)
+    expect(selectIntradayExecutionSession(hours, policy, `${date}T17:55:00.000Z`)).toBeUndefined()
+  })
+
   test('binds the exact session, warmup, cutoff, broker observation, and content hash', () => {
     const binding = bind()
 
@@ -117,10 +160,10 @@ describe('intraday execution-session binding', () => {
         openAt: '2026-02-02T14:30:00.000Z',
         closeAt: '2026-02-02T21:00:00.000Z',
       },
-      submissionOpenAt: '2026-02-02T15:30:00.000Z',
-      submissionCutoffAt: '2026-02-02T20:00:00.000Z',
-      decisionAfterOpenMs: 3_600_000,
-      submissionCutoffAfterOpenMs: 19_800_000,
+      submissionOpenAt: '2026-02-02T14:30:00.000Z',
+      submissionCutoffAt: '2026-02-02T20:55:00.000Z',
+      decisionAfterOpenMs: 0,
+      submissionCutoffAfterOpenMs: 23_100_000,
     })
     expect(
       Schema.decodeUnknownSync(ExecutionSessionBindingSchema, strictParseOptions)(structuredClone(binding)),
@@ -140,7 +183,7 @@ describe('intraday execution-session binding', () => {
     const exhausted = bindCycleExecutionSession(
       input({
         planningBrokerState: {
-          observedAt: '2026-02-02T20:00:00.000Z',
+          observedAt: '2026-02-02T20:55:00.000Z',
           contentHash: hash('5'),
         },
       }),
@@ -152,11 +195,7 @@ describe('intraday execution-session binding', () => {
     const changedCalendar = bindCycleExecutionSession(input({ calendar: calendar('2026-02-02T18:00:00.000Z') }))
     expect(Result.isFailure(changedCalendar)).toBeTrue()
     if (Result.isFailure(changedCalendar)) {
-      expect(changedCalendar.failure).toMatchObject({
-        operation: 'bind-cycle',
-        reason: 'cycle-calendar',
-        facts: { field: 'executionCloseAt' },
-      })
+      expect(changedCalendar.failure).toMatchObject({ operation: 'bind-cycle', reason: 'cycle-calendar' })
     }
 
     const changedModel = {

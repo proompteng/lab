@@ -51,6 +51,11 @@ export type CodexClientConfig = {
   agentsMcpUrl: string
   atlasMcpUrl: string
   binaryPath: string
+  flamingo: {
+    model: string
+    baseUrl: string
+    reasoningEffort: 'low' | 'medium' | 'xhigh'
+  } | null
 }
 
 export type GitLockRecoveryConfig = {
@@ -88,6 +93,33 @@ export const resolveTerminalRuntimeConfig = (env: EnvSource = process.env): Term
   shell: normalizeNonEmpty(env.SHELL) ?? '/bin/bash',
 })
 
+const resolveFlamingoConfig = (env: EnvSource): CodexClientConfig['flamingo'] => {
+  const model = normalizeNonEmpty(env.JANGAR_FLAMINGO_MODEL)
+  if (!model) return null
+  const baseUrl = normalizeNonEmpty(env.OPENAI_API_BASE_URL)
+  if (!baseUrl) throw new Error('OPENAI_API_BASE_URL is required for JANGAR_FLAMINGO_MODEL')
+  let endpoint: URL
+  try {
+    endpoint = new URL(baseUrl)
+  } catch {
+    throw new Error('OPENAI_API_BASE_URL must be an absolute HTTP(S) URL')
+  }
+  if (
+    !['http:', 'https:'].includes(endpoint.protocol) ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash
+  ) {
+    throw new Error('OPENAI_API_BASE_URL must be an HTTP(S) URL without credentials, query or fragment')
+  }
+  const reasoningEffort = normalizeNonEmpty(env.JANGAR_FLAMINGO_REASONING_EFFORT)
+  if (reasoningEffort !== 'low' && reasoningEffort !== 'medium' && reasoningEffort !== 'xhigh') {
+    throw new Error('JANGAR_FLAMINGO_REASONING_EFFORT must be low, medium or xhigh')
+  }
+  return { model, baseUrl: baseUrl.replace(/\/+$/, ''), reasoningEffort }
+}
+
 export const resolveCodexClientConfig = (env: EnvSource = process.env): CodexClientConfig => {
   const port = normalizeNonEmpty(env.UI_PORT) ?? normalizeNonEmpty(env.PORT) ?? '8080'
   const agentsServiceBaseUrl = normalizeNonEmpty(env.AGENTS_SERVICE_BASE_URL) ?? DEFAULT_AGENTS_SERVICE_BASE_URL
@@ -98,6 +130,7 @@ export const resolveCodexClientConfig = (env: EnvSource = process.env): CodexCli
       normalizeNonEmpty(env.JANGAR_MCP_URL) ??
       `http://127.0.0.1:${port}/mcp`,
     binaryPath: normalizeNonEmpty(env.JANGAR_CODEX_BINARY) ?? 'codex',
+    flamingo: resolveFlamingoConfig(env),
   }
 }
 

@@ -137,10 +137,10 @@ internal class MarketDataChannelFreshnessTracker(
       hasAnySubscribedSymbols &&
         subscribedAt > 0 &&
         now - subscribedAt >= warmupMs &&
-        marketDataFreshnessGateActive(sessionState, equityFeed)
+        marketDataFreshnessGateActive(sessionState, equityFeed, Instant.ofEpochMilli(now))
     return requiredChannels.map { channel ->
       val channelSymbols = symbolsByChannel[channel].orEmpty()
-      val readinessMode = readinessModeFor(channel, marketType)
+      val readinessMode = readinessModeFor(channel, marketType, sessionState)
       val freshnessRequired = readinessMode == MarketDataChannelReadinessMode.CONTINUOUS
       // Alpaca omits a stock minute bar when that symbol has no qualifying trades in the interval.
       // Keep the channel freshness gate, but do not turn an expected per-symbol bar gap into a restart loop.
@@ -148,7 +148,8 @@ internal class MarketDataChannelFreshnessTracker(
       val symbolCoverageRequired =
         readinessMode == MarketDataChannelReadinessMode.CONTINUOUS &&
           marketType != AlpacaMarketType.OPTIONS &&
-          !equityBarMayBeAbsent
+          !equityBarMayBeAbsent &&
+          !(marketType == AlpacaMarketType.EQUITY && sessionState in setOf("pre", "post"))
       val state = latestByChannel[channel]
       val latestKafkaSuccessAt = state?.latestKafkaSuccessAtMs?.get()?.takeIf { it > 0 }
       val latestProviderAt = state?.latestProviderEventAtMs?.get()?.takeIf { it > 0 }
@@ -167,7 +168,7 @@ internal class MarketDataChannelFreshnessTracker(
       val symbolCoverageDiagnostic =
         symbolCoverageRequired ||
           marketType == AlpacaMarketType.OPTIONS ||
-          equityBarMayBeAbsent
+          (marketType == AlpacaMarketType.EQUITY && channel in setOf("bars", "quotes"))
       val symbolLagMs =
         channelSymbols
           .mapNotNull { symbol ->
@@ -412,12 +413,17 @@ private val extendedSessionClose: LocalTime = LocalTime.of(20, 0)
 
 internal fun marketDataFreshnessGateActive(
   sessionState: String,
-  equityFeed: EquityFeed? = null,
+  equityFeed: EquityFeed?,
+  now: Instant,
 ): Boolean =
   when (equityFeed) {
     EquityFeed.Sip, EquityFeed.DelayedSip -> sessionState in setOf("pre", "regular", "post")
     EquityFeed.Overnight -> sessionState == "overnight"
-    EquityFeed.Iex, null -> sessionState == "continuous" || sessionState == "regular"
+    EquityFeed.Iex ->
+      sessionState in setOf("pre", "regular", "post") &&
+        now.atZone(marketDataFreshnessZoneId).toLocalTime() >= LocalTime.of(8, 0) &&
+        now.atZone(marketDataFreshnessZoneId).toLocalTime() < LocalTime.of(17, 0)
+    null -> sessionState == "continuous" || sessionState == "regular"
   }
 
 internal fun marketSessionState(
@@ -453,10 +459,13 @@ private enum class MarketDataChannelReadinessMode(
 private fun readinessModeFor(
   channel: String,
   marketType: AlpacaMarketType,
+  sessionState: String,
 ): MarketDataChannelReadinessMode =
   when {
+    marketType == AlpacaMarketType.EQUITY && sessionState in setOf("pre", "post") &&
+      canonicalMarketDataChannel(channel) in setOf("bars", "trades") -> MarketDataChannelReadinessMode.CONDITIONAL
     canonicalMarketDataChannel(channel) == "updatedBars" -> MarketDataChannelReadinessMode.CONDITIONAL
-    marketType == AlpacaMarketType.OPTIONS && canonicalMarketDataChannel(channel) == "trades" ->
+    marketType in setOf(AlpacaMarketType.OPTIONS, AlpacaMarketType.CRYPTO) && canonicalMarketDataChannel(channel) == "trades" ->
       MarketDataChannelReadinessMode.CONDITIONAL
     else -> MarketDataChannelReadinessMode.CONTINUOUS
   }
@@ -467,6 +476,7 @@ internal fun canonicalMarketDataChannel(channel: String): String? =
     "quote", "quotes" -> "quotes"
     "bars" -> "bars"
     "updatedbars" -> "updatedBars"
+    "orderbooks" -> "orderbooks"
     else -> null
   }
 

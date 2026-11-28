@@ -1,6 +1,6 @@
 import { Context, Data, Effect, Schema } from 'effect'
 
-import { NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
+import { IsoDateSchema, NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { ExecutionControllerKeySchema } from './controller-key'
 
@@ -9,7 +9,15 @@ const ControllerCounterSchema = NonNegativeIntegerSchema.check(Schema.isLessThan
 export enum ExecutionControllerOutcome {
   Completed = 'Completed',
   Blocked = 'Blocked',
+  Waiting = 'Waiting',
 }
+
+export const ExpectedExecutionSessionSchema = Schema.Struct({
+  date: IsoDateSchema,
+  submissionOpenAt: UtcInstantSchema,
+  firstObservationAt: UtcInstantSchema,
+  submissionCutoffAt: UtcInstantSchema,
+})
 
 const ExecutionControllerStatusBase = {
   schemaVersion: Schema.Literal(1),
@@ -18,6 +26,7 @@ const ExecutionControllerStatusBase = {
   active: Schema.Boolean,
   epoch: ControllerCounterSchema,
   nextSequence: ControllerCounterSchema,
+  expectedSession: Schema.optionalKey(ExpectedExecutionSessionSchema),
 } as const
 
 const ExecutionControllerStatusWithoutCompletionSchema = Schema.Struct(ExecutionControllerStatusBase)

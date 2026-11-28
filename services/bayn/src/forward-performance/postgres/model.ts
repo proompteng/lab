@@ -1,7 +1,8 @@
+import { CashReportingQuantumSchema } from '../../broker/alpaca/cash-reporting'
 import { Data, Schema } from 'effect'
 import type { AccountingTransaction } from '../../accounting/schema'
 import { FinalizedSnapshotProvenanceSchema } from '../../contracts'
-import { DiscrepancySchema, type AccountingReceipt } from '../../execution/contracts'
+import { DiscrepancySchema, OrderSchema, type AccountingReceipt } from '../../execution/contracts'
 import { AccountingReceiptRowSchema, AccountingTransactionRowSchema } from '../../db/accounting-rows'
 import {
   ImageDigestSchema,
@@ -10,7 +11,8 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   strictParseOptions,
 } from '../../schemas'
-import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
+import type { CycleDecisionDocument, RetainedJevExecutionDecisionDocument } from '../../shadow-decision-contract'
+import { IntradayPerformanceDecisionManifestSchema } from '../intraday-schema'
 import type {
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceCycleEvidence,
@@ -54,7 +56,7 @@ export const ReconciliationRow = Schema.Struct({
 })
 
 export const StartingCapitalRow = Schema.Struct({ starting_capital_micros: Schema.String })
-export const CashYieldEvidenceRow = Schema.Struct({
+export const CashYieldSnapshotRow = Schema.Struct({
   reconciliation_id: Sha256,
   reconciliation_content_hash: Sha256,
   reconciled_at: Schema.Date,
@@ -64,13 +66,13 @@ export const CashYieldEvidenceRow = Schema.Struct({
   opening_account_event_id: Sha256,
   opening_observed_at: Schema.Date,
   opening_cash_micros: Schema.String,
+  opening_cash_reporting_quantum_micros: Schema.NullOr(CashReportingQuantumSchema),
   pre_window_accounted_cash_delta_micros: Schema.String,
-  pre_window_cash_residual_micros: Schema.String,
   closing_account_event_id: Sha256,
   closing_observed_at: Schema.Date,
   closing_cash_micros: Schema.String,
+  closing_cash_reporting_quantum_micros: Schema.NullOr(CashReportingQuantumSchema),
   accounted_cash_delta_micros: Schema.String,
-  cash_yield_micros: Schema.String,
 })
 export const CountRow = Schema.Struct({ count: Schema.Int })
 export const DurableExecutionRow = Schema.Struct({
@@ -97,16 +99,25 @@ export const TransactionRow = Schema.Struct({
 export const CycleDecisionRow = Schema.Struct({
   cycle_id: Sha256,
   decision_hash: Sha256,
-  document: CycleDecisionDocumentSchema,
+  document: Schema.Unknown,
   created_at: Schema.Date,
 })
+export const CycleDecisionJsonRow = Schema.Struct({
+  cycle_id: Sha256,
+  decision_hash: Sha256,
+  document_json: Schema.NullOr(Schema.String),
+  created_at: Schema.Date,
+})
+export type VerifiedCycleDecisionRow = Omit<typeof CycleDecisionRow.Type, 'document'> & {
+  readonly document: CycleDecisionDocument | RetainedJevExecutionDecisionDocument
+}
 export const MarketVolumeBindingRow = Schema.Struct({
   cycle_id: Sha256,
   snapshot_id: Sha256,
   execution_session_date: IsoDateSchema,
   execution_open_at: Schema.Date,
   execution_close_at: Schema.Date,
-  manifest: FinalizedSnapshotProvenanceSchema,
+  manifest: Schema.Union([FinalizedSnapshotProvenanceSchema, IntradayPerformanceDecisionManifestSchema]),
 })
 export const IntentExecutionRow = Schema.Struct({
   intent_id: Sha256,
@@ -116,7 +127,7 @@ export const IntentExecutionRow = Schema.Struct({
   decision_hash: Sha256,
   symbol: NonEmptyString,
   side: Schema.Literals(['BUY', 'SELL']),
-  quantity_micros: Schema.String,
+  quantity_atoms: Schema.String,
   notional_limit_micros: Schema.String,
   replan_generation_hash: Schema.NullOr(Sha256),
   terminal_outcome: Schema.NullOr(Schema.Literals(['FILLED', 'CANCELED', 'EXPIRED', 'REJECTED', 'BLOCKED'])),
@@ -131,14 +142,15 @@ export const OrderExecutionRow = Schema.Struct({
   account_id: NonEmptyString,
   symbol: NonEmptyString,
   side: Schema.Literals(['BUY', 'SELL']),
-  quantity_micros: Schema.NullOr(Schema.String),
+  quantity_atoms: Schema.NullOr(Schema.String),
   notional_micros: Schema.NullOr(Schema.String),
-  filled_quantity_micros: Schema.String,
+  filled_quantity_atoms: Schema.String,
   status: Schema.Literals(['NEW', 'PARTIALLY_FILLED', 'FILLED', 'CANCELED', 'EXPIRED', 'REJECTED', 'PENDING']),
   occurred_at: Schema.Date,
   observed_at: Schema.Date,
 })
 export const FillExecutionRow = Schema.Struct({
+  source_sequence: Schema.optionalKey(Schema.String),
   event_id: Sha256,
   fill_id: NonEmptyString,
   broker_order_id: NonEmptyString,
@@ -147,12 +159,17 @@ export const FillExecutionRow = Schema.Struct({
   account_id: NonEmptyString,
   symbol: NonEmptyString,
   side: Schema.Literals(['BUY', 'SELL']),
-  quantity_micros: Schema.String,
-  price_micros: Schema.String,
+  quantity_atoms: Schema.String,
+  price_atoms: Schema.String,
   fee_micros: Schema.String,
   source_timestamp: Schema.String,
   occurred_at: Schema.Date,
   observed_at: Schema.Date,
+})
+export const NativeProtectionOrderRow = Schema.Struct({
+  event_id: Sha256,
+  occurred_at: Schema.Date,
+  order: OrderSchema,
 })
 
 export const decodeCycles = Schema.decodeUnknownEffect(Schema.Array(TerminalCycleRow), strictParseOptions)
@@ -168,15 +185,14 @@ export const decodeStartingCapital = Schema.decodeUnknownEffect(
   Schema.Array(StartingCapitalRow).check(Schema.isMaxLength(1)),
   strictParseOptions,
 )
-export const decodeCashYieldEvidence = Schema.decodeUnknownEffect(
-  Schema.Array(CashYieldEvidenceRow).check(Schema.isMaxLength(1)),
+export const decodeCashYieldSnapshots = Schema.decodeUnknownEffect(
+  Schema.Array(CashYieldSnapshotRow).check(Schema.isMaxLength(1)),
   strictParseOptions,
 )
 export const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(TransactionRow), strictParseOptions)
 export const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 export const decodeCount = Schema.decodeUnknownEffect(Schema.Tuple([CountRow]), strictParseOptions)
 export const decodeDurableExecutions = Schema.decodeUnknownEffect(Schema.Array(DurableExecutionRow), strictParseOptions)
-export const decodeCycleDecisions = Schema.decodeUnknownEffect(Schema.Array(CycleDecisionRow), strictParseOptions)
 export const decodeMarketVolumeBindings = Schema.decodeUnknownEffect(
   Schema.Array(MarketVolumeBindingRow),
   strictParseOptions,
@@ -206,10 +222,20 @@ export interface ForwardPerformancePostgresEvidence {
   readonly startingCapitalMicros?: string
   readonly cashYieldEvidence?: ForwardPerformanceCashYieldEvidence
   readonly transactions: readonly AccountingTransaction[]
-  /** All account transactions through the selected reconciliation, for stable-account ledger replay. */
+  /** All account transactions through current account reconciliation, independently of generation selection. */
   readonly ledgerTransactions: readonly AccountingTransaction[]
+  readonly cashReportingPrecisionKnown: boolean
+  readonly brokerFeeAccrualRecords: readonly (typeof import('../../db/fee-accruals').StoredAccrual.Type)[]
+  readonly cashSettlementRecords: readonly import('../../accounting/cash-settlement').StoredCashSettlement[]
+  readonly unaccountedCashSettlementCount: number
+  readonly brokerFeeRecords?: readonly import('../../accounting/broker-fees').StoredBrokerFee[]
+  readonly generationBrokerFeeIds?: readonly string[]
+  readonly ambiguousBrokerFeeCount?: number
   readonly transactionEvidence: readonly ForwardPerformanceTransactionEvidence[]
   readonly executionEvidence: readonly ForwardPerformanceExecutionEvidence[]
+  readonly alphaDecisions?: readonly import('../alpha-decisions').NativeAlphaDecisionEvidence[]
+  readonly unverifiedAlphaDecisionHashes?: readonly string[]
+  readonly unverifiedDecisionHashes?: readonly string[]
   readonly marketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[]
   readonly receipts: readonly AccountingReceipt[]
   /** All accounting receipts paired with ledgerTransactions, for stable-account ledger replay. */
@@ -233,6 +259,7 @@ export interface ForwardPerformancePostgresEvidence {
   readonly unclosedCycleCount: number
   readonly unresolvedMutationCount: number
   readonly openPositionCount: number
+  readonly accountReconciliation?: { readonly reconciledAt: string; readonly performanceExact: boolean }
   readonly unaccountedFillCount: number
   readonly postReconciliationActivityCount: number
 }

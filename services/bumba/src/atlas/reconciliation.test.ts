@@ -16,6 +16,20 @@ describe('Atlas Git reconciliation', () => {
     '',
   ].join('\0')
 
+  it('excludes binary glTF models before building the text manifest', () => {
+    const manifest = parseAtlasGitTree(
+      [
+        '100644 blob e4e44d636c1081aee687cd3763cf45b025749b50 1708872\tapps/ricochet-rush/assets/models/arena.glb',
+        '100644 blob aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 128\tassets/preview.GLB',
+        '100644 blob bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 128\tassets/scene.gltf',
+        '',
+      ].join('\0'),
+    )
+
+    expect(manifest.files.map((file) => file.path)).toEqual(['assets/scene.gltf'])
+    expect(manifest.skipped).toBe(2)
+  })
+
   it('uses one stable workflow ID per repository', () => {
     expect(buildAtlasReconciliationWorkflowId('proompteng/lab')).toBe(
       buildAtlasReconciliationWorkflowId(' PROOMPTENG/LAB '),

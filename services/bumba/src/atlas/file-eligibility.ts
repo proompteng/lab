@@ -1,5 +1,5 @@
-export const ATLAS_ELIGIBILITY_VERSION = 'atlas-eligibility-v1'
-export const DEFAULT_ATLAS_MAX_FILE_BYTES = 2_000_000
+export const ATLAS_ELIGIBILITY_VERSION = 'atlas-eligibility-v2'
+const DEFAULT_ATLAS_MAX_FILE_BYTES = 2_000_000
 
 const LOCK_FILENAMES = new Set([
   'bun.lock',
@@ -34,6 +34,7 @@ const BINARY_EXTENSIONS = new Set([
   '.exe',
   '.flac',
   '.gif',
+  '.glb',
   '.gz',
   '.ico',
   '.icns',

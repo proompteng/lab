@@ -1,8 +1,7 @@
 import { Data, Result } from 'effect'
 
 import { renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
-import type { EvaluationEvent, ReconciliationResult } from '../types'
-import { Pipeable } from '../pipeable'
+import type { EvaluationEvent } from '../types'
 
 export const LEDGER_SCHEMA_VERSION = 2
 export const LEDGER_BATCH_MAX = 8_189
@@ -66,14 +65,31 @@ export interface LedgerQueryFilter {
   readonly flags: number
 }
 
+export enum LedgerAccountFilterFlag {
+  Debits = 1,
+  Credits = 2,
+  Reversed = 4,
+}
+
+export interface LedgerAccountFilter extends Omit<LedgerQueryFilter, 'ledger'> {
+  readonly account_id: bigint
+}
+
+export type LedgerAccountBalance = Pick<
+  LedgerAccountRecord,
+  'debits_pending' | 'debits_posted' | 'credits_pending' | 'credits_posted' | 'timestamp'
+>
+
 export const AccountCode = {
   cash: 110,
   inventory: 120,
   equity: 310,
   realizedGain: 410,
   cashYieldIncome: 420,
+  cashRoundingIncome: 430,
   feeExpense: 510,
   realizedLoss: 520,
+  cashRoundingExpense: 530,
 } as const
 
 export const TransferCode = {
@@ -84,6 +100,8 @@ export const TransferCode = {
   realizedLoss: 5,
   fee: 6,
   cashYield: 7,
+  cashRoundingIncome: 8,
+  cashRoundingExpense: 9,
 } as const
 
 export interface LedgerInput {
@@ -136,6 +154,7 @@ export type LedgerValidationReason =
   | 'empty-plan'
   | 'invalid-account-metadata'
   | 'invalid-balance'
+  | 'invalid-query-page'
   | 'invalid-transaction'
   | 'invalid-transfer-metadata'
   | 'ledger-plan-failure'
@@ -271,8 +290,6 @@ export type LedgerPlanHashFailure = {
   readonly cause: CanonicalJsonFailure
 }
 
-export type PersistedReconciliation = Pick<ReconciliationResult, 'runId' | 'accountCount' | 'transferCount' | 'exact'>
-
 export const renderLedgerPlanFailure = (failure: LedgerPlanFailureDetail): string => {
   switch (failure.kind) {
     case 'no-fill-events':
@@ -309,7 +326,7 @@ const ledgerPlanCause = (failure: LedgerPlanFailureDetail): unknown => {
   }
 }
 
-const makeLedgerPlanFailureDataFirst = (ledger: number, detail: LedgerPlanFailureDetail): LedgerPlanFailure =>
+export const makeLedgerPlanFailure = (ledger: number, detail: LedgerPlanFailureDetail): LedgerPlanFailure =>
   Object.assign(
     ledgerValidationError({
       operation: 'build-plan',
@@ -320,8 +337,6 @@ const makeLedgerPlanFailureDataFirst = (ledger: number, detail: LedgerPlanFailur
     }),
     { kind: detail.kind, detail },
   ) as LedgerPlanFailure
-
-export const makeLedgerPlanFailure = Pipeable.dual(2, makeLedgerPlanFailureDataFirst)
 
 export const failLedgerPlan = (failure: LedgerPlanFailureDetail): Result.Result<never, LedgerPlanFailureDetail> =>
   Result.fail(failure)

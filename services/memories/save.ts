@@ -1,72 +1,38 @@
-import { getFlagValue, parseCliFlags, parseCommaList, parseJson, resolveAgentsBaseUrl } from './cli'
+import { spawnSync } from 'node:child_process'
+import { parsePersistMemoryNoteInput, persistMemoryNoteToAgentsService } from '@proompteng/agent-contracts'
+import { getFlagValue, parseCliFlags, parseCommaList, resolveAgentsBaseUrl } from './cli'
 
 const flags = parseCliFlags(process.argv.slice(2))
-
-const taskName = getFlagValue(flags, 'task-name')
-if (!taskName) {
-  throw new Error('task-name is required')
-}
-
-const contentValue = getFlagValue(flags, 'content')
-const contentFile = getFlagValue(flags, 'content-file')
-
-if (!contentValue && !contentFile) {
-  throw new Error('either --content or --content-file is required')
-}
-
-let content: string
-if (contentValue) {
-  content = contentValue
-} else if (contentFile) {
-  content = await Bun.file(contentFile).text()
-} else {
-  throw new Error('either --content or --content-file is required')
-}
-if (!content.trim()) {
-  throw new Error('content cannot be empty')
-}
-
-const summary = getFlagValue(flags, 'summary') ?? content.trim().slice(0, 300)
-const tags = parseCommaList(getFlagValue(flags, 'tags'))
-const metadata = parseJson(getFlagValue(flags, 'metadata'))
-
-const ignoredFlags: Array<[string, string | undefined]> = [
-  ['description', getFlagValue(flags, 'description')],
-  ['repository-ref', getFlagValue(flags, 'repository-ref')],
-  ['repository-commit', getFlagValue(flags, 'repository-commit')],
-  ['repository-path', getFlagValue(flags, 'repository-path')],
-  ['execution-id', getFlagValue(flags, 'execution-id')],
-  ['source', getFlagValue(flags, 'source')],
-  ['model', getFlagValue(flags, 'model')],
-  ['encoder-version', getFlagValue(flags, 'encoder-version')],
-]
-
-const ignored = ignoredFlags.filter(([, value]) => value)
-if (ignored.length > 0) {
-  const names = ignored.map(([name]) => `--${name}`).join(', ')
-  console.warn(`Ignoring unused flags for Agents memory note API: ${names}`)
-}
-
-const baseUrl = resolveAgentsBaseUrl()
-const endpoint = new URL('/v1/memory-notes', baseUrl).toString()
-
-const response = await fetch(endpoint, {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({
-    namespace: taskName,
-    content,
-    summary,
-    tags,
-    metadata: Object.keys(metadata).length ? metadata : undefined,
-  }),
+const supported = new Set(['task-name', 'content', 'content-file', 'summary', 'tags', 'repository', 'commit', 'json'])
+for (const key of Object.keys(flags)) if (!supported.has(key)) throw new Error(`unsupported flag --${key}`)
+const namespace = getFlagValue(flags, 'task-name')
+if (!namespace) throw new Error('task-name is required')
+const file = getFlagValue(flags, 'content-file')
+const content = getFlagValue(flags, 'content') ?? (file ? await Bun.file(file).text() : '')
+const repository = getFlagValue(flags, 'repository') ?? 'proompteng/lab'
+const checkout = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+const commit = (getFlagValue(flags, 'commit') ?? checkout.stdout?.trim() ?? '').toLowerCase()
+if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || repository.length > 200) throw new Error('repository must be owner/name')
+if (!/^[0-9a-f]{40}$/.test(commit))
+  throw new Error('Provide --commit with a full Git SHA or run inside the source checkout')
+const parsed = parsePersistMemoryNoteInput({
+  namespace,
+  content,
+  summary: getFlagValue(flags, 'summary'),
+  tags: parseCommaList(getFlagValue(flags, 'tags')),
+  metadata: { repository, commit },
 })
-
-if (!response.ok) {
-  const body = await response.text()
-  throw new Error(`Agents memory save failed (${response.status}): ${body}`)
-}
-
-const payload = (await response.json()) as { ok?: boolean; memory?: { id?: string } }
-const memoryId = payload.memory?.id ?? 'unknown'
-console.log(`saved memory ${memoryId} (${taskName})`)
+if (!parsed.ok) throw new Error(parsed.message)
+const response = await persistMemoryNoteToAgentsService(parsed.value, {
+  ...process.env,
+  AGENTS_SERVICE_BASE_URL: resolveAgentsBaseUrl(),
+})
+if (!response.ok) throw new Error(`Agents memory save failed (${response.status}): ${response.error}`)
+const note = response.body.memory
+if (!response.body.ok || !note) throw new Error('Agents memory API returned no saved note')
+const receipt = { id: note.id, createdAt: note.createdAt, retiredAt: note.retiredAt, replacementId: note.replacementId }
+console.log(
+  flags.json === true
+    ? JSON.stringify({ ok: true, memory: receipt })
+    : `saved memory ${note.id} (${note.namespace})${note.retiredAt ? ' [retired; use its replacement or save corrected knowledge]' : ''}`,
+)

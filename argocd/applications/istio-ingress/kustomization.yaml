@@ -5,10 +5,21 @@ resources:
   - external-gateway.yaml
 helmCharts:
   - name: gateway
-    repo: https://istio-release.storage.googleapis.com/charts
-    version: 1.30.3
+    repo: https://blob.istio.io/istio-release/charts
+    version: 1.32.0
     releaseName: gateway
     namespace: istio-ingress
     valuesInline:
+      labels:
+        spiffe.io/spire-managed-identity: "true"
+      volumes:
+        - name: spire-sds
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+      volumeMounts:
+        - name: spire-sds
+          mountPath: /var/run/secrets/workload-spiffe-uds
+          readOnly: true
       service:
         loadBalancerIP: "100.100.244.182"

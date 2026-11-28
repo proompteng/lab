@@ -3,16 +3,40 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: argocd
 resources:
-  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/ha/install.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.3/manifests/ha/install.yaml
   - base/ingressroute.yaml
   - base/ingressroute-private.yaml
+  - base/kargo-dex-cors-middleware.yaml
   - base/secrets.yaml
   - base/argo-workflows-sso-sealedsecret.yaml
-  - base/tsag-repo-sealedsecret.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
+images:
+  - name: public.ecr.aws/docker/library/redis
+    newTag: 8.12.0-alpine
+    digest: sha256:5af80107c1eeecb484a2269b80a26d12bfa6521787da4663bd9f19f60a163483
+  - name: ghcr.io/dexidp/dex
+    newTag: v2.46.1
+    digest: sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
+  - name: public.ecr.aws/docker/library/haproxy
+    newTag: 3.4.4-alpine
+    digest: sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564
 patches:
+  - target:
+      kind: StatefulSet
+      name: argocd-redis-ha-server
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: argocd-redis-ha-server
+      spec:
+        updateStrategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 1
+            partition: 0
   - path: overlays/argocd-cm.yaml
   - path: overlays/argocd-cmd-params-cm.yaml
   - path: overlays/argocd-lovely-plugin.yaml
@@ -39,10 +63,6 @@ patches:
     target:
       kind: Deployment
       name: argocd-redis-ha-haproxy
-  - path: overlays/argocd-redis-ha-server-recovery.yaml
-    target:
-      kind: StatefulSet
-      name: argocd-redis-ha-server
   - path: overlays/argocd-application-controller-statefulset.yaml
     target:
       kind: StatefulSet

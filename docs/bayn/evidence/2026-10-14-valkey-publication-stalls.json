@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-14",
+  "source": "c429484a83c09ec23c91b5d2c9f5c073912cbc75",
+  "publicationFailures": 4,
+  "nativeDeadlineMs": 1000,
+  "replicaAcknowledgementCauseInTraces": 3,
+  "probeBytes": 731459,
+  "probeHosts": [
+    {
+      "host": "Altra",
+      "samples": 8,
+      "maximumSetMs": 1225.387629,
+      "maximumWaitMs": 2583.8028750000003,
+      "allAcknowledged": true
+    },
+    {
+      "host": "Turin",
+      "samples": 8,
+      "maximumSetMs": 1252.3021560000002,
+      "maximumWaitMs": 2247.3852690000003,
+      "allAcknowledged": true
+    }
+  ],
+  "primaryPersistence": {
+    "aofEnabled": true,
+    "aofDelayedFsync": 18,
+    "rdbSaves": 30
+  },
+  "correctivePolicy": {
+    "appendonly": "no",
+    "save": "",
+    "repl-diskless-sync": "yes"
+  },
+  "retention": "All eight PVCs and their contents retained; no trading authority or durable-store changes"
+}

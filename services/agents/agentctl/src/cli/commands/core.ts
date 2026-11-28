@@ -1,55 +1,43 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { Args, CliConfig, Command, HelpDoc, Options } from '@effect/cli'
+import { Argument, CliError, Command, Completions, Flag } from 'effect/cli'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
+import { outputFleet, outputKubeHealth } from '../../kube/fleet'
 import { loadConfig, resolveConfigPath, saveConfig } from '../../config'
-import {
-  DEFAULT_NAMESPACE,
-  getVersion,
-  maskSecret,
-  outputStatus,
-  outputStatusKube,
-  readNestedValue,
-} from '../../runtime'
+import { callUnary, DEFAULT_NAMESPACE, getVersion, maskSecret, outputStatus } from '../../runtime'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
-import { asAgentctlError } from '../errors'
+import { asAgentctlError, validationError } from '../errors'
+import { kubeCall } from '../run-observation'
 import { renderExamples } from '../examples'
-import { renderGlobalFlags, renderShortHelp, renderTopicHelp } from '../help'
+import { renderShortHelp, renderTopicHelp } from '../help'
 import { promptConfirm, promptText } from '../prompt'
 
 const formatConfig = (config: Record<string, unknown>) => JSON.stringify(config, null, 2)
 
-export const makeHelpCommand = (getRoot: () => Command.Command<unknown, unknown, unknown, unknown>) => {
-  const topicArg = Args.optional(Args.text({ name: 'topic' }))
+export const makeHelpCommand = () => {
+  const topicArg = Argument.optional(Argument.String('topic').pipe(Argument.withDescription('Choose a command topic.')))
   return Command.make('help', { topic: topicArg }, ({ topic }) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const value = Option.getOrUndefined(topic) ?? ''
       if (value.toLowerCase() === 'all') {
-        const helpDoc = Command.getHelp(getRoot(), CliConfig.defaultConfig)
-        console.log(HelpDoc.toAnsiText(helpDoc))
-        console.log(renderGlobalFlags())
-        return
+        return yield* new CliError.ShowHelp({ commandPath: ['agentctl'], errors: [] })
       }
       const topicHelp = renderTopicHelp(value)
-      if (topicHelp) {
-        console.log(topicHelp)
-        return
-      }
-      console.log(renderShortHelp(getVersion()))
+      console.log(topicHelp ?? renderShortHelp(getVersion()))
     }),
-  )
+  ).pipe(Command.withDescription('Show help for a command topic, or use help all for the full command list.'))
 }
 
 export const makeExamplesCommand = () => {
-  const topicArg = Args.optional(Args.text({ name: 'topic' }))
+  const topicArg = Argument.optional(Argument.String('topic').pipe(Argument.withDescription('Choose a command topic.')))
   return Command.make('examples', { topic: topicArg }, ({ topic }) =>
     Effect.sync(() => {
       console.log(renderExamples(Option.getOrUndefined(topic)))
     }),
-  )
+  ).pipe(Command.withDescription('Print example invocations by topic.'))
 }
 
 export const makeQuickstartCommand = () =>
@@ -59,52 +47,43 @@ export const makeQuickstartCommand = () =>
         `Quickstart (kube mode default):\n  agentctl status\n  agentctl get agent\n  agentctl init impl --apply\n  agentctl run submit --agent <name> --impl <name> --runtime workflow --wait\n\nOptional gRPC:\n  kubectl -n agents port-forward svc/agents-grpc 50051:50051\n  agentctl --grpc --server 127.0.0.1:50051 status\n`,
       )
     }),
-  )
+  ).pipe(Command.withDescription('Show the shortest path to your first AgentRun.'))
 
-export const makeCompletionCommand = (getRoot: () => Command.Command<unknown, unknown, unknown, unknown>) => {
-  const shellArg = Args.text({ name: 'shell' })
+export const makeCompletionCommand = (getRoot: () => Command.Command.Any) => {
+  const shellArg = Argument.String('shell').pipe(Argument.withDescription('Shell name: bash, zsh, or fish.'))
+  const generateCompletion = (shell: string) => {
+    const normalized = shell.trim().toLowerCase()
+    if (normalized !== 'bash' && normalized !== 'zsh' && normalized !== 'fish') {
+      throw new Error(`Unsupported shell: ${shell}`)
+    }
+    return {
+      shell: normalized,
+      script: Completions.generate('agentctl', normalized, Completions.fromCommand(getRoot())),
+    }
+  }
 
   const printCompletion = Command.make('completion', { shell: shellArg }, ({ shell }) =>
-    Effect.gen(function* () {
-      const command = getRoot()
-      const normalized = shell.trim().toLowerCase()
-      if (normalized === 'bash') {
-        const lines = yield* Command.getBashCompletions(command, 'agentctl')
-        console.log(lines.join('\n'))
-        return
-      }
-      if (normalized === 'zsh') {
-        const lines = yield* Command.getZshCompletions(command, 'agentctl')
-        console.log(lines.join('\n'))
-        return
-      }
-      if (normalized === 'fish') {
-        const lines = yield* Command.getFishCompletions(command, 'agentctl')
-        console.log(lines.join('\n'))
-        return
-      }
-      throw new Error(`Unsupported shell: ${shell}`)
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, 'ValidationError'))),
-  )
+    Effect.try({
+      try: () => generateCompletion(shell),
+      catch: (error) => asAgentctlError(error, 'ValidationError'),
+    }).pipe(Effect.tap(({ script }) => Effect.sync(() => console.log(script)))),
+  ).pipe(Command.withDescription('Print a shell completion script.'))
 
   const install = Command.make('install', { shell: shellArg }, ({ shell }) =>
     Effect.gen(function* () {
-      const command = getRoot()
-      const normalized = shell.trim().toLowerCase()
-      let lines: string[] = []
-      if (normalized === 'bash') {
-        lines = yield* Command.getBashCompletions(command, 'agentctl')
-      } else if (normalized === 'zsh') {
-        lines = yield* Command.getZshCompletions(command, 'agentctl')
-      } else if (normalized === 'fish') {
-        lines = yield* Command.getFishCompletions(command, 'agentctl')
-      } else {
-        throw new Error(`Unsupported shell: ${shell}`)
-      }
+      const { shell: normalized, script } = yield* Effect.try({
+        try: () => generateCompletion(shell),
+        catch: (error) => asAgentctlError(error, 'ValidationError'),
+      })
       const base = process.env.XDG_CONFIG_HOME?.trim() || `${process.env.HOME}/.config`
       const filePath = `${base}/agentctl/completions/agentctl.${normalized}`
-      yield* Effect.promise(() => mkdir(dirname(filePath), { recursive: true }))
-      yield* Effect.promise(() => writeFile(filePath, `${lines.join('\n')}\n`, 'utf8'))
+      yield* Effect.tryPromise({
+        try: async () => {
+          await mkdir(dirname(filePath), { recursive: true })
+          await writeFile(filePath, `${script}\n`, 'utf8')
+        },
+        catch: (error) => asAgentctlError(error, 'IoError'),
+      })
       console.log(`Wrote ${filePath}`)
       if (normalized === 'fish') {
         console.log(`Run: set -U fish_complete_path $fish_complete_path ${base}/agentctl/completions`)
@@ -113,14 +92,17 @@ export const makeCompletionCommand = (getRoot: () => Command.Command<unknown, un
       } else {
         console.log(`Add to ~/.bashrc: source ${filePath}`)
       }
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
-  )
+    }),
+  ).pipe(Command.withDescription('Install a shell completion script in the agentctl config directory.'))
 
   return Command.withSubcommands(printCompletion, [install])
 }
 
 export const makeConfigCommand = () => {
-  const showSecrets = Options.boolean('show-secrets')
+  const showSecrets = Flag.Boolean('show-secrets').pipe(
+    Flag.withDefault(false),
+    Flag.withDescription('Include the configured token instead of masking it.'),
+  )
   const view = Command.make('view', { showSecrets }, ({ showSecrets }) =>
     Effect.gen(function* () {
       const config = yield* Effect.promise(() => loadConfig())
@@ -129,139 +111,125 @@ export const makeConfigCommand = () => {
       }
       console.log(formatConfig(config))
     }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
-  )
+  ).pipe(Command.withDescription('Print the local config with the token masked by default.'))
 
-  const namespace = Options.optional(Options.text('namespace'))
-  const server = Options.optional(Options.text('server'))
-  const address = Options.optional(Options.text('address'))
-  const token = Options.optional(Options.text('token'))
-  const kubeconfig = Options.optional(Options.text('kubeconfig'))
-  const context = Options.optional(Options.text('context'))
-  const tls = Options.boolean('tls', { negationNames: ['no-tls'] })
+  const set = Command.make('set', {}, () =>
+    Effect.gen(function* () {
+      const { config, flags } = yield* AgentctlContext
+      const { namespace, address, token, kubeconfig, context, tls } = flags
+      const changes = {
+        ...(namespace !== undefined ? { namespace } : {}),
+        ...(address !== undefined ? { address } : {}),
+        ...(token !== undefined ? { token } : {}),
+        ...(kubeconfig !== undefined ? { kubeconfig } : {}),
+        ...(context !== undefined ? { context } : {}),
+        ...(tls !== undefined ? { tls } : {}),
+      }
+      if (!Object.keys(changes).length) {
+        return yield* Effect.fail(
+          validationError(
+            'config set requires at least one of --namespace, --server, --token, --kubeconfig, --context, or --tls/--no-tls.',
+          ),
+        )
+      }
+      yield* Effect.tryPromise({
+        try: () => saveConfig({ ...config, ...changes }),
+        catch: (error) => asAgentctlError(error, 'IoError'),
+      })
+      console.log(`Updated ${resolveConfigPath()}`)
+    }),
+  ).pipe(Command.withDescription('Save selected global settings without prompting.'))
 
-  const set = Command.make(
-    'set',
-    { namespace, server, address, token, kubeconfig, context, tls },
-    ({ namespace, server, address, token, kubeconfig, context }) =>
-      Effect.gen(function* () {
-        const config = yield* Effect.promise(() => loadConfig())
-        const next = { ...config }
-
-        if (Option.isSome(namespace)) next.namespace = namespace.value
-        if (Option.isSome(server)) next.address = server.value
-        if (Option.isSome(address)) next.address = address.value
-        if (Option.isSome(token)) next.token = token.value
-        if (Option.isSome(kubeconfig)) next.kubeconfig = kubeconfig.value
-        if (Option.isSome(context)) next.context = context.value
-
-        const argv = process.argv.slice(2)
-        if (argv.includes('--tls')) next.tls = true
-        if (argv.includes('--no-tls')) next.tls = false
-
-        if (
-          !next.namespace &&
-          !next.address &&
-          !next.token &&
-          !next.kubeconfig &&
-          !next.context &&
-          next.tls === undefined
-        ) {
-          throw new Error(
-            'config set requires at least one of --namespace, --server, --token, --kubeconfig, --context, or --tls/--no-tls',
-          )
-        }
-
-        yield* Effect.promise(() => saveConfig(next))
-        console.log(`Updated ${resolveConfigPath()}`)
-      }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
-  )
-
-  const init = Command.make(
-    'init',
-    { namespace, server, address, token, kubeconfig, context, tls },
-    ({ namespace, server, address, token, kubeconfig, context }) =>
-      Effect.gen(function* () {
-        const config = yield* Effect.promise(() => loadConfig())
-        const resolvedNamespace = Option.isSome(namespace)
-          ? namespace.value
+  const init = Command.make('init', {}, () =>
+    Effect.gen(function* () {
+      const {
+        config,
+        flags: { namespace, address, token, kubeconfig, context, tls },
+      } = yield* AgentctlContext
+      const resolvedNamespace =
+        namespace !== undefined
+          ? namespace
           : yield* Effect.tryPromise({
               try: () => promptText('Namespace', { defaultValue: config.namespace ?? DEFAULT_NAMESPACE }),
               catch: (error) => asAgentctlError(error, 'ValidationError'),
             })
-        const resolvedKubeconfig = Option.isSome(kubeconfig)
-          ? kubeconfig.value
+      const resolvedKubeconfig =
+        kubeconfig !== undefined
+          ? kubeconfig
           : yield* Effect.tryPromise({
               try: () => promptText('Kubeconfig path (optional)', { allowEmpty: true }),
               catch: (error) => asAgentctlError(error, 'ValidationError'),
             })
-        const resolvedContext = Option.isSome(context)
-          ? context.value
+      const resolvedContext =
+        context !== undefined
+          ? context
           : yield* Effect.tryPromise({
               try: () => promptText('Kube context (optional)', { allowEmpty: true }),
               catch: (error) => asAgentctlError(error, 'ValidationError'),
             })
-        const argv = process.argv.slice(2)
-        const hasGrpcFlags =
-          Option.isSome(server) ||
-          Option.isSome(address) ||
-          Option.isSome(token) ||
-          argv.includes('--tls') ||
-          argv.includes('--no-tls')
-        const wantsGrpc = hasGrpcFlags
-          ? true
-          : yield* Effect.tryPromise({
-              try: () => promptConfirm('Configure gRPC access?', false),
-              catch: (error) => asAgentctlError(error, 'ValidationError'),
-            })
-        let resolvedAddress = config.address
-        let resolvedToken = config.token
-        let resolvedTls = config.tls
-        if (wantsGrpc) {
-          resolvedAddress = Option.isSome(server)
-            ? server.value
-            : Option.isSome(address)
-              ? address.value
-              : yield* Effect.tryPromise({
-                  try: () => promptText('gRPC address', { defaultValue: config.address ?? '127.0.0.1:50051' }),
-                  catch: (error) => asAgentctlError(error, 'ValidationError'),
-                })
-          resolvedToken = Option.isSome(token)
-            ? token.value
+      const hasGrpcFlags = address !== undefined || token !== undefined || tls !== undefined
+      const wantsGrpc = hasGrpcFlags
+        ? true
+        : yield* Effect.tryPromise({
+            try: () => promptConfirm('Configure gRPC access?', false),
+            catch: (error) => asAgentctlError(error, 'ValidationError'),
+          })
+      let resolvedAddress = config.address
+      let resolvedToken = config.token
+      let resolvedTls = config.tls
+      if (wantsGrpc) {
+        resolvedAddress =
+          address ??
+          (yield* Effect.tryPromise({
+            try: () => promptText('gRPC address', { defaultValue: config.address ?? '127.0.0.1:50051' }),
+            catch: (error) => asAgentctlError(error, 'ValidationError'),
+          }))
+        resolvedToken =
+          token !== undefined
+            ? token
             : yield* Effect.tryPromise({
                 try: () => promptText('Token (optional)', { allowEmpty: true }),
                 catch: (error) => asAgentctlError(error, 'ValidationError'),
               })
-          if (argv.includes('--tls')) resolvedTls = true
-          if (argv.includes('--no-tls')) resolvedTls = false
-          if (resolvedTls === undefined) {
-            resolvedTls = yield* Effect.tryPromise({
-              try: () => promptConfirm('Enable TLS?', false),
-              catch: (error) => asAgentctlError(error, 'ValidationError'),
-            })
-          }
+        resolvedTls = tls ?? resolvedTls
+        if (resolvedTls === undefined) {
+          resolvedTls = yield* Effect.tryPromise({
+            try: () => promptConfirm('Enable TLS?', false),
+            catch: (error) => asAgentctlError(error, 'ValidationError'),
+          })
         }
+      }
 
-        const next = {
-          ...config,
-          namespace: resolvedNamespace,
-          ...(resolvedAddress ? { address: resolvedAddress } : {}),
-          ...(resolvedToken ? { token: resolvedToken } : {}),
-          ...(resolvedTls !== undefined ? { tls: resolvedTls } : {}),
-          ...(resolvedKubeconfig ? { kubeconfig: resolvedKubeconfig } : {}),
-          ...(resolvedContext ? { context: resolvedContext } : {}),
-        }
-        yield* Effect.promise(() => saveConfig(next))
-        console.log(`Updated ${resolveConfigPath()}`)
-      }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
+      const next = {
+        ...config,
+        namespace: resolvedNamespace,
+        ...(resolvedAddress ? { address: resolvedAddress } : {}),
+        ...(resolvedToken ? { token: resolvedToken } : {}),
+        ...(resolvedTls !== undefined ? { tls: resolvedTls } : {}),
+        ...(resolvedKubeconfig ? { kubeconfig: resolvedKubeconfig } : {}),
+        ...(resolvedContext ? { context: resolvedContext } : {}),
+      }
+      yield* Effect.promise(() => saveConfig(next))
+      console.log(`Updated ${resolveConfigPath()}`)
+    }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
+  ).pipe(Command.withDescription('Configure namespace, Kubernetes context, and optional gRPC access.'))
+
+  return Command.make('config').pipe(
+    Command.withDescription('Inspect or update local agentctl configuration.'),
+    Command.withSubcommands([view, set, init]),
   )
-
-  return Command.make('config').pipe(Command.withSubcommands([view, set, init]))
 }
 
 export const makeVersionCommand = () =>
   Command.make(
     'version',
-    { clientOnly: Options.boolean('client').pipe(Options.withAlias('client-only')) },
+    {
+      clientOnly: Flag.Boolean('client').pipe(
+        Flag.withDefault(false),
+        Flag.withAlias('client-only'),
+        Flag.withDescription('Show the client version without contacting the server.'),
+      ),
+    },
     ({ clientOnly }) =>
       Effect.gen(function* () {
         const { resolved } = yield* AgentctlContext
@@ -274,25 +242,12 @@ export const makeVersionCommand = () =>
         if (transport.mode === 'kube') {
           const backend = transport.backend
           console.log(`agentctl ${version}`)
-          try {
-            const body = yield* Effect.promise(() =>
-              backend.listDeployments(resolved.namespace || DEFAULT_NAMESPACE, 'app.kubernetes.io/name=agents'),
-            )
-            const items = Array.isArray((body as { items?: unknown[] } | undefined)?.items)
-              ? ((body as { items?: unknown[] }).items as Record<string, unknown>[])
-              : []
-            const deployment = items[0] ?? null
-            const image = deployment
-              ? readNestedValue(deployment, ['spec', 'template', 'spec', 'containers', 0, 'image'])
-              : null
-            if (typeof image === 'string' && image) {
-              console.log(`server image ${image}`)
-            } else {
-              console.log('server info unavailable (kube mode)')
-            }
-          } catch {
-            console.log('server info unavailable (kube mode)')
-          }
+          const deployments = yield* kubeCall(() =>
+            backend.listDeployments(resolved.namespace, 'app.kubernetes.io/name=agents'),
+          ).pipe(Effect.catch(() => Effect.succeed([])))
+          const image = deployments.find((deployment) => deployment.metadata.name === 'agents')?.spec?.template?.spec
+            ?.containers?.[0]?.image
+          console.log(image ? `server image ${image}` : 'server info unavailable (kube mode)')
           return
         }
 
@@ -318,43 +273,50 @@ export const makeVersionCommand = () =>
           console.log(`build ${response.build_sha}${response.build_time ? ` (${response.build_time})` : ''}`)
         }
       }).pipe(Effect.mapError((error) => asAgentctlError(error, 'GrpcError'))),
-  )
+  ).pipe(Command.withDescription('Show client and server versions.'))
 
-const makeStatusLikeCommand = (name: 'status' | 'diagnose') =>
+const makeStatusLikeCommand = (name: 'status' | 'diagnose', description: string) =>
   Command.make(name, {}, () =>
     Effect.gen(function* () {
-      const { resolved } = yield* AgentctlContext
+      const {
+        resolved: { namespace, output },
+      } = yield* AgentctlContext
       const transport = yield* TransportService
-      const output = resolved.output
       if (transport.mode === 'kube') {
-        yield* Effect.promise(() => outputStatusKube(transport.backend, resolved.namespace, output))
+        yield* kubeCall(() => outputKubeHealth(transport.backend, namespace, output, name === 'diagnose'))
         return
       }
-      const response = yield* Effect.promise(
-        () =>
-          new Promise<Record<string, unknown>>((resolve, reject) => {
-            const fn = (transport.client as unknown as Record<string, (...args: unknown[]) => void>)
-              .GetControlPlaneStatus
-            fn.call(
-              transport.client,
-              { namespace: resolved.namespace },
-              transport.metadata,
-              (error: unknown, data: Record<string, unknown>) => {
-                if (error) reject(error)
-                else resolve(data)
-              },
-            )
-          }),
-      )
-      outputStatus(response as never, output, resolved.namespace)
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
+      const response = yield* Effect.tryPromise({
+        try: () =>
+          callUnary<Parameters<typeof outputStatus>[0]>(
+            transport.client,
+            'GetControlPlaneStatus',
+            { namespace },
+            transport.metadata,
+          ),
+        catch: (error) => asAgentctlError(error, 'GrpcError'),
+      })
+      outputStatus(response, output, namespace)
+    }),
+  ).pipe(Command.withDescription(description))
+
+export const makeStatusCommand = () =>
+  makeStatusLikeCommand('status', 'Show control-plane health and AgentRun fleet activity.')
+
+export const makeDiagnoseCommand = () =>
+  makeStatusLikeCommand('diagnose', 'Show health and suggest actions for Kubernetes fleet problems.')
+
+export const makeFleetCommand = () =>
+  Command.make('fleet', {}, () =>
+    Effect.gen(function* () {
+      const {
+        resolved: { namespace, output },
+      } = yield* AgentctlContext
+      const transport = yield* TransportService
+      if (transport.mode !== 'kube') return yield* Effect.fail(validationError('fleet requires Kubernetes mode.'))
+      yield* kubeCall(() => outputFleet(transport.backend, namespace, output))
+    }),
+  ).pipe(
+    Command.withAlias('capacity'),
+    Command.withDescription('Show AgentRun activity, node capacity, and controller limits (kube only).'),
   )
-
-export const makeStatusCommand = () => makeStatusLikeCommand('status')
-
-export const makeDiagnoseCommand = () => makeStatusLikeCommand('diagnose')
-
-const transportErrorTag = (error: unknown) => {
-  if (error && typeof error === 'object' && 'code' in error) return 'GrpcError'
-  return 'KubeError'
-}

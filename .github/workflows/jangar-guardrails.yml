@@ -1,6 +1,7 @@
 name: jangar-guardrails
 
 on:
+  workflow_call:
   push:
     branches:
       - main
@@ -22,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: jangar-guardrails-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -85,7 +86,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Enforce Jangar automation mode
         run: bun run packages/scripts/src/jangar/check-automation-policy.ts --require jangar=auto

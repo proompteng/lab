@@ -1,0 +1,174 @@
+import { Result, Schema } from 'effect'
+
+import { CryptoFeeTierSchema } from '../broker/crypto-fees'
+import { instrumentMarket, MarketKind } from '../instruments'
+import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
+import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
+import { JevContractError } from './contract'
+import { jevEntryPriceAllowances } from './entry-economics'
+import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
+import { WebullEntryContextSchema, verifyWebullEntryContext } from './webull-entry-context'
+import { EquityShortEligibilitySchema, equityShortIsEligible } from '../execution/equity-short'
+import { equityClockSession } from '../equity-hours'
+
+const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
+export const CandidateEntryInferenceInputSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.entry-inference-input.v8'),
+  numericalState: Schema.Record(Schema.String, Schema.Json),
+  chartSource: ChartSourceSchema,
+  protocol: JevProtocolSchema,
+  funding: Schema.Struct({
+    bidMicros: Price,
+    askMicros: Price,
+    capitalMicros: Price,
+    cryptoFeeTier: Schema.NullOr(CryptoFeeTierSchema),
+    equityShortEligibility: Schema.optionalKey(EquityShortEligibilitySchema),
+    accountId: Schema.optionalKey(Schema.NonEmptyString),
+  }),
+})
+export enum EntryAblationSelection {
+  LowestModeledLoss = 'LOWEST_MODELED_LOSS_THEN_SOURCE_ID',
+}
+export const AblationEntryInferenceInputSchema = Schema.Struct({
+  ...CandidateEntryInferenceInputSchema.fields,
+  schemaVersion: Schema.Literal('bayn.entry-ablation-input.v1'),
+  selectionPolicy: Schema.Enum(EntryAblationSelection),
+})
+export const EntryInferenceInputSchema = Schema.Union([
+  CandidateEntryInferenceInputSchema,
+  AblationEntryInferenceInputSchema,
+])
+export type EntryInferenceInput = typeof EntryInferenceInputSchema.Type
+export type EntryInferenceMaterial =
+  | EntryInferenceInput
+  | (Omit<typeof CandidateEntryInferenceInputSchema.Type, 'schemaVersion' | 'protocol'> & {
+      readonly schemaVersion:
+        | 'bayn.entry-inference-input.v1'
+        | 'bayn.entry-inference-input.v2'
+        | 'bayn.entry-inference-input.v3'
+        | 'bayn.entry-inference-input.v4'
+        | 'bayn.entry-inference-input.v5'
+        | 'bayn.entry-inference-input.v6'
+        | 'bayn.entry-inference-input.v7'
+        | 'bayn.entry-inference-input.v8'
+      readonly protocol: JevProtocolMaterial
+    })
+  | (Omit<typeof AblationEntryInferenceInputSchema.Type, 'protocol'> & {
+      readonly protocol: JevProtocolMaterial
+    })
+
+export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
+  Result.gen(function* () {
+    yield* Schema.decodeUnknownResult(
+      Schema.Struct({
+        schemaVersion: Schema.Literal(value.protocol.inputDefinition),
+        task: Schema.Struct({ decisionPurpose: Schema.Literal('ENTRY') }),
+      }),
+    )(value.numericalState)
+    const source = yield* decodeChartSource(value.chartSource)
+    const candidate = yield* Schema.decodeUnknownResult(
+      Schema.Struct({ symbol: SymbolSchema, bars1m: ChartSourceSchema.fields.bars }),
+    )(value.numericalState['candidate'])
+    const session = yield* Schema.decodeUnknownResult(Schema.Struct({ completedBarWindowEndsAt: UtcInstantSchema }))(
+      value.numericalState['session'],
+    )
+    if (value.funding.equityShortEligibility !== undefined) {
+      const timing = yield* Schema.decodeUnknownResult(Schema.Struct({ observedAt: UtcInstantSchema }))(
+        value.numericalState['session'],
+      )
+      if (
+        (value.protocol.schemaVersion !== 'bayn.jev.protocol.v41' &&
+          value.protocol.schemaVersion !== 'bayn.jev.protocol.v42' &&
+          value.protocol.schemaVersion !== 'bayn.jev.protocol.v43' &&
+          value.protocol.schemaVersion !== 'bayn.jev.protocol.v44') ||
+        equityClockSession(timing.observedAt) !== 'regular' ||
+        !equityShortIsEligible(
+          value.funding.equityShortEligibility,
+          value.funding.accountId ?? '',
+          source.symbol,
+          timing.observedAt,
+        )
+      )
+        return yield* Result.fail(
+          new JevContractError({ message: 'Short funding requires fresh eligible account-bound broker observations' }),
+        )
+    }
+    if (
+      candidate.symbol !== source.symbol ||
+      session.completedBarWindowEndsAt !== source.windowEndAt ||
+      !value.protocol.candidateSymbols.includes(source.symbol) ||
+      BigInt(value.funding.bidMicros) > BigInt(value.funding.askMicros)
+    )
+      return yield* Result.fail(
+        new JevContractError({ message: 'Entry inference source, symbol, funding quote or native protocol differ' }),
+      )
+    const barsHash = yield* canonicalHashV1Result(source.bars)
+    if ((yield* canonicalHashV1Result(candidate.bars1m)) !== barsHash)
+      return yield* Result.fail(
+        new JevContractError({ message: 'Chart and numerical evidence must contain the same source bars' }),
+      )
+    if (value.protocol.inputDefinition === 'bayn.jev-entry-state.v24') {
+      const context = yield* Schema.decodeUnknownResult(
+        WebullEntryContextSchema,
+        strictParseOptions,
+      )(value.numericalState['webullContext'])
+      const timing = yield* Schema.decodeUnknownResult(
+        Schema.Struct({ observedAt: Schema.optionalKey(UtcInstantSchema) }),
+      )(value.numericalState['session'])
+      if (!verifyWebullEntryContext(context, candidate.symbol, source.windowEndAt, timing.observedAt))
+        return yield* Result.fail(
+          new JevContractError({
+            message: 'Supplemental Webull context differs from the candidate or point-in-time source cut',
+          }),
+        )
+    }
+    if (
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v44'
+    ) {
+      const allowances = jevEntryPriceAllowances(value.protocol, source.symbol)
+      yield* Schema.decodeUnknownResult(
+        Schema.NullOr(
+          Schema.Struct({
+            maximumEntryQuoteDriftBps: Schema.Literal(allowances.quoteDriftBps),
+            maximumEntryLimitSlippageBps: Schema.Literal(allowances.limitSlippageBps),
+          }),
+        ),
+      )(value.numericalState['entryEconomics'])
+    } else if (
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+    ) {
+      yield* Schema.decodeUnknownResult(
+        Schema.NullOr(
+          Schema.Struct({
+            maximumEntryQuoteDriftBps: Schema.Literal(0),
+            maximumEntryLimitSlippageBps: Schema.Literal(0),
+          }),
+        ),
+      )(value.numericalState['entryEconomics'])
+    }
+    const { body, hash: requestHash } = yield* canonicalJsonWithHashV1Result(value)
+    if (Buffer.byteLength(body) > 128_000)
+      return yield* Result.fail(
+        new JevContractError({ message: 'Entry inference input exceeds the native transport budget' }),
+      )
+    return { body, requestHash }
+  })
+
+export const prepareEntryInferenceInput = (input: unknown) =>
+  Result.gen(function* () {
+    const value = yield* Schema.decodeUnknownResult(EntryInferenceInputSchema, strictParseOptions)(input)
+    if (instrumentMarket(value.chartSource.symbol) === MarketKind.Equity && value.funding.cryptoFeeTier !== null)
+      return yield* Result.fail(new JevContractError({ message: 'Equity funding cannot carry a crypto fee tier' }))
+    const prepared = yield* verifyEntryInferenceSource(value)
+    const detached = yield* Schema.decodeUnknownResult(Schema.fromJsonString(EntryInferenceInputSchema))(prepared.body)
+    return { input: detached, ...prepared }
+  }).pipe(
+    Result.mapError(
+      (cause) => new JevContractError({ message: 'Entry inference input violates its source-bound contract', cause }),
+    ),
+  )

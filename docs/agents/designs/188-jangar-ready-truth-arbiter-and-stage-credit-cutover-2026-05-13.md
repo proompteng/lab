@@ -1,6 +1,6 @@
 # 188. Jangar Ready Truth Arbiter And Stage Credit Cutover (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane readiness truth, stage-credit enforcement, AgentRun failure reduction, GitOps rollout

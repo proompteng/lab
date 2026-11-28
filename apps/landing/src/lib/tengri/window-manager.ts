@@ -1,4 +1,4 @@
-export type TengriApp = 'chrome' | 'code' | 'finder' | 'settings' | 'terminal'
+export type TengriApp = 'chrome' | 'code' | 'finder' | 'settings' | 'terminal' | 'tengri'
 export type WindowMode = 'maximized' | 'minimized' | 'normal'
 export type ResizeEdge = 'e' | 'n' | 'ne' | 'nw' | 's' | 'se' | 'sw' | 'w'
 
@@ -9,9 +9,8 @@ export type DesktopWindow = {
   title: string
   bounds: Bounds
   restoredBounds: Bounds
-  mode: WindowMode
   z: number
-}
+} & ({ mode: 'normal' | 'maximized' } | { mode: 'minimized'; minimizedMode: 'normal' | 'maximized' })
 
 export type WindowManagerState = {
   activeApp: TengriApp
@@ -40,10 +39,12 @@ const MIN_WINDOW_WIDTH = 320
 const MIN_VISIBLE_HEIGHT = 56
 const MIN_VISIBLE_WIDTH = 96
 const WINDOW_INSET = 8
+const DOCK_RESERVED_HEIGHT = 96
 
 export const APP_TITLES: Record<TengriApp, string> = {
   finder: 'Finder',
   chrome: 'Chrome',
+  tengri: 'Tengri',
   code: 'Code',
   terminal: 'Terminal',
   settings: 'Settings',
@@ -51,7 +52,7 @@ export const APP_TITLES: Record<TengriApp, string> = {
 
 export function initialWindowState(
   viewport: Bounds,
-  initialApps: readonly TengriApp[] = ['finder', 'chrome'],
+  initialApps: readonly TengriApp[] = ['finder', 'tengri'],
 ): WindowManagerState {
   const apps = initialApps.slice(0, MAX_DESKTOP_WINDOWS)
   const windows = apps.map((app, index) => {
@@ -96,10 +97,10 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
   if (action.type === 'restore') return focusWindow(state, action.id, true, action.viewport)
   if (action.type === 'minimize') {
     const windows = state.windows.map((window) =>
-      window.id === action.id
+      window.id === action.id && window.mode !== 'minimized'
         ? {
             ...window,
-            bounds: window.mode === 'maximized' ? window.restoredBounds : window.bounds,
+            minimizedMode: window.mode,
             mode: 'minimized' as const,
           }
         : window,
@@ -127,7 +128,7 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
       windows: focused.windows.map((window) => {
         if (window.id !== action.id) return window
         if (window.mode === 'maximized') {
-          const restoredBounds = clampToViewport(window.restoredBounds, action.viewport)
+          const restoredBounds = fitToViewport(window.restoredBounds, action.viewport)
           return { ...window, bounds: restoredBounds, restoredBounds, mode: 'normal' as const }
         }
         return {
@@ -147,9 +148,9 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
         bounds:
           window.mode === 'maximized'
             ? maximizedBounds(action.viewport)
-            : clampToViewport(window.bounds, action.viewport),
+            : fitToViewport(window.bounds, action.viewport),
         restoredBounds:
-          window.mode === 'normal' ? clampToViewport(window.restoredBounds, action.viewport) : window.restoredBounds,
+          window.mode === 'normal' ? fitToViewport(window.restoredBounds, action.viewport) : window.restoredBounds,
       })),
     }
   }
@@ -174,7 +175,20 @@ function appendWindow(state: WindowManagerState, app: TengriApp, title: string, 
 function focusWindow(state: WindowManagerState, id: string, restore = false, viewport?: Bounds): WindowManagerState {
   const target = state.windows.find((window) => window.id === id)
   if (!target) return state
-  const restoredBounds = restore && viewport ? clampToViewport(target.restoredBounds, viewport) : target.bounds
+  const restoring = restore && target.mode === 'minimized'
+  if (
+    !restoring &&
+    state.activeWindowId === id &&
+    state.windows.every((window) => window.id === id || window.mode === 'minimized' || window.z < target.z)
+  )
+    return state
+  const mode = target.mode === 'minimized' ? target.minimizedMode : target.mode
+  const bounds =
+    restoring && viewport
+      ? mode === 'maximized'
+        ? maximizedBounds(viewport)
+        : fitToViewport(target.bounds, viewport)
+      : target.bounds
   return {
     ...state,
     activeApp: target.app,
@@ -182,9 +196,7 @@ function focusWindow(state: WindowManagerState, id: string, restore = false, vie
     nextZ: state.nextZ + 1,
     windows: state.windows.map((window) => {
       if (window.id !== id) return window
-      return restore
-        ? { ...window, bounds: restoredBounds, restoredBounds, mode: 'normal' as const, z: state.nextZ }
-        : { ...window, z: state.nextZ }
+      return restoring ? { ...window, bounds, mode, z: state.nextZ } : { ...window, z: state.nextZ }
     }),
   }
 }
@@ -200,12 +212,13 @@ function activateFrontmost(state: WindowManagerState): WindowManagerState {
 
 function newWindow(app: TengriApp, title: string, viewport: Bounds, z: number, id: number): DesktopWindow {
   const preferred = preferredSize(app)
-  const bounds = clampToViewport(
+  const availableHeight = Math.max(0, viewport.height - DOCK_RESERVED_HEIGHT)
+  const bounds = fitToViewport(
     {
       x: Math.max(12, (viewport.width - preferred.width) / 2 + (z % 4) * 22),
-      y: Math.max(12, (viewport.height - preferred.height) / 2 + (z % 3) * 18),
+      y: Math.max(12, (availableHeight - preferred.height) / 2 + (z % 3) * 18),
       width: Math.min(preferred.width, viewport.width - 24),
-      height: Math.min(preferred.height, viewport.height - 24),
+      height: Math.min(preferred.height, availableHeight - 24),
     },
     viewport,
   )
@@ -219,19 +232,17 @@ function preferredSize(app: TengriApp) {
 }
 
 function maximizedBounds(viewport: Bounds): Bounds {
-  const horizontal = viewportAxis(viewport.width, MIN_WINDOW_WIDTH)
-  const vertical = viewportAxis(viewport.height, MIN_WINDOW_HEIGHT)
   return {
-    x: horizontal.inset,
-    y: vertical.inset,
-    width: horizontal.available,
-    height: vertical.available,
+    x: 0,
+    y: 0,
+    width: Math.max(0, viewport.width),
+    height: Math.max(0, viewport.height),
   }
 }
 
 export function clampToViewport(bounds: Bounds, viewport: Bounds): Bounds {
   const horizontal = viewportAxis(viewport.width, MIN_WINDOW_WIDTH)
-  const vertical = viewportAxis(viewport.height, MIN_WINDOW_HEIGHT)
+  const vertical = viewportAxis(viewport.height - DOCK_RESERVED_HEIGHT, MIN_WINDOW_HEIGHT)
   const width = clamp(bounds.width, Math.min(MIN_WINDOW_WIDTH, horizontal.available), horizontal.available)
   const height = clamp(bounds.height, Math.min(MIN_WINDOW_HEIGHT, vertical.available), vertical.available)
   return {
@@ -268,11 +279,27 @@ export function resizeBounds(base: Bounds, edge: ResizeEdge, dx: number, dy: num
     next.width = horizontal.size
   }
   if (edge.includes('n')) {
-    const vertical = resizeAxis(base.y, base.height, dy, true, viewport.height, MIN_WINDOW_HEIGHT, MIN_VISIBLE_HEIGHT)
+    const vertical = resizeAxis(
+      base.y,
+      base.height,
+      dy,
+      true,
+      viewport.height - DOCK_RESERVED_HEIGHT,
+      MIN_WINDOW_HEIGHT,
+      MIN_VISIBLE_HEIGHT,
+    )
     next.y = vertical.start
     next.height = vertical.size
   } else if (edge.includes('s')) {
-    const vertical = resizeAxis(base.y, base.height, dy, false, viewport.height, MIN_WINDOW_HEIGHT, MIN_VISIBLE_HEIGHT)
+    const vertical = resizeAxis(
+      base.y,
+      base.height,
+      dy,
+      false,
+      viewport.height - DOCK_RESERVED_HEIGHT,
+      MIN_WINDOW_HEIGHT,
+      MIN_VISIBLE_HEIGHT,
+    )
     next.y = vertical.start
     next.height = vertical.size
   }
@@ -280,7 +307,20 @@ export function resizeBounds(base: Bounds, edge: ResizeEdge, dx: number, dy: num
 }
 
 function offsetBounds(bounds: Bounds, x: number, y: number, viewport: Bounds) {
-  return clampToViewport({ ...bounds, x: bounds.x + x, y: bounds.y + y }, viewport)
+  return fitToViewport({ ...bounds, x: bounds.x + x, y: bounds.y + y }, viewport)
+}
+
+function fitToViewport(bounds: Bounds, viewport: Bounds): Bounds {
+  const horizontal = viewportAxis(viewport.width, MIN_WINDOW_WIDTH)
+  const vertical = viewportAxis(viewport.height - DOCK_RESERVED_HEIGHT, MIN_WINDOW_HEIGHT)
+  const width = clamp(bounds.width, Math.min(MIN_WINDOW_WIDTH, horizontal.available), horizontal.available)
+  const height = clamp(bounds.height, Math.min(MIN_WINDOW_HEIGHT, vertical.available), vertical.available)
+  return {
+    x: clamp(bounds.x, horizontal.inset, Math.max(horizontal.inset, horizontal.size - horizontal.inset - width)),
+    y: clamp(bounds.y, vertical.inset, Math.max(vertical.inset, vertical.size - vertical.inset - height)),
+    width,
+    height,
+  }
 }
 
 function resizeAxis(
@@ -335,7 +375,7 @@ function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManag
         : [],
     ),
   )
-  const windows = persistedWindows.flatMap((window) => {
+  const windows = persistedWindows.flatMap((window): DesktopWindow[] => {
     if (!window || !isTengriApp(window.app) || !validBounds(window.bounds) || !validBounds(window.restoredBounds)) {
       return []
     }
@@ -349,18 +389,24 @@ function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManag
     usedIds.add(id)
     const mode = isWindowMode(window.mode) ? window.mode : ('normal' as const)
     const restoredBounds =
-      mode === 'normal' ? clampToViewport(window.restoredBounds, viewport) : nonNegativeBounds(window.restoredBounds)
-    return [
-      {
-        app: window.app,
-        bounds: mode === 'maximized' ? maximizedBounds(viewport) : clampToViewport(window.bounds, viewport),
-        id,
-        mode,
-        restoredBounds,
-        title: APP_TITLES[window.app],
-        z,
-      },
-    ]
+      mode === 'normal' ? fitToViewport(window.restoredBounds, viewport) : nonNegativeBounds(window.restoredBounds)
+    const restored = {
+      app: window.app,
+      bounds: mode === 'maximized' ? maximizedBounds(viewport) : fitToViewport(window.bounds, viewport),
+      id,
+      restoredBounds,
+      title: APP_TITLES[window.app],
+      z,
+    }
+    return mode === 'minimized'
+      ? [
+          {
+            ...restored,
+            mode,
+            minimizedMode: window.mode === 'minimized' && window.minimizedMode === 'maximized' ? 'maximized' : 'normal',
+          },
+        ]
+      : [{ ...restored, mode }]
   })
   const frontmost = [...windows]
     .filter((window) => window.mode !== 'minimized')

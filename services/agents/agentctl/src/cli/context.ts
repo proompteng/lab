@@ -9,6 +9,6 @@ export type AgentctlContextValue = {
   resolved: ResolvedConfig
 }
 
-export class AgentctlContext extends Context.Tag('agentctl/Context')<AgentctlContext, AgentctlContextValue>() {}
+export class AgentctlContext extends Context.Service<AgentctlContext, AgentctlContextValue>()('agentctl/Context') {}
 
 export const makeAgentctlContextLayer = (value: AgentctlContextValue) => Layer.succeed(AgentctlContext, value)

@@ -9,6 +9,7 @@ on:
       - 'third_party/buzz/**'
       - '.github/workflows/buzz-relay-build-push.yml'
       - 'argocd/applications/buzz/**'
+      - 'argocd/bootstrap/buzz/**'
   push:
     branches:
       - main
@@ -16,12 +17,17 @@ on:
       - 'third_party/buzz/**'
       - '.github/workflows/buzz-relay-build-push.yml'
       - 'argocd/applications/buzz/**'
+      - 'argocd/bootstrap/buzz/**'
   workflow_dispatch:
 
 env:
   UPSTREAM_REVISION: acfbb1bb6af54cb29cb152496ff43b8285dcb8cf
   UPSTREAM_IMAGE: ghcr.io/block/buzz@sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428
   IMAGE_REPOSITORY: registry.ide-newton.ts.net/lab/buzz
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
@@ -59,17 +65,17 @@ jobs:
           git -C upstream diff --check
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: network=host
+        uses: ./.github/actions/setup-buildkit
 
       - name: Build and test native image
         uses: docker/build-push-action@v6
         with:
           context: upstream
           file: third_party/buzz/Dockerfile
+          ulimit: nofile=65536:65536
           platforms: linux/${{ matrix.architecture }}
           push: false
+          no-cache-filters: verify
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}
             UPSTREAM_IMAGE=${{ matrix.upstream_image }}
@@ -110,17 +116,17 @@ jobs:
           git -C upstream diff --check
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: network=host
+        uses: ./.github/actions/setup-buildkit
 
       - name: Build and push native image
         uses: docker/build-push-action@v6
         with:
           context: upstream
           file: third_party/buzz/Dockerfile
+          ulimit: nofile=65536:65536
           platforms: linux/${{ matrix.architecture }}
           push: true
+          no-cache-filters: verify
           tags: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}
@@ -130,7 +136,7 @@ jobs:
   publish-index:
     if: github.event_name != 'pull_request'
     needs: build
-    runs-on: arc-arm64
+    runs-on: arc-amd64
     steps:
       - name: Checkout deployment repository
         uses: actions/checkout@v5
@@ -147,9 +153,6 @@ jobs:
           printf 'source_sha=%s\n' "${source_sha}" >> "${GITHUB_OUTPUT}"
           printf 'source_timestamp=%s\n' "$(git show -s --format=%cI HEAD)" >> "${GITHUB_OUTPUT}"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Publish multi-architecture index
         shell: bash
         env:
@@ -161,11 +164,11 @@ jobs:
           [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
           for architecture in amd64 arm64; do
             reference="${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}-${architecture}"
-            crane mutate "${reference}" \
+            crane mutate --platform "linux/${architecture}" "${reference}" \
               --label "org.opencontainers.image.created=${SOURCE_TIMESTAMP}" \
               --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
               --tag "${reference}" >/dev/null
-            crane config "${reference}" | jq -e \
+            crane config --platform "linux/${architecture}" "${reference}" | jq -e \
               --arg source_timestamp "${SOURCE_TIMESTAMP}" \
               --arg source_sha "${SOURCE_SHA}" \
               '.config.Labels["org.opencontainers.image.created"] == $source_timestamp and
@@ -200,10 +203,7 @@ jobs:
             probe_error="$(mktemp)"
             trap 'rm -f "${probe_error}"' EXIT
             if kargo_digest="$(
-              docker buildx imagetools inspect \
-                --format '{{json .Manifest}}' \
-                "${kargo_reference}" 2>"${probe_error}" |
-                jq -er '.digest' 2>>"${probe_error}"
+              crane digest "${kargo_reference}" 2>"${probe_error}"
             )"; then
               [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
               [[ "${kargo_digest}" == "${digest}" ]]
@@ -215,10 +215,7 @@ jobs:
               fi
               docker buildx imagetools create --tag "${kargo_reference}" "${tag}"
               kargo_digest="$(
-                docker buildx imagetools inspect \
-                  --format '{{json .Manifest}}' \
-                  "${kargo_reference}" |
-                  jq -er '.digest'
+                crane digest "${kargo_reference}"
               )"
               [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
               [[ "${kargo_digest}" == "${digest}" ]]

@@ -1,25 +1,32 @@
 name: buf
 
 on:
+  workflow_call:
   push:
     branches:
       - main
     paths:
       - 'proto/**'
       - 'buf.work.yaml'
+      - 'buf.yaml'
+      - 'buf.lock'
       - 'buf.gen.yaml'
-      - 'scripts/generate-proto.sh'
       - '.github/workflows/buf-ci.yml'
   pull_request:
     paths:
       - 'proto/**'
       - 'buf.work.yaml'
+      - 'buf.yaml'
+      - 'buf.lock'
       - 'buf.gen.yaml'
-      - 'scripts/generate-proto.sh'
+      - '.github/workflows/buf-ci.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: buf-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   lint:
@@ -42,15 +49,10 @@ jobs:
       - name: Buf lint
         run: buf lint
 
-      - name: Determine if breaking change check is available
-        id: breaking
-        run: |
-          if git show origin/main:proto/buf.yaml >/dev/null 2>&1; then
-            echo "has_config=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_config=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Buf breaking
-        if: steps.breaking.outputs.has_config == 'true'
-        run: buf breaking --against '.git#branch=origin/main'
+        env:
+          BASE_REVISION: ${{ github.event_name != 'merge_group' && 'origin/main' || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          base_sha="$(git rev-parse --verify "${BASE_REVISION}^{commit}")"
+          buf breaking --against ".git#ref=${base_sha}"

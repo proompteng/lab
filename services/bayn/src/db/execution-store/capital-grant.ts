@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
+import { databaseUtcInstant } from '../clock'
 
 import { BrokerEnvironment } from '../../broker/identity'
 import {
@@ -23,7 +24,7 @@ import {
   type ExactReconciliationFacts,
 } from '../../execution/capital-grant-algebra'
 import type { WriterFenceService } from '../../execution/writer-fence'
-import { Pipeable } from '../../pipeable'
+
 import {
   authorityStateFromRow,
   researchCapitalGrantGenerationFromRow,
@@ -42,7 +43,6 @@ export interface CapitalGrantInterpreter {
   readonly activateResearchCapitalGrant: (
     proof: ResearchCapitalGrantProofBinding,
     sourceGenerationHash: string,
-    cutoffAt: string,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
 }
 
@@ -52,7 +52,7 @@ interface ResearchCapitalGrantRuntimeBinding {
   readonly sourceGenerationHash: string
 }
 
-const makeCapitalGrantInterpreterDataFirst = (
+export const makeCapitalGrantInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   config: ExecutionStoreRuntimeConfig,
@@ -161,11 +161,11 @@ const makeCapitalGrantInterpreterDataFirst = (
 
   const requireFreshCapitalGrantGeneration = (derived: Pick<DerivedResearchCapitalGrantGeneration, 'reconciliation'>) =>
     authority.nextAuthorityInstant.pipe(
-      Effect.flatMap((observedAt) =>
+      Effect.tap((observedAt) =>
         liftAuthorityDecision(
           validateCapitalGrantGenerationFreshness(
             derived.reconciliation,
-            observedAt,
+            new Date(observedAt),
             config.reconciliationStaleThresholdMs,
           ),
         ),
@@ -176,7 +176,7 @@ const makeCapitalGrantInterpreterDataFirst = (
     generationHash: string,
     authorityVersion: number,
     kill: AuthorityState['kill'],
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     sql<Record<string, unknown>>`
       UPDATE authority_state
@@ -189,7 +189,7 @@ const makeCapitalGrantInterpreterDataFirst = (
       WHERE singleton
       RETURNING
         schema_version, generation_hash, maximum, effective, kill_state, reason,
-        version::text AS version, updated_at
+        version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
     `.pipe(
       Effect.flatMap(decodeAuthorityStateRows),
       Effect.flatMap((rows) => {
@@ -244,7 +244,7 @@ const makeCapitalGrantInterpreterDataFirst = (
   const writeResearchCapitalGrantGenerationActivation = (
     decision: Extract<CapitalGrantActivationDecision, { readonly _tag: 'ActivateCapitalGrantGeneration' }>,
     derived: DerivedResearchCapitalGrantGeneration,
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     Effect.gen(function* () {
       const input = derived.generation
@@ -293,7 +293,6 @@ const makeCapitalGrantInterpreterDataFirst = (
   const activateResearchCapitalGrantGenerationTransaction = (
     proof: ResearchCapitalGrantProofBinding,
     binding: ResearchCapitalGrantRuntimeBinding,
-    cutoffAt: string,
   ) =>
     Effect.gen(function* () {
       const locked = yield* authority.lockCapitalGrant(binding.accountId)
@@ -307,21 +306,10 @@ const makeCapitalGrantInterpreterDataFirst = (
       const [existing] = yield* authority.readGeneration(derived.generation.generationHash)
       yield* authority.requireUnusedGeneration(derived.generation.generationHash, existing)
       const activatedAt = yield* requireFreshCapitalGrantGeneration(derived)
-      if (activatedAt.toISOString() >= cutoffAt) {
-        return yield* failExecutionStore(
-          'authority',
-          'invariant',
-          'research capital activation crossed its immutable cutoff before commit',
-        )
-      }
       return yield* writeResearchCapitalGrantGenerationActivation(decision, derived, activatedAt)
     })
 
-  const activateResearchCapitalGrant = (
-    candidate: ResearchCapitalGrantProofBinding,
-    sourceGenerationHash: string,
-    cutoffAt: string,
-  ) =>
+  const activateResearchCapitalGrant = (candidate: ResearchCapitalGrantProofBinding, sourceGenerationHash: string) =>
     runExecutionOperation(
       'authority',
       Effect.gen(function* () {
@@ -336,13 +324,9 @@ const makeCapitalGrantInterpreterDataFirst = (
             build: config.build,
           }),
         )
-        return yield* writerFence.transaction(
-          activateResearchCapitalGrantGenerationTransaction(proof, binding, cutoffAt),
-        )
+        return yield* writerFence.transaction(activateResearchCapitalGrantGenerationTransaction(proof, binding))
       }),
     )
 
   return { activateResearchCapitalGrant }
 }
-
-export const makeCapitalGrantInterpreter = Pipeable.dual(4, makeCapitalGrantInterpreterDataFirst)

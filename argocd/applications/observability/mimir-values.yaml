@@ -13,8 +13,23 @@ global:
     - name: OBS_S3_REGION
       value: us-east-1
 
+image:
+  repository: docker.io/grafana/mimir
+  tag: 3.2.6@sha256:32d79dc873a804d4dbf2724afcbb7b141553b5ed9118f9295972c4bb2982d6fd
+
 mimir:
   structuredConfig:
+    ingest_storage:
+      enabled: true
+      kafka:
+        # Use the same internal listener as Tempo; port 9092 requires SCRAM.
+        address: kafka-kafka-bootstrap.kafka.svc.cluster.local:9093
+        topic: observability.mimir.ingest.v1
+        auto_create_topic_enabled: false
+        auto_create_topic_default_partitions: 3
+        # Kafka owns offsets; a new topic starts from its beginning. Never apply
+        # an offset file from another Kafka cluster to this topic.
+        consumer_group_offset_commit_file_enforced: false
     alertmanager:
       external_url: https://mimir.ide-newton.ts.net/alertmanager
     limits:
@@ -25,32 +40,38 @@ mimir:
       bucket_store:
         sync_dir: /data/tsdb-sync
       s3:
-        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
         bucket_name: mimir-blocks
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
-        insecure: true
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
         bucket_lookup_type: path
     alertmanager_storage:
       backend: s3
       s3:
-        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
         bucket_name: mimir-alertmanager
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
-        insecure: true
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
         bucket_lookup_type: path
     ruler_storage:
       backend: s3
       s3:
-        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
         bucket_name: mimir-ruler
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
-        insecure: true
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
         bucket_lookup_type: path
     ruler:
       # /data/ruler is the writable working directory used by the ruler.
@@ -59,11 +80,17 @@ mimir:
     usage_stats:
       enabled: false
       installation_mode: helm
-  runtimeConfig:
-    overrides:
-      anonymous:
-        ingestion_rate: 20000
-        ingestion_burst_size: 400000
+runtimeConfig:
+  overrides:
+    anonymous:
+      ingestion_rate: 20000
+      ingestion_burst_size: 400000
+      max_global_series_per_user: 600000
+      metric_relabel_configs:
+        # The cumulative CI buckets keep old label sets live and have no dashboard or alert consumers.
+        - source_labels: [job, __name__]
+          regex: ci-observability;ci_job_collection_delay_seconds_bucket
+          action: drop
 
 rollout_operator:
   enabled: false
@@ -73,6 +100,9 @@ admin_api:
 
 distributor:
   replicas: 2
+  extraArgs:
+    # Allow Kafka's existing 10s write budget and 2s overhead to complete before the caller expires.
+    distributor.remote-timeout: 15s
   resources:
     requests:
       cpu: 200m
@@ -80,6 +110,13 @@ distributor:
 
 ingester:
   replicas: 3
+  # Reserve working memory for the TSDB head and replay without capping either.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+  statefulStrategy:
+    type: RollingUpdate
   zoneAwareReplication:
     enabled: false
   persistentVolume:
@@ -98,9 +135,13 @@ query_scheduler:
 
 ruler:
   replicas: 1
+  extraArgs:
+    distributor.remote-timeout: 15s
 
 store_gateway:
   replicas: 1
+  strategy:
+    type: RollingUpdate
   zoneAwareReplication:
     enabled: false
   persistentVolume:
@@ -110,6 +151,8 @@ store_gateway:
 
 compactor:
   replicas: 1
+  strategy:
+    type: RollingUpdate
   persistentVolume:
     enabled: true
     size: 20Gi
@@ -117,25 +160,37 @@ compactor:
 
 alertmanager:
   replicas: 1
+  statefulStrategy:
+    type: RollingUpdate
   zoneAwareReplication:
     enabled: false
   fallbackConfig: |
     # Real fallback config is rendered by External Secrets into the
-    # observability-alertmanager-email Secret and mounted over this file.
+    # observability-alertmanager-email-brevo Secret and mounted over this file.
     route:
       receiver: default-receiver
     receivers:
       - name: default-receiver
-  persistence:
+  persistentVolume:
     enabled: true
-    storageClass: rook-ceph-block
-    size: 5Gi
+    # Preserve the existing immutable 1Gi claim template, which omits a class.
+    # Its bound PVC already uses the default rook-ceph-block StorageClass.
+    storageClass: null
+    size: 1Gi
+
+gateway:
+  nginx:
+    config:
+      serverSnippet: |
+        location = /alertmanager {
+          return 302 "https://grafana.ide-newton.ts.net/alerting/groups?alertmanager=Mimir%20Alertmanager#";
+        }
+        location = /alertmanager/ {
+          return 302 "https://grafana.ide-newton.ts.net/alerting/groups?alertmanager=Mimir%20Alertmanager#";
+        }
 
 kafka:
-  persistence:
-    enabled: true
-    size: 20Gi
-    storageClassName: rook-ceph-block
+  enabled: false
 
 metaMonitoring:
   dashboards:

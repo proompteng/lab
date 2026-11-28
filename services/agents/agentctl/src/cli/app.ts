@@ -1,4 +1,4 @@
-import { Command } from '@effect/cli'
+import { Command } from 'effect/cli'
 import * as Effect from 'effect/Effect'
 import { getVersion } from '../runtime'
 import { makeAuthCommand } from './commands/auth'
@@ -7,6 +7,7 @@ import {
   makeConfigCommand,
   makeDiagnoseCommand,
   makeExamplesCommand,
+  makeFleetCommand,
   makeHelpCommand,
   makeQuickstartCommand,
   makeStatusCommand,
@@ -24,17 +25,12 @@ import {
   makeListCommand,
   makeWatchCommand,
 } from './commands/verbs'
+import { globalOptions } from './global-flags'
 import { renderShortHelp } from './help'
 
 export const makeApp = () => {
-  let root = Command.make('agentctl', {}, () =>
-    Effect.sync(() => {
-      console.log(renderShortHelp(getVersion()))
-    }),
-  )
-  const getRoot = () => root
-
-  const help = makeHelpCommand(getRoot)
+  const getRoot = (): Command.Command.Any => root
+  const help = makeHelpCommand()
   const examples = makeExamplesCommand()
   const quickstart = makeQuickstartCommand()
   const version = makeVersionCommand()
@@ -54,27 +50,36 @@ export const makeApp = () => {
   const explain = makeExplainCommand()
   const run = makeRunCommand()
 
-  root = Command.withSubcommands(root, [
-    help,
-    examples,
-    quickstart,
-    version,
-    auth,
-    config,
-    completion,
-    status,
-    diagnose,
-    get,
-    describe,
-    list,
-    watch,
-    apply,
-    del,
-    explain,
-    create,
-    init,
-    run,
-  ])
+  const root = Command.make('agentctl', {}, () =>
+    Effect.sync(() => {
+      console.log(renderShortHelp(getVersion()))
+    }),
+  ).pipe(
+    Command.withGlobalFlags(globalOptions),
+    Command.withDescription('Operate Agents resources and AgentRuns from Kubernetes or gRPC.'),
+    Command.withSubcommands([
+      help,
+      examples,
+      quickstart,
+      version,
+      auth,
+      config,
+      completion,
+      status,
+      diagnose,
+      makeFleetCommand(),
+      get,
+      describe,
+      list,
+      watch,
+      apply,
+      del,
+      explain,
+      create,
+      init,
+      run,
+    ]),
+  )
 
   return root
 }

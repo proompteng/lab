@@ -1,0 +1,124 @@
+{
+  "unmanagedAttributePolicy": null,
+  "attributes": [
+    {
+      "name": "username",
+      "displayName": "Username",
+      "permissions": {
+        "view": [
+          "admin",
+          "user"
+        ],
+        "edit": [
+          "admin"
+        ]
+      },
+      "multivalued": false,
+      "validations": {
+        "length": {
+          "min": 3,
+          "max": 255
+        },
+        "username-prohibited-characters": {},
+        "up-username-not-idn-homograph": {}
+      }
+    },
+    {
+      "name": "email",
+      "displayName": "Email",
+      "permissions": {
+        "view": [
+          "admin",
+          "user"
+        ],
+        "edit": [
+          "admin"
+        ]
+      },
+      "multivalued": false,
+      "validations": {
+        "email": {},
+        "length": {
+          "max": 254
+        }
+      }
+    },
+    {
+      "name": "firstName",
+      "displayName": "First name",
+      "permissions": {
+        "view": [
+          "admin",
+          "user"
+        ],
+        "edit": [
+          "admin"
+        ]
+      },
+      "multivalued": false,
+      "validations": {
+        "length": {
+          "max": 255
+        }
+      }
+    },
+    {
+      "name": "lastName",
+      "displayName": "Last name",
+      "permissions": {
+        "view": [
+          "admin",
+          "user"
+        ],
+        "edit": [
+          "admin"
+        ]
+      },
+      "multivalued": false,
+      "validations": {
+        "length": {
+          "max": 255
+        }
+      }
+    },
+    {
+      "name": "github_id",
+      "displayName": "Verified GitHub ID",
+      "permissions": {
+        "view": [
+          "admin",
+          "user"
+        ],
+        "edit": [
+          "admin"
+        ]
+      },
+      "multivalued": false,
+      "validations": {
+        "pattern": {
+          "pattern": "^[1-9][0-9]{0,19}$"
+        }
+      }
+    },
+    {
+      "name": "picture",
+      "displayName": "GitHub avatar",
+      "permissions": {
+        "view": [
+          "admin",
+          "user"
+        ],
+        "edit": [
+          "admin"
+        ]
+      },
+      "multivalued": false,
+      "validations": {
+        "length": {
+          "max": 2048
+        }
+      }
+    }
+  ],
+  "groups": []
+}

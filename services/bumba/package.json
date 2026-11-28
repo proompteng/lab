@@ -17,14 +17,13 @@
     "tsc": "bunx tsc --noEmit"
   },
   "dependencies": {
-    "@effect/schema": "^0.75.5",
     "@proompteng/temporal-bun-sdk": "workspace:*",
     "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",
     "@tree-sitter-grammars/tree-sitter-kotlin": "^1.1.0",
     "@tree-sitter-grammars/tree-sitter-toml": "^0.7.0",
     "@tree-sitter-grammars/tree-sitter-yaml": "^0.7.1",
     "@tree-sitter-grammars/tree-sitter-zig": "^1.1.2",
-    "effect": "^3.21.2",
+    "effect": "4.1.4",
     "tree-sitter-bash": "^0.25.1",
     "tree-sitter-c": "^0.24.1",
     "tree-sitter-css": "^0.25.0",
@@ -43,8 +42,8 @@
     "yaml": "^2.8.4"
   },
   "devDependencies": {
-    "@types/bun": "1.4.0",
+    "@types/bun": "1.4.2",
     "typescript": "^7.0.2"
   },
-  "packageManager": "bun@1.4.0"
+  "packageManager": "bun@1.4.2"
 }

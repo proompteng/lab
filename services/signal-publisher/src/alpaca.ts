@@ -1,5 +1,5 @@
 import { Cause, Effect, Redacted, Schema } from 'effect'
-import { Headers, HttpClient, HttpClientRequest } from 'effect/unstable/http'
+import { Headers, HttpClient, HttpClientRequest } from 'effect/http'
 
 import type { PublisherConfig } from './config'
 import {

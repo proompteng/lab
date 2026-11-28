@@ -1,0 +1,104 @@
+{
+  "scope": "configuration-audit-only",
+  "bunVersion": "1.4.0",
+  "status": "configuration-mismatch",
+  "planSha256": "922c48e96eaf2e74d73502df24f0da22770b6c7fadc90374c4fbc86123150502",
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "sourceFilesMatched": 101,
+  "runs": [
+    {
+      "runId": "bayn-cosmos-selfhosted-20260823-graph-v2",
+      "seed": 20260823,
+      "architecture": "graph",
+      "nativeBudget": {
+        "unit": "parent-expansion-attempts",
+        "maximum": 100,
+        "configuredMaxProposals": 2
+      }
+    },
+    {
+      "runId": "bayn-cosmos-selfhosted-20260823-chain-v2",
+      "seed": 20260823,
+      "architecture": "chain",
+      "nativeBudget": {
+        "unit": "serial-cycles",
+        "maximum": 102,
+        "configuredMaxProposals": 2
+      }
+    },
+    {
+      "runId": "bayn-cosmos-selfhosted-20260824-chain-v2",
+      "seed": 20260824,
+      "architecture": "chain",
+      "nativeBudget": {
+        "unit": "serial-cycles",
+        "maximum": 102,
+        "configuredMaxProposals": 2
+      }
+    },
+    {
+      "runId": "bayn-cosmos-selfhosted-20260824-graph-v2",
+      "seed": 20260824,
+      "architecture": "graph",
+      "nativeBudget": {
+        "unit": "parent-expansion-attempts",
+        "maximum": 100,
+        "configuredMaxProposals": 2
+      }
+    },
+    {
+      "runId": "bayn-cosmos-selfhosted-20260825-graph-v2",
+      "seed": 20260825,
+      "architecture": "graph",
+      "nativeBudget": {
+        "unit": "parent-expansion-attempts",
+        "maximum": 100,
+        "configuredMaxProposals": 2
+      }
+    },
+    {
+      "runId": "bayn-cosmos-selfhosted-20260825-chain-v2",
+      "seed": 20260825,
+      "architecture": "chain",
+      "nativeBudget": {
+        "unit": "serial-cycles",
+        "maximum": 102,
+        "configuredMaxProposals": 2
+      }
+    }
+  ],
+  "findings": [
+    {
+      "subject": "seed 20260823",
+      "detail": "Expected one mcts config, found 0"
+    },
+    {
+      "subject": "seed 20260823",
+      "detail": "Expected one no-flow config, found 0"
+    },
+    {
+      "subject": "seed 20260824",
+      "detail": "Expected one mcts config, found 0"
+    },
+    {
+      "subject": "seed 20260824",
+      "detail": "Expected one no-flow config, found 0"
+    },
+    {
+      "subject": "seed 20260825",
+      "detail": "Expected one mcts config, found 0"
+    },
+    {
+      "subject": "seed 20260825",
+      "detail": "Expected one no-flow config, found 0"
+    }
+  ],
+  "unverified": [
+    "Native config admission and actual model requests are not exercised.",
+    "Paper MCTS multi-subtree behavior is not established by architecture.name=mcts.",
+    "Native budget units do not establish comparable realized evaluable-factor pools.",
+    "Initialization, retries, duplicates and usable-factor counts require terminal receipts.",
+    "Calendar-correct labels, point-in-time lineage and untouched downstream splits require separate evidence.",
+    "Method advantage, economic qualification and capital authority are not established."
+  ]
+}

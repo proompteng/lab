@@ -25,11 +25,22 @@ operatorConfig:
       priorityClassName: system-node-critical
       kubeletDirPath: /var/lib/kubelet
       enableSeLinuxHostMount: false
+      # Let the CSI operator rotate one node plugin at a time. DaemonSet
+      # readiness is the operator gate; storage acceptance additionally checks
+      # existing mounts and VolumeAttachments before the wave is accepted.
+      updateStrategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
       affinity:
         nodeAffinity: {}
       # Turin is intentionally a control-plane node and needs CSI node plugins
       # so GPU workloads pinned there can mount rook-ceph-block PVCs.
       tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
@@ -42,7 +53,11 @@ operatorConfig:
       priorityClassName: system-cluster-critical
       affinity:
         nodeAffinity: {}
-      tolerations: []
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       imagePullPolicy: IfNotPresent
 
 drivers:
@@ -67,8 +82,14 @@ drivers:
     nodePlugin:
       # Node pods contain the mount processes, so roll them one node at a time.
       updateStrategy:
-        type: OnDelete
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
       tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
@@ -100,7 +121,11 @@ drivers:
     controllerPlugin:
       hostNetwork: true
       replicas: 2
-      tolerations: []
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       imagePullPolicy: ""
       resources:
         attacher:
@@ -164,11 +189,17 @@ drivers:
     kernelMountOptions: {}
     fuseMountOptions: {}
     nodePlugin:
-      # FUSE mount processes live inside this pod. Preserve OnDelete even though
-      # current consumers use the kernel client, and roll nodes explicitly.
+      # FUSE mount processes live inside this pod. Keep one node unavailable at
+      # most; the acceptance helper checks mounts and attachments after rollout.
       updateStrategy:
-        type: OnDelete
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
       tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
@@ -198,7 +229,11 @@ drivers:
     controllerPlugin:
       hostNetwork: true
       replicas: 2
-      tolerations: []
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       imagePullPolicy: ""
       resources:
         attacher:

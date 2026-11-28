@@ -1,9 +1,9 @@
 import { Result } from 'effect'
 
 import { Authority } from '../../execution/contracts'
-import { Pipeable } from '../../pipeable'
+
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
-import { TargetPlanStatus } from '../../target-planner'
+import { TargetPlanStatus } from '../../target-planner/index'
 import type { AutonomousCycle } from '../model'
 import {
   selectRecoveryFailure,
@@ -64,7 +64,7 @@ const validateDecisionBinding = (
     : Result.succeed(undefined)
 }
 
-const selectBoundDecisionDataFirst = (
+export const selectBoundDecision = (
   cycle: AutonomousCycle,
   document: CycleDecisionDocument | null | undefined,
   observedAt: string,
@@ -112,5 +112,3 @@ const selectBoundDecisionDataFirst = (
     },
   )
 }
-
-export const selectBoundDecision = Pipeable.dual(3, selectBoundDecisionDataFirst)

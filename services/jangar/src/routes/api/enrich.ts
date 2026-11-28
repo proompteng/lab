@@ -257,7 +257,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
         202,
       )
     }),
-    Effect.catchAll((error) => Effect.succeed(resolveRequestError(error.message))),
+    Effect.catch((error) => Effect.succeed(resolveRequestError(error.message))),
   )
 
 const postLocalEnrichHandler = async (request: Request) => {

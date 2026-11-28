@@ -9,16 +9,26 @@ resources:
 helmCharts:
   - name: sealed-secrets
     repo: https://bitnami.github.io/sealed-secrets
-    version: 2.19.1
+    version: 2.22.0
     releaseName: sealed-secrets
     namespace: sealed-secrets
     includeCRDs: true
+    valuesInline:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: "1"
+          memory: 256Mi
   - name: sealed-secrets-web
     repo: https://charts.bakito.net
-    version: 3.3.1
+    version: 3.3.2
     releaseName: sealed-secrets-web
     namespace: sealed-secrets
     valuesInline:
+      nodeSelector:
+        kubernetes.io/arch: amd64
       sealedSecrets:
         namespace: sealed-secrets
         serviceName: sealed-secrets
@@ -34,7 +44,7 @@ helmCharts:
 images:
   - name: docker.io/bitnami/sealed-secrets-controller
     newName: mirror.gcr.io/bitnami/sealed-secrets-controller
-    newTag: 0.38.4
+    newTag: 0.41.2
   - name: ghcr.io/bakito/sealed-secrets-web
     newName: ghcr.io/bakito/sealed-secrets-web
-    newTag: v3.1.9
+    newTag: v3.3.2

@@ -9,7 +9,7 @@ metadata:
     strimzi.io/kraft: enabled
 spec:
   kafka:
-    version: 4.3.0
+    version: 4.3.1
     metadataVersion: "4.3-IV0"
     listeners:
       - name: plain
@@ -32,6 +32,8 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
+      metadata.max.idle.interval.ms: 5000
+      broker.session.timeout.ms: 60000
       controller.quorum.election.timeout.ms: 60000
       controller.quorum.fetch.timeout.ms: 180000
     livenessProbe:
@@ -62,25 +64,26 @@ spec:
   template:
     pod:
       affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [talos-192-168-1-85, turin, talos-192-168-1-194]
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    strimzi.io/cluster: kafka
-                    strimzi.io/name: kafka-kafka
-                    strimzi.io/pool-name: pool-a
-                topologyKey: kubernetes.io/hostname
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              strimzi.io/cluster: kafka
-              strimzi.io/name: kafka-kafka
-              strimzi.io/pool-name: pool-a
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: kafka
+                  strimzi.io/name: kafka-kafka
+                  strimzi.io/pool-name: pool-a
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
   resources:
     requests:
       cpu: '2000m'
@@ -89,7 +92,7 @@ spec:
     type: persistent-claim
     size: 30Gi
     deleteClaim: false
-    class: rook-ceph-block
+    class: kafka-nvme
 ---
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
@@ -105,25 +108,26 @@ spec:
   template:
     pod:
       affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [talos-192-168-1-85, turin, talos-192-168-1-194]
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    strimzi.io/cluster: kafka
-                    strimzi.io/name: kafka-kafka
-                    strimzi.io/pool-name: pool-b
-                topologyKey: kubernetes.io/hostname
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              strimzi.io/cluster: kafka
-              strimzi.io/name: kafka-kafka
-              strimzi.io/pool-name: pool-b
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: kafka
+                  strimzi.io/name: kafka-kafka
+                  strimzi.io/pool-name: pool-b
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
   resources:
     requests:
       cpu: '2000m'
@@ -132,7 +136,7 @@ spec:
     type: persistent-claim
     size: 200Gi
     deleteClaim: false
-    class: rook-ceph-block
+    class: kafka-nvme
 ---
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser

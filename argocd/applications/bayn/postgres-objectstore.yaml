@@ -19,7 +19,7 @@ spec:
         memory: 128Mi
       limits:
         cpu: 500m
-        memory: 512Mi
+        memory: 1Gi
   configuration:
     destinationPath: s3://cnpg-bayn/
     endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80

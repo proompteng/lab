@@ -33,7 +33,8 @@ Trust these surfaces in order:
 - DB migrations: `services/torghut/migrations/README.md`
 - CI/CD and release commands: `docs/torghut/ci-cd.md`
 - Historical simulation operations: `docs/torghut/rollouts/historical-simulation-playbook.md`
-- Current write-pressure rollout evidence: `docs/torghut/rollouts/2026-07-14-storage-write-pressure-remediation.md`
+- Write-pressure implementation history: [PR #12604](https://github.com/proompteng/lab/pull/12604); use the current
+  remediation design above for live operations.
 - Production readiness proof probes: `docs/torghut/production-readiness-proof-runbook.md`
 - Whitepaper issue to Kafka to Torghut to AgentRun workflow: `docs/torghut/whitepaper-research-workflow.md`
 - Postgres table reference: `docs/torghut/postgres-table-reference.md`
@@ -56,8 +57,6 @@ configuration, or maintained docs. It is not the first source for live operation
 - `docs/torghut/design-system/v1/torghut-autonomous-trading-system.md` is the compact production topology baseline.
 - `docs/torghut/design-system/v6/index.md` indexes historical proof/capital design contracts. Treat those as context
   until verified against live GitOps, code, and runtime readback.
-- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md` is retained as a historical
-  authority-map snapshot.
 
 When a design file says `Accepted`, `implementation-ready`, or `current`, read that as the status at the time the file
 was written unless the file explicitly points to current code, GitOps, runtime APIs, and validation evidence. Current

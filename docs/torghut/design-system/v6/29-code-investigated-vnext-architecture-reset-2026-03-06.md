@@ -8,21 +8,6 @@
 - Primary objective: preserve Torghut's strong deterministic execution and governance core while replacing synthetic alpha and evaluation surfaces with empirical, replayable, and promotion-safe ones.
 - Implementation closeout: `doc29` completion contract satisfied in recorded evidence on `2026-03-07`
 
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
-- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
-- Current source evidence:
-  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
-  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
-  - `services/torghut/app/trading/consumer_evidence.py`
-  - `services/torghut/app/trading/freshness_carry.py`
-  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
-  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
-- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
-
-
 ## Usage note (2026-03-09)
 
 Read this document as:
@@ -30,10 +15,7 @@ Read this document as:
 - the architecture-reset rationale that explained why empirical truth mattered more than more autonomy, and
 - the dated doc29 closeout record for truthful promotion gating.
 
-Do not treat it as the single current next-work checklist. For that, use:
-
-- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
-- `docs/torghut/design-system/v6/32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
+For current operational priorities, use [Torghut documentation](../../README.md), source, GitOps, and runtime evidence.
 
 ## Executive Summary
 
@@ -154,8 +136,6 @@ Supporting design documents inspected:
 
 - `docs/torghut/architecture.md`
 - `docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md`
-- `docs/torghut/design-system/v6/13-production-gap-closure-master-plan-2026-03-03.md`
-- `docs/torghut/design-system/v5/09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
 
 ### Verified repo facts
 

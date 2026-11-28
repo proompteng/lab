@@ -5,7 +5,7 @@
       "HTTPS": true
     },
     "8090": {
-      "HTTPS": true
+      "TCPForward": "127.0.0.1:8090"
     },
     "8100": {
       "HTTPS": true
@@ -16,13 +16,6 @@
       "Handlers": {
         "/": {
           "Proxy": "http://127.0.0.1:8180"
-        }
-      }
-    },
-    "nuc.ide-newton.ts.net:8090": {
-      "Handlers": {
-        "/": {
-          "Proxy": "http://127.0.0.1:8090"
         }
       }
     },

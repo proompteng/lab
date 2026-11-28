@@ -1,0 +1,6 @@
+disable: []
+excluded_directories:
+  - .git
+  - .godot
+  - build
+  - .venv

@@ -1,14 +1,10 @@
 # 190. Jangar Projection Foreclosure Notary And Stage Custody Repair (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar stale projection foreclosure, stage custody repair, AgentRun and market-context data authority, ready truth,
 stage credit, Torghut repair-only route custody, validation, rollout, rollback, and cross-stage handoff.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/195-torghut-stale-projection-foreclosure-and-route-custody-2026-05-13.md`
 
 Extends:
 
@@ -16,7 +12,6 @@ Extends:
 - `docs/agents/designs/189-jangar-authority-provenance-settlement-and-rollout-reentry-windows-2026-05-13.md`
 - `docs/agents/designs/188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
 - `docs/agents/designs/187-jangar-stage-credit-ledger-and-runner-slot-futures-2026-05-13.md`
-- `docs/agents/designs/123-jangar-market-context-contradiction-ledger-and-lane-capital-holds-2026-05-06.md`
 
 ## Decision
 

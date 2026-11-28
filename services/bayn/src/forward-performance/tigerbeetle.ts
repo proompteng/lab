@@ -1,10 +1,11 @@
+import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { Data, Effect, Result, Scope } from 'effect'
 
-import type { RuntimeConfig } from '../config'
-import { assembleAccountPlan, accountReconciliationQueries } from '../ledger/decisions'
+import type { RuntimeConfig } from '../config/model'
+import { assembleAccountPlan } from '../ledger/decisions'
+import { readAccountLedger } from '../ledger/account-read'
 import {
   AccountCode,
-  LEDGER_BATCH_MAX,
   ledgerValidationError,
   reconcileLedgerPlan,
   type LedgerPlan,
@@ -18,7 +19,6 @@ import type {
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceLedgerTotals,
 } from './model'
-import { Pipeable } from '../pipeable'
 
 export class ForwardPerformanceLedgerError extends Data.TaggedError('ForwardPerformanceLedgerError')<{
   readonly operation: 'read'
@@ -51,10 +51,17 @@ const planAmount = (plan: LedgerPlan, code: number, side: 'debit' | 'credit'): b
 }
 
 const generationLedgerTotals = (plan: LedgerPlan): ForwardPerformanceLedgerTotals => ({
+  cashSettlementRoundingMicros: (
+    planAmount(plan, AccountCode.cashRoundingIncome, 'credit') -
+    planAmount(plan, AccountCode.cashRoundingExpense, 'debit')
+  ).toString(),
   realizedGainMicros: planAmount(plan, AccountCode.realizedGain, 'credit').toString(),
   realizedLossMicros: planAmount(plan, AccountCode.realizedLoss, 'debit').toString(),
-  brokerExecutionFeesMicros: planAmount(plan, AccountCode.feeExpense, 'debit').toString(),
-  otherChargedCostsMicros: '0',
+  brokerExecutionFeesMicros: (
+    planAmount(plan, AccountCode.feeExpense, 'debit') - planAmount(plan, AccountCode.feeExpense, 'credit')
+  ).toString(),
+  // Trading transfers contain no inference or operating-expense coverage; exactness cannot prove those costs zero.
+  otherChargedCostsMicros: null,
   cashYieldMicros: '0',
 })
 
@@ -87,7 +94,7 @@ const validateCashYieldEvidence = (
   Result.gen(function* () {
     if (evidence === undefined) return 0n
     if (
-      evidence.schemaVersion !== 'bayn.forward-performance-cash-yield-evidence.v1' ||
+      evidence.schemaVersion !== 'bayn.forward-performance-cash-yield-evidence.v3' ||
       !SHA256_PATTERN.test(evidence.reconciliationId) ||
       !SHA256_PATTERN.test(evidence.reconciliationContentHash) ||
       !SHA256_PATTERN.test(evidence.baselineAccountEventId) ||
@@ -131,6 +138,18 @@ const validateCashYieldEvidence = (
 
     const baselineCash = yield* parseSignedI128(evidence.baselineCashMicros, 'baselineCashMicros')
     const openingCash = yield* parseSignedI128(evidence.openingCashMicros, 'openingCashMicros')
+    const baselineOffset = yield* parseSignedI128(
+      evidence.baselineCashReportingOffsetMicros,
+      'baselineCashReportingOffsetMicros',
+    )
+    const openingOffset = yield* parseSignedI128(
+      evidence.openingCashReportingOffsetMicros,
+      'openingCashReportingOffsetMicros',
+    )
+    const closingOffset = yield* parseSignedI128(
+      evidence.closingCashReportingOffsetMicros,
+      'closingCashReportingOffsetMicros',
+    )
     const preWindowCashDelta = yield* parseSignedI128(
       evidence.preWindowAccountedCashDeltaMicros,
       'preWindowAccountedCashDeltaMicros',
@@ -142,9 +161,26 @@ const validateCashYieldEvidence = (
     const closingCash = yield* parseSignedI128(evidence.closingCashMicros, 'closingCashMicros')
     const accountedCashDelta = yield* parseSignedI128(evidence.accountedCashDeltaMicros, 'accountedCashDeltaMicros')
     const cashYieldAmount = yield* parseSignedI128(evidence.cashYieldMicros, 'cashYieldMicros')
-    const derivedPreWindowResidual = openingCash - baselineCash - preWindowCashDelta
-    const derivedCashYield = closingCash - openingCash - accountedCashDelta
+    const derivedPreWindowResidual =
+      openingCash -
+      BigInt(
+        reportedCashMicros(
+          (baselineCash + preWindowCashDelta + openingOffset - baselineOffset).toString(),
+          evidence.openingCashReportingQuantumMicros,
+        ),
+      )
+    const derivedCashYield =
+      closingCash -
+      BigInt(
+        reportedCashMicros(
+          (openingCash + accountedCashDelta + closingOffset - openingOffset).toString(),
+          evidence.closingCashReportingQuantumMicros,
+        ),
+      )
     if (
+      (openingOffset < 0n ? -openingOffset : openingOffset) * 2n > BigInt(evidence.openingCashReportingQuantumMicros) ||
+      (closingOffset < 0n ? -closingOffset : closingOffset) * 2n > BigInt(evidence.closingCashReportingQuantumMicros) ||
+      (evidence.baselineAccountEventId === evidence.openingAccountEventId && baselineOffset !== openingOffset) ||
       preWindowResidual !== 0n ||
       derivedPreWindowResidual !== preWindowResidual ||
       derivedCashYield < 0n ||
@@ -168,7 +204,7 @@ const validateCashYieldEvidence = (
     return cashYieldAmount
   })
 
-const readForwardPerformanceLedgerDataFirst = (
+export const readForwardPerformanceLedger = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   accountId: string,
   accountPlans: readonly LedgerPlan[],
@@ -177,45 +213,11 @@ const readForwardPerformanceLedgerDataFirst = (
   generationPlans: readonly LedgerPlan[] = accountPlans,
 ): Effect.Effect<ForwardPerformanceLedgerEvidence, ForwardPerformanceLedgerError, Scope.Scope> =>
   Effect.gen(function* () {
-    const cashYieldResidual = yield* Effect.fromResult(validateCashYieldEvidence(cashYieldEvidence)).pipe(
-      Effect.mapError(ledgerError),
-    )
-    const accountPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, accountPlans)).pipe(
-      Effect.mapError(ledgerError),
-    )
-    const generationPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, generationPlans)).pipe(
-      Effect.mapError(ledgerError),
-    )
-    const boundedQueries = yield* Effect.fromResult(
-      accountReconciliationQueries(accountPlan, config.tigerBeetle.ledger),
-    ).pipe(Effect.mapError(ledgerError))
-    const queries = {
-      accounts: { ...boundedQueries.accounts, limit: LEDGER_BATCH_MAX },
-      transfers: { ...boundedQueries.transfers, limit: LEDGER_BATCH_MAX },
-    }
-    const client = yield* makeTigerBeetleRequestClient(config, dependencies).pipe(Effect.mapError(ledgerError))
-    const [accounts, transfers] = yield* Effect.all(
-      [
-        client.request('forward-performance-accounts', (active) => active.queryAccounts(queries.accounts)),
-        client.request('forward-performance-transfers', (active) => active.queryTransfers(queries.transfers)),
-      ],
-      { concurrency: 'unbounded' },
-    ).pipe(Effect.mapError(ledgerError))
-
-    if (accounts.length >= LEDGER_BATCH_MAX || transfers.length >= LEDGER_BATCH_MAX) {
-      return yield* ledgerError(
-        ledgerValidationError({
-          operation: 'verify-account',
-          reason: 'batch-limit',
-          message: 'broker account reached the exact TigerBeetle reconciliation limit',
-          material: {
-            accountCount: accounts.length,
-            transferCount: transfers.length,
-            limit: LEDGER_BATCH_MAX,
-          },
-        }),
-      )
-    }
+    const cashYieldResidual = yield* Effect.fromResult(validateCashYieldEvidence(cashYieldEvidence))
+    const accountPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, accountPlans))
+    const generationPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, generationPlans))
+    const client = yield* makeTigerBeetleRequestClient(config, dependencies)
+    const { accounts, transfers } = yield* readAccountLedger(client, accountPlan, config.tigerBeetle.ledger)
 
     const expectedAccountIds = new Set(accountPlan.accounts.map((account) => account.id))
     const actualAccountIds = new Set(accounts.map((account) => account.id))
@@ -231,17 +233,4 @@ const readForwardPerformanceLedgerDataFirst = (
       openPositionCount: openInventoryCount(accounts),
       cashYieldEvidenceRequired: cashYieldResidual > 0n,
     }
-  })
-
-export const readForwardPerformanceLedger = Pipeable.by<
-  (
-    accountId: string,
-    accountPlans: readonly LedgerPlan[],
-    cashYieldEvidence?: ForwardPerformanceCashYieldEvidence,
-    dependencies?: JournalDependencies,
-    generationPlans?: readonly LedgerPlan[],
-  ) => (
-    config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
-  ) => ReturnType<typeof readForwardPerformanceLedgerDataFirst>,
-  typeof readForwardPerformanceLedgerDataFirst
->((arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null, readForwardPerformanceLedgerDataFirst)
+  }).pipe(Effect.mapError(ledgerError))

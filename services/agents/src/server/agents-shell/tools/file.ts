@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { relative, resolve } from 'node:path'
+import { readFileSync, statSync } from 'node:fs'
+import { basename, dirname } from 'node:path'
 
 import { Effect } from 'effect'
 
@@ -16,7 +16,7 @@ import {
   type ReadFileInput,
   type SearchInput,
 } from '../schemas'
-import { resolveExistingDirectory, resolveWorkspacePath } from '../workspace-policy'
+import { resolveWorkspacePath } from '../workspace-policy'
 
 export const createFileTools = (): EffectTool[] => [
   {
@@ -32,19 +32,20 @@ export const createFileTools = (): EffectTool[] => [
     handler: (args: SearchInput, { config, runner, auth }) =>
       Effect.tryPromise({
         try: async () => {
-          const cwd = resolveExistingDirectory(config.workspaceRoot, args.path)
           const rgArgs = ['--line-number', '--no-heading', '--color=never', '--hidden']
           for (const exclude of DEFAULT_WORKSPACE_SEARCH_EXCLUDES) {
             rgArgs.push('-g', `!${exclude}/**`)
           }
           if (args.fixedStrings) rgArgs.push('--fixed-strings')
           if (args.caseSensitive === false) rgArgs.push('--ignore-case')
-          rgArgs.push(args.query)
-          rgArgs.push('.')
+          const target = resolveWorkspacePath(runner.resolveRoot(args.sessionId, auth), args.path)
+          const directory = statSync(target).isDirectory()
+          rgArgs.push('--', args.query, directory ? '.' : basename(target))
           const result = await runner.runProcess({
             command: 'rg',
             args: rgArgs,
-            cwd: relative(resolve(config.workspaceRoot), cwd) || '.',
+            cwd: directory ? target : dirname(target),
+            sessionId: args.sessionId,
             timeoutSeconds: config.defaultTimeoutSeconds,
             maxOutputBytes: args.maxOutputBytes,
             okExitCodes: [0, 1],
@@ -65,10 +66,12 @@ export const createFileTools = (): EffectTool[] => [
     annotations: readOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: ReadFileInput, { config }) =>
+    handler: (args: ReadFileInput, { config, runner, auth }) =>
       Effect.try({
         try: () => {
-          const path = resolveWorkspacePath(config.workspaceRoot, args.path)
+          const path = args.sessionId
+            ? resolveWorkspacePath(runner.resolveRoot(args.sessionId, auth), args.path)
+            : resolveWorkspacePath(config.workspaceRoot, args.path)
           const maxBytes = asPositiveInteger(
             args.maxBytes,
             'maxBytes',

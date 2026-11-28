@@ -1,11 +1,13 @@
 import { Effect, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { capitalGrantFailureDetails, type CapitalGrantAlgebraFailure } from '../../execution/capital-grant-algebra'
 import { ReconciliationStoreError } from '../reconciliation'
+import { WriterFenceError } from '../../execution/writer-fence'
 import { ExecutionStoreError } from './contract'
 import type { ExecutionStoreDecisionFailure } from './decisions'
-import { Pipeable } from '../../pipeable'
+
+import { withObservedStage } from '../../telemetry'
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
@@ -24,21 +26,26 @@ export const executionStoreError = (input: ExecutionStoreErrorInput): ExecutionS
     cause: input.cause,
   })
 
-const failExecutionStoreDataFirst = (
+export const failExecutionStore = (
   operation: ExecutionStoreError['operation'],
   failure: ExecutionStoreError['failure'],
   message: string,
 ): Effect.Effect<never, ExecutionStoreError> => Effect.fail(executionStoreError({ operation, failure, message }))
 
-export const failExecutionStore = Pipeable.dual(3, failExecutionStoreDataFirst)
-
-const runExecutionOperationDataFirst = <A, E, R>(
+export const runExecutionOperation = <A, E, R>(
   operation: ExecutionStoreError['operation'],
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, ExecutionStoreError, R> =>
   effect.pipe(
     Effect.mapError((cause) => {
       if (cause instanceof ExecutionStoreError) return cause
+      if (cause instanceof WriterFenceError)
+        return executionStoreError({
+          operation,
+          failure: 'query',
+          message: 'execution store could not hold the PostgreSQL writer fence',
+          cause,
+        })
       if (cause instanceof ReconciliationStoreError) {
         return executionStoreError({
           operation,
@@ -79,16 +86,11 @@ const runExecutionOperationDataFirst = <A, E, R>(
         cause,
       })
     }),
+    withObservedStage('bayn.execution-store.operation', { dependency: 'postgresql', operation }),
+    Effect.annotateLogs({ operation }),
   )
 
-export const runExecutionOperation = Pipeable.generic<
-  <A, E, R>(
-    effect: Effect.Effect<A, E, R>,
-  ) => (operation: ExecutionStoreError['operation']) => Effect.Effect<A, ExecutionStoreError, R>,
-  typeof runExecutionOperationDataFirst
->(2, runExecutionOperationDataFirst)
-
-const liftStoreDecisionDataFirst = <A>(
+export const liftStoreDecision = <A>(
   operation: ExecutionStoreError['operation'],
   decision: Result.Result<A, ExecutionStoreDecisionFailure>,
 ): Effect.Effect<A, ExecutionStoreError> =>
@@ -97,13 +99,6 @@ const liftStoreDecisionDataFirst = <A>(
       executionStoreError({ operation, failure: failure.failure, message: failure.message, cause: failure.cause }),
     ),
   )
-
-export const liftStoreDecision = Pipeable.generic<
-  <A>(
-    decision: Result.Result<A, ExecutionStoreDecisionFailure>,
-  ) => (operation: ExecutionStoreError['operation']) => Effect.Effect<A, ExecutionStoreError>,
-  typeof liftStoreDecisionDataFirst
->(2, liftStoreDecisionDataFirst)
 
 export const liftAuthorityDecision = <A>(
   decision: Result.Result<A, CapitalGrantAlgebraFailure>,

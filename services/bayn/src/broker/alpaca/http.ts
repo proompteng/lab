@@ -1,10 +1,13 @@
-import { NodeHttpClient, Undici } from '@effect/platform-node'
-import { Cause, Context, Effect, Layer, pipe, Redacted, Result, Scope } from 'effect'
-import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { NodeHttpClient } from '@effect/platform-node'
+import * as Undici from '@effect/platform-node/Undici'
+import { Cause, Context, Effect, Layer, Redacted, Result, Schema, Scope } from 'effect'
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
-import { decodeBrokerProxyUrl, type BrokerConnection } from '../connection'
+import { withObservedStage } from '../../telemetry'
+import { type BrokerConnection } from '../connection'
+import { BrokerEnvironment } from '../identity'
 import {
   BrokerReadContractFailure,
   BrokerReadError,
@@ -27,6 +30,10 @@ import {
   decodeErrorResponse,
   decodeExternalClientOrderId,
   decodeFillActivities,
+  decodeFeeActivities,
+  decodeFeeActivitiesQuery,
+  decodeNonTradeActivityPage,
+  decodeNonTradeActivityWindow,
   decodeFillActivitiesQuery,
   decodeMarketCalendar,
   decodeMarketCalendarQuery,
@@ -36,10 +43,15 @@ import {
   decodeOrdersQuery,
   decodePositions,
   redactedHeaders,
+  NonTradeActivityStatementSchema,
+  nonTradeActivityInScope,
+  verifyNonTradeActivityStatement,
   responseParseOptions,
+  SortDirection,
   type BrokerReadShape,
   type Decoder,
   type FillActivitiesQuery,
+  type FeeActivitiesQuery,
   type MarketCalendarQuery,
   type OrdersQuery,
   type ProxyDispatcherDependencies,
@@ -51,6 +63,7 @@ import {
   normalizeAccountResult,
   normalizeAssetResult,
   normalizeFillActivitiesResult,
+  normalizeFeeActivitiesResult,
   normalizeMarketCalendarResult,
   normalizeOrderResult,
   normalizeOrdersResult,
@@ -61,6 +74,7 @@ import {
   accountUrl,
   assetBySymbolUrl,
   fillActivitiesRequest,
+  feeActivitiesRequest,
   marketCalendarUrl,
   orderByClientIdUrl,
   orderByIdUrl,
@@ -68,10 +82,21 @@ import {
   positionsUrl,
   responseEvidenceResult,
 } from './requests'
-import { Pipeable } from '../../pipeable'
+
+import { makeReadDiagnostics, projectReadDiagnostic, type ReadDiagnostic } from './read-diagnostics'
+import { positionDecodeDiagnostic } from './response-decode-diagnostics'
+import {
+  readTransportInterceptor,
+  withReadTransportCoverage,
+  withReadTransportDiagnostics,
+} from './transport-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
-
+// Calendar discovery must leave time for the rest of the bounded recovery pass.
+const marketCalendarTimeoutMs = 5_000
+// Retry a stuck read before it consumes the observation's whole freshness lead.
+// The read below still bounds headers, retries, body decoding and validation together.
+const readAttemptTimeoutMs = 5_000
 export class AlpacaHttpClient extends Context.Service<AlpacaHttpClient, HttpClient.HttpClient>()(
   '@proompteng/bayn/broker/alpaca/http/AlpacaHttpClient',
 ) {}
@@ -101,51 +126,10 @@ const normalizeRead = <A>(
     ),
   )
 
-const makeProxyDispatcherDataFirst = (
-  proxyUrl: string,
-  dependencies: ProxyDispatcherDependencies = {
-    create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
-    destroy: (dispatcher) => dispatcher.destroy(),
-  },
-): Effect.Effect<Undici.Dispatcher, BrokerReadError, Scope.Scope> =>
-  Effect.acquireRelease(
-    pipe(
-      Effect.fromResult(parseProxyUrl(proxyUrl)),
-      Effect.flatMap((url) =>
-        Effect.try({
-          try: () => dependencies.create(url),
-          catch: (cause) =>
-            configurationError({ operation: 'proxy', message: 'Alpaca proxy dispatcher acquisition failed', cause }),
-        }),
-      ),
-    ),
-    (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
-  )
-
-export const makeProxyDispatcher = Pipeable.by<
-  (dependencies?: ProxyDispatcherDependencies) => (proxyUrl: string) => ReturnType<typeof makeProxyDispatcherDataFirst>,
-  typeof makeProxyDispatcherDataFirst
->((arguments_) => typeof arguments_[0] === 'string', makeProxyDispatcherDataFirst)
-
-export const parseProxyUrl = (proxyUrl: string): Result.Result<URL, BrokerReadError> =>
-  pipe(
-    decodeBrokerProxyUrl(proxyUrl),
-    Result.map((origin) => new URL(origin)),
-    Result.mapError((cause) => {
-      const message =
-        cause.reason === 'INVALID_URL'
-          ? 'invalid Alpaca proxy configuration'
-          : cause.reason === 'HTTP_OR_HTTPS_REQUIRED'
-            ? 'Alpaca proxy URL must use HTTP or HTTPS'
-            : cause.reason === 'CREDENTIALS_FORBIDDEN'
-              ? 'Alpaca proxy credentials must not be embedded in the URL'
-              : 'Alpaca proxy URL must contain only an origin'
-      return configurationError({ operation: 'proxy', message, cause })
-    }),
-  )
-
 const defaultProxyDispatcherDependencies: ProxyDispatcherDependencies = {
-  create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
+  // Normal quota-paced polls are about fifteen seconds apart; the four-second default reconnects every poll.
+  create: (url) =>
+    new Undici.ProxyAgent({ uri: url.toString(), keepAliveTimeout: 30_000, keepAliveMaxTimeout: 30_000 }),
   destroy: (dispatcher) => dispatcher.destroy(),
 }
 
@@ -162,42 +146,45 @@ const makeVerifiedProxyDispatcher = (
     (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
   )
 
-const proxyLayer = (
-  connection: BrokerConnection,
-  dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
-): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
-  Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies))
-
-const alpacaHttpLayerDataFirst = (
+export const alpacaHttpLayer = (
   connection: BrokerConnection,
   dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
 ): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
-  NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(connection, dependencies)))
+  HttpClient.layerMergedContext(
+    Effect.gen(function* () {
+      const rawDispatcher = yield* NodeHttpClient.Dispatcher
+      // Bun's compatibility dispatcher lacks interceptors; preserve that fallback and report its coverage.
+      const interceptorAvailable = typeof rawDispatcher.compose === 'function'
+      const dispatcher = interceptorAvailable ? rawDispatcher.compose(readTransportInterceptor) : rawDispatcher
+      const client = yield* NodeHttpClient.makeUndici.pipe(Effect.provideService(NodeHttpClient.Dispatcher, dispatcher))
+      // A composed dispatcher reaching this point installed the interceptor successfully, not necessarily invoked it.
+      return HttpClient.transformResponse(client, withReadTransportCoverage(interceptorAvailable))
+    }),
+  ).pipe(
+    Layer.provide(
+      Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies)),
+    ),
+  )
 
-export const alpacaHttpLayer = Pipeable.by<
-  (
-    dependencies?: ProxyDispatcherDependencies,
-  ) => (connection: BrokerConnection) => ReturnType<typeof alpacaHttpLayerDataFirst>,
-  typeof alpacaHttpLayerDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'baseUrl' in arguments_[0],
-  alpacaHttpLayerDataFirst,
-)
-
-export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
+export const make = (connection: BrokerConnection) =>
   Effect.gen(function* () {
     const key = Redacted.value(connection.key)
     const secret = Redacted.value(connection.secret)
     const sensitiveValues = [key, secret]
     const baseClient = yield* HttpClient.HttpClient
-    const client = baseClient.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
+    const observeDiagnostic = yield* makeReadDiagnostics(connection.identity)
 
-    const readJson = <A>(
+    const readResponse = <A, E extends Schema.SchemaError | BrokerReadContractFailure>(
       operation: BrokerReadOperation,
       url: URL,
-      decoder: Decoder<A>,
-    ): Effect.Effect<ReadResult<A>, BrokerReadError> =>
-      Effect.gen(function* () {
+      decoder: (input: unknown) => Result.Result<A, E>,
+      timeoutMs = connection.operationTimeoutMs,
+    ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> => {
+      // A shorter whole-read deadline owns cancellation; an equal attempt timer can race it into another retry.
+      const bounded =
+        timeoutMs > readAttemptTimeoutMs ? baseClient.pipe(HttpClient.timeout(readAttemptTimeoutMs)) : baseClient
+      const client = bounded.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
+      return Effect.gen(function* () {
         const request = HttpClientRequest.get(url, {
           acceptJson: true,
           headers: {
@@ -205,9 +192,11 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             'APCA-API-SECRET-KEY': secret,
           },
         })
-        const response = yield* client
-          .execute(request)
-          .pipe(Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)))
+        const response = yield* client.execute(request).pipe(
+          withReadTransportDiagnostics(operation),
+          withObservedStage('bayn.alpaca.read.headers', { dependency: 'alpaca', operation, diagnosticOnly: true }),
+          Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)),
+        )
         const headers = yield* decodeResponseHeaders(response).pipe(
           Effect.mapError((cause) =>
             invalidResponse({
@@ -219,6 +208,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           ),
         )
         const raw = yield* response.json.pipe(
+          withObservedStage('bayn.alpaca.read.body', { dependency: 'alpaca', operation, diagnosticOnly: true }),
           Effect.mapError((cause) =>
             invalidResponse({
               operation,
@@ -278,6 +268,23 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         }
 
         const value = yield* Effect.fromResult(decoder(raw)).pipe(
+          Effect.tapError((cause) => {
+            if (operation !== 'positions' || cause instanceof BrokerReadContractFailure) return Effect.void
+            const diagnostic = positionDecodeDiagnostic(cause, raw)
+            const annotations = {
+              'broker.decode_field': diagnostic.field,
+              'broker.decode_issue': diagnostic.issue,
+              'broker.decode_expected_type': diagnostic.expectedType,
+              'broker.decode_actual_type': diagnostic.actualType,
+            }
+            return Effect.annotateCurrentSpan(annotations).pipe(
+              Effect.andThen(
+                Effect.logWarning('Broker positions response schema rejected').pipe(Effect.annotateLogs(annotations)),
+              ),
+              // Optional telemetry cannot replace the provider rejection; cancellation must still interrupt.
+              Effect.catchCause((cause) => (Cause.hasInterrupts(cause) ? Effect.failCause(cause) : Effect.void)),
+            )
+          }),
           Effect.mapError((cause) =>
             invalidResponse({
               operation,
@@ -293,24 +300,33 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           'broker.status': evidence.status,
           'broker.content_hash': evidence.contentHash,
         })
-        return { value, evidence }
+        const diagnostic =
+          connection.identity.environment === BrokerEnvironment.Sandbox
+            ? projectReadDiagnostic(operation, raw)
+            : undefined
+        return { value, evidence, ...(diagnostic === undefined ? {} : { diagnostic }) }
       }).pipe(
-        Effect.timeout(`${connection.operationTimeoutMs} millis`),
+        Effect.timeout(timeoutMs),
         Effect.mapError((cause) =>
           cause instanceof BrokerReadError
             ? cause
             : Cause.isTimeoutError(cause)
-              ? timeoutError(operation, connection.operationTimeoutMs, cause, sensitiveValues)
+              ? timeoutError(operation, timeoutMs, cause, sensitiveValues)
               : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
+        withObservedStage('bayn.alpaca.read', { dependency: 'alpaca', operation }),
+        Effect.annotateLogs({ operation }),
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )
+    }
 
-    const account = readJson('account', accountUrl(connection), decodeAccount).pipe(
+    const accountWithBody = readResponse('account', accountUrl(connection), (body) =>
+      Result.map(decodeAccount(body), (account) => ({ account, body })),
+    ).pipe(
       Effect.flatMap((result) => {
         const normalized = normalizeAccountResult(
-          result.value,
+          result.value.account,
           connection.expectedAccountId,
           result.evidence.observedAt,
         )
@@ -319,7 +335,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             new BrokerReadError({
               operation: 'account',
               kind: BrokerReadErrorKind.AccountMismatch,
-              message: `Alpaca credential resolved account ${result.value.id}, expected ${connection.expectedAccountId}`,
+              message: `Alpaca credential resolved account ${result.value.account.id}, expected ${connection.expectedAccountId}`,
               retryable: false,
               status: result.evidence.status,
               requestId: result.evidence.requestId,
@@ -329,11 +345,15 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             }),
           )
         }
-        return normalizeRead('account', result.evidence, normalized)
+        return normalizeRead('account', result.evidence, normalized).pipe(
+          Effect.tap(() => observeDiagnostic(result.diagnostic, result.evidence)),
+          Effect.map((read) => ({ ...read, body: result.value.body })),
+        )
       }),
     )
+    const account = accountWithBody.pipe(Effect.map(({ body: _body, ...read }) => read))
 
-    const accountConfiguration = readJson(
+    const accountConfiguration = readResponse(
       'account-configuration',
       accountConfigurationUrl(connection),
       decodeAccountConfiguration,
@@ -347,7 +367,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       ),
     )
 
-    const positions = readJson('positions', positionsUrl(connection), decodePositions).pipe(
+    const positions = readResponse('positions', positionsUrl(connection), decodePositions).pipe(
       Effect.flatMap((result) =>
         normalizeRead(
           'positions',
@@ -360,7 +380,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const assetBySymbol = (symbol: string) =>
       decodeInput('asset-by-symbol', decodeAssetSymbol, symbol, 'invalid Alpaca asset symbol').pipe(
         Effect.flatMap((decoded) =>
-          readJson('asset-by-symbol', assetBySymbolUrl(connection, decoded), decodeAsset).pipe(
+          readResponse('asset-by-symbol', assetBySymbolUrl(connection, decoded), decodeAsset).pipe(
             Effect.map((result) => ({ decoded, result })),
           ),
         ),
@@ -376,9 +396,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const marketCalendar = (query: MarketCalendarQuery) =>
       decodeInput('market-calendar', decodeMarketCalendarQuery, query, 'invalid Alpaca market calendar query').pipe(
         Effect.flatMap((decoded) =>
-          readJson('market-calendar', marketCalendarUrl(connection, decoded), decodeMarketCalendar).pipe(
-            Effect.map((result) => ({ decoded, result })),
-          ),
+          readResponse(
+            'market-calendar',
+            marketCalendarUrl(connection, decoded),
+            decodeMarketCalendar,
+            Math.min(connection.operationTimeoutMs, marketCalendarTimeoutMs),
+          ).pipe(Effect.map((result) => ({ decoded, result }))),
         ),
         Effect.flatMap(({ decoded, result }) =>
           normalizeRead('market-calendar', result.evidence, normalizeMarketCalendarResult(result.value, decoded)),
@@ -387,7 +410,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
 
     const orders = (query: OrdersQuery = {}) =>
       decodeInput('orders', decodeOrdersQuery, query, 'invalid Alpaca orders query').pipe(
-        Effect.flatMap((decoded) => readJson('orders', ordersUrl(connection, decoded), decodeOrders)),
+        Effect.flatMap((decoded) => readResponse('orders', ordersUrl(connection, decoded), decodeOrders)),
         Effect.flatMap((result) =>
           normalizeRead(
             'orders',
@@ -399,7 +422,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
 
     const orderById = (orderId: string) =>
       decodeInput('order-by-id', decodeOrderId, orderId, 'invalid Alpaca order ID').pipe(
-        Effect.flatMap((decoded) => readJson('order-by-id', orderByIdUrl(connection, decoded), decodeOrder)),
+        Effect.flatMap((decoded) => readResponse('order-by-id', orderByIdUrl(connection, decoded), decodeOrder)),
         Effect.flatMap((result) =>
           normalizeRead(
             'order-by-id',
@@ -417,7 +440,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         'invalid Alpaca client order ID',
       ).pipe(
         Effect.flatMap((decoded) =>
-          readJson('order-by-client-id', orderByClientIdUrl(connection, decoded), decodeOrder),
+          readResponse('order-by-client-id', orderByClientIdUrl(connection, decoded), decodeOrder),
         ),
         Effect.flatMap((result) =>
           normalizeRead(
@@ -432,7 +455,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       decodeInput('fill-activities', decodeFillActivitiesQuery, query, 'invalid Alpaca fill activities query').pipe(
         Effect.flatMap((decoded) => {
           const request = fillActivitiesRequest(connection, decoded)
-          return readJson('fill-activities', request.url, decodeFillActivities).pipe(
+          return readResponse('fill-activities', request.url, decodeFillActivities).pipe(
             Effect.map((result) => ({ result, pageSize: request.pageSize })),
           )
         }),
@@ -462,6 +485,108 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         ),
       )
 
+    const feeActivities = (query: FeeActivitiesQuery = {}) =>
+      decodeInput('fee-activities', decodeFeeActivitiesQuery, query, 'invalid Alpaca fee activities query').pipe(
+        Effect.flatMap((decoded) => {
+          const request = feeActivitiesRequest(connection, decoded)
+          return readResponse('fee-activities', request.url, decodeFeeActivities).pipe(
+            Effect.map((result) => ({ result, pageSize: request.pageSize })),
+          )
+        }),
+        Effect.flatMap(({ pageSize, result }) =>
+          Effect.fromResult(normalizeFeeActivitiesResult(result.value, connection.expectedAccountId)).pipe(
+            Effect.tap(() => observeDiagnostic(result.diagnostic, result.evidence)),
+            Effect.map((items) => {
+              const lastItem = items.at(-1)
+              return {
+                value: {
+                  items,
+                  ...(items.length === pageSize && lastItem !== undefined
+                    ? { nextPageToken: lastItem.activityId }
+                    : {}),
+                },
+                evidence: result.evidence,
+              }
+            }),
+            Effect.mapError((cause) =>
+              invalidResponse({
+                operation: 'fee-activities',
+                message: 'Alpaca fee-activities response violates the Bayn read contract',
+                evidence: result.evidence,
+                cause,
+              }),
+            ),
+          ),
+        ),
+      )
+
+    const nonTradeActivityStatement = Effect.fn('bayn.alpaca.non-trade-activity-statement')(function* (window: {
+      readonly after: string
+      readonly until: string
+    }) {
+      const operation = 'non-trade-activities'
+      const bounds = yield* decodeInput(operation, decodeNonTradeActivityWindow, window, 'Invalid activity window')
+      const now = yield* currentUtcInstant
+      if (connection.environment !== BrokerEnvironment.Sandbox || bounds.until > now) {
+        return yield* invalidRequest(operation, 'Financial activity capture requires a historical PAPER window', null)
+      }
+      const verifiedAccount = yield* accountWithBody
+      const readDirection = (direction: SortDirection) =>
+        Effect.gen(function* () {
+          const pages = []
+          const seen = new Set<string>()
+          let pageToken: string | undefined
+          for (let index = 0; index < 100; index++) {
+            const request = fillActivitiesRequest(connection, {
+              ...bounds,
+              direction,
+              ...(pageToken === undefined ? {} : { pageToken }),
+            })
+            request.url.pathname = '/v2/account/activities'
+            request.url.searchParams.set('category', 'non_trade_activity')
+            const { value, evidence } = yield* readResponse(operation, request.url, decodeNonTradeActivityPage)
+            for (const row of value.rows) {
+              if (seen.has(row.id) || !nonTradeActivityInScope(row, verifiedAccount.value.id, bounds)) {
+                return yield* invalidResponse({
+                  operation,
+                  message: 'Alpaca returned an out-of-scope or repeated activity',
+                  evidence,
+                })
+              }
+              seen.add(row.id)
+            }
+            pages.push({ pageToken: pageToken ?? null, evidence, body: value.body })
+            const lastItem = value.rows.at(-1)
+            if (lastItem === undefined) return pages
+            pageToken = lastItem.id
+          }
+          return yield* invalidResponse({
+            operation,
+            message: 'Alpaca non-trade activity pagination exceeded its bound',
+          })
+        })
+      const firstPass = yield* readDirection(SortDirection.Ascending)
+      const secondPass = yield* readDirection(SortDirection.Descending)
+      const statement = yield* Schema.decodeUnknownEffect(NonTradeActivityStatementSchema)({
+        schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v2' as const,
+        accountIdentityHash: connection.identity.identityHash,
+        window: bounds,
+        accountRead: verifiedAccount.evidence,
+        accountBody: verifiedAccount.body,
+        firstPass,
+        secondPass,
+        observedAt: yield* currentUtcInstant,
+      }).pipe(
+        Effect.mapError(() =>
+          invalidResponse({ operation, message: 'Alpaca activity statement has invalid structure' }),
+        ),
+      )
+      yield* Effect.fromResult(verifyNonTradeActivityStatement(statement, verifiedAccount.value.id)).pipe(
+        Effect.mapError((message) => invalidResponse({ operation, message })),
+      )
+      return statement
+    })
+
     return {
       account,
       accountConfiguration,
@@ -471,6 +596,8 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       orderById,
       orderByClientId,
       fillActivities,
+      feeActivities,
       marketCalendar,
-    }
+      nonTradeActivityStatement,
+    } satisfies BrokerReadShape & { readonly nonTradeActivityStatement: typeof nonTradeActivityStatement }
   })

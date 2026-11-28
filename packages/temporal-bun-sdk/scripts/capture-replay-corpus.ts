@@ -45,7 +45,6 @@ type ManifestEntry = {
   readonly path: string
   readonly temporalServerVersion?: string
   readonly sdkVersion?: string
-  readonly bunVersion?: string
   readonly workflowType: string
   readonly featureTags: readonly string[]
   readonly commandKinds?: readonly WorkflowCommandKind[]
@@ -403,7 +402,6 @@ const captureFixture = async ({
     path: `../fixtures/${fileName}`,
     temporalServerVersion: temporalCliVersion,
     sdkVersion: packageVersion,
-    bunVersion: Bun.version,
     workflowType: scenario.workflowType,
     featureTags: scenario.featureTags,
     commandKinds,
@@ -730,9 +728,15 @@ const writeManifest = async (capturedEntries: readonly ManifestEntry[]) => {
   const nextManifest = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
-    fixtures: [...staticFixtures, ...capturedEntries],
+    fixtures: [...staticFixtures, ...capturedEntries].map(stripRuntimeVersionProvenance),
   }
   await writeFile(manifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`, 'utf8')
+}
+
+const stripRuntimeVersionProvenance = (entry: ManifestEntry): ManifestEntry => {
+  const sanitized = { ...entry } as ManifestEntry & { bunVersion?: unknown }
+  delete sanitized.bunVersion
+  return sanitized
 }
 
 const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {

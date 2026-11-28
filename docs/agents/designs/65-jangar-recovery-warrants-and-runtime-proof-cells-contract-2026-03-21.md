@@ -1,6 +1,6 @@
 # 65. Jangar Recovery Warrants and Runtime Proof Cells Contract (2026-03-21)
 
-Status: Approved for implementation (`plan`)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: `2026-03-21`
 Owner: Gideon Park (Torghut Traders)
 Mission: `codex/swarm-torghut-quant-plan`
@@ -13,15 +13,10 @@ Companion doc:
 
 - `docs/torghut/design-system/v6/64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md`
 
-Merged program:
-
-- `docs/torghut/design-system/v6/65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md`
-
 Extends:
 
 - `64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
 - `63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
-- `62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
 
 ## Executive summary
 

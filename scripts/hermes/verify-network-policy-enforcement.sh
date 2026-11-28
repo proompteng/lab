@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly hermes_image='registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a'
+readonly hermes_image='registry.ide-newton.ts.net/lab/hermes-agent@sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283'
 probe_namespace="hermes-network-policy-probe-$(openssl rand -hex 4)"
 readonly probe_namespace
 probe_namespace_created=false
@@ -51,6 +51,11 @@ spec:
   enableServiceLinks: false
   nodeSelector:
     kubernetes.io/arch: amd64
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
   restartPolicy: Never
   terminationGracePeriodSeconds: 5
   securityContext:
@@ -129,6 +134,11 @@ spec:
   enableServiceLinks: false
   nodeSelector:
     kubernetes.io/arch: amd64
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
   restartPolicy: Never
   terminationGracePeriodSeconds: 5
   securityContext:

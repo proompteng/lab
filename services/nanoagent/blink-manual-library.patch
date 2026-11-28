@@ -1,0 +1,16 @@
+--- a/lua/blink/cmp/fuzzy/download/init.lua
++++ b/lua/blink/cmp/fuzzy/download/init.lua
+@@ -15,5 +15,12 @@
+   if fuzzy_config.implementation == 'lua' then return callback(nil, 'lua') end
+-
++
++  -- Tengri verifies this library while building the editor bundle.
++  if not download_config.download then
++    local loaded, err = pcall(require, 'blink.cmp.fuzzy.rust')
++    if loaded then return callback(nil, 'rust') end
++    return callback('Bundled native completion failed to load: ' .. tostring(err))
++  end
++
+   async.task
+     .all({ git.get_version(download_config.force_version), files.get_version() })
+     :map(function(results)

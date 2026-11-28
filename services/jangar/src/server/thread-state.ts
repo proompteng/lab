@@ -14,12 +14,12 @@ export type ThreadStateService = {
   clearChat: (chatId: string) => Effect.Effect<void, Error>
 }
 
-export class ThreadState extends Context.Tag('ThreadState')<ThreadState, ThreadStateService>() {}
+export class ThreadState extends Context.Service<ThreadState, ThreadStateService>()('ThreadState') {}
 
 const normalizeError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
-export const ThreadStateLive = Layer.scoped(
+export const ThreadStateLive = Layer.effect(
   ThreadState,
   Effect.gen(function* () {
     let store: ChatThreadStore | null = null
@@ -28,7 +28,7 @@ export const ThreadStateLive = Layer.scoped(
       if (!store) return Effect.void
       return pipe(
         store.shutdown(),
-        Effect.catchAll((error) => {
+        Effect.catch((error) => {
           console.warn('[chat] failed to close thread store', { error: String(error) })
           return Effect.void
         }),

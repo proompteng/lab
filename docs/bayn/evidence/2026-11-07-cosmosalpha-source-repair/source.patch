@@ -1,0 +1,69 @@
+--- a/src/cosmosalpha/factors/expression.py
++++ b/src/cosmosalpha/factors/expression.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import math
+ import re
+ from dataclasses import dataclass
+ from enum import StrEnum
+@@ -58,7 +59,7 @@
+ }
+ 
+ _IDENTIFIER_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
+-_NUMBER_PATTERN = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?")
++_NUMBER_PATTERN = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
+ _SCHEMA_VERSION_PATTERN = re.compile(
+     r"^[a-z][a-z0-9-]*/(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$"
+ )
+@@ -770,7 +771,13 @@
+         if number_match is not None:
+             raw = number_match.group(0)
+             self._position = number_match.end()
+-            return NumberNode(float(raw) if "." in raw else int(raw))
++            try:
++                value = float(raw) if "." in raw or "e" in raw.lower() else int(raw)
++            except (ValueError, OverflowError) as error:
++                raise self._error("invalid numeric literal") from error
++            if isinstance(value, float) and not math.isfinite(value):
++                raise self._error("numeric literal must be finite")
++            return NumberNode(value)
+ 
+         identifier_match = _IDENTIFIER_PATTERN.match(self._text, self._position)
+         if identifier_match is None:
+--- a/src/cosmosalpha/pipeline/graph/controller.py
++++ b/src/cosmosalpha/pipeline/graph/controller.py
+@@ -491,18 +491,14 @@
+                             item[0],
+                         ),
+                     )
++                    proceed = winner == (attempt_id, candidate) or (
++                        winner[0] == attempt_id
++                        and winner[1].candidate_index == candidate.candidate_index
++                    )
+                     decision = CandidateCalculationDecision(
+-                        winner == (attempt_id, candidate)
+-                        or (
+-                            winner[0] == attempt_id
+-                            and winner[1].candidate_index == candidate.candidate_index
+-                        ),
+-                        None,
++                        proceed,
++                        None if proceed else "DUPLICATE_ATTEMPT",
+                     )
+-                    if not decision.proceed:
+-                        decision = CandidateCalculationDecision(
+-                            False, "DUPLICATE_ATTEMPT"
+-                        )
+                 decisions[attempt_id].append(decision)
+         return {attempt_id: tuple(values) for attempt_id, values in decisions.items()}
+ 
+@@ -710,6 +706,7 @@
+                 )
+                 return GraphAttemptExecution(request, result)
+             except Exception as error:  # noqa: BLE001 - structured attempt failure
++                LOGGER.exception("Graph attempt failed attempt=%s", request.attempt_id)
+                 try:
+                     error_code = classify_attempt_failure(error)
+                 except Exception:  # noqa: BLE001 - defensive barrier release

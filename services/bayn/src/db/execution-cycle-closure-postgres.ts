@@ -1,7 +1,12 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Effect, Layer, Option, Result, Schema } from 'effect'
 
+import { executionCloseRecoveryExpiry, isContinuousMarket, regularEquitySessions } from '../market-hours'
 import { WriterFence } from '../execution/writer-fence'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
+import { currentUtcInstant } from '../time'
+import { verifyJevPortfolioSources } from './jev-position-postgres'
+import { deriveProtectionCloseBasis, withCurrentProtectionReleaseProof } from './protection-release'
 import {
   ExecutionCycleClosureStore,
   ExecutionCycleClosureStoreError,
@@ -116,21 +121,202 @@ const readReplanByHash = (
 const makeStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   const fence = yield* WriterFence
+  const verifyExit = (closure: ExecutionCycleClosure, original?: ExecutionCycleClosure) =>
+    Effect.gen(function* () {
+      const target = closure.document.strategyDecision
+      if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') {
+        const originalTarget = original?.document.strategyDecision
+        if (original === undefined || originalTarget?.schemaVersion !== 'bayn.jev-exit-target.v5') return
+        const session = original.document.executionSession
+        const regular =
+          session === undefined || isContinuousMarket(session.calendar)
+            ? undefined
+            : regularEquitySessions(session.calendar).find(({ date }) => date === originalTarget.sessionDate)
+        const predecessor = Option.getOrElse(yield* readLatestReplanByCycleId(sql, closure.cycleId), () => original)
+        if (
+          target?.schemaVersion !== 'bayn.execution-flat-target.v1' ||
+          originalTarget.evidence.portfolio.purpose !== 'MANAGE' ||
+          originalTarget.evidence.portfolio.managedSymbol === undefined ||
+          regular === undefined ||
+          Date.parse(closure.createdAt) < Date.parse(regular.closeAt) - 120_000 ||
+          closure.entryDecisionHash !== original.entryDecisionHash ||
+          closure.document.replanGenerationHash !== predecessor.contentHash ||
+          closure.createdAt <= predecessor.createdAt
+        )
+          return yield* storeError(
+            'bind-replan',
+            'invariant',
+            'A Jev close replan cannot discard its exit evidence before the ETF flatten window',
+          )
+        return
+      }
+      const binding = closure.document.bindings
+      const planner = closure.document.plannerInput
+      const release = planner?.protectionClose
+      if (planner !== undefined && release !== undefined) {
+        const current = yield* withCurrentProtectionReleaseProof(
+          { proofId: release.proofId, accountId: binding.accountId, cycleId: closure.cycleId },
+          planner.maximumInputAgeMs,
+          (evidence, trigger) => {
+            const proven = deriveProtectionCloseBasis(release.proofId, evidence)
+            return Effect.succeed(
+              Result.isSuccess(proven) &&
+                evidence.entryDecisionHash === closure.entryDecisionHash &&
+                canonicalJsonEqualV1(proven.success, release) &&
+                canonicalJsonEqualV1(trigger, target),
+            )
+          },
+        ).pipe(Effect.provideService(PgClient.PgClient, sql), Effect.provideService(WriterFence, fence))
+        if (original !== undefined || current !== true)
+          return yield* storeError(
+            'bind',
+            'invariant',
+            'Jev closure requires the current proof of its own cancellation',
+          )
+      }
+      yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
+        yield* sql`
+      SELECT EXISTS (
+        SELECT 1 FROM reconciliations WHERE reconciliation_id = ${binding.reconciliationId}
+          AND account_id = ${binding.accountId} AND expected_hash = ${binding.planningBrokerStateHash}
+          AND observed_hash = ${binding.planningBrokerStateHash} AND content_hash = ${binding.reconciliationHash}
+          AND status = 'EXACT' AND discrepancies = '[]'::jsonb AND reconciled_at <= ${closure.createdAt}::timestamptz
+      ) AS matches
+    `,
+      )
+      if (original !== undefined) {
+        const next = yield* Effect.fromResult(canonicalHashV1Result(target))
+        const prior = closure.document.replanGenerationHash
+        const latest = yield* readLatestReplanByCycleId(sql, closure.cycleId)
+        const predecessor = Option.getOrElse(latest, () => original)
+        const previousTarget = predecessor.document.strategyDecision
+        const first = yield* Effect.fromResult(canonicalHashV1Result(previousTarget))
+        const newLeg =
+          first !== next &&
+          previousTarget?.schemaVersion === 'bayn.jev-exit-target.v5' &&
+          previousTarget.evidence.portfolio.purpose === 'MANAGE' &&
+          previousTarget.evidence.portfolio.managedSymbol !== undefined &&
+          target.evidence.portfolio.purpose === 'MANAGE' &&
+          target.evidence.portfolio.managedSymbol !== undefined &&
+          target.evidence.portfolio.managedSymbol !== previousTarget.evidence.portfolio.managedSymbol
+        if (newLeg) {
+          const now = yield* currentUtcInstant
+          const earlierSymbol = previousTarget.symbols[0]
+          if (
+            now < closure.createdAt ||
+            now >= target.commitDeadlineAt ||
+            target.evidence.portfolio.brokerState.positions.some(
+              (position) => position.symbol === earlierSymbol && BigInt(position.quantityAtoms) !== 0n,
+            )
+          )
+            return yield* storeError(
+              'bind-replan',
+              'invariant',
+              'A new ETF exit requires fresh evidence and a settled preceding leg',
+            )
+          yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
+            yield* sql`SELECT NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements_text(${sql.json(predecessor.document.orderedIntentIds)}) AS prior(id)
+              LEFT JOIN intents i ON i.intent_id = prior.id AND i.cycle_id = ${closure.cycleId}
+              WHERE i.state IS DISTINCT FROM 'TERMINAL'
+            ) AS matches`,
+          )
+          yield* verifyJevPortfolioSources(sql, closure.cycleId, target.evidence.portfolio)
+        }
+        const originalSession = original.document.executionSession
+        const regularCloseAt =
+          originalSession === undefined || isContinuousMarket(originalSession.calendar)
+            ? null
+            : (regularEquitySessions(originalSession.calendar).find(
+                ({ date }) => date === originalSession.executionSession.date,
+              )?.closeAt ?? null)
+        const [recovery] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ allowed: Schema.Boolean })]),
+        )(
+          yield* sql`
+            SELECT EXISTS (
+              SELECT 1 FROM autonomous_cycles WHERE cycle_id = ${closure.cycleId}
+                AND LEAST(execution_close_at, ${regularCloseAt}::timestamptz) <= ${closure.createdAt}::timestamptz
+            ) AS allowed
+          `,
+        )
+        const recoveryDeadline =
+          originalSession === undefined
+            ? null
+            : executionCloseRecoveryExpiry(originalSession.calendar, closure.createdAt)
+        const boundedRecoveryLease =
+          recovery.allowed &&
+          closure.expiresAt > closure.createdAt &&
+          recoveryDeadline !== null &&
+          closure.expiresAt <= recoveryDeadline
+        if (
+          (first !== next && !newLeg) ||
+          closure.entryDecisionHash !== original.entryDecisionHash ||
+          (closure.expiresAt !== original.expiresAt && !boundedRecoveryLease) ||
+          prior !== predecessor.contentHash ||
+          closure.createdAt <= predecessor.createdAt
+        )
+          return yield* storeError(
+            'bind-replan',
+            'invariant',
+            'Jev residual close must preserve its committed trigger and exact predecessor',
+          )
+        return
+      }
+      const now = yield* currentUtcInstant
+      if (
+        closure.document.replanGenerationHash !== undefined ||
+        now < closure.createdAt ||
+        now >= target.commitDeadlineAt
+      )
+        return yield* storeError('bind', 'invariant', 'The initial Jev exit evidence expired before durable commitment')
+      yield* verifyJevPortfolioSources(sql, closure.cycleId, target.evidence.portfolio)
+    })
   const store: ExecutionCycleClosureStoreShape = {
+    stageProtectionClose: (closure) =>
+      fence
+        .transaction(
+          Effect.gen(function* () {
+            const release = closure.document.plannerInput?.protectionClose
+            if (release === undefined || closure.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v5')
+              return false
+            if (Option.isSome(yield* readByCycleId(sql, closure.cycleId))) return false
+            yield* verifyExit(closure)
+            yield* sql`
+            INSERT INTO protection_release_close_plans(proof_id, cycle_id, document)
+            VALUES (${release.proofId}, ${closure.cycleId}, ${sql.json(closure)})
+            ON CONFLICT (proof_id) DO NOTHING
+          `
+            const [row] = yield* sql`SELECT document = ${sql.json(closure)} AS matches
+            FROM protection_release_close_plans WHERE proof_id = ${release.proofId}`.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ matches: Schema.Boolean })))),
+            )
+            return row?.matches === true
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause instanceof ExecutionCycleClosureStoreError
+              ? cause
+              : storeError('bind', 'query', 'protection close plan staging failed', cause),
+          ),
+        ),
     read: (cycleId) => readByCycleId(sql, cycleId),
     readLatestReplan: (cycleId) => readLatestReplanByCycleId(sql, cycleId),
     containsIntent: (intentId) =>
       sql<{ readonly contains: boolean }>`
         SELECT EXISTS (
           SELECT 1
-          FROM autonomous_cycle_paper_closures AS closure,
+          FROM intents AS target
+          JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = target.cycle_id,
           LATERAL jsonb_array_elements_text(closure.document #> '{document,orderedIntentIds}') AS intent(value)
-          WHERE intent.value = ${intentId}
+          WHERE target.intent_id = ${intentId} AND intent.value = target.intent_id
         ) OR EXISTS (
           SELECT 1
-          FROM autonomous_cycle_paper_close_replans AS replan,
+          FROM intents AS target
+          JOIN autonomous_cycle_paper_close_replans AS replan ON replan.cycle_id = target.cycle_id,
           LATERAL jsonb_array_elements_text(replan.document #> '{document,orderedIntentIds}') AS intent(value)
-          WHERE intent.value = ${intentId}
+          WHERE target.intent_id = ${intentId} AND intent.value = target.intent_id
         ) AS contains
       `.pipe(
         Effect.flatMap((rows) => {
@@ -149,6 +335,19 @@ const makeStore = Effect.gen(function* () {
       fence
         .transaction(
           Effect.gen(function* () {
+            const replay = yield* readReplanByHash(sql, closure.cycleId, closure.contentHash)
+            if (Option.isSome(replay)) return replay.value
+            const original = yield* readByCycleId(sql, closure.cycleId)
+            if (
+              closure.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' &&
+              Option.isNone(original)
+            )
+              return yield* storeError(
+                'bind-replan',
+                'invariant',
+                'Jev residual close requires an initial committed exit',
+              )
+            yield* verifyExit(closure, Option.getOrUndefined(original))
             yield* sql`
             INSERT INTO autonomous_cycle_paper_close_replans (
               content_hash,
@@ -194,6 +393,29 @@ const makeStore = Effect.gen(function* () {
       fence
         .transaction(
           Effect.gen(function* () {
+            const existing = yield* readByCycleId(sql, closure.cycleId)
+            if (Option.isSome(existing)) {
+              if (existing.value.contentHash !== closure.contentHash)
+                return yield* storeError(
+                  'bind',
+                  'conflict',
+                  'Execution closure already has different immutable content',
+                )
+              return existing.value
+            }
+            yield* verifyExit(closure)
+            const protection = closure.document.plannerInput?.protectionClose
+            if (protection !== undefined) {
+              yield* sql`SELECT EXISTS(
+                SELECT 1 FROM protection_release_close_plans AS plan
+                WHERE plan.proof_id = ${protection.proofId} AND plan.document = ${sql.json(closure)}
+                  AND system_evidence_source_committed(plan.xmin)
+              ) AS matches`.pipe(
+                Effect.flatMap(
+                  Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })])),
+                ),
+              )
+            }
             yield* sql`
             INSERT INTO autonomous_cycle_paper_closures (
               cycle_id,

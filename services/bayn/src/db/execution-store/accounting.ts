@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect } from 'effect'
+import { Effect, Schema } from 'effect'
 
-import { prepareAccounting } from '../../accounting/domain'
+import { prepareAccounting, AccountingInventorySide } from '../../accounting/domain'
 import { renderAccountingFailure } from '../../accounting/failure'
 import type { PositionCost, PreparedAccounting } from '../../accounting/model'
 import type { AccountingTransaction } from '../../accounting/schema'
@@ -9,6 +9,7 @@ import type { FillEventInput } from '../../broker/observations'
 import type { JournalService } from '../../ledger'
 import { currentUtcInstant } from '../../time'
 import type { AccountingReceipt } from '../../execution/contracts'
+import type { WriterFenceService } from '../../execution/writer-fence'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../accounting-rows'
 import type { BrokerEventInterpreter } from './broker-events'
 import type { ExecutionStoreError, ExecutionStoreRuntimeConfig } from './contract'
@@ -31,17 +32,17 @@ import {
   decodeTransactionRows,
   decodeUnresolvedPredecessor,
 } from './rows'
-import { Pipeable } from '../../pipeable'
 
 export interface AccountingInterpreter {
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, ExecutionStoreError>
 }
 
-const makeAccountingInterpreterDataFirst = (
+export const makeAccountingInterpreter = (
   sql: PgClient.PgClient,
   journal: JournalService,
   config: ExecutionStoreRuntimeConfig,
   events: Pick<BrokerEventInterpreter, 'append'>,
+  writerFence: WriterFenceService,
 ): AccountingInterpreter => {
   const economicallyPrecedes = (input: FillEventInput) => sql`
     (
@@ -68,8 +69,14 @@ const makeAccountingInterpreterDataFirst = (
       'account',
       sql<Record<string, unknown>>`
         SELECT
-          COALESCE(sum(transaction.quantity_delta_micros), 0)::text AS quantity_micros,
-          COALESCE(sum(transaction.cost_basis_delta_micros), 0)::text AS cost_micros
+          (COALESCE(sum(transaction.quantity_delta_atoms), 0) -
+            COALESCE((SELECT sum(fee.quantity_atoms) FROM broker_inventory_debits AS fee
+              WHERE fee.account_id = ${input.accountId} AND fee.symbol = ${input.fill.symbol}
+                AND fee.posted AND fee.effective_at <= ${input.occurredAt}::timestamptz), 0))::text AS quantity_atoms,
+          (COALESCE(sum(transaction.cost_basis_delta_micros), 0) -
+            COALESCE((SELECT sum(fee.cost_basis_micros) FROM broker_inventory_debits AS fee
+              WHERE fee.account_id = ${input.accountId} AND fee.symbol = ${input.fill.symbol}
+                AND fee.posted AND fee.effective_at <= ${input.occurredAt}::timestamptz), 0))::text AS cost_micros
         FROM accounting_transactions AS transaction
         JOIN fills AS candidate_fill ON candidate_fill.event_id = transaction.broker_event_id
         WHERE transaction.account_id = ${input.accountId}
@@ -78,7 +85,7 @@ const makeAccountingInterpreterDataFirst = (
       `.pipe(
         Effect.flatMap(decodePositionCost),
         Effect.map(([position]) => ({
-          quantityMicros: position.quantity_micros,
+          quantityAtoms: position.quantity_atoms,
           costMicros: position.cost_micros,
         })),
       ),
@@ -130,10 +137,10 @@ const makeAccountingInterpreterDataFirst = (
       sql<Record<string, unknown>>`
         SELECT
           schema_version, transaction_id, broker_event_id, intent_id, account_id, symbol, side,
-          quantity_micros::text AS quantity_micros, price_micros::text AS price_micros,
+          quantity_atoms::text AS quantity_atoms, price_atoms::text AS price_atoms,
           notional_micros::text AS notional_micros, fee_micros::text AS fee_micros,
           cost_basis_micros::text AS cost_basis_micros, realized_pnl_micros::text AS realized_pnl_micros,
-          quantity_delta_micros::text AS quantity_delta_micros,
+          quantity_delta_atoms::text AS quantity_delta_atoms,
           cost_basis_delta_micros::text AS cost_basis_delta_micros,
           cash_delta_micros::text AS cash_delta_micros, ledger_plan_hash, content_hash, occurred_at
         FROM accounting_transactions
@@ -151,49 +158,71 @@ const makeAccountingInterpreterDataFirst = (
       sql`
         INSERT INTO accounting_transactions (
           transaction_id, schema_version, broker_event_id, intent_id, account_id, symbol, side,
-          quantity_micros, price_micros, notional_micros, fee_micros, cost_basis_micros,
-          realized_pnl_micros, quantity_delta_micros, cost_basis_delta_micros, cash_delta_micros,
+          quantity_atoms, price_atoms, notional_micros, fee_micros, cost_basis_micros,
+          realized_pnl_micros, quantity_delta_atoms, cost_basis_delta_micros, cash_delta_micros,
           ledger_plan_hash, content_hash, occurred_at
         ) VALUES (
           ${prepared.transaction.transactionId}, ${prepared.transaction.schemaVersion},
           ${prepared.transaction.brokerEventId}, ${prepared.transaction.intentId ?? null},
           ${prepared.transaction.accountId}, ${prepared.transaction.symbol}, ${prepared.transaction.side},
-          ${prepared.transaction.quantityMicros}, ${prepared.transaction.priceMicros},
+          ${prepared.transaction.quantityAtoms}, ${prepared.transaction.priceAtoms},
           ${prepared.transaction.notionalMicros}, ${prepared.transaction.feeMicros},
           ${prepared.transaction.costBasisMicros}, ${prepared.transaction.realizedPnlMicros},
-          ${prepared.transaction.quantityDeltaMicros}, ${prepared.transaction.costBasisDeltaMicros},
+          ${prepared.transaction.quantityDeltaAtoms}, ${prepared.transaction.costBasisDeltaMicros},
           ${prepared.transaction.cashDeltaMicros}, ${prepared.transaction.ledgerPlanHash},
           ${prepared.transaction.contentHash}, ${prepared.transaction.occurredAt}
         )
       `.pipe(Effect.asVoid),
     )
 
+  const expectedAccounting = (
+    eventId: string,
+    input: FillEventInput,
+    position: PositionCost,
+  ): Effect.Effect<PreparedAccounting, ExecutionStoreError> =>
+    runExecutionOperation(
+      'account',
+      Effect.gen(function* () {
+        const rows = yield* sql`SELECT protection FROM intents WHERE intent_id = ${input.fill.intentId ?? ''}
+        AND account_id = ${input.accountId} AND symbol = ${input.fill.symbol}`
+        const [bound] = yield* Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ protection: Schema.NullOr(Schema.Struct({ _tag: Schema.String })) })),
+        )(rows)
+        const tag = bound?.protection?._tag
+        // Signed prior inventory comes from the posted accounting chain, never a raw broker position.
+        const inventorySide =
+          BigInt(position.quantityAtoms) < 0n ||
+          tag === 'EquityShortBracket' ||
+          tag === 'EquityShortOco' ||
+          tag === 'EquityShortStopLimit'
+            ? AccountingInventorySide.Short
+            : AccountingInventorySide.Long
+        return yield* Effect.fromResult(
+          prepareAccounting(eventId, input.fill, position, config.tigerBeetle.ledger, inventorySide),
+        ).pipe(
+          Effect.mapError((cause) =>
+            executionStoreError({
+              operation: 'account',
+              failure: 'invariant',
+              message: `fill accounting plan is invalid: ${renderAccountingFailure(cause)}`,
+              cause,
+            }),
+          ),
+        )
+      }),
+    )
+
   const prepare = (input: FillEventInput): Effect.Effect<PreparedAccounting, ExecutionStoreError> =>
     runExecutionOperation(
       'account',
-      sql.withTransaction(
+      writerFence.transaction(
         Effect.gen(function* () {
           const event = yield* events.append(input)
           const stored = yield* readPrepared(event.eventId)
           yield* requirePostedPredecessors(input)
           if (stored === undefined) yield* requireNoPreparedSuccessors(input)
           const position = yield* priorPosition(input)
-          const expected = yield* prepareAccounting(
-            event.eventId,
-            input.fill,
-            position,
-            config.tigerBeetle.ledger,
-          ).pipe(
-            Effect.fromResult,
-            Effect.mapError((cause) =>
-              executionStoreError({
-                operation: 'account',
-                failure: 'invariant',
-                message: `fill accounting plan is invalid: ${renderAccountingFailure(cause)}`,
-                cause,
-              }),
-            ),
-          )
+          const expected = yield* expectedAccounting(event.eventId, input, position)
           const replay = yield* liftStoreDecision('account', decidePreparedAccountingReplay(stored, expected))
           if (stored === undefined) yield* insertPrepared(replay)
           return replay
@@ -234,7 +263,7 @@ const makeAccountingInterpreterDataFirst = (
         planAccountingReceipt(prepared, config.tigerBeetle.clusterId.toString(), config.tigerBeetle.ledger),
       ).pipe(
         Effect.flatMap((planned) =>
-          sql.withTransaction(
+          writerFence.transaction(
             Effect.gen(function* () {
               const recordedAt = yield* currentUtcInstant
               const candidate = yield* decodeReceipt({ ...planned, recordedAt })
@@ -245,7 +274,7 @@ const makeAccountingInterpreterDataFirst = (
                 ) VALUES (
                   ${candidate.receiptId}, ${candidate.schemaVersion}, ${candidate.intentId ?? null},
                   ${candidate.brokerEventId}, ${candidate.tigerBeetleClusterId}, ${candidate.tigerBeetleLedger},
-                  ${candidate.accountIds}, ${candidate.transferIds}, ${candidate.debitMicros}, ${candidate.creditMicros},
+                  ${candidate.accountIds}::numeric[], ${candidate.transferIds}::numeric[], ${candidate.debitMicros}, ${candidate.creditMicros},
                   ${candidate.contentHash}, ${candidate.recordedAt}
                 )
                 ON CONFLICT (broker_event_id) DO NOTHING
@@ -281,5 +310,3 @@ const makeAccountingInterpreterDataFirst = (
 
   return { account }
 }
-
-export const makeAccountingInterpreter = Pipeable.dual(4, makeAccountingInterpreterDataFirst)

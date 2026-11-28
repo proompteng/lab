@@ -1,0 +1,130 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-valkey
+spec:
+  podSelector:
+    matchLabels:
+      buf.red/name: bayn-valkey
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [bayn, bayn-execution-controller, bayn-research, bayn-valkey-acceptance]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: valkey-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: valkey-operator
+      ports:
+        - port: 6379
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              buf.red/name: bayn-valkey
+      ports:
+        - port: 6379
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+      ports:
+        - port: 9121
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              buf.red/name: bayn-valkey
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Helpers watch their operator-owned configuration through the API.
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 100.100.244.141/32
+        - ipBlock:
+            cidr: 100.100.244.142/32
+        - ipBlock:
+            cidr: 100.100.244.190/32
+      ports:
+        - port: 6443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-valkey-clients
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [bayn, bayn-execution-controller, bayn-research]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              buf.red/name: bayn-valkey
+      ports:
+        - port: 6379
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-valkey-acceptance
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-valkey-acceptance
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              buf.red/name: bayn-valkey
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

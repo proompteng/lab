@@ -5,7 +5,7 @@ Internal Knative service that powers `http://go/<slug>` redirects with a small a
 ## Prerequisites
 
 - `.env.local` in `services/golink` (copy `.env.example`) with `GOLINK_DATABASE_URL` set. Defaults point to the local compose Postgres on port 15433.
-- Bun 1.4.0 and Node 24.11.1 (workspace defaults).
+- Bun 1.4.2 and Node 24.11.1 (workspace defaults).
 
 ## Scripts
 
@@ -60,5 +60,5 @@ The Knative service is cluster-local with Tailscale exposure at host `go`.
 
 ## Testing
 
-- Vitest covers redirect lookup and CRUD handlers using an in-memory PGlite database (`createTestDb`).
+- Bun runs redirect lookup and CRUD tests in randomized order using an in-memory PGlite database (`createTestDb`).
 - UI behaviors rely on optimistic React Query mutations; manual QA: create/edit/delete rows and confirm slug redirect 302 and 404 for unknown slugs.

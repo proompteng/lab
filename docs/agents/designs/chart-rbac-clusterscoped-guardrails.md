@@ -1,6 +1,6 @@
 # Chart RBAC Cluster-Scoped Guardrails
 
-Status: Draft (2026-02-07)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 Docs index: [README](../README.md)
 

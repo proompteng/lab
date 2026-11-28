@@ -4,25 +4,32 @@ import assert from 'node:assert/strict'
 
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { OrderSide, type Fill } from '../execution/contracts'
-import { prepareAccounting, rebuildAccountingLedger } from './domain'
+import { hashLedgerPlanResult } from '../ledger-plan'
+import {
+  brokerFeeLedgerPlan,
+  cashSettlementLedgerPlan,
+  coinFeeLedgerPlan,
+  prepareAccounting,
+  rebuildAccountingLedger,
+} from './domain'
 import type { AccountingFailure } from './failure'
 import type { PositionCost, PreparedAccounting } from './model'
 
 const eventId = 'a'.repeat(64)
-const emptyPosition: PositionCost = { quantityMicros: '0', costMicros: '0' }
+const emptyPosition: PositionCost = { quantityAtoms: '0', costMicros: '0' }
 
 const fill = (overrides: Partial<Fill> = {}): Fill => ({
-  schemaVersion: 'bayn.paper-fill.v1',
+  schemaVersion: 'bayn.fill.v2',
   accountId: 'paper-account',
   fillId: 'activity-1',
   brokerOrderId: 'broker-order-1',
   clientOrderId: 'bayn-order-1',
   symbol: 'NVDA',
   side: OrderSide.Buy,
-  quantityMicros: '1000000',
-  priceMicros: '100000000',
+  quantityAtoms: '1000000000',
+  priceAtoms: '100000000000',
   feeMicros: '0',
   occurredAt: '2026-07-22T15:30:00.000Z',
   ...overrides,
@@ -42,6 +49,138 @@ const postedMicros = (prepared: PreparedAccounting): bigint =>
   prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n)
 
 describe('execution accounting', () => {
+  test.each([
+    {
+      name: 'buy with fee',
+      overrides: { feeMicros: '2500' },
+      prior: emptyPosition,
+      ledgerPlanHash: '918948628ef0e46c31b8adfd6b40a269a6ade2d66004c310a2dfd217e5e860b1',
+      contentHash: '7048ddd9a74ba9a77695926d8a54243564535ba73edf52b24ddba04233cb2cdd',
+    },
+    {
+      name: 'partial gain with fee',
+      overrides: { side: OrderSide.Sell, priceAtoms: '120000000000', feeMicros: '2500' },
+      prior: { quantityAtoms: '3000000000', costMicros: '300000000' },
+      ledgerPlanHash: 'ee0192ccf02a378bd8e95ec1276e7f2073b0579405661ffab2d3342421dcf574',
+      contentHash: '86b220e92634d9ab696bab88a9794c938d98202ea9fe3393ee65a0aab00ab44a',
+    },
+    {
+      name: 'full loss with fee',
+      overrides: {
+        side: OrderSide.Sell,
+        quantityAtoms: '3000000000',
+        priceAtoms: '90000000000',
+        feeMicros: '500',
+      },
+      prior: { quantityAtoms: '3000000000', costMicros: '300000001' },
+      ledgerPlanHash: '0fc004aa986e538ab268abbbd70cfd5fa9a2a6c4df9da98b0c0428a406b5f50b',
+      contentHash: 'a4d3c291d411bac3858d1447805825c2cc34adda685cf425fcc080d8335f1e1b',
+    },
+    {
+      name: 'partial sale with rounded zero basis',
+      overrides: { side: OrderSide.Sell, quantityAtoms: '1000', priceAtoms: '1000000000' },
+      prior: { quantityAtoms: '3000', costMicros: '1' },
+      ledgerPlanHash: '4b993ba02e623db370ec4382c9268a7142c8260f87e568062e41b472794f8fe3',
+      contentHash: '2029c37fecc918d40bbdd43ea621086d27a6b4dcaf8389c482599dadc6d50054',
+    },
+  ])(
+    'preserves the complete historical ledger identity for $name',
+    ({ overrides, prior, ledgerPlanHash, contentHash }) => {
+      const prepared = successOf(prepareAccounting(eventId, fill(overrides), prior, 7001))
+      expect(Result.getOrThrow(hashLedgerPlanResult(prepared.ledger))).toBe(ledgerPlanHash)
+      expect(prepared.transaction).toMatchObject({ ledgerPlanHash, contentHash })
+      expect(successOf(rebuildAccountingLedger(prepared.transaction, 7001))).toEqual(prepared.ledger)
+    },
+  )
+
+  test.each([
+    {
+      amount: '0',
+      fee: '06039382d0f602bb290ac1d5270fe96a1b06df59d8f0379a1f92542e95ba8fd2',
+      settlement: '06039382d0f602bb290ac1d5270fe96a1b06df59d8f0379a1f92542e95ba8fd2',
+    },
+    {
+      amount: '2300',
+      fee: 'dd03ac463bc61969659e53dea81e2aefcfe2c775630dafbdd0c000051adc401f',
+      settlement: 'aaf531cf64820d9d2c986e76dc19b9b5c07d66b5baff0434e074073bb2f381ca',
+    },
+    {
+      amount: '-2300',
+      fee: 'c190b516fb06e09162700467c5342d7736fd839a8ef3eeaffa013ed013efe4ff',
+      settlement: 'eee511bd75f0709ce3b651c9f919553850f626db2e557edcd7edb77a81c4e091',
+    },
+  ])('preserves broker fee and cash settlement identities for $amount micros', ({ amount, fee, settlement }) => {
+    expect(Result.getOrThrow(hashLedgerPlanResult(brokerFeeLedgerPlan('paper-account', 'fee-1', amount, 7001)))).toBe(
+      fee,
+    )
+    expect(
+      Result.getOrThrow(hashLedgerPlanResult(cashSettlementLedgerPlan('paper-account', 'settlement-1', amount, 7001))),
+    ).toBe(settlement)
+  })
+
+  test.each([
+    { amount: '0', hash: '06039382d0f602bb290ac1d5270fe96a1b06df59d8f0379a1f92542e95ba8fd2' },
+    { amount: '2300', hash: '591d92a0b1c267207c29978463c582e6ef1cf4cbd95fb5efc3d0f3b0f88cf231' },
+  ])('preserves the historical coin fee identity for $amount micros', ({ amount, hash }) => {
+    expect(
+      Result.getOrThrow(
+        hashLedgerPlanResult(coinFeeLedgerPlan('paper-account', 'coin-fee-1', 'BTC/USD', amount, 7001)),
+      ),
+    ).toBe(hash)
+  })
+
+  test('keeps reconstructed records isolated across plans, accounts and ledgers', () => {
+    const builders = [
+      () => successOf(prepareAccounting(eventId, fill({ feeMicros: '2500' }), emptyPosition, 7001)).ledger,
+      () => brokerFeeLedgerPlan('paper-account', 'fee-1', '-2300', 7001),
+      () => cashSettlementLedgerPlan('paper-account', 'settlement-1', '2300', 7001),
+      () => coinFeeLedgerPlan('paper-account', 'coin-fee-1', 'BTC/USD', '2300', 7001),
+    ]
+    for (const build of builders) {
+      const first = build()
+      const witness = structuredClone(first)
+      const replay = build()
+      assert(first.accounts[0] !== undefined && first.transfers[0] !== undefined)
+      expect(replay.accounts[0]).not.toBe(first.accounts[0])
+      expect(replay.transfers[0]).not.toBe(first.transfers[0])
+      Object.assign(first.accounts[0], { debits_posted: 999n })
+      Object.assign(first.transfers[0], { amount: 999n })
+      expect(replay).toEqual(witness)
+      expect(build()).toEqual(witness)
+    }
+    const other = brokerFeeLedgerPlan('other-account', 'fee-1', '-2300', 7002)
+    const original = brokerFeeLedgerPlan('paper-account', 'fee-1', '-2300', 7001)
+    expect(other.runKey).not.toBe(original.runKey)
+    expect(other.runTag).not.toBe(original.runTag)
+    expect(other.accounts.every((account) => account.ledger === 7002 && account.user_data_128 === other.runKey)).toBe(
+      true,
+    )
+    expect(
+      other.transfers.every((transfer) => transfer.ledger === 7002 && transfer.user_data_64 === other.runTag),
+    ).toBe(true)
+    expect(
+      original.accounts.every((account) => account.ledger === 7001 && account.user_data_128 === original.runKey),
+    ).toBe(true)
+  })
+
+  test('posts delayed broker fees and refunds with stable identities and the existing cash and expense accounts', () => {
+    const fee = brokerFeeLedgerPlan('paper-account', 'fee-1', '-230000', 7001)
+    const replay = brokerFeeLedgerPlan('paper-account', 'fee-1', '-230000', 7001)
+    const refund = brokerFeeLedgerPlan('paper-account', 'refund-1', '230000', 7001)
+    const withFillFee = successOf(prepareAccounting(eventId, fill({ feeMicros: '230000' }), emptyPosition, 7001))
+    const knownFee = withFillFee.ledger.transfers.find((transfer) => transfer.amount === 230000n)
+    if (knownFee === undefined) throw new Error('expected existing fee transfer')
+    expect(fee).toEqual(replay)
+    expect(fee.transfers).toHaveLength(1)
+    expect(fee.transfers[0]?.amount).toBe(230000n)
+    expect(fee.transfers[0]?.debit_account_id).toBe(knownFee.debit_account_id)
+    expect(fee.transfers[0]?.credit_account_id).toBe(knownFee.credit_account_id)
+    expect(refund.transfers[0]?.debit_account_id).toBe(fee.transfers[0]?.credit_account_id)
+    expect(refund.transfers[0]?.credit_account_id).toBe(fee.transfers[0]?.debit_account_id)
+    expect(refund.transfers[0]?.id).not.toBe(fee.transfers[0]?.id)
+    expect(brokerFeeLedgerPlan('paper-account', 'zero', '0', 7001).transfers).toEqual([])
+  })
+
   test('posts an exact buy with an explicit fee', () => {
     const prepared = successOf(prepareAccounting(eventId, fill({ feeMicros: '2500' }), emptyPosition, 7001))
 
@@ -50,7 +189,7 @@ describe('execution accounting', () => {
       notionalMicros: '100000000',
       costBasisMicros: '100000000',
       realizedPnlMicros: '0',
-      quantityDeltaMicros: '1000000',
+      quantityDeltaAtoms: '1000000000',
       costBasisDeltaMicros: '100000000',
       cashDeltaMicros: '-100002500',
     })
@@ -61,7 +200,7 @@ describe('execution accounting', () => {
 
   test('uses round-half-up for quantity times price', () => {
     const prepared = successOf(
-      prepareAccounting(eventId, fill({ quantityMicros: '500000', priceMicros: '100000001' }), emptyPosition, 7001),
+      prepareAccounting(eventId, fill({ quantityAtoms: '500000000', priceAtoms: '100000001000' }), emptyPosition, 7001),
     )
 
     expect(prepared.transaction.notionalMicros).toBe('50000001')
@@ -71,7 +210,7 @@ describe('execution accounting', () => {
     const prepared = successOf(
       prepareAccounting(
         eventId,
-        fill({ quantityMicros: '500000', priceMicros: '100000001', feeMicros: '2500' }),
+        fill({ quantityAtoms: '500000000', priceAtoms: '100000001000', feeMicros: '2500' }),
         emptyPosition,
         7001,
       ),
@@ -83,7 +222,7 @@ describe('execution accounting', () => {
       costBasisMicros: '50000001',
       cashDeltaMicros: '-50002501',
       ledgerPlanHash: 'ed64d5c2d5e9dbb34eaf42b9f86d6afb7323478e2550e2921dbd22a3edef3657',
-      contentHash: '7d91dd98ee38ce4a6bb1c0a8e6ad032f6c3da9106847ddcf80c3f2fbf0042222',
+      contentHash: '65aef852d6ee96cfa1ece78817bafde73f87f55ec220b4ea5e6265c57c7b24c0',
     })
     expect(prepared.ledger.accounts.map((account) => account.id)).toEqual([
       11_018_531_402_962_299_880_943_285_336_145_171_022n,
@@ -100,8 +239,8 @@ describe('execution accounting', () => {
     const prepared = successOf(
       prepareAccounting(
         eventId,
-        fill({ side: OrderSide.Sell, quantityMicros: '1000000', priceMicros: '120000000' }),
-        { quantityMicros: '3000000', costMicros: '300000000' },
+        fill({ side: OrderSide.Sell, quantityAtoms: '1000000000', priceAtoms: '120000000000' }),
+        { quantityAtoms: '3000000000', costMicros: '300000000' },
         7001,
       ),
     )
@@ -110,7 +249,7 @@ describe('execution accounting', () => {
       notionalMicros: '120000000',
       costBasisMicros: '100000000',
       realizedPnlMicros: '20000000',
-      quantityDeltaMicros: '-1000000',
+      quantityDeltaAtoms: '-1000000000',
       costBasisDeltaMicros: '-100000000',
       cashDeltaMicros: '120000000',
     })
@@ -122,8 +261,8 @@ describe('execution accounting', () => {
     const prepared = successOf(
       prepareAccounting(
         eventId,
-        fill({ side: OrderSide.Sell, quantityMicros: '3000000', priceMicros: '90000000', feeMicros: '500' }),
-        { quantityMicros: '3000000', costMicros: '300000001' },
+        fill({ side: OrderSide.Sell, quantityAtoms: '3000000000', priceAtoms: '90000000000', feeMicros: '500' }),
+        { quantityAtoms: '3000000000', costMicros: '300000001' },
         7001,
       ),
     )
@@ -143,8 +282,8 @@ describe('execution accounting', () => {
     const prepared = successOf(
       prepareAccounting(
         eventId,
-        fill({ side: OrderSide.Sell, quantityMicros: '1', priceMicros: '1000000' }),
-        { quantityMicros: '3', costMicros: '1' },
+        fill({ side: OrderSide.Sell, quantityAtoms: '1000', priceAtoms: '1000000000' }),
+        { quantityAtoms: '3000', costMicros: '1' },
         7001,
       ),
     )
@@ -159,8 +298,8 @@ describe('execution accounting', () => {
     const prepared = successOf(
       prepareAccounting(
         eventId,
-        fill({ side: OrderSide.Sell, quantityMicros: '1', priceMicros: '1000000' }),
-        { quantityMicros: '1', costMicros: '0' },
+        fill({ side: OrderSide.Sell, quantityAtoms: '1000', priceAtoms: '1000000000' }),
+        { quantityAtoms: '1000', costMicros: '0' },
         7001,
       ),
     )
@@ -175,48 +314,46 @@ describe('execution accounting', () => {
       failureOf(
         prepareAccounting(
           eventId,
-          fill({ side: OrderSide.Sell, quantityMicros: '1000001' }),
-          { quantityMicros: '1000000', costMicros: '100000000' },
+          fill({ side: OrderSide.Sell, quantityAtoms: '1000001000' }),
+          { quantityAtoms: '1000000000', costMicros: '100000000' },
           7001,
         ),
       ),
     ).toEqual({
       _tag: 'AccountingSellQuantityExceedsPosition',
-      saleQuantityMicros: 1_000_001n,
-      positionQuantityMicros: 1_000_000n,
+      saleQuantityAtoms: 1000001000n,
+      positionQuantityAtoms: 1000000000n,
     })
   })
 
   test('returns exact failures for invalid position state and rounded-zero fills without throwing', () => {
-    expect(failureOf(prepareAccounting(eventId, fill(), { quantityMicros: '-1', costMicros: '0' }, 7001))).toEqual({
+    expect(failureOf(prepareAccounting(eventId, fill(), { quantityAtoms: '-1000', costMicros: '0' }, 7001))).toEqual({
       _tag: 'AccountingNegativePositionCost',
-      quantityMicros: -1n,
+      quantityAtoms: -1000n,
       costMicros: 0n,
     })
-    expect(failureOf(prepareAccounting(eventId, fill(), { quantityMicros: '0', costMicros: '1' }, 7001))).toEqual({
+    expect(failureOf(prepareAccounting(eventId, fill(), { quantityAtoms: '0', costMicros: '1' }, 7001))).toEqual({
       _tag: 'AccountingEmptyPositionRetainsCost',
       costMicros: 1n,
     })
     expect(
-      failureOf(prepareAccounting(eventId, fill({ quantityMicros: '1', priceMicros: '1' }), emptyPosition, 7001)),
+      failureOf(prepareAccounting(eventId, fill({ quantityAtoms: '1000', priceAtoms: '1' }), emptyPosition, 7001)),
     ).toEqual({
       _tag: 'AccountingFillNotionalRoundedToZero',
-      quantityMicros: 1n,
-      priceMicros: 1n,
+      quantityAtoms: 1000n,
+      priceAtoms: 1n,
     })
   })
 
   test('returns parse and canonicalization defects as concrete failure data', () => {
-    expect(failureOf(prepareAccounting(eventId, fill(), { quantityMicros: 'invalid', costMicros: '0' }, 7001))).toEqual(
-      {
-        _tag: 'AccountingMicrosParseFailed',
-        field: 'position.quantityMicros',
-        value: 'invalid',
-      },
-    )
-    expect(failureOf(prepareAccounting(eventId, fill(), { quantityMicros: '+1', costMicros: '0' }, 7001))).toEqual({
+    expect(failureOf(prepareAccounting(eventId, fill(), { quantityAtoms: 'invalid', costMicros: '0' }, 7001))).toEqual({
       _tag: 'AccountingMicrosParseFailed',
-      field: 'position.quantityMicros',
+      field: 'position.quantityAtoms',
+      value: 'invalid',
+    })
+    expect(failureOf(prepareAccounting(eventId, fill(), { quantityAtoms: '+1', costMicros: '0' }, 7001))).toEqual({
+      _tag: 'AccountingMicrosParseFailed',
+      field: 'position.quantityAtoms',
       value: '+1',
     })
 
@@ -258,7 +395,9 @@ describe('execution accounting', () => {
       ledgerPlanHash,
     }
     expect(
-      failureOf(rebuildAccountingLedger({ ...material, contentHash: canonicalHashV1(material) }, 7001)),
+      failureOf(
+        rebuildAccountingLedger({ ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }, 7001),
+      ),
     ).toMatchObject({
       _tag: 'AccountingLedgerPlanHashMismatch',
       transactionId: prepared.transaction.transactionId,

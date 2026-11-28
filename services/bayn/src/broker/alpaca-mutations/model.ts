@@ -3,10 +3,27 @@ import { Context, Data, Effect, Schema } from 'effect'
 import { MutationOutcome } from '../../execution/contracts'
 import { StrictNonEmptyStringSchema as NonEmptyString, UtcInstantSchema as UtcInstant } from '../../schemas'
 import type { Intent } from '../../execution/contracts'
-import type { BrokerReadError, Order, ReadResult } from '../alpaca'
-import { Pipeable } from '../../pipeable'
+import type { BrokerReadError } from '../alpaca/failures'
+import type { Order, ReadResult } from '../alpaca/model'
+
+import { submissionDenialReason, type SubmissionDenialReason } from '../../execution/submission-denial'
 
 const RequestId = NonEmptyString.check(Schema.isMaxLength(256))
+
+/** Measured request handling, including the projection guard and complete response body. */
+export const MutationRoutingSchema = Schema.Struct({
+  startedAt: UtcInstant,
+  requestDispatchedAt: Schema.NullOr(UtcInstant),
+  completedAt: UtcInstant,
+}).check(
+  Schema.makeFilter(
+    (routing) =>
+      (routing.startedAt <= routing.completedAt &&
+        (routing.requestDispatchedAt === null ||
+          (routing.startedAt <= routing.requestDispatchedAt && routing.requestDispatchedAt <= routing.completedAt))) ||
+      'routing clocks must be ordered',
+  ),
+)
 
 export enum MutationOperation {
   Submit = 'SUBMIT',
@@ -25,6 +42,7 @@ export const MutationEvidenceSchema = Schema.Struct({
   status: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })),
   contentHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
   observedAt: UtcInstant,
+  routing: Schema.optionalKey(MutationRoutingSchema),
 })
 export type MutationEvidence = typeof MutationEvidenceSchema.Type
 export type PartialMutationEvidence = {
@@ -40,6 +58,7 @@ export class BrokerMutationError extends Data.TaggedError('BrokerMutationError')
   readonly evidence?: PartialMutationEvidence
   readonly brokerOrderId?: string
   readonly brokerCode?: string
+  readonly denialReason?: SubmissionDenialReason
   readonly cause?: Readonly<Record<string, string>>
 }> {}
 
@@ -56,7 +75,7 @@ export interface CancelReceipt {
 }
 
 export interface BrokerMutationShape {
-  readonly submit: (intent: Intent, closeOnly?: boolean) => Effect.Effect<SubmitReceipt, BrokerMutationError>
+  readonly submit: (intent: Intent) => Effect.Effect<SubmitReceipt, BrokerMutationError>
   readonly cancel: (brokerOrderId: string) => Effect.Effect<CancelReceipt, BrokerMutationError>
   readonly orderById?: (brokerOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly orderByClientId?: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
@@ -113,6 +132,7 @@ export interface BrokerMutationInvalidRequestInput {
   readonly operation: MutationOperation
   readonly message: string
   readonly cause?: unknown
+  readonly denialReason?: SubmissionDenialReason
 }
 
 export const invalidRequest = (input: BrokerMutationInvalidRequestInput) =>
@@ -120,6 +140,7 @@ export const invalidRequest = (input: BrokerMutationInvalidRequestInput) =>
     operation: input.operation,
     failure: MutationFailure.InvalidRequest,
     outcome: MutationOutcome.Known,
+    denialReason: input.denialReason ?? submissionDenialReason(input.cause),
     message: input.message,
     ...(input.cause === undefined ? {} : { cause: causeSummary(input.cause) }),
   })
@@ -143,7 +164,7 @@ export const unknownOutcome = (input: BrokerMutationUnknownOutcomeInput) =>
     ...(input.cause === undefined ? {} : { cause: causeSummary(input.cause) }),
   })
 
-const knownRejectionDataFirst = (
+export const knownRejection = (
   requestHash: string,
   evidence: MutationEvidence,
   code: string | number,
@@ -159,9 +180,7 @@ const knownRejectionDataFirst = (
     brokerCode: String(code),
   })
 
-export const knownRejection = Pipeable.dual(4, knownRejectionDataFirst)
-
-const mismatchedAcceptedOrderDataFirst = (requestHash: string, evidence: MutationEvidence, brokerOrderId: string) =>
+export const mismatchedAcceptedOrder = (requestHash: string, evidence: MutationEvidence, brokerOrderId: string) =>
   new BrokerMutationError({
     operation: MutationOperation.Submit,
     failure: MutationFailure.Unknown,
@@ -171,5 +190,3 @@ const mismatchedAcceptedOrderDataFirst = (requestHash: string, evidence: Mutatio
     evidence,
     brokerOrderId,
   })
-
-export const mismatchedAcceptedOrder = Pipeable.dual(3, mismatchedAcceptedOrderDataFirst)

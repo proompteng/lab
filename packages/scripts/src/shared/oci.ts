@@ -326,24 +326,20 @@ export const createOciIndex = (options: CreateOciIndexOptions): CreateOciIndexRe
   if (options.deferKargoTag && !kargoTag) {
     throw new Error('createOciIndex deferKargoTag requires kargoTag')
   }
-  const args = ['index', 'append']
+  const args = ['index', 'create', reference]
 
   for (const archTag of options.archTags) {
     const archReference = resolveArchReference(options.image, archTag)
-    args.push('-m', resolveDigestReference(archReference))
+    const digestReference = resolveDigestReference(archReference)
+    args.push('--digest', digestReference.slice(digestReference.lastIndexOf('@') + 1))
   }
 
-  args.push('-t', reference)
-  runRequired('crane', args)
+  for (const [key, value] of annotations) {
+    args.push('--annotation', `${key}=${value}`)
+  }
+  runRequired('regctl', args)
 
   if (annotations.length > 0) {
-    const mutateArgs = ['mutate', reference]
-    for (const [key, value] of annotations) {
-      mutateArgs.push('--annotation', `${key}=${value}`)
-    }
-    mutateArgs.push('--tag', reference)
-    runRequired('crane', mutateArgs)
-
     const manifest = JSON.parse(runRequired('crane', ['manifest', reference])) as {
       annotations?: Record<string, string>
     }

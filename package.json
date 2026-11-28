@@ -10,6 +10,7 @@
     "services/jangar/*"
   ],
   "scripts": {
+    "release:temporal": "bun packages/temporal-bun-sdk/scripts/release.ts",
     "dev:landing": "bun run --filter landing --filter @proompteng/backend dev",
     "build:landing": "turbo run build --filter=landing",
     "build:proompteng": "bun run packages/scripts/src/proompteng/build-image.ts",
@@ -29,19 +30,12 @@
     "start:cms": "bun run --filter cms start",
     "lint:cms": "bun run --filter cms lint",
     "lint:oxlint": "oxlint --config .oxlintrc.json apps packages services scripts",
-    "lint:oxlint:type": "bash -lc 'set -euo pipefail; bun run --cwd apps/app lint:oxlint:type; bun run --cwd apps/cms lint:oxlint:type; bun run --cwd apps/docs lint:oxlint:type; bun run --cwd apps/froussard lint:oxlint:type; bun run --cwd apps/kabina lint:oxlint:type; bun run --cwd apps/kitty-krew lint:oxlint:type; bun run --cwd apps/landing lint:oxlint:type; bun run --cwd apps/nata lint:oxlint:type; bun run --cwd apps/reestr lint:oxlint:type; bun run --cwd apps/reviseur lint:oxlint:type; bun run --cwd packages/agent-contracts lint:oxlint:type; bun run --cwd packages/atelier lint:oxlint:type; bun run --cwd packages/cloutt lint:oxlint:type; bun run --cwd packages/codex lint:oxlint:type; bun run --cwd packages/cx-tools lint:oxlint:type; bun run --cwd packages/discord lint:oxlint:type; bun run --cwd packages/schematic lint:oxlint:type; bun run --cwd packages/scripts lint:oxlint:type; bun run --cwd packages/temporal-bun-sdk lint:oxlint:type; bun run --cwd packages/temporal-bun-sdk-example lint:oxlint:type; bun run --cwd services/agents lint:oxlint:type; bun run --cwd services/bayn lint:oxlint:type; bun run --cwd services/bumba lint:oxlint:type; bun run --cwd services/golink lint:oxlint:type; bun run --cwd services/jangar lint:oxlint:type; bun run --cwd services/khoshut lint:oxlint:type; bun run --cwd services/memories lint:oxlint:type; bun run --cwd services/oirat lint:oxlint:type; bun run --cwd services/symphony lint:oxlint:type;'",
+    "lint:oxlint:type": "bash -lc 'set -euo pipefail; bun run --cwd apps/app lint:oxlint:type; bun run --cwd apps/cms lint:oxlint:type; bun run --cwd apps/docs lint:oxlint:type; bun run --cwd apps/froussard lint:oxlint:type; bun run --cwd apps/kabina lint:oxlint:type; bun run --cwd apps/kitty-krew lint:oxlint:type; bun run --cwd apps/landing lint:oxlint:type; bun run --cwd apps/nata lint:oxlint:type; bun run --cwd apps/reestr lint:oxlint:type; bun run --cwd apps/reviseur lint:oxlint:type; bun run --cwd packages/agent-contracts lint:oxlint:type; bun run --cwd packages/codex lint:oxlint:type; bun run --cwd packages/cx-tools lint:oxlint:type; bun run --cwd packages/discord lint:oxlint:type; bun run --cwd packages/schematic lint:oxlint:type; bun run --cwd packages/scripts lint:oxlint:type; bun run --cwd packages/temporal-bun-sdk lint:oxlint:type; bun run --cwd packages/temporal-bun-sdk-example lint:oxlint:type; bun run --cwd services/agents lint:oxlint:type; bun run --cwd services/bayn lint:oxlint:type; bun run --cwd services/bumba lint:oxlint:type; bun run --cwd services/golink lint:oxlint:type; bun run --cwd services/jangar lint:oxlint:type; bun run --cwd services/khoshut lint:oxlint:type; bun run --cwd services/memories lint:oxlint:type; bun run --cwd services/oirat lint:oxlint:type; bun run --cwd services/symphony lint:oxlint:type;'",
     "lint:argocd": "bash scripts/kubeconform.sh argocd",
     "proto:generate": "buf generate --path proto/proompteng && buf generate --template buf.temporal.gen.yaml --path proto/temporal",
     "clean": "find . -name node_modules -type d -prune -exec rm -rf '{}' +",
     "format": "bunx oxfmt",
-    "tf:plan": "tofu -chdir='./tofu/harvester' plan",
-    "tf:apply": "tofu -chdir='./tofu/harvester' apply -auto-approve",
-    "tf:destroy": "tofu -chdir='./tofu/harvester' destroy --target harvester_virtualmachine.kube-cluster -auto-approve",
-    "ansible": "ansible-playbook -vvvv -i ./ansible/inventory/hosts.ini ./ansible/playbooks/rancher2.yml",
-    "harvester:apply": "kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates",
-    "k:install": "./kubernetes/install.sh",
-    "k:bootstrap": "kubectl apply --server-side --force-conflicts -k argocd/applications/argocd",
-    "hooks:install": "node node_modules/lefthook/bin/index.js install --reset-hooks-path",
+    "hooks:install": "mise exec -- hk install --mise",
     "postinstall": "bun run postinstall:workspace-artifacts",
     "postinstall:workspace-artifacts": "bun run --filter @proompteng/codex build && bun run --filter @proompteng/discord build && bun run --filter @proompteng/otel build && bun run --filter @proompteng/temporal-bun-sdk build && bun run --filter docs fumadocs:generate && bun run --filter olden fumadocs:generate",
     "dev:convex": "bun run --filter @proompteng/backend dev",
@@ -66,13 +60,10 @@
     "build:facteur": "bun run packages/scripts/src/facteur/build-image.ts",
     "build:attic": "bun run packages/scripts/src/attic/build-image.ts",
     "build:headlamp": "bun run packages/scripts/src/headlamp/build-image.ts",
-    "build:arc-runner": "bun run packages/scripts/src/arc-runner/build-image.ts",
-    "arc-runner:deploy": "bun run packages/scripts/src/arc-runner/deploy-service.ts",
     "attic:deploy": "bun run packages/scripts/src/attic/deploy-service.ts",
     "headlamp:deploy": "bun run packages/scripts/src/headlamp/deploy-service.ts",
     "build:oirat": "bun run packages/scripts/src/oirat/build-image.ts",
     "agents:deploy": "bun run packages/scripts/src/agents/deploy-service.ts",
-    "app:deploy": "bun run packages/scripts/src/app/deploy-service.ts",
     "synthesis:deploy": "bun run packages/scripts/src/synthesis/deploy-service.ts",
     "cms:deploy": "bun run packages/scripts/src/cms/deploy-service.ts",
     "facteur:reseal": "bun run packages/scripts/src/facteur/reseal-secrets.ts",
@@ -106,6 +97,8 @@
     "flink:build": "bun run packages/scripts/src/dorvud/build-and-push.ts",
     "smoke:torghut-ws": "bun run packages/scripts/src/torghut/ws-smoke.ts",
     "atlas:code-search": "bun run packages/scripts/src/atlas/code-search.ts",
+    "context:retrieve": "bun run services/memories/context.ts",
+    "context:evaluate": "bun run services/memories/context-evaluate.ts",
     "atlas:rebuild": "bun run packages/scripts/src/atlas/rebuild.ts",
     "atlas:verify": "bun run packages/scripts/src/atlas/verify.ts",
     "lint:flamingo-hard-migration": "bun run scripts/jangar/validate-flamingo-hard-migration.ts",
@@ -113,7 +106,7 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.10",
-    "@types/bun": "^1.4.0",
+    "@types/bun": "^1.4.2",
     "nitro": "^3.0.260429-beta",
     "xstate": "^5.31.0"
   },
@@ -121,9 +114,7 @@
     "@commitlint/cli": "20.5.3",
     "@commitlint/config-conventional": "20.5.3",
     "@playwright/test": "^1.59.1",
-    "bun-types": "1.4.0",
-    "lefthook": "2.1.9",
-    "lint-staged": "16.4.0",
+    "bun-types": "1.4.2",
     "node-gyp": "12.3.0",
     "oxfmt": "^0.48.0",
     "oxlint": "^1.63.0",
@@ -131,20 +122,14 @@
     "turbo": "2.9.9",
     "typescript": "7.0.2"
   },
-  "lint-staged": {
-    "*.go": "gofmt -w",
-    "*.{ts,tsx,js,jsx}": [
-      "oxlint --config .oxlintrc.json",
-      "oxfmt --no-error-on-unmatched-pattern"
-    ],
-    "*.css": "oxfmt --no-error-on-unmatched-pattern"
-  },
   "engines": {
     "node": "24.11.1"
   },
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.2",
   "patchedDependencies": {
-    "@effect/sql-clickhouse@4.0.0-beta.99": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.99.patch",
-    "@effect/sql-clickhouse@4.0.0-beta.102": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.102.patch"
+    "@platformatic/kafka@2.12.1": "patches/@platformatic%2Fkafka@2.12.1.patch",
+    "effect@4.1.4": "patches/effect@4.1.4.patch",
+    "@effect/sql-pg@4.1.4": "patches/@effect%2Fsql-pg@4.1.4.patch",
+    "@redis/client@6.3.0": "patches/@redis%2Fclient@6.3.0.patch"
   }
 }

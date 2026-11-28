@@ -1,3 +1,4 @@
+import { DEFAULT_CODEX_MODEL } from './config'
 import type { RuntimeSnapshot, SymphonyConfig } from './types'
 
 type SymphonyConfigOverrides = Omit<
@@ -48,6 +49,7 @@ export const makeTestConfig = (overrides: SymphonyConfigOverrides = {}): Symphon
   },
   codex: {
     command: overrides.codex?.command ?? 'codex app-server',
+    model: overrides.codex?.model ?? DEFAULT_CODEX_MODEL,
     approvalPolicy: overrides.codex?.approvalPolicy ?? 'never',
     threadSandbox: overrides.codex?.threadSandbox ?? 'workspace-write',
     turnSandboxPolicy: overrides.codex?.turnSandboxPolicy ?? null,

@@ -2,24 +2,15 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { Command, Options } from '@effect/cli'
+import { Command, Flag } from 'effect/cli'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import {
-  applyManifest,
-  callUnary,
-  outputResource,
-  outputResources,
-  parseJson,
-  parseKeyValueList,
-  readTextInput,
-  toKeyValueMap,
-  waitForRunCompletion,
-  waitForRunCompletionKube,
-} from '../../runtime'
+import { applyManifest, callUnary, outputResource, outputResources, parseJson, readTextInput } from '../../runtime'
 import { buildAgentRunYaml } from '../../templates/agent-run'
 import { buildImplementationSpecYaml } from '../../templates/implementation-spec'
 import { TransportService } from '../../transport'
+import { parseRunValues } from '../run-input'
+import { waitForRunCompletion, waitForRunCompletionKube } from '../run-observation'
 import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'
 import { promptList, promptText } from '../prompt'
@@ -32,7 +23,7 @@ const resolvePromptText = (value: Option.Option<string>, question: string, allow
         catch: (error) => asAgentctlError(error, 'ValidationError'),
       })
 
-const resolvePromptList = (values: string[], question: string) =>
+const resolvePromptList = (values: readonly string[], question: string) =>
   values.length > 0
     ? Effect.succeed(
         values
@@ -56,14 +47,31 @@ const transportErrorTag = (error: unknown) => {
 }
 
 const makeInitImplCommand = () => {
-  const name = Options.optional(Options.text('name'))
-  const text = Options.optional(Options.text('text'))
-  const summary = Options.optional(Options.text('summary'))
-  const acceptance = Options.repeated(Options.text('acceptance').pipe(Options.withAlias('criteria')))
-  const labels = Options.repeated(Options.text('label').pipe(Options.withAlias('labels')))
-  const source = Options.optional(Options.text('source'))
-  const file = Options.optional(Options.text('file'))
-  const apply = Options.boolean('apply')
+  const name = Flag.optional(Flag.String('name').pipe(Flag.withDescription('Set a fixed Kubernetes resource name.')))
+  const text = Flag.optional(Flag.String('text').pipe(Flag.withDescription('Task text, @file, or - for stdin.')))
+  const summary = Flag.optional(Flag.String('summary').pipe(Flag.withDescription('Set a short task summary.')))
+  const acceptance = Flag.atLeast(
+    Flag.String('acceptance')
+      .pipe(Flag.withDescription('Add an acceptance criterion; repeat as needed.'))
+      .pipe(Flag.withAlias('criteria')),
+    0,
+  )
+  const labels = Flag.atLeast(
+    Flag.String('label')
+      .pipe(Flag.withDescription('Add an implementation label; repeat as needed.'))
+      .pipe(Flag.withAlias('labels')),
+    0,
+  )
+  const source = Flag.optional(
+    Flag.String('source').pipe(Flag.withDescription('Set source provenance as provider=...,externalId=...,url=....')),
+  )
+  const file = Flag.optional(
+    Flag.String('file').pipe(Flag.withDescription('Write the generated manifest to this path.')),
+  )
+  const apply = Flag.Boolean('apply').pipe(
+    Flag.withDefault(false),
+    Flag.withDescription('Apply the generated manifest to the selected backend.'),
+  )
 
   return Command.make(
     'impl',
@@ -154,23 +162,49 @@ const makeInitImplCommand = () => {
         const resource = parseJson(response.json)
         if (resource) outputResource(resource, resolved.output)
       }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
+  ).pipe(Command.withDescription('Generate or apply an ImplementationSpec manifest.'))
 }
 
 const makeInitRunCommand = () => {
-  const name = Options.optional(Options.text('name'))
-  const agent = Options.optional(Options.text('agent'))
-  const impl = Options.optional(Options.text('impl'))
-  const runtime = Options.optional(Options.text('runtime'))
-  const runtimeConfig = Options.repeated(Options.text('runtime-config'))
-  const param = Options.repeated(Options.text('param'))
-  const workloadImage = Options.optional(Options.text('workload-image'))
-  const cpu = Options.optional(Options.text('cpu'))
-  const memory = Options.optional(Options.text('memory'))
-  const memoryRef = Options.optional(Options.text('memory-ref'))
-  const file = Options.optional(Options.text('file'))
-  const apply = Options.boolean('apply')
-  const wait = Options.boolean('wait')
+  const name = Flag.optional(Flag.String('name').pipe(Flag.withDescription('Set a fixed Kubernetes resource name.')))
+  const agent = Flag.optional(
+    Flag.String('agent').pipe(Flag.withDescription('Reference the Agent that will execute the task.')),
+  )
+  const impl = Flag.optional(
+    Flag.String('impl').pipe(Flag.withDescription('Reference an existing ImplementationSpec.')),
+  )
+  const runtime = Flag.optional(
+    Flag.String('runtime').pipe(Flag.withDescription('Select the run runtime (workflow, job, temporal, or custom).')),
+  )
+  const runtimeConfig = Flag.atLeast(
+    Flag.String('runtime-config').pipe(Flag.withDescription('Set runtime config as key=value; repeat as needed.')),
+    0,
+  )
+  const param = Flag.atLeast(
+    Flag.String('param').pipe(
+      Flag.withDescription('Set a parameter as key=value; repeat as needed. Prompt is not a parameter.'),
+    ),
+    0,
+  )
+  const workloadImage = Flag.optional(
+    Flag.String('workload-image').pipe(Flag.withDescription('Override the runner image.')),
+  )
+  const cpu = Flag.optional(Flag.String('cpu').pipe(Flag.withDescription('Set the runner CPU request.')))
+  const memory = Flag.optional(Flag.String('memory').pipe(Flag.withDescription('Set the runner memory request.')))
+  const memoryRef = Flag.optional(
+    Flag.String('memory-ref').pipe(Flag.withDescription('Reference an Agents Memory resource.')),
+  )
+  const file = Flag.optional(
+    Flag.String('file').pipe(Flag.withDescription('Write the generated manifest to this path.')),
+  )
+  const apply = Flag.Boolean('apply').pipe(
+    Flag.withDefault(false),
+    Flag.withDescription('Apply the generated manifest to the selected backend.'),
+  )
+  const wait = Flag.Boolean('wait').pipe(
+    Flag.withDefault(false),
+    Flag.withDescription('Wait for the applied run to finish.'),
+  )
 
   return Command.make(
     'run',
@@ -193,6 +227,14 @@ const makeInitRunCommand = () => {
       Effect.gen(function* () {
         const { resolved } = yield* AgentctlContext
         const transport = yield* TransportService
+        const suppliedParams = yield* Effect.try({
+          try: () =>
+            parseRunValues(
+              param.flatMap((value) => value.split(',')),
+              '--param',
+            ),
+          catch: (error) => asAgentctlError(error, 'ValidationError'),
+        })
         const resolvedAgent = yield* resolvePromptText(agent, 'Agent name')
         const resolvedImpl = yield* resolvePromptText(impl, 'ImplementationSpec name')
         const resolvedRuntime = yield* resolvePromptText(
@@ -201,11 +243,23 @@ const makeInitRunCommand = () => {
           false,
           'workflow',
         )
-        const params = yield* resolvePromptList(param, 'Parameters (key=value, comma-separated, optional)')
-        const runtimeParams = yield* resolvePromptList(
+        const paramEntries = param.length
+          ? []
+          : yield* resolvePromptList(param, 'Parameters (key=value, comma-separated, optional)')
+        const parameters = param.length
+          ? suppliedParams
+          : yield* Effect.try({
+              try: () => parseRunValues(paramEntries, '--param'),
+              catch: (error) => asAgentctlError(error, 'ValidationError'),
+            })
+        const configEntries = yield* resolvePromptList(
           runtimeConfig,
           'Runtime config (key=value, comma-separated, optional)',
         )
+        const config = yield* Effect.try({
+          try: () => parseRunValues(configEntries, '--runtime-config'),
+          catch: (error) => asAgentctlError(error, 'ValidationError'),
+        })
         const resolvedWorkloadImage = Option.getOrUndefined(workloadImage)
         const resolvedCpu = Option.getOrUndefined(cpu)
         const resolvedMemory = Option.getOrUndefined(memory)
@@ -218,8 +272,8 @@ const makeInitRunCommand = () => {
           agentName: resolvedAgent,
           implName: resolvedImpl,
           runtimeType: resolvedRuntime,
-          runtimeConfig: toKeyValueMap(parseKeyValueList(runtimeParams)),
-          parameters: toKeyValueMap(parseKeyValueList(params)),
+          runtimeConfig: config,
+          parameters,
           memoryRef: resolvedMemoryRef,
           workloadImage: resolvedWorkloadImage,
           cpu: resolvedCpu,
@@ -246,9 +300,7 @@ const makeInitRunCommand = () => {
             const resource = resources[0]
             const runName = (resource?.metadata as { name?: string } | undefined)?.name
             if (typeof runName === 'string' && runName) {
-              yield* Effect.promise(() =>
-                waitForRunCompletionKube(transport.backend, runName, resolved.namespace, resolved.output),
-              )
+              yield* waitForRunCompletionKube(transport.backend, runName, resolved.namespace, resolved.output)
             }
           }
           return
@@ -268,23 +320,18 @@ const makeInitRunCommand = () => {
           if (wait) {
             const runName = (resource.metadata as { name?: string } | undefined)?.name
             if (runName) {
-              const exitCode = yield* Effect.promise(() =>
-                waitForRunCompletion(
-                  transport.client,
-                  transport.metadata,
-                  runName,
-                  resolved.namespace,
-                  resolved.output,
-                ),
+              yield* waitForRunCompletion(
+                transport.client,
+                transport.metadata,
+                runName,
+                resolved.namespace,
+                resolved.output,
               )
-              if (exitCode !== 0) {
-                throw { _tag: 'GrpcError', message: '' }
-              }
             }
           }
         }
       }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
+  ).pipe(Command.withDescription('Generate or apply an AgentRun manifest.'))
 }
 
 export const makeInitCommand = () => {
@@ -292,7 +339,7 @@ export const makeInitCommand = () => {
     Effect.sync(() => {
       console.log('Usage: agentctl init <impl|run>')
     }),
-  )
+  ).pipe(Command.withDescription('Generate common Agents manifests.'))
 
   return Command.withSubcommands(base, [makeInitImplCommand(), makeInitRunCommand()])
 }

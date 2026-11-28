@@ -3,33 +3,32 @@
 This directory contains retained Torghut design contracts. It is useful for rationale, contract archaeology, and
 implementation background, but it is not the primary live operations source of truth.
 
-For current operational decisions, start with `docs/torghut/README.md`, live GitOps, service code, and runtime status
-endpoints.
+For current operational decisions, start with [Torghut documentation](../README.md), live GitOps, service code, and
+runtime status endpoints.
 
 ## Current Entry Points
 
-- Production topology baseline: `v1/torghut-autonomous-trading-system.md`
-- Historical simulation baseline: `v1/historical-dataset-simulation.md`
-- Trading-day simulation automation: `v1/trading-day-simulation-automation.md`
-- Design archive index: `v6/index.md`
-- Historical authority-map snapshot:
-  `current-source-of-truth-and-priority-guide-2026-03-09.md`
+- Historical production topology: [v1 design](v1/torghut-autonomous-trading-system.md).
+- Simulation operations: [current playbook](../rollouts/historical-simulation-playbook.md).
+- Proof and capital-authority contracts: [v6 entry point](v6/index.md).
 
 ## Corpus Layout
 
-- `v1/`: cohesive production topology pass aligned to early production reality.
-- `v2/`: research and profitability blueprint; may drift from production.
-- `v3/`: flexible quant strategy engine and full-loop autonomy handoff.
-- `v4/`: quant and LLM profitability expansion pack.
-- `v5/`: strategy build pack and per-paper technique synthesis.
-- `v6/`: historical intraday autonomy, proof, capital authority, and Jangar/Torghut contract archive. The March 2026 options-lane series in `v6/33` through `v6/37` is rationale/archaeology, not current cluster health or trading authority.
+- `v1/`: topology and operational contracts still referenced by maintained docs and alert rules.
+- `v3/full-loop/`: the LLM advisory rollout contract referenced by alert rules, plus historical YAML templates.
+- `v6/`: proof, capital-authority, and Jangar integration contracts referenced by the implementation, tests, or current
+  runbooks; the completion matrix remains machine-consumed.
+
+Superseded version packs, handoff catalogs, and the dated authority map are available in Git history.
 
 ## Authority And Retention
 
 A file inside this directory may explain why a design existed, but it is not current production truth without live
-code, GitOps, and runtime validation. Keep files only while source, configuration, tests, maintained documentation, or
-another retained contract cites them. Completed rollout journals and orphaned proposals belong in Git history. Use
-`../../documentation-authority.md` and `../README.md` before treating any dated design as actionable.
+code, GitOps, and runtime validation. Keep files only while a live external consumer or maintained current document
+needs them, or when they preserve clearly unique historical rationale/provenance. Archive-to-archive references,
+generated catalogs, and obsolete indexes do not justify retention. Completed rollout journals and orphaned proposals
+belong in Git history. Use `../../documentation-authority.md` and `../README.md` before treating any dated design as
+actionable.
 
 ## Operator Rule
 
@@ -42,12 +41,8 @@ Before treating any dated design file as current truth, verify it against:
 - `GET /trading/revenue-repair`
 - relevant Argo application and Kubernetes object state
 
-## Historical Audits
+## Archive Boundary
 
-- Every design document now has a `Source Implementation Audit (2026-07-04)` block with current source evidence,
-  implementation status, and drift notes.
-- `implementation-audit.md` summarizes the source-read audit coverage.
-- `implementation-status-matrix-2026-02-21.md` has been refreshed as the current source-read matrix for the audited
-  design corpus.
-- `implementation-status-matrix-2026-02-21.md`
-- `implementation-audit.md`
+The retained files are implementation references, not a build order or a record of current rollout status. For current
+behavior, use `docs/torghut/README.md`, live GitOps, service code, and runtime readback. Recover removed snapshots from
+Git history instead of restoring an obsolete catalog.

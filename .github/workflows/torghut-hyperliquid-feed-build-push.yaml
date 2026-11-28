@@ -17,8 +17,6 @@ on:
       - 'services/dorvud/hyperliquid-feed/**'
       - 'nix/images/dorvud-jvm-service.nix'
       - 'nix/images/torghut-hyperliquid-feed.nix'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/torghut-hyperliquid-feed/**'
   workflow_dispatch:
 
@@ -33,6 +31,7 @@ jobs:
     with:
       image_name: torghut-hyperliquid-feed
       package_attr: torghut-hyperliquid-feed-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}

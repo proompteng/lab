@@ -22,7 +22,7 @@ export type AgentRunKubeOperation =
   | 'get-implementation-spec'
   | 'get-vcs-provider'
   | 'evaluate-admission-limits'
-  | 'apply-agent-run'
+  | 'create-agent-run'
 
 export class AgentRunInvalidPayloadError extends Data.TaggedError('AgentRunInvalidPayloadError')<{
   readonly message: string

@@ -5,10 +5,25 @@ import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
+import io.micrometer.core.instrument.binder.jvm.JvmGcMetrics
+import io.micrometer.core.instrument.binder.jvm.JvmMemoryMetrics
+import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+
+internal fun observeJvmMetrics(registry: MeterRegistry): JvmGcMetrics =
+  JvmGcMetrics().apply {
+    try {
+      bindTo(registry)
+      JvmMemoryMetrics().bindTo(registry)
+      JvmThreadMetrics().bindTo(registry)
+    } catch (error: Throwable) {
+      close()
+      throw error
+    }
+  }
 
 internal class ForwarderMetrics(
   private val registry: MeterRegistry,

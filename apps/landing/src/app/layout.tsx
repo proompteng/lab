@@ -1,7 +1,21 @@
 import type { Metadata, Viewport } from 'next'
+import localFont from 'next/font/local'
 import Script from 'next/script'
 import Providers from '@/components/providers'
 import './globals.css'
+
+const geistSans = localFont({
+  src: '../../public/tengri/fonts/GeistSans.woff2',
+  variable: '--font-geist-sans',
+  weight: '100 900',
+})
+const geistMono = localFont({
+  src: '../../public/tengri/fonts/GeistMono.woff2',
+  variable: '--font-geist-mono',
+  weight: '100 900',
+  adjustFontFallback: false,
+  fallback: ['Tengri Mono Symbols', 'ui-monospace', 'monospace'],
+})
 
 const WEBSITE_JSON_LD_ID = 'ld+json-website'
 const PRODUCT_JSON_LD_ID = 'ld+json-product'
@@ -181,7 +195,11 @@ export default function RootLayout({
     ],
   }
   return (
-    <html lang="en" suppressHydrationWarning className="dark scroll-smooth">
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`dark scroll-smooth ${geistSans.variable} ${geistMono.variable}`}
+    >
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

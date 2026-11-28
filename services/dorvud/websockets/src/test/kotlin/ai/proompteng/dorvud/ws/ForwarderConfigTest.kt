@@ -10,6 +10,99 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class ForwarderConfigTest {
+  @Test
+  fun `all shared equity bars stream without changing executable quote and trade paths`() {
+    val symbols = "AAPL,AMD,AMZN,AVGO,COHR,CRDO,GOOGL,INTC,IWM,LITE,META,MRVL,MSFT,MU,NFLX,NVDA,QQQ,SMH,SNDK,SPY,TSLA,WDC"
+    val streamed = "AAPL,AMZN,NVDA,SPY"
+    val latest = "AMD,AVGO,COHR,CRDO,GOOGL,INTC,IWM,LITE,META,MRVL,MSFT,MU,NFLX,QQQ,SMH,SNDK,TSLA,WDC"
+    val parsed =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "SYMBOLS" to symbols,
+          "ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars",
+          "ALPACA_MARKET_DATA_BARS_SYMBOLS" to symbols,
+          "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to streamed,
+          "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to streamed,
+          "ALPACA_LATEST_SYMBOLS" to latest,
+        ),
+      )
+    val channels = parsed.marketDataFeedConfigs().single().desiredSymbolsByChannel(parsed.staticSymbols)
+    assertEquals(30, channels.values.sumOf { it.size })
+    assertEquals(symbols.split(",").toSet(), channels.getValue("bars").toSet())
+    for (channel in listOf("quotes", "trades")) {
+      assertEquals(streamed.split(",").toSet(), channels.getValue(channel).toSet())
+      assertEquals(symbols.split(",").toSet(), (channels.getValue(channel) + latest.split(",")).toSet())
+    }
+    assertEquals(LatestMarketDataConfig(latest.split(","), 2000, 10_000), parsed.latestMarketData)
+  }
+
+  @Test
+  fun `expanded equity source preserves thirty admitted streams and polls only missing completed bars`() {
+    val old = "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
+    val added = "GOOGL,INTC,META,MSFT,NFLX,TSLA"
+    val streamed = "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
+    val base =
+      mapOf(
+        "ALPACA_KEY_ID" to "key",
+        "ALPACA_SECRET_KEY" to "secret",
+        "SYMBOLS" to "$old,$added",
+        "ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars",
+        "ALPACA_MARKET_DATA_BARS_SYMBOLS" to old,
+        "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to streamed,
+        "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to streamed,
+        "ALPACA_LATEST_SYMBOLS" to "AMD,AVGO,COHR,CRDO,GOOGL,INTC,LITE,META,MRVL,MSFT,MU,NFLX,SNDK,TSLA,WDC",
+        "ALPACA_LATEST_BAR_SYMBOLS" to added,
+      )
+    val parsed = ForwarderConfig.fromEnv(base)
+    assertEquals(
+      30,
+      parsed
+        .marketDataFeedConfigs()
+        .single()
+        .desiredSymbolsByChannel(parsed.staticSymbols)
+        .values
+        .sumOf { it.size },
+    )
+    assertEquals(added.split(","), requireNotNull(parsed.latestMarketData).barSymbols)
+    for (invalid in listOf("AAPL", "TSLA,TSLA", "UNREQUESTED")) {
+      assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base + ("ALPACA_LATEST_BAR_SYMBOLS" to invalid)) }
+    }
+    assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base - "ALPACA_LATEST_SYMBOLS") }
+  }
+
+  @Test
+  fun `latest observations require explicit missing symbols and a bounded single IEX producer`() {
+    val base =
+      mapOf(
+        "ALPACA_KEY_ID" to "key",
+        "ALPACA_SECRET_KEY" to "secret",
+        "SYMBOLS" to "AMD,SPY",
+        "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to "SPY",
+        "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to "SPY",
+      )
+    assertEquals(null, ForwarderConfig.fromEnv(base).latestMarketData)
+    val enabled = base + ("ALPACA_LATEST_SYMBOLS" to "AMD")
+    assertEquals(LatestMarketDataConfig(listOf("AMD"), 2000, 10_000), ForwarderConfig.fromEnv(enabled).latestMarketData)
+    for (invalid in listOf(
+      mapOf("ALPACA_LATEST_SYMBOLS" to ""),
+      mapOf("ALPACA_LATEST_SYMBOLS" to "AMD,AMD"),
+      mapOf("ALPACA_LATEST_SYMBOLS" to "MSFT"),
+      mapOf("ALPACA_LATEST_SYMBOLS" to "SPY"),
+      mapOf("ALPACA_FEED" to "sip"),
+      mapOf("SHARD_COUNT" to "2"),
+      mapOf("JANGAR_SYMBOLS_URL" to "https://example.test"),
+      mapOf("ALPACA_LATEST_POLL_INTERVAL_MS" to "100"),
+      mapOf("ALPACA_LATEST_POLL_INTERVAL_MS" to "bad"),
+      mapOf("ALPACA_LATEST_MAX_AGE_MS" to "10001"),
+      mapOf("ALPACA_LATEST_MAX_AGE_MS" to "0"),
+    )) {
+      assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(enabled + invalid) }
+    }
+    assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base + ("ALPACA_LATEST_MAX_AGE_MS" to "1000")) }
+  }
+
   private val authoritativeUniverse =
     mapOf(
       "SYMBOLS" to "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY",
@@ -31,15 +124,10 @@ class ForwarderConfigTest {
     )
 
   @Test
-  fun `preserves the supported sip core feed when observations are disabled`() {
+  fun `configures a small consolidated sip lane without a raised budget`() {
     val cfg =
       ForwarderConfig.fromEnv(
-        mapOf(
-          "ALPACA_KEY_ID" to "key",
-          "ALPACA_SECRET_KEY" to "secret",
-          "ALPACA_FEED" to "sip",
-          "SYMBOLS" to "AAPL",
-        ),
+        sipTestEnv(listOf("AAPL")),
       )
 
     val runtime = cfg.marketDataFeedConfigs().single()
@@ -80,12 +168,8 @@ class ForwarderConfigTest {
   fun `keeps consolidated sip core data separate from delayed observation data`() {
     val cfg =
       ForwarderConfig.fromEnv(
-        mapOf(
-          "ALPACA_KEY_ID" to "key",
-          "ALPACA_SECRET_KEY" to "secret",
-          "ALPACA_FEED" to "sip",
-          "ALPACA_OBSERVATION_FEEDS" to "delayed_sip",
-        ) + authoritativeUniverse + observationTopics,
+        sipTestEnv(listOf("AAPL", "AMZN", "IWM", "NVDA", "QQQ", "SMH", "SPY")) +
+          ("ALPACA_OBSERVATION_FEEDS" to "delayed_sip") + observationTopics,
       )
 
     val runtimes = cfg.marketDataFeedConfigs()
@@ -223,7 +307,7 @@ class ForwarderConfigTest {
     assertEquals(12L, cfg.barsBackfillLookbackHours)
     assertFalse(cfg.enableTradeUpdates)
     assertEquals(AlpacaMarketType.EQUITY, cfg.alpacaMarketType)
-    assertEquals("us", cfg.alpacaCryptoLocation)
+    assertEquals(null, cfg.cryptoFeed)
     assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), cfg.alpacaMarketDataChannels)
     assertEquals(emptySet(), cfg.optionsMarketHolidays)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
@@ -507,14 +591,15 @@ class ForwarderConfigTest {
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
-          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols?assetClass=crypto",
           "ALPACA_MARKET_TYPE" to "crypto",
+          "SYMBOLS" to "BTC/USD",
+          "TOPIC_CRYPTO_EVENTS" to "bayn.market-data.crypto.v1",
         ),
       )
 
     assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
-    assertEquals("us", cfg.alpacaCryptoLocation)
-    assertEquals(listOf("trades", "quotes", "bars"), cfg.alpacaMarketDataChannels)
+    assertEquals("us", cfg.cryptoFeed?.location)
+    assertEquals(listOf("trades", "quotes", "bars", "updatedBars", "orderbooks"), cfg.alpacaMarketDataChannels)
   }
 
   @Test
@@ -524,14 +609,15 @@ class ForwarderConfigTest {
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
-          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols?assetClass=crypto",
           "ALPACA_MARKET_TYPE" to "crypto",
+          "SYMBOLS" to "BTC/USD",
+          "TOPIC_CRYPTO_EVENTS" to "bayn.market-data.crypto.v1",
           "ALPACA_CRYPTO_LOCATION" to "eu-1",
         ),
       )
 
     assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
-    assertEquals("eu-1", cfg.alpacaCryptoLocation)
+    assertEquals("eu-1", cfg.cryptoFeed?.location)
   }
 
   @Test
@@ -559,13 +645,15 @@ class ForwarderConfigTest {
 
   @Test
   fun `rejects unknown crypto location`() {
-    assertFailsWith<IllegalStateException> {
+    assertFailsWith<IllegalArgumentException> {
       ForwarderConfig.fromEnv(
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
           "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
           "ALPACA_MARKET_TYPE" to "crypto",
+          "SYMBOLS" to "BTC/USD",
+          "TOPIC_CRYPTO_EVENTS" to "bayn.market-data.crypto.v1",
           "ALPACA_CRYPTO_LOCATION" to "moon-1",
         ),
       )

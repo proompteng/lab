@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.candidate_specs.support import (
     Decimal,
     _TestCandidateSpecsBase,
@@ -7,6 +9,8 @@ from tests.candidate_specs.support import (
     candidate_specs_module,
     compile_candidate_specs,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestAlphaDecayClaimAddsPredictabilityStressContract(_TestCandidateSpecsBase):

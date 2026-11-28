@@ -7,6 +7,11 @@ spec:
     spec:
       containers:
         - name: dex
+          readinessProbe:
+            tcpSocket:
+              port: 5556
+            periodSeconds: 5
+            timeoutSeconds: 2
           env:
             - name: ARGO_WORKFLOWS_SSO_CLIENT_SECRET
               valueFrom:

@@ -1,19 +1,6 @@
 # 201. Torghut Alpha Closure Settlement And Feature Replay Market (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
-
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
-- Matched implementation area: Simulation, replay, backtesting, and Lean.
-- Current source evidence:
-  - `services/torghut/scripts/run_local_simple_lane_replay.py`
-  - `services/torghut/scripts/verify_historical_simulation_parity.py`
-  - `services/torghut/app/api/trading_misc/lean_backtests.py`
-  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
-  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
-- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 
@@ -365,7 +352,6 @@ M5: Add Jangar slot-governor enforcement.
 
 Architecture PR validation:
 
-- `bunx oxfmt --check docs/agents/designs/196-jangar-alpha-closure-slot-governor-and-no-delta-budget-2026-05-14.md docs/torghut/design-system/v6/201-torghut-alpha-closure-settlement-and-feature-replay-market-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
 - `git diff --check`
 
 Engineer validation:

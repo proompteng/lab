@@ -1,6 +1,6 @@
 # 129. Jangar Heartbeat Lane Escrow And Material Verdict Stability (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar controller heartbeat authority, AgentRun ingestion witnesses, material action verdict stability, Torghut
@@ -14,7 +14,6 @@ Extends:
 
 - `128-jangar-runtime-convergence-ledger-and-capital-gate-receipts-2026-05-06.md`
 - `128-jangar-terminal-run-settlement-and-forecast-reentry-admission-2026-05-06.md`
-- `121-jangar-controller-witness-uplink-and-proof-renewal-train-2026-05-06.md`
 - `120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
 
 ## Decision

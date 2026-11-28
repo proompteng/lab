@@ -8,14 +8,14 @@ let
   system = pkgs.stdenv.hostPlatform.system;
   baseImageHash =
     {
-      x86_64-linux = "sha256-+F0Nwl1kywqH3jmGXSo4UhL2+gdZ+uAGVO3HE7wWx50=";
-      aarch64-linux = "sha256-kFvKpWFp5+O+cPF8tKTrkYNd3263sawXaYz6R8wKFuo=";
+      x86_64-linux = "sha256-b1vS0IDuXoWsoUF1mKgBLc8SncwvtXgIwHkDYGY/TDk=";
+      aarch64-linux = "sha256-y0LvyBN6u7W0CC/49uS+0VwNtViKgUW4r9Zp/V842jg=";
     }
     .${system} or (throw "arc-runner-image is not supported on ${system}");
 
   baseImage = pkgs.dockerTools.pullImage {
     imageName = "ghcr.io/actions/actions-runner";
-    imageDigest = "sha256:08c30b0a7105f64bddfc485d2487a22aa03932a791402393352fdf674bda2c29";
+    imageDigest = "sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4";
     hash = baseImageHash;
     finalImageName = "ghcr.io/actions/actions-runner";
     finalImageTag = "pinned";

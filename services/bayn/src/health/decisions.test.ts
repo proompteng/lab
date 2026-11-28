@@ -1,0 +1,502 @@
+import { expect, test } from 'bun:test'
+import { Effect, Ref } from 'effect'
+
+import { CycleOperationsCondition, CycleOperationsReason } from '../cycle/observability'
+import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
+import { readinessResponseDecision, renderPrometheusMetrics, statusFacts } from '../http'
+import {
+  ExecutionControllerOutcome,
+  executionControllerStatusHasCompletion,
+  type ExecutionControllerStatus,
+  type ExecutionControllerStatusWithCompletion,
+} from '../execution/controller-status'
+import type { ExecutionControllerHealth } from '../execution/controller-health'
+import { config, provenance, readyState } from '../testing/runtime-fixtures'
+import { deriveHealthTransition } from './decisions'
+import type { HealthProbeResults } from './model'
+import { checkHealth } from './program'
+
+const checkedAt = '2026-08-28T16:00:00.000Z'
+const results: HealthProbeResults = {
+  postgresql: { _tag: 'Available', value: undefined },
+  tigerBeetle: { _tag: 'Available', value: undefined },
+  broker: null,
+  cycle: {
+    _tag: 'Available',
+    value: {
+      current: null,
+      last: null,
+      unfinishedCycleCount: 0,
+      authority: null,
+      reconciliation: null,
+      mutations: {
+        eventCount: 0,
+        recoveryFoundCount: 0,
+        approvedIntentCount: 0,
+        acknowledgedIntentCount: 0,
+        unresolvedCount: 0,
+        oldestUnresolvedAt: null,
+        latestOccurredAt: null,
+      },
+    },
+  },
+}
+const transition = (probes: HealthProbeResults) => {
+  const current = readyState()
+  return deriveHealthTransition(
+    { ...current, autonomousCycleLoop: { ...current.autonomousCycleLoop, owner: 'Process' } },
+    {
+      config,
+      results: probes,
+      broker: undefined,
+      cycleFiber: { _tag: 'Running' },
+      clock: { _tag: 'Available', checkedAt, checkedAtMs: Date.parse(checkedAt) },
+    },
+  )
+}
+
+test('confirmed overnight cash fee waits block execution without reporting stale reconciliation as a failure', () => {
+  const observedAt = '2026-11-25T01:06:00.000Z'
+  const accountId = 'test-account'
+  const initial = readyState()
+  const generationHash = 'a'.repeat(64)
+  const state = {
+    ...initial,
+    capitalActivation: {
+      _tag: 'Realized',
+      requestHash: 'b'.repeat(64),
+      generationHash,
+      grant: 'Research',
+      scope: 'Standing',
+    },
+    autonomousCycleLoop: {
+      ...initial.autonomousCycleLoop,
+      owner: 'Process',
+      lastPass: { result: 'SUCCESS', outcome: 'WAITING', waitReason: 'BROKER_OBSERVATION_PENDING', observedAt },
+    },
+  } as const
+  if (results.cycle._tag !== 'Available') throw new Error('Missing cycle projection fixture')
+  const projection = {
+    ...results.cycle.value,
+    authority: {
+      generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      reason: null,
+      updatedAt: observedAt,
+    },
+    reconciliation: {
+      accountId,
+      reconciliationId: 'c'.repeat(64),
+      status: ReconciliationStatus.Exact,
+      discrepancyCount: 0,
+      reconciledAt: observedAt,
+      coversLatestMutation: true,
+    },
+  }
+  const pending = {
+    _tag: 'Unavailable',
+    error: 'Broker observation is awaiting authoritative cash fee records',
+    observationFailure: 'CASH_FEES_PENDING',
+  } as const
+  const observe = (at: string, overrides?: Partial<HealthProbeResults>) =>
+    deriveHealthTransition(
+      {
+        ...state,
+        autonomousCycleLoop: {
+          ...state.autonomousCycleLoop,
+          lastPass: { ...state.autonomousCycleLoop.lastPass, observedAt: at },
+        },
+      },
+      {
+        config,
+        results: { ...results, broker: pending, cycle: { _tag: 'Available', value: projection }, ...overrides },
+        broker: { expectedAccountId: accountId, executionEligible: true, executionDisabledReason: null },
+        cycleFiber: { _tag: 'Running' },
+        clock: { _tag: 'Available', checkedAt: at, checkedAtMs: Date.parse(at) },
+      },
+    ).next
+  const overnight = '2026-11-25T07:52:59.000Z'
+  for (const at of [observedAt, overnight]) {
+    const waiting = observe(at)
+    expect(statusFacts(waiting, config.execution, provenance, config.build.verification)).toMatchObject({
+      operational: { ready: false },
+      cycle: {
+        condition: CycleOperationsCondition.Waiting,
+        reason: 'CASH_FEES_PENDING',
+        alerts: { reconciliationBlocked: true, cycleFailed: false },
+      },
+      executionSession: { condition: 'BLOCKED', ready: false },
+      broker: { readAvailable: false, reasonCode: 'BROKER_CASH_FEES_PENDING' },
+    })
+    expect(readinessResponseDecision(waiting).status).toBe(503)
+    const metrics = renderPrometheusMetrics(waiting, config, provenance, config.build.verification)
+    expect(metrics).toContain('bayn_cycle_reason{reason="cash_fees_pending"} 1\n')
+    expect(metrics).toContain('bayn_cycle_condition{condition="failed"} 0\n')
+  }
+
+  const unavailable = observe(overnight, { broker: { _tag: 'Unavailable', error: 'Broker read unavailable' } })
+  expect(unavailable.cycle).toMatchObject({
+    condition: CycleOperationsCondition.Failed,
+    reason: CycleOperationsReason.ReconciliationStale,
+  })
+  const journalFailed = observe(overnight, { tigerBeetle: { _tag: 'Unavailable', error: 'Ledger unavailable' } })
+  expect(journalFailed.cycle.condition).toBe(CycleOperationsCondition.Failed)
+  const mismatch = observe(overnight, {
+    cycle: {
+      _tag: 'Available',
+      value: {
+        ...projection,
+        reconciliation: { ...projection.reconciliation, status: ReconciliationStatus.Discrepancy, discrepancyCount: 1 },
+      },
+    },
+  })
+  expect(mismatch.cycle).toMatchObject({
+    condition: CycleOperationsCondition.Failed,
+    reason: CycleOperationsReason.ReconciliationDiscrepancy,
+  })
+
+  const settledAt = '2026-11-25T07:53:00.000Z'
+  const brokerAvailable = { _tag: 'Available', value: { accountId, permissionError: null } } as const
+  expect(observe(settledAt, { broker: brokerAvailable }).cycle.reason).toBe(CycleOperationsReason.ReconciliationStale)
+  const settled = observe(settledAt, {
+    broker: brokerAvailable,
+    cycle: {
+      _tag: 'Available',
+      value: { ...projection, reconciliation: { ...projection.reconciliation, reconciledAt: settledAt } },
+    },
+  })
+  expect(settled.cycle.reason).toBe(CycleOperationsReason.NoCycleRecorded)
+  expect(readinessResponseDecision(settled).status).toBe(200)
+})
+
+const completedController: ExecutionControllerStatusWithCompletion = {
+  schemaVersion: 1,
+  controllerKey: 'a'.repeat(64),
+  planHash: 'b'.repeat(64),
+  active: true,
+  epoch: 1,
+  nextSequence: 1,
+  lastSequence: 0,
+  lastOutcome: ExecutionControllerOutcome.Waiting,
+  lastReceiptHash: 'c'.repeat(64),
+  completedAt: checkedAt,
+  lastPass: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: checkedAt },
+}
+
+const operationalFor = (status: ExecutionControllerStatus | null): ExecutionControllerHealth | null =>
+  status === null
+    ? null
+    : {
+        schemaVersion: 'bayn.execution-controller-health.v1',
+        controllerKey: status.controllerKey,
+        planHash: status.planHash,
+        sourceRevision: config.build.sourceRevision,
+        active: status.active,
+        epoch: status.epoch,
+        nextSequence: status.nextSequence,
+        ...(executionControllerStatusHasCompletion(status) && status.nextDueAt !== undefined
+          ? { nextDueAt: status.nextDueAt }
+          : {}),
+      }
+
+const controllerTransition = (
+  status: ExecutionControllerStatus | null,
+  nowMs = Date.parse(checkedAt),
+  operational = operationalFor(status),
+) => {
+  const current = readyState()
+  return deriveHealthTransition(
+    {
+      ...current,
+      executionController: {
+        configured: true,
+        controllerKey: completedController.controllerKey,
+        planHash: completedController.planHash,
+        status: null,
+        readAvailable: true,
+        checkedAt,
+        error: null,
+      },
+    },
+    {
+      config,
+      results: { ...results, executionController: { _tag: 'Available', value: { status, operational } } },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: { _tag: 'Available', checkedAt: new Date(nowMs).toISOString(), checkedAtMs: nowMs },
+    },
+  )
+}
+
+test('a completed streaming controller stays ready while idle without a domain deadline', () => {
+  const nowMs = Date.parse(checkedAt) + config.cycleStallThresholdMs * 2
+  const result = controllerTransition(completedController, nowMs)
+  expect(result.health.dependencies.cycleRunner).toMatchObject({ status: 'AVAILABLE', error: null })
+  expect(readinessResponseDecision(result.next, { nowMs, leaseMs: 1000 })).toMatchObject({
+    status: 200,
+    body: { ready: true },
+  })
+  expect(statusFacts(result.next, config.execution, provenance, config.build.verification)).toMatchObject({
+    operational: { ready: true },
+  })
+})
+
+const completedOperational: ExecutionControllerHealth = {
+  schemaVersion: 'bayn.execution-controller-health.v1',
+  controllerKey: completedController.controllerKey,
+  planHash: completedController.planHash,
+  sourceRevision: config.build.sourceRevision,
+  active: true,
+  epoch: completedController.epoch,
+  nextSequence: completedController.nextSequence,
+}
+
+test('an accepted wake ages from its original acceptance while an idle SQL completion remains unchanged', () => {
+  const acceptedAtMs = Date.parse(checkedAt) + 1
+  const operational = {
+    ...completedOperational,
+    pendingWake: { sequence: completedController.nextSequence, acceptedAt: new Date(acceptedAtMs).toISOString() },
+  }
+  const deadline = acceptedAtMs + config.cycleStallThresholdMs
+  expect(
+    readinessResponseDecision(controllerTransition(completedController, deadline - 1, operational).next).status,
+  ).toBe(200)
+  const stalled = controllerTransition(completedController, deadline, operational)
+  expect(stalled.health.dependencies.cycleRunner).toMatchObject({
+    status: 'UNAVAILABLE',
+    error: `Restate execution controller is overdue by ${config.cycleStallThresholdMs}ms`,
+  })
+  expect(readinessResponseDecision(stalled.next).status).toBe(503)
+  const recoveredAt = deadline + 1
+  const recovered = {
+    ...completedController,
+    lastSequence: 1,
+    nextSequence: 2,
+    completedAt: new Date(recoveredAt).toISOString(),
+  }
+  expect(
+    readinessResponseDecision(
+      controllerTransition(recovered, recoveredAt + config.cycleStallThresholdMs * 2, {
+        ...completedOperational,
+        nextSequence: 2,
+      }).next,
+    ).status,
+  ).toBe(200)
+})
+
+test('a newer SQL completion cannot hide outstanding canonical owner work', () => {
+  const nowMs = Date.parse(checkedAt) + config.cycleStallThresholdMs
+  const status = {
+    ...completedController,
+    lastSequence: 1,
+    nextSequence: 2,
+    completedAt: new Date(nowMs).toISOString(),
+  }
+  const current = controllerTransition(status, nowMs, {
+    ...completedOperational,
+    pendingWake: { sequence: 1, acceptedAt: checkedAt },
+  })
+  expect(readinessResponseDecision(current.next).status).toBe(503)
+})
+
+test('a canonical domain deadline survives SQL completion while the owner is still finalizing', () => {
+  const nowMs = Date.parse(checkedAt) + config.cycleStallThresholdMs
+  const status = {
+    ...completedController,
+    lastSequence: 1,
+    nextSequence: 2,
+    completedAt: new Date(nowMs).toISOString(),
+  }
+  expect(
+    readinessResponseDecision(
+      controllerTransition(status, nowMs, { ...completedOperational, nextDueAt: checkedAt }).next,
+    ).status,
+  ).toBe(503)
+})
+
+test.each([
+  { name: 'missing operational state', operational: null },
+  { name: 'different operational identity', operational: { ...completedOperational, controllerKey: 'd'.repeat(64) } },
+  { name: 'different operational plan', operational: { ...completedOperational, planHash: 'd'.repeat(64) } },
+  { name: 'different operational source', operational: { ...completedOperational, sourceRevision: 'd'.repeat(40) } },
+  { name: 'different operational epoch', operational: { ...completedOperational, epoch: 2 } },
+  { name: 'SQL behind operational progress', operational: { ...completedOperational, nextSequence: 2 } },
+  { name: 'durably inactive operational state', operational: { ...completedOperational, active: false } },
+  {
+    name: 'invalid wake acceptance',
+    operational: { ...completedOperational, pendingWake: { sequence: 1, acceptedAt: 'invalid' } },
+  },
+  {
+    name: 'future wake acceptance',
+    operational: {
+      ...completedOperational,
+      pendingWake: { sequence: 1, acceptedAt: new Date(Date.parse(checkedAt) + 1).toISOString() },
+    },
+  },
+] satisfies readonly { name: string; operational: ExecutionControllerHealth | null }[])(
+  '$name cannot reuse a prior idle success',
+  ({ operational }) => {
+    expect(
+      readinessResponseDecision(controllerTransition(completedController, Date.parse(checkedAt), operational).next),
+    ).toMatchObject({
+      status: 503,
+      body: { ready: false },
+    })
+  },
+)
+
+test.each([
+  {
+    name: 'first completion missing',
+    status: {
+      schemaVersion: 1,
+      controllerKey: completedController.controllerKey,
+      planHash: completedController.planHash,
+      active: true,
+      epoch: 1,
+      nextSequence: 0,
+    },
+    error: 'Restate lifecycle has not completed its first durable pass',
+  },
+  {
+    name: 'inactive controller',
+    status: { ...completedController, active: false },
+    error: 'Restate execution controller is durably inactive',
+  },
+  {
+    name: 'different controller identity',
+    status: { ...completedController, controllerKey: 'd'.repeat(64) },
+    error: 'Restate execution-controller projection identity differs from the configured controller',
+  },
+  {
+    name: 'different controller plan',
+    status: { ...completedController, planHash: 'd'.repeat(64) },
+    error: 'Restate execution-controller projection plan differs from the configured controller',
+  },
+  {
+    name: 'last pass failed',
+    status: {
+      ...completedController,
+      lastPass: {
+        result: 'FAILURE',
+        observedAt: checkedAt,
+        operation: 'run-cycle-pass',
+        failure: 'database',
+        message: 'database unavailable',
+      },
+    },
+    error: 'run-cycle-pass/database: database unavailable',
+  },
+  {
+    name: 'invalid completion time',
+    status: { ...completedController, completedAt: 'invalid' },
+    error: 'Restate execution-controller projection has an invalid completion schedule',
+  },
+  {
+    name: 'future idle completion',
+    status: { ...completedController, completedAt: new Date(Date.parse(checkedAt) + 1).toISOString() },
+    error: 'Restate execution-controller completion time is in the future',
+  },
+  {
+    name: 'invalid scheduled deadline',
+    status: { ...completedController, nextDueAt: 'invalid' },
+    error: 'Restate execution-controller projection has an invalid completion schedule',
+  },
+] satisfies readonly { name: string; status: ExecutionControllerStatus; error: string }[])(
+  '$name cannot establish controller readiness',
+  ({ status, error }) => {
+    const result = controllerTransition(status)
+    expect(result.health.dependencies.cycleRunner).toMatchObject({ status: 'UNAVAILABLE', error })
+    expect(readinessResponseDecision(result.next)).toMatchObject({ status: 503, body: { ready: false } })
+  },
+)
+
+test.each([0, 1, 1_000])(
+  'a deadline elapsed by %dms at completion retains its original overdue boundary',
+  (elapsedMs) => {
+    const nextDueAtMs = Date.parse(checkedAt) - elapsedMs
+    const scheduled = { ...completedController, nextDueAt: new Date(nextDueAtMs).toISOString() }
+    const completed = controllerTransition(scheduled)
+    expect(completed.health.dependencies.cycleRunner).toMatchObject({ status: 'AVAILABLE', error: null })
+    expect(readinessResponseDecision(completed.next)).toMatchObject({ status: 200, body: { ready: true } })
+    expect(completed.next.executionController?.status).toMatchObject({ nextDueAt: scheduled.nextDueAt })
+    const deadline = nextDueAtMs + config.cycleStallThresholdMs
+    expect(readinessResponseDecision(controllerTransition(scheduled, deadline - 1).next)).toMatchObject({
+      status: 200,
+      body: { ready: true },
+    })
+    const overdue = controllerTransition(scheduled, deadline)
+    expect(overdue.health.dependencies.cycleRunner).toMatchObject({
+      status: 'UNAVAILABLE',
+      error: `Restate execution controller is overdue by ${config.cycleStallThresholdMs}ms`,
+    })
+    expect(readinessResponseDecision(overdue.next)).toMatchObject({ status: 503, body: { ready: false } })
+  },
+)
+
+test('status health without a direct market probe removes the prior signal result and reports unknown data', () => {
+  const result = transition(results)
+  expect(result.failedDependencies).toEqual([])
+  expect(result.health.dependencies).not.toHaveProperty('signal')
+  expect(statusFacts(result.next, config.execution, provenance, config.build.verification)).toMatchObject({
+    operational: { ready: true },
+    data: { status: 'UNKNOWN' },
+  })
+})
+
+test('direct market-data failure still prevents readiness', () => {
+  const result = transition({ ...results, signal: { _tag: 'Unavailable', error: 'Kafka projection is rebuilding' } })
+  expect(result.failedDependencies).toContain('signal')
+  expect(statusFacts(result.next, config.execution, provenance, config.build.verification)).toMatchObject({
+    operational: { ready: false },
+    data: { status: 'INVALID' },
+  })
+})
+
+test('status without a market probe still fails closed on PostgreSQL failure', () => {
+  const result = transition({ ...results, postgresql: { _tag: 'Unavailable', error: 'connection deadline exceeded' } })
+  expect(result.failedDependencies).toContain('postgresql')
+  expect(statusFacts(result.next, config.execution, provenance, config.build.verification)).toMatchObject({
+    operational: { ready: false },
+    data: { status: 'UNKNOWN' },
+  })
+})
+
+test('a public health pass without market data still probes its dependencies and rejects missing controller evidence', () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const state = yield* Ref.make(readyState())
+      const projection = results.cycle
+      if (projection._tag !== 'Available') throw new Error('Invalid test projection')
+      yield* checkHealth(
+        config,
+        state,
+        {
+          postgresql: Effect.void,
+          journal: {
+            check: Effect.void,
+            post: () => Effect.die('Unexpected journal write'),
+            verifyAccount: () => Effect.die('Unexpected ledger account check'),
+            journalAndReconcile: () => Effect.die('Unexpected ledger mutation'),
+            checkRun: () => Effect.die('Unexpected journal result check'),
+          },
+          cycleObservability: { read: () => Effect.succeed(projection.value) },
+        },
+        undefined,
+        undefined,
+        { _tag: 'Exact', bindingId: 'a'.repeat(64) },
+      )
+      const current = yield* Ref.get(state)
+      expect(current.health.dependencies).not.toHaveProperty('signal')
+      expect(current.health.dependencies.postgresql.status).toBe('AVAILABLE')
+      expect(current.health.dependencies.tigerBeetle.status).toBe('AVAILABLE')
+      expect(current.health.dependencies.cycle.status).toBe('AVAILABLE')
+      expect(current.health.dependencies.cycleRunner.status).toBe('UNAVAILABLE')
+      expect(statusFacts(current, config.execution, provenance, config.build.verification)).toMatchObject({
+        operational: { ready: false },
+        data: { status: 'UNKNOWN' },
+      })
+    }),
+  ))

@@ -4,10 +4,10 @@ import { operationalError, type OperationalError } from './errors'
 import {
   GitSourceRevisionSchema as SourceRevision,
   ImageRepositorySchema as ImageRepository,
+  ImageDigestSchema as ImageDigest,
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as StrictNonEmptyString,
 } from './schemas'
-import { Pipeable } from './pipeable'
 
 declare const __BAYN_BUILD_SOURCE_REVISION__: string
 declare const __BAYN_BUILD_IMAGE_REPOSITORY__: string
@@ -16,6 +16,13 @@ declare const __BAYN_BUILD_STRATEGY_PARAMETER_HASH__: string
 declare const __BAYN_BUILD_STRATEGY_NAME__: string
 declare const __BAYN_BUILD_STRATEGY_PROTOCOL_HASH__: string
 declare const __BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__: string
+
+export const ExecutionBuildSchema = Schema.Struct({
+  sourceRevision: SourceRevision,
+  imageRepository: ImageRepository,
+  imageDigest: ImageDigest,
+})
+export type ExecutionBuild = typeof ExecutionBuildSchema.Type
 
 export const EmbeddedBuildMetadataSchema = Schema.Struct({
   sourceRevision: SourceRevision,
@@ -74,7 +81,7 @@ export const embeddedRuntimeIdentity: EmbeddedRuntimeIdentity | undefined = hasN
       executionRiskPolicyHash: executionRiskPolicyHash ?? 'incomplete',
     }
 
-const verifyParameterHashDataFirst = (
+export const verifyParameterHash = (
   metadata: EmbeddedBuildMetadata,
   actualParameterHash: string,
 ): Effect.Effect<void, OperationalError> =>
@@ -88,9 +95,7 @@ const verifyParameterHashDataFirst = (
         }),
       )
 
-export const verifyParameterHash = Pipeable.dual(2, verifyParameterHashDataFirst)
-
-const verifyBehaviorHashDataFirst = (
+export const verifyBehaviorHash = (
   metadata: EmbeddedBuildMetadata,
   actualBehaviorHash: string,
 ): Effect.Effect<void, OperationalError> =>
@@ -104,9 +109,7 @@ const verifyBehaviorHashDataFirst = (
         }),
       )
 
-export const verifyBehaviorHash = Pipeable.dual(2, verifyBehaviorHashDataFirst)
-
-const verifyStrategyNameDataFirst = (
+export const verifyStrategyName = (
   identity: EmbeddedRuntimeIdentity,
   actualStrategyName: string,
 ): Effect.Effect<void, OperationalError> =>
@@ -120,9 +123,7 @@ const verifyStrategyNameDataFirst = (
         }),
       )
 
-export const verifyStrategyName = Pipeable.dual(2, verifyStrategyNameDataFirst)
-
-const verifyStrategyProtocolHashDataFirst = (
+export const verifyStrategyProtocolHash = (
   identity: EmbeddedRuntimeIdentity,
   actualProtocolHash: string,
 ): Effect.Effect<void, OperationalError> =>
@@ -136,9 +137,7 @@ const verifyStrategyProtocolHashDataFirst = (
         }),
       )
 
-export const verifyStrategyProtocolHash = Pipeable.dual(2, verifyStrategyProtocolHashDataFirst)
-
-const verifyExecutionRiskPolicyHashDataFirst = (
+export const verifyExecutionRiskPolicyHash = (
   identity: EmbeddedRuntimeIdentity,
   actualPolicyHash: string,
 ): Effect.Effect<void, OperationalError> =>
@@ -151,5 +150,3 @@ const verifyExecutionRiskPolicyHashDataFirst = (
           message: 'compiled execution risk policy does not match build metadata',
         }),
       )
-
-export const verifyExecutionRiskPolicyHash = Pipeable.dual(2, verifyExecutionRiskPolicyHashDataFirst)

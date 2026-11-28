@@ -59,9 +59,10 @@ function readSecrets(): Record<RequiredSecret, string> {
     throw new Error('TENGRI_TICKET_SIGNING_SECRET must contain at least 32 characters')
   }
 
-  const hmacKeys = secrets.TENGRI_INTERNAL_HMAC_SECRET.split(',')
-  if (hmacKeys.length < 1 || hmacKeys.length > 2 || hmacKeys.some((key) => !/^[A-Za-z0-9_-]{32,}$/.test(key))) {
-    throw new Error('TENGRI_INTERNAL_HMAC_SECRET must contain one or two non-empty base64url keys')
+  if (!/^[0-9a-f]{64}$/.test(secrets.TENGRI_INTERNAL_HMAC_SECRET)) {
+    throw new Error(
+      'TENGRI_INTERNAL_HMAC_SECRET must contain one 32-byte key encoded as 64 lowercase hexadecimal characters',
+    )
   }
 
   return secrets

@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-mcts-runtime-route.v1",
+  "status": "DOCUMENTED_SOURCE_DIFFERENCE",
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "sourceInventoryId": "d881fb60c4cb560e5aafce650291ed50dd2ca3d8db99a7eac1eadac1dd99f778",
+  "originalAuthorInventorySha256": "481cca8383c7d9c8a4f76c7f9d9d04b2a77631af9625b0ac28016aa9872ed662",
+  "sources": [
+    {
+      "path": "src/cosmosalpha/pipeline/runtime.py",
+      "authorGitBlobSha1": "f28adc4fde55066f5877e94bb1dccd7549b335da",
+      "sha256": "919ee8aa6ab9a0044fcae7c57e8f15b86266e0ed0617361b752a53f3eb9a282a",
+      "unchangedFromAuthor": true
+    },
+    {
+      "path": "src/cosmosalpha/pipeline/mcts/stub_agents.py",
+      "authorGitBlobSha1": "5bcb13caceecd1c2dd4f5933fdabdccb2ee23fa2",
+      "sha256": "10dac5308f707a81fbdf1c4902d32841dad22a84bf5283f8396f8af97cb6d947",
+      "unchangedFromAuthor": true
+    }
+  ],
+  "mctsAgentBindings": {
+    "hypothesis_agent": "MCTSHypothesisStub",
+    "feedback_agent": "MCTSFeedbackStub"
+  },
+  "wirePrefix": {
+    "experimentId": "3199efd6fd36fbd98f9435f2c04ce843a910c53f32ca0932e26b93ea7fed5a46",
+    "runId": "calendar-study-20260823-mcts",
+    "observedAt": "2026-11-09T13:26:22.830388+00:00",
+    "journalPrefixSha256": "bbdf95025998069cba624665dab75eee88de0536f21377f7b5bedb6444479fbe",
+    "requestsVerified": 14,
+    "responsesVerified": 13,
+    "pendingRequests": 1,
+    "requestsByStage": {
+      "expression_repair": 1,
+      "factor_expression": 4,
+      "mcts_factor_design": 5,
+      "portrait": 4
+    },
+    "sampleRequests": [
+      {
+        "number": 1,
+        "stage": "mcts_factor_design",
+        "requestSha256": "b1c5dae91cd1e74cdca183d73702c902fe8e1c372aa0a1d307e2ceb8f8555521",
+        "maxOutputTokens": 12000
+      },
+      {
+        "number": 2,
+        "stage": "factor_expression",
+        "requestSha256": "69e5a67834a883d90c4350b20bf19ec7b02f762a10d7f2c199f3988c9139bdc2",
+        "maxOutputTokens": 12000
+      },
+      {
+        "number": 3,
+        "stage": "portrait",
+        "requestSha256": "b688d08550d4ea9a137f93e3c8180c638fe32812eba60bed962e54eea73cc7c3",
+        "maxOutputTokens": 20000
+      }
+    ]
+  },
+  "paperDifference": "Appendix D Table 11 lists model-based hypothesis generation for MCTS roots and expansion; the pinned runtime installs a stub that makes no model call.",
+  "verification": "Compared both installed source hashes to original author git-blob admission; inspected the runtime constructor AST; recovered the exact retained journal prefix and checked all 14 raw request hashes and routes.",
+  "scope": "Source routing and a saved initial request prefix only. Does not qualify MCTS scores, a complete mining pool, downstream results, paper parity or strategy edge."
+}

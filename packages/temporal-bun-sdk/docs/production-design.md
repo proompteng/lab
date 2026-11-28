@@ -368,15 +368,16 @@ can contribute independently without re-planning.
      publish.
   2. release-please derives the semver bump from Conventional Commits, updates
      `package.json`, and rewrites `CHANGELOG.md` inside the automated release PR.
-  3. Publishing uses GitHub OIDC + `npm publish --provenance --access public`
-     with a scoped automation token, and emits an attestation/SBOM artifact.
-  4. Prepare mode runs build/test/load suites against the release-please branch
-     (`release-please--branches--main--components--temporal-bun-sdk`) so the PR
-     contains validated artifacts, while the dedicated proto workflow keeps
-     generated sources in sync.
-  5. Publish mode exposes a `workflow_dispatch` dry-run path, references
-     `security@proompteng.ai` for disclosures, and requires maintainers to link
-     execution logs/artifacts before requesting review.
+  3. Publishing uses GitHub OIDC trusted publishing and
+     `npm publish --provenance --access public`.
+  4. `bun run release:temporal` opens or updates the version PR using the
+     maintainer's existing GitHub CLI login. Preparation needs no build or
+     integration run. Merging a stable version increase triggers publication
+     after the merged commit passes build, replay, integration, load, and
+     provenance gates. See [Releasing](releasing.md).
+  5. Publish mode retains a `workflow_dispatch` dry-run and retry path. The
+     workflow verifies the published npm package before marking its version PR
+     released. Security disclosures go to `security@proompteng.ai`.
 
 ## Component Designs
 
@@ -408,7 +409,7 @@ can contribute independently without re-planning.
    - Map-based registry with AsyncLocalStorage context and cancellation support.
 2. ✅ **Retries & heartbeats (TBS-002)**
    - WorkerRuntime uses the lifecycle helper to emit throttled heartbeats via `RecordActivityTaskHeartbeat`, retry transient RPC failures, and propagate server-side cancellation through the `ActivityContext`.
-   - Local activity retries mirror the `WorkflowRetryPolicy` (initial/max interval, backoff coefficient, maximum attempts, non-retryable error types, schedule-to-close bounds) before surfacing a terminal failure flagged as non-retryable.
+   - Temporal owns remote activity retries, including backoff, maximum attempts, non-retryable error types, and schedule-to-close bounds. Each worker task invokes the handler once and reports its failure without converting a retryable error into a non-retryable one. Start-to-close bounds one attempt.
    - `activityContext.heartbeat(...details)` is now available to user code; details and cancellation reasons flow into `RespondActivityTaskCanceled/Failed` for Temporal UI parity.
    - Covered by `tests/activities/lifecycle.test.ts` and the Temporal CLI harness suite (`tests/integration/activity-lifecycle.integration.test.ts`) which exercises steady-state heartbeats, heartbeat timeouts, and retry exhaustion.
 3. **Cancellation semantics**

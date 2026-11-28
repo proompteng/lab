@@ -3,8 +3,8 @@
 This app deploys [Forgejo](https://forgejo.org/) using the official OCI Helm chart:
 
 - Chart: `oci://code.forgejo.org/forgejo-helm/forgejo`
-- Chart version: `17.1.4`
-- App version: `15.0.6`
+- Chart version: `17.1.5`
+- App version: selected by Kargo from the verified release publisher
 
 ## Current profile
 
@@ -26,3 +26,14 @@ References:
 
 - https://forgejo.org/docs/latest/
 - https://artifacthub.io/packages/helm/forgejo-helm/forgejo
+
+## Version 17 recovery
+
+The Application tracks `kargo/forgejo` and authorizes only `forgejo-release:forgejo`.
+The 17.0.2 cutover retained offline PostgreSQL and repository snapshots and
+their isolated clone claims. Recover them as a pair from the
+`forgejo-server-17-0-2-cutover-*` resources. The published image uses the
+upstream rootless index and platform digests exercised in the clone rehearsal.
+
+Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md) for
+the acceptance checks and coordinated recovery.

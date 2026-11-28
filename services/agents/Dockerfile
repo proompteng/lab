@@ -4,12 +4,14 @@
 # This is intentionally separate from the domain services so the Agents release
 # owns its build graph. The control-plane and controller targets both run
 # @proompteng/agents entrypoints.
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG NODE24_VERSION=24.11.1
 ARG KUBECTL_VERSION=1.34.3
 ARG NATSCLI_VERSION=v0.4.0
 ARG UV_VERSION=0.11.14
+ARG PSTACK_REPOSITORY=https://github.com/michael-denyer/pstack-claude.git
+ARG PSTACK_COMMIT=6d25df69f0baf6600807d82975d75139f3b1ab92
 
 FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS agents-build-tools
 ARG BUILDARCH
@@ -75,6 +77,8 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   curl \
   gh \
   git \
+  ipmitool \
+  openssh-client \
   jq \
   python3 \
   ripgrep \
@@ -140,6 +144,21 @@ RUN set -eux; \
   install -o root -g root -m 0755 "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}/nats" /usr/local/bin/nats; \
   rm -rf "${NATS_ARCHIVE}" "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}"; \
   nats --version
+
+FROM agents-tools AS pstack-bundle
+ARG PSTACK_REPOSITORY
+ARG PSTACK_COMMIT
+
+RUN set -eux; \
+  install -d /opt/agents-shell/pstack-source; \
+  git -C /opt/agents-shell/pstack-source init -q; \
+  git -C /opt/agents-shell/pstack-source remote add origin "${PSTACK_REPOSITORY}"; \
+  git -C /opt/agents-shell/pstack-source fetch -q --depth=1 origin "${PSTACK_COMMIT}"; \
+  git -C /opt/agents-shell/pstack-source checkout -q --detach FETCH_HEAD; \
+  test "$(git -C /opt/agents-shell/pstack-source rev-parse HEAD)" = "${PSTACK_COMMIT}"; \
+  test -f /opt/agents-shell/pstack-source/plugins/pstack/skills/poteto-mode/SKILL.md; \
+  test -f /opt/agents-shell/pstack-source/plugins/pstack/skills/poteto-mode/references/codex-tools.md; \
+  test "$(find /opt/agents-shell/pstack-source/plugins/pstack/skills -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 68
 
 FROM agents-build-tools AS agents-workspace-deps
 WORKDIR /app
@@ -304,6 +323,9 @@ CMD ["bun", "run", "src/server/controller-entrypoint.ts"]
 
 FROM controller AS agents-shell
 ARG UV_VERSION
+ARG TARGETARCH
+
+COPY --from=pstack-bundle /opt/agents-shell/pstack-source/plugins/pstack /opt/agents-shell/pstack
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
@@ -330,12 +352,27 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   ln -sf /usr/bin/python3 /usr/local/bin/python; \
   rm -rf /var/lib/apt/lists/*
 
+RUN set -eux; \
+  case "${TARGETARCH}" in \
+    amd64) TALOS_SHA=ff432b68986709e6b69c563a08a2ced4232d5196b0dccd6d2e783e9d714d7d7d; OMNI_SHA=358e8b102fda75c9a4298ac6720379276bb19c9da8fdf0fe7a490342b4ea1754 ;; \
+    arm64) TALOS_SHA=dfd3aa33c3159810e216fc39afb685d4d120c8f2728e017d8c7f7635d3139382; OMNI_SHA=f579346cf9a6030ef6c23b583d2a6a2ab32241d633b6cc16f44cb196d660dcb7 ;; \
+    *) echo "unsupported agents-shell architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL --retry 3 "https://github.com/siderolabs/talos/releases/download/v1.14.5/talosctl-linux-${TARGETARCH}" -o /usr/local/bin/talosctl; \
+  echo "${TALOS_SHA}  /usr/local/bin/talosctl" | sha256sum -c -; \
+  curl -fsSL --retry 3 "https://github.com/siderolabs/omni/releases/download/v1.11.0/omnictl-linux-${TARGETARCH}" -o /usr/local/bin/omnictl; \
+  echo "${OMNI_SHA}  /usr/local/bin/omnictl" | sha256sum -c -; \
+  chmod 0755 /usr/local/bin/talosctl /usr/local/bin/omnictl; \
+  talosctl version --client; \
+  omnictl --version
+
 RUN python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERSION}" \
   && uv --version
 
 WORKDIR /app/services/agents
 RUN install -o root -g root -m 0755 ./scripts/apply_patch.py /usr/local/bin/apply_patch \
   && chmod +x ./scripts/agents-shell-entrypoint.sh \
+  && chmod +x ./scripts/install-agents-shell-pstack.sh \
   && mkdir -p /workspace /workspace/.agents-shell \
   && command -v bash git gh rg curl jq yq python3 uv ps wget kubectl apply_patch \
   && tmp="$(mktemp -d)" \

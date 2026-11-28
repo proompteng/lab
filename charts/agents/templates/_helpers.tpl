@@ -51,6 +51,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: agents-shell
 {{- end -}}
 
+{{- define "agents.podDisruptionBudgetAvailability" -}}
+{{- if and (hasKey . "maxUnavailable") (ne (toString .maxUnavailable) "") -}}
+maxUnavailable: {{ .maxUnavailable | toJson }}
+{{- else -}}
+minAvailable: {{ dig "minAvailable" 1 . | toJson }}
+{{- end -}}
+{{- end -}}
+
 {{- define "agents.rolloutChecksumAnnotations" -}}
 {{- if not .Values.rolloutChecksums.enabled -}}
 {{- else -}}

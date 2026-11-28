@@ -1,7 +1,7 @@
 import { Data, Effect, Match, Schema } from 'effect'
-import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
+import { isSqlError, type SqlErrorReason } from 'effect/sql/SqlError'
 
-import { Pipeable } from '../pipeable'
+import { withObservedStage } from '../telemetry'
 
 export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
 export type PersistenceFailure = 'connectivity' | 'constraint' | 'decode' | 'invariant' | 'query' | 'transaction'
@@ -77,7 +77,7 @@ export const databaseError = (input: DatabaseErrorInput): DatabaseError => {
   })
 }
 
-const classifyDatabaseErrorDataFirst = (operation: string, cause: unknown): DatabaseError => {
+export const classifyDatabaseError = (operation: string, cause: unknown): DatabaseError => {
   if (cause instanceof DatabaseError) return cause
   if (Schema.isSchemaError(cause)) {
     return databaseError({ failure: 'decode', operation, message: 'database row decoding failed', cause })
@@ -95,20 +95,12 @@ const classifyDatabaseErrorDataFirst = (operation: string, cause: unknown): Data
   return databaseError({ failure: 'invariant', operation, message: 'unexpected database result', cause })
 }
 
-export const classifyDatabaseError = Pipeable.dual(2, classifyDatabaseErrorDataFirst)
-
-const runDatabaseDataFirst = <A, E, R>(
+export const runDatabase = <A, E, R>(
   operation: string,
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, DatabaseError, R> =>
-  effect.pipe(Effect.mapError((cause) => classifyDatabaseError(operation, cause)))
-
-export const runDatabase = Pipeable.generic<
-  <A, E, R>(effect: Effect.Effect<A, E, R>) => (operation: string) => Effect.Effect<A, DatabaseError, R>,
-  typeof runDatabaseDataFirst
->(2, runDatabaseDataFirst)
-
-const ensureDataFirst = (condition: boolean, operation: string, message: string): Effect.Effect<void, DatabaseError> =>
-  condition ? Effect.void : Effect.fail(databaseError({ failure: 'invariant', operation, message }))
-
-export const ensure = Pipeable.dual(3, ensureDataFirst)
+  effect.pipe(
+    Effect.mapError((cause) => classifyDatabaseError(operation, cause)),
+    withObservedStage('bayn.postgres.operation', { dependency: 'postgresql', operation, slowAfterMs: 1_000 }),
+    Effect.annotateLogs({ operation }),
+  )

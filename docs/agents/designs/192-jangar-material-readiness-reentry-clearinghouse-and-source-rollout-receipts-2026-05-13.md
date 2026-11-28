@@ -1,6 +1,6 @@
 # 192. Jangar Material Readiness Reentry Clearinghouse And Source Rollout Receipts (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar material readiness, source-to-serving rollout truth, AgentRun launch admission, watch/cache authority,
@@ -17,7 +17,6 @@ Extends:
 - `docs/agents/designs/189-jangar-authority-provenance-settlement-and-rollout-reentry-windows-2026-05-13.md`
 - `docs/agents/designs/188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
 - `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
-- `docs/agents/designs/140-jangar-watch-reliability-state-exchange-and-capital-action-governor-2026-05-07.md`
 - `docs/agents/runbooks.md`
 
 ## Decision

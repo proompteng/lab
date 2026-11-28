@@ -20,7 +20,7 @@ export type GrpcTransport = {
 
 export type Transport = KubeTransport | GrpcTransport
 
-export class TransportService extends Context.Tag('agentctl/Transport')<TransportService, Transport>() {}
+export class TransportService extends Context.Service<TransportService, Transport>()('agentctl/Transport') {}
 
 export const TransportLive = Layer.effect(
   TransportService,
@@ -38,10 +38,13 @@ export const TransportLive = Layer.effect(
       return { mode: 'kube', backend }
     }
 
-    const client = yield* Effect.tryPromise({
-      try: () => createClient(resolved.address, resolved.tls),
-      catch: (error) => asAgentctlError(error, 'GrpcError'),
-    })
+    const client = yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        try: () => createClient(resolved.address, resolved.tls),
+        catch: (error) => asAgentctlError(error, 'GrpcError'),
+      }),
+      (client) => Effect.sync(() => client.close()),
+    )
     const metadata = createMetadata(resolved.token)
     return { mode: 'grpc', client, metadata }
   }),

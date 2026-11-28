@@ -1,4 +1,5 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import childProcess, { type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { once } from 'node:events'
 
 import type { ClientInfo, InitializeCapabilities, RequestId } from './app-server'
 import type { ReasoningEffort } from './app-server/ReasoningEffort'
@@ -13,7 +14,6 @@ import type {
   ChatgptAuthTokensRefreshResponse,
   CommandExecutionOutputDeltaNotification,
   ContextCompactedNotification,
-  CurrentTimeReadResponse,
   DynamicToolCallParams,
   DynamicToolCallResponse,
   DynamicToolSpec,
@@ -38,6 +38,8 @@ import type {
   ThreadGoalStatus,
   ThreadHistoryMode,
   ThreadItem,
+  ThreadItemsListParams,
+  ThreadItemsListResponse,
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
@@ -68,6 +70,7 @@ type JsonRpcRequestMethod =
   | 'initialize'
   | 'thread/start'
   | 'thread/resume'
+  | 'thread/items/list'
   | 'thread/goal/set'
   | 'thread/goal/get'
   | 'thread/goal/clear'
@@ -153,6 +156,7 @@ export type CodexAppServerOptions = {
   persistExtendedHistory?: boolean
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
+  onNotification?: (notification: { method: string; params?: unknown }) => void
   onRequestUserInput?: (
     params: ToolRequestUserInputParams,
   ) => ToolRequestUserInputResponse | Promise<ToolRequestUserInputResponse>
@@ -239,7 +243,14 @@ const defaultInitializeCapabilities: InitializeCapabilities = {
   requestAttestation: false,
 }
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
-const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
+const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 60_000
+
+export class CodexAppServerBootstrapTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`codex app-server failed to initialize within ${timeoutMs}ms`)
+    this.name = 'CodexAppServerBootstrapTimeoutError'
+  }
+}
 
 const declineAdditionalPermissions = (): PermissionsRequestApprovalResponse => ({
   permissions: {},
@@ -483,8 +494,8 @@ export class CodexAppServerClient {
   private rejectReady: ((reason: unknown) => void) | null = null
   private readySettled = false
   private bootstrapTimeout: ReturnType<typeof setTimeout> | null = null
-  private bootstrapTimeoutMs: number
   private logger: CodexAppServerOptions['logger']
+  private onNotification: CodexAppServerOptions['onNotification']
   private sandbox: SandboxMode
   private approval: AskForApproval
   private defaultModel: string
@@ -506,7 +517,7 @@ export class CodexAppServerClient {
     cwd,
     sandbox = 'danger-full-access',
     approval = 'never',
-    defaultModel = 'gpt-5.6-sol',
+    defaultModel = 'gpt-6.2-sol',
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
     experimentalRawEvents = false,
@@ -514,6 +525,7 @@ export class CodexAppServerClient {
     persistExtendedHistory = false,
     clientInfo = defaultClientInfo,
     logger,
+    onNotification,
     onRequestUserInput,
     onDynamicToolCall,
     dynamicTools,
@@ -523,6 +535,7 @@ export class CodexAppServerClient {
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
   }: CodexAppServerOptions = {}) {
     this.logger = logger
+    this.onNotification = onNotification
     this.sandbox = normalizeSandboxMode(sandbox)
     this.approval = normalizeApprovalPolicy(approval)
     this.defaultModel = defaultModel
@@ -537,7 +550,6 @@ export class CodexAppServerClient {
     this.onAttestationGenerate = onAttestationGenerate ?? null
     this.onPermissionsRequestApproval = onPermissionsRequestApproval ?? null
     this.onChatgptAuthTokensRefresh = onChatgptAuthTokensRefresh ?? null
-    this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
     const args = ['--sandbox', this.sandbox]
     for (const override of cliConfigOverrides) {
@@ -551,7 +563,7 @@ export class CodexAppServerClient {
       args.push('--ask-for-approval', cliApproval)
     }
     args.push('--model', defaultModel, 'app-server')
-    this.child = spawn(binaryPath, args, {
+    this.child = childProcess.spawn(binaryPath, args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -562,9 +574,11 @@ export class CodexAppServerClient {
     })
 
     this.bootstrapTimeout = setTimeout(() => {
-      this.handleFatalError(new Error(`codex app-server failed to initialize within ${this.bootstrapTimeoutMs}ms`))
-    }, this.bootstrapTimeoutMs)
+      this.handleFatalError(new CodexAppServerBootstrapTimeoutError(bootstrapTimeoutMs))
+    }, bootstrapTimeoutMs)
 
+    this.child.on('error', (error) => this.handleFatalError(error))
+    this.child.stdin.on('error', (error) => this.handleFatalError(error))
     this.bootstrap(clientInfo)
       .then(() => this.settleReady())
       .catch((error) => this.handleFatalError(error))
@@ -585,7 +599,25 @@ export class CodexAppServerClient {
       clearTimeout(this.bootstrapTimeout)
       this.bootstrapTimeout = null
     }
-    this.child.kill()
+    if (!this.child.killed) this.child.kill()
+  }
+
+  async stopAndWait(): Promise<void> {
+    const waitForExit = async () => {
+      if (this.child.pid && this.child.exitCode === null && this.child.signalCode === null) {
+        await once(this.child, 'exit', { signal: AbortSignal.timeout(1_000) })
+      }
+    }
+    this.stop()
+    try {
+      await waitForExit()
+    } catch (error) {
+      if (!(error instanceof Error) || error.name !== 'AbortError') throw error
+      this.child.kill('SIGKILL')
+      await waitForExit().catch((cause) => {
+        throw new Error('codex app-server did not exit after SIGKILL', { cause })
+      })
+    }
   }
 
   private settleReady(): void {
@@ -604,19 +636,13 @@ export class CodexAppServerClient {
 
     if (!this.readySettled) {
       this.readySettled = true
-      if (this.bootstrapTimeout) {
-        clearTimeout(this.bootstrapTimeout)
-        this.bootstrapTimeout = null
-      }
       this.rejectReady?.(error)
     }
 
     this.rejectAllPending(error)
     this.failAllStreams(error)
 
-    if (!this.child.killed) {
-      this.child.kill()
-    }
+    this.stop()
   }
 
   async runTurn(
@@ -811,6 +837,19 @@ export class CodexAppServerClient {
     return response.cleared
   }
 
+  async getTurnItems(threadId: string, turnId: string): Promise<ThreadItem[]> {
+    await this.ensureReady()
+    const items: ThreadItem[] = []
+    let cursor: string | null = null
+    do {
+      const params: ThreadItemsListParams = { threadId, turnId, cursor, limit: 100, sortDirection: 'asc' }
+      const page = await this.request<ThreadItemsListResponse>('thread/items/list', params)
+      items.push(...page.data.map(({ item }) => item))
+      cursor = page.nextCursor
+    } while (cursor)
+    return items
+  }
+
   async waitForThreadIdle(
     threadId: string,
     { quietMs = 1000, timeoutMs = 0, signal }: ThreadIdleWaitOptions = {},
@@ -1000,11 +1039,6 @@ export class CodexAppServerClient {
         case 'mcpServer/elicitation/request':
           result = { action: 'decline', content: null }
           break
-        case 'currentTime/read':
-          result = {
-            currentTimeAt: Math.floor(Date.now() / 1000),
-          } satisfies CurrentTimeReadResponse
-          break
         case 'applyPatchApproval':
           result = { decision: 'denied' }
           break
@@ -1048,6 +1082,7 @@ export class CodexAppServerClient {
   }
 
   private handleNotification(notification: JsonRpcNotification): void {
+    this.onNotification?.(notification)
     const { method } = notification
     const params = notification.params
 
@@ -1429,11 +1464,12 @@ export class CodexAppServerClient {
             id: item.id,
             status,
             title: 'image generation',
-            detail: item.revisedPrompt ?? item.result,
+            detail: item.revisedPrompt ?? ('result' in item ? item.result : item.fileId),
             data: {
               status: item.status,
               revisedPrompt: item.revisedPrompt,
-              result: item.result,
+              ...('result' in item ? { result: item.result } : { fileId: item.fileId }),
+              ...(item.savedPath ? { savedPath: item.savedPath } : {}),
             },
           }
         default:

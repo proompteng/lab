@@ -13,8 +13,11 @@ on:
       - 'nix/**'
       - '.github/workflows/kubeconform.yml'
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -36,17 +39,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base_sha="${{ github.event.pull_request.base.sha }}"
-            git fetch --no-tags --depth=1 origin "${base_sha}"
+          base_sha="${{ github.event.before }}"
+          if [ -z "${base_sha}" ] || [ "${base_sha}" = "0000000000000000000000000000000000000000" ]; then
+            git fetch --no-tags --depth=2 origin "${{ github.sha }}"
+            base_sha="$(git rev-parse "${{ github.sha }}^")"
           else
-            base_sha="${{ github.event.before }}"
-            if [ -z "${base_sha}" ] || [ "${base_sha}" = "0000000000000000000000000000000000000000" ]; then
-              git fetch --no-tags --depth=2 origin "${{ github.sha }}"
-              base_sha="$(git rev-parse "${{ github.sha }}^")"
-            else
-              git fetch --no-tags --depth=1 origin "${base_sha}"
-            fi
+            git fetch --no-tags --depth=1 origin "${base_sha}"
           fi
 
           mapfile -d '' changed_manifests < <(
@@ -72,9 +70,9 @@ jobs:
             fi
             printf 'Validator input changed without manifest changes: %s\n' "${changed_validator_inputs[@]}"
             echo "Validating full Argo CD tree because kubeconform inputs changed."
-            nix develop -c scripts/kubeconform.sh argocd
+            nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh argocd
             exit 0
           fi
 
           printf 'Validating changed manifest: %s\n' "${changed_manifests[@]}"
-          nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
+          nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${changed_manifests[@]}"

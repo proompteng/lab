@@ -1,13 +1,11 @@
 import type { ExecutionControllerStatus } from './execution/controller-status'
+import type { BrokerReadError } from './broker/alpaca/failures'
 import {
   CycleOperationsCondition,
   type CycleOperationsStatus,
   unknownCycleOperationsStatus,
 } from './cycle/observability'
-import {
-  RetainedAutonomousCyclePassObservationSchema,
-  type RetainedAutonomousCyclePassObservation,
-} from './cycle/runner/pass-observation'
+import { type RetainedAutonomousCyclePassObservation } from './cycle/runner/pass-observation'
 
 export interface DependencyHealth {
   readonly status: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE'
@@ -20,7 +18,7 @@ export interface RuntimeHealth {
   readonly checkedAt: string | null
   readonly dependencies: {
     readonly postgresql: DependencyHealth
-    readonly signal: DependencyHealth
+    readonly signal?: DependencyHealth
     readonly tigerBeetle: DependencyHealth
     readonly cycle: DependencyHealth
     readonly cycleRunner: DependencyHealth
@@ -40,9 +38,8 @@ export interface BrokerStatus extends BrokerConfiguration {
   readonly readAvailable: boolean | null
   readonly checkedAt: string | null
   readonly error: string | null
+  readonly observationFailure?: BrokerReadError['observationFailure']
 }
-
-export const AutonomousCyclePassObservationSchema = RetainedAutonomousCyclePassObservationSchema
 
 export type AutonomousCyclePassObservation = RetainedAutonomousCyclePassObservation
 
@@ -68,23 +65,14 @@ export type CapitalActivationRuntimeState =
   | {
       readonly _tag: 'Pending'
       readonly requestHash: string | null
-      readonly reason: 'REQUEST_INVALID' | 'STARTUP_EVIDENCE_UNAVAILABLE' | 'PREPARATION_FAILED' | 'REQUEST_EXPIRED'
+      readonly reason: 'REQUEST_INVALID' | 'STARTUP_EVIDENCE_UNAVAILABLE' | 'PREPARATION_FAILED'
     }
   | {
       readonly _tag: 'Realized'
       readonly requestHash: string
       readonly generationHash: string
       readonly grant: 'Research'
-      readonly cutoffAt: string
-      readonly expiresAt: string
-      readonly maximumCloseSessions: number | null
-    }
-  | {
-      readonly _tag: 'Completed'
-      readonly requestHash: string
-      readonly generationHash: string
-      readonly grant: 'Research'
-      readonly receiptHash: string
+      readonly scope: 'Standing'
     }
 
 export interface RuntimeState {

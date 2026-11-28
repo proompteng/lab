@@ -1,22 +1,15 @@
 # 187. Jangar Main Source CI Retention And Source-Serving Verdicts (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Gideon Park, Torghut Traders Architecture
 Scope: Jangar launch custody, Torghut source CI retention, image/source/serving proof, deployer verification,
 capital safety, rollout, rollback, and cross-stage handoff.
 
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
-
 Extends:
 
 - `186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
 - `186-jangar-route-warrant-dispatch-custody-and-dependency-verdicts-2026-05-13.md`
-- `178-jangar-source-serving-parity-escrow-and-route-independent-launch-passports-2026-05-08.md`
-- `../torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `../torghut/design-system/v6/190-torghut-route-warrant-exchange-and-ingestion-proof-reentry-2026-05-13.md`
 
 ## Decision
 
@@ -289,7 +282,6 @@ Deployer milestone:
 Local validation for this PR:
 
 - `bun test packages/scripts/src/torghut/__tests__/build-push-workflow.test.ts`
-- `bunx oxfmt --check .github/workflows/torghut-ci.yml packages/scripts/src/torghut/__tests__/build-push-workflow.test.ts docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md docs/torghut/design-system/v6/191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
 - `git diff --check`
 
 Runtime validation for engineer/deployer stages:

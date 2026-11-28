@@ -1,0 +1,103 @@
+global:
+  spire:
+    clusterName: galactic
+    trustDomain: proompteng.ai
+    recommendations:
+      enabled: true
+      prometheus: false
+    namespaces:
+      create: false
+      server:
+        name: spire-server
+        create: false
+      system:
+        name: spire-system
+        create: false
+  installAndUpgradeHooks:
+    enabled: false
+  deleteHooks:
+    enabled: false
+spire-server:
+  enabled: false
+spire-agent:
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+  sds:
+    enabled: true
+    disableSPIFFECertValidation: false
+  podSecurityContext:
+    runAsUser: 0
+    runAsGroup: 0
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+      add: [SYS_PTRACE]
+    seccompProfile:
+      type: RuntimeDefault
+  serviceAccount:
+    name: spire-agent
+  server:
+    address: spire-server.spire-server.svc.cluster.local
+  workloadAttestors:
+    k8s:
+      verification:
+        type: hostCert
+        hostCert:
+          basePath: /var/lib/kubelet/pki
+          fileName: kubelet.crt
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+spiffe-csi-driver:
+  image:
+    tag: "0.3.0"
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+  kubeletPath: /var/lib/kubelet
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+spiffe-oidc-discovery-provider:
+  enabled: true
+  namespaceOverride: spire-system
+  replicaCount: 2
+  jwtIssuer: https://oidc.proompteng.ai
+  bundleSource: ConfigMap
+  bundleConfigMap: spire-bundle
+  config:
+    jwksUri: https://oidc.proompteng.ai/keys
+    setKeyUse: true
+  tls:
+    spire:
+      enabled: false
+    externalSecret:
+      enabled: true
+      secretName: oidc-discovery-proompteng-ai-tls
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: spiffe-oidc-discovery-provider
+          app.kubernetes.io/instance: spire

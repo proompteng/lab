@@ -1,160 +1,235 @@
-# Repository Agent Guide
+# Working in lab
 
-## Operating Contract
+Complete the requested change, prove it at the requested boundary, and stop.
 
-- Infer the requested goal and intended level of work from context. Preserve domain context, hard constraints, approval boundaries, success criteria, required evidence, and output format. Choose ordinary implementation steps yourself; ask only when an important ambiguity could materially change one of those.
-- For requests to answer, explain, review, diagnose, or plan, inspect the relevant materials and report the result. Do not implement changes unless the request also asks for them.
-- For requests to change, build, or fix, make the requested in-scope local changes and run relevant non-destructive validation without asking first. Safe local actions include reading and searching files, inspecting logs and repository state, editing in-scope code, and running tests.
-- Require confirmation before external writes not explicitly requested, destructive actions, purchases, credential or permission changes, or a material expansion of scope.
-- Complete the requested outcome before yielding. For multi-step work, keep a short plan, update it only at meaningful milestones, and avoid narrating routine tool use.
-- Use the provided current working directory for all repository work. Do not create or use alternate worktrees or temporary repository copies unless the user explicitly requests one.
-- Start from concrete evidence and reproduce defects when practical. Gather context until you can name the files or resources to change and the validation path, then act without repeating equivalent searches or reads.
-- Lead final responses with the result, evidence, validation commands and outcomes, material caveats or blockers, and the next required action. Omit repeated background and generic reassurance.
-- Check the nearest `README` or nested `AGENTS.md` for component-specific rules.
-- Keep this root guide repository-wide. Add new path-specific rules to the nearest nested `AGENTS.md` instead of expanding the global instruction chain.
+## Keep it simple
 
-## GPT-5.6 Sol Usage
+- Make the smallest complete, readable change. Clever compression is not simplicity.
+- Reuse repository code and conventions first, then platform or standard-library features, then installed dependencies.
+  Add dependencies, infrastructure, abstractions, and configuration only for a concrete current requirement.
+- Keep one implementation. Hard-migrate callers and remove the replaced path. Preserve compatibility only when
+  explicitly requested.
+- Prefer deletion and direct code. Future flexibility and hypothetical scale do not justify more complexity.
+- Optimize the core workflow for its users and maintainers. Extra options must improve that workflow.
+- Preserve correctness, security, accessibility, and data. Remove your temporary resources when finished.
 
-- `gpt-5.6-sol` is this repository's frontier-capability default; the public `gpt-5.6` alias routes to Sol. Do not switch model families or raise reasoning effort merely as a substitute for missing evidence or tests.
-- Give the model the outcome, material domain context, hard constraints, approval boundaries, success criteria, required evidence, and output shape. Let it choose ordinary implementation steps instead of prescribing a brittle procedure.
-- Keep prompts and tool descriptions lean: state each durable rule once, expose only relevant tools, and retain examples only when they encode a product requirement or correct a measured failure.
-- Gather context in a bounded loop: search broadly once, focus on the converged files and contracts, deduplicate reads, stop when the change and validation path are known, and search again only when validation exposes a new unknown.
-- For new GPT-5.6 integrations, start at `medium` reasoning, use `low` for measured latency-sensitive work, move to `high` or `xhigh` only for measured quality gains, and reserve `max` for the hardest quality-first workloads. Preserve an existing evaluated setting when migrating, then compare one level lower.
-- Use the Responses API for tool-using or multi-turn integrations and preserve response output items and applicable reasoning context across turns. Use programmatic tool calling only for bounded tool-heavy work that does not need fresh judgment between calls.
+## Scope and authority
 
-Sources: [OpenAI GPT-5.6 model guidance](https://developers.openai.com/api/docs/guides/latest-model), the current
-[GPT-5.6 Sol prompting guidance](https://developers.openai.com/api/docs/guides/prompt-guidance-gpt-5p6), and the
-[OpenAI GPT-5 Cookbook prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_prompting_guide).
-Prefer the Sol-specific guidance when the sources differ.
+- Work directly. Do not spawn subagents.
+- Keep application-specific content in its owning repository. Shared infrastructure documentation must stay focused
+  on the infrastructure without importing unrelated application details from other repositories.
+- Requests to build, change, fix, or ship authorize implementation, validation, commit, push, PR, CI and review fixes,
+  and merge after required gates pass. Respect narrower limits such as local-only, draft-only, or do-not-deploy.
+  Investigation, review, explanation, and planning requests authorize findings unless the user also requests changes.
+- Authorization persists across turns. Resolve routine choices from the repository and conversation. Ask only when
+  missing information changes the outcome or authority to act, and continue independent work while waiting.
+- Ask before expanding scope, unrequested destructive actions, purchases, or changes to credential identity,
+  destinations, or permissions. An authorized rollout includes renewing an expired credential for the same verified
+  account through its existing secret-sync path. Prepare the reviewable work before any required approval.
+- Match completion to the requested outcome. A routine source change ends at reviewed merge. Requests to move or
+  migrate workloads, deploy, roll out, recover, or verify live behavior authorize the corresponding rollout and runtime
+  proof. Do not stop at merge while that requested outcome remains unfinished.
+- The merge boundary prevents unrequested monitoring, not completion of an authorized rollout. Check CI, Kargo, Argo,
+  and live state only as needed to deliver the requested outcome; do not turn waiting into the task.
+- Preserve unfinished requirements when the user adds feedback. Answer side questions and resume unless redirected.
+  Do not turn completion into another cleanup, audit, or monitoring task.
 
-## Repository Map
+Explicit user instructions take precedence over repository and skill guidance, subject to system and developer
+constraints. Read applicable instructions along the path to files you change and the owning component's README.
+`AGENTS.override.md` takes precedence over `AGENTS.md` in the same directory; more specific instructions govern their
+paths. Use skills when they help. If a skill blocks authorized work, check existing authorization before asking; if a
+conflict remains, link and quote the exact instruction and explain its effect.
 
-- `apps/`: Next.js and TanStack frontends; tests are co-located.
-- `packages/`: shared TypeScript libraries and the Convex backend in `packages/backend`.
-- `services/`: Go, Kotlin, Rails, and Python services.
-- `argocd/`, `kubernetes/`, `tofu/`, `ansible/`: infrastructure and GitOps.
-- `scripts/`, `packages/scripts/`: build and typed deployment helpers.
-- `skills/`: agent skills; bootstrap with `scripts/init_skill.py`.
+## Establish enough evidence to act
 
-## Toolchain
+1. Inspect the provided checkout's branch, commit, and dirty files. Preserve unrelated work. Do not create another
+   worktree or repository copy unless requested. Continue an assigned branch; start new work on `codex/` from fresh
+   `origin/main`, or local `main` when no remote is configured, without overwriting local changes.
+2. Identify expected behavior, the responsible code path, affected callers and contracts, and the validation needed
+   to prove the change. Inspect or run the system to settle factual questions before asking the user. Keep a short
+   plan only when dependent steps need tracking.
+3. Use `rg` and `rg --files` for focused discovery. Batch independent reads and bound outputs to the question.
+   Prefer a small rerunnable tool to repetitive, error-prone manual work. Begin implementation once the affected
+   files and validation path are clear; expand investigation only when evidence exposes an unresolved question.
+4. Use source and configuration for intended behavior, runtime readback for deployed behavior, and
+   [documentation authority](docs/documentation-authority.md) when sources disagree. Historical designs, memory,
+   search indexes, and health indicators alone do not establish current correctness.
 
-- Prefer `nix develop` from the repository root. Run `toolchain-doctor` inside the shell when versions look wrong.
-- Pinned versions: Node 24.11.1, Bun 1.4.0, Go 1.25.5, Ruby 3.4.7 with Bundler 2.7+, and Helm 3. Go services support Go 1.24+.
-- Python support: 3.9–3.12 for `apps/alchimie`; see nested guidance for Python services.
-- Helm 4 is not supported for `kustomize --enable-helm` in this repository.
-- Optional local direnv setup: copy `.envrc.example` to `.envrc`, then run `direnv allow`.
-- Do not edit generated output (`dist/`, `build/`, `_generated`) or lockfiles (`bun.lock`, `bun.lockb`) directly; use the owning generator.
+Before substantial investigation or implementation, retrieve focused context:
 
-## Discovery and Commands
+```sh
+bun run context:retrieve --query "<task and identifiers>" --repository proompteng/lab --limit 3
+```
 
-- Search code with `bun run atlas:code-search --query "<query>" --repository proompteng/lab --limit 10`. Atlas indexes
-  only production `main`; use Git or `rg` for branches, pull-request refs, and uncommitted work. Narrow only as needed
-  with `--path-prefix` and `--language`; pass `--ref main` only when an explicit ref is useful.
-- Atlas initial production acceptance has passed, but trust remains conditional. For conceptual queries, require
-  relevant results, no degradation, and a returned commit matching the locally available requested Git ref: fresh
-  `origin/main` when configured, otherwise local `main`. If neither ref exists, treat Atlas as a navigation lead until
-  commit identity is independently verified. `semantic` and `hybrid` modes demonstrate semantic participation; a
-  relevant `lexical` result with `degradation=null` is valid. Treat irrelevant lexical fallbacks, missing, or stale
-  results as contradictory evidence. Exact-identifier queries may legitimately report `semanticDistance=n/a`.
-- Follow `docs/atlas/README.md` for the full trust and reverification contract. Report contradictions instead of hiding
-  them with narrower queries; Atlas health, statistics, or a few successful results do not prove corpus completeness.
-- Install dependencies with `bun install`.
-- Frontends: `bun run dev:<app>`, `bun run build:<app>`, `bun run start:<app>`.
-- Convex: `bun run dev:convex`, `bun run --filter @proompteng/backend codegen`, `bun run seed:models`.
-- TypeScript formatting and linting: `bun run format`, `bun run lint:<name>`, `bunx oxfmt --check <paths>`.
-- Protobufs: `bun run proto:generate`.
-- Go: `go test ./services/...`, `go build ./services/...`; run `go mod tidy` in a service when dependencies change.
-- Infrastructure: `bun run tf:plan`, `bun run tf:apply`, `bun run lint:argocd`, `bun run ansible`.
-- Scope workspace commands with `bun run --filter <workspace> <script>`.
-- Focused tests: `bun run --filter <workspace> test -- <file> -t "<name>"`, `bun test -t "<name>" <file>`, `go test ./services/prt -run <TestName>`, `./gradlew test --tests "<class>"`, `bundle exec rails test <file>:<line>`, or `pytest <file> -k "<pattern>"`.
+This combines bounded code excerpts and durable notes. The CLI checks Atlas against the checkout commit; use Git and
+`rg` when the code snapshot is stale or unavailable. Verify note claims against current source or live behavior.
+Unavailable sources are non-blocking. Save durable context only when
+explicitly requested; never save secrets, personal data, raw logs, or transient status.
 
-## Memory Workflow
+For indexed production `main`, use:
 
-- Before substantial investigation or implementation, retrieve relevant prior context from the repository root with `bun run --filter memories retrieve-memory --query "<task, service, and relevant identifiers>" --limit 10`.
-- Retrieval searches all namespaces by default; use `--task-name "<namespace>"` only to restrict the search. Treat results as leads and verify important claims against the current branch, documentation, or live state.
-- After completing work, save only durable context that will materially help future tasks—architectural decisions, discovered constraints, operational facts, or important identifiers—with `bun run --filter memories save-memory --task-name "<stable-namespace>" --content "<durable context>" --summary "<short summary>" --tags "<comma-separated-tags>"`.
-- Never save secrets, credentials, tokens, private user data, raw logs, transient CI or rollout status, speculation, or easily rediscovered facts. The scripts auto-detect the in-cluster Agents endpoint; memory unavailability is non-blocking unless the task explicitly depends on it.
+```sh
+bun run atlas:code-search --query "<query>" --repository proompteng/lab --limit 10
+```
 
-## Code Standards
+Trust results only when relevant, without degradation, and matching the requested commit verified against fresh
+`origin/main`, or local `main` without a remote. Otherwise use them as navigation leads. Follow
+[Atlas's verification contract](docs/atlas/README.md), report contradictions, and use Git and `rg` for branch changes.
 
-- Oxfmt is authoritative: 2 spaces, single quotes, trailing commas, 120-column width.
-- Imports: standard library, third party, then internal, separated by blank lines.
-- Names: `kebab-case` files, `PascalCase` components and types, `camelCase` functions.
-- Prefer explicit control flow over nested ternaries and use `async`/`await` consistently.
-- Go: run `gofmt`; wrap errors with context using `fmt.Errorf("context: %w", err)`.
-- Kotlin: run `ktlint`. Rails follows its default style.
-- UI: Tailwind only; order classes layout → spacing → sizing → typography → colors and use `cn()` for conditionals.
-- Use the zinc palette, responsive utilities, accessible interaction states, and content-driven dimensions rather than hardcoded widths or heights.
-- Forms use Zod schemas in `schemas/`, `zodResolver`, validation after typing, and inline errors.
-- Compose or configure base shadcn components; do not edit them directly. Add components through the shadcn CLI.
+## Make the responsible change
 
-## Testing and Review
+- Trace a defect through its callers and fix the cause in the owning code path. Remove changes whose hypotheses the
+  evidence disproves.
+- Model valid states before control flow. Derive values from one source of truth instead of synchronizing copies.
+  Keep mutable state local and collapse layers that only forward calls.
+- Parse external inputs at trust boundaries and derive internal types from authoritative schemas. Retain useful
+  error context.
+- Give independent writers separate state; use atomic updates or one owner when sharing is required. Reconcile
+  uncertain outcomes before retrying side effects.
+- Update affected callers, configuration, documentation, tests, and generated contracts together.
+- Handle failure paths. Do not hide failures with fabricated data, silent fallbacks, disabled checks, or weaker
+  assertions. Keep secrets and personal data out of logs and committed artifacts.
+- Follow the configured formatter and linter. TypeScript uses [.oxfmtrc.json](.oxfmtrc.json) and
+  [.oxlintrc.json](.oxlintrc.json); Go uses `gofmt`, Python uses Ruff, and other languages use the owning component's
+  tooling.
+- For UI work, compose existing Tailwind and shadcn components with zinc colors, responsive layouts, and accessible
+  interaction states. Add shadcn components through its CLI; do not modify base components. Forms use Zod,
+  `zodResolver`, and inline validation errors.
+- Edit generator inputs, then regenerate outputs. Use the owning package manager for lockfiles. Do not hand-edit
+  `dist/`, `build/`, `_generated`, generated routes, or dependency lockfiles.
+- Comments explain non-obvious reasons. Document deliberate limits and the condition that would require a different
+  design.
 
-- Co-locate tests using `*.test.ts(x)`, `*_test.go`, `src/test/kotlin/*Test.kt`, Rails `test/**`, or `alchimie_tests/`.
-- Run the smallest test that proves the behavior, then broaden validation in proportion to risk.
-- Bug fixes require a regression test that fails before the fix and passes after it. If that is not feasible, document why and record exact manual validation.
-- Review only actionable issues introduced by the change. Prioritize correctness, security, data loss, error handling, performance, and missing tests; avoid speculative or stylistic findings.
-- Treat exposed secrets, authorization gaps, and PII logging as highest priority.
-- Infra changes under `argocd/`, `kubernetes/`, `tofu/`, or `ansible/` require rollout and impact notes.
+## Prove the result
 
-## Git, Pull Requests, and CI
+- Capture expected behavior before a refactor. Reproduce defects when practical and add regression coverage that
+  fails before the fix and passes afterward. Test the real failure pattern and affected callers. If automation is
+  impractical, give the reason and exact manual evidence.
+- Run the smallest meaningful checks for affected behavior and failure paths, plus required component and CI checks.
+  Documentation and low-impact edits need relevant validation, not tests that restate the edit.
+- Inspect the final files and diff. Keep unrelated and unnecessary generated changes out of the patch. Repeat or
+  broaden checks only after a change, failure, or unresolved concern justifies it.
+- Separate product failures from missing dependencies, denied network operations, and unavailable environments.
+  Report what passed, what failed, and what remains unverified. A blocked check has not passed.
+- Measure performance against a representative baseline. Change one variable at a time and report only observed
+  improvements, with their limits.
+- For authorized deployment, migration, recovery, or live verification, verify the exact remote commit, required CI,
+  deployed revision/image, and requested live behavior. Argo `Synced`/`Healthy` and readiness endpoints establish infrastructure
+  state; exercise the product behavior before claiming the release is complete.
 
-- Create work branches from fresh `main` using the `codex/` prefix.
-- Use Conventional Commits and matching PR titles: `<type>(<scope>): <summary>`. Common types are `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `build`, `ci`, `perf`, and `revert`.
-- Build every PR body from `.github/PULL_REQUEST_TEMPLATE.md`. Describe only actual changes, fill each retained section, use `N/A` where appropriate, check completed checklist items, and remove placeholders or duplicate sections before create or update.
-- Run focused local validation before pushing. Fix all required CI failures before reporting the PR ready or merging.
-- Ensure CI provides language-appropriate linting for every touched path: Oxlint/Oxfmt for TypeScript, Ruff for Python, and the service-specific Go linter where applicable.
-- Use squash merges: `gh pr merge <number> --squash -R proompteng/lab`. Do not pass `--delete-branch`, which conflicts with worktrees.
-- If `gh stack --help` is unavailable, install the official extension once with `gh extension install github/gh-stack`.
-- For dependent changes, use GitHub native stacks: initialize the bottom branch with `gh stack init --base main <branch>`, then create each dependent branch with `gh stack add <branch>`.
-- Stage only explicit owned paths; never use `git add -A` in a dirty worktree. Keep each stack layer independently reviewable and green.
-- Publish or refresh with `gh stack submit --auto --open`, then verify every PR and parent relationship with `gh stack view`.
-- Land a green stack with `gh stack merge --yes --squash`; never delete its branches from a shared worktree.
-- Normal deployments flow through committed CI/CD and GitOps; do not deploy services directly from a worktree.
+## Code Review Rules
 
-## Codex Review
+Flag actionable defects introduced by the change, including broken contracts, authorization errors, data loss, and
+exposed secrets or personal data. Prioritize correctness, safety, and expected load, then tests, performance, and
+simplicity. Verify findings against connected code and a concrete trigger and consequence. Treat automated review
+comments as claims to check. Leave formatting and lint enforcement to configured tools. Keep findings within the
+requested scope.
 
-- Let automatic Codex review run without posting `@codex review` or polling for review signals.
-- Treat actionable Codex findings as blocking and resolve them before merge. A push that fixes reviewed feedback does not require another current-head review cycle.
-- For each actionable finding, verify the cited code and range, fix it, add focused regression coverage or exact validation, then push. Reply with the commit and evidence and resolve the finding only after the fix is present.
+## Deliver through the existing gates
 
-## Sub-agents
+- Use Conventional Commits and matching PR titles, `<type>(<scope>): <summary>`. Stage explicit owned paths; never use
+  `git add -A` in a dirty shared checkout.
+- Build PR descriptions from [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md). Describe final
+  behavior and actual validation, fill retained sections, and remove placeholders.
+- Validate locally before pushing. Inspect required gates for the current PR commit at the delivery decision and fix
+  required failures. Do not wait for optional checks or sit in CI/review polling loops with status-only updates.
+  Continue independent authorized work while checks run. If only pending required gates remain, use auto-merge when
+  available and report the exact pending gate; do not spend the turn watching jobs or claim completion prematurely.
+- Let automatic Codex review run. Do not post `@codex review` or repeatedly poll for review signals. Verify actionable
+  findings, fix them, add focused evidence, and push before replying and resolving. A fix push does not require a new
+  review cycle; unresolved actionable findings block merge.
+- Use GitHub native stacks for dependent PRs. Verify parent relationships with `gh stack view`, keep each layer
+  independently reviewable and green, and publish with `gh stack submit --auto --open` when authorized.
+- Squash with `gh pr merge <number> --squash -R proompteng/lab`, or `gh stack merge --yes --squash` for a green stack.
+  Do not delete branches used by shared worktrees. Confirm a completed merge once; report a deferred merge as pending.
+  Stop at the requested outcome, continuing an authorized rollout or migration when it remains unfinished.
 
-- Use sub-agents only for independent parallel work. Give each one a concrete objective, exclusive file ownership or a read-only scope, constraints, and expected evidence.
-- Keep one decision owner. Do not let agents edit overlapping files; prefer findings with exact pointers when ownership is uncertain.
-- Avoid expensive installs and full suites in delegated discovery. Use targeted validation, 30–60 second waits, and close completed agents promptly.
+## Repository tools and entry points
 
-## GitOps and Infrastructure Safety
+Use `nix develop` for the pinned toolchain and `toolchain-doctor` when versions differ. Read [flake.nix](flake.nix),
+[package.json](package.json), and component manifests for current pins and scripts. Use `bun install` when dependencies
+are needed. Run these commands from the repository root with root-relative `<paths>`, selecting only relevant checks:
 
-- Default to GitOps: edit manifests and let Argo CD reconcile. Apply directly only when explicitly requested or during a documented emergency.
-- Application image delivery is owned by Kargo. The normal path is `main` merge -> passing image build/publish -> Kargo Warehouse -> Freight -> exact automatic Stage promotion -> Kargo copies the exact source commit, writes the full digest and build/provenance metadata, and pushes `kargo/<stage>` -> Argo CD sync/health -> workload rollout and live proof. Retained post-deploy workflows listen to that exact Kargo branch and the Stage-written manifest paths, not `main`; manual dispatch is diagnostic only. Do not create or merge a SHA/digest manifest bump, release branch, deployment PR, release automerge, manual Argo sync, or direct `kubectl` deployment for an image release.
-- Repo-owned builders publish immutable `kargo-sha-<40>` aliases only after the final multi-architecture OCI index succeeds. Multi-image receipt builders must withhold all discoverable Kargo aliases until every image and the caller's terminal validation and artifact upload succeed; they may prepare exact receipt indexes under tags excluded by the Warehouse. Images retaining CI receipts use `kargo-sha-<40>-run-<github-run-id>`, so a new build run for the same source never moves an immutable tag. Platform images carry `org.opencontainers.image.created` and `org.opencontainers.image.revision`; the final index carries stable source/revision annotations, while receipt-bearing indexes also carry `ai.proompteng.github-actions-run-id` and `ai.proompteng.github-actions-build-conclusion`. The builder must reject mismatched run-qualified tags and annotations. Kargo-retained CI receipts must come from those selected-image annotations, never a Freight name or invented result. Their Warehouses ignore legacy `sha-*` and mutable `latest`, preventing failed or pre-migration builds from creating Freight. External `analysis` uses publisher `latest` only as a `Digest`-strategy discovery pointer and pins the immutable digest in Freight/manifests; external `bilig` uses bare 40-hex/`NewestBuild`. Agents and operators never create or retag these tags.
-- Git remains the complete desired-state authority; Kargo Freight and Stage state plus its generated `kargo/<stage>` branch are the promotion record. ApplicationSet must track and preserve Kargo branches and their deployment metadata, and a recreated Application is recovered by re-promoting its current Freight. Use the `lab-delivery` namespace for Warehouse/Freight/Stage evidence and `argocd` for Application evidence.
-- New Kargo targets require a main-only build that publishes an immutable image, a Warehouse, Stage, exact automatic promotion policy, and the Application's authorized-stage annotation. Promotion must update the source files consumed by the Application's configured renderer; validate the rendered output against the promoted digest. Do not assume built-in Kustomize or forbid an existing renderer such as Lovely.
-- Bayn is the explicit safety exception and is not enrolled in Kargo: it has no Warehouse, Freight, or Stage. `bayn-release` activation and lineage remain the authority for strategy activation.
-- Argo applications under `argocd/applications/**` must not render `Namespace` objects. ApplicationSet owns namespaces through `CreateNamespace=true` and `managedNamespaceMetadata`.
-- Remove upstream `Namespace` objects with a Kustomize `$patch: delete`; this removes them from rendered output, not from the cluster. Avoid namespace pruning or set `argocd.argoproj.io/sync-options: Prune=false` through managed namespace annotations.
-- Do not introduce deprecated Kubernetes or KubeVirt fields or feature gates without a documented requirement.
-- Talos configs must not contain duplicate `machine.files[].path` values. Duplicate paths break `writeUserFiles` and can prevent CRI and Kubelet startup. For multi-document configs, generate and apply a corrected full config rather than attempting a fragile patch.
+```sh
+bun run --filter <workspace> <script>
+bunx oxfmt --check <paths>
+bunx oxlint --config .oxlintrc.json <paths>
+bun run --filter @proompteng/backend codegen
+bun run proto:generate
+bun run lint:argocd
+```
 
-## Kubernetes
+Run component-only commands from their documented directory. Run Go tests inside the affected module; root `go.work`
+does not make `go test ./services/...` cover every module.
 
-- Always pass an explicit namespace to `kubectl`.
-- If no context exists in Coder, create an `in-cluster` context from `/var/run/secrets/kubernetes.io/serviceaccount/{token,ca.crt,namespace}` and `https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}`.
-- On `Unauthorized` or login errors, refresh the `service-user` token and in-cluster CA, then verify with `kubectl auth whoami` before retrying.
-- Render Helm-backed Kustomize overlays from `nix develop`: `kustomize build --enable-helm <path> | kubectl apply -n <ns> -f -`.
-- CNPG: `kubectl cnpg psql -n <ns> <cluster> -- <psql args>`.
+| Work                              | Start here                                                                                                  |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Apps, services, shared packages   | `apps/`, `services/`, `packages/`; owning README and manifest                                               |
+| Convex                            | `packages/backend/`                                                                                         |
+| Build and deployment helpers      | [packages/scripts/README.md](packages/scripts/README.md)                                                    |
+| Operational documentation         | [docs/README.md](docs/README.md)                                                                            |
+| Talos/Omni and cluster operations | [devices/galactic/README.md](devices/galactic/README.md)                                                    |
+| Image delivery                    | [docs/release-automation.md](docs/release-automation.md)                                                    |
+| AgentRuns                         | [creation guide](docs/agents/agentrun-creation-guide.md), [CRD specification](docs/agents/crd-yaml-spec.md) |
+| Temporal                          | [skills/temporal/SKILL.md](skills/temporal/SKILL.md)                                                        |
+| Autonomous project execution      | [skills/autonomous-agents/SKILL.md](skills/autonomous-agents/SKILL.md)                                      |
 
-## AgentRuns
+## Infrastructure contracts
 
-- Sources of truth: `docs/agents/agentrun-creation-guide.md`, `docs/agents/crd-yaml-spec.md`, and `docs/torghut/design-system/v1/agentruns-handoff.md`.
-- When using an ImplementationSpec, omit `spec.parameters.prompt`; it overrides `ImplementationSpec.spec.text`.
-- Set TTL with top-level `spec.ttlSecondsAfterFinished`.
-- PR/VCS runs require `spec.vcsRef.name`, read-write `spec.vcsPolicy`, and a unique `spec.parameters.head` using `codex/...`.
-- Default in-cluster callbacks to the service-account token. Whitepaper finalize callbacks use `JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN=true`; override the path with `JANGAR_WHITEPAPER_SERVICE_ACCOUNT_TOKEN_PATH` only when needed.
-- After apply, inspect the controller ConfigMap labeled `agents.proompteng.ai/agent-run=<name>` and verify `run.json.prompt`. For early failures, compare `status.contract.requiredKeys` with `spec.parameters`.
-- Monitor with `kubectl -n agents get agentrun <name>`, `kubectl -n agents get job -l agents.proompteng.ai/agent-run=<name> -o name`, and `kubectl -n agents logs -f job/<job>`.
+Read deployment, bootstrap, and reseal scripts before running them. Run OpenTofu and Ansible only from an explicitly
+selected, currently owned stack. Record rollout order, impact, and recovery for infrastructure changes; render and
+validate manifests before an authorized apply.
 
-## Temporal
+- Normal deployments use committed CI/CD and GitOps. Direct cluster mutation requires explicit authorization or an
+  authorized emergency procedure. Do not deploy from a worktree or use legacy direct-cluster helpers for releases.
+- An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
+  Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
+  affected resources. For Kargo-managed applications, verify the eligible image, selected Freight, and the authorized
+  Stage's generated `kargo/<stage>` commit. Sync only that commit and preserve Kargo metadata and existing automation
+  and retention settings.
+  Scope expansion, unrequested destructive pruning, and credential or permission changes still require approval.
+- Kargo owns application image promotion. Follow [release automation](docs/release-automation.md) for artifact
+  eligibility, enrollment, promotion, evidence, and recovery. The path is reviewed `main` merge, successful immutable
+  image publication, Warehouse/Freight, exact automatic Stage promotion, generated `kargo/<stage>`, Argo reconciliation,
+  workload rollout, and live proof. Do not bypass gates with SHA/digest bumps, release branches, deployment PRs,
+  release automerge, direct `kubectl` deployment, or operator-created/retagged image aliases.
+- Preserve the release contract's OCI annotations, immutable and run-qualified tags, and external `analysis`/`bilig`
+  exceptions. CI receipts come from the selected image's annotations. Multi-image receipt builders withhold every
+  discoverable Kargo alias until all images, terminal validation, and artifact uploads succeed; preparation tags must
+  remain excluded from Warehouse discovery.
+- Git owns desired state. Kargo Freight, Stage, and `kargo/<stage>` record promotion. ApplicationSet must preserve the
+  Kargo branch and deployment metadata; recover a recreated Application by re-promoting its current Freight. New
+  targets need a main-only immutable build, Warehouse, Stage, exact automatic policy, and authorized-stage annotation.
+  Promotion must update the configured renderer's source inputs, with rendered output verified against the digest.
+  Retained post-deploy workflows follow the exact Kargo branch and Stage-written paths; manual dispatch is diagnostic.
+  Use the owning `<project>-release` namespace for promotion evidence and `argocd` for Application evidence.
+- Bayn uses the same Kargo image-delivery path. Its native activation hook and trading runtime retain account,
+  strategy, grant, reconciliation, and order-risk enforcement; image promotion does not grant live capital authority.
+- Confirm the Kubernetes context and pass an explicit namespace to `kubectl`. On authorization failures, verify
+  identity and follow the [access runbook](docs/runbooks/galactic-kubernetes-access.md) without silently changing
+  credentials or targets. If Coder has no context, configure `in-cluster` from its mounted service account files at
+  `/var/run/secrets/kubernetes.io/serviceaccount/{token,ca.crt,namespace}` and
+  `https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}`. Verify with `kubectl -n <ns> auth whoami`; never print tokens.
+- Use Helm 3 through `nix develop` for `kustomize build --enable-helm`; Helm 4 is unsupported here. Applications under
+  `argocd/applications/**` must not render `Namespace` objects. ApplicationSet owns them through `CreateNamespace=true`
+  and `managedNamespaceMetadata`. Delete upstream namespace manifests from rendered output with `$patch: delete`, and
+  prevent live namespace pruning.
+- Talos `machine.files[].path` entries must be unique. Validate the full configuration before an authorized apply.
+  Avoid deprecated Kubernetes/KubeVirt fields or feature gates without a documented requirement.
+- AgentRun task text belongs in the ImplementationSpec or inline implementation. `parameters.prompt` overrides are
+  rejected. Follow the creation guide's VCS and service-account contracts, use top-level `spec.ttlSecondsAfterFinished`,
+  and verify the controller's rendered `run.json.prompt` and required contract keys after creation.
 
-- Use `skills/temporal/SKILL.md` as the source of truth for Temporal CLI address, namespace, and task queue defaults.
+## Communication and maintenance
+
+Lead updates with the result, decision, or blocker in plain language. Explain user impact and evidence; omit routine
+narration and filler. Final responses state what changed, the validation result, and any remaining blocker; link
+relevant files and distinguish implemented, tested, pushed, merged, and deployed claims.
+
+Keep this file focused on repository-wide decisions and constraints. Put component procedures in their owning docs and
+link them here. Encode mechanical rules in types, tests, generators, or existing lint; keep prose for decisions these
+cannot enforce. Verify changes against fresh `main` so a rewrite does not discard newer contracts. Model and reasoning
+settings belong in runtime configuration, not application defaults changed by this guide.
+
+Instruction scoping follows [Codex AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md),
+consulted 2026-09-10. Repository policies above are local choices.

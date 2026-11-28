@@ -7,6 +7,8 @@ import { resolve } from 'node:path'
 import process from 'node:process'
 import { inspect } from 'node:util'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
+import { captureFixtureCommand } from './collect-smoke-diagnostics'
+import { assertSmokeRunnerImage, localSmokeRunnerImage } from './resolve-smoke-runner-image'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -169,19 +171,16 @@ type BuildHelmArgsInput = {
   imageRepository?: string
   controlPlaneImageRepository?: string
   controllersImageRepository?: string
-  runnerImageRepository?: string
   imageTag?: string
   controlPlaneImageTag?: string
   controllersImageTag?: string
-  runnerImageTag?: string
   imageDigestSet: boolean
   imageDigest: string
   controlPlaneImageDigestSet?: boolean
   controlPlaneImageDigest?: string
   controllersImageDigestSet?: boolean
   controllersImageDigest?: string
-  runnerImageDigestSet?: boolean
-  runnerImageDigest?: string
+  smokeRunnerImage?: string
 }
 
 export const buildHelmArgs = ({
@@ -193,20 +192,18 @@ export const buildHelmArgs = ({
   imageRepository,
   controlPlaneImageRepository,
   controllersImageRepository,
-  runnerImageRepository,
   imageTag,
   controlPlaneImageTag,
   controllersImageTag,
-  runnerImageTag,
   imageDigestSet,
   imageDigest,
   controlPlaneImageDigestSet,
   controlPlaneImageDigest = '',
   controllersImageDigestSet,
   controllersImageDigest = '',
-  runnerImageDigestSet,
-  runnerImageDigest = '',
+  smokeRunnerImage = localSmokeRunnerImage,
 }: BuildHelmArgsInput) => {
+  assertSmokeRunnerImage(smokeRunnerImage)
   const helmArgs = [
     'upgrade',
     '--install',
@@ -238,16 +235,10 @@ export const buildHelmArgs = ({
       helmArgs.push('--set', `controllers.image.repository=${controllersImageRepository}`)
     }
   }
-  if (runnerImageRepository) {
-    helmArgs.push('--set', `runner.image.repository=${runnerImageRepository}`)
-  }
   if (imageTag) {
     helmArgs.push('--set-string', `image.tag=${imageTag}`)
     helmArgs.push('--set-string', `controlPlane.image.tag=${controlPlaneImageTag ?? imageTag}`)
     helmArgs.push('--set-string', `controllers.image.tag=${controllersImageTag ?? imageTag}`)
-    if (runnerImageRepository) {
-      helmArgs.push('--set-string', `runner.image.tag=${runnerImageTag ?? imageTag}`)
-    }
   } else {
     if (controlPlaneImageTag) {
       helmArgs.push('--set-string', `controlPlane.image.tag=${controlPlaneImageTag}`)
@@ -255,17 +246,11 @@ export const buildHelmArgs = ({
     if (controllersImageTag) {
       helmArgs.push('--set-string', `controllers.image.tag=${controllersImageTag}`)
     }
-    if (runnerImageTag) {
-      helmArgs.push('--set-string', `runner.image.tag=${runnerImageTag}`)
-    }
   }
   if (imageDigestSet) {
     helmArgs.push('--set', `image.digest=${imageDigest}`)
     helmArgs.push('--set', `controlPlane.image.digest=${controlPlaneImageDigest ?? imageDigest}`)
     helmArgs.push('--set', `controllers.image.digest=${controllersImageDigest ?? imageDigest}`)
-    if (runnerImageRepository) {
-      helmArgs.push('--set', `runner.image.digest=${runnerImageDigest ?? imageDigest}`)
-    }
   } else {
     if (controlPlaneImageDigestSet) {
       helmArgs.push('--set', `controlPlane.image.digest=${controlPlaneImageDigest}`)
@@ -273,10 +258,10 @@ export const buildHelmArgs = ({
     if (controllersImageDigestSet) {
       helmArgs.push('--set', `controllers.image.digest=${controllersImageDigest}`)
     }
-    if (runnerImageDigestSet) {
-      helmArgs.push('--set', `runner.image.digest=${runnerImageDigest}`)
-    }
   }
+
+  // Both deployments consume this chart env var. Keep the fixture image independent of their image overrides.
+  helmArgs.push('--set-string', `env.vars.AGENTS_AGENT_RUNNER_IMAGE=${smokeRunnerImage}`)
 
   return helmArgs
 }
@@ -534,6 +519,61 @@ const dumpNamespaceDiagnostics = async (namespace: string, releaseName: string) 
   await runInherit(['kubectl', '-n', namespace, 'get', 'events', '--sort-by=.metadata.creationTimestamp'])
 }
 
+export const isFreshDeploymentReady = (value: unknown): boolean => {
+  const record = (input: unknown): Record<string, unknown> =>
+    typeof input === 'object' && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : {}
+  const integer = (input: unknown): input is number =>
+    typeof input === 'number' && Number.isSafeInteger(input) && input >= 0
+  const deployment = record(value)
+  const metadata = record(deployment.metadata)
+  const spec = record(deployment.spec)
+  const status = record(deployment.status)
+  const desired = spec.replicas
+  if (
+    metadata.deletionTimestamp ||
+    !integer(metadata.generation) ||
+    metadata.generation < 1 ||
+    !integer(status.observedGeneration) ||
+    status.observedGeneration < metadata.generation ||
+    !integer(desired) ||
+    desired === 0
+  )
+    return false
+  for (const field of ['replicas', 'updatedReplicas', 'readyReplicas', 'availableReplicas']) {
+    const count = status[field] ?? 0
+    if (!integer(count) || count !== desired) return false
+  }
+  if ((status.unavailableReplicas ?? 0) !== 0) return false
+  const conditions = Array.isArray(status.conditions) ? status.conditions.map(record) : []
+  return (
+    conditions.some((condition) => condition.type === 'Available' && condition.status === 'True') &&
+    !conditions.some((condition) => condition.type === 'Progressing' && condition.status === 'False')
+  )
+}
+
+export const checkFreshDeploymentReady = async (
+  namespace: string,
+  deployment: string,
+  capture = captureFixtureCommand,
+): Promise<boolean> => {
+  try {
+    const result = await capture([
+      'kubectl',
+      '--request-timeout=5s',
+      '-n',
+      namespace,
+      'get',
+      'deployment',
+      deployment,
+      '-o',
+      'json',
+    ])
+    return result.exitCode === 0 && !result.timedOut && isFreshDeploymentReady(JSON.parse(result.stdout))
+  } catch {
+    return false
+  }
+}
+
 const waitForDeploymentRollout = async (namespace: string, deployment: string, timeoutFlag: string) => {
   const exitCode = await runInherit([
     'kubectl',
@@ -545,6 +585,12 @@ const waitForDeploymentRollout = async (namespace: string, deployment: string, t
     `--timeout=${timeoutFlag}`,
   ])
   if (exitCode !== 0) {
+    // A disconnected watch can report an obsolete deadline after the rollout
+    // has recovered. Accept only one bounded, current-generation readiness read.
+    if (await checkFreshDeploymentReady(namespace, deployment)) {
+      log(`Deployment ${deployment} is ready in a fresh read after rollout watcher exited ${exitCode}.`)
+      return
+    }
     await dumpNamespaceDiagnostics(namespace, deployment)
     failSmoke(
       `Command failed (${exitCode}): kubectl -n ${namespace} rollout status deploy/${deployment} --timeout=${timeoutFlag}`,
@@ -731,11 +777,9 @@ const main = async () => {
   const imageRepository = process.env.AGENTS_IMAGE_REPOSITORY
   const controlPlaneImageRepository = process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY
   const controllersImageRepository = process.env.AGENTS_CONTROLLER_IMAGE_REPOSITORY
-  const runnerImageRepository = process.env.AGENTS_RUNNER_IMAGE_REPOSITORY
   const imageTag = process.env.AGENTS_IMAGE_TAG
   const controlPlaneImageTag = process.env.AGENTS_CONTROL_PLANE_IMAGE_TAG
   const controllersImageTag = process.env.AGENTS_CONTROLLER_IMAGE_TAG
-  const runnerImageTag = process.env.AGENTS_RUNNER_IMAGE_TAG
   const imageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_IMAGE_DIGEST')
   const imageDigest = process.env.AGENTS_IMAGE_DIGEST ?? ''
   const controlPlaneImageDigestSet = Object.prototype.hasOwnProperty.call(
@@ -745,8 +789,8 @@ const main = async () => {
   const controlPlaneImageDigest = process.env.AGENTS_CONTROL_PLANE_IMAGE_DIGEST ?? ''
   const controllersImageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_CONTROLLER_IMAGE_DIGEST')
   const controllersImageDigest = process.env.AGENTS_CONTROLLER_IMAGE_DIGEST ?? ''
-  const runnerImageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_RUNNER_IMAGE_DIGEST')
-  const runnerImageDigest = process.env.AGENTS_RUNNER_IMAGE_DIGEST ?? ''
+  const smokeRunnerImage = process.env.AGENTS_SMOKE_RUNNER_IMAGE ?? localSmokeRunnerImage
+  assertSmokeRunnerImage(smokeRunnerImage)
 
   const agentctlCommand = agentctlBin.endsWith('.js') ? ['node', agentctlBin] : [agentctlBin]
   const agentctlExecutable = agentctlCommand[0]
@@ -834,19 +878,16 @@ const main = async () => {
     imageRepository,
     controlPlaneImageRepository,
     controllersImageRepository,
-    runnerImageRepository,
     imageTag,
     controlPlaneImageTag,
     controllersImageTag,
-    runnerImageTag,
     imageDigestSet,
     imageDigest,
     controlPlaneImageDigestSet,
     controlPlaneImageDigest,
     controllersImageDigestSet,
     controllersImageDigest,
-    runnerImageDigestSet,
-    runnerImageDigest,
+    smokeRunnerImage,
   })
 
   log('Applying Agents chart CRDs...')

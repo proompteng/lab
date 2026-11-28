@@ -4,6 +4,8 @@ import { DateTime, Result } from 'effect'
 
 import { Authority, KillState, ReconciliationStatus } from '../../execution/contracts'
 import { CycleState, CycleTerminalReason } from '../model'
+import { EntryAllocationReason } from '../entry-allocation-observation'
+import { ForwardPerformanceUnavailableReason } from '../observability'
 import {
   decodeCycleObservabilityProjectionRows,
   projectCycleObservabilityRow,
@@ -40,7 +42,12 @@ const emptyExecutionFunnel = (): CycleObservabilityProjectionRow['execution_funn
   latestIntentAt: null,
   latestOrderAt: null,
   latestFillAt: null,
+  maximumIntentToSubmitLatencyMs: null,
   maximumOrderAcknowledgementLatencyMs: null,
+  maximumOrderObservationLatencyMs: null,
+  maximumIntentToBrokerFillLatencyMs: null,
+  maximumFillIngestionLatencyMs: null,
+  latencyClockRegressionCount: 0,
   maximumFillLatencyMs: null,
   positionSnapshotObservedAt: null,
   positionCount: null,
@@ -58,10 +65,12 @@ const emptyRow = (): CycleObservabilityProjectionRow => ({
   current_account_id: null,
   current_signal_session_date: null,
   current_execution_session_date: null,
+  current_execution_calendar_schema_version: null,
   current_state: null,
   current_snapshot_id: null,
   current_decision_hash: null,
   current_terminal_reason: null,
+  current_publication_deadline_at: null,
   current_submission_open_at: null,
   current_submission_cutoff_at: null,
   current_execution_open_at: null,
@@ -73,10 +82,12 @@ const emptyRow = (): CycleObservabilityProjectionRow => ({
   last_account_id: null,
   last_signal_session_date: null,
   last_execution_session_date: null,
+  last_execution_calendar_schema_version: null,
   last_state: null,
   last_snapshot_id: null,
   last_decision_hash: null,
   last_terminal_reason: null,
+  last_publication_deadline_at: null,
   last_submission_open_at: null,
   last_submission_cutoff_at: null,
   last_execution_open_at: null,
@@ -117,6 +128,10 @@ const emptyRow = (): CycleObservabilityProjectionRow => ({
   accounting_execution_fees_micros: '0',
   accounting_net_realized_pnl_after_execution_fees_micros: '0',
   performance_receipt_created_at: null,
+  performance_authority_generation_hash: null,
+  performance_source_revision: null,
+  performance_window_opened_at: null,
+  performance_window_closed_at: null,
   performance_evidence_status: null,
   performance_profitability: null,
   performance_gross_realized_pnl_micros: null,
@@ -136,6 +151,7 @@ const currentCycleRow = (): CycleObservabilityProjectionRow => ({
   current_account_id: 'paper-account-1',
   current_signal_session_date: '2026-07-24',
   current_execution_session_date: '2026-07-27',
+  current_execution_calendar_schema_version: 'bayn.alpaca-market-calendar-observation.v2',
   current_state: CycleState.Pending,
   current_snapshot_id: '2'.repeat(64),
   current_decision_hash: null,
@@ -149,9 +165,51 @@ const currentCycleRow = (): CycleObservabilityProjectionRow => ({
 })
 
 describe('cycle observability projection', () => {
+  test('retains a bounded allocation explanation on the last cycle when the next session is already active', () => {
+    const current = currentCycleRow()
+    const row = {
+      ...current,
+      last_cycle_id: '9'.repeat(64),
+      last_account_id: current.current_account_id,
+      last_signal_session_date: current.current_signal_session_date,
+      last_execution_session_date: current.current_execution_session_date,
+      last_execution_calendar_schema_version: current.current_execution_calendar_schema_version,
+      last_state: CycleState.NoTrade,
+      last_submission_open_at: current.current_submission_open_at,
+      last_submission_cutoff_at: current.current_submission_cutoff_at,
+      last_execution_open_at: current.current_execution_open_at,
+      last_execution_close_at: current.current_execution_close_at,
+      last_created_at: current.current_created_at,
+      last_updated_at: current.current_updated_at,
+      last_entry_allocation: {
+        noTrade: true,
+        positiveTarget: true,
+        flat: true,
+        allocationCapitalMicros: '0',
+        priorRecordedTurnoverMicros: '1100000000',
+        maximumTurnoverMicros: '1000000000',
+      },
+    }
+    const projection = Result.getOrThrow(projectCycleObservabilityRow(row))
+    expect(projection.last?.entryAllocationReason).toBe(EntryAllocationReason.TurnoverBudgetExhausted)
+    expect(projection.current?.entryAllocationReason).toBeUndefined()
+    expect(projection.last?.terminalReason).toBeNull()
+    expect(Result.isSuccess(decodeCycleObservabilityProjectionRows([row]))).toBe(true)
+  })
+
   test('decodes the unknown SQL projection once at the adapter boundary', () => {
     expect(decodeCycleObservabilityProjectionRows([emptyRow()])).toEqual(Result.succeed([emptyRow()]))
     expect(decodeCycleObservabilityProjectionRows([{ ...emptyRow(), unfinished_cycle_count: '0' }])).toMatchObject({
+      _tag: 'Failure',
+    })
+  })
+
+  test.each([
+    { performance_source_revision: 'unknown' },
+    { performance_window_opened_at: '2026-07-24T13:30:00.000+00:00' },
+    { performance_window_closed_at: '2026-02-30T20:00:00.000Z' },
+  ])('rejects malformed present receipt provenance at the SQL boundary (%j)', (invalid) => {
+    expect(decodeCycleObservabilityProjectionRows([{ ...emptyRow(), ...invalid }])).toMatchObject({
       _tag: 'Failure',
     })
   })
@@ -176,6 +234,7 @@ describe('cycle observability projection', () => {
         execution: emptyExecutionFunnel(),
         economics: {
           accounting: {
+            scope: 'ACCOUNT_HISTORY',
             fillCount: 0,
             transactionCount: 0,
             receiptCount: 0,
@@ -187,6 +246,7 @@ describe('cycle observability projection', () => {
             netRealizedPnlAfterExecutionFeesMicros: '0',
           },
           forwardPerformance: null,
+          forwardPerformanceUnavailableReason: ForwardPerformanceUnavailableReason.NoPersistedReceipt,
         },
       }),
     )
@@ -201,7 +261,7 @@ describe('cycle observability projection', () => {
       authority_effective: Authority.Observe,
       authority_kill: KillState.Clear,
       authority_reason: null,
-      authority_updated_at: sqlTimestamp('2026-07-24T21:02:00.000Z'),
+      authority_updated_at: '2026-07-24T21:02:00.000Z',
       reconciliation_id: '4'.repeat(64),
       reconciliation_account_id: 'paper-account-1',
       reconciliation_status: ReconciliationStatus.Exact,
@@ -274,6 +334,10 @@ describe('cycle observability projection', () => {
         row: { ...emptyRow(), performance_receipt_created_at: sqlTimestamp('2026-07-24T21:06:00.000Z') },
         message: 'forward-performance economics projection is incomplete',
       },
+      {
+        row: { ...emptyRow(), performance_authority_generation_hash: 'a'.repeat(64) },
+        message: 'forward-performance economics projection is incomplete',
+      },
     ] as const
 
     for (const testCase of cases) {
@@ -290,9 +354,14 @@ describe('cycle observability projection', () => {
     }
   })
 
-  test('projects running accounting and immutable all-cost performance separately', () => {
+  test('separates account history and retained receipt provenance from the current authority', () => {
     const row: CycleObservabilityProjectionRow = {
       ...emptyRow(),
+      authority_generation_hash: 'a'.repeat(64),
+      authority_maximum: Authority.Execution,
+      authority_effective: Authority.Execution,
+      authority_kill: KillState.Clear,
+      authority_updated_at: '2026-07-27T13:00:00.000Z',
       accounting_fill_count: 4,
       accounting_transaction_count: 4,
       accounting_receipt_count: 4,
@@ -301,6 +370,10 @@ describe('cycle observability projection', () => {
       accounting_execution_fees_micros: '500000',
       accounting_net_realized_pnl_after_execution_fees_micros: '12000000',
       performance_receipt_created_at: sqlTimestamp('2026-07-24T21:06:00.000Z'),
+      performance_authority_generation_hash: 'b'.repeat(64),
+      performance_source_revision: 'c'.repeat(40),
+      performance_window_opened_at: '2026-07-24T13:30:00.000Z',
+      performance_window_closed_at: '2026-07-24T21:06:00.000Z',
       performance_evidence_status: 'SUFFICIENT',
       performance_profitability: 'PROFITABLE',
       performance_gross_realized_pnl_micros: '12500000',
@@ -319,6 +392,7 @@ describe('cycle observability projection', () => {
     if (Result.isFailure(projected)) return expect.unreachable(projected.failure.message)
     expect(projected.success.economics).toEqual({
       accounting: {
+        scope: 'ACCOUNT_HISTORY',
         fillCount: 4,
         transactionCount: 4,
         receiptCount: 4,
@@ -331,6 +405,10 @@ describe('cycle observability projection', () => {
       },
       forwardPerformance: {
         createdAt: '2026-07-24T21:06:00.000Z',
+        authorityGenerationHash: 'b'.repeat(64),
+        sourceRevision: 'c'.repeat(40),
+        windowOpenedAt: '2026-07-24T13:30:00.000Z',
+        windowClosedAt: '2026-07-24T21:06:00.000Z',
         evidenceStatus: 'SUFFICIENT',
         profitability: 'PROFITABLE',
         grossRealizedPnlMicros: '12500000',
@@ -343,6 +421,29 @@ describe('cycle observability projection', () => {
         accountingReceiptsExact: true,
         ledgerExact: true,
       },
+      forwardPerformanceUnavailableReason: null,
+    })
+    expect(projected.success.authority?.generationHash).toBe('a'.repeat(64))
+    expect(Result.isSuccess(decodeCycleObservabilityProjectionRows([row]))).toBe(true)
+    expect(
+      Result.isSuccess(
+        decodeCycleObservabilityProjectionRows([{ ...row, performance_source_revision: 'c'.repeat(64) }]),
+      ),
+    ).toBe(true)
+
+    const withoutProvenance = projectCycleObservabilityRow({
+      ...row,
+      performance_source_revision: null,
+      performance_window_opened_at: null,
+      performance_window_closed_at: null,
+    })
+    expect(Result.isSuccess(withoutProvenance)).toBe(true)
+    if (Result.isFailure(withoutProvenance)) return expect.unreachable(withoutProvenance.failure.message)
+    expect(withoutProvenance.success.economics?.forwardPerformance).toMatchObject({
+      authorityGenerationHash: 'b'.repeat(64),
+      sourceRevision: null,
+      windowOpenedAt: null,
+      windowClosedAt: null,
     })
   })
 
@@ -423,6 +524,7 @@ describe('cycle observability projection', () => {
       current_account_id: null,
       current_signal_session_date: null,
       current_execution_session_date: null,
+      current_execution_calendar_schema_version: null,
       current_state: null,
       current_snapshot_id: null,
       current_submission_open_at: null,
@@ -435,6 +537,7 @@ describe('cycle observability projection', () => {
       last_account_id: 'paper-account-1',
       last_signal_session_date: '2026-07-24',
       last_execution_session_date: '2026-07-27',
+      last_execution_calendar_schema_version: 'bayn.alpaca-market-calendar-observation.v2',
       last_state: CycleState.Blocked,
       last_snapshot_id: '6'.repeat(64),
       last_decision_hash: null,

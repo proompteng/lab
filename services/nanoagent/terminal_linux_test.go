@@ -72,7 +72,7 @@ func TestTerminalManagerCleansEnvironmentSanitizedDescendantAfterLeaderExit(t *t
 	manager.cleanupDelay = 20 * time.Millisecond
 	t.Cleanup(manager.close)
 
-	view, _, err := manager.create("terminal-creation-sanitized-descendant", "/", 80, 24)
+	view, _, err := manager.create("terminal-creation-sanitized-descendant", "/workspace", 80, 24)
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
 	}

@@ -1,0 +1,50 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: oidc-discovery-proompteng-ai
+  namespace: spire-system
+spec:
+  secretName: oidc-discovery-proompteng-ai-tls
+  dnsNames: [oidc.proompteng.ai]
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: oidc-discovery
+  namespace: spire-system
+spec:
+  serverName: oidc.proompteng.ai
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: oidc-discovery
+  namespace: spire-system
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: Host(`oidc.proompteng.ai`) && Method(`GET`) && (Path(`/.well-known/openid-configuration`) || Path(`/keys`))
+      services:
+        - name: spire-spiffe-oidc-discovery-provider
+          port: 443
+          scheme: https
+          serversTransport: oidc-discovery
+  tls:
+    secretName: oidc-discovery-proompteng-ai-tls
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: oidc-discovery
+  namespace: spire-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spiffe-oidc-discovery-provider
+      app.kubernetes.io/instance: spire

@@ -19,6 +19,8 @@ The repository centers on:
 - `apps/app`: TanStack Start control-plane UI
 - `apps/cms`: Payload CMS for landing content
 - `apps/docs`: Fumadocs-based documentation app
+- `apps/orbit-salvage`: Godot space-salvage game with a native desktop and browser build
+- `apps/ricochet-rush`: Godot 3D survival shooter with native desktop and browser builds
 - `apps/froussard`: Bun webhook bridge service in `apps/`
 - `apps/reestr`, `apps/reviseur`, `apps/kabina`, `apps/nata`, `apps/kitty-krew`, `apps/alchimie`, `apps/discourse`:
   additional product and experiment surfaces
@@ -29,8 +31,8 @@ The repository centers on:
 - `packages/scripts`: typed Bun deploy/build/reseal automation used across services
 - `packages/temporal-bun-sdk`: Temporal SDK and examples for Bun-based workers
 - `packages/codex`: Codex client/runtime package
-- `packages/design`, `packages/atelier`, `packages/cloutt`, `packages/cx-tools`, `packages/discord`,
-  `packages/otel`, `packages/schematic`: shared libraries and tooling
+- `packages/design`, `packages/cx-tools`, `packages/discord`, `packages/otel`, `packages/schematic`: shared libraries
+  and tooling
 
 ### Services
 
@@ -64,7 +66,7 @@ TigerBeetle operator code lives in the standalone `proompteng/tigresse` reposito
 - Nix with flakes enabled. The repo-level toolchain is provided by `nix develop`.
 - Without Nix, install the equivalent tools manually:
   - Node `24.11.1`
-  - Bun `1.4.0`
+  - Bun `1.4.2`
   - Go `1.25.5` for repo parity; Go services support `1.24+`
   - Ruby `3.4.7` + Bundler `2.7+` for `services/dernier`
   - Python:
@@ -81,6 +83,10 @@ toolchain-doctor
 ```bash
 bun install
 ```
+
+With mise installed, `bun run hooks:install` sets up the repository's Git hooks. If this clone already uses the old
+Lefthook setup, run `bunx lefthook@2.1.9 uninstall` once before installing hk. Commits run formatting and linting on
+staged files. Pushes run the same workspace lint as CI.
 
 Common entry points from the repo root:
 
@@ -105,7 +111,7 @@ bun run dev:convex
 
 Service-specific local workflows live in the nearest README. Two important examples:
 
-- `services/jangar/README.md`: local Jangar development, Tilt port-forwards, worker split, and gRPC notes
+- `services/jangar/README.md`: local Jangar development, worker split, and gRPC notes
 - `services/torghut/README.md`: `uv`-based Python setup, migration checks, whitepaper workflow, and rollout automation
 
 ## Common Commands
@@ -142,14 +148,17 @@ go build ./services/...
 
 ### Infrastructure
 
+The current `galactic` cluster is managed by Omni/Talos, while Argo CD owns Kubernetes application desired state. Start
+with `devices/galactic/README.md`; there are no generic root apply/install commands for legacy Harvester, Rancher, or K3s
+environments.
+
 ```bash
-bun run tf:plan
-bun run tf:apply
 bun run lint:argocd
-bun run ansible
 ```
 
-Service deploy/build/reseal workflows use the typed scripts under `packages/scripts/src/**`.
+Build, reseal, and validation helpers live under `packages/scripts/src/**`. Repository policy requires normal
+production releases to flow through committed CI, Kargo, and Argo CD. Retained direct-cluster helpers are legacy paths
+pending fail-closed removal in `docs/repository-cleanup-todo.md`; do not use them for production releases.
 
 ## Repository Layout
 
@@ -176,6 +185,7 @@ Service deploy/build/reseal workflows use the typed scripts under `packages/scri
 - Jangar service docs: `services/jangar/README.md`
 - Torghut docs index: `docs/torghut/README.md`
 - Deploy/build script catalog: `packages/scripts/README.md`
+- Repository cleanup backlog: `docs/repository-cleanup-todo.md`
 - Root tooling and workflows: `AGENTS.md`
 
 ## Notes

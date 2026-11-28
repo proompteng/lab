@@ -7,17 +7,133 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
-  test('CreateAgent accepts only a display name and rejects resource escalation fields', () => {
-    expect(tengriActionSchema.safeParse({ action: 'create-agent', displayName: 'Tengri' }).success).toBe(true)
+  test('scopes active-run reads to a validated conversation without changing workspace reads', () => {
+    const action = { action: 'active-codex-runs', agentId: 'agent-test' } as const
+    expect(tengriActionSchema.parse(action)).toEqual(action)
+    expect(tengriActionSchema.parse({ ...action, threadId: 'thread-selected' })).toEqual({
+      ...action,
+      threadId: 'thread-selected',
+    })
+    for (const threadId of ['', ' ', '../other', 'x'.repeat(161), null]) {
+      expect(tengriActionSchema.safeParse({ ...action, threadId }).success).toBe(false)
+    }
+    expect(tengriActionSchema.safeParse({ ...action, ownerHash: 'other' }).success).toBe(false)
+  })
+
+  test('power settings enforce integer idle limits and reject modes that retain RAM', () => {
+    const action = { action: 'update-power-settings', agentId: 'agent-test' }
+    for (const idleTimeoutMinutes of [0, 5, 60, 1440]) {
+      expect(tengriActionSchema.safeParse({ ...action, power: { idleTimeoutMinutes } }).success).toBe(true)
+    }
+    for (const idleTimeoutMinutes of [-1, 0.5, 1441, '60', null]) {
+      expect(tengriActionSchema.safeParse({ ...action, power: { idleTimeoutMinutes } }).success).toBe(false)
+    }
+    expect(
+      tengriActionSchema.safeParse({ ...action, power: { sleepMode: 'hibernate', idleTimeoutMinutes: 60 } }).success,
+    ).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        ...action,
+        power: { idleTimeoutMinutes: 60, ownerHash: 'other' },
+      }).success,
+    ).toBe(false)
+  })
+  test('accepts model options when creating threads or sending turns and rejects invalid choices', () => {
+    for (const action of [
+      { action: 'create-thread', agentId: 'agent-test' },
+      {
+        action: 'send-turn',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        agentId: 'agent-test',
+        threadId: 'thread-test',
+        text: 'Read the workspace',
+      },
+    ]) {
+      expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.2-sol', reasoningEffort: 'high' }).success).toBe(
+        true,
+      )
+      expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.2-sol\n' }).success).toBe(false)
+      expect(tengriActionSchema.safeParse({ ...action, reasoningEffort: 'unbounded' }).success).toBe(false)
+    }
+  })
+
+  test('history reads accept only the conversation identity', () => {
+    const action = { action: 'resume-thread', agentId: 'agent-test', threadId: 'thread-test' }
+    expect(tengriActionSchema.safeParse(action).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.2-sol' }).success).toBe(false)
+    expect(tengriActionSchema.safeParse({ ...action, reasoningEffort: 'high' }).success).toBe(false)
+  })
+
+  test('editor logout revocation cannot select another owner', () => {
+    expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions' }).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions', ownerId: 'someone-else' }).success).toBe(
+      false,
+    )
+  })
+
+  test('validates editor window identity and rejects editor ports in ordinary previews', () => {
+    expect(tengriActionSchema.safeParse({ action: 'browser-session', agentId: 'agent-test' }).success).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'browser-session',
+        agentId: 'agent-test',
+        windowId: 'desktop-stable-chrome-window',
+        renewal: false,
+      }).success,
+    ).toBe(true)
+    const editor = {
+      action: 'editor-session',
+      agentId: 'agent-test',
+      windowId: 'desktop-stable-code-window',
+      renewal: false,
+    }
+    expect(tengriActionSchema.safeParse(editor).success).toBe(true)
+    for (const windowId of ['short', '../arbitrary-window-path', 'a'.repeat(129)]) {
+      expect(tengriActionSchema.safeParse({ ...editor, windowId }).success).toBe(false)
+    }
+    for (const port of [13337, 13338, 13339]) {
+      expect(
+        tengriActionSchema.safeParse({
+          action: 'preview-session',
+          agentId: 'agent-test',
+          port,
+          path: '/',
+          fragment: '',
+        }).success,
+      ).toBe(false)
+    }
+  })
+
+  test('CreateAgent requires a stable operation ID, accepts a display name and rejects resource escalation fields', () => {
     expect(
       tengriActionSchema.safeParse({
         action: 'create-agent',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        displayName: 'Tengri',
+      }).success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'create-agent',
+        operationId: '11111111-1111-4111-8111-111111111111',
         displayName: 'Tengri',
         resources: { cpuMillis: 64_000, memoryMib: 262_144 },
       }).success,
     ).toBe(false)
-    expect(tengriActionSchema.safeParse({ action: 'create-agent', displayName: 'a'.repeat(64) }).success).toBe(true)
-    expect(tengriActionSchema.safeParse({ action: 'create-agent', displayName: 'a'.repeat(65) }).success).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'create-agent',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        displayName: 'a'.repeat(64),
+      }).success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'create-agent',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        displayName: 'a'.repeat(65),
+      }).success,
+    ).toBe(false)
   })
 
   test('constrains terminal geometry, approval decisions, and preview ports', () => {
@@ -26,7 +142,7 @@ describe('Tengri BFF action schema', () => {
         action: 'create-terminal',
         agentId: 'agent-123',
         creationId: 'terminal-creation-123',
-        cwd: '/',
+        cwd: '/workspace',
         columns: 10_000,
         rows: 24,
       }).success,
@@ -55,6 +171,8 @@ describe('Tengri BFF action schema', () => {
       expect(
         tengriActionSchema.safeParse({
           action: 'resolve-approval',
+          runId: '11111111-1111-4111-8111-111111111111',
+          operationId: '22222222-2222-4222-8222-222222222222',
           agentId: 'agent-123',
           approvalId: 'approval-1',
           decision,
@@ -64,6 +182,8 @@ describe('Tengri BFF action schema', () => {
     expect(
       tengriActionSchema.safeParse({
         action: 'resolve-approval',
+        runId: '11111111-1111-4111-8111-111111111111',
+        operationId: '22222222-2222-4222-8222-222222222222',
         agentId: 'agent-123',
         approvalId: 'approval-1',
         decision: 'always-approve',
@@ -81,11 +201,18 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         port: 4321,
         path: '/app?mode=dev',
+        fragment: '#editor',
       }).success,
     ).toBe(true)
     for (const path of ['https://example.test/app', '/app#ticket', '/app\u0000private']) {
       expect(
-        tengriActionSchema.safeParse({ action: 'preview-session', agentId: 'agent-123', port: 4321, path }).success,
+        tengriActionSchema.safeParse({
+          action: 'preview-session',
+          agentId: 'agent-123',
+          port: 4321,
+          path,
+          fragment: '',
+        }).success,
       ).toBe(false)
     }
     const exactPreviewPath = `/${'é'.repeat(2047)}x`
@@ -96,6 +223,7 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         port: 4321,
         path: exactPreviewPath,
+        fragment: '',
       }).success,
     ).toBe(true)
     expect(
@@ -104,13 +232,37 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         port: 4321,
         path: `${exactPreviewPath}é`,
+        fragment: '',
       }).success,
     ).toBe(false)
+    const exactPreviewFragment = `#${'é'.repeat(2047)}x`
+    expect(Buffer.byteLength(exactPreviewFragment, 'utf8')).toBe(4096)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'preview-session',
+        agentId: 'agent-123',
+        port: 4321,
+        path: '/',
+        fragment: exactPreviewFragment,
+      }).success,
+    ).toBe(true)
+    for (const fragment of ['editor', '#editor\nprivate', `#${'é'.repeat(2048)}`]) {
+      expect(
+        tengriActionSchema.safeParse({
+          action: 'preview-session',
+          agentId: 'agent-123',
+          port: 4321,
+          path: '/',
+          fragment,
+        }).success,
+      ).toBe(false)
+    }
     expect(
       tengriActionSchema.safeParse({
         action: 'revoke-preview-session',
         agentId: 'agent-123',
         sessionId: 'abc123abc123abc123abc123',
+        revocationToken: 'a'.repeat(43),
       }).success,
     ).toBe(true)
     expect(
@@ -123,7 +275,18 @@ describe('Tengri BFF action schema', () => {
   })
 
   test('requires absolute clean file paths and rejects undeclared action fields', () => {
-    for (const path of ['workspace/file.ts', '/workspace/file.ts\u0000secret', '/workspace/file.ts\nnext']) {
+    for (const path of [
+      'workspace/file.ts',
+      '/',
+      '/lab/README.md',
+      '/workspace-other/report.txt',
+      '/workspace/',
+      '/workspace//report.txt',
+      '/workspace/../report.txt',
+      '/workspace/./report.txt',
+      '/workspace/file.ts\u0000secret',
+      '/workspace/file.ts\nnext',
+    ]) {
       expect(tengriActionSchema.safeParse({ action: 'read-file', agentId: 'agent-123', path }).success).toBe(false)
     }
     expect(
@@ -144,8 +307,13 @@ describe('Tengri BFF action schema', () => {
 
     const exact = 'é'.repeat(MAX_EDITABLE_FILE_BYTES / 2)
     expect(
-      tengriActionSchema.safeParse({ action: 'write-file', agentId: 'agent-123', path: spacedPath, content: exact })
-        .success,
+      tengriActionSchema.safeParse({
+        action: 'write-file',
+        agentId: 'agent-123',
+        path: spacedPath,
+        content: exact,
+        expectedRevision: 'missing',
+      }).success,
     ).toBe(true)
     expect(
       tengriActionSchema.safeParse({
@@ -153,19 +321,38 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         path: spacedPath,
         content: `${exact}é`,
+        expectedRevision: 'missing',
       }).success,
     ).toBe(false)
+  })
+
+  test('requires a precise file revision or create-only precondition for saves', () => {
+    const save = { action: 'write-file', agentId: 'agent-123', path: '/workspace/main.ts', content: '' }
+    expect(tengriActionSchema.safeParse(save).success).toBe(false)
+    for (const expectedRevision of ['', '*', 'A'.repeat(64), 'f'.repeat(63), 'missing ']) {
+      expect(tengriActionSchema.safeParse({ ...save, expectedRevision }).success).toBe(false)
+    }
+    for (const expectedRevision of ['missing', 'a'.repeat(64)]) {
+      expect(tengriActionSchema.safeParse({ ...save, expectedRevision }).success).toBe(true)
+    }
   })
 
   test('bounds Codex prompts by UTF-8 bytes', () => {
     const exact = '🙂'.repeat(MAX_CODEX_PROMPT_BYTES / 4)
     expect(
-      tengriActionSchema.safeParse({ action: 'send-turn', agentId: 'agent-123', threadId: 'thread-1', text: exact })
-        .success,
+      tengriActionSchema.safeParse({
+        action: 'send-turn',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        agentId: 'agent-123',
+        threadId: 'thread-1',
+        text: exact,
+      }).success,
     ).toBe(true)
     expect(
       tengriActionSchema.safeParse({
         action: 'steer-turn',
+        runId: '11111111-1111-4111-8111-111111111111',
+        operationId: '11111111-1111-4111-8111-111111111111',
         agentId: 'agent-123',
         threadId: 'thread-1',
         turnId: 'turn-1',
@@ -189,4 +376,66 @@ describe('Tengri BFF action schema', () => {
       }).success,
     ).toBe(false)
   })
+})
+
+describe('Codex image inputs', () => {
+  const png = { mediaType: 'image/png', data: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]).toString('base64') }
+  const request = {
+    action: 'send-turn',
+    operationId: '11111111-1111-4111-8111-111111111111',
+    agentId: 'agent-123',
+    threadId: 'thread-1',
+    text: '',
+  }
+  test('accepts image-only and mixed text/image messages', () => {
+    expect(tengriActionSchema.safeParse({ ...request, images: [png] }).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ ...request, text: 'Inspect this', images: [png] }).success).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        ...request,
+        action: 'steer-turn',
+        runId: '11111111-1111-4111-8111-111111111111',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        turnId: 'turn-1',
+        images: [png],
+      }).success,
+    ).toBe(true)
+    expect(tengriActionSchema.safeParse(request).success).toBe(false)
+  })
+  test('rejects spoofed formats, malformed base64, remote URLs, and excessive images', () => {
+    for (const image of [
+      { ...png, mediaType: 'image/jpeg' },
+      { ...png, data: 'https://example.test/image.png' },
+      { ...png, data: 'not base64' },
+      { ...png, mediaType: 'image/svg+xml' },
+    ])
+      expect(tengriActionSchema.safeParse({ ...request, images: [image] }).success).toBe(false)
+    expect(tengriActionSchema.safeParse({ ...request, images: Array(5).fill(png) }).success).toBe(false)
+  })
+  test('bounds each image and total decoded size', () => {
+    const bytes = Buffer.alloc(4 * 1024 * 1024)
+    Buffer.from(png.data, 'base64').copy(bytes)
+    const exact = { ...png, data: bytes.toString('base64') }
+    expect(tengriActionSchema.safeParse({ ...request, images: [exact, exact] }).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ ...request, images: [exact, exact, png] }).success).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        ...request,
+        images: [{ ...png, data: Buffer.concat([bytes, Buffer.from([0])]).toString('base64') }],
+      }).success,
+    ).toBe(false)
+  })
+})
+
+test('run recovery binds an explicit run and stable control identity', () => {
+  const action = {
+    action: 'recover-run',
+    agentId: 'agent-test',
+    runId: '11111111-1111-4111-8111-111111111111',
+    operationId: '22222222-2222-4222-8222-222222222222',
+  }
+  expect(tengriActionSchema.safeParse(action).success).toBe(true)
+  expect(tengriActionSchema.safeParse({ ...action, operationId: undefined }).success).toBe(false)
+  expect(tengriActionSchema.safeParse({ ...action, runId: 'other' }).success).toBe(false)
+  expect(tengriActionSchema.safeParse({ ...action, sessionId: 'caller-session' }).success).toBe(false)
 })

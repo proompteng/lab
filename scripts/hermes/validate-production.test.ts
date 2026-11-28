@@ -6,6 +6,29 @@ test('accepts the committed Hermes production surfaces', async () => {
   expect(validateProductionContent(await loadProductionFiles())).toEqual([])
 })
 
+test('rejects redirecting the Hermes mirror destination', async () => {
+  const files = await loadProductionFiles()
+  const reference = 'TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64'
+  files.mirrorWorkflow = files.mirrorWorkflow.replace(
+    reference,
+    reference.replace('lab/hermes-agent', 'lab/wrong-agent'),
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mirrorWorkflow}: missing production invariant ${JSON.stringify(reference)}`,
+  )
+})
+
+test('rejects a source-index digest that disagrees with the reviewed Hermes release', async () => {
+  const files = await loadProductionFiles()
+  const assignment = 'SOURCE_INDEX_DIGEST: sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7'
+  files.mirrorWorkflow = files.mirrorWorkflow.replace(assignment, `SOURCE_INDEX_DIGEST: sha256:${'0'.repeat(64)}`)
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mirrorWorkflow}: missing production invariant ${JSON.stringify(assignment)}`,
+  )
+})
+
 test('rejects Kubernetes write verbs in the Hermes ClusterRole', async () => {
   const files = await loadProductionFiles()
   files.rbac = files.rbac.replace('verbs: [get, list, watch]', 'verbs: [get, list, watch, create]')
@@ -95,7 +118,7 @@ test('rejects omitting the Hermes toolchain bin mount from one container', async
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: init and gateway must mount the immutable toolchain bin facade read-only`,
+    `${productionPaths.statefulSet}: init, gateway, and dashboard must mount the immutable toolchain bin facade read-only`,
   )
 })
 
@@ -107,7 +130,46 @@ test('rejects omitting the Hermes toolchain closure mount from one container', a
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: init and gateway must mount the immutable Nix closure read-only`,
+    `${productionPaths.statefulSet}: init, gateway, and dashboard must mount the immutable Nix closure read-only`,
+  )
+})
+
+test('rejects a container without the immutable native web SDK path', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace('name: PYTHONPATH', 'name: DISABLED_PYTHONPATH')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: missing production invariant "name: PYTHONPATH\\n              value: /opt/lab-toolchain/python"`,
+  )
+})
+
+test('rejects a container without the native web SDK mount', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'mountPath: /opt/lab-toolchain/python',
+    'mountPath: /opt/disabled-python',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: missing production invariant "name: lab-toolchain-image\\n              mountPath: /opt/lab-toolchain/python\\n              subPath: python\\n              readOnly: true"`,
+  )
+})
+
+test('rejects omitting the native web SDK from the immutable toolchain image', async () => {
+  const files = await loadProductionFiles()
+  files.toolchainImage = files.toolchainImage.replace('    pythonDependencies\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.toolchainImage}: missing production invariant "    pythonDependencies\\n"`,
+  )
+})
+
+test('rejects bootstrap without the native web SDK import check', async () => {
+  const files = await loadProductionFiles()
+  files.bootstrap = files.bootstrap.replace('import exa_py; ', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.bootstrap}: missing production invariant "import exa_py; import importlib.metadata as m; print(m.version(\\"exa-py\\"))"`,
   )
 })
 
@@ -141,15 +203,12 @@ test('rejects a gateway working directory above the lab checkout', async () => {
   )
 })
 
-test('rejects a reduced code-execution tool-call budget', async () => {
+test('rejects exposing code execution outside the approved terminal path', async () => {
   const files = await loadProductionFiles()
-  files.config = files.config.replace(
-    'code_execution:\n  timeout: 120\n  max_tool_calls: 100',
-    'code_execution:\n  timeout: 120\n  max_tool_calls: 10',
-  )
-
+  const invariant = 'disabled_toolsets: [delegation, cronjob, code_execution, kanban]'
+  files.config = files.config.replace(invariant, 'disabled_toolsets: [delegation, cronjob, kanban]')
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: missing production invariant \"code_execution:\\n  timeout: 120\\n  max_tool_calls: 100\"`,
+    `${productionPaths.config}: missing production invariant ${JSON.stringify(invariant)}`,
   )
 })
 
@@ -180,6 +239,76 @@ test('rejects omitting the translated Kubernetes API endpoints', async () => {
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.networkPolicy}: missing production invariant "cidr: 100.100.244.141/32"`,
+  )
+})
+
+test('rejects omitting the private Hermes Tailscale Ingress from the rendered application', async () => {
+  const files = await loadProductionFiles()
+  files.kustomization = files.kustomization.replace('  - tailscale-ingress.yaml\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.kustomization}: missing production invariant "- tailscale-ingress.yaml"`,
+  )
+})
+
+test('rejects changing the Hermes Tailscale TLS or routing hostname', async () => {
+  const files = await loadProductionFiles()
+  files.tailscaleIngress = files.tailscaleIngress.replaceAll('hermes.ide-newton.ts.net', 'hermes-public.example.com')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.tailscaleIngress}: TLS and routing must use only the Hermes MagicDNS hostname`,
+  )
+})
+
+test.each(['/', '/v1', '/health'])('rejects routing %s to another backend', async (path) => {
+  const files = await loadProductionFiles()
+  const port = path === '/' ? 'dashboard' : 'api'
+  const route = `path: ${path}\n            pathType: Prefix\n            backend:\n              service:\n                name: hermes\n                port:\n                  name: ${port}`
+  files.tailscaleIngress = files.tailscaleIngress.replace(route, route.replace('name: hermes', 'name: other'))
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.tailscaleIngress}: missing production invariant ${JSON.stringify(route)}`,
+  )
+})
+
+test('rejects enabling public Funnel access for Hermes', async () => {
+  const files = await loadProductionFiles()
+  files.tailscaleIngress = files.tailscaleIngress.replace(
+    '    tailscale.com/tags: tag:k8s',
+    '    tailscale.com/funnel: "true"',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.tailscaleIngress}: contains forbidden production term "tailscale.com/funnel"`,
+  )
+})
+
+test('rejects widening Hermes ingress beyond its exact Tailscale proxy', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicy = files.networkPolicy.replace(
+    '        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: tailscale',
+    '        - namespaceSelector: {}\n        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: tailscale',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicy}: contains forbidden production term "        - namespaceSelector: {}"`,
+  )
+})
+
+test('rejects a tailnet isolation check that depends on cluster DNS', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('--resolve "${service_host}:8642:${HERMES_SERVICE_IP}"', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "--resolve \\"\${service_host}:8642:\${HERMES_SERVICE_IP}\\""`,
+  )
+})
+
+test('rejects treating arbitrary tailnet probe failures as policy denial', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('if [ "$curl_status" -ne 28 ]; then', 'if [ "$curl_status" -eq 0 ]; then')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "if [ \\"$curl_status\\" -ne 28 ]; then"`,
   )
 })
 
@@ -239,19 +368,37 @@ test('rejects a mutable Hermes runtime image', async () => {
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: the bootstrap and gateway containers must use the mirrored immutable amd64 digest`,
+    `${productionPaths.statefulSet}: the bootstrap, gateway, and dashboard containers must use the mirrored immutable amd64 digest`,
   )
 })
 
 test('rejects release evidence that does not enforce the mirrored digest', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+    'test "$mirror_digest" = sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283',
     'printf \'%s\\n\' "$mirror_digest"',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a"`,
+    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283"`,
+  )
+})
+
+test('rejects a Hermes config that is not pre-migrated to schema 46', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('_config_version: 46', '_config_version: 33')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: missing production invariant "_config_version: 46"`,
+  )
+})
+
+test('rejects changing the Qwen Flamingo model during the runtime upgrade', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('default: qwen38-flamingo', 'default: replacement-model')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: missing production invariant "model:\\n  default: qwen38-flamingo\\n  provider: flamingo\\n  context_length: 262144"`,
   )
 })
 
@@ -323,6 +470,18 @@ test('rejects a terminal login profile that omits the production tools path', as
   )
 })
 
+test('rejects a gateway that shadows the release-bundled Node with the terminal toolchain', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '/opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/opt/lab-toolchain/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    '/opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: the gateway must use the release-bundled Node before the Lab terminal toolchain`,
+  )
+})
+
 test('rejects a gateway that does not mount the immutable terminal login profile', async () => {
   const files = await loadProductionFiles()
   files.statefulSet = files.statefulSet.replace(
@@ -383,20 +542,20 @@ test('rejects a broadly scoped GitHub SealedSecret', async () => {
 test('rejects API sessions without the terminal toolset', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace(
-    '  api_server: [file, memory, terminal, todo, web, exa]',
-    '  api_server: [file, memory, todo, web, exa]',
+    '  api_server: [file, memory, session_search, terminal, todo, web, skills]',
+    '  api_server: [file, memory, session_search, todo, web, skills]',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: missing production invariant "platform_toolsets:\\n  cli: [file, memory, terminal, todo, web, exa]\\n  api_server: [file, memory, terminal, todo, web, exa]\\n  discord: [file, memory, terminal, todo, web, exa]"`,
+    `${productionPaths.config}: missing production invariant "platform_toolsets:\\n  cli: [file, memory, session_search, terminal, todo, web, skills]\\n  api_server: [file, memory, session_search, terminal, todo, web, skills]\\n  discord: [file, memory, session_search, terminal, todo, web, skills]"`,
   )
 })
 
 test('rejects duplicate platform toolset keys', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace(
-    '  discord: [file, memory, terminal, todo, web, exa]\n',
-    '  discord: [file, memory, terminal, todo, web, exa]\n  discord: [file, memory, terminal, todo, web, exa]\n',
+    '  discord: [file, memory, session_search, terminal, todo, web, skills]\n',
+    '  discord: [file, memory, session_search, terminal, todo, web, skills]\n  discord: [file, memory, session_search, terminal, todo, web, skills]\n',
   )
 
   expect(validateProductionContent(files)).toContain(
@@ -470,7 +629,7 @@ test('rejects a duplicate Exa API key mapping', async () => {
 
 test('rejects Exa MCP tools with mutation or agent authority', async () => {
   const files = await loadProductionFiles()
-  files.config = files.config.replace('        - web_fetch_exa', '        - web_fetch_exa\n        - agent_run')
+  files.config += '\nagent_run: enabled\n'
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.config}: contains forbidden production term "agent_run"`,
@@ -480,12 +639,12 @@ test('rejects Exa MCP tools with mutation or agent authority', async () => {
 test('rejects an additional MCP server', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace(
-    '\ndelegation:',
-    '\n  unreviewed:\n    url: "https://example.com/mcp"\n\ndelegation:',
+    'mcp_servers: {}',
+    'mcp_servers:\n  unreviewed:\n    url: "https://example.com/mcp"',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: Exa must be the only MCP server with exactly two read-only web tools`,
+    `${productionPaths.config}: native Exa web tools must be the only web integration`,
   )
 })
 
@@ -724,14 +883,40 @@ test('rejects syncing Hermes before network-policy enforcement proof', async () 
   )
 })
 
-test('rejects automatic Argo reconciliation during the staged migration', async () => {
+test('allows manual Hermes reconciliation for a reviewed maintenance phase', async () => {
   const files = await loadProductionFiles()
-  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) manual/, '$1 auto')
+  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, '$1 manual')
+  expect(validateProductionContent(files)).toEqual([])
+})
 
+test.each(['auto', 'manual'])('rejects %s Hermes reconciliation from an unpromoted source', async (mode) => {
+  const files = await loadProductionFiles()
+  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, `$1 ${mode}`)
+  files.platform = files.platform.replace('targetRevision: kargo/hermes-toolchain', 'targetRevision: main')
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.platform}: missing production invariant "automation: manual"`,
+    `${productionPaths.platform}: missing production invariant "targetRevision: kargo/hermes-toolchain"`,
   )
 })
+
+test.each(['auto', 'manual'])('rejects %s Hermes reconciliation without the authorized Stage', async (mode) => {
+  const files = await loadProductionFiles()
+  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, `$1 ${mode}`)
+  files.platform = files.platform.replace('kargo.akuity.io/authorized-stage: hermes-release:hermes-toolchain', '')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.platform}: missing production invariant "kargo.akuity.io/authorized-stage: hermes-release:hermes-toolchain"`,
+  )
+})
+
+test.each(['automatic', 'automatically', 'manual-only', 'false', ''])(
+  'rejects invalid Hermes automation mode %s',
+  async (mode) => {
+    const files = await loadProductionFiles()
+    files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, `$1 ${mode}`)
+    expect(validateProductionContent(files)).toContain(
+      `${productionPaths.platform}: Hermes automation must be exactly auto or manual`,
+    )
+  },
+)
 
 test('rejects automatic OpenClaw reconciliation during credential transfer', async () => {
   const files = await loadProductionFiles()
@@ -790,7 +975,7 @@ test('rejects a backup CronJob without independent retry behavior', async () => 
   )
 })
 
-test('rejects a backup CronJob that cannot be suspended deterministically', async () => {
+test('rejects suspended production backups', async () => {
   const files = await loadProductionFiles()
   files.backupCronJob = files.backupCronJob.replace('suspend: false', 'suspend: true')
 
@@ -822,10 +1007,40 @@ test('rejects a read-only data mount that prevents SQLite WAL-safe backup', asyn
 
 test('rejects publishing a backup after SQLite falls back to a raw copy', async () => {
   const files = await loadProductionFiles()
-  files.backupScript = files.backupScript.replace('*"SQLite safe copy failed"*|', '')
+  files.backupPolicy = files.backupPolicy.replace('*"SQLite safe copy failed"*|', '')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.backupScript}: missing production invariant "*\\\"SQLite safe copy failed\\\"*|*\\\"Raw copy also failed\\\"*|*\\\"Warnings (\\\"*)"`,
+    `${productionPaths.backupPolicy}: missing production invariant "*\\\"SQLite safe copy failed\\\"*|*\\\"Raw copy also failed\\\"*)"`,
+  )
+})
+
+test('rejects accepting the gateway socket warning without proving it is a Unix socket', async () => {
+  const files = await loadProductionFiles()
+  files.backupPolicy = files.backupPolicy.replace('[ -S "$backup_policy_socket" ] || return 1', ':')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupPolicy}: missing production invariant "[ -S \\"$backup_policy_socket\\" ] || return 1"`,
+  )
+})
+
+test('rejects a broad backup warning allowance', async () => {
+  const files = await loadProductionFiles()
+  files.backupPolicy = files.backupPolicy.replace(
+    "backup_policy_header='  Warnings (1 files skipped):'",
+    "backup_policy_header='  Warnings ('",
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupPolicy}: missing production invariant "backup_policy_header='  Warnings (1 files skipped):'"`,
+  )
+})
+
+test('rejects a backup archive that can publish the transient gateway socket', async () => {
+  const files = await loadProductionFiles()
+  files.backupScript = files.backupScript.replace('if "gateway.sock" in backup.namelist():', 'if False:')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupScript}: missing production invariant "if \\"gateway.sock\\" in backup.namelist():"`,
   )
 })
 
@@ -1308,12 +1523,40 @@ test('rejects Exa key rotation without the dedicated restart and canary procedur
   )
 })
 
+test('rejects rollback through an unpromoted main revision', async () => {
+  const files = await loadProductionFiles()
+  files.runbook += "\nargocd app sync hermes --revision '<last-known-good-main-sha>' --prune=false\n"
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: contains forbidden production term "<last-known-good-main-sha>"`,
+  )
+})
+
+test('rejects rollback without selecting verified Hermes Freight', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'Re-promote a previously verified Hermes Freight through Stage `hermes-release/hermes-toolchain`.',
+    'Sync the prior source revision.',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "Re-promote a previously verified Hermes Freight through Stage \u0060hermes-release/hermes-toolchain\u0060."`,
+  )
+})
+
 test('rejects removing Hermes surfaces from production validation routing', async () => {
   const files = await loadProductionFiles()
   files.impactMap = files.impactMap.replace('      - docs/runbooks/hermes-production-rollout.md\n', '')
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.impactMap}: missing production invariant "- docs/runbooks/hermes-production-rollout.md"`,
+  )
+})
+
+test('rejects removing Kargo Stage edits from Hermes production validation routing', async () => {
+  const files = await loadProductionFiles()
+  files.impactMap = files.impactMap.replace('      - argocd/applications/kargo/stages.yaml\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.impactMap}: missing production invariant "- argocd/applications/kargo/stages.yaml"`,
   )
 })
 
@@ -1326,5 +1569,148 @@ test('rejects a PR workflow that omits migration audit tests', async () => {
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.pullRequestWorkflow}: missing production invariant "bun test scripts/hermes/*.test.ts"`,
+  )
+})
+
+test('rejects a dashboard without the existing Secret-backed password', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'name: HERMES_DASHBOARD_BASIC_AUTH_PASSWORD',
+    'name: UNAUTHENTICATED_DASHBOARD',
+  )
+  expect(
+    validateProductionContent(files).some((failure) => failure.includes('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD')),
+  ).toBe(true)
+})
+
+test('rejects dashboard readiness that accepts an inactive authentication gate', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace("d.get('auth_required') is True", 'True')
+  expect(validateProductionContent(files).some((failure) => failure.includes('auth_required'))).toBe(true)
+})
+
+test('rejects exposing the dashboard to same-namespace callers', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicy = files.networkPolicy.replace(
+    '  egress:',
+    '        - protocol: TCP\n          port: 9119\n  egress:',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicy}: only the exact Tailscale proxy may reach the dashboard port`,
+  )
+})
+
+test('rejects building dashboard assets during startup', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace('            - --skip-build\n', '')
+  expect(validateProductionContent(files).some((failure) => failure.includes('--skip-build'))).toBe(true)
+})
+
+test('rejects sharing gateway process credentials with dashboard subprocesses', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '      enableServiceLinks: false',
+    '      enableServiceLinks: false\n      shareProcessNamespace: true',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: contains forbidden production term "shareProcessNamespace: true"`,
+  )
+})
+
+test('rejects allowing dashboard credentials to be persisted to the data PVC', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replaceAll('mountPath: /opt/data/.env', 'mountPath: /opt/data/writable.env')
+  expect(validateProductionContent(files).some((failure) => failure.includes('/opt/data/.env'))).toBe(true)
+})
+
+test('rejects publishing backups with nonempty environment credential files', async () => {
+  const files = await loadProductionFiles()
+  files.backupScript = files.backupScript.replace(
+    'if Path(entry.filename).name == ".env" and backup.read(entry).strip():',
+    'if False:',
+  )
+  expect(validateProductionContent(files).some((failure) => failure.includes('backup.read(entry).strip()'))).toBe(true)
+})
+
+for (const [name, invariant, replacement] of [
+  ['automatic deletion of session history', 'sessions:\n  auto_prune: false', 'sessions:\n  auto_prune: true'],
+  [
+    'cloud compression routing',
+    'compression:\n    provider: flamingo\n    timeout: 180\n    max_concurrency: 1',
+    'compression:\n    provider: auto\n    timeout: 180\n    max_concurrency: 1',
+  ],
+  [
+    'unbounded long-context prefill',
+    'compression:\n  enabled: true\n  threshold: 0.75\n  threshold_tokens: 65536',
+    'compression:\n  enabled: true\n  threshold: 0.75',
+  ],
+  ['silent compaction data loss', 'abort_on_summary_failure: true', 'abort_on_summary_failure: false'],
+  [
+    'unattended Kanban execution',
+    'kanban:\n  dispatch_in_gateway: false\n  auto_decompose: false',
+    'kanban:\n  dispatch_in_gateway: true\n  auto_decompose: true',
+  ],
+  ['runtime language-server installation', 'lsp:\n  install_strategy: manual', 'lsp:\n  install_strategy: auto'],
+] as const) {
+  test(`rejects ${name}`, async () => {
+    const files = await loadProductionFiles()
+    files.config = files.config.replace(invariant, replacement)
+    expect(validateProductionContent(files)).toContain(
+      `${productionPaths.config}: missing production invariant ${JSON.stringify(invariant)}`,
+    )
+  })
+}
+
+test('rejects a gateway without native GitOps managed mode', async () => {
+  const files = await loadProductionFiles()
+  const gatewayStart = files.statefulSet.indexOf('        - name: hermes\n')
+  files.statefulSet =
+    files.statefulSet.slice(0, gatewayStart) +
+    files.statefulSet
+      .slice(gatewayStart)
+      .replace('name: HERMES_MANAGED\n              value: gitops', 'name: HERMES_MANAGED\n              value: false')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: missing production invariant "name: HERMES_MANAGED\\n              value: gitops"`,
+  )
+})
+
+test('rejects a writable managed-install marker', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'mountPath: /opt/data/.managed\n              subPath: managed-install\n              readOnly: true',
+    'mountPath: /opt/data/.managed\n              subPath: managed-install\n              readOnly: false',
+  )
+  expect(validateProductionContent(files).some((failure) => failure.includes('/opt/data/.managed'))).toBe(true)
+})
+
+test('rejects publication that can race the agent mirror', async () => {
+  const files = await loadProductionFiles()
+  files.toolchainBuildWorkflow = files.toolchainBuildWorkflow.replace('    needs: verify-agent-mirror\n', '')
+  expect(validateProductionContent(files).some((failure) => failure.includes('needs: verify-agent-mirror'))).toBe(true)
+})
+
+test('rejects runtime creation of secondary profiles', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'name: profiles\n              mountPath: /opt/data/profiles\n              readOnly: true',
+    'name: profiles\n              mountPath: /opt/data/profiles\n              readOnly: false',
+  )
+  expect(validateProductionContent(files).some((failure) => failure.includes('/opt/data/profiles'))).toBe(true)
+})
+
+test('rejects a retired multiplex opt-out', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('gateway:\n', 'gateway:\n  multiplex_profiles: false\n')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: contains forbidden production term "multiplex_profiles: false"`,
+  )
+})
+
+test('rejects a volume order that redirects Kargo promotion to the kubectl image', async () => {
+  const files = await loadProductionFiles()
+  const volume = '        - name: profiles\n          emptyDir:\n            sizeLimit: 1Mi\n'
+  files.statefulSet = files.statefulSet.replace(volume, '').replace('      volumes:\n', '      volumes:\n' + volume)
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.kargoStages}: missing production invariant "- key: spec.template.spec.volumes.6.image.reference"`,
   )
 })

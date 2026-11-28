@@ -1,0 +1,15 @@
+[Unit]
+Description=Report development workstation readiness
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/lib/devbox-health.py
+User=nobody
+Group=nogroup
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

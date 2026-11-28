@@ -5,7 +5,9 @@ import { resolveBooleanFeatureToggle, type BooleanFeatureToggleRequest } from '.
 import { createKubeGateway, type KubeGateway } from '../kube-gateway'
 import { startResourceWatch } from '../kube-watch'
 import {
+  clearAgentsControllerGauges,
   recordAgentConcurrency,
+  recordAgentConcurrencyLimit,
   recordAgentQueueDepth,
   recordAgentRateLimitRejection,
   recordAgentRunOutcome,
@@ -15,12 +17,15 @@ import {
   recordAgentRunUntouchedBacklog,
   recordAgentRunUntouchedOldestAgeSeconds,
   recordReconcileDurationMs,
+  recordRunnerCompletion,
+  recordRuntimeDebrisOrphanPods,
 } from '../metrics'
 import { parseNamespaceScopeEnv } from '../namespace-scope'
 import { asRecord, asString, readNested } from '../primitives'
 import { createKubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { buildResourceFingerprint, shouldApplyStatus } from '../status-utils'
 import { resolveAgentCommsSubscriberConfig } from '../integrations-config'
+import { recordAgentRunLifecycleSpan } from '../tracing'
 import { createAgentRunReconciler } from './agent-run-reconciler'
 import {
   buildArtifactsLimitMessage,
@@ -69,8 +74,9 @@ import {
   resolveRuntimeDebrisCleanupConfig,
 } from './runtime-config'
 import { resolveWorkloadImage } from './workload-image'
+import { parseRunnerTerminalStatus, runnerStatusToTerminalOutcome, type RunnerTerminalStatus } from './runner-status'
 import { reconcileRuntimeDebris } from './runtime-debris'
-import { resolveParam, resolveParameters } from './run-utils'
+import { isQueuedRun, resolveParam, resolveParameters } from './run-utils'
 import { createTemporalRuntimeTools } from './temporal-runtime'
 import { resolveVcsAuthMethod, validateVcsAuthConfig } from './vcs-auth'
 import {
@@ -83,7 +89,7 @@ import {
   resolveVcsPrRateLimits,
   secretHasKey,
 } from './vcs-context'
-import { createWorkflowReconciler } from './workflow-reconciler'
+import { createWorkflowReconciler, type CompletedWorkflowRunner } from './workflow-reconciler'
 import { validateAutonomousCodexAuthSecret } from './policy'
 import {
   logAgentsControllerDebug,
@@ -100,6 +106,8 @@ const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'agents.controller.enabled'
+const isAgentRunTerminalPhase = (phase: string | null): phase is 'Succeeded' | 'Failed' | 'Cancelled' =>
+  phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled'
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -463,10 +471,30 @@ const getPrimitivesStore = async () => {
   }
 }
 
+const runnerCompletionDetails = (
+  runner: RunnerTerminalStatus | null,
+  fallbackStart: number | null,
+  fallbackFinish: number | null,
+) => {
+  const telemetry = runner?.telemetry?.state === 'finished' ? runner.telemetry : undefined
+  const startedAt = parseTimestampMs(runner?.startedAt) ?? parseTimestampMs(telemetry?.startedAt) ?? fallbackStart
+  const finish = parseTimestampMs(runner?.finishedAt) ?? fallbackFinish
+  const start = startedAt !== null && finish !== null && finish >= startedAt ? startedAt : undefined
+  return {
+    start,
+    finish,
+    model: telemetry?.model ?? runner?.model,
+    effort: telemetry?.effort ?? runner?.effort,
+    durationSeconds: start !== undefined && finish !== null ? (finish - start) / 1000 : undefined,
+    telemetry,
+  }
+}
+
 const setStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
   resource: Record<string, unknown>,
   status: Record<string, unknown>,
+  completedWorkflowRunners: CompletedWorkflowRunner[] = [],
 ) => {
   const metadata = asRecord(resource.metadata) ?? {}
   const name = asString(metadata.name)
@@ -564,34 +592,104 @@ const setStatus = async (
     updatedAt: nowIso(),
     conditions,
   }
-  if (!shouldApplyStatus(asRecord(resource.status), nextStatus)) {
+  const previousStatus = asRecord(resource.status)
+  if (!shouldApplyStatus(previousStatus, nextStatus)) {
     return
   }
-  if (kind === 'AgentRun') {
-    const previousPhase = asString(asRecord(resource.status)?.phase)
-    const nextPhase = asString(nextStatusBase.phase)
-    if (nextPhase && ['Succeeded', 'Failed', 'Cancelled'].includes(nextPhase) && previousPhase !== nextPhase) {
-      const runtimeRef = asRecord(status.runtimeRef) ?? asRecord(readNested(resource, ['status', 'runtimeRef'])) ?? {}
-      const runtimeType =
-        asString(runtimeRef.type) ?? asString(readNested(resource, ['spec', 'runtime', 'type'])) ?? 'unknown'
-      recordAgentRunOutcome(nextPhase, { runtime: runtimeType })
-      try {
-        await runtimeDependencies.onAgentRunTerminalStatus?.({
-          resource,
-          nextStatus,
-          previousPhase: previousPhase ?? null,
-          nextPhase,
-        })
-      } catch (error) {
-        console.warn('[agents] AgentRun terminal status hook failed', {
-          runName: asString(readNested(resource, ['metadata', 'name'])) ?? null,
-          phase: nextPhase,
-          error,
-        })
-      }
+  const previousPhase = asString(previousStatus?.phase)
+  const terminalPhase = kind === 'AgentRun' && isAgentRunTerminalPhase(phase) ? phase : null
+  const firstCompletion = terminalPhase !== null && !isAgentRunTerminalPhase(previousPhase)
+  const isWorkflowRun =
+    kind === 'AgentRun' &&
+    phase !== 'Template' &&
+    (readNested(resource, ['spec', 'runtime', 'type']) === 'workflow' ||
+      readNested(previousStatus, ['runtimeRef', 'type']) === 'workflow')
+  // A workflow's persisted step/attempt/iteration progress is the completion receipt. Stale writes must not rewind it.
+  const resourceVersion = firstCompletion || isWorkflowRun ? asString(metadata.resourceVersion) : null
+  await kube.applyStatus({
+    apiVersion,
+    kind,
+    metadata: { name, namespace, ...(resourceVersion ? { resourceVersion } : {}) },
+    status: nextStatus,
+  })
+  const agent = asString(readNested(resource, ['spec', 'agentRef', 'name']))
+  if (resourceVersion) {
+    for (const { runner, jobStartedAt, jobFinishedAt } of completedWorkflowRunners) {
+      const { model, effort, durationSeconds, telemetry } = runnerCompletionDetails(
+        runner,
+        parseTimestampMs(jobStartedAt),
+        parseTimestampMs(jobFinishedAt),
+      )
+      recordRunnerCompletion({
+        outcome: runnerStatusToTerminalOutcome(runner).phase,
+        agent,
+        model,
+        effort,
+        durationSeconds,
+        telemetry,
+      })
     }
   }
-  await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status: nextStatus })
+  if (!terminalPhase || terminalPhase === previousPhase) return
+  if (firstCompletion) {
+    const runtime =
+      asString(readNested(nextStatusBase, ['runtimeRef', 'type'])) ??
+      asString(readNested(resource, ['status', 'runtimeRef', 'type'])) ??
+      asString(readNested(resource, ['spec', 'runtime', 'type'])) ??
+      'unknown'
+    const runner = isWorkflowRun ? null : parseRunnerTerminalStatus(nextStatusBase.runner)
+    const { model, effort, telemetry, durationSeconds, start, finish } = runnerCompletionDetails(
+      runner,
+      parseTimestampMs(nextStatusBase.startedAt) ?? parseTimestampMs(previousStatus?.startedAt),
+      parseTimestampMs(nextStatusBase.finishedAt),
+    )
+    recordAgentRunOutcome(terminalPhase, { runtime })
+    if (runner) {
+      recordRunnerCompletion({
+        outcome: terminalPhase,
+        agent,
+        model,
+        effort,
+        durationSeconds,
+        telemetry,
+      })
+    }
+    const endTime = finish ?? Date.now()
+    const traceId = recordAgentRunLifecycleSpan({
+      name,
+      namespace,
+      runtime,
+      outcome: terminalPhase,
+      model,
+      effort,
+      startTime: start ?? endTime,
+      endTime,
+    })
+    logAgentsControllerInfo('agentrun_terminal_status_committed', {
+      namespace,
+      runName: name,
+      outcome: terminalPhase,
+      runtime,
+      model,
+      effort,
+      trace_id: traceId,
+    })
+  }
+  try {
+    await runtimeDependencies.onAgentRunTerminalStatus?.({
+      resource,
+      nextStatus,
+      previousPhase,
+      nextPhase: terminalPhase,
+    })
+  } catch (error) {
+    logAgentsControllerWarn('agentrun_terminal_status_hook_failed', {
+      namespace,
+      runName: name,
+      phase: terminalPhase,
+      ...toLogError(error),
+    })
+  }
 }
 
 const resolveJobImage = (workload: Record<string, unknown>, provider?: Record<string, unknown> | null) =>
@@ -631,7 +729,6 @@ const resolveAgentRunRetentionSeconds = (spec: Record<string, unknown>) => {
   return parseAgentRunRetentionSeconds()
 }
 
-const TERMINAL_AGENTRUN_PHASES = new Set(['Succeeded', 'Failed', 'Cancelled'])
 const AGENTRUN_RETAIN_ANNOTATION = 'agents.proompteng.ai/retain'
 
 const parseTimestampMs = (value: unknown) => {
@@ -660,7 +757,7 @@ const getAgentRunRetentionDecision = (agentRun: Record<string, unknown>, nowMs: 
     readNested(metadata, ['annotations', 'agents.proompteng.ai/template']),
   )?.toLowerCase()
   const isTemplate = templateAnnotation === 'true' || phase === 'Template'
-  if (isTemplate || !phase || !TERMINAL_AGENTRUN_PHASES.has(phase) || metadata.deletionTimestamp) {
+  if (isTemplate || !isAgentRunTerminalPhase(phase) || metadata.deletionTimestamp) {
     return { eligible: false, reason: 'not_terminal' }
   }
   if (isAgentRunRetainAnnotated(agentRun)) {
@@ -804,6 +901,7 @@ const resyncAgentRunsForNamespace = async (
   reason: 'periodic' | 'watch_restart' | 'manual',
 ) => {
   const nsState = ensureNamespaceState(state, namespace)
+  const lifecycleToken = runtimeMutableState.lifecycleToken
   const now = Date.now()
   const retentionSweep = await sweepExpiredAgentRunsForNamespace(
     kube,
@@ -812,16 +910,21 @@ const resyncAgentRunsForNamespace = async (
     now,
     reason,
   )
+  if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
   const runList = retentionSweep.runs
   const refreshedRuns = new Map<string, Record<string, unknown>>()
   const candidateRuns: Array<{ run: Record<string, unknown>; reasons: string[] }> = []
   let untouchedRunCount = 0
   let oldestUntouchedAgeSeconds: number | null = null
+  let activeRuns = 0
+  let queuedRuns = 0
 
   for (const run of runList) {
     const name = asString(readNested(run, ['metadata', 'name']))
     if (!name) continue
     refreshedRuns.set(name, run)
+    if (readNested(run, ['status', 'phase']) === 'Running') activeRuns += 1
+    if (isQueuedRun(run)) queuedRuns += 1
     const reasons = getAgentRunUntouchedReasons(run)
     const untouchedReasons = reasons.filter((entry) => entry !== 'generation_drift')
     if (untouchedReasons.length > 0) {
@@ -889,7 +992,11 @@ const resyncAgentRunsForNamespace = async (
 
   syncControllerAgentRunIngestionHealth()
 
-  recordAgentRunUntouchedBacklog(untouchedRunCount, { namespace, reason })
+  recordAgentConcurrency(activeRuns, { scope: 'namespace', namespace })
+  recordAgentConcurrencyLimit(concurrency.perNamespace, { scope: 'namespace', namespace })
+  recordAgentConcurrencyLimit(concurrency.cluster, { scope: 'cluster' })
+  recordAgentQueueDepth(queuedRuns, { scope: 'namespace', namespace, source: 'snapshot' })
+  recordAgentRunUntouchedBacklog(untouchedRunCount, { namespace })
   if (oldestUntouchedAgeSeconds !== null) {
     recordAgentRunUntouchedOldestAgeSeconds(oldestUntouchedAgeSeconds, { namespace, reason })
   }
@@ -901,11 +1008,13 @@ const resyncAgentRunsForNamespace = async (
   const runtimeDebrisConfig = resolveRuntimeDebrisCleanupConfig()
   if (runtimeDebrisConfig.mode !== 'disabled') {
     try {
-      await reconcileRuntimeDebris({
+      const summary = await reconcileRuntimeDebris({
         config: runtimeDebrisConfig,
         kube,
         namespace,
       })
+      if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
+      recordRuntimeDebrisOrphanPods(summary.orphanTerminalPods, { namespace, mode: summary.mode })
     } catch (error) {
       logAgentsControllerWarn('runtime_debris_reconcile_failed', {
         namespace,
@@ -1118,8 +1227,6 @@ const reconcileNamespaceSnapshot = async (
     perAgent: counts.perAgent,
     perRepository: counts.perRepository,
   }
-  recordAgentConcurrency(counts.total, { scope: 'namespace', namespace })
-  recordAgentConcurrency(counts.cluster, { scope: 'cluster' })
 
   for (const run of runs) {
     await reconcileAgentRunWithMetrics(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
@@ -1545,6 +1652,7 @@ const stopAgentsControllerInternal = () => {
   runtimeMutableState.controllerSnapshot = null
   runtimeMutableState.namespaceQueues.clear()
   runtimeMutableState.agentRunIngestionState.clear()
+  clearAgentsControllerGauges()
   runtimeMutableState.started = false
   controllerState.started = false
   controllerState.namespaces = null
@@ -1557,9 +1665,11 @@ export type AgentsControllerService = {
   getHealth: Effect.Effect<AgentsControllerHealth, never>
 }
 
-export class AgentsController extends Context.Tag('AgentsController')<AgentsController, AgentsControllerService>() {}
+export class AgentsController extends Context.Service<AgentsController, AgentsControllerService>()(
+  'AgentsController',
+) {}
 
-export const AgentsControllerLive = Layer.scoped(
+export const AgentsControllerLive = Layer.effect(
   AgentsController,
   Effect.gen(function* () {
     initializeRuntimeMutableStateForLayer()

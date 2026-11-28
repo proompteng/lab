@@ -24,7 +24,8 @@ let
 
   source = lib.cleanSourceWith {
     src = dorvudRoot;
-    filter = path: type:
+    filter =
+      path: type:
       let
         rel = relativePath path;
       in
@@ -62,7 +63,7 @@ let
       export JAVA_HOME=${pkgs.jdk21_headless}
       mkdir -p "$GRADLE_USER_HOME"
 
-      gradle --no-daemon --project-cache-dir "$TMPDIR/gradle-project-cache" :technical-analysis-flink:uberJar
+      gradle --no-daemon --project-cache-dir "$TMPDIR/gradle-project-cache" :technical-analysis-flink:uberJar :platform:glitchtipJar
 
       runHook postBuild
     '';
@@ -71,6 +72,7 @@ let
       runHook preInstall
       mkdir -p "$out"
       cp technical-analysis-flink/build/libs/technical-analysis-flink-all.jar "$out/app.jar"
+      cp platform/build/libs/dorvud-glitchtip.jar "$out/dorvud-glitchtip.jar"
       test -f "$out/app.jar"
       runHook postInstall
     '';
@@ -79,15 +81,15 @@ let
   flinkBaseBySystem = {
     x86_64-linux = {
       arch = "amd64";
-      imageDigest = "sha256:d357b0e1eb89eb4377735a008dfcbd35f7f06af6cba24dfbb6062379fb70a9a9";
-      hash = "sha256-yqnR8f52GZMBKohYP63iSwEi1HoFqJjA9aZLnnOiE4I=";
-      finalImageTag = "2.0.1-scala_2.12-java21-amd64";
+      imageDigest = "sha256:dbbc4a0745fbcbf87a3d0d772f50127920e3220779ce2b9ae0179e6ee7a44cca";
+      hash = "sha256-J/lYUAuLFoHz3fbW6rAvqLJ3uvoiYxvf6d0XEdMSmCA=";
+      finalImageTag = "2.2.1-scala_2.12-java21-amd64";
     };
     aarch64-linux = {
       arch = "arm64";
-      imageDigest = "sha256:c0b3512ea891d604c585d3cb217b75a2bf920d9faaa9f0770496476189d5f57f";
-      hash = "sha256-US/1mivd9zMNrd3Mt98WqwLFHNNse3McFswww8Dn3Ko=";
-      finalImageTag = "2.0.1-scala_2.12-java21-arm64";
+      imageDigest = "sha256:ff1d667c4c13912fe89c3a5365e72c6faabe44d1a9cc9f41025989833b1c4d2c";
+      hash = "sha256-gGRPMhCWhDRPgRE6lrQoS9A7vdrMZPbkyw8eBDuJAVY=";
+      finalImageTag = "2.2.1-scala_2.12-java21-arm64";
     };
   };
   flinkBaseSpec =
@@ -103,8 +105,8 @@ let
   };
 
   s3Plugin = pkgs.fetchurl {
-    url = "https://repo1.maven.org/maven2/org/apache/flink/flink-s3-fs-hadoop/2.0.1/flink-s3-fs-hadoop-2.0.1.jar";
-    hash = "sha256-OMqbSzN4oZd+RaNUA7dmfiWn9kHoJXi7hBtUT8HYsbU=";
+    url = "https://repo1.maven.org/maven2/org/apache/flink/flink-s3-fs-hadoop/2.2.1/flink-s3-fs-hadoop-2.2.1.jar";
+    hash = "sha256-8af4ZH3j96wsRnf5uiIco+0y6VQfYZZ9pEXDaq3K+Sc=";
   };
 
   appLayer = pkgs.stdenvNoCC.mkDerivation {
@@ -125,9 +127,10 @@ let
     installPhase = ''
       runHook preInstall
 
-      mkdir -p "$out/opt/flink/usrlib" "$out/opt/flink/plugins/s3-fs-hadoop"
+      mkdir -p "$out/opt/flink/usrlib" "$out/opt/flink/lib" "$out/opt/flink/plugins/s3-fs-hadoop"
       cp ${appJar}/app.jar "$out/opt/flink/usrlib/app.jar"
-      cp ${s3Plugin} "$out/opt/flink/plugins/s3-fs-hadoop/flink-s3-fs-hadoop-2.0.1.jar"
+      cp ${appJar}/dorvud-glitchtip.jar "$out/opt/flink/lib/dorvud-glitchtip.jar"
+      cp ${s3Plugin} "$out/opt/flink/plugins/s3-fs-hadoop/flink-s3-fs-hadoop-2.2.1.jar"
 
       runHook postInstall
     '';

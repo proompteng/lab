@@ -1,0 +1,208 @@
+import { PgClient } from '@effect/sql-pg'
+import { Effect, Option, Schema, Stream } from 'effect'
+import { ReportVerification, reportVerificationConcurrency } from './forward-performance/verification'
+
+import { canonicalHashV1Result } from './hash'
+import {
+  InferenceCostError,
+  InferenceCostRequestSchema,
+  decodeInferenceCostRequest,
+  type DecodedInferenceCostEvidence,
+  type DecodedInferenceCostRequest,
+} from './inference-costs'
+import type { InferenceExpenseRecord } from './inference-expense'
+import { decodeInferenceExpenseSessionRows } from './inference-expense-postgres'
+import { IsoDateSchema, StrictNonEmptyStringSchema, UtcInstantSchema } from './schemas'
+import type { WriterFenceService } from './execution/writer-fence'
+import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
+
+enum SnapshotRowKind {
+  Cut = 'CUT',
+  Request = 'REQUEST',
+  Quote = 'QUOTE',
+}
+
+const SnapshotSchema = Schema.Array(
+  Schema.Union([
+    Schema.Struct({
+      as_of: UtcInstantSchema,
+      request_count: Schema.Int,
+      quote_count: Schema.Int,
+      kind: Schema.Literal(SnapshotRowKind.Cut),
+      payload: Schema.Null,
+    }),
+    Schema.Struct({
+      as_of: UtcInstantSchema,
+      request_count: Schema.Int,
+      quote_count: Schema.Int,
+      kind: Schema.Literal(SnapshotRowKind.Request),
+      payload: InferenceCostRequestSchema,
+    }),
+    Schema.Struct({
+      as_of: UtcInstantSchema,
+      request_count: Schema.Int,
+      quote_count: Schema.Int,
+      kind: Schema.Literal(SnapshotRowKind.Quote),
+      payload: Schema.Unknown,
+    }),
+  ]),
+)
+
+const inferenceSnapshotError = (cause: unknown) =>
+  cause instanceof InferenceCostError
+    ? cause
+    : new InferenceCostError({ message: 'Inference cost evidence snapshot failed', cause })
+
+/** Source projection shared by financial snapshots and bounded read-only research exports. */
+export const inferenceCostRequestRows = (sql: PgClient.PgClient, accountId: string, sessionDate: string) => sql`
+  SELECT request.request_id AS "requestId", request.cycle_id AS "cycleId",
+    request.authority_generation_hash AS "authorityGenerationHash",
+    request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution, handoff.payload AS handoff,
+    CASE WHEN chart_claim.request_id IS NULL THEN NULL ELSE
+      jsonb_build_object('claim', chart_claim.payload, 'terminal', chart_terminal.payload) END AS "chartCheckpoint",
+    CASE WHEN request.schema_version='bayn.jev-evaluation-request.v3' THEN jsonb_build_object(
+      'claims', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_dispatch_claims WHERE request_id=request.request_id),'[]'::jsonb),
+      'terminals', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_terminal_receipts WHERE request_id=request.request_id),'[]'::jsonb),
+      'skips', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb)
+    ) END AS "stagedCheckpoint"
+  FROM jev_evaluation_requests AS request
+  JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+  LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
+  LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
+  LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
+  LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
+  LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
+  WHERE cycle.account_id = ${accountId}
+    AND cycle.execution_session_date = ${sessionDate}::date
+`
+
+export interface InferenceCostSnapshot {
+  readonly evidence: DecodedInferenceCostEvidence
+  readonly quotes: readonly InferenceExpenseRecord[]
+}
+
+/** Acquire every source in the cut; verify it after the enclosing read snapshot releases its connection. */
+export const acquireInferenceExpenseSnapshot = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  sessionDate: string,
+  writerFence?: WriterFenceService,
+): Effect.Effect<
+  {
+    readonly verify: Effect.Effect<InferenceCostSnapshot, InferenceCostError>
+  },
+  InferenceCostError
+> =>
+  Effect.gen(function* () {
+    const scope = yield* Schema.decodeUnknownEffect(
+      Schema.Struct({ accountId: StrictNonEmptyStringSchema, sessionDate: IsoDateSchema }),
+    )({ accountId, sessionDate }).pipe(
+      Effect.mapError(() => new InferenceCostError({ message: 'Inference cost account or session is malformed' })),
+    )
+    const accountBindingHash = yield* Effect.fromResult(
+      canonicalHashV1Result({ schemaVersion: 'bayn.inference-cost-account.v1', accountId: scope.accountId }),
+    ).pipe(Effect.mapError(() => new InferenceCostError({ message: 'Inference account binding cannot be hashed' })))
+    return yield* forwardPerformanceSnapshot(sql, writerFence)
+      .withTransaction(
+        Effect.gen(function* () {
+          const sourceQuery = sql`
+            WITH cut AS (
+              SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of,
+                (SELECT count(*)::integer FROM jev_evaluation_requests AS request
+                  JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+                  WHERE cycle.account_id = ${scope.accountId}
+                    AND cycle.execution_session_date = ${scope.sessionDate}::date
+                ) AS request_count,
+                (SELECT count(*)::integer FROM inference_expense_quotes
+                  WHERE account_id = ${scope.accountId} AND session_date = ${scope.sessionDate}::date
+                ) AS quote_count
+            )
+            SELECT cut.as_of, cut.request_count, cut.quote_count, 'CUT'::text AS kind, NULL::jsonb AS payload FROM cut
+            UNION ALL
+            SELECT cut.as_of, cut.request_count, cut.quote_count, 'REQUEST', (to_jsonb(item) - 'chartCheckpoint' - 'stagedCheckpoint') ||
+              CASE WHEN item."chartCheckpoint" IS NULL THEN '{}'::jsonb
+                ELSE jsonb_build_object('chartCheckpoint', item."chartCheckpoint") END ||
+              CASE WHEN item."stagedCheckpoint" IS NULL THEN '{}'::jsonb
+                ELSE jsonb_build_object('stagedCheckpoint', item."stagedCheckpoint") END
+              FROM cut CROSS JOIN (
+                ${inferenceCostRequestRows(sql, scope.accountId, scope.sessionDate)}
+              ) AS item
+            UNION ALL
+            SELECT cut.as_of, cut.request_count, cut.quote_count, 'QUOTE', to_jsonb(item)
+              FROM cut CROSS JOIN (
+                SELECT quote_hash AS "quoteHash", payload,
+                  to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "verifiedAt"
+                FROM inference_expense_quotes
+                WHERE account_id = ${scope.accountId} AND session_date = ${scope.sessionDate}::date
+                ORDER BY quote_hash COLLATE "C"
+              ) AS item
+          `
+          return yield* Stream.runCollect(sourceQuery.stream)
+        }),
+      )
+      .pipe(
+        Effect.map((inputs) => ({
+          verify: Effect.gen(function* () {
+            const verifier = yield* Effect.serviceOption(ReportVerification)
+            const decoded = yield* Effect.forEach(
+              inputs,
+              (input) =>
+                Effect.gen(function* () {
+                  const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
+                  let request: DecodedInferenceCostRequest | undefined
+                  if (row.kind === SnapshotRowKind.Request) {
+                    // Reproduction is synchronous CPU work. Service sockets and caller
+                    // cancellation between requests without changing the financial cut.
+                    yield* Effect.yieldNow
+                    request = yield* Option.isSome(verifier)
+                      ? verifier.value.inference(row.payload, row.as_of)
+                      : Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of))
+                  }
+                  return { row, request }
+                }),
+              { concurrency: Option.isSome(verifier) ? reportVerificationConcurrency : 1 },
+            )
+            const rows = decoded.map(({ row }) => row)
+            const requests = decoded.flatMap(({ request }) => (request === undefined ? [] : [request]))
+            const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
+            const cut = cuts[0]
+            if (
+              cuts.length !== 1 ||
+              cut === undefined ||
+              rows.some(
+                (row) =>
+                  row.as_of !== cut.as_of ||
+                  row.request_count !== cut.request_count ||
+                  row.quote_count !== cut.quote_count,
+              )
+            )
+              return yield* new InferenceCostError({ message: 'Inference cost snapshot time is unavailable' })
+            const quoteRows = rows.flatMap((row) => (row.kind === SnapshotRowKind.Quote ? [row.payload] : []))
+            if (requests.length !== cut.request_count || quoteRows.length !== cut.quote_count)
+              return yield* new InferenceCostError({ message: 'Inference cost snapshot row coverage differs' })
+            const evidence: DecodedInferenceCostEvidence = {
+              schemaVersion: requests.some((row) => row.stagedCheckpoint !== undefined)
+                ? 'bayn.inference-cost-evidence.v4'
+                : requests.some((row) => row.chartCheckpoint !== undefined)
+                  ? 'bayn.inference-cost-evidence.v3'
+                  : 'bayn.inference-cost-evidence.v2',
+              accountBindingHash,
+              sessionDate: scope.sessionDate,
+              asOf: cut.as_of,
+              requests,
+            }
+            const quotes = yield* decodeInferenceExpenseSessionRows(quoteRows, scope.sessionDate)
+            return {
+              evidence: {
+                ...evidence,
+                requests: evidence.requests.toSorted((left, right) =>
+                  left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0,
+                ),
+              },
+              quotes,
+            }
+          }).pipe(Effect.mapError(inferenceSnapshotError)),
+        })),
+        Effect.mapError(inferenceSnapshotError),
+      )
+  })

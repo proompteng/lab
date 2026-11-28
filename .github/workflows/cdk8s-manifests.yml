@@ -14,6 +14,10 @@ on:
       - 'argocd/applications/*/generated/**'
       - 'bun.lock'
       - 'package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
+      - 'tsconfig.base.json'
       - 'scripts/kubeconform.sh'
       - 'schemas/custom/**'
       - 'flake.nix'
@@ -22,12 +26,30 @@ on:
       - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/cdk8s-manifests.yml'
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).k8s }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/cdk8s-manifests.yml
+          dependency-aware-push: 'true'
+          workspaces: |
+            k8s: ['', 'packages/k8s']
+
   validate:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -36,15 +58,15 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Cache Bun packages
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.4.0-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-bun-1.4.2-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-1.4.0-
+            ${{ runner.os }}-bun-1.4.2-
 
       - name: Install dependencies
         run: >-
@@ -77,7 +99,6 @@ jobs:
         run: |
           set -euo pipefail
           bun run --filter @proompteng/k8s synth:check -- --all
-          bun run --filter @proompteng/k8s synth:check -- --all
           git diff --exit-code -- ':(glob)argocd/applications/*/generated/**'
 
       - name: Set up Nix toolchain
@@ -95,13 +116,13 @@ jobs:
           test "${#applications[@]}" -gt 0
           for application in "${applications[@]}"; do
             rendered="${RUNNER_TEMP}/${application}.yaml"
-            nix develop -c scripts/kubeconform.sh "argocd/applications/${application}/generated"
+            nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "argocd/applications/${application}/generated"
             nix develop -c kustomize build "argocd/applications/${application}" >"${rendered}"
-            nix develop -c scripts/kubeconform.sh "${rendered}"
+            nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${rendered}"
           done
           if grep -R -E '^kind: (Namespace|Secret)$' argocd/applications/{docs,analysis}/generated; then
             echo 'Generated applications must not contain Namespace or plaintext Secret resources' >&2
             exit 1
           fi
           grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/docs@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/docs.yaml"
-          grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/analysis:[0-9a-f]{40}$' "${RUNNER_TEMP}/analysis.yaml"
+          grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/analysis@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/analysis.yaml"

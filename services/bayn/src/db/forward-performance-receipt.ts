@@ -1,4 +1,15 @@
-import { Context, Data, Effect, Option, Result, Schema } from 'effect'
+import { SnapshotManifestFields } from '../market-data/streaming/manifest-schema'
+import { IntradayPerformanceVolumeEvidenceSchema } from '../forward-performance/intraday-schema'
+import { validIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
+import { Data, Effect, Result, Schema } from 'effect'
+import { WriterFence, withWriterFence, type WriterFenceService } from '../execution/writer-fence'
+import {
+  executionActivationExpiredRestrictionReason,
+  executionMandateCompletedRestrictionReason,
+  legacyExecutionActivationExpiredRestrictionReason,
+  legacyV1CompletedRestrictionReason,
+} from '../execution/mandate'
+import { PgClient } from '@effect/sql-pg'
 
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -46,6 +57,9 @@ const ForwardPerformanceCashYieldBindingSchema = Schema.Struct({
 })
 
 const ForwardPerformanceExecutionQualitySchema = Schema.Struct({
+  unverifiedDecisionHashes: Schema.optionalKey(
+    Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
+  ),
   status: Schema.Union([Schema.Literal('MEASURED'), Schema.Literal('NOT_ELIGIBLE'), Schema.Literal('UNDETERMINED')]),
   reasonCodes: Schema.Array(ReceiptStringSchema),
   evidenceHash: Schema.NullOr(Sha256Schema),
@@ -53,9 +67,9 @@ const ForwardPerformanceExecutionQualitySchema = Schema.Struct({
     Schema.Struct({
       plannedOrderCount: NonNegativeIntegerSchema,
       fillCount: NonNegativeIntegerSchema,
-      plannedQuantityMicros: SignedMicrosSchema,
-      filledQuantityMicros: SignedMicrosSchema,
-      unfilledQuantityMicros: SignedMicrosSchema,
+      plannedQuantityAtoms: SignedMicrosSchema,
+      filledQuantityAtoms: SignedMicrosSchema,
+      unfilledQuantityAtoms: SignedMicrosSchema,
       plannedReferenceNotionalMicros: SignedMicrosSchema,
       executedNotionalMicros: SignedMicrosSchema,
       executionPriceShortfallMicros: SignedMicrosSchema,
@@ -73,9 +87,26 @@ const ForwardPerformanceExecutionQualitySchema = Schema.Struct({
       lastTerminalOrderObservedAt: UtcInstantSchema,
     }),
   ),
-})
+}).check(
+  Schema.makeFilter((quality) => {
+    if (quality.unverifiedDecisionHashes === undefined) return true
+    const expectedHash = canonicalHashV1Result({ unverifiedDecisionHashes: quality.unverifiedDecisionHashes })
+    return (
+      quality.status === 'UNDETERMINED' &&
+      quality.implementationShortfall === null &&
+      quality.reasonCodes.includes('PLANNED_DECISION_EVIDENCE_GAP') &&
+      Result.isSuccess(expectedHash) &&
+      expectedHash.success === quality.evidenceHash
+    )
+  }),
+)
 
 const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
+  intradaySources: Schema.optionalKey(
+    Schema.Array(
+      IntradayPerformanceVolumeEvidenceSchema.check(Schema.makeFilter(validIntradayPerformanceVolumeEvidence)),
+    ),
+  ),
   status: Schema.Union([Schema.Literal('MEASURED'), Schema.Literal('NOT_ELIGIBLE'), Schema.Literal('UNDETERMINED')]),
   reasonCodes: Schema.Array(ReceiptStringSchema),
   evidenceHash: Schema.NullOr(Sha256Schema),
@@ -85,11 +116,18 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
       symbol: ReceiptStringSchema,
       windowOpenedAt: UtcInstantSchema,
       windowClosedAt: UtcInstantSchema,
-      filledQuantityMicros: SignedMicrosSchema,
-      marketVolumeQuantityMicros: SignedMicrosSchema,
+      filledQuantityAtoms: SignedMicrosSchema,
+      marketVolumeQuantityAtoms: SignedMicrosSchema,
+      intradaySource: Schema.optionalKey(
+        Schema.Struct({
+          feed: SnapshotManifestFields.feed,
+          volumeScope: Schema.Literal('RECORDED_COMPLETE_MINUTE_VOLUME'),
+          evidenceHash: Sha256Schema,
+        }),
+      ),
       participationRate: Schema.Struct({
-        numeratorQuantityMicros: SignedMicrosSchema,
-        denominatorQuantityMicros: SignedMicrosSchema,
+        numeratorQuantityAtoms: SignedMicrosSchema,
+        denominatorQuantityAtoms: SignedMicrosSchema,
         decimal: DecimalSchema,
       }),
     }),
@@ -98,15 +136,36 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
   boundedObservedExecutedNotionalMicros: Schema.NullOr(SignedMicrosSchema),
   maximumParticipationRate: Schema.NullOr(
     Schema.Struct({
-      numeratorQuantityMicros: SignedMicrosSchema,
-      denominatorQuantityMicros: SignedMicrosSchema,
+      numeratorQuantityAtoms: SignedMicrosSchema,
+      denominatorQuantityAtoms: SignedMicrosSchema,
       decimal: DecimalSchema,
     }),
   ),
-})
+}).check(
+  Schema.makeFilter((capacity) =>
+    capacity.observations.every((observation) => {
+      if (observation.intradaySource === undefined) return true
+      const sources = (capacity.intradaySources ?? []).filter(
+        (source) => source.contentHash === observation.intradaySource?.evidenceHash,
+      )
+      const source = sources[0]
+      return (
+        sources.length === 1 &&
+        source !== undefined &&
+        source.cycleId === observation.cycleId &&
+        source.symbol === observation.symbol &&
+        source.windowOpenedAt === observation.windowOpenedAt &&
+        source.windowClosedAt === observation.windowClosedAt &&
+        source.sourceFeed === observation.intradaySource.feed &&
+        source.volumeScope === observation.intradaySource.volumeScope &&
+        source.quantityAtoms === observation.marketVolumeQuantityAtoms
+      )
+    }),
+  ),
+)
 
 const ForwardPerformanceReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v3'),
+  schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v4'),
   bindings: Schema.Struct({
     runtime: ForwardPerformanceBuildBindingSchema,
     source: Schema.NullOr(ForwardPerformanceBuildBindingSchema),
@@ -130,6 +189,7 @@ const ForwardPerformanceReceiptSchema = Schema.Struct({
     brokerExecutionFeesMicros: Schema.NullOr(SignedMicrosSchema),
     otherChargedCostsMicros: Schema.NullOr(SignedMicrosSchema),
     cashYieldMicros: Schema.NullOr(SignedMicrosSchema),
+    cashSettlementRoundingMicros: Schema.NullOr(SignedMicrosSchema),
     grossRealizedPnlMicros: Schema.NullOr(SignedMicrosSchema),
     netRealizedPnlAfterCostsMicros: Schema.NullOr(SignedMicrosSchema),
     netRealizedReturn: Schema.NullOr(
@@ -216,30 +276,216 @@ export const makeForwardPerformanceReceiptEnvelope = (
     Result.mapError(() => 'ForwardPerformanceReceiptCanonicalizationFailed' as const),
   )
 
-export class ForwardPerformanceReceiptStoreError extends Data.TaggedError('ForwardPerformanceReceiptStoreError')<{
-  readonly operation: 'bind' | 'read'
-  readonly failure: 'conflict' | 'decode' | 'invariant' | 'query'
-  readonly message: string
-  readonly cause?: unknown
-}> {}
-
-export interface ForwardPerformanceReceiptStoreShape {
-  readonly read: (
-    authorityGenerationHash: string,
-  ) => Effect.Effect<Option.Option<ForwardPerformanceReceiptEnvelope>, ForwardPerformanceReceiptStoreError>
-  readonly bind: (
-    envelope: ForwardPerformanceReceiptEnvelope,
-  ) => Effect.Effect<ForwardPerformanceReceiptEnvelope, ForwardPerformanceReceiptStoreError>
-}
-
-export class ForwardPerformanceReceiptStore extends Context.Service<
-  ForwardPerformanceReceiptStore,
-  ForwardPerformanceReceiptStoreShape
->()('@proompteng/bayn/db/forward-performance-receipt/ForwardPerformanceReceiptStore') {}
-
 const decodeEnvelopeResult = Schema.decodeUnknownResult(ForwardPerformanceReceiptEnvelopeSchema, strictParseOptions)
 
 export const decodeForwardPerformanceReceiptEnvelopeResult = (
   input: unknown,
 ): Result.Result<ForwardPerformanceReceiptEnvelope, unknown> =>
   decodeEnvelopeResult(input) as Result.Result<ForwardPerformanceReceiptEnvelope, unknown>
+
+export class ForwardPerformanceReceiptPersistenceError extends Data.TaggedError(
+  'ForwardPerformanceReceiptPersistenceError',
+)<{ readonly message: string; readonly cause?: unknown }> {}
+
+export const makePersistableForwardPerformanceReceiptEnvelope = (
+  authorityGenerationHash: string,
+  receipt: ForwardPerformanceReceipt,
+): Result.Result<ForwardPerformanceReceiptEnvelope, ForwardPerformanceReceiptPersistenceError> => {
+  const { window, evidence, reconciliationProof: proof } = receipt
+  if (
+    evidence.status !== 'SUFFICIENT' ||
+    evidence.reasonCodes.length !== 0 ||
+    receipt.profitability === 'UNDETERMINED' ||
+    receipt.bindings.source === null ||
+    receipt.bindings.strategy === null ||
+    window.firstCycleId === null ||
+    window.lastCycleId === null ||
+    window.openedAt === null ||
+    window.closedAt === null ||
+    window.closedAt < window.openedAt ||
+    window.reconciliationId === null ||
+    window.reconciliationContentHash === null ||
+    (window.reconciliationStatus !== 'EXACT' && window.cashYieldAdjustedExact !== true) ||
+    !proof.accountingReceiptsExact ||
+    !proof.ledgerExact ||
+    proof.missingLedgerAccountCount !== 0 ||
+    proof.unresolvedMutationCount !== 0 ||
+    proof.unclosedCycleCount !== 0 ||
+    proof.openPositionCount !== 0
+  )
+    return Result.fail(
+      new ForwardPerformanceReceiptPersistenceError({
+        message: 'Cannot persist a forward-performance receipt without sufficient, closed, exactly reconciled evidence',
+      }),
+    )
+
+  return makeForwardPerformanceReceiptEnvelope({
+    schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
+    authorityGenerationHash,
+    cycleId: window.lastCycleId,
+    receiptHash: receipt.receiptHash,
+    receipt,
+    createdAt: window.closedAt,
+  }).pipe(
+    Result.flatMap(decodeForwardPerformanceReceiptEnvelopeResult),
+    Result.mapError(
+      (cause) =>
+        new ForwardPerformanceReceiptPersistenceError({ message: 'Invalid forward-performance receipt', cause }),
+    ),
+  )
+}
+
+const decodePersistenceMatches = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ matches: Schema.Boolean })))
+
+export const evaluateAndPersistForwardPerformanceReceipt = <
+  A extends { readonly receipt: ForwardPerformanceReceipt },
+  E,
+  R,
+>(
+  authorityGenerationHash: string,
+  evaluate: (writerFence: WriterFenceService) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const writerFence = yield* WriterFence
+    // Own the same serialization boundary as broker/accounting ingestion before the first read,
+    // and retain it through the immutable append. No pre-fence snapshot is reused for a write.
+    return yield* writerFence.transaction(
+      Effect.gen(function* () {
+        const report = yield* evaluate(writerFence)
+        const envelope = yield* Effect.fromResult(
+          makePersistableForwardPerformanceReceiptEnvelope(authorityGenerationHash, report.receipt),
+        )
+        yield* persistForwardPerformanceReceipt(envelope)
+        return report
+      }),
+    )
+  })
+
+export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceReceiptEnvelope) =>
+  Effect.gen(function* () {
+    yield* Effect.fromResult(
+      decodeForwardPerformanceReceiptEnvelopeResult(envelope).pipe(
+        Result.mapError(
+          (cause) =>
+            new ForwardPerformanceReceiptPersistenceError({ message: 'Invalid forward-performance envelope', cause }),
+        ),
+      ),
+    )
+    const expected = yield* Effect.fromResult(
+      makePersistableForwardPerformanceReceiptEnvelope(envelope.authorityGenerationHash, envelope.receipt),
+    )
+    if (expected.contentHash !== envelope.contentHash)
+      return yield* new ForwardPerformanceReceiptPersistenceError({
+        message: 'Forward-performance envelope must bind the report cycle and stable evidence timestamp',
+      })
+    const sql = yield* PgClient.PgClient
+    yield* withWriterFence(
+      sql.withTransaction(
+        Effect.gen(function* () {
+          // Terminal restrictions precede receipt-gated rollover. Accept that non-effective state
+          // or an already superseded generation, never an active mandate or an operator kill.
+          // Hold the authority/cycle rows through the append without changing authority.
+          const terminal = yield* sql`
+          SELECT true AS matches
+          FROM authority_generations AS generation
+          JOIN authority_state AS state
+            ON state.singleton
+          JOIN autonomous_cycles AS cycle
+            ON cycle.cycle_id = ${envelope.cycleId}
+            AND cycle.account_id = generation.account_id
+            AND cycle.qualification_run_id = COALESCE(generation.qualification_run_id, generation.research_plan_hash)
+          WHERE generation.generation_hash = ${envelope.authorityGenerationHash}
+            AND generation.maximum = 'PAPER'
+            AND generation.broker_identity_hash = ${envelope.receipt.bindings.account.accountReferenceHash}
+            AND generation.broker_provider = ${envelope.receipt.bindings.account.provider}
+            AND generation.broker_environment = ${envelope.receipt.bindings.account.environment}
+            AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+            AND cycle.terminal_at <= ${envelope.createdAt}::timestamptz
+            AND (
+              EXISTS (
+                SELECT 1 FROM intents AS cycle_intent
+                WHERE cycle_intent.cycle_id = cycle.cycle_id
+                  AND cycle_intent.account_id = generation.account_id
+                  AND cycle_intent.authority_generation_hash = generation.generation_hash
+              )
+              OR EXISTS (
+                SELECT 1 FROM autonomous_cycle_shadow_decisions AS decision
+                WHERE decision.cycle_id = cycle.cycle_id
+                  AND decision.decision_hash = cycle.decision_hash
+                  AND decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
+                  AND decision.document ->> 'mode' = 'PAPER'
+                  AND decision.document #>> '{bindings,accountId}' = generation.account_id
+                  AND decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id
+                  AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+              )
+            )
+            AND (
+              (
+                state.generation_hash <> generation.generation_hash
+                AND state.version > generation.authority_version
+                AND EXISTS (
+                  SELECT 1 FROM authority_generations AS successor
+                  WHERE successor.previous_generation_hash = generation.generation_hash
+                    AND successor.account_id = generation.account_id
+                    AND successor.authority_version > generation.authority_version
+                    AND successor.activated_at > ${envelope.createdAt}::timestamptz
+                )
+              )
+              OR (
+                state.generation_hash = generation.generation_hash
+                AND state.version >= generation.authority_version
+                AND state.maximum = 'PAPER'
+                AND state.effective = 'OBSERVE'
+                AND state.kill_state = 'ACTIVE'
+                AND state.reason IN (
+                  ${executionMandateCompletedRestrictionReason},
+                  ${executionActivationExpiredRestrictionReason},
+                  ${legacyV1CompletedRestrictionReason},
+                  ${legacyExecutionActivationExpiredRestrictionReason}
+                )
+                AND state.updated_at >= generation.activated_at
+                AND state.updated_at < ${envelope.createdAt}::timestamptz
+              )
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM intents AS intent
+              WHERE intent.authority_generation_hash = generation.generation_hash
+                AND (intent.state <> 'TERMINAL' OR intent.updated_at > ${envelope.createdAt}::timestamptz)
+            )
+          FOR SHARE OF state, cycle
+        `.pipe(Effect.flatMap(decodePersistenceMatches))
+          if (terminal.length !== 1 || terminal[0]?.matches !== true)
+            return yield* new ForwardPerformanceReceiptPersistenceError({
+              message: 'Cannot persist a forward-performance receipt before its generation is terminal and settled',
+            })
+
+          yield* sql`
+          INSERT INTO autonomous_forward_performance_receipts (
+            authority_generation_hash, cycle_id, document, created_at
+          ) VALUES (
+            ${envelope.authorityGenerationHash}, ${envelope.cycleId}, ${sql.json(envelope)}, ${envelope.createdAt}
+          )
+          ON CONFLICT (authority_generation_hash) DO NOTHING
+        `
+          const rows = yield* sql`
+          SELECT document = ${sql.json(envelope)} AS matches
+          FROM autonomous_forward_performance_receipts
+          WHERE authority_generation_hash = ${envelope.authorityGenerationHash}
+        `.pipe(Effect.flatMap(decodePersistenceMatches))
+          if (rows.length !== 1 || rows[0]?.matches !== true)
+            return yield* new ForwardPerformanceReceiptPersistenceError({
+              message: 'A different forward-performance receipt already exists for this authority generation',
+            })
+        }),
+      ),
+    )
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof ForwardPerformanceReceiptPersistenceError
+        ? cause
+        : new ForwardPerformanceReceiptPersistenceError({
+            message: 'Failed to persist the forward-performance receipt',
+            cause,
+          }),
+    ),
+  )

@@ -10,7 +10,7 @@ spec:
   enablePDB: true
   enableSuperuserAccess: false
   failoverDelay: 0
-  imageName: ghcr.io/cloudnative-pg/postgresql:17.0
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
   logLevel: info
   maxSyncReplicas: 0
   minSyncReplicas: 0
@@ -67,9 +67,14 @@ spec:
         name: cnpg-default-monitoring
     disableDefaultQueries: false
     enablePodMonitor: true
+  backup:
+    volumeSnapshot:
+      className: rook-ceph-block
+      snapshotOwnerReference: backup
   postgresql:
     parameters:
       archive_mode: "on"
+      wal_buffers: 16MB
       archive_timeout: 5min
       dynamic_shared_memory_type: posix
       full_page_writes: "on"
@@ -95,3 +100,18 @@ spec:
       wal_sender_timeout: 5s
     syncReplicaElectionConstraint:
       enabled: false
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: bilig-db-pre-18-7
+  namespace: bilig
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: bilig-db
+  method: volumeSnapshot
+  online: true
+  target: prefer-standby

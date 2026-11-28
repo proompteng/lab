@@ -10,10 +10,9 @@ controllers:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-
-runner:
-  image:
-    repository: registry.ide-newton.ts.net/lab/agents-codex-runner
+  env:
+    vars:
+      AGENTS_MIGRATIONS: 'auto'
 
 namespaceOverride: agents-ci
 

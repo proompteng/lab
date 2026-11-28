@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Undici } from '@effect/platform-node'
+import * as Undici from '@effect/platform-node/Undici'
 import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { BrokerEnvironment } from '../execution/authority'
 import {
   AccountStatus,
@@ -13,13 +13,8 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
-  BrokerReadError,
-  BrokerReadErrorKind,
-  BrokerAccountPreflightError,
-  BrokerProvider,
-  BrokerSession,
-  BrokerSessionAcquisitionError,
-  BrokerSessionAcquisitionStage,
+  NonTradeActivityStatementSchema,
+  verifyNonTradeActivityStatement,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -27,20 +22,19 @@ import {
   PositionSide,
   SortDirection,
   TradeActivityType,
-  alpacaSandboxBaseUrl,
-  decodeBrokerConnection,
-  layer,
-  make,
-  makeProxyDispatcher,
   readPreflightTimeoutMs,
-  verifyReadAccess,
   type BrokerReadShape,
-  type BrokerConnection,
-} from './alpaca'
-import { parseProxyUrl } from './alpaca/http'
+} from './alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from './alpaca/failures'
+import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/preflight'
+import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
+import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
+import { make, alpacaHttpLayer } from './alpaca/http'
+import { fillActivityIdentity } from './activities'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
+import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const assetId = 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415'
@@ -192,7 +186,52 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
+  test('preserves ledger identity across Eastern daylight time and microsecond rounding', () => {
+    expect(fillActivityIdentity(orderId, '2026-10-05T15:12:39.021034500Z')).toEqual({
+      activityId: `20261005111239021::${orderId}`,
+      transactionTime: '2026-10-05T15:12:39.021034000Z',
+    })
+    expect(fillActivityIdentity(orderId, '2026-11-05T15:12:39.999999500Z')).toEqual({
+      activityId: `20261105101239999::${orderId}`,
+      transactionTime: '2026-11-05T15:12:40.000000000Z',
+    })
+  })
+
+  test('retains the broker crypto fee tier with its account response evidence', async () => {
+    const raw = { ...accountResponse, crypto_status: 'ACTIVE', crypto_tier: 4 }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const result = await Effect.runPromise(withClient(client, (read) => read.account))
+    expect(result.value).toMatchObject({ id: accountId, cryptoStatus: 'ACTIVE', cryptoFeeTier: 4 })
+    expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(raw)))
+  })
+
+  test.each([0, 9, '4'])('rejects an unrecognized broker crypto fee tier %s', async (cryptoTier) => {
+    const raw = { ...accountResponse, crypto_status: 'ACTIVE', crypto_tier: cryptoTier }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.account)))
+    expect(failure.kind).toBe(BrokerReadErrorKind.InvalidResponse)
+  })
+
+  test.each([
+    ['ETHUSD', 'us_equity'],
+    ['ETH/USD', 'us_equity'],
+    ['AAPL', 'crypto'],
+    ['XRPUSD', 'crypto'],
+    ['ETH/BTC', 'crypto'],
+    ['ethusd', 'crypto'],
+  ])('rejects mismatched or unsupported broker position %s in %s', async (symbol, assetClass) => {
+    const response = [{ ...positionResponse, symbol, asset_class: assetClass }]
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.positions)))
+    expect(failure).toMatchObject({
+      operation: 'positions',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+    })
+  })
+
   test('reads and runtime-decodes the configured paper account without leaking credentials', async () => {
+    const response = { ...accountResponse, transfers_blocked: true }
     let method = ''
     let url = ''
     let key = ''
@@ -205,7 +244,7 @@ describe('Alpaca paper reads', () => {
         url = target.toString()
         key = request.headers['apca-api-key-id'] ?? ''
         secret = request.headers['apca-api-secret-key'] ?? ''
-        inspected = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(request.toJSON()).pipe(
+        inspected = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(request.toJSON()).pipe(
           Effect.mapError(
             (cause) =>
               new HttpClientError.HttpClientError({
@@ -217,7 +256,7 @@ describe('Alpaca paper reads', () => {
               }),
           ),
         )
-        return jsonResponse(request, accountResponse)
+        return jsonResponse(request, response)
       }),
     )
 
@@ -238,8 +277,10 @@ describe('Alpaca paper reads', () => {
       'account',
       'accountConfiguration',
       'assetBySymbol',
+      'feeActivities',
       'fillActivities',
       'marketCalendar',
+      'nonTradeActivityStatement',
       'orderByClientId',
       'orderById',
       'orders',
@@ -252,12 +293,13 @@ describe('Alpaca paper reads', () => {
       equityMicros: '103820560000',
       lastEquityMicros: '104000000000',
       buyingPowerMicros: '262113632000',
+      transfersBlocked: true,
       observedAt: '1970-01-01T00:00:00.000Z',
     })
     expect(result.evidence).toEqual({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(accountResponse),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
       rateLimit: {
         limit: '200',
@@ -267,6 +309,40 @@ describe('Alpaca paper reads', () => {
       },
     })
   })
+
+  test.each([
+    ['103820.560000493882', '104000.000000693882', '103820560000', '104000000001'],
+    ['-0.000000000001', '-0.000000000001', '-1', '0'],
+    ['-100.000000000001', '-101.000000000001', '-100000001', '-101000000'],
+    ['10.999999999999', '11.999999999999', '10999999', '12000000'],
+    ['10.123456000000', '11.123456000000', '10123456', '11123456'],
+  ])(
+    'bounds account equity marks without understating daily loss: %s / %s',
+    async (equity, lastEquity, current, previous) => {
+      const raw = { ...accountResponse, equity, last_equity: lastEquity }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const result = await Effect.runPromise(withClient(client, (read) => read.account))
+      expect(result.value.equityMicros).toBe(current)
+      expect(result.value.lastEquityMicros).toBe(previous)
+      expect(result.value.cashMicros).toBe('-23140200000')
+      expect(result.value.buyingPowerMicros).toBe('262113632000')
+      expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(raw)))
+    },
+  )
+
+  test.each(['cash', 'buying_power', 'non_marginable_buying_power'] as const)(
+    'keeps exact-money precision checks for %s while accepting high-precision marks',
+    async (field) => {
+      const raw = { ...accountResponse, last_equity: '104000.000000693882', [field]: '1.000000000001' }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.account)))
+      expect(failure).toMatchObject({
+        operation: 'account',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    },
+  )
 
   test('reads and hashes the current fractional-trading account configuration with GET only', async () => {
     const requests: Array<{ method: string; url: URL; key: string; secret: string }> = []
@@ -319,27 +395,30 @@ describe('Alpaca paper reads', () => {
         secret: 'paper-secret',
       },
     ])
-    const requestHash = canonicalHashV1({
-      schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
-      source: 'alpaca-v2-account-configurations',
-      method: 'GET',
-      path: '/v2/account/configurations',
-    })
+    const requestHash = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
+        source: 'alpaca-v2-account-configurations',
+        method: 'GET',
+        path: '/v2/account/configurations',
+      }),
+    )
     const normalized = {
       schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
       source: 'alpaca-v2-account-configurations',
       requestHash,
       fractionalTrading: true,
+      noShorting: true,
     } as const
     expect(result.value).toEqual({
       ...normalized,
       observedAt: '1970-01-01T00:00:01.000Z',
-      normalizedResponseHash: canonicalHashV1(normalized),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(normalized)),
     })
     expect(result.evidence).toMatchObject({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(accountConfigurationResponse),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(accountConfigurationResponse)),
       observedAt: '1970-01-01T00:00:01.000Z',
     })
     expect(requests.some(({ method }) => method === 'PATCH' || method === 'POST' || method === 'DELETE')).toBe(false)
@@ -359,7 +438,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
     })
   })
@@ -372,6 +451,9 @@ describe('Alpaca paper reads', () => {
       status: 'inactive',
       tradable: false,
       fractionable: false,
+      minimumQuantityAtoms: '1000000000',
+      quantityIncrementAtoms: '1000000000',
+      priceIncrementAtoms: '100000',
       attributes: ['ipo'],
     }
     const requests: Array<{ method: string; url: URL; key: string; secret: string }> = []
@@ -424,13 +506,15 @@ describe('Alpaca paper reads', () => {
         secret: 'paper-secret',
       },
     ])
-    const requestHash = canonicalHashV1({
-      schemaVersion: 'bayn.alpaca-asset-observation.v1',
-      source: 'alpaca-v2-asset',
-      method: 'GET',
-      path: `/v2/assets/${encodeURIComponent(requestedSymbol)}`,
-      requestedSymbol,
-    })
+    const requestHash = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.alpaca-asset-observation.v1',
+        source: 'alpaca-v2-asset',
+        method: 'GET',
+        path: `/v2/assets/${encodeURIComponent(requestedSymbol)}`,
+        requestedSymbol,
+      }),
+    )
     const normalized = {
       schemaVersion: 'bayn.alpaca-asset-observation.v1',
       source: 'alpaca-v2-asset',
@@ -443,17 +527,20 @@ describe('Alpaca paper reads', () => {
       status: AssetStatus.Inactive,
       tradable: false,
       fractionable: false,
+      minimumQuantityAtoms: '1000000000',
+      quantityIncrementAtoms: '1000000000',
+      priceIncrementAtoms: '100000',
       attributes: ['ipo'],
     } as const
     expect(result.value).toEqual({
       ...normalized,
       observedAt: '1970-01-01T00:00:02.000Z',
-      normalizedResponseHash: canonicalHashV1(normalized),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(normalized)),
     })
     expect(result.evidence).toMatchObject({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:02.000Z',
     })
     expect(requests.some(({ method }) => method === 'POST' || method === 'DELETE')).toBe(false)
@@ -508,7 +595,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
     })
 
@@ -520,7 +607,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
       cause: {
         message: 'asset lookup returned symbol MSFT, expected AAPL',
@@ -542,7 +629,7 @@ describe('Alpaca paper reads', () => {
       operation: 'asset-by-symbol',
       kind: BrokerReadErrorKind.InvalidResponse,
       retryable: false,
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
     })
   })
@@ -590,31 +677,47 @@ describe('Alpaca paper reads', () => {
     expect(requestedUrl?.pathname).toBe('/v2/calendar')
     expect(requestedUrl?.searchParams.toString()).toBe('start=2026-03-06&end=2026-03-10&date_type=TRADING')
     const normalized = {
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       requestedRange: { start: '2026-03-06', end: '2026-03-10' },
       timeZone: 'UTC',
       sessions: [
         {
           date: '2026-03-06',
-          openAt: '2026-03-06T14:30:00.000Z',
-          closeAt: '2026-03-06T21:00:00.000Z',
+          openAt: '2026-03-06T13:00:00.000Z',
+          closeAt: '2026-03-06T22:00:00.000Z',
         },
         {
           date: '2026-03-09',
-          openAt: '2026-03-09T13:30:00.000Z',
-          closeAt: '2026-03-09T20:00:00.000Z',
+          openAt: '2026-03-09T12:00:00.000Z',
+          closeAt: '2026-03-09T21:00:00.000Z',
+        },
+      ],
+      providerSessions: [
+        {
+          date: '2026-03-06',
+          regularOpenAt: '2026-03-06T14:30:00.000Z',
+          regularCloseAt: '2026-03-06T21:00:00.000Z',
+          sessionOpenAt: '2026-03-06T09:00:00.000Z',
+          sessionCloseAt: '2026-03-07T01:00:00.000Z',
+        },
+        {
+          date: '2026-03-09',
+          regularOpenAt: '2026-03-09T13:30:00.000Z',
+          regularCloseAt: '2026-03-09T20:00:00.000Z',
+          sessionOpenAt: '2026-03-09T08:00:00.000Z',
+          sessionCloseAt: '2026-03-10T00:00:00.000Z',
         },
       ],
     } as const
     expect(result.value).toEqual({
       ...normalized,
-      normalizedResponseHash: canonicalHashV1(normalized),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(normalized)),
     })
     expect(result.evidence).toMatchObject({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
     })
   })
 
@@ -658,8 +761,8 @@ describe('Alpaca paper reads', () => {
     })
 
     response = [
-      { date: '2026-03-09', open: '09:30', close: '16:00' },
-      { date: '2026-03-09', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-03-09', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-03-09', open: '09:30', close: '16:00' },
     ]
     const duplicate = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.marketCalendar(query))))
     expect(duplicate).toMatchObject({
@@ -668,7 +771,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
     })
 
-    response = [{ date: '2026-03-11', open: '09:30', close: '16:00' }]
+    response = [{ session_open: '0930', session_close: '1600', date: '2026-03-11', open: '09:30', close: '16:00' }]
     const outsideRange = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.marketCalendar(query))))
     expect(outsideRange).toMatchObject({
       operation: 'market-calendar',
@@ -686,11 +789,7 @@ describe('Alpaca paper reads', () => {
         return Effect.succeed(jsonResponse(request, accountConfigurationResponse))
       }
       if (url.pathname === '/v2/positions') return Effect.succeed(jsonResponse(request, []))
-      if (
-        url.pathname === '/v2/orders' ||
-        url.pathname === '/v2/account/activities/FILL' ||
-        url.pathname === '/v2/calendar'
-      ) {
+      if (url.pathname === '/v2/orders' || url.pathname === '/v2/account/activities/FILL') {
         return Effect.succeed(jsonResponse(request, []))
       }
       return Effect.succeed(jsonResponse(request, { code: 40410000, message: 'order not found' }, 404))
@@ -714,7 +813,6 @@ describe('Alpaca paper reads', () => {
       openOrderCount: 0,
       recentOrderCount: 0,
       fillCount: 0,
-      marketCalendarSessionCount: 0,
       orderById: 'NOT_FOUND',
       orderByClientId: 'NOT_FOUND',
     })
@@ -723,8 +821,7 @@ describe('Alpaca paper reads', () => {
     expect(proof.positionsHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.ordersHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.fillsHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(proof.marketCalendarHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(requests).toHaveLength(9)
+    expect(requests).toHaveLength(8)
     expect(requests.every(({ method }) => method === 'GET')).toBe(true)
     expect(
       requests
@@ -737,8 +834,7 @@ describe('Alpaca paper reads', () => {
     const fill = requests.find(({ url }) => url.pathname === '/v2/account/activities/FILL')
     expect(fill?.url.searchParams.get('page_size')).toBe('1')
     expect(fill?.url.searchParams.get('direction')).toBe('desc')
-    const calendar = requests.find(({ url }) => url.pathname === '/v2/calendar')
-    expect(calendar?.url.searchParams.toString()).toBe('start=1970-01-01&end=1970-01-14&date_type=TRADING')
+    expect(requests.some(({ url }) => url.pathname === '/v2/calendar')).toBe(false)
   })
 
   test('preflights ordinary non-empty orders whose optional Alpaca fields are null', async () => {
@@ -769,28 +865,41 @@ describe('Alpaca paper reads', () => {
     expect(proof.ordersHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
-  test('fails the complete startup preflight when the market calendar payload is invalid', async () => {
+  test('preflights account access during a market calendar outage', async () => {
+    const requests: string[] = []
     const client = HttpClient.make((request, url) => {
+      requests.push(url.pathname)
       if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
       if (url.pathname === '/v2/account/configurations') {
         return Effect.succeed(jsonResponse(request, accountConfigurationResponse))
       }
       if (url.pathname === '/v2/calendar') {
-        return Effect.succeed(jsonResponse(request, [{ date: '2026-07-23', open: '9:30', close: '16:00' }]))
+        return Effect.succeed(jsonResponse(request, { message: 'Internal Server Error' }, 500))
+      }
+      if (url.pathname.startsWith('/v2/orders/') || url.pathname === '/v2/orders:by_client_order_id') {
+        return Effect.succeed(jsonResponse(request, { code: 40410000, message: 'order not found' }, 404))
       }
       return Effect.succeed(jsonResponse(request, []))
     })
 
-    const failure = await Effect.runPromise(Effect.flip(withClient(client, verifyConnectionReadAccess)))
+    const proof = await Effect.runPromise(
+      withClient(client, verifyConnectionReadAccess, { ...options, retryAttempts: 0 }),
+    )
 
-    expect(failure).toMatchObject({
-      operation: 'market-calendar',
-      kind: BrokerReadErrorKind.InvalidResponse,
-      retryable: false,
+    expect(proof).toMatchObject({
+      accountId,
+      accountStatus: AccountStatus.Active,
+      positionCount: 0,
+      openOrderCount: 0,
+      recentOrderCount: 0,
+      fillCount: 0,
+      orderById: 'NOT_FOUND',
+      orderByClientId: 'NOT_FOUND',
     })
+    expect(requests).not.toContain('/v2/calendar')
   })
 
-  test('fails closed on every account permission gate before reading positions, orders, fills, or calendar', async () => {
+  test('fails closed on every account permission gate before reading positions, orders, or fills', async () => {
     const cases = [
       {
         name: 'inactive account',
@@ -878,12 +987,11 @@ describe('Alpaca paper reads', () => {
     let interrupted = 0
     const client = HttpClient.make((request, url) => {
       if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
-      return Effect.never.pipe(
-        Effect.onInterrupt(() =>
-          Effect.sync(() => {
-            interrupted += 1
-          }),
-        ),
+      // Withhold the body so the whole-preflight deadline, rather than the earlier header-attempt bound, wins.
+      return Effect.succeed(
+        Object.defineProperty(jsonResponse(request, accountConfigurationResponse), 'json', {
+          value: Effect.never.pipe(Effect.ensuring(Effect.sync(() => interrupted++))),
+        }),
       )
     })
 
@@ -921,8 +1029,9 @@ describe('Alpaca paper reads', () => {
         exchange: AssetExchange.Nasdaq,
         assetClass: AssetClass.UsEquity,
         side: PositionSide.Long,
-        quantityMicros: '5000000',
+        quantityAtoms: '5000000000',
         averageEntryPriceMicros: '100000000',
+        costBasisMicros: '500000000',
         marketPriceMicros: '120000000',
         marketValueMicros: '600000000',
         unrealizedPnlMicros: '100000000',
@@ -935,13 +1044,13 @@ describe('Alpaca paper reads', () => {
     expect(short.value).toEqual([
       expect.objectContaining({
         side: PositionSide.Short,
-        quantityMicros: '-5000000',
+        quantityAtoms: '-5000000000',
         marketValueMicros: '-600000000',
         unrealizedPnlMicros: '-100000000',
       }),
     ])
 
-    response = [{ ...positionResponse, qty: '0.079145874' }]
+    response = [{ ...positionResponse, qty: '0.0791458741' }]
     const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.positions)))
     expect(failure).toMatchObject({
       _tag: 'BrokerReadError',
@@ -952,7 +1061,7 @@ describe('Alpaca paper reads', () => {
         tag: 'BrokerReadContractFailure',
         reason: 'DECIMAL_PRECISION',
         field: 'position quantity',
-        actual: '0.079145874',
+        actual: '0.0791458741',
       },
     })
     expect(failure.message).toContain('violates the Bayn read contract')
@@ -972,6 +1081,39 @@ describe('Alpaca paper reads', () => {
       },
     })
   })
+
+  for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
+    test(`reads the compact ${symbol} position after a native coin fill`, async () => {
+      const response = [
+        {
+          ...positionResponse,
+          symbol: symbol.replace('/', ''),
+          exchange: 'CRYPTO',
+          asset_class: 'crypto',
+          qty: '0.032967375',
+          avg_entry_price: '2425.31',
+          cost_basis: '79.956104',
+          market_value: '79.45467',
+          unrealized_pl: '-0.501434',
+          current_price: '2410.1',
+        },
+      ]
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+      const result = await Effect.runPromise(withClient(client, (read) => read.positions))
+      expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(response)))
+      expect(result.value).toEqual([
+        expect.objectContaining({
+          symbol,
+          assetClass: AssetClass.Crypto,
+          quantityAtoms: '32967375',
+          averageEntryPriceMicros: '2425310000',
+          costBasisMicros: '79956104',
+          marketValueMicros: '79454670',
+          unrealizedPnlMicros: '-501434',
+        }),
+      ])
+    })
+  }
 
   test('reads order collections and deterministic order lookups with GET only', async () => {
     const requests: Array<{ method: string; url: URL }> = []
@@ -1016,8 +1158,8 @@ describe('Alpaca paper reads', () => {
         orderType: OrderType.Market,
         side: OrderSide.Buy,
         status: OrderStatus.Accepted,
-        quantityMicros: '5000000',
-        filledQuantityMicros: '0',
+        quantityAtoms: '5000000000',
+        filledQuantityAtoms: '0',
         createdAt: '2021-03-16T18:38:01.942282Z',
       })
     }
@@ -1169,6 +1311,315 @@ describe('Alpaca paper reads', () => {
     expect(calls).toBe(callsBeforeInvalidLookup)
   })
 
+  test('reads exact signed non-trade fees without retaining account descriptions', async () => {
+    let requestedUrl: URL | undefined
+    const raw = {
+      activity_type: 'FEE',
+      id: `20260910000000000::${orderId}`,
+      date: '2026-09-10',
+      net_amount: '-0.21',
+      description: 'private account detail',
+    }
+    const client = HttpClient.make((request, url) => {
+      requestedUrl = url
+      return Effect.succeed(jsonResponse(request, [raw]))
+    })
+    const result = await Effect.runPromise(
+      withClient(client, (read) => read.feeActivities({ pageSize: 1, direction: SortDirection.Ascending })),
+    )
+    expect(requestedUrl?.pathname).toBe('/v2/account/activities')
+    expect(requestedUrl?.searchParams.get('activity_types')).toBe('FEE,CFEE')
+    expect(result.value).toEqual({
+      items: [{ accountId, activityId: raw.id, date: raw.date, netAmountMicros: '-210000' }],
+      nextPageToken: raw.id,
+    })
+    expect(JSON.stringify(result.value)).not.toContain('private account detail')
+    for (const invalid of [
+      { ...raw, account_id: assetId },
+      { ...raw, net_amount: '-0.0000001' },
+      { ...raw, activity_type: 'DIV' },
+      { ...raw, date: '2026-02-30' },
+    ]) {
+      const bad = HttpClient.make((request) => Effect.succeed(jsonResponse(request, [invalid])))
+      const exit = await Effect.runPromiseExit(withClient(bad, (read) => read.feeActivities()))
+      expect(Exit.isFailure(exit)).toBe(true)
+    }
+    expect(Result.getOrThrow(decimalToMicrosResult('-0.01', true, 'fee'))).toBe('-10000')
+    expect(Result.isFailure(decimalToMicrosResult('-0.01', false, 'quantity'))).toBe(true)
+    expect(Result.getOrThrow(decimalToMicrosResult('0.01', true, 'fee refund'))).toBe('10000')
+  })
+
+  test('captures all non-trade activity through empty terminal pages in both directions', async () => {
+    const bounds = { after: '2026-09-10T13:00:00.000Z', until: '2026-09-11T13:00:00.000Z' }
+    const fee = {
+      id: `20260911010000000::${orderId}`,
+      activity_type: 'FEE',
+      date: '2026-09-10',
+      net_amount: '-0.21',
+      description: 'private account detail',
+    }
+    const deposit = {
+      id: `20260910160000000::${assetId}`,
+      activity_type: 'CSD',
+      date: '2026-09-10',
+      created_at: '2026-09-10T16:00:00Z',
+      net_amount: '0.21',
+    }
+    const calls: { direction: string | null; pageToken: string | null }[] = []
+    const client = HttpClient.make((request, url) => {
+      expect(request.method).toBe('GET')
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      expect(url.pathname).toBe('/v2/account/activities')
+      expect(url.searchParams.get('category')).toBe('non_trade_activity')
+      expect(url.searchParams.has('activity_types')).toBe(false)
+      expect(url.searchParams.get('after')).toBe(bounds.after)
+      expect(url.searchParams.get('until')).toBe(bounds.until)
+      const direction = url.searchParams.get('direction')
+      const pageToken = url.searchParams.get('page_token')
+      calls.push({ direction, pageToken })
+      const [first, second] = direction === 'asc' ? [deposit, fee] : [fee, deposit]
+      return Effect.succeed(
+        jsonResponse(request, pageToken === null ? [first] : pageToken === first.id ? [second] : []),
+      )
+    })
+    const result = await Effect.runPromise(
+      make(options).pipe(
+        Effect.flatMap((read) => read.nonTradeActivityStatement(bounds)),
+        Effect.provideService(HttpClient.HttpClient, client),
+      ),
+    )
+    expect(calls).toEqual([
+      { direction: 'asc', pageToken: null },
+      { direction: 'asc', pageToken: deposit.id },
+      { direction: 'asc', pageToken: fee.id },
+      { direction: 'desc', pageToken: null },
+      { direction: 'desc', pageToken: fee.id },
+      { direction: 'desc', pageToken: deposit.id },
+    ])
+    expect(result.accountIdentityHash).toBe(options.identity.identityHash)
+    expect(result.window).toEqual(bounds)
+    const statement = Result.getOrThrow(Schema.decodeUnknownResult(NonTradeActivityStatementSchema)(result))
+    expect(statement.accountBody).toEqual(accountResponse)
+    expect(
+      verifyNonTradeActivityStatement({ ...statement, accountBody: { ...accountResponse, id: assetId } }, assetId),
+    ).toMatchObject({ _tag: 'Failure' })
+    expect(Result.getOrThrow(verifyNonTradeActivityStatement(statement, accountId)).activities).toEqual([
+      {
+        activityId: deposit.id,
+        activityType: 'CSD',
+        date: deposit.date,
+        createdAt: deposit.created_at,
+        netAmount: '0.21',
+      },
+      { activityId: fee.id, activityType: 'FEE', date: fee.date, createdAt: null, netAmount: '-0.21' },
+    ])
+    expect(result.firstPass.at(-1)?.body).toEqual([])
+    expect(result.secondPass.at(-1)?.body).toEqual([])
+    expect(result.firstPass[1]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([fee])))
+  })
+
+  test('withholds the non-trade statement for repeated, changing, wrong-account or out-of-window activities', async () => {
+    const bounds = { after: '2026-09-10T13:00:00.000Z', until: '2026-09-11T13:00:00.000Z' }
+    const fee = { id: `20260911010000000::${orderId}`, activity_type: 'FEE', date: '2026-09-10', net_amount: '-0.21' }
+    const scenarios = [
+      () => [fee],
+      (url: URL) =>
+        url.searchParams.has('page_token')
+          ? []
+          : [{ ...fee, net_amount: url.searchParams.get('direction') === 'asc' ? '-0.21' : '-0.22' }],
+      () => [{ ...fee, account_id: assetId }],
+      () => [{ ...fee, created_at: bounds.until }],
+    ]
+    for (const scenario of scenarios) {
+      const client = HttpClient.make((request, url) =>
+        Effect.succeed(jsonResponse(request, url.pathname === '/v2/account' ? accountResponse : scenario(url))),
+      )
+      const failure = await Effect.runPromise(
+        make(options).pipe(
+          Effect.flatMap((read) => read.nonTradeActivityStatement(bounds)),
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.flip,
+        ),
+      )
+      expect(failure).toMatchObject({ operation: 'non-trade-activities', kind: BrokerReadErrorKind.InvalidResponse })
+    }
+  })
+
+  test('retains available cash CFEE through the HTTP adapter in a stable broker snapshot', async () => {
+    const raw = {
+      activity_type: 'CFEE',
+      id: `20261015000000000::${orderId}`,
+      date: '2026-10-15',
+      created_at: '2026-10-14T23:59:58.123456Z',
+      net_amount: '-0.23',
+      status: 'executed',
+      description: 'Coin Pair Transaction Fee (USD)',
+    }
+    const client = HttpClient.make((request, url) => {
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/account/activities')
+        return Effect.succeed(jsonResponse(request, url.searchParams.has('until') ? [] : [raw]))
+      if (['/v2/positions', '/v2/orders', '/v2/account/activities/FILL'].includes(url.pathname))
+        return Effect.succeed(jsonResponse(request, []))
+      return Effect.die(new Error('Unexpected broker endpoint'))
+    })
+
+    const snapshot = await Effect.runPromise(
+      withClient(client, (read) => readStableBrokerSnapshot(read, Effect.succeed('2026-10-15T08:00:00.000Z'))),
+    )
+    expect(snapshot.history.fees).toHaveLength(1)
+    expect(snapshot.history.fees[0]?.value).toMatchObject({
+      accountId,
+      activityId: raw.id,
+      date: raw.date,
+      sourceCreatedAt: '2026-10-14T23:59:58.123456000Z',
+      netAmountMicros: '-230000',
+    })
+    expect(snapshot.history.fees[0]?.value.coinDebit).toBeUndefined()
+    expect(snapshot.history.fees[0]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([raw])))
+  })
+
+  test.each([
+    ['buy', OrderSide.Buy],
+    ['sell', OrderSide.Sell],
+    ['sell_short', OrderSide.Sell],
+  ] as const)('normalizes trade activity side %s with exact fractional fill evidence', async (side, expected) => {
+    const raw = [{ ...fillResponse, side, qty: '0.625', cum_qty: '0.625' }]
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const result = await Effect.runPromise(withClient(client, (read) => read.fillActivities()))
+    expect(result.value.items).toEqual([
+      {
+        accountId,
+        activityId: fillResponse.id,
+        cumulativeQuantityAtoms: '625000000',
+        leavesQuantityAtoms: '0',
+        priceAtoms: '120125000000',
+        quantityAtoms: '625000000',
+        side: expected,
+        symbol: fillResponse.symbol,
+        transactionTime: fillResponse.transaction_time,
+        brokerOrderId: orderId,
+        type: TradeActivityType.Fill,
+        orderStatus: OrderStatus.Filled,
+      },
+    ])
+    expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(raw)))
+  })
+
+  test.each(['sell_short_exempt', 'buy_to_cover', 'undisclosed', 'SELL_SHORT', ''])(
+    'rejects unsupported trade activity side %s with the original response evidence',
+    async (side) => {
+      const raw = [{ ...fillResponse, side }]
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.fillActivities())))
+      expect(failure).toMatchObject({
+        operation: 'fill-activities',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+        status: 200,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(raw)),
+      })
+    },
+  )
+
+  test('retains a sell_short fill on a later history page through both stable snapshot reads', async () => {
+    const shortOrderId = '4bd18603-8a5c-43bb-99b6-382a43862c9b'
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      ...fillResponse,
+      id: `20260721113406977::00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      symbol: 'MSFT',
+      qty: '1',
+      cum_qty: String(index + 1),
+      leaves_qty: String(99 - index),
+      type: index === 99 ? 'fill' : 'partial_fill',
+      order_status: index === 99 ? 'filled' : 'partially_filled',
+    }))
+    const lastPage = [
+      {
+        ...fillResponse,
+        id: `20260721113506977::${shortOrderId}`,
+        order_id: shortOrderId,
+        qty: '0.625',
+        cum_qty: '0.625',
+        side: 'sell_short',
+      },
+    ]
+    const orders = [
+      {
+        ...orderResponse,
+        symbol: 'MSFT',
+        qty: '100',
+        filled_qty: '100',
+        filled_avg_price: '120.125',
+        status: 'filled',
+      },
+      {
+        ...orderResponse,
+        id: shortOrderId,
+        side: 'sell',
+        qty: '0.625',
+        filled_qty: '0.625',
+        filled_avg_price: '120.125',
+        status: 'filled',
+      },
+    ]
+    const fillPages: (string | null)[] = []
+    const client = HttpClient.make((request, url) => {
+      expect(request.method).toBe('GET')
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/orders') return Effect.succeed(jsonResponse(request, orders))
+      if (url.pathname === '/v2/positions' || url.pathname === '/v2/account/activities')
+        return Effect.succeed(jsonResponse(request, []))
+      if (url.pathname === '/v2/account/activities/FILL') {
+        const token = url.searchParams.get('page_token')
+        fillPages.push(token)
+        return Effect.succeed(jsonResponse(request, token === null ? firstPage : lastPage))
+      }
+      return Effect.die(new Error('Unexpected broker endpoint'))
+    })
+    const snapshot = await Effect.runPromise(
+      withClient(client, (read) => readStableBrokerSnapshot(read, Effect.succeed('2026-07-21T16:00:00.000Z'))),
+    )
+    expect(fillPages).toEqual([null, firstPage[99]?.id, null, firstPage[99]?.id])
+    expect(snapshot.history.fills).toHaveLength(101)
+    expect(snapshot.history.fills.at(-1)?.value).toMatchObject({
+      activityId: lastPage[0]?.id,
+      brokerOrderId: shortOrderId,
+      side: OrderSide.Sell,
+      quantityAtoms: '625000000',
+      priceAtoms: '120125000000',
+    })
+    expect(snapshot.history.fills.at(-1)?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(lastPage)))
+    expect(snapshot.history.orders.rows[1]?.value.side).toBe(OrderSide.Sell)
+  })
+
+  test('keeps sell_short outside the order response side contract', async () => {
+    const raw = { ...orderResponse, side: 'sell_short' }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.orderById(orderId))))
+    expect(failure).toMatchObject({ operation: 'order-by-id', kind: BrokerReadErrorKind.InvalidResponse })
+  })
+
+  test('rejects trade timestamp filters on daily fee queries before dispatch', async () => {
+    let calls = 0
+    const client = HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(jsonResponse(request, []))
+    })
+    for (const query of [
+      { pageSize: 1, until: '2026-10-15T09:56:00.000Z' },
+      { pageSize: 1, after: '2026-10-15T00:00:00.000Z' },
+    ]) {
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.feeActivities(query))))
+      expect(failure).toMatchObject({
+        operation: 'fee-activities',
+        kind: BrokerReadErrorKind.InvalidRequest,
+        retryable: false,
+      })
+    }
+    expect(calls).toBe(0)
+  })
+
   test('reads a bounded fill page and derives the documented page token', async () => {
     let requestedUrl: URL | undefined
     const client = HttpClient.make((request, url) => {
@@ -1194,10 +1645,10 @@ describe('Alpaca paper reads', () => {
         {
           accountId,
           activityId: fillResponse.id,
-          cumulativeQuantityMicros: '5000000',
-          leavesQuantityMicros: '0',
-          priceMicros: '120125000',
-          quantityMicros: '5000000',
+          cumulativeQuantityAtoms: '5000000000',
+          leavesQuantityAtoms: '0',
+          priceAtoms: '120125000000',
+          quantityAtoms: '5000000000',
           side: OrderSide.Buy,
           symbol: 'AAPL',
           transactionTime: '2026-07-21T15:34:06.977123Z',
@@ -1208,6 +1659,85 @@ describe('Alpaca paper reads', () => {
       ],
       nextPageToken: fillResponse.id,
     })
+  })
+
+  test('normalizes short-sale fills and buy covers without losing surrounding fill history', async () => {
+    const quantities = ['10', '32', '273', '231', '84']
+    const cumulative = ['10', '42', '315', '231', '315']
+    const leaves = ['305', '273', '0', '84', '0']
+    const shortFills = quantities.map((qty, index) => ({
+      ...fillResponse,
+      id: `short-fill-${index}::${orderId}`,
+      side: index < 3 ? 'sell_short' : 'buy',
+      qty,
+      cum_qty: cumulative[index],
+      leaves_qty: leaves[index],
+      type: leaves[index] === '0' ? 'fill' : 'partial_fill',
+      order_status: leaves[index] === '0' ? 'filled' : 'partially_filled',
+    }))
+    const page = [fillResponse, { ...fillResponse, id: `long-sell::${orderId}`, side: 'sell' }, ...shortFills]
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, page)))
+
+    const result = await Effect.runPromise(withClient(client, (read) => read.fillActivities({ pageSize: 7 })))
+
+    expect(result.value.items.map((fill) => fill.activityId)).toEqual(page.map((fill) => fill.id))
+    expect(result.value.items.map((fill) => fill.side)).toEqual([
+      OrderSide.Buy,
+      OrderSide.Sell,
+      OrderSide.Sell,
+      OrderSide.Sell,
+      OrderSide.Sell,
+      OrderSide.Buy,
+      OrderSide.Buy,
+    ])
+    expect(result.value.items.slice(2).map((fill) => fill.quantityAtoms)).toEqual(
+      quantities.map((quantity) => (BigInt(quantity) * 1_000_000_000n).toString()),
+    )
+    expect(result.value.items.slice(2).map((fill) => fill.cumulativeQuantityAtoms)).toEqual(
+      cumulative.map((quantity) => (BigInt(quantity) * 1_000_000_000n).toString()),
+    )
+    expect(result.value.items.every((fill) => fill.accountId === accountId && fill.brokerOrderId === orderId)).toBe(
+      true,
+    )
+    expect(result.value.nextPageToken).toBe(page.at(-1)?.id)
+    expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(page)))
+  })
+
+  test.each(['short', 'sell_short_unexpected', 'BUY'])(
+    'rejects a full fill page containing unknown provider side %s',
+    async (side) => {
+      const client = HttpClient.make((request) =>
+        Effect.succeed(jsonResponse(request, [fillResponse, { ...fillResponse, side }])),
+      )
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.fillActivities())))
+      expect(failure).toMatchObject({
+        operation: 'fill-activities',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    },
+  )
+
+  test('short-sale fill decoding preserves account and cumulative-quantity checks', async () => {
+    for (const invalid of [{ account_id: assetId }, { cum_qty: '4' }]) {
+      const client = HttpClient.make((request) =>
+        Effect.succeed(jsonResponse(request, [{ ...fillResponse, side: 'sell_short', ...invalid }])),
+      )
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.fillActivities())))
+      expect(failure).toMatchObject({
+        operation: 'fill-activities',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    }
+  })
+
+  test('short-sale activity vocabulary does not widen broker order sides', async () => {
+    const client = HttpClient.make((request) =>
+      Effect.succeed(jsonResponse(request, { ...orderResponse, side: 'sell_short' })),
+    )
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.orderById(orderId))))
+    expect(failure).toMatchObject({ operation: 'order-by-id', kind: BrokerReadErrorKind.InvalidResponse })
   })
 
   test('requests the default fill page size explicitly and returns a cursor for a full page', async () => {
@@ -1362,7 +1892,7 @@ describe('Alpaca paper reads', () => {
       kind: BrokerReadErrorKind.InvalidResponse,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(accountResponse),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(accountResponse)),
       observedAt: '1970-01-01T00:00:00.000Z',
       cause: {
         tag: 'BrokerReadContractFailure',
@@ -1413,7 +1943,7 @@ describe('Alpaca paper reads', () => {
       status: 429,
       requestId: 'req-123',
       retryable: true,
-      contentHash: canonicalHashV1({ code: 42910000, message: 'slow down' }),
+      contentHash: Result.getOrThrow(canonicalHashV1Result({ code: 42910000, message: 'slow down' })),
     })
     expect(calls).toBe(2)
   })
@@ -1562,7 +2092,8 @@ describe('Alpaca paper reads', () => {
       accountStatus: AccountStatus.Active,
       fractionalTrading: true,
     })
-    expect(paths).toHaveLength(9)
+    expect(paths).toHaveLength(8)
+    expect(paths).not.toContain('/v2/calendar')
     expect(paths.filter((path) => path === '/v2/account')).toHaveLength(1)
     expect(paths.filter((path) => path === '/v2/account/configurations')).toHaveLength(1)
   })
@@ -1594,44 +2125,20 @@ describe('Alpaca paper reads', () => {
 })
 
 describe('Alpaca proxy lifecycle', () => {
-  test('parses only credential-free HTTP origins as a pure Result decision', () => {
-    const valid = parseProxyUrl('https://proxy.test:3128')
-    expect(Result.isSuccess(valid)).toBe(true)
-    if (Result.isSuccess(valid)) expect(valid.success.origin).toBe('https://proxy.test:3128')
-
-    for (const [proxyUrl, message] of [
-      ['not a URL', 'invalid Alpaca proxy configuration'],
-      ['socks5://proxy.test:1080', 'Alpaca proxy URL must use HTTP or HTTPS'],
-      ['http://user:secret@proxy.test:3128', 'Alpaca proxy credentials must not be embedded in the URL'],
-      ['http://proxy.test:3128/path', 'Alpaca proxy URL must contain only an origin'],
-      ['http://proxy.test:3128?route=paper', 'Alpaca proxy URL must contain only an origin'],
-      ['http://proxy.test:3128#paper', 'Alpaca proxy URL must contain only an origin'],
-    ] as const) {
-      const result = parseProxyUrl(proxyUrl)
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) {
-        expect(result.failure).toMatchObject({
-          kind: BrokerReadErrorKind.Configuration,
-          operation: 'proxy',
-          retryable: false,
-          message,
-        })
-      }
-    }
-  })
-
   test('keeps its Undici proxy dispatcher alive until the owning scope exits and releases it exactly once', async () => {
     let releases = 0
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* makeProxyDispatcher('http://proxy.test:3128', {
-            create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
-            destroy: () => {
-              releases += 1
-              return Promise.resolve()
-            },
-          })
+          yield* Layer.build(
+            alpacaHttpLayer(options, {
+              create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
+              destroy: () => {
+                releases += 1
+                return Promise.resolve()
+              },
+            }),
+          )
           expect(releases).toBe(0)
           yield* Effect.yieldNow
           expect(releases).toBe(0)
@@ -1641,31 +2148,22 @@ describe('Alpaca proxy lifecycle', () => {
     expect(releases).toBe(1)
   })
 
-  test('fails before acquisition for unsafe proxy configuration', async () => {
-    const failure = await Effect.runPromise(
-      Effect.flip(Effect.scoped(makeProxyDispatcher('socks5://user:secret@proxy.test:1080'))),
-    )
-    expect(failure).toMatchObject({
-      kind: BrokerReadErrorKind.Configuration,
-      operation: 'proxy',
-      retryable: false,
-    })
-  })
-
   test('contains dispatcher construction failures in the typed acquisition channel', async () => {
     let releases = 0
     const failure = await Effect.runPromise(
       Effect.flip(
         Effect.scoped(
-          makeProxyDispatcher('http://proxy.test:3128', {
-            create: () => {
-              throw new Error('dispatcher construction failed')
-            },
-            destroy: () => {
-              releases += 1
-              return Promise.resolve()
-            },
-          }),
+          Layer.build(
+            alpacaHttpLayer(options, {
+              create: () => {
+                throw new Error('dispatcher construction failed')
+              },
+              destroy: () => {
+                releases += 1
+                return Promise.resolve()
+              },
+            }),
+          ),
         ),
       ),
     )

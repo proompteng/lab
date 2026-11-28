@@ -115,7 +115,7 @@ const swallowMetricsFailure = <E, R>(
   operation: string,
 ): Effect.Effect<void, never, R> =>
   effect.pipe(
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.sync(() => {
         console.warn(`[temporal-bun-sdk] metrics ${operation} failed: ${describeMetricsError(error)}`)
       }),

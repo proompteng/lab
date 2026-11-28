@@ -1,6 +1,6 @@
 # 184. Jangar Stage-Clearance Packets And Freeze-Aware Launch Governor (2026-05-12)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-12
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane resilience, scheduled AgentRun admission, stage-freeze reduction, action-custody
@@ -23,8 +23,6 @@ Extends:
 
 - `183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
 - `182-jangar-controller-witness-carry-and-failure-debt-maturity-2026-05-08.md`
-- `180-jangar-stage-clearance-exchange-and-scheduler-routability-contract-2026-05-08.md`
-- `180-jangar-execution-trust-debt-retirement-and-profit-repair-settlement-2026-05-08.md`
 
 ## Decision
 

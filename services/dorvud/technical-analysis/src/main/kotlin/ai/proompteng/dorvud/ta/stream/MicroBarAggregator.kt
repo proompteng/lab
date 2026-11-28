@@ -1,6 +1,7 @@
 package ai.proompteng.dorvud.ta.stream
 
 import ai.proompteng.dorvud.platform.Envelope
+import ai.proompteng.dorvud.platform.LATEST_REST_SOURCE
 import ai.proompteng.dorvud.platform.Window
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -28,6 +29,7 @@ class MicroBarAggregator {
   private val buckets = ConcurrentHashMap<String, Bucket>()
 
   fun onTrade(envelope: Envelope<TradePayload>): List<Envelope<MicroBarPayload>> {
+    if (envelope.source == LATEST_REST_SOURCE) return emptyList()
     val symbol = envelope.symbol
     val secondStart = envelope.payload.t.truncatedTo(ChronoUnit.SECONDS)
 

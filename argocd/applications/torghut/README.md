@@ -2,22 +2,164 @@
 
 This directory contains the Argo CD application resources for the `torghut` namespace.
 
-## Live API and scheduler ownership
+## Active runtime
 
-The Knative `Service/torghut` is a stateless API reader (`TORGHUT_PROCESS_ROLE=api`). It must never start trading or
-reconciliation loops. `Deployment/torghut-scheduler` is the only workload configured with
-`TORGHUT_PROCESS_ROLE=scheduler`; it uses `Recreate` rollout semantics and starts at zero replicas for P0a containment.
-The API proxies only the scheduler-owned `/trading/status` surface and returns `503` while the scheduler is unavailable.
-API `/metrics` is process-local API health telemetry, not scheduler or writer proof. Scheduler metrics are exposed
-directly by `Service/torghut-scheduler` and are intentionally unavailable while its Deployment has zero replicas.
+The shared Alpaca publisher `torghut-ws` runs in the `bayn` namespace so the provider credential stays with its owner. One subscription per market feed supplies the existing Kafka topics to all strategies. The publisher can reach Alpaca only through the market-data listener on the Bayn egress proxy. Each strategy keeps its private broker account for orders and fills. The SIP shadow deployment remains parked until its existing entitlement and capacity checks pass.
 
-Rollout is deliberately two-stage. First promote and prove the scheduler-free API image while the scheduler
-Deployment remains at zero. Then perform the documented one-time emergency removal of legacy Knative revisions and
-prove that no scheduler loop remains. Only after those checks pass may a follow-up GitOps change scale the advisory-
-locked scheduler Deployment to one replica. Do not add a persistent revision-cleanup Job or combine those stages.
-Do not restore `autoscaling.knative.dev/minScale` on the API template: the annotation is copied onto immutable
-revisions and was the reason stale revisions remained hot. Activate the current API revision with an explicit request
-when rollout proof needs a running pod.
+This application retains `torghut-ws`, the `market-data-archive` Flink job, the live `torghut-ta` Flink job,
+ClickHouse and Keeper, notebooks, and their observability resources. Bayn consumes verified Kafka raw and feature
+streams and owns its PostgreSQL database and ledger in the `bayn` namespace.
+
+The Torghut API, simulation API, TA simulation job, Torghut PostgreSQL cluster, Torghut TigerBeetle cluster,
+and LLM guardrails exporter are retired. Their database migration and CA-reflector hooks, reconciliation
+CronJobs, simulation workflows and analysis templates, API exposure, and API scrape are also retired.
+The trading scheduler remains absent. Notebooks retain ClickHouse access; PostgreSQL and trading-status
+views refer to retired services and are unavailable.
+
+Inactive manifests remain as recovery and release-tooling inputs. Kargo still updates their image metadata,
+but only entries in `kustomization.yaml` are deployed. Do not restore those entries without a separate
+reviewed restoration plan. The shared Argo Application and namespace must remain present.
+
+See [runtime retirement and recovery](runtime-retirement.md) for the removal scope, storage checkpoints,
+rollout order, and recovery constraints. The post-deploy workflow verifies absence of the retired workloads,
+then verifies both retained Flink jobs, checkpoints, websocket/Kafka flow, and TA freshness. It observes the
+Kargo-owned rollout and does not contact the retired API endpoints.
+
+Kargo's `kargo-http-smoke` verification checks that the TA HTTP response contains `RUNNING`; it can succeed while
+the previous job still serves during a handover. The separate `torghut-post-deploy-verify` workflow binds its
+pipeline and telemetry evidence to the verified generated Git revision. After the existing pipeline and market-data
+checks, it verifies Alloy's current Deployment/ReplicaSet/Pod, promoted image, resources, rollout digest and mounted
+config hash. A restart or OOM retained by the current Pod during that Argo operation fails acceptance, even if the
+Pod is Ready again. A collector identity change within the observation window also fails; transient read failures
+cannot erase that identity. This snapshot does not reconstruct termination history for already deleted Pods.
+
+This cluster reports the immutable OCI index pull reference in container `imageID`; the verifier matches its digest
+to the promoted image. The separate container `image` status field is a config digest and is not used as a pull
+reference. A future runtime reporting child-manifest `imageID` digests will fail closed until a verified
+index-to-child mapping is added; the verifier does not assume those digest types are interchangeable.
+
+The telemetry check derives expected TaskManager counts and images from the promoted manifests and binds every
+target to a current ready worker's owner, UID and IP. Both successful scrapes and native Flink metrics must reach
+Mimir within three configured scrape intervals and advance across a two-interval observation window. Old targets,
+empty results and stale readiness cannot satisfy it. Remote-write delivery must advance without dropped samples
+across the observation window. A collector started during the operation must also have no earlier drops. For a reused
+collector, cumulative drops before the first observation cannot be assigned to this rollout and remain unproven;
+normal nonzero queues and recovered retries are recorded and allowed when their delivery timestamps stay current.
+This is a bounded delivery check, not a market latency or profitability SLO. It uses the runner's existing read/exec
+access and Mimir endpoint, adds no credentials or permissions, and retains sanitized evidence with the pipeline
+artifact. Its five-minute convergence budget leaves the existing rollout and market-data retry budgets unchanged.
+
+## Latest IEX observations for Bayn
+
+The websocket producer also polls IEX latest quotes and trades for
+`AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC`. The configured interval is two seconds after each pass, with a ten-second
+maximum provider event age. The admitted WebSocket baseline remains 16 bars, seven quotes and seven trades.
+
+The reviewed configuration arms a [same-session diagnostic qualification](../../../services/dorvud/README.md#same-session-iex-subscription-qualification)
+of the nine missing quote/trade memberships. Extra WebSocket frames never enter Kafka or ordinary freshness tracking;
+REST remains their sole admitted source. A complete acknowledgement and a usable regular-session observation window,
+followed by verified baseline restoration, are required evidence. Neither an existing single-connection limit nor
+after-hours silence establishes whether the full 48-membership target is entitled. The normal single-replica Recreate
+rollout has a restart gap; no additional provider connection or credential is introduced.
+
+Verify that the deployed TA consumer contains the `source=rest_latest` trade exclusion before activating this
+configuration. The exclusion was introduced in source `0f48bef14941942e4bf67f05f15777916db79d76`. Check the actual
+consumer image, restored Flink state and a completed checkpoint. Keep compatible exclusions during rollback because
+disabling polling does not remove retained samples.
+
+During a regular session, verify acknowledged provider timestamps for all nine symbols, their Kafka records and
+usable Bayn snapshots. After-hours HTTP success or readiness does not prove regular-session coverage or profitability.
+See the [producer contract](../../../services/dorvud/README.md#latest-quote-and-trade-observations) for sample semantics,
+failure handling and archive provenance limits.
+
+## Recovering a failed stateful TA upgrade
+
+When the Flink operator reports a missing JobManager and unavailable HA metadata, an ordinary image update cannot
+complete a stateful upgrade. Use the operator's explicit savepoint redeployment through reviewed GitOps:
+
+1. Read `status.jobStatus.upgradeSavepointPath` and retained checkpoint metadata. Select the newest complete,
+   compatible checkpoint or savepoint and verify its `_metadata` and referenced files through the existing storage
+   identity. Preserve the selected state files.
+2. Verify that the replacement TA image preserves the saved operator IDs, including generated Kafka sink Writer
+   and Committer operators. Do not enable `allowNonRestoredState` to bypass incompatible state.
+3. Set `spec.job.initialSavepointPath` to that verified path and increment `spec.job.savepointRedeployNonce`. Leave
+   `upgradeMode: savepoint` in place. Publish the change through the normal matching-image Kargo promotion.
+4. Check the actual Flink job reaches `RUNNING`, restores the selected state, and completes a new checkpoint.
+   Confirm raw/feature output and archive progress independently of Kargo or Argo status.
+
+Nonce `4` selects externalized checkpoint `chk-150416` from job `6f91a7e6fde64b66a48634f7ad7c19ba`, completed
+before the November 7 outage left its JobManager without a running job. Its 357,287-byte `_metadata` was read
+through the existing checkpoint identity on 2026-11-07; SHA-256 is
+`d25ef2e958088b93c927de6510e0abf743e47fb1e9f816bdf38df2580c12d47c`.
+Flink's native metadata reader found 43 operator states and 18 external files; all files were present with the
+recorded sizes. Resolve relative state handles with that reader rather than treating embedded URI strings as active files.
+Keep `TA_FEATURE_RESTORE_TOPOLOGY=ROLLING_FEATURES` and all restoration IDs. Kafka sources resume their saved
+offsets; existing at-least-once sink semantics still apply when records are replayed. Do not select the older nonce-2
+bootstrap savepoint for an ordinary restart.
+
+Once restored, keep the nonce stable;
+ordinary subsequent upgrades resume using the operator's checkpoint/savepoint lifecycle. Increment it only for a
+new explicitly selected recovery. The operator does not support automatic rollback after this redeployment: if
+restoration fails, retain the saved data, repair the state compatibility, and deliver another reviewed recovery.
+
+Both retained pipelines enable `kubernetes.operator.job.restart.failed`, allowing the existing operator to recover
+terminal failures from successful checkpoint state after a dependency outage. This does not skip state, permit
+non-restored operators, or change the savepoint upgrade mode. Verify actual restoration and new completed checkpoints.
+
+Alloy labels producer logs from Kubernetes discovery with `namespace`, `pod`, `container` and `service` before
+forwarding them to Loki. Query `{namespace="torghut",service="torghut-ta"}` or the exact GlitchTip server and event
+timestamp. A healthy Alloy Pod alone does not prove these labels or log delivery; verify current records for the
+forwarder and both Flink process types after deployment.
+
+Alloy scrapes `torghut-ta-metrics` and `market-data-archive-metrics`. The signal pipeline alerts distinguish missing
+scrapes, a reachable JobManager without a running job, and stalled or missing checkpoints. Each routes to the existing
+critical email receiver. A Ready JobManager alone is insufficient; check the Flink REST job state and checkpoint age.
+
+The separate `torghut-ta-taskmanager-metrics` and `market-data-archive-taskmanager-metrics` Services select the
+corresponding TaskManager Pods. Existing Alloy endpoint discovery scrapes each Pod's named `metrics` port every
+30 seconds, preserving `pod`, `namespace` and `service` labels. These targets expose Kafka source lag, pending records,
+watermarks and task backpressure; JobManager metrics alone do not expose that pipeline work. The existing JobManager
+Services remain separate so running-job and checkpoint monitoring retain their original targets.
+
+Alloy requests 256 MiB and has a 512 MiB memory limit to accommodate these targets and Flink handover. On
+2026-11-21, the first four TA and eight archive targets added 41,717 post-relabel samples per 30-second scrape.
+Collector working set rose from 139.7 MiB to 225.7 MiB, and the collector was OOM-killed at 06:08:09 UTC during
+handover under its former 256 MiB limit. The larger budget provides room for overlapping scrape state while
+preserving the full metric content. After rollout, verify peak collector memory, restart count, remote-write
+failed/retried samples and queue recovery alongside target coverage and Mimir ingestion; a successful Kargo
+promotion alone does not establish collector capacity.
+
+After promotion through `torghut-release:torghut` to `kargo/torghut`, verify that
+`count by (service) (up{job="torghut",namespace="torghut",service=~".*-taskmanager-metrics"} == 1)` matches each
+deployment's running TaskManager count. Check `flink_taskmanager_job_task_operator_pendingRecords` and
+`flink_taskmanager_job_task_backPressuredTimeMsPerSecond` for the active jobs. A missing series is unobserved, not
+zero backlog; Kafka consumer lag can be `NaN` on idle or unassigned source subtasks. Alloy discovers these Services
+without restarting the collector or changing network permissions. Normal cohort promotion still updates its image
+metadata and follows the existing workload rollout and Flink checkpoint procedures.
+
+The behavior is documented in the
+[deployed operator's recovery contract](https://github.com/apache/flink-kubernetes-operator/blob/79d730bab4d8403f3a447fb027f879f5cbdc59ad/docs/content/docs/custom-resource/job-management.md#redeploy-using-the-savepointredeploynonce).
+
+## ClickHouse archive capacity
+
+Each ClickHouse replica requests a 200 GiB `rook-ceph-block` data volume. The technical-feature backfill exhausted
+the former 50 GiB volumes: ClickHouse rejected inserts with `NOT_ENOUGH_SPACE`, and the archive's JDBC failures
+restarted Flink workers. Capacity must cover retained source data, full indicator lineage, and temporary merge parts.
+The expansion uses the existing Ceph pool and preserves both PVC names, data, replication, and quorum enforcement.
+
+Deliver the volume-template change through matching-image Kargo promotion and Argo reconciliation. Let the
+ClickHouse operator reconcile the existing claims and any required replica rollout; do not delete PVCs or tables.
+Verify both PVCs' requested and actual capacity, mounted filesystem space, both active replicas, completed archive
+checkpoints, and advancing feature rows. A green Argo application alone does not prove storage recovery.
+
+Expanded volumes cannot be shrunk in place. If application configuration is rolled back, retain the 200 GiB storage
+request and existing data. Further recovery must preserve the claims and use the operator's normal reconciliation.
+See [Altinity's persistent-storage behavior](https://altinity.com/blog/whats-new-in-altinity-clickhouse-operator).
+
+## Historical procedures
+
+The procedures below predate runtime retirement. They assume services that are now absent and must not be
+run against the retained data pipeline. Use the retirement and recovery document for current operations.
 
 ### P0a one-time legacy Knative revision cleanup
 
@@ -513,6 +655,7 @@ kubectl get analysisrun -n torghut
 ```
 
 ### Scope / target resources (as deployed)
+
 - Kubernetes namespace: `torghut`
 - Flink TA job: `FlinkDeployment/torghut-ta-sim` (`argocd/applications/torghut/ta-sim/flinkdeployment.yaml`)
 - TA config: `ConfigMap/torghut-ta-sim-config` (`argocd/applications/torghut/ta-sim/configmap.yaml`)
@@ -523,6 +666,7 @@ kubectl get analysisrun -n torghut
 - Ceph RGW bucket: `ObjectBucketClaim/flink-checkpoints` (for Flink checkpoint/savepoint storage)
 
 Kafka topics (v1):
+
 - Inputs: `torghut.trades.v1`, `torghut.quotes.v1`, `torghut.bars.1m.v1`
 - Outputs (derived): `torghut.ta.bars.1s.v1`, `torghut.ta.signals.v1`
 - Status: `torghut.ta.status.v1`
@@ -539,7 +683,9 @@ heartbeat, or accepted-source freshness are stale. Use `MARKET_DATA_FRESHNESS_MO
 without claiming regular-session proof.
 
 ### Replay window constraints (what can be replayed)
+
 Replay is constrained by **both** Kafka retention (inputs) and ClickHouse TTL (outputs):
+
 - **Kafka retention (inputs) is the hard limit:** if events aged out of Kafka, TA cannot replay them. v1 expected
   retention is **7–30 days** for ingest topics; confirm actual broker settings before assuming older data exists.
   See `docs/torghut/design-system/v1/component-kafka-topics-and-retention.md`.
@@ -590,6 +736,7 @@ python3 services/torghut/scripts/ta_replay_runner.py \
 This script intentionally keeps defaults conservative and does not automate destructive Mode 2 actions.
 
 ### Safety gates (read first)
+
 - **Trading safety (prerequisite):** if there is any uncertainty about signal correctness (stale/corrupt/partial), pause
   trading first and keep it paused until verification passes.
   - set `spec.replicas: 0` in `argocd/applications/torghut/scheduler-deployment.yaml`
@@ -602,7 +749,9 @@ This script intentionally keeps defaults conservative and does not automate dest
   additional confirmation step + a recorded ticket/incident reference.
 
 ### Safety prerequisites and confirmations
+
 Before touching the TA job or Kafka topics, record the following in your ticket/incident:
+
 - `REPLAY_ID` (unique id used in group id + any backups), example: `2026-02-09T0315Z-INC1234`
 - `PREV_TA_GROUP_ID` (current steady-state group id from `argocd/applications/torghut/ta/configmap.yaml`)
 - `PREV_TA_AUTO_OFFSET_RESET` (current steady-state offset reset policy)
@@ -611,28 +760,30 @@ Before touching the TA job or Kafka topics, record the following in your ticket/
 - If Mode 2 is required: explicit human approval + acknowledgement of destructive steps
 
 ### Inputs to capture (for rollback)
+
 - `PREV_TA_GROUP_ID` (current steady-state group id from `argocd/applications/torghut/ta/configmap.yaml`)
 - `PREV_TA_AUTO_OFFSET_RESET` (current steady-state offset reset policy)
 - `REPLAY_ID` (unique id used in group id + any backups), example: `2026-02-09T0315Z-INC1234`
 - Current TA job state: `running` vs `suspended`
 
 ### Mode 1 (recommended): Non-destructive replay/backfill (consumer-group isolation)
+
 Goal: recompute TA outputs from retained Kafka inputs without deleting topics or Flink state.
 
-1) Pause trading (recommended; required if signal correctness is uncertain)
+1. Pause trading (recommended; required if signal correctness is uncertain)
    - `argocd/applications/torghut/scheduler-deployment.yaml`: set `spec.replicas: 0`, then Argo sync.
-2) Suspend TA to stop writes while you switch group id
+2. Suspend TA to stop writes while you switch group id
    - GitOps-first: set `spec.job.state: suspended` in `argocd/applications/torghut/ta/flinkdeployment.yaml`, then Argo sync.
    - Emergency-only:
      ```
      kubectl -n torghut patch flinkdeployment torghut-ta --type=merge -p '{"spec":{"job":{"state":"suspended"}}}'
      ```
-3) Set a **fresh** replay consumer group + replay policy
+3. Set a **fresh** replay consumer group + replay policy
    - Edit `argocd/applications/torghut/ta/configmap.yaml`:
      - `TA_GROUP_ID: "torghut-ta-replay-<REPLAY_ID>"`
      - `TA_AUTO_OFFSET_RESET: "earliest"`
    - Confirm the new `TA_GROUP_ID` has never been used before; never reuse an old replay group id.
-4) Restart and resume TA (required to pick up ConfigMap env changes)
+4. Restart and resume TA (required to pick up ConfigMap env changes)
    - GitOps-first:
      - bump `spec.restartNonce` in `argocd/applications/torghut/ta/flinkdeployment.yaml`
      - set `spec.job.state: running`
@@ -641,7 +792,7 @@ Goal: recompute TA outputs from retained Kafka inputs without deleting topics or
      ```
      kubectl -n torghut patch flinkdeployment torghut-ta --type=merge -p '{"spec":{"restartNonce":<bump>}}'
      ```
-5) Verify replay progress and correctness (keep trading paused until green)
+5. Verify replay progress and correctness (keep trading paused until green)
    - FlinkDeployment health:
      - `kubectl -n torghut get flinkdeployment torghut-ta`
    - ClickHouse freshness (examples):
@@ -650,6 +801,7 @@ Goal: recompute TA outputs from retained Kafka inputs without deleting topics or
    - Expected behavior: lag will be high initially and should trend down toward real-time.
 
 Notes:
+
 - This mode may temporarily increase ClickHouse write volume and disk usage (replay inserts). Tables are designed for
   at-least-once and dedup via `ReplacingMergeTree`, but merges are not instantaneous.
 - If you need a truly clean window (no duplicates / no stale partitions), treat that as a **separate explicitly
@@ -657,25 +809,30 @@ Notes:
   change control.
 
 ### Mode 2 (emergency only): Destructive “replay from scratch”
+
 This mode deletes derived Kafka topics and Flink checkpoint/savepoint state. Only use when Mode 1 is insufficient (for
 example, corrupted checkpoint directory or irrecoverable derived-topic issues).
 
 Before starting, get explicit human confirmation that the following are acceptable:
+
 - Deleting/recreating **derived** topics: `torghut.ta.bars.1s.v1`, `torghut.ta.signals.v1`
 - Deleting Flink checkpoint/savepoint directories under `s3a://flink-checkpoints/torghut/technical-analysis/...`
 
-0) Pause trading (required)
+0. Pause trading (required)
+
 - Set `spec.replicas: 0` in `argocd/applications/torghut/scheduler-deployment.yaml` and Argo sync.
 
-1) Suspend the job (same as Mode 1)
+1. Suspend the job (same as Mode 1)
 
-2) Back up Flink state directories (so rollback is possible)
-Precheck: identify a pod with S3 tooling available (`aws` CLI is simplest).
+2. Back up Flink state directories (so rollback is possible)
+   Precheck: identify a pod with S3 tooling available (`aws` CLI is simplest).
+
 ```
 kubectl -n torghut get pods
 ```
 
 Backup (example; use a unique prefix per replay):
+
 ```
 kubectl -n torghut exec <pod-with-aws-cli> -- aws --endpoint-url http://rook-ceph-rgw-objectstore.rook-ceph.svc:80 s3 cp --recursive \
   s3://flink-checkpoints/torghut/technical-analysis/checkpoints \
@@ -686,8 +843,9 @@ kubectl -n torghut exec <pod-with-aws-cli> -- aws --endpoint-url http://rook-cep
   s3://flink-checkpoints/torghut/technical-analysis/backup/<replay-id>/savepoints
 ```
 
-3) Drop and recreate derived output topics (Kafka namespace `kafka`)
-Precheck: identify a Kafka pod that has `kafka-topics.sh` available.
+3. Drop and recreate derived output topics (Kafka namespace `kafka`)
+   Precheck: identify a Kafka pod that has `kafka-topics.sh` available.
+
 ```
 kubectl -n kafka get pods
 ```
@@ -712,7 +870,8 @@ kubectl -n kafka exec <kafka-pod> -- /opt/kafka/bin/kafka-topics.sh \
   --partitions 1 --replication-factor 3
 ```
 
-4) Remove checkpoint/savepoint state directories (destructive; after backup only)
+4. Remove checkpoint/savepoint state directories (destructive; after backup only)
+
 ```
 kubectl -n torghut exec <pod-with-aws-cli> -- aws --endpoint-url http://rook-ceph-rgw-objectstore.rook-ceph.svc:80 s3 rm --recursive \
   s3://flink-checkpoints/torghut/technical-analysis/checkpoints
@@ -721,32 +880,36 @@ kubectl -n torghut exec <pod-with-aws-cli> -- aws --endpoint-url http://rook-cep
   s3://flink-checkpoints/torghut/technical-analysis/savepoints
 ```
 
-5) Set a fresh replay consumer group and replay from the beginning (same requirement as Mode 1)
+5. Set a fresh replay consumer group and replay from the beginning (same requirement as Mode 1)
+
 ```
 # argocd/applications/torghut/ta/configmap.yaml
 TA_GROUP_ID: "torghut-ta-replay-<REPLAY_ID>"
 TA_AUTO_OFFSET_RESET: "earliest"
 ```
+
 Apply via GitOps (preferred), then restart via `spec.restartNonce` bump and set `spec.job.state: running`.
 
-6) Verify replay progress and correctness (keep trading paused until green)
+6. Verify replay progress and correctness (keep trading paused until green)
+
 - FlinkDeployment health:
   - `kubectl -n torghut get flinkdeployment torghut-ta`
 - ClickHouse freshness:
   - `SELECT max(event_ts) FROM torghut.ta_signals WHERE symbol='NVDA';`
 
 ### Rollback / recovery if replay fails
-1) Stop the job:
+
+1. Stop the job:
    - Set `spec.job.state: suspended` (GitOps-first) or patch the FlinkDeployment.
-2) Restore steady-state config (non-destructive rollback):
+2. Restore steady-state config (non-destructive rollback):
    - Revert `TA_GROUP_ID` to `PREV_TA_GROUP_ID` in `argocd/applications/torghut/ta/configmap.yaml`.
    - If you changed `TA_AUTO_OFFSET_RESET`, restore the previous value.
    - Bump `spec.restartNonce` in `argocd/applications/torghut/ta/flinkdeployment.yaml` to force restart.
    - Set `spec.job.state: running` and Argo sync.
-3) If you used Mode 2 (deleted state), restore MinIO state from your backup prefix, then restart:
+3. If you used Mode 2 (deleted state), restore MinIO state from your backup prefix, then restart:
    - Copy `backup/<replay-id>/checkpoints` back to `.../checkpoints` in the `flink-checkpoints` bucket
    - Copy `backup/<replay-id>/savepoints` back to `.../savepoints` in the `flink-checkpoints` bucket
-4) Verify with the checks above before unpausing trading.
+4. Verify with the checks above before unpausing trading.
 
 If you performed destructive actions (topic deletion or ClickHouse deletion), rollback may require re-running the replay
 or restoring from backups (see `docs/torghut/design-system/v1/disaster-recovery-and-backups.md`).

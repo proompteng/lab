@@ -1,38 +1,30 @@
 from __future__ import annotations
 
-from tests.strategy_runtime.support import (
-    Decimal,
-    FeatureNormalizationError,
-    SignalEnvelope,
-    Strategy,
-    StrategyConfig,
-    StrategyRuntime,
-    TestCase,
-    _compose_strategy_description,
-    datetime,
-    normalize_feature_vector_v3,
-    timezone,
-    uuid,
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest import TestCase
+
+from app.trading.features import FeatureNormalizationError, normalize_feature_vector_v3
+from app.trading.models import SignalEnvelope
+from app.trading.strategy_runtime import StrategyRuntime
+from tests.trading_fixtures import (
+    make_catalog_strategy,
+    make_runtime_strategy,
+    make_signal,
 )
 
 
 class TestStrategyRuntimeCoreA(TestCase):
     def test_runtime_is_deterministic_for_same_input(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="deterministic",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="legacy_macd_rsi",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("2500"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 10, tzinfo=timezone.utc),
             seq=42,
             payload={"macd": {"macd": 1.2, "signal": 0.3}, "rsi14": 25, "price": 101.5},
         )
@@ -51,21 +43,15 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertEqual(decision_a.feature_hash, decision_b.feature_hash)
 
     def test_runtime_missing_required_features_fails_closed(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="invalid",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="legacy_macd_rsi",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("2500"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 10, tzinfo=timezone.utc),
             payload={"price": 101.5},
         )
         runtime = StrategyRuntime()
@@ -74,21 +60,17 @@ class TestStrategyRuntimeCoreA(TestCase):
             runtime.evaluate(strategy, feature_vector, timeframe="1Min")
 
     def test_intraday_tsmom_plugin_emits_buy_on_trend(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="intraday-tsmom",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["NVDA"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("2500"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+        signal = make_signal(
+            datetime(2026, 2, 10, tzinfo=timezone.utc),
             symbol="NVDA",
-            timeframe="1Min",
             seq=7,
             payload={
                 "price": 140.25,
@@ -112,21 +94,17 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertEqual(decision.plugin_id, "intraday_tsmom")
 
     def test_intraday_tsmom_plugin_emits_sell_on_downtrend(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="intraday-tsmom",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["NVDA"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("2500"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+        signal = make_signal(
+            datetime(2026, 2, 10, tzinfo=timezone.utc),
             symbol="NVDA",
-            timeframe="1Min",
             seq=9,
             payload={
                 "price": 140.05,
@@ -149,11 +127,9 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertIn("momentum_reversal_exit", decision.intent.rationale)
 
     def test_intraday_tsmom_plugin_emits_buy_for_one_second_profile(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="intraday-tsmom-1sec",
             description="version=1.1.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["MSFT"],
@@ -186,21 +162,17 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertIn("tsmom_trend_up", decision.intent.rationale)
 
     def test_runtime_decision_metadata_includes_trace_when_enabled(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="intraday-tsmom-trace",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["NVDA"],
             max_position_pct_equity=Decimal("0.02"),
             max_notional_per_trade=Decimal("2500"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+        signal = make_signal(
+            datetime(2026, 2, 10, tzinfo=timezone.utc),
             symbol="NVDA",
-            timeframe="1Min",
             seq=7,
             payload={
                 "price": 140.25,
@@ -228,29 +200,17 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertTrue(strategy_trace["passed"])
 
     def test_intraday_tsmom_plugin_skips_buy_outside_entry_window(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-window",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-window",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"entry_end_minute_utc": "1180"},
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={"entry_end_minute_utc": "1180"},
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 24, 19, 45, 55, tzinfo=timezone.utc),
@@ -275,29 +235,17 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertIsNone(decision)
 
     def test_intraday_tsmom_plugin_skips_buy_when_spread_exceeds_cap(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-spread-cap",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-spread-cap",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"max_spread_bps": "60"},
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={"max_spread_bps": "60"},
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 23, 19, 17, 55, tzinfo=timezone.utc),
@@ -323,31 +271,19 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertIsNone(decision)
 
     def test_intraday_tsmom_plugin_prefers_prev_session_close_drive(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-prev-close-drive",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-prev-close-drive",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={
-                        "min_session_open_drive_bps": "30",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={
+                "min_session_open_drive_bps": "30",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 24, 18, 17, 55, tzinfo=timezone.utc),
@@ -376,46 +312,32 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertEqual(decision.intent.action, "buy")
 
     def test_intraday_tsmom_plugin_emits_buy_with_session_context_filters(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-session-aware",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-session-aware",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("3.0"),
-                    max_notional_per_trade=Decimal("94770"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "entry_end_minute_utc": "1020",
-                        "min_session_open_drive_bps": "45",
-                        "min_session_range_bps": "40",
-                        "min_session_range_position": "0.65",
-                        "min_price_vs_vwap_w5m_bps": "0",
-                        "max_price_vs_vwap_w5m_bps": "16",
-                        "min_price_vs_opening_range_high_bps": "-6",
-                        "max_price_vs_opening_range_high_bps": "18",
-                        "max_recent_spread_bps": "12",
-                        "max_recent_spread_bps_max": "40",
-                        "min_recent_imbalance_pressure": "0.02",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("3.0"),
             max_notional_per_trade=Decimal("94770"),
+            params={
+                "entry_start_minute_utc": "845",
+                "entry_end_minute_utc": "1020",
+                "min_session_open_drive_bps": "45",
+                "min_session_range_bps": "40",
+                "min_session_range_position": "0.65",
+                "min_price_vs_vwap_w5m_bps": "0",
+                "max_price_vs_vwap_w5m_bps": "16",
+                "min_price_vs_opening_range_high_bps": "-6",
+                "max_price_vs_opening_range_high_bps": "18",
+                "max_recent_spread_bps": "12",
+                "max_recent_spread_bps_max": "40",
+                "min_recent_imbalance_pressure": "0.02",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 16, 16, 44, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 16, 16, 44, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -450,42 +372,28 @@ class TestStrategyRuntimeCoreA(TestCase):
     def test_intraday_tsmom_plugin_emits_buy_with_prev_close_opening_and_cross_section_filters(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-research-filters",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-research-filters",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("3.0"),
-                    max_notional_per_trade=Decimal("94770"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "entry_end_minute_utc": "1020",
-                        "min_session_open_drive_bps": "30",
-                        "min_opening_window_return_bps": "20",
-                        "min_cross_section_opening_window_return_rank": "0.70",
-                        "min_cross_section_continuation_rank": "0.75",
-                        "min_cross_section_continuation_breadth": "0.55",
-                        "min_recent_microprice_bias_bps": "0.40",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("3.0"),
             max_notional_per_trade=Decimal("94770"),
+            params={
+                "entry_start_minute_utc": "845",
+                "entry_end_minute_utc": "1020",
+                "min_session_open_drive_bps": "30",
+                "min_opening_window_return_bps": "20",
+                "min_cross_section_opening_window_return_rank": "0.70",
+                "min_cross_section_continuation_rank": "0.75",
+                "min_cross_section_continuation_breadth": "0.55",
+                "min_recent_microprice_bias_bps": "0.40",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 16, 16, 44, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 16, 16, 44, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -527,38 +435,24 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertEqual(decision.intent.action, "buy")
 
     def test_intraday_tsmom_plugin_skips_buy_when_quote_state_is_unstable(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-quote-quality",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-quote-quality",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("3.0"),
-                    max_notional_per_trade=Decimal("94770"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "entry_end_minute_utc": "1020",
-                        "min_session_open_drive_bps": "30",
-                        "max_recent_quote_invalid_ratio": "0.10",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("3.0"),
             max_notional_per_trade=Decimal("94770"),
+            params={
+                "entry_start_minute_utc": "845",
+                "entry_end_minute_utc": "1020",
+                "min_session_open_drive_bps": "30",
+                "max_recent_quote_invalid_ratio": "0.10",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 16, 16, 44, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 16, 16, 44, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -591,42 +485,28 @@ class TestStrategyRuntimeCoreA(TestCase):
     def test_intraday_tsmom_plugin_skips_buy_when_recent_spread_is_unstable(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-recent-spread",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-recent-spread",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("3.0"),
-                    max_notional_per_trade=Decimal("94770"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "entry_end_minute_utc": "1020",
-                        "min_session_open_drive_bps": "45",
-                        "min_session_range_bps": "40",
-                        "min_session_range_position": "0.65",
-                        "min_price_vs_vwap_w5m_bps": "0",
-                        "max_price_vs_vwap_w5m_bps": "16",
-                        "max_recent_spread_bps_max": "40",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("3.0"),
             max_notional_per_trade=Decimal("94770"),
+            params={
+                "entry_start_minute_utc": "845",
+                "entry_end_minute_utc": "1020",
+                "min_session_open_drive_bps": "45",
+                "min_session_range_bps": "40",
+                "min_session_range_position": "0.65",
+                "min_price_vs_vwap_w5m_bps": "0",
+                "max_price_vs_vwap_w5m_bps": "16",
+                "max_recent_spread_bps_max": "40",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 16, 16, 44, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 16, 16, 44, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -655,29 +535,17 @@ class TestStrategyRuntimeCoreA(TestCase):
     def test_intraday_tsmom_plugin_skips_buy_when_price_is_above_ema12_band(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-band",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-band",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"max_price_above_ema12_bps": "0"},
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={"max_price_above_ema12_bps": "0"},
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 18, 27, 27, tzinfo=timezone.utc),
@@ -702,29 +570,17 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertIsNone(decision)
 
     def test_intraday_tsmom_plugin_skips_buy_when_pullback_is_too_shallow(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-pullback",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-pullback",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"min_price_below_ema12_bps": "2"},
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={"min_price_below_ema12_bps": "2"},
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 18, 27, 36, tzinfo=timezone.utc),
@@ -749,29 +605,17 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertIsNone(decision)
 
     def test_intraday_tsmom_plugin_skips_buy_when_bullish_hist_is_too_hot(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-hot-hist",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-hot-hist",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"bullish_hist_cap": "0.055"},
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={"bullish_hist_cap": "0.055"},
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 24, 16, 56, 49, tzinfo=timezone.utc),
@@ -796,39 +640,25 @@ class TestStrategyRuntimeCoreA(TestCase):
         self.assertIsNone(decision)
 
     def test_intraday_tsmom_plugin_decays_early_drive_floors_late_session(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-1sec-late-session-decay",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-1sec-late-session-decay",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("3.0"),
-                    max_notional_per_trade=Decimal("94770"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "entry_end_minute_utc": "1160",
-                        "min_session_open_drive_bps": "40",
-                        "min_opening_window_return_bps": "20",
-                        "late_session_floor_multiplier": "0.5",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("3.0"),
             max_notional_per_trade=Decimal("94770"),
+            params={
+                "entry_start_minute_utc": "845",
+                "entry_end_minute_utc": "1160",
+                "min_session_open_drive_bps": "40",
+                "min_opening_window_return_bps": "20",
+                "late_session_floor_multiplier": "0.5",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 18, 30, 44, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 18, 30, 44, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={

@@ -18,22 +18,18 @@ spec:
         app.kubernetes.io/name: saigak
         app.kubernetes.io/component: embeddings
     spec:
-      runtimeClassName: nvidia
       nodeSelector:
-        kubernetes.io/arch: arm64
-        kubernetes.io/hostname: talos-192-168-1-85
-        nvidia.com/gpu.present: "true"
+        kubernetes.io/arch: amd64
+        kubernetes.io/hostname: talos-192-168-1-194
       tolerations:
-        - key: node-role.kubernetes.io/control-plane
-          operator: Exists
-          effect: NoSchedule
-        - key: nvidia.com/gpu
-          operator: Exists
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
           effect: NoSchedule
       terminationGracePeriodSeconds: 120
       initContainers:
         - name: model-init
-          image: ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42
+          image: ollama/ollama:0.40.19-rocm@sha256:4f73cdd3226204f3778e1c81f87c0b10ed92fd33270ccfcc815ffffc0b2600cd
           imagePullPolicy: IfNotPresent
           command:
             - sh
@@ -58,20 +54,7 @@ spec:
               ollama pull qwen3-embedding:8b
               ollama create qwen3-embedding-saigak:8b -f /config/qwen3-embedding-8b.modelfile
               ollama show qwen3-embedding-saigak:8b >/dev/null
-              for model in \
-                qwen3-main-saigak:30b-a3b \
-                qwen3-coder-saigak:30b-a3b-q4_K_M \
-                qwen3-coder-saigak:30b \
-                qwen3-embedding-saigak:0.6b \
-                qwen3-coder:30b \
-                qwen3-coder:30b-a3b-q4_K_M \
-                qwen3-embedding:0.6b \
-                qwen3-embedding:8b \
-                qwen3:30b-a3b; do
-                if ollama list | awk 'NR > 1 {print $1}' | grep -Fxq "$model"; then
-                  ollama rm "$model"
-                fi
-              done
+              ollama rm qwen3-embedding:8b
           env:
             - name: OLLAMA_HOST
               value: 127.0.0.1:11435
@@ -85,7 +68,7 @@ spec:
               readOnly: true
       containers:
         - name: ollama
-          image: ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42
+          image: ollama/ollama:0.40.19-rocm@sha256:4f73cdd3226204f3778e1c81f87c0b10ed92fd33270ccfcc815ffffc0b2600cd
           imagePullPolicy: IfNotPresent
           env:
             - name: OLLAMA_HOST
@@ -102,10 +85,6 @@ spec:
               value: 30m
             - name: OLLAMA_MAX_LOADED_MODELS
               value: "1"
-            - name: NVIDIA_VISIBLE_DEVICES
-              value: all
-            - name: NVIDIA_DRIVER_CAPABILITIES
-              value: compute,utility
           livenessProbe:
             exec:
               command:
@@ -117,13 +96,13 @@ spec:
             failureThreshold: 6
           resources:
             requests:
-              cpu: "8"
-              memory: 32Gi
-              nvidia.com/gpu: "1"
+              cpu: "4"
+              memory: 12Gi
+              amd.com/gpu: "1"
             limits:
               cpu: "32"
-              memory: 64Gi
-              nvidia.com/gpu: "1"
+              memory: 24Gi
+              amd.com/gpu: "1"
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -133,7 +112,7 @@ spec:
             - name: model-cache
               mountPath: /var/lib/ollama
         - name: embedding-proxy
-          image: python:3.12-slim@sha256:6c4dd321d176d61ea848dc8c73a4f7dbae8f70e0ee48bb411ea2f045b599fa8e
+          image: python:3.15.2-slim@sha256:08a4c22c92b79ec821a7ad49768480039ee5b7accac3955228e75366e30abc8e
           imagePullPolicy: IfNotPresent
           command:
             - python
@@ -144,7 +123,7 @@ spec:
             - name: SAIGAK_EMBEDDING_MODEL
               value: qwen3-embedding-saigak:8b
             - name: SAIGAK_EMBEDDING_DIMENSION
-              value: "4096"
+              value: "2048"
             - name: SAIGAK_PROXY_TIMEOUT_SECONDS
               value: "120"
             - name: SAIGAK_REQUIRE_GPU_RESIDENCY
@@ -198,5 +177,5 @@ spec:
             name: saigak-runtime
         - name: model-cache
           persistentVolumeClaim:
-            claimName: saigak-altra-data
+            claimName: saigak-ryzen-data
       restartPolicy: Always

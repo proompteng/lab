@@ -1,31 +1,173 @@
+import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { connect, createServer as createHttp2Server, type ClientHttp2Session } from 'node:http2'
-import { createServer as createHttpServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
-import { ConfigProvider, Effect } from 'effect'
+import { ConfigProvider, Effect, Redacted, Result } from 'effect'
 
+import { restateServicePrefixConfig } from './execution-service-names'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import {
-  decodeRestateRequestIdentityKeys,
   makeRestateExecutionEndpointHandler,
+  publishMarketChange,
   restateExecutionServerConfig,
+  withNativeStartupReadiness,
 } from './restate-execution-server'
+import { MarketChangeReason, marketChangedEventId } from '../execution/events'
 
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
 const sourceRevision = 'c'.repeat(40)
 const requestIdentityKey = 'publickeyv1_2G8dCQhArfvGpzPw5Vx2ALciR4xCLHfS5YaT93XjNxX9'
+const inactiveActivityRuntime = {
+  verify: () => {
+    throw new Error('discovery does not verify broker activities')
+  },
+  cursor: async () => ({
+    cursor: null,
+    caughtUp: false,
+    replayFromId: null,
+    replayUntilId: null,
+    completionHash: null,
+    fillFeeComplete: true,
+    sourceRevision,
+  }),
+  record: async () => {
+    throw new Error('discovery does not record broker activities')
+  },
+  completeCatchup: async () => {
+    throw new Error('discovery does not record broker activity catchup')
+  },
+  heartbeat: async () => {
+    throw new Error('discovery does not record broker activity heartbeats')
+  },
+}
 
-const reservePort = (): Promise<number> =>
-  new Promise((resolve, reject) => {
-    const server = createHttpServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address() as AddressInfo
-      server.close((cause) => (cause === undefined ? resolve(address.port) : reject(cause)))
-    })
+test.each([400, 403, 404, 408, 412, 429, 503])(
+  'market hint HTTP %s keeps permanent rejection distinct from retryable ingress failures',
+  async (status) => {
+    const producerId = '11111111-1111-4111-8111-111111111111'
+    const event = {
+      schemaVersion: 'bayn.execution-wakeup.v1' as const,
+      _tag: 'MarketChanged' as const,
+      sourceRevision,
+      producerId,
+      sequence: 1,
+      reason: MarketChangeReason.Data,
+      eventId: marketChangedEventId(producerId, 1),
+    }
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const receiver = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              Bun.serve({ port: 0, fetch: () => new Response('untrusted response details', { status }) }),
+            ),
+            (server) => Effect.promise(() => server.stop(true)),
+          )
+          const result = yield* Effect.result(
+            publishMarketChange(
+              receiver.url.origin,
+              { controllerKey, sourceRevision, operationTimeoutMs: 1_000 },
+              event,
+              Redacted.make('fixture-token'),
+            ),
+          )
+          expect(Result.isFailure(result)).toBe(true)
+          if (Result.isFailure(result)) {
+            expect(result.failure.retryable).toBe(status === 400 || status === 403 ? false : undefined)
+            expect(result.failure.message).toBe(`market change registration returned HTTP ${status}`)
+            expect(String(result.failure)).not.toContain('untrusted response details')
+          }
+        }),
+      ),
+    )
+  },
+)
+
+test.each(['', 'sleeve-4'])('market hint transport preserves its payload for prefix %j', async (servicePrefix) => {
+  const producerId = '11111111-1111-4111-8111-111111111111'
+  const event = {
+    schemaVersion: 'bayn.execution-wakeup.v1' as const,
+    _tag: 'MarketChanged' as const,
+    sourceRevision,
+    producerId,
+    sequence: 1,
+    reason: MarketChangeReason.Recovery,
+    eventId: marketChangedEventId(producerId, 1),
+  }
+  const received: Array<{ path: string; key: string | null; body: string }> = []
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const receiver = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            Bun.serve({
+              port: 0,
+              fetch: async (request) => {
+                received.push({
+                  path: new URL(request.url).pathname,
+                  key: request.headers.get('idempotency-key'),
+                  body: await request.text(),
+                })
+                return new Response('null')
+              },
+            }),
+          ),
+          (server) => Effect.promise(() => server.stop(true)),
+        )
+        yield* publishMarketChange(
+          receiver.url.origin,
+          { controllerKey, sourceRevision, servicePrefix, operationTimeoutMs: 1_000 },
+          event,
+          Redacted.make('fixture-token'),
+        )
+        yield* publishMarketChange(
+          receiver.url.origin,
+          { controllerKey, sourceRevision, servicePrefix, operationTimeoutMs: 1_000 },
+          event,
+          Redacted.make('fixture-token'),
+        )
+      }),
+    ),
+  )
+  expect(received).toEqual(
+    Array.from({ length: 2 }, () => ({
+      path: `/${servicePrefix === '' ? '' : `${servicePrefix}-`}BaynExecutionController/${controllerKey}/marketChanged`,
+      key: `bayn-market-hint-${event.eventId}`,
+      body: JSON.stringify(event),
+    })),
+  )
+})
+
+test('a hint from another local worker source is permanently rejected before network I/O', async () => {
+  const producerId = '11111111-1111-4111-8111-111111111111'
+  const event = {
+    schemaVersion: 'bayn.execution-wakeup.v1' as const,
+    _tag: 'MarketChanged' as const,
+    sourceRevision: 'd'.repeat(40),
+    producerId,
+    sequence: 1,
+    reason: MarketChangeReason.Data,
+    eventId: marketChangedEventId(producerId, 1),
+  }
+  const result = await Effect.runPromise(
+    Effect.result(
+      publishMarketChange(
+        'http://127.0.0.1:1',
+        { controllerKey, sourceRevision, operationTimeoutMs: 1_000 },
+        event,
+        Redacted.make('fixture-token'),
+      ),
+    ),
+  )
+  expect(result).toMatchObject({
+    _tag: 'Failure',
+    failure: {
+      message: 'market change differs from its local worker source',
+      retryable: false,
+    },
   })
+})
 
 const connectSession = (origin: string): Promise<ClientHttp2Session> =>
   new Promise((resolve, reject) => {
@@ -57,11 +199,11 @@ const readDiscovery = (session: ClientHttp2Session): Promise<unknown> =>
     request.end()
   })
 
-const readUnsignedDiscoveryStatus = (session: ClientHttp2Session): Promise<number> =>
+const readUnsignedDiscoveryStatus = (session: ClientHttp2Session, path = '/discover'): Promise<number> =>
   new Promise((resolve, reject) => {
     const request = session.request({
       ':method': 'GET',
-      ':path': '/discover',
+      ':path': path,
       accept: 'application/vnd.restate.endpointmanifest.v4+json',
     })
     let status: number | undefined
@@ -78,37 +220,140 @@ const readUnsignedDiscoveryStatus = (session: ClientHttp2Session): Promise<numbe
   })
 
 describe('native Restate execution server', () => {
-  test('discovers only the account-keyed controller and its narrow bootstrap', async () => {
-    const handler = makeRestateExecutionEndpointHandler(
-      { controllerKey, operationTimeoutMs: 30_000, planHash, sourceRevision },
-      {
-        advance: () => Promise.reject(new Error('discovery must not advance execution')),
-        log: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      },
-      'd'.repeat(64),
-      [],
-    )
-    const port = await reservePort()
-
-    const discovery = await Effect.runPromise(
+  test('each physical worker must warm before startup readiness, while broker transport remains available during recovery', async () => {
+    await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* acquireRestateHttp2Server(createHttp2Server(handler), port)
-          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
-          const manifest = yield* Effect.promise(() => readDiscovery(client))
-          client.close()
-          return manifest
+          const warm = [false, false]
+          const clients: ClientHttp2Session[] = []
+          let delegated = 0
+          for (const index of [0, 1]) {
+            const server = createHttp2Server(
+              withNativeStartupReadiness(
+                (_request, response) => {
+                  delegated += 1
+                  response.writeHead(200).end()
+                },
+                async () => warm[index] === true,
+              ),
+            )
+            yield* acquireRestateHttp2Server(server, 0)
+            const address = server.address()
+            if (address === null || typeof address === 'string') throw new Error('No test TCP listener')
+            clients.push(
+              yield* Effect.acquireRelease(
+                Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`)),
+                (client) => Effect.sync(() => client.close()),
+              ),
+            )
+          }
+          const statuses = (path: string) =>
+            Promise.all(clients.map((client) => readUnsignedDiscoveryStatus(client, path)))
+          expect(yield* Effect.promise(() => statuses('/startup-ready'))).toEqual([503, 503])
+          expect(yield* Effect.promise(() => statuses('/broker-observation'))).toEqual([200, 200])
+          warm[0] = true
+          expect(yield* Effect.promise(() => statuses('/startup-ready'))).toEqual([200, 503])
+          warm[1] = true
+          expect(yield* Effect.promise(() => statuses('/startup-ready'))).toEqual([200, 200])
+          warm[0] = false
+          warm[1] = false
+          expect(yield* Effect.promise(() => statuses('/startup-ready'))).toEqual([200, 200])
+          expect(yield* Effect.promise(() => statuses('/broker-observation'))).toEqual([200, 200])
+          expect(delegated).toBe(4)
         }),
       ),
     )
+  })
 
+  test('discovers separate execution, observation and projection owners with seven-day receipts', async () => {
+    const makeHandler = (prefix?: string) =>
+      makeRestateExecutionEndpointHandler(
+        {
+          controllerKey,
+          operationTimeoutMs: 30_000,
+          planHash,
+          sourceRevision,
+          ...(prefix === undefined ? {} : { servicePrefix: prefix }),
+        },
+        {
+          advance: () => Promise.reject(new Error('discovery must not advance execution')),
+          log: () => Promise.resolve(),
+          prepareActivation: () => Promise.resolve(),
+          projectState: () => Promise.resolve(),
+        },
+        'd'.repeat(64),
+        [],
+        { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
+        {
+          activityRuntime: inactiveActivityRuntime,
+          runtime: {
+            probeProtection: async () => undefined,
+            recordNotification: async () => ({ covered: false }),
+            isNotificationCovered: async () => false,
+            project: async () => {
+              throw new Error('endpoint discovery does not project broker source events')
+            },
+            verifyNotification: () => {
+              throw new Error('discovery does not verify notifications')
+            },
+            invalidate: async () => undefined,
+            activate: () => Promise.resolve(),
+            poll: () =>
+              Promise.resolve({
+                poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+                startedAtMs: 0,
+                completedAtMs: 0,
+              }),
+          },
+          maxAgeMs: 60_000,
+          freshnessLeadMs: 30_000,
+        },
+      )
+
+    const discover = (prefix?: string) =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const server = createHttp2Server(makeHandler(prefix))
+            yield* acquireRestateHttp2Server(server, 0)
+            const address = server.address()
+            if (address === null || typeof address === 'string') throw new Error('Restate test server did not bind TCP')
+            const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`))
+            const manifest = yield* Effect.promise(() => readDiscovery(client))
+            client.close()
+            return manifest
+          }),
+        ),
+      )
+
+    const discovery = await discover()
+    expect(JSON.stringify(await discover(''))).toBe(JSON.stringify(discovery))
+    const prefixed = JSON.stringify(await discover('sleeve-4'))
+    const names = [
+      'BaynExecutionController',
+      'BaynBrokerObservations',
+      'BaynBrokerSourceProjector',
+      'BaynBrokerActivities',
+      'BaynEntryInference',
+    ]
+    expect(prefixed).toBe(
+      names.reduce(
+        (manifest, name) => manifest.replace(`"name":"${name}"`, `"name":"sleeve-4-${name}"`),
+        JSON.stringify(discovery),
+      ),
+    )
     const services =
       (
         discovery as {
           readonly services?: readonly {
             readonly name?: string
-            readonly handlers?: readonly { readonly name?: string }[]
+            readonly handlers?: readonly {
+              readonly name?: string
+              readonly ty?: string
+              readonly ingressPrivate?: boolean
+              readonly idempotencyRetention?: number
+              readonly journalRetention?: number
+            }[]
           }[]
         }
       ).services ?? []
@@ -117,12 +362,83 @@ describe('native Restate execution server', () => {
     ).toEqual([
       {
         name: 'BaynExecutionController',
-        handlers: ['activate', 'tick', 'deactivate', 'status'],
+        handlers: [
+          'activate',
+          'rotate',
+          'tick',
+          'wake',
+          'marketChanged',
+          'deactivate',
+          'prepareActivation',
+          'status',
+          'health',
+          'activateDeployment',
+        ],
       },
       {
-        name: 'BaynExecutionBootstrap',
-        handlers: ['start'],
+        name: 'BaynBrokerObservations',
+        handlers: ['notify', 'reconcile', 'refresh', 'activate', 'capture', 'freshness', 'status'],
       },
+      { name: 'BaynBrokerSourceProjector', handlers: ['project'] },
+      { name: 'BaynBrokerActivities', handlers: ['cursor', 'ingest', 'catchup', 'heartbeat'] },
+      { name: 'BaynEntryInference', handlers: ['watch', 'evaluate'] },
+    ])
+    expect(services[0]?.handlers?.find(({ name }) => name === 'prepareActivation')).toMatchObject({
+      ty: 'SHARED',
+      ingressPrivate: true,
+    })
+    expect(services[0]?.handlers?.find(({ name }) => name === 'activateDeployment')).toMatchObject({
+      ty: 'SHARED',
+      ingressPrivate: false,
+      idempotencyRetention: 7 * 24 * 60 * 60_000,
+      journalRetention: 0,
+    })
+    expect(services[0]?.handlers?.find(({ name }) => name === 'health')).toMatchObject({
+      ty: 'SHARED',
+      ingressPrivate: false,
+      idempotencyRetention: 0,
+      journalRetention: 0,
+    })
+    expect(services[2]?.handlers?.find(({ name }) => name === 'project')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: true,
+      idempotencyRetention: 7 * 24 * 60 * 60_000,
+    })
+    expect(services[3]?.handlers?.find(({ name }) => name === 'cursor')).toMatchObject({
+      ty: 'SHARED',
+      ingressPrivate: false,
+    })
+    expect(services[3]?.handlers?.find(({ name }) => name === 'ingest')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: false,
+      idempotencyRetention: 7 * 24 * 60 * 60_000,
+    })
+    for (const name of ['catchup', 'heartbeat'])
+      expect(services[3]?.handlers?.find((handler) => handler.name === name)).toMatchObject({
+        ty: 'EXCLUSIVE',
+        ingressPrivate: false,
+        idempotencyRetention: 7 * 24 * 60 * 60_000,
+      })
+    expect(services[4]?.handlers?.find(({ name }) => name === 'watch')).toMatchObject({ ingressPrivate: true })
+    expect(services[1]?.handlers?.find(({ name }) => name === 'refresh')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: true,
+    })
+    expect(
+      services[0]?.handlers
+        ?.filter(({ name }) => name !== 'activateDeployment' && name !== 'marketChanged' && name !== 'health')
+        .map(({ name, ingressPrivate }) => ({
+          name,
+          ingressPrivate,
+        })),
+    ).toEqual([
+      { name: 'activate', ingressPrivate: true },
+      { name: 'rotate', ingressPrivate: true },
+      { name: 'tick', ingressPrivate: true },
+      { name: 'wake', ingressPrivate: true },
+      { name: 'deactivate', ingressPrivate: true },
+      { name: 'prepareActivation', ingressPrivate: true },
+      { name: 'status', ingressPrivate: true },
     ])
   })
 
@@ -140,7 +456,7 @@ describe('native Restate execution server', () => {
         Effect.provideService(
           ConfigProvider.ConfigProvider,
           ConfigProvider.fromUnknown({
-            BAYN_EXECUTION_BOOTSTRAP_TOKEN: Buffer.alloc(32, 7).toString('base64url'),
+            BAYN_EXECUTION_ACTIVATION_TOKEN: Buffer.alloc(32, 7).toString('base64url'),
             RESTATE_REQUEST_IDENTITY_KEYS: requestIdentityKey,
             BAYN_LIFECYCLE_OWNER: 'RESTATE',
             BAYN_LIFECYCLE_COMMAND_PORT: '8081',
@@ -156,11 +472,11 @@ describe('native Restate execution server', () => {
       requestIdentityKeys: requestIdentityKey,
     })
     expect(Object.keys(configured).sort()).toEqual([
-      'bootstrapToken',
+      'activationToken',
+      'ingressOrigin',
       'port',
-      'previousPlanHash',
-      'previousSourceRevision',
       'requestIdentityKeys',
+      'servicePrefix',
     ])
   })
 
@@ -170,18 +486,46 @@ describe('native Restate execution server', () => {
       {
         advance: () => Promise.reject(new Error('unsigned discovery must not advance execution')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       },
       'd'.repeat(64),
       [requestIdentityKey],
+      { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
+      {
+        activityRuntime: inactiveActivityRuntime,
+        runtime: {
+          probeProtection: async () => undefined,
+          recordNotification: async () => ({ covered: false }),
+          isNotificationCovered: async () => false,
+          project: async () => {
+            throw new Error('endpoint discovery does not project broker source events')
+          },
+          verifyNotification: () => {
+            throw new Error('discovery does not verify notifications')
+          },
+          invalidate: async () => undefined,
+          activate: () => Promise.resolve(),
+          poll: () =>
+            Promise.resolve({
+              poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+              startedAtMs: 0,
+              completedAtMs: 0,
+            }),
+        },
+        maxAgeMs: 60_000,
+        freshnessLeadMs: 30_000,
+      },
     )
-    const port = await reservePort()
 
     const status = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* acquireRestateHttp2Server(createHttp2Server(handler), port)
-          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
+          const server = createHttp2Server(handler)
+          yield* acquireRestateHttp2Server(server, 0)
+          const address = server.address()
+          if (address === null || typeof address === 'string') throw new Error('Restate test server did not bind TCP')
+          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`))
           const responseStatus = yield* Effect.promise(() => readUnsignedDiscoveryStatus(client))
           client.close()
           return responseStatus
@@ -191,4 +535,18 @@ describe('native Restate execution server', () => {
 
     expect(status).toBe(401)
   })
+})
+
+test('service prefix defaults to empty and rejects malformed path segments', async () => {
+  const read = (environment: Record<string, string>) =>
+    Effect.runPromise(
+      Effect.result(restateServicePrefixConfig).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+      ),
+    )
+  expect(Result.getOrThrow(await read({}))).toBe('')
+  expect(Result.getOrThrow(await read({ BAYN_RESTATE_SERVICE_PREFIX: '' }))).toBe('')
+  expect(Result.getOrThrow(await read({ BAYN_RESTATE_SERVICE_PREFIX: 'sleeve-4' }))).toBe('sleeve-4')
+  for (const malformed of ['a/b', ' a', 'UPPER', 'é', 'x'.repeat(33)])
+    expect(Result.isFailure(await read({ BAYN_RESTATE_SERVICE_PREFIX: malformed }))).toBe(true)
 })

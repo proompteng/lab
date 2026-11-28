@@ -36,7 +36,8 @@ bun run build
 ## Local validation
 
 ```bash
-bun run lint:oxlint
+bun run lint
 bun run lint:oxlint:type
+bun test
 bunx tsc --noEmit -p tsconfig.json
 ```

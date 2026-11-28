@@ -1,14 +1,13 @@
 import { Result, pipe } from 'effect'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
-import { legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import {
   TargetPlanReason,
   TargetPlanStatus,
   canonicalizePlannerOutputFailure,
-  quoteBoundTargetPlannerInputSchemaVersion,
   referenceTargetPlanSchemaVersion,
+  shortTargetCollateralMicros,
   type BlockedTargetPlanReason,
   type PlannedTargetQuantity,
   type ReferenceTargetIntent,
@@ -31,20 +30,20 @@ import {
   type TargetPlanResult,
 } from './result'
 
-const outputSchemaVersion = (input: TargetPlannerInput) =>
-  input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
-    ? referenceTargetPlanSchemaVersion
-    : legacyReferenceTargetPlanSchemaVersion
-
-const targetPlanExecutionTerms = (
-  input: TargetPlannerInput,
-): { readonly executionTerms: TargetPlanExecutionTerms } | Record<never, never> => {
-  if (input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) return {}
-  const { executionPurpose, orderType, timeInForce, priceReference, snapshotId, snapshotContentHash } =
-    input.executionTerms
+const targetPlanExecutionTerms = (input: TargetPlannerInput): { readonly executionTerms: TargetPlanExecutionTerms } => {
+  const {
+    executionPurpose,
+    orderType,
+    timeInForce,
+    priceReference,
+    snapshotId,
+    snapshotContentHash,
+    equityShortEntries,
+  } = input.executionTerms
   return {
     executionTerms: {
       ...(executionPurpose === undefined ? {} : { executionPurpose }),
+      ...(equityShortEntries === undefined ? {} : { equityShortEntries }),
       orderType,
       timeInForce,
       priceReference,
@@ -62,7 +61,7 @@ const blocked = (
   targets: readonly PlannedTargetQuantity[] = [],
   requiredReferenceBuyNotionalMicros = '0',
 ): BlockedOutputMaterial => ({
-  schemaVersion: outputSchemaVersion(input),
+  schemaVersion: referenceTargetPlanSchemaVersion,
   inputHash,
   ...targetPlanExecutionTerms(input),
   status: TargetPlanStatus.Blocked,
@@ -70,6 +69,9 @@ const blocked = (
   targets,
   intentTargets: [],
   requiredReferenceBuyNotionalMicros,
+  ...(shortTargetCollateralMicros(targets) === 0n
+    ? {}
+    : { requiredShortCollateralMicros: shortTargetCollateralMicros(targets).toString() }),
   availableBuyingPowerMicros,
   residualBuyingPowerMicros: availableBuyingPowerMicros,
 })
@@ -78,10 +80,7 @@ const makeReferenceTargetIntents = (
   input: TargetPlannerInput,
   targetFacts: readonly PlannedTargetFact[],
 ): readonly ReferenceTargetIntent[] => {
-  const executionTerms =
-    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
-      ? input.executionTerms
-      : { orderType: OrderType.Market, timeInForce: TimeInForce.Day }
+  const executionTerms = input.executionTerms
   return targetFacts
     .flatMap(({ target, delta }): readonly ReferenceTargetIntent[] =>
       delta === 0n
@@ -95,9 +94,9 @@ const makeReferenceTargetIntents = (
               accountId: input.accountId,
               symbol: target.symbol,
               side: delta > 0n ? OrderSide.Buy : OrderSide.Sell,
-              orderType: executionTerms.orderType,
+              orderType: OrderType.Limit,
               timeInForce: executionTerms.timeInForce,
-              quantityMicros: (delta < 0n ? -delta : delta).toString(),
+              quantityAtoms: (delta < 0n ? -delta : delta).toString(),
               createdAt: input.observedAt,
             },
           ],
@@ -125,7 +124,9 @@ const selectTargetNotionalBlock = (
       requiredBuyingPower.toString(),
     )
   }
-  return requiredBuyingPower > 0n && requiredBuyingPower > facts.availableBuyingPower
+  const requiredCollateral = shortTargetCollateralMicros(targets)
+  return requiredBuyingPower + requiredCollateral > 0n &&
+    requiredBuyingPower + requiredCollateral > facts.availableBuyingPower
     ? blocked(
         facts.input,
         facts.inputHash,
@@ -141,7 +142,6 @@ const selectSellLiquidityBlock = (
   facts: TargetPlannerFacts,
   targetFacts: readonly PlannedTargetFact[],
 ): BlockedOutputMaterial | undefined => {
-  if (facts.input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) return undefined
   const exceedsBound = targetFacts.some(({ delta, target }) => {
     if (delta >= 0n) return false
     const maximumSellQuantity = facts.maximumSellQuantities.get(target.symbol)
@@ -186,23 +186,25 @@ const assembleExecutableTargetPlan = (
       (fact) =>
         fact.delta > 0n &&
         !(
-          BigInt(fact.target.currentQuantityMicros) < 0n &&
-          BigInt(fact.target.targetQuantityMicros) === 0n &&
-          fact.delta === -BigInt(fact.target.currentQuantityMicros)
+          BigInt(fact.target.currentQuantityAtoms) < 0n &&
+          BigInt(fact.target.targetQuantityAtoms) === 0n &&
+          fact.delta === -BigInt(fact.target.currentQuantityAtoms)
         ),
     )
     .map((fact) => referenceNotional(fact.delta, fact.referencePrice))
   const requiredBuyingPower = requiredReferenceBuyNotionals.reduce((total, value) => total + value, 0n)
+  const requiredCollateral = shortTargetCollateralMicros(targets)
   const notionalBlock = selectTargetNotionalBlock(facts, targets, requiredReferenceBuyNotionals)
   if (notionalBlock !== undefined) return notionalBlock
   const common = {
-    schemaVersion: outputSchemaVersion(facts.input),
+    schemaVersion: referenceTargetPlanSchemaVersion,
     inputHash: facts.inputHash,
     ...targetPlanExecutionTerms(facts.input),
     targets,
     requiredReferenceBuyNotionalMicros: requiredBuyingPower.toString(),
+    ...(requiredCollateral === 0n ? {} : { requiredShortCollateralMicros: requiredCollateral.toString() }),
     availableBuyingPowerMicros: facts.input.brokerState.account.buyingPowerMicros,
-    residualBuyingPowerMicros: (facts.availableBuyingPower - requiredBuyingPower).toString(),
+    residualBuyingPowerMicros: (facts.availableBuyingPower - requiredBuyingPower - requiredCollateral).toString(),
   } as const
   return intents.length === 0
     ? {

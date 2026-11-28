@@ -1,0 +1,20 @@
+{
+  "sourceRevision": "5d776325dda0bec3a44e4eae8efbbfa4961ff475",
+  "sourceBaseRevision": "8f87974758c4490bbfc9549fc7c44ba5f02f871a",
+  "runtime": "v24.11.1",
+  "helperSourceSha256": "44154b03621547a3c0a9092f4977df4c3cd950c8038fa041d748759ee1151062",
+  "fixture": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/node-exit-equity.json",
+  "canonicalBytes": 34714,
+  "canonicalSha256": "f89e444fd3fe538346344f9c2f8e21dab6b995a9e901beb8374742300c7fbfad",
+  "contentHash": "f3e8e3832c9cd0aa543ef2016392add87ced473fac597d468dd49d536adfd5f2",
+  "gzipPath": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/node-exit-equity.json.gz",
+  "gzipBytes": 7012,
+  "gzipSha256": "400b00b01532c9c179202ed8a2017430f82c377fe443041aa6e049c76db54436",
+  "gzipParameters": {
+    "mtime": 0,
+    "filename": "",
+    "compresslevel": 9
+  },
+  "harness": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/capture-exit.mjs",
+  "harnessSha256": "abe7885794b7060e8a3da0f580bbb43aa030d716cfd06f70c594f509ce220d5f"
+}

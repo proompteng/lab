@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$#" -ne 1 ]]; then
-  echo "Usage: verify-bayn-image-command <nix-image-tar>" >&2
+if [[ "$#" -ne 2 || ( "$2" != trading && "$2" != research ) ]]; then
+  echo "Usage: verify-bayn-image-command <nix-image-tar> <trading|research>" >&2
   exit 2
 fi
 
@@ -61,42 +61,76 @@ resolve_image_entry() {
   printf '%s\n' "${entry}"
 }
 
-forward_wrapper="$(resolve_image_entry /bin/bayn-forward-performance)"
-forward_command="$(resolve_image_entry /app/services/bayn/dist/forward-performance-command.js)"
-execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
+role="$2"
 image_node="$(resolve_image_entry /bin/node)"
-
-test -x "${forward_wrapper}"
-test -f "${forward_command}"
-test -f "${execution_server}"
 test -x "${image_node}"
 
-image_ref="$(jq -er '.[0].RepoTags | if length == 1 then .[0] else error("expected one image tag") end' \
-  "${archive}/manifest.json")"
-if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
-  echo 'Bayn image command verification requires an isolated Docker daemon.' >&2
-  exit 1
-fi
-docker load --input "${image_tar}" >/dev/null
-image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}")"
-actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/bayn-forward-performance \
-    "${image_id}" \
-    --help
-)"
-expected='Usage: bayn-forward-performance [--help]'
-if [[ "${actual}" != "${expected}" ]]; then
-  printf 'Unexpected Bayn forward-performance help output:\n%s\n' "${actual}" >&2
-  exit 1
-fi
+if [[ "${role}" = trading ]]; then
+  for command in index restate-execution-server restate-execution-activate market-projection-worker decision-construction-worker \
+    forward-performance-command forward-performance-verification-worker control-opening-command inference-cost-command streaming-diagnostics-command glitchtip-smoke-command valkey-command backtest-command; do
+    test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
+  done
+  test -x "$(resolve_image_entry /bin/bayn-inference-cost)"
+  test -x "$(resolve_image_entry /bin/bayn-forward-performance)"
+  test -x "$(resolve_image_entry /bin/bayn-control-opening)"
+  test -f "$(resolve_image_entry /app/services/bayn/dist/jev-compiler-dependencies.json)"
+  for command in python python3 git bun crane bayn-research bayn-gepa bayn-backtest bayn-system-assessment bayn-jev-study-export bayn-equity-edge-screen; do
+    if [[ -e "${rootfs}/bin/${command}" || -L "${rootfs}/bin/${command}" ]]; then
+      echo "Trading image contains research executable ${command}." >&2
+      exit 1
+    fi
+  done
+  for command in restate-research-server research-command control-study-command system-assessment-command \
+    jev-study-export-command equity-edge-screen run-macro-etf-core-rebalance run-macro-canary-etf-rebalance bayn-daily-scorecard; do
+    if [[ -e "${rootfs}/app/services/bayn/dist/${command}.js" ]]; then
+      echo "Trading image contains research bundle ${command}." >&2
+      exit 1
+    fi
+  done
+  if [[ -d "${rootfs}/app/services/bayn/gepa" ]]; then
+    echo 'Trading image contains GEPA sources.' >&2
+    exit 1
+  fi
 
-printf '%s\n' "${actual}"
+  # Inspect the bundled client, not just its dependency manifest: the fixed-output
+  # dependency closure must preserve cancellation of stalled Redis connections.
+  for command in index restate-execution-server valkey-command; do
+    bundle="$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
+    if ! grep -Fq 'this.#connectController?.abort()' "${bundle}" ||
+      ! grep -Fq 'this.#connectWithSignal(retries, controller.signal)' "${bundle}" ||
+      ! grep -Fq 'AbortSignal.any([withDefaults.signal, signal])' "${bundle}"; then
+      echo "Bayn image bundle is missing native Redis connection cancellation: ${command}" >&2
+      exit 1
+    fi
+  done
+else
+  for command in system-assessment forward-performance research webull-research jev-evaluate backtest frozen-control-backtest control-study native-arrival-export jev-study-export equity-edge-screen gepa gepa-native; do
+    test -x "$(resolve_image_entry "/bin/bayn-${command}")"
+  done
+  for command in restate-research-server system-assessment-command forward-performance-command forward-performance-verification-worker research-command \
+    webull-research-command jev-evaluation-command backtest-command frozen-control-command control-study-command \
+    native-arrival-export-command jev-study-export-command equity-edge-screen \
+    run-macro-etf-core-rebalance run-macro-canary-etf-rebalance bayn-daily-scorecard; do
+    test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
+  done
+  for receipt in jev-compiler-dependencies frozen-control-compiler; do
+    test -f "$(resolve_image_entry "/app/services/bayn/dist/${receipt}.json")"
+  done
+  for runner in runner native; do
+    test -f "$(resolve_image_entry "/app/services/bayn/gepa/${runner}.py")"
+  done
+  for command in git bun crane; do
+    test -x "$(resolve_image_entry "/bin/${command}")"
+  done
+  for command in restate-execution-server control-opening-command; do
+    if [[ -e "${rootfs}/app/services/bayn/dist/${command}.js" ]]; then
+      echo "Research image contains trading bundle ${command}." >&2
+      exit 1
+    fi
+  done
+  if [[ -e "${rootfs}/bin/bayn-control-opening" || -L "${rootfs}/bin/bayn-control-opening" ]]; then
+    echo 'Research image contains the trading opening-capture executable.' >&2
+    exit 1
+  fi
+fi
+printf 'Bayn %s image commands and role separation verified in archive.\n' "${role}"

@@ -22,6 +22,7 @@ import { resolveFailureCategoryFromMetadata, resolveFailureSignal } from '~/serv
 import * as runIdentity from '~/server/torghut-market-context-run-identity'
 import {
   resolveMarketContextIngestAuthConfig,
+  DEFAULT_MARKET_CONTEXT_PROVIDER,
   resolveMarketContextRuntimeConfig,
 } from '~/server/torghut-market-context-config'
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
@@ -207,15 +208,6 @@ type MarketContextRunStatusPayload = {
 const IN_CLUSTER_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 const IN_CLUSTER_SERVICE_ACCOUNT_CA_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
 
-const parseProviderChain = (value: string | undefined, fallback: string[]) => {
-  if (!value) return fallback
-  const providers = value
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-  return providers.length > 0 ? providers : fallback
-}
-
 const parseTimestamp = (value: unknown): Date | null => {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
   if (typeof value !== 'string') return null
@@ -338,7 +330,7 @@ const resolveSettings = () => {
     batchRequireOpenSession: config.batchRequireOpenSession,
     batchTradingStatusUrl: config.batchTradingStatusUrl,
     batchTradingStatusTimeoutMs: config.batchTradingStatusTimeoutMs,
-    providerChain: parseProviderChain(config.providerChain.join(','), ['codex-spark', 'codex']),
+    providerChain: config.providerChain,
     providerFailureThreshold: config.providerFailureThreshold,
     providerCooldownSeconds: config.providerCooldownSeconds,
     onDemandDispatchEnabled: config.onDemandDispatchEnabled,
@@ -368,7 +360,7 @@ const buildMissingContext = (params: { domain: MarketContextProviderDomain; symb
     payload: {
       symbol: params.symbol,
       domain: params.domain,
-      provider: resolveSettings().providerChain[0] ?? 'codex-spark',
+      provider: resolveSettings().providerChain[0] ?? DEFAULT_MARKET_CONTEXT_PROVIDER,
       status: 'missing',
     },
     citations: [] as MarketContextProviderCitation[],
@@ -585,7 +577,7 @@ const buildDegradedSnapshotMetadata = (params: {
 }) => {
   const payload = { ...params.snapshot.payload }
   const riskFlags = new Set(params.snapshot.riskFlags)
-  const preferredProvider = params.providerChain[0] ?? 'codex-spark'
+  const preferredProvider = params.providerChain[0] ?? DEFAULT_MARKET_CONTEXT_PROVIDER
   payload.provider = params.snapshot.provider ?? payload.provider ?? preferredProvider
   payload.providerChain = params.providerChain
   payload.lastSuccessfulAsOfUtc = toIso(params.snapshot.asOf)
@@ -905,7 +897,7 @@ export const startMarketContextProviderRun = async (input: RunStartPayload) => {
   if (!symbol) throw new Error('symbol is required')
   const requestId = parseNonEmptyString(input.requestId) ?? randomUUID()
   const runName = parseNonEmptyString(input.runName)
-  const provider = parseNonEmptyString(input.provider) ?? 'codex-spark'
+  const provider = parseNonEmptyString(input.provider) ?? DEFAULT_MARKET_CONTEXT_PROVIDER
   const reason = parseNonEmptyString(input.reason)
   const metadata = coercePayload(input.metadata)
   const status = coerceLifecycleStatus('started', 'started')
@@ -1490,13 +1482,12 @@ const resolveMarketSessionOpenFromPayload = (value: unknown): boolean | null => 
 }
 
 const resolveTradingSessionOpen = async (settings: ReturnType<typeof resolveSettings>): Promise<boolean | null> => {
-  const url = settings.batchTradingStatusUrl.trim()
-  if (!url) return null
+  if (!settings.batchTradingStatusUrl.trim()) return null
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), settings.batchTradingStatusTimeoutMs)
   try {
-    const response = await fetch(url, {
+    const response = await fetch(settings.batchTradingStatusUrl, {
       headers: { accept: 'application/json' },
       signal: controller.signal,
     })
@@ -1519,7 +1510,9 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
   if (!domain) throw new Error('domain must be news; fundamentals market-context runs are retired')
 
   const provider =
-    typeof input.provider === 'string' && input.provider.trim().length > 0 ? input.provider.trim() : 'codex-spark'
+    typeof input.provider === 'string' && input.provider.trim().length > 0
+      ? input.provider.trim()
+      : DEFAULT_MARKET_CONTEXT_PROVIDER
   const runName = typeof input.runName === 'string' && input.runName.trim().length > 0 ? input.runName.trim() : null
   const runStatus = coerceRunStatus(input.runStatus)
   const lifecycleStatus = coerceLifecycleStatus(input.runStatus, runStatus)
@@ -1545,7 +1538,8 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
   if (batchItems) {
     if (settings.batchRequireOpenSession) {
       const marketOpen = await resolveTradingSessionOpen(settings)
-      if (marketOpen === false) {
+      if (marketOpen !== true) {
+        const skipped = marketOpen === false ? 'market_closed' : 'market_session_unavailable'
         await executeDbTransaction(db, async (trx) => {
           await upsertRunLifecycleFromIngest({
             trx,
@@ -1562,7 +1556,7 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
                 updatedSymbols: 0,
                 failedSymbols: 0,
               },
-              skipped: 'market_closed',
+              skipped,
             },
             runError: null,
             now,
@@ -1579,13 +1573,13 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
                 updatedSymbols: 0,
                 failedSymbols: 0,
               },
-              skipped: 'market_closed',
+              skipped,
               metadata,
             },
           })
         })
 
-        recordTorghutMarketContextBatchRun({ domain, outcome: 'skipped_market_closed' })
+        recordTorghutMarketContextBatchRun({ domain, outcome: `skipped_${skipped}` })
         recordTorghutMarketContextBatchRunDurationMs(Date.now() - batchStartMs, { domain })
         recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'processed' })
         recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'updated' })
@@ -1601,7 +1595,7 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
             updatedSymbols: 0,
             failedSymbols: 0,
           },
-          skipped: 'market_closed',
+          skipped,
         }
       }
     }

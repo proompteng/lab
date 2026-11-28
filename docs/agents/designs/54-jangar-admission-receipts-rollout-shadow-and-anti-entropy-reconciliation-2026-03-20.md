@@ -1,6 +1,6 @@
 # 54. Jangar Admission Receipts, Rollout Shadow, and Anti-Entropy Reconciliation (2026-03-20)
 
-Status: Approved for implementation (`plan`)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: `2026-03-20`
 Owner: Victor Chen (Jangar Engineering)
 Mission: `codex/swarm-jangar-control-plane-plan`
@@ -16,9 +16,6 @@ Companion doc:
 Extends:
 
 - `51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
-- `52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md`
-- `52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md`
-- `53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
 - `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 
 ## Executive summary

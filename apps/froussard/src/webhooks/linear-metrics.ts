@@ -1,4 +1,4 @@
-import { metrics } from '@proompteng/otel/api'
+import { type ManagedRuntime, Metric } from 'effect'
 
 export type LinearWebhookDownstream = 'agents' | 'kafka' | 'processing'
 
@@ -8,20 +8,27 @@ export interface LinearWebhookMetrics {
   recordDeliveryLatencyMs: (durationMs: number, outcome: string) => void
 }
 
-const meter = metrics.getMeter('froussard-linear-webhook', '1.0.0')
-const verificationFailures = meter.createCounter('froussard_linear_webhook_verification_failures_total', {
+const verificationFailures = Metric.counter('froussard_linear_webhook_verification_failures_total', {
   description: 'Rejected Linear webhook deliveries before trusted processing',
+  incremental: true,
 })
-const downstreamFailures = meter.createCounter('froussard_linear_webhook_downstream_failures_total', {
+const downstreamFailures = Metric.counter('froussard_linear_webhook_downstream_failures_total', {
   description: 'Verified Linear webhook deliveries that failed a downstream dependency',
+  incremental: true,
 })
-const deliveryLatency = meter.createHistogram('froussard_linear_webhook_delivery_latency_ms', {
+const deliveryLatency = Metric.histogram('froussard_linear_webhook_delivery_latency_ms', {
   description: 'End-to-end Linear webhook response latency',
-  unit: 'ms',
+  attributes: { unit: 'milliseconds' },
+  boundaries: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
 })
 
-export const linearWebhookMetrics: LinearWebhookMetrics = {
-  recordVerificationFailure: (reason) => verificationFailures.add(1, { reason }),
-  recordDownstreamFailure: (dependency, reason) => downstreamFailures.add(1, { dependency, reason }),
-  recordDeliveryLatencyMs: (durationMs, outcome) => deliveryLatency.record(durationMs, { outcome }),
-}
+export const makeLinearWebhookMetrics = (
+  runtime: Pick<ManagedRuntime.ManagedRuntime<never, never>, 'runSync'>,
+): LinearWebhookMetrics => ({
+  recordVerificationFailure: (reason) =>
+    runtime.runSync(Metric.update(Metric.withAttributes(verificationFailures, { reason }), 1)),
+  recordDownstreamFailure: (dependency, reason) =>
+    runtime.runSync(Metric.update(Metric.withAttributes(downstreamFailures, { dependency, reason }), 1)),
+  recordDeliveryLatencyMs: (durationMs, outcome) =>
+    runtime.runSync(Metric.update(Metric.withAttributes(deliveryLatency, { outcome }), durationMs)),
+})

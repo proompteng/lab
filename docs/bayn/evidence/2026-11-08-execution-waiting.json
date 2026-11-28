@@ -1,0 +1,649 @@
+{
+  "traceId": "68fb4647c96b52673b880b64678bfc0",
+  "sourceRevision": "1a291e1ad1ce0931efa307b0090df3080ec7379b",
+  "outcome": "Waiting",
+  "capturedAt": "2026-11-08 14:18:39 PST",
+  "worker": [
+    {
+      "id": "161bc38b4cae36bc",
+      "name": "Execution pass \u00b7 Waiting",
+      "service": "Bayn",
+      "startMs": 0.0,
+      "durationMs": 1161.318812,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.execution.advance",
+        "bayn.execution.outcome": "Waiting"
+      }
+    },
+    {
+      "id": "3e163432d34adfcd",
+      "name": "Read authority generation",
+      "service": "postgresql",
+      "startMs": 0.22512,
+      "durationMs": 11.56713,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.execution.generation.read",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "161bc38b4cae36bc"
+    },
+    {
+      "id": "07809894ebb9b268",
+      "name": "Reconcile account",
+      "service": "Bayn",
+      "startMs": 12.053571,
+      "durationMs": 936.040618,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.run"
+      },
+      "parentId": "161bc38b4cae36bc"
+    },
+    {
+      "id": "1d834be325c2b1a7",
+      "name": "Read broker observation",
+      "service": "broker",
+      "startMs": 12.075621,
+      "durationMs": 117.127124,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.broker-snapshot",
+        "bayn.dependency": "broker"
+      },
+      "parentId": "07809894ebb9b268"
+    },
+    {
+      "id": "baa2021be0189af5",
+      "name": "Materialize cached observation",
+      "service": "valkey",
+      "startMs": 16.198432,
+      "durationMs": 99.614088,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.broker.observation.materialization",
+        "bayn.operation": "snapshot",
+        "bayn.dependency": "valkey"
+      },
+      "parentId": "1d834be325c2b1a7"
+    },
+    {
+      "id": "09633ea743b9b555",
+      "name": "Valkey GET",
+      "service": "valkey",
+      "startMs": 16.299772,
+      "durationMs": 16.268752,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.valkey.get",
+        "bayn.dependency": "valkey"
+      },
+      "parentId": "baa2021be0189af5"
+    },
+    {
+      "id": "e673a2153a98d678",
+      "name": "Persist reconciliation",
+      "service": "Bayn",
+      "startMs": 129.281735,
+      "durationMs": 818.798573,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.persist"
+      },
+      "parentId": "07809894ebb9b268"
+    },
+    {
+      "id": "34befb12d955a7be",
+      "name": "PostgreSQL writer transaction",
+      "service": "postgresql",
+      "startMs": 204.56059,
+      "durationMs": 743.102297,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.postgres.writer-fence",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "e673a2153a98d678"
+    },
+    {
+      "id": "eaf45a65f0add6a0",
+      "name": "Persist valuation",
+      "service": "postgresql",
+      "startMs": 236.070782,
+      "durationMs": 148.858086,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.execution-store.operation",
+        "bayn.operation": "valuation",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "c54f0d1aad541159",
+      "name": "Cash settlement",
+      "service": "Bayn",
+      "startMs": 472.936126,
+      "durationMs": 29.682487,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.cash-settlement"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "1a4a537650822fbe",
+      "name": "Fee posting",
+      "service": "Bayn",
+      "startMs": 502.681723,
+      "durationMs": 53.64602,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.fee-posting"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "679afb0dc9a37fa2",
+      "name": "Read accruals",
+      "service": "postgresql",
+      "startMs": 556.400453,
+      "durationMs": 21.567756,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.accrual-read",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "a5c275ad60436f08",
+      "name": "Verify accounting",
+      "service": "Bayn",
+      "startMs": 578.031519,
+      "durationMs": 296.125338,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.accounting-verify"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "0dede6575f8e1912",
+      "name": "TigerBeetle \u00b7 verify-account-accounts",
+      "service": "tigerbeetle",
+      "startMs": 839.258417,
+      "durationMs": 12.457721,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.tigerbeetle.request",
+        "bayn.operation": "verify-account-accounts",
+        "bayn.dependency": "tigerbeetle"
+      },
+      "parentId": "a5c275ad60436f08"
+    },
+    {
+      "id": "ff45075aaf5e761f",
+      "name": "TigerBeetle \u00b7 verify-account-transfers",
+      "service": "tigerbeetle",
+      "startMs": 839.426727,
+      "durationMs": 24.027662,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.tigerbeetle.request",
+        "bayn.operation": "verify-account-transfers",
+        "bayn.dependency": "tigerbeetle"
+      },
+      "parentId": "a5c275ad60436f08"
+    },
+    {
+      "id": "79dc2653dd45bc17",
+      "name": "TigerBeetle \u00b7 verify-account-accounts",
+      "service": "tigerbeetle",
+      "startMs": 851.911319,
+      "durationMs": 12.131492,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.tigerbeetle.request",
+        "bayn.operation": "verify-account-accounts",
+        "bayn.dependency": "tigerbeetle"
+      },
+      "parentId": "a5c275ad60436f08"
+    },
+    {
+      "id": "96c2c8640cd3aa8e",
+      "name": "TigerBeetle \u00b7 verify-account-transfers",
+      "service": "tigerbeetle",
+      "startMs": 863.87521,
+      "durationMs": 7.177349,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.tigerbeetle.request",
+        "bayn.operation": "verify-account-transfers",
+        "bayn.dependency": "tigerbeetle"
+      },
+      "parentId": "a5c275ad60436f08"
+    },
+    {
+      "id": "55fd599fd7a55d1d",
+      "name": "Compare ledgers",
+      "service": "Bayn",
+      "startMs": 874.207017,
+      "durationMs": 58.162131,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.compare"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "d92df8f5101d528f",
+      "name": "Alpaca market calendar",
+      "service": "alpaca",
+      "startMs": 952.71687,
+      "durationMs": 203.650419,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.alpaca.read",
+        "bayn.operation": "market-calendar",
+        "bayn.dependency": "alpaca"
+      },
+      "parentId": "161bc38b4cae36bc"
+    },
+    {
+      "id": "c707601cd039860e",
+      "name": "Calendar request \u2192 headers",
+      "service": "alpaca",
+      "startMs": 952.891981,
+      "durationMs": 202.740366,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.alpaca.read.headers",
+        "bayn.operation": "market-calendar",
+        "bayn.dependency": "alpaca"
+      },
+      "parentId": "d92df8f5101d528f"
+    },
+    {
+      "id": "48eb4ba17343499e",
+      "name": "Read calendar response body",
+      "service": "alpaca",
+      "startMs": 1155.773888,
+      "durationMs": 0.27125,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.alpaca.read.body",
+        "bayn.operation": "market-calendar",
+        "bayn.dependency": "alpaca"
+      },
+      "parentId": "d92df8f5101d528f"
+    },
+    {
+      "id": "68583dfa7ee03b11",
+      "name": "Read authority generation",
+      "service": "postgresql",
+      "startMs": 1160.029008,
+      "durationMs": 0.969823,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.execution.generation.read",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "161bc38b4cae36bc"
+    }
+  ],
+  "full": [
+    {
+      "id": "73b880b64678bfc0",
+      "name": "invocation-start BaynExecutionController/{account}/tick",
+      "service": "Restate",
+      "startMs": 0.0,
+      "durationMs": 25972.502038,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "invocation-start BaynExecutionController/{account}/tick"
+      }
+    },
+    {
+      "id": "da6fc7f0348757c9",
+      "name": "invocation-attempt BaynExecutionController/{account}/tick",
+      "service": "Restate",
+      "startMs": 25972.784378,
+      "durationMs": 3076.568652,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "invocation-attempt BaynExecutionController/{account}/tick"
+      },
+      "parentId": "73b880b64678bfc0"
+    },
+    {
+      "id": "8af4b32839fb50d0",
+      "name": "attempt BaynExecutionController/{account}/tick",
+      "service": "Bayn",
+      "startMs": 25974.0,
+      "durationMs": 3074.253126,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "attempt BaynExecutionController/{account}/tick"
+      },
+      "parentId": "da6fc7f0348757c9"
+    },
+    {
+      "id": "4974c7f4768c1227",
+      "name": "run (advance Bayn execution once)",
+      "service": "Bayn",
+      "startMs": 25975.0,
+      "durationMs": 1222.14401,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "run (advance Bayn execution once)"
+      },
+      "parentId": "8af4b32839fb50d0"
+    },
+    {
+      "id": "161bc38b4cae36bc",
+      "name": "Execution pass \u00b7 Waiting",
+      "service": "Bayn",
+      "startMs": 25987.419401,
+      "durationMs": 1161.318812,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.execution.advance",
+        "bayn.execution.outcome": "Waiting"
+      },
+      "parentId": "4974c7f4768c1227"
+    },
+    {
+      "id": "3e163432d34adfcd",
+      "name": "Read authority generation",
+      "service": "postgresql",
+      "startMs": 25987.644521,
+      "durationMs": 11.56713,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.execution.generation.read",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "161bc38b4cae36bc"
+    },
+    {
+      "id": "07809894ebb9b268",
+      "name": "Reconcile account",
+      "service": "Bayn",
+      "startMs": 25999.472972,
+      "durationMs": 936.040618,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.run"
+      },
+      "parentId": "161bc38b4cae36bc"
+    },
+    {
+      "id": "1d834be325c2b1a7",
+      "name": "Read broker observation",
+      "service": "broker",
+      "startMs": 25999.495022,
+      "durationMs": 117.127124,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.broker-snapshot",
+        "bayn.dependency": "broker"
+      },
+      "parentId": "07809894ebb9b268"
+    },
+    {
+      "id": "baa2021be0189af5",
+      "name": "Materialize cached observation",
+      "service": "valkey",
+      "startMs": 26003.617833,
+      "durationMs": 99.614088,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.broker.observation.materialization",
+        "bayn.operation": "snapshot",
+        "bayn.dependency": "valkey"
+      },
+      "parentId": "1d834be325c2b1a7"
+    },
+    {
+      "id": "09633ea743b9b555",
+      "name": "Valkey GET",
+      "service": "valkey",
+      "startMs": 26003.719173,
+      "durationMs": 16.268752,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.valkey.get",
+        "bayn.dependency": "valkey"
+      },
+      "parentId": "baa2021be0189af5"
+    },
+    {
+      "id": "e673a2153a98d678",
+      "name": "Persist reconciliation",
+      "service": "Bayn",
+      "startMs": 26116.701136,
+      "durationMs": 818.798573,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.persist"
+      },
+      "parentId": "07809894ebb9b268"
+    },
+    {
+      "id": "34befb12d955a7be",
+      "name": "PostgreSQL writer transaction",
+      "service": "postgresql",
+      "startMs": 26191.979991,
+      "durationMs": 743.102297,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.postgres.writer-fence",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "e673a2153a98d678"
+    },
+    {
+      "id": "eaf45a65f0add6a0",
+      "name": "Persist valuation",
+      "service": "postgresql",
+      "startMs": 26223.490183,
+      "durationMs": 148.858086,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.execution-store.operation",
+        "bayn.operation": "valuation",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "c54f0d1aad541159",
+      "name": "Cash settlement",
+      "service": "Bayn",
+      "startMs": 26460.355527,
+      "durationMs": 29.682487,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.cash-settlement"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "1a4a537650822fbe",
+      "name": "Fee posting",
+      "service": "Bayn",
+      "startMs": 26490.101124,
+      "durationMs": 53.64602,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.fee-posting"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "679afb0dc9a37fa2",
+      "name": "Read accruals",
+      "service": "postgresql",
+      "startMs": 26543.819854,
+      "durationMs": 21.567756,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.accrual-read",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "a5c275ad60436f08",
+      "name": "Verify accounting",
+      "service": "Bayn",
+      "startMs": 26565.45092,
+      "durationMs": 296.125338,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.accounting-verify"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "0dede6575f8e1912",
+      "name": "TigerBeetle \u00b7 verify-account-accounts",
+      "service": "tigerbeetle",
+      "startMs": 26826.677818,
+      "durationMs": 12.457721,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.tigerbeetle.request",
+        "bayn.operation": "verify-account-accounts",
+        "bayn.dependency": "tigerbeetle"
+      },
+      "parentId": "a5c275ad60436f08"
+    },
+    {
+      "id": "ff45075aaf5e761f",
+      "name": "TigerBeetle \u00b7 verify-account-transfers",
+      "service": "tigerbeetle",
+      "startMs": 26826.846128,
+      "durationMs": 24.027662,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.tigerbeetle.request",
+        "bayn.operation": "verify-account-transfers",
+        "bayn.dependency": "tigerbeetle"
+      },
+      "parentId": "a5c275ad60436f08"
+    },
+    {
+      "id": "79dc2653dd45bc17",
+      "name": "TigerBeetle \u00b7 verify-account-accounts",
+      "service": "tigerbeetle",
+      "startMs": 26839.33072,
+      "durationMs": 12.131492,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.tigerbeetle.request",
+        "bayn.operation": "verify-account-accounts",
+        "bayn.dependency": "tigerbeetle"
+      },
+      "parentId": "a5c275ad60436f08"
+    },
+    {
+      "id": "96c2c8640cd3aa8e",
+      "name": "TigerBeetle \u00b7 verify-account-transfers",
+      "service": "tigerbeetle",
+      "startMs": 26851.294611,
+      "durationMs": 7.177349,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.tigerbeetle.request",
+        "bayn.operation": "verify-account-transfers",
+        "bayn.dependency": "tigerbeetle"
+      },
+      "parentId": "a5c275ad60436f08"
+    },
+    {
+      "id": "55fd599fd7a55d1d",
+      "name": "Compare ledgers",
+      "service": "Bayn",
+      "startMs": 26861.626418,
+      "durationMs": 58.162131,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.reconciliation.compare"
+      },
+      "parentId": "34befb12d955a7be"
+    },
+    {
+      "id": "d92df8f5101d528f",
+      "name": "Alpaca market calendar",
+      "service": "alpaca",
+      "startMs": 26940.136271,
+      "durationMs": 203.650419,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.alpaca.read",
+        "bayn.operation": "market-calendar",
+        "bayn.dependency": "alpaca"
+      },
+      "parentId": "161bc38b4cae36bc"
+    },
+    {
+      "id": "c707601cd039860e",
+      "name": "Calendar request \u2192 headers",
+      "service": "alpaca",
+      "startMs": 26940.311382,
+      "durationMs": 202.740366,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.alpaca.read.headers",
+        "bayn.operation": "market-calendar",
+        "bayn.dependency": "alpaca"
+      },
+      "parentId": "d92df8f5101d528f"
+    },
+    {
+      "id": "48eb4ba17343499e",
+      "name": "Read calendar response body",
+      "service": "alpaca",
+      "startMs": 27143.193289,
+      "durationMs": 0.27125,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.alpaca.read.body",
+        "bayn.operation": "market-calendar",
+        "bayn.dependency": "alpaca"
+      },
+      "parentId": "d92df8f5101d528f"
+    },
+    {
+      "id": "68583dfa7ee03b11",
+      "name": "Read authority generation",
+      "service": "postgresql",
+      "startMs": 27147.448409,
+      "durationMs": 0.969823,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "bayn.execution.generation.read",
+        "bayn.dependency": "postgresql"
+      },
+      "parentId": "161bc38b4cae36bc"
+    },
+    {
+      "id": "80345ad0fb0821ab",
+      "name": "invocation-end BaynExecutionController/{account}/tick",
+      "service": "Restate",
+      "startMs": 31141.832345,
+      "durationMs": 0.00525,
+      "status": "ok",
+      "attributes": {
+        "Recorded span": "invocation-end BaynExecutionController/{account}/tick"
+      },
+      "parentId": "73b880b64678bfc0"
+    }
+  ],
+  "workerDurationMs": 1161.318812,
+  "fullDurationMs": 31141.837595,
+  "measurementScope": "Previously captured Waiting pass. Not an inference/order benchmark, not the audited source revision. Nested inclusive times overlap; pre-attempt interval cause unassigned."
+}

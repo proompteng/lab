@@ -1,6 +1,6 @@
 # 189. Jangar Terminal Debt Compaction And Repair Outcome Escrow (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane retained failure debt, active launch admission, terminal AgentRun/job settlement, repair
@@ -16,7 +16,6 @@ Extends:
 - `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`
 - `docs/agents/designs/187-jangar-stage-credit-ledger-and-runner-slot-futures-2026-05-13.md`
 - `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
-- `docs/agents/designs/171-jangar-terminal-debt-exchange-and-retry-custody-2026-05-08.md`
 - `services/jangar/README.md`
 
 ## Decision

@@ -15,11 +15,11 @@
   },
   "dependencies": {
     "@restatedev/restate-sdk": "1.16.4",
-    "effect": "4.0.0-beta.102"
+    "effect": "4.1.4"
   },
   "devDependencies": {
-    "@types/bun": "1.4.0",
+    "@types/bun": "1.4.2",
     "typescript": "^7.0.2"
   },
-  "packageManager": "bun@1.4.0"
+  "packageManager": "bun@1.4.2"
 }

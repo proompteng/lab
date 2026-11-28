@@ -1,6 +1,6 @@
 # 177. Jangar Evidence-Quality Admission Ledger And Degradation Backpressure (2026-05-08)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-08
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane reliability, schedule-runner failure reduction, database/data quality authority, Torghut
@@ -14,7 +14,6 @@ Extends:
 
 - `176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
 - `175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
-- `173-jangar-action-broker-and-proof-carrying-rollout-cells-2026-05-08.md`
 - `docs/torghut/design-system/v6/180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`
 
 ## Decision

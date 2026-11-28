@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Effect, Redacted } from 'effect'
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
 import { fetchBars, fetchCalendar } from './alpaca'
 import type { PublisherConfig } from './config'

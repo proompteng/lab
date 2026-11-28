@@ -90,10 +90,12 @@ const main = () => {
   writeFileSync(outputArgument, rendered, { encoding: 'utf8', mode: 0o600 })
   chmodSync(outputArgument, 0o600)
 
-  const patchName = 'image-factory-registry.yaml'
-  const sourcePatch = resolve(dirname(templatePath), patchName)
-  const outputPatch = resolve(dirname(outputArgument), patchName)
-  if (sourcePatch !== outputPatch) copyFileSync(sourcePatch, outputPatch)
+  const patches = new Set(Array.from(rendered.matchAll(/^\s+- file: ([\w][\w.-]*)\s*$/gm), (match) => match[1]))
+  for (const patchName of patches) {
+    const sourcePatch = resolve(dirname(templatePath), patchName)
+    const outputPatch = resolve(dirname(outputArgument), patchName)
+    if (sourcePatch !== outputPatch) copyFileSync(sourcePatch, outputPatch)
+  }
 
   process.stdout.write(`Rendered secret-bearing Omni template to ${outputArgument} with mode 0600\n`)
 }

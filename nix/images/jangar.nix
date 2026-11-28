@@ -10,6 +10,15 @@
 
 let
   codexCli = import ./openai-codex-cli.nix { inherit pkgs; };
+  codexConfigTemplate = builtins.fromTOML (
+    builtins.readFile (repoRoot + "/services/jangar/scripts/codex-config-container.toml")
+  );
+  codexConfig = (pkgs.formats.toml { }).generate "jangar-codex-config.toml" (
+    codexConfigTemplate
+    // {
+      mcp_servers = builtins.removeAttrs codexConfigTemplate.mcp_servers [ "alpaca" ];
+    }
+  );
   kubectl = exact.kubectl or pkgs.kubectl;
 
   scriptWrapper =
@@ -55,8 +64,8 @@ import ./bun-workspace-service.nix {
   serviceName = "jangar";
   packageName = "@proompteng/jangar";
   depsHash = {
-    x86_64-linux = "sha256-0PdSMvKatJj/qKGlknGaOjBdHz4nnn9Ct4jtvzMh2lw=";
-    aarch64-linux = "sha256-DOzgrmUV/R0nkV+3HfQngnbHQeuwuG67gO4rRZ/d/dc=";
+    x86_64-linux = "sha256-SHbZJopsefIhM7nOttWm/hsAlFyqWMacfRNaOlaPEto=";
+    aarch64-linux = "sha256-BC6oaJBhr/rQyoLi6YiuQW61jq0nFrB57CNyIZLkpU4=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -116,12 +125,13 @@ import ./bun-workspace-service.nix {
     "bun --cwd=packages/agent-contracts run build"
     "bun --cwd=packages/codex run build"
     "bun --cwd=packages/otel run build"
-    "bun --cwd=packages/temporal-bun-sdk run build"
     "bun --cwd=packages/cx-tools run build"
+    "bun --cwd=packages/discord run build"
+    "bun --cwd=packages/temporal-bun-sdk run build"
     "NODE_OPTIONS=--max-old-space-size=4096 CI=true JANGAR_BUILD_MINIFY=0 JANGAR_BUILD_SOURCEMAP=0 JANGAR_BUILD_LOG_LEVEL=warn bun --cwd=services/jangar run build"
   ];
   runtimeInstallPhase = ''
-    mkdir -p "$out/app/packages" "$out/app/services/jangar"
+    mkdir -p "$out/app/packages" "$out/app/services/jangar" "$out/root/.codex"
 
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
 
@@ -132,6 +142,7 @@ import ./bun-workspace-service.nix {
     cp "$TMPDIR/work/services/jangar/package.json" "$out/app/services/jangar/package.json"
     cp -R "$TMPDIR/work/services/jangar/node_modules" "$out/app/services/jangar/node_modules"
     cp -R "$TMPDIR/work/services/jangar/.output" "$out/app/services/jangar/.output"
+    cp ${codexConfig} "$out/root/.codex/config.toml"
     node_pty_package_json="$(find "$out/app/node_modules/.bun" -path '*/node_modules/node-pty/package.json' -print -quit)"
     if [ -z "$node_pty_package_json" ]; then
       echo "node-pty package not found in runtime node_modules" >&2
@@ -154,8 +165,11 @@ import ./bun-workspace-service.nix {
     cp -R "$TMPDIR/work/services/jangar/src/server/runtime-tooling-config.ts" "$out/app/services/jangar/src/server/runtime-tooling-config.ts"
 
     cp -R "$TMPDIR/work/services/bumba" "$out/app/services/bumba"
-    rm -rf "$out/app/services/bumba/node_modules"
-    ln -s /app/node_modules "$out/app/services/bumba/node_modules"
+
+    bun "$out/app/services/bumba/scripts/verify-temporal-runtime.ts" \
+      "$out/app/services/bumba" "$out/app/services/jangar"
+
+    bun "$TMPDIR/work/services/jangar/scripts/verify-production-runtime.ts" "$out/app/services/jangar"
 
     chmod +x "$out/app/packages/cx-tools/dist/"*.js
   '';
@@ -172,6 +186,8 @@ import ./bun-workspace-service.nix {
     "VSCODE_PORT=8081"
     "VSCODE_DATA_DIR=/workspace/.ovscode"
     "VSCODE_DEFAULT_FOLDER=/workspace/lab"
+    "HOME=/root"
+    "CODEX_HOME=/root/.codex"
     "CODEX_CWD=/workspace/lab"
     "CODEX_REPO_SLUG=proompteng/lab"
     "CODEX_REPO_URL=https://github.com/proompteng/lab.git"
@@ -189,8 +205,6 @@ import ./bun-workspace-service.nix {
     nodejs
     pkgs.bash
     pkgs.curl
-    pkgs.docker-buildx
-    pkgs.docker-client
     pkgs.gh
     pkgs.git
     pkgs.go

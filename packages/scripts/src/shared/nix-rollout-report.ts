@@ -151,14 +151,18 @@ export const buildNixRolloutReport = (input: {
   const nixImages = inventory.entries.filter((entry) => entry.class === 'nix-image')
   const workflowImages = inventory.entries.filter((entry) => entry.class === 'workflow-image')
   const manifestOnlyImageApps = inventory.entries.filter(
-    (entry) => entry.class === 'vendor-manifest' && entry.repoImages.length > 0,
+    (entry) => entry.class === 'vendor-manifest' && (entry.repoImages.length > 0 || entry.deferredReason !== undefined),
   )
   const deferredApps = inventory.entries.filter((entry) => entry.class === 'deferred')
   const missingBuildContracts = nixImages.flatMap((entry) => {
     const missing = []
     if (!entry.nixImageAttr) missing.push('nix attr')
-    if (!entry.buildScriptPath) missing.push('manual build script')
-    if (!entry.deployScriptPath) missing.push('manual deploy script')
+    if (!entry.buildScriptPath && !entry.workflowPaths.includes('argocd/applications/kargo')) {
+      missing.push('manual build script')
+    }
+    if (!entry.deployScriptPath && !entry.workflowPaths.includes('argocd/applications/kargo')) {
+      missing.push('manual deploy script')
+    }
     if (entry.workflowPaths.length === 0) missing.push('workflow')
     return missing.length > 0 ? [`${entry.name}: missing ${missing.join(', ')}`] : []
   })
@@ -241,7 +245,7 @@ export const formatNixRolloutReportMarkdown = (report: NixRolloutReport): string
         `| ${entry.name} | ${entry.repoImages.join('<br>')} | ${entry.workflowPaths.join('<br>')} | ${entry.deferredReason ?? ''} |`,
     ),
     '',
-    '## Manifest-Only Repo Image References',
+    '## Manifest-Only Image Apps',
     '',
     '| App | Images | Reason |',
     '| --- | --- | --- |',

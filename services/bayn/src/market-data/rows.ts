@@ -14,7 +14,6 @@ import {
   strictParseOptions as StrictParseOptions,
 } from '../schemas'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from '../types'
-import { Pipeable } from '../pipeable'
 
 const calendarTimeZone = 'America/New_York' as const
 const SnapshotIdSchema = HashSchema
@@ -151,7 +150,7 @@ export const decodeManifests = (
     ),
   )
 
-const decodeSnapshotRowsDataFirst = (
+export const decodeSnapshotRows = (
   bars: readonly unknown[],
   sessions: readonly unknown[],
   manifests: readonly unknown[],
@@ -161,5 +160,3 @@ const decodeSnapshotRowsDataFirst = (
     sessions: decodeSessions(sessions),
     manifests: decodeManifests(manifests),
   })
-
-export const decodeSnapshotRows = Pipeable.dual(3, decodeSnapshotRowsDataFirst)

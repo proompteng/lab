@@ -1,21 +1,10 @@
 # 164. Jangar Contract Graduation Brake And Runtime Receipt Gates (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-07
 Owner: Gideon Park, Torghut Traders Architecture
 Scope: Jangar control-plane resilience, accepted-contract graduation, runtime receipt custody, safer rollout brakes,
 Torghut capital guardrail consumption, validation, rollback, and engineer/deployer acceptance gates.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
-
-Extends:
-
-- `163-jangar-scoped-evidence-debt-and-retained-failure-quarantine-2026-05-07.md`
-- `162-jangar-contract-witness-notary-and-material-action-gates-2026-05-07.md`
-- `162-jangar-capital-receipt-convergence-and-repair-convoy-admission-2026-05-07.md`
-- `docs/torghut/design-system/v6/167-torghut-scoped-profit-repair-options-and-freshness-debt-retirement-2026-05-07.md`
 
 ## Decision
 

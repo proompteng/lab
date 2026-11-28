@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="hull" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a5961"/>
+      <stop offset="1" stop-color="#102733"/>
+    </linearGradient>
+    <linearGradient id="wing" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f7476"/>
+      <stop offset="1" stop-color="#15333f"/>
+    </linearGradient>
+    <radialGradient id="core" cx="42%" cy="35%" r="75%">
+      <stop offset="0" stop-color="#ffd38c"/>
+      <stop offset="0.42" stop-color="#ee9b4e"/>
+      <stop offset="1" stop-color="#9b4c36"/>
+    </radialGradient>
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="49" fill="#080f1b" stroke="#183748" stroke-width="5"/>
+
+  <g fill="none" stroke-linecap="round">
+    <path d="M36 121c21-54 84-77 137-49 30 16 49 46 47 79" stroke="#2a7880" stroke-width="3" opacity=".66"/>
+    <path d="M25 177c26 24 62 35 97 30 33-5 61-22 78-48" stroke="#5fe3d0" stroke-width="2" opacity=".52"/>
+    <path d="M46 65c24-22 57-32 89-27" stroke="#325a6a" stroke-width="2" opacity=".74"/>
+    <path d="M60 196c35 13 76 10 105-8" stroke="#234b5c" stroke-width="7" opacity=".4"/>
+  </g>
+
+  <g fill="#b9d3d1">
+    <circle cx="40" cy="95" r="2.2" opacity=".8"/>
+    <circle cx="211" cy="106" r="1.7" opacity=".75"/>
+    <circle cx="184" cy="49" r="1.5" opacity=".62"/>
+    <circle cx="73" cy="216" r="1.6" opacity=".62"/>
+  </g>
+
+  <!-- A compact salvage tug, canted into its turn. -->
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <path d="M74 160 99 111l50-30 35 7-5 33-42 37-43 14z" fill="#050b12" opacity=".9" transform="translate(3 6)"/>
+    <path d="M74 154 99 105l50-30 35 7-5 33-42 37-43 14z" fill="url(#hull)" stroke="#65d8ca" stroke-width="3"/>
+    <path d="M101 105 149 75l35 7-20 18-45 22z" fill="#214b56" stroke="#7ee7d7" stroke-width="2" opacity=".95"/>
+    <path d="m165 99 14-6-4 22-24 20-12-11z" fill="#0c202b" stroke="#477f84" stroke-width="2"/>
+    <path d="m105 119 26-13 11 12-38 25-19 5z" fill="#173641" opacity=".95"/>
+
+    <!-- amber cockpit and warm service light -->
+    <path d="m141 90 22-12 13 3-19 17z" fill="url(#core)" stroke="#ffd99c" stroke-width="2"/>
+    <circle cx="159" cy="87" r="9" fill="#f3a253" opacity=".28" filter="url(#softGlow)"/>
+    <circle cx="159" cy="87" r="2.8" fill="#fff0c4"/>
+
+    <!-- twin ion wakes -->
+    <path d="m82 146-26 4" stroke="#5fe3d0" stroke-width="5" opacity=".16"/>
+    <path d="m83 155-30 13" stroke="#f1a354" stroke-width="4" opacity=".13"/>
+    <path d="m80 148-22 5" stroke="#a0f3e0" stroke-width="2" opacity=".86"/>
+    <path d="m81 156-25 10" stroke="#ffd18a" stroke-width="1.6" opacity=".76"/>
+
+    <!-- articulated recovery hook -->
+    <path d="M119 138c-6 13-2 26 11 30 13 4 26-3 27-16" fill="none" stroke="#e6a765" stroke-width="4"/>
+    <path d="M118 138c-5 11-2 23 9 27" fill="none" stroke="#ffe0a6" stroke-width="1.5"/>
+    <path d="m154 151 10 1-4 10-9-2z" fill="#f2a052" stroke="#ffd18a" stroke-width="2"/>
+    <circle cx="158" cy="164" r="5" fill="none" stroke="#5fe3d0" stroke-width="2"/>
+  </g>
+
+  <g fill="none" stroke-linecap="round">
+    <path d="M81 181 69 196M89 185l-6 19" stroke="url(#wing)" stroke-width="7"/>
+    <path d="M81 181 69 196M89 185l-6 19" stroke="#4fc7bd" stroke-width="1.5" opacity=".72"/>
+  </g>
+
+  <circle cx="179" cy="183" r="4" fill="#5fe3d0" opacity=".2" filter="url(#softGlow)"/>
+  <circle cx="179" cy="183" r="1.5" fill="#a5f2df"/>
+</svg>

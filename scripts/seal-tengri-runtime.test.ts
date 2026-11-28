@@ -10,7 +10,7 @@ const validSecrets = {
   BETTER_AUTH_SECRET: 'better-auth-production-secret-000000000000',
   GITHUB_CLIENT_ID: 'Ov23liTengriTestClient',
   GITHUB_CLIENT_SECRET: 'github-production-client-secret',
-  TENGRI_INTERNAL_HMAC_SECRET: 'a'.repeat(43),
+  TENGRI_INTERNAL_HMAC_SECRET: 'ab'.repeat(32),
   TENGRI_TICKET_SIGNING_SECRET: 'ticket-signing-secret-000000000000000000',
 }
 
@@ -174,13 +174,22 @@ describe('seal-tengri-runtime', () => {
     })
   })
 
-  test('rejects invalid secret input before contacting GitHub or writing manifests', async () => {
+  test.each([
+    ['base64url', 'a'.repeat(43)],
+    ['rotation bundle', `${'ab'.repeat(32)},${'cd'.repeat(32)}`],
+    ['uppercase hex', 'AB'.repeat(32)],
+    ['short hex', 'a'.repeat(63)],
+    ['long hex', 'a'.repeat(65)],
+    ['invalid characters', 'not valid'],
+  ])('rejects %s before contacting GitHub or writing manifests', async (_label, key) => {
     const harness = await createHarness()
-    const result = await runGenerator(harness, { TENGRI_INTERNAL_HMAC_SECRET: 'not valid' })
+    const result = await runGenerator(harness, { TENGRI_INTERNAL_HMAC_SECRET: key })
 
     expect(result.exitCode).not.toBe(0)
-    expect(result.stderr).toContain('must contain one or two non-empty base64url keys')
+    expect(result.stderr).toContain('must contain one 32-byte key encoded as 64 lowercase hexadecimal characters')
     expect(harness.oauthRequests).toHaveLength(0)
+    expect(await Bun.file(join(harness.root, 'captures/tengri-tengri-runtime.json')).exists()).toBe(false)
+    expect(await Bun.file(join(harness.root, 'captures/proompteng-tengri-bff.json')).exists()).toBe(false)
     expect(await Bun.file(join(harness.root, 'argocd/applications/tengri/sealed-secret.yaml')).exists()).toBe(false)
     expect(await Bun.file(join(harness.root, 'argocd/applications/proompteng/sealed-secret.yaml')).exists()).toBe(false)
   })

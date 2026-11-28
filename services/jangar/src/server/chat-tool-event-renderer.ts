@@ -16,10 +16,9 @@ export type ChatToolEventRendererService = {
   create: () => ToolRenderer
 }
 
-export class ChatToolEventRenderer extends Context.Tag('ChatToolEventRenderer')<
-  ChatToolEventRenderer,
-  ChatToolEventRendererService
->() {}
+export class ChatToolEventRenderer extends Context.Service<ChatToolEventRenderer, ChatToolEventRendererService>()(
+  'ChatToolEventRenderer',
+) {}
 
 const truncateLines = (text: string, maxLines: number) => {
   const lines = text.split(/\r?\n/)

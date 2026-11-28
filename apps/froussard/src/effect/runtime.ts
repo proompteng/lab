@@ -5,6 +5,7 @@ import { AppConfigLayer } from '@/effect/config'
 import { AppLoggerLayer } from '@/logger'
 import { GithubServiceLayer } from '@/services/github/service'
 import { KafkaProducerLayer } from '@/services/kafka'
+import { makeTelemetryLayer } from '@/telemetry'
 
 const CoreAppLayer = Layer.mergeAll(AppConfigLayer, AppLoggerLayer)
 const BaseAppLayer = Layer.mergeAll(
@@ -13,10 +14,9 @@ const BaseAppLayer = Layer.mergeAll(
   KafkaProducerLayer.pipe(Layer.provide(CoreAppLayer)),
 )
 
-export type AppRuntimeLayer = typeof BaseAppLayer
-
 export const AppLayer = BaseAppLayer
 
-export type AppRuntime = ManagedRuntime<Layer.Layer.Success<AppRuntimeLayer>, Layer.Layer.Error<AppRuntimeLayer>>
+export type AppRuntime = ManagedRuntime<Layer.Success<typeof AppLayer>, Layer.Error<typeof AppLayer>>
 
-export const makeAppRuntime = (): AppRuntime => makeManagedRuntime(AppLayer)
+export const makeAppRuntime = (): AppRuntime =>
+  makeManagedRuntime(AppLayer.pipe(Layer.provideMerge(makeTelemetryLayer())))

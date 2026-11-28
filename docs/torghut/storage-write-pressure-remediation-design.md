@@ -347,11 +347,11 @@ live proof that OCI worker `max-parallelism` bounds build execution, not exporte
 for a registry-wide write boundary.
 
 The definitive boundary is therefore attached to the singleton registry itself. Its Service terminates at an HAProxy
-sidecar that routes `POST`, `PUT`, `PATCH`, and `DELETE` requests through one backend connection while preserving a
+sidecar that routes `POST`, `PUT`, `PATCH`, and `DELETE` requests through a shared upload budget while preserving a
 separate concurrent path for `GET` and `HEAD` image pulls. The write backend closes its server connection after each
 response. Client and server inactivity are bounded at five minutes so a canceled or stalled request body cannot retain
-the single write slot; healthy shaped uploads continuously transfer data and therefore reset the inactivity timer. The
-proxy queues at most 128 write requests for up to two hours. A generated ConfigMap name forces a pod rollout on
+an upload slot; healthy shaped uploads continuously transfer data and therefore reset the inactivity timer. The
+proxy permits 32 concurrent bulk requests and queues at most 128 for up to two hours. A generated ConfigMap name forces a pod rollout on
 proxy-policy changes, and `Recreate` prevents two registry pods from competing for the RWO filesystem during that
 rollout. This covers Docker, BuildKit, and direct OCI publishers at the same shared choke point without reducing pull
 concurrency.
@@ -360,8 +360,19 @@ The first post-proxy Analysis run, `29411750432` at source revision `89a019b4`, 
 mutation requests, with a maximum queue time of 10.211 seconds. It also exposed a second-order limit: one
 519,231,697-byte blob was still committed at roughly 51.53 MiB/s, and Kafka recorded a 2,423.56 ms controller event
 immediately afterward. That exceeds the two-second storage gate even though request fan-out was eliminated. The
-registry boundary must therefore also shape mutation request bodies to 1 MiB/s. This keeps the shared Ceph write path
-bounded independently of publisher implementation while leaving `GET` and `HEAD` image pulls unthrottled.
+registry boundary initially shaped mutation request bodies to 1 MiB/s. This bounded the shared Ceph write path
+independently of publisher implementation while leaving `GET` and `HEAD` image pulls unthrottled.
+
+The registry's current boundary shares one 10 MiB/s budget across all mutation requests, including concurrent blob
+uploads and manifest commits. This is an aggregate limit, not a per-request allowance. Publishing 6.8 GiB has a transfer
+floor of about 11.6 minutes before queueing and overhead. Mimir history from August 28 through September 27, 2026 showed a 104.7 MiB/s peak five-minute
+client write rate and a 57.1 MiB/s peak rolling-hour average across Ceph pools. Those observations support testing a
+modest increase but do not establish a safe registry throughput ceiling. The operator selected 10 MiB/s and waived
+the proposed sustained load trial; this change does not establish shared-storage stability at that rate. Require a
+coordinated 30-minute observation of current Ceph, Kafka and database dependencies before any further increase.
+Revert the cap to the previous validated 5 MiB/s through GitOps if the higher rate
+causes a gate failure. The generated proxy ConfigMap rolls the singleton registry with its existing `Recreate` strategy;
+schedule that restart after active publications complete, since interrupted uploads may need a retry.
 
 A later production build exposed a liveness defect in that first boundary. A large blob upload occupied the only write
 connection while completed multi-architecture builds queued their small image-manifest and index `PUT` requests behind
@@ -370,11 +381,11 @@ live HAProxy socket state showed full client receive queues waiting behind the s
 publisher reproduced the same head-of-line blocking.
 
 Manifest commits now have a separate, bounded four-connection backend selected only for `PUT
-/v2/<repository>/manifests/<reference>`. All mutation bodies remain subject to the 1 MiB/s frontend limit, while blob
-upload initiation, transfer, finalization, and deletion remain on the original single-connection queue. The exception is
+/v2/<repository>/manifests/<reference>`. All mutation bodies share the 10 MiB/s frontend limit, while blob
+upload initiation, transfer, finalization, and deletion use the bounded 32-connection backend. The separate manifest path is
 safe because an image manifest or index is only a few KiB and Distribution rejects references to blobs that are not
-already present. This restores publication liveness without reopening the large-blob fan-out that caused the Ceph write
-burst.
+already present. Concurrent blob requests avoid a stalled upload blocking every publisher; the shared aggregate limit
+bounds their combined write traffic. See the [registry runbook](../../argocd/applications/registry/README.md) for the active policy and qualification requirements.
 
 The next Torghut rollout exposed avoidable work ahead of that boundary. Runs `29482560820` and `29485437093` each fed
 roughly 200 MiB per architecture through the shaped writer even though most Nix store layers were unchanged. A

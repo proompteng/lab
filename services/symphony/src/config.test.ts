@@ -3,6 +3,16 @@ import { describe, expect, test } from 'bun:test'
 import { toSymphonyConfig } from './config'
 
 describe('config normalization', () => {
+  test('defaults Codex sessions to GPT-6.2 Sol and preserves an explicit model override', async () => {
+    const defaultConfig = await toSymphonyConfig('/tmp/WORKFLOW.md', {})
+    const overrideConfig = await toSymphonyConfig('/tmp/WORKFLOW.md', {
+      codex: { model: '  custom-model  ' },
+    })
+
+    expect(defaultConfig.codex.model).toBe('gpt-6.2-sol')
+    expect(overrideConfig.codex.model).toBe('custom-model')
+  })
+
   test('parses target, release, and health extensions', async () => {
     const config = await toSymphonyConfig(
       '/tmp/WORKFLOW.md',
@@ -33,7 +43,7 @@ describe('config normalization', () => {
           promotion_authority: 'kargo',
           required_checks_source: 'branch_protection',
           promotion_branch_prefix: 'codex/jangar-release-',
-          kargo_project: 'lab-delivery',
+          kargo_project: 'symphony-release',
           kargo_warehouse: 'jangar',
           kargo_branch: 'kargo/jangar',
           kargo_stages: ['jangar'],
@@ -91,7 +101,7 @@ describe('config normalization', () => {
     expect(config.release).toMatchObject({
       mode: 'kargo_auto',
       promotionAuthority: 'kargo',
-      kargoProject: 'lab-delivery',
+      kargoProject: 'symphony-release',
       kargoWarehouse: 'jangar',
       kargoBranch: 'kargo/jangar',
       kargoStages: ['jangar'],

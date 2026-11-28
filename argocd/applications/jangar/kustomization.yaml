@@ -15,9 +15,12 @@ resources:
   - tailscale-service.yaml
   - ingressroute-jangar-k8s-private.yaml
   - ingressroute-openwebui-k8s-private.yaml
+  - postgres-upgrade-final-backup.yaml
   - postgres-cluster.yaml
+  - auto-ontology-db-networkpolicy.yaml
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
+  - redis-upgrade-backup.yaml
   - pvc-rwo.yaml
   - vscode-tailscale-service.yaml
   - alloy-rbac.yaml
@@ -31,14 +34,14 @@ resources:
 helmCharts:
   - name: open-webui
     repo: https://helm.openwebui.com
-    version: 16.0.0
+    version: 18.4.0
     releaseName: jangar-openwebui
     namespace: jangar
     valuesFile: openwebui-values.yaml
 images:
   - name: ghcr.io/open-webui/open-webui
-    newTag: v0.11.0
-    digest: sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228
+    newTag: v0.13.4
+    digest: sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901
   - name: registry.ide-newton.ts.net/lab/jangar
     newTag: sha-c9e7e812e662f56fe32d69eefe03db1230d04155
     digest: sha256:37a1de689f56a3614b4051063c1d14c797dc1c4552c73d7711dd25ebda517bfa

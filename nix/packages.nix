@@ -121,6 +121,7 @@ let
     x86_64-linux = {
       sourceRoot = ".";
       src = fetchurl {
+        name = "kubeconform-linux-amd64.tar.gz";
         url = "https://github.com/yannh/kubeconform/releases/download/v${kubeconformVersion}/kubeconform-linux-amd64.tar.gz";
         hash = "sha256-wxUY3dEiZjs/Oqh0z+gXjLCYjelE8px0oLkmCSDRFdM=";
       };
@@ -148,43 +149,85 @@ let
     };
   };
 
-  kubectlVersion = "1.29.4";
+  kubectlVersion = "1.37.0";
   kubectlSource = sourceFor "kubectl" {
     x86_64-linux.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/linux/amd64/kubectl";
-      hash = "sha256-EONDhhw8sAEBYecDMHupB63Sru6v/GREd5rZFfmInIg=";
+      hash = "sha256-YSk1n04fOEilVyzLCybPKLjKCM7zjJWnZbL2SiyWGi8=";
     };
     aarch64-linux.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/linux/arm64/kubectl";
-      hash = "sha256-YVN0CO7crQZNczQ4Su1Qioqh6nhjEbh7UFRWouBTXTY=";
+      hash = "sha256-ki3yjfJIzACp4CX5R3BPHRSC3mTs5Uz+V+YfGerx7vM=";
     };
     x86_64-darwin.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/darwin/amd64/kubectl";
-      hash = "sha256-evm4ojPEmtXuy1kARxngvAeXJJK2dOu84pGeUzJrVbI=";
+      hash = "sha256-1SdsD0/ed/xEYHApDzRZRKfx/aFT32uWDl/ek7epvM0=";
     };
     aarch64-darwin.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/darwin/arm64/kubectl";
-      hash = "sha256-s6iB5iCKpBJ1qXSBZ2qMijwWKC8817RBsX8ligVAEvE=";
+      hash = "sha256-WDvu2uvkIucdPxqWrO+LH++G6i8JpFrQGqbJzih8E4A=";
     };
   };
 
-  argoWorkflowsVersion = "4.0.5";
+  talosctlVersion = "1.14.5";
+  talosctlSource = sourceFor "talosctl" {
+    x86_64-linux.src = fetchurl {
+      name = "talosctl-linux-amd64";
+      url = "https://github.com/siderolabs/talos/releases/download/v${talosctlVersion}/talosctl-linux-amd64";
+      hash = "sha256-/0MraJhnCea2nFY6CKLO1CMtUZaw3M1tLng+nXFNfX0=";
+    };
+    aarch64-linux.src = fetchurl {
+      url = "https://github.com/siderolabs/talos/releases/download/v${talosctlVersion}/talosctl-linux-arm64";
+      hash = "sha256-39OqM8MVmBDiFvw5r7aF1NEgyPJyjgF9jH92NdMTk4I=";
+    };
+    x86_64-darwin.src = fetchurl {
+      url = "https://github.com/siderolabs/talos/releases/download/v${talosctlVersion}/talosctl-darwin-amd64";
+      hash = "sha256-z5lPL5s7JJQfMxEkut4njra9hOnywrG7DPtffLSdsTw=";
+    };
+    aarch64-darwin.src = fetchurl {
+      url = "https://github.com/siderolabs/talos/releases/download/v${talosctlVersion}/talosctl-darwin-arm64";
+      hash = "sha256-yGUHe9/JnDjXCzd3CGgu7BqP66uYfwYjIG5xOdkBMJY=";
+    };
+  };
+
+  omnictlVersion = "1.11.0";
+  omnictlSource = sourceFor "omnictl" {
+    x86_64-linux.src = fetchurl {
+      url = "https://github.com/siderolabs/omni/releases/download/v${omnictlVersion}/omnictl-linux-amd64";
+      hash = "sha256-NY6LEC/adcmkKYrGcgN5J2uxnJ2o/fD+ekkDQrTqF1Q=";
+    };
+    aarch64-linux.src = fetchurl {
+      url = "https://github.com/siderolabs/omni/releases/download/v${omnictlVersion}/omnictl-linux-arm64";
+      hash = "sha256-9Xk0bPmmAw72wjtYPSpqKrMiQdYztswW9EyxltZg3Lc=";
+    };
+    x86_64-darwin.src = fetchurl {
+      url = "https://github.com/siderolabs/omni/releases/download/v${omnictlVersion}/omnictl-darwin-amd64";
+      hash = "sha256-8NMgq0mNGjglKGFnT+2yZHG4Cy64ab3TQ2zB1NZTEjY=";
+    };
+    aarch64-darwin.src = fetchurl {
+      url = "https://github.com/siderolabs/omni/releases/download/v${omnictlVersion}/omnictl-darwin-arm64";
+      hash = "sha256-S7sUmjtbL4UFH0xNvBVinmOcpTJ9bl8cNwKO/zzBB18=";
+    };
+  };
+
+  argoWorkflowsVersion = "4.1.6";
   argoWorkflowsSource = sourceFor "argo-workflows" {
     x86_64-linux.src = fetchurl {
+      name = "argo-linux-amd64.gz";
       url = "https://github.com/argoproj/argo-workflows/releases/download/v${argoWorkflowsVersion}/argo-linux-amd64.gz";
-      hash = "sha256-hzJBjzvJMOnqDivklycM8kW1XHrJrhFoVnQ/a8MnM8A=";
+      hash = "sha256-iF+IajONfnwP1KaBFSdw+1TfGEf4/FXq7XiNZhwDBOA=";
     };
     aarch64-linux.src = fetchurl {
       url = "https://github.com/argoproj/argo-workflows/releases/download/v${argoWorkflowsVersion}/argo-linux-arm64.gz";
-      hash = "sha256-KAaD9NKcQzxhS7xH2GONLKCVqY4VD4IbcaQHMmBuNMs=";
+      hash = "sha256-wRmWqVMpKI68xR5YMK001h7WhNUoAlGChZYwVZn5K/U=";
     };
     x86_64-darwin.src = fetchurl {
       url = "https://github.com/argoproj/argo-workflows/releases/download/v${argoWorkflowsVersion}/argo-darwin-amd64.gz";
-      hash = "sha256-zztdjIKQLeFj5+85L/vajBdnFiDIInhdFORwVVY+FlQ=";
+      hash = "sha256-/97MfFktPih4IQxY//dBLoC1TVqx0OJaFWwZ9ghLMFo=";
     };
     aarch64-darwin.src = fetchurl {
       url = "https://github.com/argoproj/argo-workflows/releases/download/v${argoWorkflowsVersion}/argo-darwin-arm64.gz";
-      hash = "sha256-/lFleWUZwKS6riwgAQ4LDh3ra6jzycXC7qIb2INJ4Go=";
+      hash = "sha256-DJXFOsIuFfJGW7zbrf5i6W9A7M9wy9K5NG4hJmeOKeQ=";
     };
   };
 
@@ -193,6 +236,7 @@ let
     x86_64-linux = {
       archiveRoot = "shellcheck-v${shellcheckVersion}";
       src = fetchurl {
+        name = "shellcheck-v${shellcheckVersion}.linux.x86_64.tar.xz";
         url = "https://github.com/koalaman/shellcheck/releases/download/v${shellcheckVersion}/shellcheck-v${shellcheckVersion}.linux.x86_64.tar.xz";
         hash = "sha256-jDvhKwXVwXegTCnjx4zomshvFZVoHKsUm2W5fE4icZg=";
       };
@@ -260,34 +304,39 @@ let
     };
   };
 
-  bunVersion = "1.4.0";
+  bunVersion = "1.4.2";
+  # Public release URLs avoid the unauthenticated API quota during fixed-output downloads.
   bunSource = sourceFor "bun" {
     x86_64-linux = {
       sourceRoot = "bun-linux-x64";
       src = fetchurl {
+        name = "bun-linux-x64.zip";
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-x64.zip";
-        hash = "sha256-LQP7X7g6yLVnrKCigbLOGhoZ1Ij1bClo2Iw/Jekv5FI=";
+        hash = "sha256-NjaPrvdSeHXV/6UuU81IAhdB8qg+tiCKjdZAaNQiqRM=";
       };
     };
     aarch64-linux = {
       sourceRoot = "bun-linux-aarch64";
       src = fetchurl {
+        name = "bun-linux-aarch64.zip";
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-aarch64.zip";
-        hash = "sha256-SxozLuhhmD65O8/m93D/+U4+MbLDiL2uo8jtNeWO7Q4=";
+        hash = "sha256-VDKLvC2cjgyfiSxUTWbFeoO4QTnjSQnl7oF1jxrI/ac=";
       };
     };
     x86_64-darwin = {
       sourceRoot = "bun-darwin-x64-baseline";
       src = fetchurl {
+        name = "bun-darwin-x64-baseline.zip";
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-x64-baseline.zip";
-        hash = "sha256-2pufG0unZsbymXEfON+qmGI+HtnECJaqU9uAPFLsH6A=";
+        hash = "sha256-utW71s8U0JgNEV9ZVMn/kE32GdXplNLaH/zNPzFjALA=";
       };
     };
     aarch64-darwin = {
       sourceRoot = "bun-darwin-aarch64";
       src = fetchurl {
+        name = "bun-darwin-aarch64.zip";
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-aarch64.zip";
-        hash = "sha256-xmnpf2Fk4cluBwF0jbmN+ndJKQjL2DlMdVcTSnNd44E=";
+        hash = "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8=";
       };
     };
   };
@@ -349,6 +398,18 @@ in
     pname = "kubectl";
     version = kubectlVersion;
     source = kubectlSource;
+  };
+
+  talosctl = mkRawBin {
+    pname = "talosctl";
+    version = talosctlVersion;
+    source = talosctlSource;
+  };
+
+  omnictl = mkRawBin {
+    pname = "omnictl";
+    version = omnictlVersion;
+    source = omnictlSource;
   };
 
   argo-workflows = mkGzipBin {

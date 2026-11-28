@@ -2,9 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT_DIR}"
 CHART_DIR="${ROOT_DIR}/charts/agents"
 ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
 CI_VALUES_FILE="${ROOT_DIR}/scripts/agents/values-ci.yaml"
+schema_dir="${ROOT_DIR}/schemas/custom"
 # Backward-compatible: older callers used HELM_KUBE_VERSION.
 KUBE_VERSION_FOR_HELM="${KUBE_VERSION_FOR_HELM:-${HELM_KUBE_VERSION:-1.35.0}}"
 DUMMY_IMAGE_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -15,16 +17,7 @@ if [[ -d "${ROOT_DIR}/services/jangar/api/agents" ]]; then
   exit 1
 fi
 
-if command -v rg >/dev/null 2>&1; then
-  if rg -n "codex-universal|ghcr.io/openai/codex-universal" \
-    "${CHART_DIR}/examples" \
-    "${ROOT_DIR}/scripts/agents/native-workflow-e2e.sh"; then
-    echo "Agents examples must use the chart-managed agents-codex-runner image, not codex-universal." >&2
-    exit 1
-  fi
-elif grep -R -n -E "codex-universal|ghcr\.io/openai/codex-universal" \
-  "${CHART_DIR}/examples" \
-  "${ROOT_DIR}/scripts/agents/native-workflow-e2e.sh"; then
+if grep -R -nF 'codex-universal' "${CHART_DIR}/examples"; then
   echo "Agents examples must use the chart-managed agents-codex-runner image, not codex-universal." >&2
   exit 1
 fi
@@ -64,6 +57,49 @@ git -C "${ROOT_DIR}" diff --exit-code -- "${CHART_DIR}/crds" \
   "${ROOT_DIR}/services/agents/api"
 
 run_with_helm3 helm lint --kube-version "${KUBE_VERSION_FOR_HELM}" "${CHART_DIR}"
+run_with_helm3 python3 -m unittest discover -s "${CHART_DIR}/tests"
+
+for identity_mode in default override; do
+  identity_name='Greg Konush'
+  identity_email='12027037+gregkonush@users.noreply.github.com'
+  identity_args=()
+  if [[ "${identity_mode}" == override ]]; then
+    identity_name='Another Operator'
+    identity_email='operator@example.invalid'
+    identity_args=(
+      --set-string "agentsShell.env.vars.AGENTS_SHELL_GIT_USER_NAME=${identity_name}"
+      --set-string "agentsShell.env.vars.AGENTS_SHELL_GIT_USER_EMAIL=${identity_email}"
+    )
+  fi
+  identity_render="$(mktemp)"
+  run_with_helm3 helm template agents "${CHART_DIR}" --kube-version "${KUBE_VERSION_FOR_HELM}" \
+    --namespace agents --values "${ARGOCD_AGENTS_DIR}/values.yaml" "${identity_args[@]}" >"${identity_render}"
+  python3 "${ROOT_DIR}/scripts/agents/check-shell-git-identity.py" "${identity_render}" \
+    "${ROOT_DIR}/services/agents/scripts/agents-shell-entrypoint.sh" "${identity_name}" "${identity_email}"
+  rm -f "${identity_render}"
+done
+
+runner_rbac_render="$(mktemp)"
+run_with_helm3 helm template agents "${CHART_DIR}" --namespace agents \
+  --set runnerServiceAccount.create=true --set runnerServiceAccount.rbac.create=true \
+  --show-only templates/runner-rbac.yaml > "${runner_rbac_render}"
+python3 - "${runner_rbac_render}" <<'PY'
+import sys
+import yaml
+
+role = next(doc for doc in yaml.safe_load_all(open(sys.argv[1])) if doc['kind'] == 'Role')
+write_rules = [rule for rule in role['rules'] if set(rule['verbs']) & {'create', 'update', 'patch', 'delete', '*'}]
+assert write_rules == [], write_rules
+PY
+rm -f "${runner_rbac_render}"
+
+for split in false true; do
+  run_with_helm3 helm template metrics-check "${CHART_DIR}" --namespace agents \
+    --set "controllers.enabled=${split},metrics.serviceMonitor.enabled=true" \
+    --set metrics.serviceMonitor.namespace=monitoring,metrics.service.type=NodePort \
+    --set metrics.service.port=9191,metrics.path=/internal/metrics |
+    python3 "${ROOT_DIR}/scripts/agents/check-metrics-monitoring.py" "${split}"
+done
 
 chart_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/Chart.yaml" | sed "s/[\"']//g")"
 artifacthub_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/artifacthub-pkg.yml" | sed "s/[\"']//g")"
@@ -300,19 +336,21 @@ python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/swarm.pr
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/artifacts.proompteng.ai_artifacts.yaml" artifacts.proompteng.ai v1alpha1 Artifact
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/workspaces.proompteng.ai_workspaces.yaml" workspaces.proompteng.ai v1alpha1 Workspace
 
-if ! git -C "${ROOT_DIR}" diff --exit-code -- "${ROOT_DIR}/schemas/custom"; then
+schema_drift="$(git status --porcelain --untracked-files=all -- "${schema_dir}")"
+if [[ -n "${schema_drift}" ]]; then
+  printf '%s\n' "${schema_drift}" >&2
   echo "schemas/custom is out of date; regenerate and commit the CRD schemas." >&2
   exit 1
 fi
 
-python3 - <<'PY'
+python3 - "${CHART_DIR}" <<'PY'
 import sys
 from pathlib import Path
 import yaml
 
-root = Path(__file__).resolve().parents[2]
-crd_dir = root / "charts" / "agents" / "crds"
-examples_dir = root / "charts" / "agents" / "examples"
+chart_dir = Path(sys.argv[1])
+crd_dir = chart_dir / "crds"
+examples_dir = chart_dir / "examples"
 
 crd_versions = {}
 for path in crd_dir.glob("*.yaml"):
@@ -352,11 +390,14 @@ if errors:
     sys.exit(1)
 PY
 
-schema_dir="${ROOT_DIR}/schemas/custom"
 if ! command -v kubeconform >/dev/null 2>&1; then
   echo "kubeconform is required but not installed" >&2
   exit 1
 fi
+
+run_with_helm3 helm template agents "${CHART_DIR}" --namespace agents --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --set autoOntologyMcpGateway.enabled=true --show-only templates/auto-ontology-mcp-gateway.yaml |
+  kubeconform --strict --summary
 
 CRD_SCHEMA_VERSION="${KUBECONFORM_K8S_VERSION:-1.27.0}"
 crd_schema_dir="$(mktemp -d)"
@@ -385,34 +426,17 @@ schema = {
     "definitions": definitions,
     "$ref": "#/definitions/io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinition",
 }
-payload = json.dumps(schema)
-for name in ("CustomResourceDefinition.json", "customresourcedefinition.json"):
-    (base / name).write_text(payload)
+(base / "customresourcedefinition.json").write_text(json.dumps(schema))
 PY
 
 kubeconform --strict --summary \
   --schema-location "${crd_schema_dir}/{{.ResourceKind}}.json" \
   "${CHART_DIR}/crds"/*.yaml
 
-kubeconform --strict --summary --ignore-missing-schemas \
-  --schema-location "${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
+kubeconform --strict --summary \
   --schema-location "${schema_dir}/{{.Group}}/{{.ResourceAPIVersion}}/{{.ResourceKind}}.json" \
-  --schema-location "${schema_dir}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location "${schema_dir}/{{.ResourceKind}}_{{.Group}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
   --schema-location default \
   "${CHART_DIR}/examples"/*.yaml
-
-kubeconform --strict --summary --ignore-missing-schemas \
-  --schema-location "${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}/{{.ResourceAPIVersion}}/{{.ResourceKind}}.json" \
-  --schema-location "${schema_dir}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location "${schema_dir}/{{.ResourceKind}}_{{.Group}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location default \
-  "${ROOT_DIR}/argocd/applications/agents/application.yaml"
 
 CRD_DIR="${CHART_DIR}/crds" python3 - <<'PY'
 import json

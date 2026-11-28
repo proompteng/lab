@@ -1,6 +1,6 @@
 # 200. Jangar Revenue Repair Settlement Conveyor And Stage Health Custody (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-14
 Owner: Gideon Park, Torghut Traders Architecture
 Scope: Jangar control-plane admission, Torghut revenue-repair settlement custody, stage health, rollout proof,

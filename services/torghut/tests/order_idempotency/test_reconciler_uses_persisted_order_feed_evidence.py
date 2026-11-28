@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-from tests.order_idempotency.support import (
-    Decimal,
-    Execution,
-    ExecutionOrderEvent,
-    ExecutionTCAMetric,
-    FakeAlpacaClient,
-    Reconciler,
-    Strategy,
-    TradeDecision,
-    _TestOrderIdempotencyBase,
-    datetime,
-    select,
-    timezone,
-)
+from datetime import datetime, timezone
+from decimal import Decimal
+
+from sqlalchemy import select
+
+from app.models import Execution, ExecutionOrderEvent, ExecutionTCAMetric, TradeDecision
+from app.trading.reconcile import Reconciler
+from tests.order_idempotency.support import FakeAlpacaClient, _TestOrderIdempotencyBase
+from tests.trading_fixtures import make_strategy
 
 
 class TestReconcilerUsesPersistedOrderFeedEvidence(_TestOrderIdempotencyBase):
@@ -23,13 +18,9 @@ class TestReconcilerUsesPersistedOrderFeedEvidence(_TestOrderIdempotencyBase):
                 raise AssertionError(f"should_not_fetch_order:{alpaca_order_id}")
 
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -119,13 +110,9 @@ class TestReconcilerUsesPersistedOrderFeedEvidence(_TestOrderIdempotencyBase):
                 }
 
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()

@@ -1,206 +1,73 @@
-# Tailscale on Talos nodes (production runbook)
+# Tailscale on Galactic Talos nodes
 
-This runbook installs and validates node-level Tailscale on Talos so `containerd` can pull private images from `registry.ide-newton.ts.net`.
+Status: Current validation guide. Omni owns configuration and rollout.
 
-Cluster inventory (current):
+Node-level Tailscale lets Talos `kubelet` and `containerd` reach private tailnet services such as
+`registry.ide-newton.ts.net`. The authoritative desired state is the secret-redacted Omni template at
+`devices/galactic/omni/cluster-template.yaml`, which declares the `siderolabs/tailscale` system extension and one
+`ExtensionServiceConfig` per machine.
 
-- `ryzen` (amd64): `192.168.1.194`
-- `ampone` (arm64): `192.168.1.203`
-- `altra` (arm64): `192.168.1.85`
+## Change path
 
-## Why this is required
+Follow `devices/galactic/omni/README.md` to render the template with secrets into a mode-`0600` temporary file, validate
+it, inspect an Omni dry-run, and sync one machine phase at a time. Never commit the raw export, rendered template,
+Tailscale auth key, or Omni join token.
 
-Kubernetes pulls images via node `kubelet`/`containerd`, not pod networking. If the node OS cannot reach a Tailscale-only registry hostname, pods fail with `ErrImagePull`/`ImagePullBackOff`.
+Do not apply the retained per-device Tailscale patches with `talosctl apply-config`, manually replace an EFI image, or
+force a Talos upgrade to change Tailscale. Those were pre-Omni recovery paths and no longer own `galactic` machine
+configuration. Use `docs/runbooks/talos-latest-upgrade-plan.md` for the bounded same-schematic replacement exception.
 
-## Architecture
+## Repository validation
 
-Tailscale on Talos requires both:
-
-1. Talos **system extension** (`tailscale`) in `machine.install.extensions`.
-2. `ExtensionServiceConfig` named `tailscale` with runtime env (`TS_AUTHKEY`, `TS_HOSTNAME`, routes, etc.).
-
-Important DNS behavior on Talos:
-
-- Set `TS_ACCEPT_DNS=false`.
-- Configure DNS using Talos machine config (`machine.network.nameservers`).
-- Reason: Talos root filesystem is immutable; allowing Tailscale to manage `/etc/resolv.conf` creates noisy failures.
-
-## Files in this repo
-
-- Extension patch:
-  - `devices/ryzen/manifests/tailscale-system-extension.patch.yaml`
-  - `devices/ampone/manifests/tailscale-system-extension.patch.yaml`
-  - `devices/altra/manifests/tailscale-system-extension.patch.yaml`
-- DNS patch:
-  - `devices/ryzen/manifests/tailscale-dns.patch.yaml`
-  - `devices/ampone/manifests/tailscale-dns.patch.yaml`
-  - `devices/altra/manifests/tailscale-dns.patch.yaml`
-- Service template:
-  - `devices/ryzen/manifests/tailscale-extension-service.template.yaml`
-  - `devices/ampone/manifests/tailscale-extension-service.template.yaml`
-  - `devices/altra/manifests/tailscale-extension-service.template.yaml`
-- Generated (gitignored, contains authkey):
-  - `devices/*/manifests/tailscale-extension-service.yaml`
-
-## 1) Render per-node ExtensionServiceConfig files
+Before proposing an Omni template change:
 
 ```bash
-bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts
-bun run packages/scripts/src/tailscale/generate-ampone-extension-service.ts
-bun run packages/scripts/src/tailscale/generate-altra-extension-service.ts
+bun test devices/galactic/omni/render-template.test.ts
 ```
 
-## 2) Patch machine config (no reboot yet)
+Then follow the render, `omnictl cluster template validate`, and `omnictl cluster template sync --dry-run --verbose`
+sequence in `devices/galactic/omni/README.md`. A dry-run is required before an explicitly approved sync.
+
+## Runtime validation
+
+Use the current machine addresses from `devices/galactic/README.md`. Run these read-only checks for each target node:
 
 ```bash
-# ryzen (192.168.1.194)
-talosctl get machineconfig -n 192.168.1.194 -e 192.168.1.194 -o jsonpath='{.spec}' \
-  | awk '/^---$/{exit} {print}' > /tmp/ryzen-machineconfig.yaml
-talosctl apply-config -n 192.168.1.194 -e 192.168.1.194 -f /tmp/ryzen-machineconfig.yaml \
-  --config-patch @devices/ryzen/manifests/tailscale-extension-service.yaml \
-  --config-patch @devices/ryzen/manifests/tailscale-dns.patch.yaml \
-  --config-patch @devices/ryzen/manifests/tailscale-system-extension.patch.yaml \
-  --mode=no-reboot
-
-# ampone (192.168.1.203)
-talosctl get machineconfig -n 192.168.1.203 -e 192.168.1.203 -o jsonpath='{.spec}' \
-  | awk '/^---$/{exit} {print}' > /tmp/ampone-machineconfig.yaml
-talosctl apply-config -n 192.168.1.203 -e 192.168.1.203 -f /tmp/ampone-machineconfig.yaml \
-  --config-patch @devices/ampone/manifests/tailscale-extension-service.yaml \
-  --config-patch @devices/ampone/manifests/tailscale-dns.patch.yaml \
-  --config-patch @devices/ampone/manifests/tailscale-system-extension.patch.yaml \
-  --mode=no-reboot
-
-# altra (192.168.1.85)
-talosctl get machineconfig -n 192.168.1.85 -e 192.168.1.85 -o jsonpath='{.spec}' \
-  | awk '/^---$/{exit} {print}' > /tmp/altra-machineconfig.yaml
-talosctl apply-config -n 192.168.1.85 -e 192.168.1.85 -f /tmp/altra-machineconfig.yaml \
-  --config-patch @devices/altra/manifests/tailscale-extension-service.yaml \
-  --config-patch @devices/altra/manifests/tailscale-dns.patch.yaml \
-  --config-patch @devices/altra/manifests/tailscale-system-extension.patch.yaml \
-  --mode=no-reboot
+talosctl -n <talos-api-address> -e <talos-api-address> get extensions | rg tailscale
+talosctl -n <talos-api-address> -e <talos-api-address> service ext-tailscale status
+talosctl -n <talos-api-address> -e <talos-api-address> logs ext-tailscale | tail -n 40
 ```
 
-## 3) Activate extension on boot
-
-### Method A (recommended for arm64 boards): ESP UKI swap
-
-Use this on `ampone` and `altra`. This avoids firmware `efivars` write failures observed on ARM boards during in-place `talosctl upgrade`.
-
-1. Create a schematic with `siderolabs/tailscale`.
-2. Download arm64 secureboot ISO for that schematic:
+Confirm all three current nodes are online and reachable through the tailnet:
 
 ```bash
-SCHEMATIC_ID='<your-schematic-id>'
-TALOS_VER='v1.12.4'
-curl -L -o /tmp/metal-arm64-secureboot.iso \
-  "https://factory.talos.dev/image/${SCHEMATIC_ID}/${TALOS_VER}/metal-arm64-secureboot.iso"
+set -euo pipefail
+
+for node in ryzen turin altra; do
+  if ! tailscale ping --c 1 --timeout 10s --until-direct=false "$node" >/dev/null; then
+    printf 'required Tailscale node is offline or unreachable: %s\n' "$node" >&2
+    exit 1
+  fi
+done
 ```
 
-3. Extract UKI from the ISO:
+When validating private registry reachability, use an existing approved smoke-test tag and pull it through the Talos
+node runtime:
 
 ```bash
-tmpdir="$(mktemp -d)"
-bsdtar -xf /tmp/metal-arm64-secureboot.iso -C "$tmpdir"
-ls -la "$tmpdir/EFI/Linux"
-cp "$tmpdir/EFI/Linux/Talos-v1.12.4.efi" /tmp/Talos-v1.12.4.efi
+talosctl -n <talos-api-address> -e <talos-api-address> image pull \
+  registry.ide-newton.ts.net/lab/registry-smoketest:<approved-tag>
 ```
 
-4. Mount ESP from the target node and replace UKI (example: ampone):
+Do not create or publish a new image merely to perform this check.
 
-```bash
-kubectl -n kube-system delete pod efi-tools-203 --ignore-not-found
-kubectl -n kube-system run efi-tools-203 \
-  --image=debian:12-slim \
-  --restart=Never \
-  --overrides='{"spec":{"nodeName":"talos-192-168-1-203","hostPID":true,"containers":[{"name":"efi","image":"debian:12-slim","command":["sleep","infinity"],"securityContext":{"privileged":true},"volumeMounts":[{"name":"hostdev","mountPath":"/dev"}]}],"volumes":[{"name":"hostdev","hostPath":{"path":"/dev"}}]}}'
-kubectl -n kube-system wait --for=condition=Ready pod/efi-tools-203 --timeout=60s
-kubectl -n kube-system cp /tmp/Talos-v1.12.4.efi efi-tools-203:/tmp/Talos-v1.12.4.efi
-kubectl -n kube-system exec efi-tools-203 -- bash -lc '
-  set -euxo pipefail
-  apt-get update
-  apt-get install -y mount util-linux
-  mkdir -p /mnt/efi
-  mount /dev/nvme0n1p1 /mnt/efi
-  ls -la /mnt/efi/EFI/Linux
-  cp /mnt/efi/EFI/Linux/Talos-v1.12.4.efi /mnt/efi/EFI/Linux/Talos-v1.12.4.efi.bak.$(date +%s)
-  cp /tmp/Talos-v1.12.4.efi /mnt/efi/EFI/Linux/Talos-v1.12.4.efi
-  # Prevent duplicate boot menu entries from extra UKIs:
-  [ -f /mnt/efi/EFI/Linux/Talos-v1.12.4~1.efi ] && mv /mnt/efi/EFI/Linux/Talos-v1.12.4~1.efi /mnt/efi/EFI/Linux/Talos-v1.12.4~1.efi.disabled.$(date +%s) || true
-  sync
-  umount /mnt/efi
-'
-kubectl -n kube-system delete pod efi-tools-203
-talosctl -n 192.168.1.203 reboot
-```
+## Acceptance
 
-Repeat for `altra` using its node name and ESP device.
+- Omni reports no unexpected pending machine operation.
+- The expected Tailscale extension is installed and `ext-tailscale` is healthy on each node.
+- Ryzen, Turin, and Altra have the intended tailnet identities and answer a Tailscale-layer ping.
+- A node-level private registry pull succeeds without changing DNS or machine configuration directly.
+- Kubernetes nodes remain `Ready`, and existing registry-backed workloads do not enter `ImagePullBackOff`.
 
-### Method B (standard): Talos in-place upgrade
-
-Use when firmware supports bootloader updates reliably:
-
-```bash
-talosctl upgrade -n 192.168.1.194 -e 192.168.1.194 --image ghcr.io/siderolabs/installer:v1.12.4
-```
-
-## 4) Validation checklist
-
-Run per node:
-
-```bash
-talosctl -n <node-ip> get extensions | rg tailscale
-talosctl -n <node-ip> service ext-tailscale status
-talosctl -n <node-ip> logs ext-tailscale | tail -n 40
-```
-
-Confirm node appears in Tailnet:
-
-```bash
-tailscale status | rg -E 'ryzen|ampone|altra'
-```
-
-Confirm node-level private pull:
-
-```bash
-talosctl image pull -n <node-ip> -e <node-ip> registry.ide-newton.ts.net/lab/registry-smoketest:<tag>
-```
-
-## Failure modes and fixes (observed)
-
-1. `failed to install bootloader ... efivars ... input/output error` on ARM:
-
-- Cause: firmware/efivars write path fails during in-place upgrade.
-- Fix: use Method A (ESP UKI swap), then reboot.
-
-2. Boot menu shows many Talos entries:
-
-- Cause: multiple `.efi` UKIs under `EFI/Linux`; systemd-boot auto-discovers each.
-- Fix: keep one active UKI (`Talos-v1.12.4.efi`), rename extra files (for example `~1.efi`).
-
-3. `ext-tailscale` never stabilizes or node missing in Tailnet:
-
-- Cause: missing extension activation, bad `TS_AUTHKEY`, or wrong tags/ACL.
-- Fix: verify `get extensions`, verify `ExtensionServiceConfig`, rotate auth key, check tailnet ACL grants for tags.
-
-4. `TS_ACCEPT_DNS=true` causes DNS write errors:
-
-- Cause: Talos root FS is immutable.
-- Fix: set `TS_ACCEPT_DNS=false`, manage nameservers via machine config patches.
-
-5. Node identity/IP drift (`202` -> `203`) breaks cluster/LB:
-
-- Cause: node rebooted with different live identity/IP while configs still reference old IP.
-- Fix:
-  - remove stale etcd member and stale Kubernetes node
-  - update local talosconfig endpoints/nodes
-  - update NUC HAProxy backend (`devices/nuc/k8s-api-lb/haproxy.cfg`) to new IP
-  - update docs/manifests that still reference old IP
-
-## Post-change cluster checks
-
-```bash
-kubectl get nodes -o wide
-kubectl -n registry get pod -o wide
-kubectl get pod -n default private-image-test-ampone -o jsonpath='{.status.phase}{"\n"}'
-```
+An Omni sync completing is configuration evidence, not runtime acceptance. Record the exact target machine and readback
+evidence before moving to another node.

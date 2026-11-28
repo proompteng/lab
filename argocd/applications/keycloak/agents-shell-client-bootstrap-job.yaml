@@ -133,7 +133,7 @@ spec:
                 'implicitFlowEnabled': False,
                 'serviceAccountsEnabled': False,
                 'fullScopeAllowed': False,
-                'redirectUris': ['https://chatgpt.com/connector/oauth/*'],
+                'redirectUris': ['https://chatgpt.com/connector_platform_oauth_redirect'],
                 'webOrigins': ['https://chatgpt.com'],
                 'attributes': {
                   'access.token.lifespan': '28800',

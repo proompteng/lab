@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { summarizeLatestReviewStates } from '../github-client'
+import { createGitHubClient, summarizeLatestReviewStates } from '../github-client'
 
 describe('summarizeLatestReviewStates', () => {
   it('lets a later approval supersede an earlier change request from the same reviewer', () => {
@@ -95,5 +95,57 @@ describe('summarizeLatestReviewStates', () => {
         },
       ]),
     ).toEqual({ status: 'pending', requestedChanges: false })
+  })
+})
+
+describe('GitHub request retries', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('does not retry an ordinary API failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('unavailable', { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createGitHubClient({ token: null, apiBaseUrl: 'https://github.test' })
+    await expect(client.getPullRequest('owner', 'repo', 1)).rejects.toThrow('503')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a rate limit and returns the successful result', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('rate limit', {
+          status: 429,
+          headers: { 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) - 10) },
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ number: 1, head: {}, base: {} }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createGitHubClient({ token: null, apiBaseUrl: 'https://github.test' })
+    const result = client.getPullRequest('owner', 'repo', 1)
+    await vi.runAllTimersAsync()
+    expect((await result).number).toBe(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops after five retries when rate limiting persists', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response('rate limit', {
+          status: 429,
+          headers: { 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) - 10) },
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createGitHubClient({ token: null, apiBaseUrl: 'https://github.test' })
+    const failure = expect(client.getPullRequest('owner', 'repo', 1)).rejects.toThrow('429')
+    await vi.runAllTimersAsync()
+    await failure
+    expect(fetchMock).toHaveBeenCalledTimes(6)
   })
 })

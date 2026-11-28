@@ -425,17 +425,43 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
   const updateAgentRunDetails: PrimitivesStore['updateAgentRunDetails'] = async (input) => {
     await ready
     const payloadJson = input.payload ? JSON.stringify(input.payload) : null
+    // Projection observers can finish after cancellation, so preserve intent and terminal evidence atomically.
+    const reviewUpdate = ['needs_iteration', 'needs_human'].includes(input.status)
+    const preserveTerminal = sql<boolean>`not ${reviewUpdate} and (
+      status in ('needs_iteration', 'needs_human') or (
+        status in ('Succeeded', 'Failed', 'Cancelled') and (
+          ${input.status} not in ('Succeeded', 'Failed', 'Cancelled')
+          or (status in ('Succeeded', 'Failed') and ${input.status} = 'Cancelled')
+        )
+      )
+    )`
     const row = await db
       .updateTable('agent_runs')
       .set({
-        status: input.status,
+        status: sql`case
+          when ${preserveTerminal} then status
+          when (payload ? 'cancellation' or coalesce(${payloadJson}::jsonb ? 'cancellation', false))
+            and not ${reviewUpdate} and ${input.status} not in ('Succeeded', 'Failed', 'Cancelled') then 'Cancelling'
+          else ${input.status}
+        end`,
         external_run_id: input.externalRunId ?? sql.ref('external_run_id'),
-        payload: input.payload ? sql`${payloadJson}::jsonb` : sql.ref('payload'),
+        payload: input.payload
+          ? sql`case when ${preserveTerminal} then payload else
+          payload || ${payloadJson}::jsonb || case when payload ? 'cancellation'
+            then jsonb_build_object('cancellation', payload->'cancellation') else '{}'::jsonb end
+        end`
+          : sql.ref('payload'),
         updated_at: sql`now()`,
       })
       .where('id', '=', input.id)
+      .where(sql<boolean>`payload #>> '{resource,metadata,uid}' is null
+        or ${payloadJson}::jsonb #>> '{resource,metadata,uid}' is null
+        or payload #>> '{resource,metadata,uid}' = ${payloadJson}::jsonb #>> '{resource,metadata,uid}'`)
       .returningAll()
       .executeTakeFirst()
+    if (!row && (await db.selectFrom('agent_runs').select('id').where('id', '=', input.id).executeTakeFirst())) {
+      throw new Error('AgentRun resource UID cannot change within a projection')
+    }
     return row ? toAgentRunRecord(row) : null
   }
 

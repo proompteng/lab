@@ -6,6 +6,7 @@ metadata:
   name: cloudflared-deployment
   namespace: cloudflare
 spec:
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       pod: cloudflared
@@ -20,7 +21,7 @@ spec:
             value: "65532 65532"
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf
+          image: cloudflare/cloudflared:2026.11.2@sha256:55c7e3e8d89d5e8d20b75a82f3602cbf98e06db406e73e282073cfdc5a9a3af6
           command:
             - cloudflared
             - tunnel

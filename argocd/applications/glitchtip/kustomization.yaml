@@ -1,0 +1,128 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: glitchtip
+
+resources:
+  - app-secret.yaml
+  - email-externalsecret.yaml
+  - tailscale-ingress.yaml
+  - server-upgrade-backup.yaml
+  - auto-ontology-db-networkpolicy.yaml
+  - glitchtip-audit-views-job.yaml
+
+configMapGenerator:
+  - name: glitchtip-scheduler-health
+    namespace: glitchtip
+    options:
+      disableNameSuffixHash: true
+    files:
+      - scheduler-health.py
+
+helmCharts:
+  - name: glitchtip
+    repo: https://gitlab.com/api/v4/projects/16325141/packages/helm/stable
+    version: 9.2.0
+    releaseName: glitchtip
+    namespace: glitchtip
+    valuesFile: glitchtip-values.yaml
+
+patches:
+  - target:
+      kind: Cluster
+      name: glitchtip-pg
+    patch: |-
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: glitchtip-pg
+        annotations:
+          argocd.argoproj.io/sync-wave: "-2"
+          argocd.argoproj.io/sync-options: Prune=false,Delete=false
+      spec:
+        imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
+        # The pinned chart renders only instances, storage, and bootstrap.
+        managed:
+          roles:
+            - name: glitchtip_audit_ro
+              login: true
+              inherit: false
+              superuser: false
+              createdb: false
+              createrole: false
+              replication: false
+              bypassrls: false
+              passwordSecret:
+                name: glitchtip-audit-ro-db
+        backup:
+          volumeSnapshot:
+            className: rook-ceph-block
+            snapshotOwnerReference: backup
+        postgresql:
+          parameters:
+            wal_buffers: 16MB
+  - target:
+      kind: Job
+      name: glitchtip-migrate
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1hook
+        value: Sync
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "0"
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1hook-delete-policy
+        value: BeforeHookCreation,HookSucceeded
+  - target:
+      kind: Deployment
+      name: glitchtip-web
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: glitchtip-web
+        namespace: glitchtip
+        annotations:
+          argocd.argoproj.io/sync-wave: "1"
+      spec:
+        template:
+          spec:
+            volumes:
+              - name: scheduler-health
+                configMap:
+                  name: glitchtip-scheduler-health
+            containers:
+              - name: glitchtip
+                env:
+                  - name: GLITCHTIP_EMBED_WORKER
+                    $patch: delete
+                volumeMounts:
+                  - name: scheduler-health
+                    mountPath: /opt/glitchtip-health
+                    readOnly: true
+                livenessProbe:
+                  httpGet: null
+                  exec:
+                    command:
+                      - python
+                      - /opt/glitchtip-health/scheduler-health.py
+                  initialDelaySeconds: 120
+                  periodSeconds: 10
+                  timeoutSeconds: 8
+                  # Allow a 65s slowdown plus up to 60s of scheduler retry backoff.
+                  failureThreshold: 15
+  - target:
+      kind: Pod
+      name: glitchtip-test-connection
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: glitchtip-test-connection

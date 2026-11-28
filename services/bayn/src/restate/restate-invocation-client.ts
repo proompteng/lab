@@ -1,5 +1,26 @@
 import { Data, Duration, Effect, Result, Schema } from 'effect'
 
+export const InternalHttpOriginSchema = Schema.Trim.check(
+  Schema.makeFilter(
+    (candidate: string) => {
+      try {
+        const url = new URL(candidate)
+        return (
+          url.protocol === 'http:' &&
+          url.username === '' &&
+          url.password === '' &&
+          url.pathname === '/' &&
+          url.search === '' &&
+          url.hash === ''
+        )
+      } catch {
+        return false
+      }
+    },
+    { expected: 'an uncredentialed internal HTTP origin' },
+  ),
+)
+
 export interface RestateInvocationRequestOptions {
   readonly headers?: Readonly<Record<string, string>>
   readonly timeoutMs: number
@@ -63,11 +84,25 @@ const readBoundedJson = async (response: Response, description: string): Promise
   if (Number.isFinite(declaredLength) && declaredLength > restateInvocationMaximumResponseBytes) {
     throw new Error(`${description} returned an oversized response`)
   }
-  const bytes = new Uint8Array(await response.arrayBuffer())
-  if (bytes.byteLength > restateInvocationMaximumResponseBytes) {
-    throw new Error(`${description} returned an oversized response`)
+  const reader = response.body?.getReader()
+  if (reader === undefined) throw new Error(`${description} returned an empty response`)
+  const decoder = new TextDecoder()
+  let byteLength = 0
+  let text = ''
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      byteLength += chunk.value.byteLength
+      if (byteLength > restateInvocationMaximumResponseBytes) {
+        throw new Error(`${description} returned an oversized response`)
+      }
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    return JSON.parse(text + decoder.decode()) as unknown
+  } finally {
+    reader.releaseLock()
   }
-  return JSON.parse(new TextDecoder().decode(bytes)) as unknown
 }
 
 export const sendRestateInvocation = (
@@ -84,11 +119,15 @@ export const sendRestateInvocation = (
         body: JSON.stringify(body),
         signal: requestSignal(signal, options.timeoutMs),
       })
-      if (!response.ok) throw new Error(`Restate invocation send returned HTTP ${response.status}`)
-      const candidate = await readBoundedJson(response, 'Restate invocation send')
-      const decoded = decodeRestateAcceptedInvocation(candidate)
-      if (Result.isFailure(decoded)) throw new Error('Restate invocation send returned an invalid receipt')
-      return decoded.success
+      try {
+        if (!response.ok) throw new Error(`Restate invocation send returned HTTP ${response.status}`)
+        const candidate = await readBoundedJson(response, 'Restate invocation send')
+        const decoded = decodeRestateAcceptedInvocation(candidate)
+        if (Result.isFailure(decoded)) throw new Error('Restate invocation send returned an invalid receipt')
+        return decoded.success
+      } finally {
+        await response.body?.cancel()
+      }
     },
     catch: (cause) =>
       new RestateInvocationClientError({
@@ -112,15 +151,16 @@ export const awaitRestateInvocation = (
             method: 'GET',
             signal: requestSignal(signal, options.requestTimeoutMs),
           })
-          if (response.status === 470) {
+          try {
+            if (response.status === 470) return undefined
+            if (!response.ok) throw new Error(`Restate invocation output returned HTTP ${response.status}`)
+            if (response.headers.get('x-restate-id') !== invocationId) {
+              throw new Error('Restate invocation output identity does not match the accepted invocation')
+            }
+            return await readBoundedJson(response, 'Restate invocation output')
+          } finally {
             await response.body?.cancel()
-            return undefined
           }
-          if (!response.ok) throw new Error(`Restate invocation output returned HTTP ${response.status}`)
-          if (response.headers.get('x-restate-id') !== invocationId) {
-            throw new Error('Restate invocation output identity does not match the accepted invocation')
-          }
-          return readBoundedJson(response, 'Restate invocation output')
         },
         catch: (cause) =>
           new RestateInvocationClientError({

@@ -1,38 +1,37 @@
+import { restateServicePrefixConfig } from '../restate/execution-service-names'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Option, Ref, Result, Schedule } from 'effect'
+import { Config, Effect, Ref, Result, Schedule } from 'effect'
+import { HttpClient } from 'effect/http'
 
-import { makeApplicationPlan, type ApplicationPlanFor } from '../app'
-import { BrokerSession } from '../broker/alpaca'
-import type { LoadedRuntimeConfig } from '../config'
-import { CycleObservability } from '../cycle/store'
-import { readForwardPerformanceReceiptByGeneration } from '../db/forward-performance-receipt-postgres'
-import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store'
+import { makeApplicationPlan, type ApplicationPlan } from '../app'
+import { BrokerRead } from '../broker/alpaca/model'
+import type { LoadedRuntimeConfig } from '../config/model'
+import { CycleObservability } from '../cycle/store/observability'
+import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store/contract'
 import { postgresHealthCheck } from '../db/postgres-client'
 import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 import { ExecutionControllerStatusStore } from '../execution/controller-status'
 import { BrokerAccess } from '../execution/authority'
-import { checkHealth, type CycleObservationBinding } from '../health'
+import { checkHealth } from '../health/program'
+import { makeExecutionControllerHealthReader } from '../health/controller-client'
+import { type CycleObservationBinding } from '../health/model'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
-import { IntradayMarketData } from '../market-data'
 import { initialState, type RuntimeState } from '../runtime-state'
-import { currentUtcInstant } from '../time'
-import { observeCycleGenerationHash, runtimeBroker } from './lifecycle'
+import { observeCycleGenerationHash } from '../execution/capital-grant-algebra'
+import { InternalHttpOriginSchema } from '../restate/restate-invocation-client'
 import {
-  capitalActivationOperationalError,
-  completedCapitalActivation,
   decodeConfiguredCapitalActivation,
   pendingCapitalActivation,
   readBoundCapitalActivationGeneration,
-  readCompletedExecutionLifecycle,
   readOnlyExecutionPolicy,
   realizedCapitalActivation,
   researchCapitalRecoveryRequestIsCompatible,
   type ConfiguredCapitalActivation,
 } from './capital-activation'
 
-const readOnlyPlan = (plan: ApplicationPlanFor<'AutonomousService'>): ApplicationPlanFor<'AutonomousService'> => {
+const readOnlyPlan = (plan: ApplicationPlan): ApplicationPlan => {
   const config = {
     ...plan.config,
     execution: readOnlyExecutionPolicy(plan),
@@ -42,7 +41,7 @@ const readOnlyPlan = (plan: ApplicationPlanFor<'AutonomousService'>): Applicatio
     parameterHash: plan.parameterHash,
     strategy: plan.strategy,
     strategyProtocolHash: plan.strategyProtocolHash,
-  }) as ApplicationPlanFor<'AutonomousService'>
+  }) as ApplicationPlan
 }
 
 const configuredCapitalActivation = (
@@ -53,25 +52,15 @@ const configuredCapitalActivation = (
     ? Result.succeed(null)
     : decodeConfiguredCapitalActivation(serialized, serializedBuildLineage)
 
-const readReceiptHash = (sql: PgClient.PgClient, authorityGenerationHash: string) =>
-  readForwardPerformanceReceiptByGeneration(sql, authorityGenerationHash).pipe(
-    Effect.map(Option.map((receipt) => receipt.receiptHash)),
-    Effect.mapError((cause) =>
-      capitalActivationOperationalError('completed execution lifecycle receipt read failed', cause),
-    ),
-  )
-
 export interface ReadOnlyCapitalActivationStore {
-  readonly authority: AuthorityGenerationStoreShape
-  readonly readReceiptHash: (authorityGenerationHash: string) => ReturnType<typeof readReceiptHash>
+  readonly authority: Pick<AuthorityGenerationStoreShape, 'readAuthorityState' | 'readResearchAuthorityGeneration'>
 }
 
 const makeReadOnlyCapitalActivationStore = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   sql: PgClient.PgClient,
 ): ReadOnlyCapitalActivationStore => ({
   authority: makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), plan.config.alpaca.identity),
-  readReceiptHash: (generationHash) => readReceiptHash(sql, generationHash),
 })
 
 const logActivationUnavailable = (reason: string, cause?: unknown): Effect.Effect<void> =>
@@ -88,16 +77,16 @@ const logActivationUnavailable = (reason: string, cause?: unknown): Effect.Effec
   )
 
 export const refreshReadOnlyCapitalActivation = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   state: Ref.Ref<RuntimeState>,
   store: ReadOnlyCapitalActivationStore,
 ): Effect.Effect<void> => {
-  const publishUnavailable = (reason: string): Effect.Effect<void> =>
+  const publishUnavailable = (reason: string, cause?: unknown): Effect.Effect<void> =>
     Effect.gen(function* () {
       const request = Result.isSuccess(configured) ? (configured.success?.request ?? null) : null
       yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
-      yield* logActivationUnavailable(reason)
+      yield* logActivationUnavailable(reason, cause)
     })
 
   return Effect.gen(function* () {
@@ -117,24 +106,12 @@ export const refreshReadOnlyCapitalActivation = (
 
     const observePlan = readOnlyPlan(plan)
     const { request, buildContinuation, buildLineage } = configured.success
-    const observedAt = yield* currentUtcInstant
-    const currentRequest = researchCapitalRecoveryRequestIsCompatible(request, observePlan, observedAt, true)
+    const currentRequest = researchCapitalRecoveryRequestIsCompatible(request, observePlan)
     if (Result.isFailure(currentRequest)) {
       yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
       return yield* logActivationUnavailable('REQUEST_NOT_CURRENT')
     }
 
-    const completed = yield* readCompletedExecutionLifecycle(
-      observePlan,
-      request,
-      buildContinuation,
-      buildLineage,
-      store.authority,
-      store.readReceiptHash,
-    )
-    if (completed !== undefined) {
-      return yield* completedCapitalActivation(state, request, completed.authorityGenerationHash, completed.receiptHash)
-    }
     const generation = yield* readBoundCapitalActivationGeneration(
       observePlan,
       request,
@@ -148,7 +125,7 @@ export const refreshReadOnlyCapitalActivation = (
       duration: plan.config.operationTimeoutMs,
       orElse: () => publishUnavailable('DURABLE_PROJECTION_TIMEOUT'),
     }),
-    Effect.catch(() => publishUnavailable('DURABLE_PROJECTION_UNAVAILABLE')),
+    Effect.catch((cause) => publishUnavailable('DURABLE_PROJECTION_UNAVAILABLE', cause)),
     Effect.withLogSpan('read-only-capital-projection'),
   )
 }
@@ -164,7 +141,7 @@ export const readOnlyCycleObservationId = (
 export const resolveReadOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   activationRequestRequired: boolean,
-  authority: AuthorityGenerationStoreShape,
+  authority: Pick<AuthorityGenerationStoreShape, 'readAuthorityState'>,
 ): Effect.Effect<CycleObservationBinding, ExecutionStoreError> => {
   const configuredId = readOnlyCycleObservationId(configured)
   if (
@@ -180,35 +157,27 @@ export const resolveReadOnlyCycleObservationId = (
     )
   }
   const readAuthorityState = authority.readAuthorityState
-  return readAuthorityState === undefined
-    ? Effect.fail(
-        new ExecutionStoreError({
-          operation: 'authority',
-          failure: 'invariant',
-          message: 'read-only status authority projection is unavailable',
-        }),
-      )
-    : readAuthorityState.pipe(
-        Effect.flatMap((current) =>
-          Effect.fromResult(observeCycleGenerationHash(current)).pipe(
-            Effect.mapError(
-              (message) =>
-                new ExecutionStoreError({
-                  operation: 'authority',
-                  failure: 'invariant',
-                  message,
-                }),
-            ),
-            Effect.map((bindingId): CycleObservationBinding => ({ _tag: 'Exact', bindingId })),
-          ),
+  return readAuthorityState.pipe(
+    Effect.flatMap((current) =>
+      Effect.fromResult(observeCycleGenerationHash(current)).pipe(
+        Effect.mapError(
+          (message) =>
+            new ExecutionStoreError({
+              operation: 'authority',
+              failure: 'invariant',
+              message,
+            }),
         ),
-      )
+        Effect.map((bindingId): CycleObservationBinding => ({ _tag: 'Exact', bindingId })),
+      ),
+    ),
+  )
 }
 
 export const resolveReadOnlyCycleObservationIdForHealth = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   activationRequestRequired: boolean,
-  authority: AuthorityGenerationStoreShape,
+  authority: Pick<AuthorityGenerationStoreShape, 'readAuthorityState'>,
   operationTimeoutMs: number,
 ): Effect.Effect<CycleObservationBinding> =>
   resolveReadOnlyCycleObservationId(configured, activationRequestRequired, authority).pipe(
@@ -223,7 +192,7 @@ export const resolveReadOnlyCycleObservationIdForHealth = (
   )
 
 export const readOnlyExecutionControllerBinding = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): { readonly controllerKey: string; readonly planHash: string } | undefined => {
   const planHash = plan.config.expectedExecutionControllerPlanHash
   return planHash === undefined
@@ -234,14 +203,13 @@ export const readOnlyExecutionControllerBinding = (
       }
 }
 
-export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlan) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    const marketData = yield* IntradayMarketData
     const journal = yield* Journal
     const cycleObservability = yield* CycleObservability
     const controllerStatus = yield* ExecutionControllerStatusStore
-    const brokerSession = yield* BrokerSession
+    const brokerRead = yield* BrokerRead
     const observePlan = readOnlyPlan(plan)
     const configured = configuredCapitalActivation(
       plan.config.capitalActivationRequestJson,
@@ -250,6 +218,19 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
     const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
     const activationRequestRequired = plan.config.execution.brokerAccess === BrokerAccess.Mutation
     const controller = readOnlyExecutionControllerBinding(plan)
+    const controllerProbe =
+      controller === undefined
+        ? undefined
+        : {
+            controllerKey: controller.controllerKey,
+            read: makeExecutionControllerHealthReader(
+              yield* HttpClient.HttpClient,
+              yield* Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN'),
+              controllerStatus.read,
+              observePlan.config.operationTimeoutMs,
+              yield* restateServicePrefixConfig,
+            ),
+          }
     const state = yield* Ref.make(
       initialState({
         broker: {
@@ -262,7 +243,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
         ...(controller === undefined ? {} : { executionController: controller }),
       }),
     )
-    const dependencies = { marketData, journal, postgresql: postgresHealthCheck(sql), cycleObservability }
+    const dependencies = { journal, postgresql: postgresHealthCheck(sql), cycleObservability }
     yield* refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)
     yield* serveHttp(observePlan.config, state, observePlan.strategy.provenance, observePlan.config.build.verification)
 
@@ -280,12 +261,16 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
               observePlan.config,
               state,
               dependencies,
-              runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
+              {
+                read: brokerRead,
+                expectedAccountId: observePlan.config.alpaca.expectedAccountId,
+                executionEligible: current.capitalActivation?._tag === 'Realized',
+                executionDisabledReason:
+                  current.capitalActivation?._tag === 'Realized' ? null : 'BROKER_ACCESS_READ_ONLY',
+              },
               undefined,
               cycleObservation,
-              controller === undefined
-                ? undefined
-                : { controllerKey: controller.controllerKey, read: controllerStatus.read },
+              controllerProbe,
             ),
           ),
         ),

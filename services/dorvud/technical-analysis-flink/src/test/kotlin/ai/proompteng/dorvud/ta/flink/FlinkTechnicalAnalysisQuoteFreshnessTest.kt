@@ -11,6 +11,17 @@ import kotlin.test.assertTrue
 
 class FlinkTechnicalAnalysisQuoteFreshnessTest {
   @Test
+  fun `quote state only accepts strictly newer events`() {
+    val currentTs = Instant.parse("2026-05-07T16:13:10Z")
+    val current = TimedQuoteState(eventTs = currentTs, payload = quotePayload(currentTs))
+
+    assertTrue(quoteStateAccepts(null, currentTs))
+    assertTrue(quoteStateAccepts(current, currentTs.plusNanos(1)))
+    assertFalse(quoteStateAccepts(current, currentTs))
+    assertFalse(quoteStateAccepts(current, currentTs.minusNanos(1)))
+  }
+
+  @Test
   fun `minute bar freshness uses the interval end`() {
     val barStart = Instant.parse("2026-05-07T16:13:00Z")
     val quoteTs = barStart.plusSeconds(59)

@@ -32,6 +32,27 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - port: 8000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:
@@ -111,6 +132,13 @@ spec:
     - from:
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: bayn-daily-scorecard
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
               cnpg.io/cluster: bayn-db
       ports:
         - port: 5432
@@ -158,6 +186,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: bayn-egress-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app.kubernetes.io/name: bayn-egress-proxy
     app.kubernetes.io/part-of: bayn
@@ -171,13 +201,41 @@ spec:
   ingress:
     - from:
         - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [torghut-ws, torghut-ws-sip]
+      ports:
+        - port: 3130
+          protocol: TCP
+    - from:
+        - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-execution-controller
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-research
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-broker-feed
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-macro-daily-sleeves
       ports:
         - port: 3128
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opencode-research
+      ports:
+        - port: 3129
           protocol: TCP
   egress:
     - to:

@@ -1,0 +1,837 @@
+import { makeJevDispatch } from '../jev/evaluation'
+import { recordEntryVisualClaim } from './entry-inference-postgres'
+import { insertJevEvaluationReceipts, insertJevEvaluationResolutions } from './jev-evaluation-postgres'
+import { PgClient } from '@effect/sql-pg'
+import { Array as Arr, Cause, Clock, Effect, Exit, Layer, Option, Schema } from 'effect'
+import type { Statement } from 'effect/sql'
+
+import { operationalError } from '../errors'
+import { canonicalHashV1Result } from '../hash'
+import {
+  decodeJevBatchPlan,
+  decodeJevBatchResult,
+  JevCandidatePlanStatus,
+  JevCandidateResultStatus,
+  makeJevBatchResult,
+  type JevBatchPlan,
+  type JevBatchResult,
+} from '../jev/batch'
+import {
+  JevBatchExpired,
+  JevBatchStore,
+  isVerifiedJevCompletion,
+  readClaimedJevSource,
+  retainJevBatchPreparation,
+  type JevBatchAdmissionOptions,
+  type JevBatchEvidence,
+} from '../jev/batch-evaluation'
+import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest } from '../jev/evidence'
+import { jevInferenceWorkChannel } from '../jev/inference-work'
+import {
+  decodeJevResolution,
+  makeJevResolution,
+  JevResolutionStatus,
+  type JevEvaluationEvidence,
+} from '../jev/resolution'
+import { isPreparedJevBatch, type PreparedJevBatch } from '../jev/trading-signals'
+import { Sha256Schema, SymbolSchema, UtcDatabaseInstantSchema, strictParseOptions } from '../schemas'
+import { utcInstantFromEpochMillis } from '../time'
+import { withObservedStage } from '../telemetry'
+import { readJevEvaluationEvidence } from './jev-evaluation-read'
+import { recordReproducedJevObservation } from './candidate-observation-postgres'
+
+const StoredRow = Schema.Struct({ plan: Schema.Unknown, result: Schema.NullOr(Schema.Unknown) })
+const StoredEvaluationRow = Schema.Struct({
+  request_id: Sha256Schema,
+  request: Schema.Unknown,
+  receipt: Schema.NullOr(Schema.Unknown),
+  resolution: Schema.NullOr(Schema.Unknown),
+})
+const OneBatch = Schema.Tuple([Schema.Struct({ batch_id: Sha256Schema })])
+const Matches = Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })])
+const SettlementBatchIds = Schema.Array(
+  Schema.Struct({
+    batch_id: Sha256Schema,
+    terminal_at: UtcDatabaseInstantSchema,
+  }),
+)
+
+/** Keep recovery work bounded; the native expense owner will retry the remainder next pass. */
+export const jevTerminalBatchSettlementLimit = 64
+/**
+ * A malformed historical plan must not pin the first settlement page forever. A
+ * pass can walk four keyset pages when a page contains failures, but never turns
+ * the background owner into an unbounded history scan. The cursor is advanced
+ * over every fetched row, so a fresh owner pass reaches later valid plans even
+ * when the oldest page is permanently undecodable.
+ */
+const jevTerminalBatchSettlementScanPages = 4
+
+export const makeJevBatchStore = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  let lastAdmitted: PreparedJevBatch | undefined
+  const attachPreparation = (evidence: JevBatchEvidence) =>
+    lastAdmitted === undefined ? evidence : retainJevBatchPreparation(evidence, lastAdmitted)
+  const persistError = (cause: unknown) =>
+    operationalError({
+      component: 'database',
+      operation: 'jev-batch',
+      message: 'Jev batch evidence could not be durably verified',
+      cause,
+    })
+  const requireAutocommit = Effect.gen(function* () {
+    if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
+      return yield* persistError('Jev batches must commit independently before inference or decision use')
+  })
+
+  const read = (input: string) =>
+    Effect.gen(function* () {
+      const batchId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
+      const rows = yield* Schema.decodeUnknownEffect(
+        Schema.Array(StoredRow),
+        strictParseOptions,
+      )(
+        yield* sql`
+        SELECT plan.payload AS plan, result.payload AS result
+        FROM jev_batch_plans AS plan LEFT JOIN jev_batch_results AS result USING (batch_id)
+        WHERE plan.batch_id = ${batchId}
+      `,
+      )
+      const row = rows[0]
+      if (row === undefined) return null
+      const plan = yield* Effect.fromResult(decodeJevBatchPlan(row.plan))
+      if (plan.batchId !== batchId) return yield* persistError('Stored Jev batch identity differs')
+      if (row.result === null) return attachPreparation({ plan, result: null })
+      const result = yield* Effect.fromResult(decodeJevBatchResult(plan, row.result))
+      const { evidence: evidenceByRequestId } = yield* readJevEvaluationEvidence(
+        sql,
+        result.candidates.flatMap((candidate) =>
+          candidate.status === JevCandidateResultStatus.Excluded ? [] : [candidate.requestId],
+        ),
+      )
+      for (const candidate of result.candidates) {
+        if (candidate.status === JevCandidateResultStatus.Excluded) continue
+        const evidence = evidenceByRequestId.get(candidate.requestId) ?? null
+        if (candidate.status === JevCandidateResultStatus.Unattempted) {
+          if (evidence !== null) return yield* persistError('A sealed unattempted candidate has a request claim')
+        } else if (
+          evidence?.resolution?.resolutionHash !== candidate.resolution.resolutionHash ||
+          (candidate.receipt !== null && evidence.receipt?.receiptHash !== candidate.receipt.receiptHash)
+        )
+          return yield* persistError('Jev batch differs from its independently committed candidate evidence')
+      }
+      return attachPreparation({ plan, result })
+    }).pipe(Effect.mapError(persistError))
+
+  const begin = (batch: PreparedJevBatch, options?: JevBatchAdmissionOptions) =>
+    Effect.gen(function* () {
+      yield* requireAutocommit
+      if (!isPreparedJevBatch(batch)) return yield* persistError('Jev admission requires a prepared batch')
+      const { plan, source } = batch
+      yield* Effect.annotateCurrentSpan({
+        'bayn.jev.batch_id': plan.batchId,
+        'bayn.cycle.id': plan.cycleId,
+        'bayn.jev.observed_at': plan.observedAt,
+        'bayn.jev.expires_at': plan.expiresAt,
+      })
+      const observations = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ payload: Schema.Unknown })),
+        strictParseOptions,
+      )(yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${plan.observationHash}`)
+      const storedObservation = observations[0]
+      if (
+        storedObservation !== undefined &&
+        (yield* Effect.fromResult(canonicalHashV1Result(storedObservation.payload))) !== source.verified.contentHash
+      )
+        return yield* persistError('Jev batch observation bytes differ from their stored hash')
+      const existing = yield* read(plan.batchId)
+      if (existing !== null) {
+        yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'recorded')
+        lastAdmitted = batch
+        return { ...existing, dispatches: [] }
+      }
+      const checkWindow = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        const checkedAt = utcInstantFromEpochMillis(now)
+        yield* Effect.annotateCurrentSpan({
+          'bayn.jev.admission.checked_at': checkedAt,
+          'bayn.jev.admission.lag_ms': now - Date.parse(plan.observedAt),
+        })
+        if (now < Date.parse(plan.observedAt))
+          return yield* persistError('Jev batch clock regressed before observation')
+        const expiresAt = Math.min(
+          Date.parse(plan.expiresAt),
+          options?.admissionDeadlineAt ?? Date.parse(plan.expiresAt),
+        )
+        if (now >= expiresAt) {
+          yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'expired')
+          return yield* new JevBatchExpired({
+            batchId: plan.batchId,
+            cycleId: plan.cycleId,
+            observedAt: plan.observedAt,
+            expiresAt: utcInstantFromEpochMillis(expiresAt),
+            checkedAt,
+          })
+        }
+        return checkedAt
+      })
+      yield* checkWindow
+      const dispatches = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* recordReproducedJevObservation(sql, source.verified, plan.schemaVersion)
+          const checkedAt = yield* checkWindow
+          yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
+          const requests = plan.candidates.flatMap((candidate) =>
+            candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request] : [],
+          )
+          if (!Arr.isArrayNonEmpty(requests)) {
+            const result = yield* Effect.fromResult(
+              makeJevBatchResult(plan, {
+                schemaVersion: 'bayn.jev-batch-result.v1',
+                batchId: plan.batchId,
+                completedAt: checkedAt,
+                candidates: plan.candidates.map(({ symbol }) => ({
+                  symbol,
+                  status: JevCandidateResultStatus.Excluded,
+                })),
+              }),
+            )
+            // With no inference claims to wait for, admission can commit the plan and
+            // final result together. RETURNING keeps a racing retry from rewriting an
+            // existing plan or result, including unfinished plans from older workers.
+            yield* sql`
+          WITH admitted AS (
+            INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
+            VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
+            ON CONFLICT DO NOTHING
+            RETURNING batch_id
+          )
+          INSERT INTO jev_batch_results (batch_id, result_hash, payload)
+          SELECT admitted.batch_id, ${result.resultHash}, ${sql.json(result)} FROM admitted
+        `
+          } else {
+            const inserted = yield* Schema.decodeUnknownEffect(
+              Schema.Array(Schema.Struct({ batch_id: Sha256Schema })),
+              strictParseOptions,
+            )(
+              yield* sql`
+        INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
+        VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
+        ON CONFLICT DO NOTHING RETURNING batch_id
+      `,
+            )
+            if (inserted.length === 0) return []
+            yield* sql`INSERT INTO jev_evaluation_requests ${sql.insert(
+              Arr.map(requests, (request) => ({
+                request_id: request.requestId,
+                cycle_id: request.cycleId,
+                authority_generation_hash: request.authorityGenerationHash,
+                payload: sql.json(request),
+              })),
+            )}`
+            const dispatches = []
+            for (const request of requests) {
+              const dispatch = yield* Effect.fromResult(makeJevDispatch({ request, claimedAt: checkedAt }))
+              if (dispatch.visualClaim !== null) {
+                // This transaction inserted the request. Its checkpoint is empty and
+                // no other transaction can create dependent rows before this commit.
+                const admitted = yield* recordEntryVisualClaim(sql, dispatch.visualClaim, {
+                  request,
+                  checkpoint: { claims: [], terminals: [], skips: [] },
+                })
+                if (!admitted.dispatchAllowed)
+                  return yield* persistError('Initial visual claim could not be admitted with its request')
+              }
+              dispatches.push(dispatch)
+            }
+            if (options?.deferProviderDispatch === true) {
+              const reference = options.sourceReference
+              const manifest = reference.manifest
+              if (
+                manifest.snapshotId !== plan.snapshotId ||
+                (yield* Effect.fromResult(canonicalHashV1Result(manifest))) !==
+                  (yield* Effect.fromResult(canonicalHashV1Result(source.verified.snapshot.manifest)))
+              )
+                return yield* persistError('Deferred inference source differs from its verified live reference')
+              const referenceTable =
+                reference.schemaVersion === 'bayn.simulated-snapshot-reference.v2'
+                  ? 'simulated_snapshot_references'
+                  : 'streaming_snapshot_references'
+              yield* sql`INSERT INTO ${sql(referenceTable)} (snapshot_id, schema_version, content_hash, observed_at, manifest)
+                VALUES (${manifest.snapshotId}, ${reference.schemaVersion}, ${manifest.contentHash},
+                  ${manifest.observedAt}::timestamptz, ${sql.json(manifest)})
+                ON CONFLICT (snapshot_id) DO NOTHING`
+              const [match] = yield* Schema.decodeUnknownEffect(
+                Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })]),
+                strictParseOptions,
+              )(
+                yield* sql`SELECT EXISTS (SELECT 1 FROM ${sql(referenceTable)}
+                WHERE snapshot_id = ${manifest.snapshotId} AND schema_version = ${reference.schemaVersion}
+                  AND content_hash = ${manifest.contentHash} AND observed_at = ${manifest.observedAt}::timestamptz
+                  AND manifest = ${sql.json(manifest)}) AS matches`,
+              )
+              if (!match.matches)
+                return yield* persistError('Deferred inference reference conflicts with recorded source')
+              yield* sql`WITH admitted AS (
+                INSERT INTO jev_inference_work (batch_id, dispatches, admission_deadline_at)
+                VALUES (${plan.batchId}, ${sql.json(
+                  dispatches.map(({ request, claimedAt, visualClaim }) => ({
+                    requestId: request.requestId,
+                    claimedAt,
+                    visualClaim,
+                  })),
+                )}, ${options.admissionDeadlineAt === undefined ? null : utcInstantFromEpochMillis(options.admissionDeadlineAt)}::timestamptz)
+                RETURNING batch_id
+              )
+              SELECT pg_notify(${jevInferenceWorkChannel}, '') FROM admitted`
+              return null
+            }
+            return dispatches
+          }
+          return []
+        }),
+      )
+      const saved = yield* read(plan.batchId)
+      if (saved === null) return yield* persistError('Committed Jev batch plan is missing')
+      lastAdmitted = batch
+      return { ...saved, dispatches }
+    }).pipe(
+      Effect.mapError((cause) => (cause instanceof JevBatchExpired ? cause : persistError(cause))),
+      withObservedStage('bayn.jev.batch-admission', { dependency: 'postgresql' }),
+    )
+
+  const recordResult = (plan: JevBatchPlan, result: JevBatchResult) =>
+    Effect.gen(function* () {
+      const rows = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ matches: Schema.Literal(true) })),
+        strictParseOptions,
+      )(
+        yield* sql`WITH submitted AS (
+          SELECT ${plan.batchId}::text AS batch_id, ${result.resultHash}::text AS result_hash,
+            ${sql.json(result)}::jsonb AS payload
+        ), inserted AS (
+          INSERT INTO jev_batch_results (batch_id, result_hash, payload)
+          SELECT batch_id, result_hash, payload FROM submitted
+          ON CONFLICT DO NOTHING RETURNING batch_id, result_hash, payload
+        )
+        SELECT inserted.batch_id=submitted.batch_id AND inserted.result_hash=submitted.result_hash
+          AND inserted.payload=submitted.payload AS matches
+        FROM inserted CROSS JOIN submitted`,
+      )
+      if (rows.length === 1) return { plan, result } satisfies JevBatchEvidence
+      const saved = yield* read(plan.batchId)
+      if (saved === null || saved.result === null)
+        return yield* persistError('A competing Jev batch result did not commit')
+      return saved
+    })
+
+  const finish = (input: string) =>
+    Effect.gen(function* () {
+      yield* requireAutocommit
+      const batchId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
+      // An all-excluded admission or normal cohort completion may have committed the
+      // final batch atomically. Its immutable result needs no new durability wait.
+      const committed = yield* read(batchId)
+      if (committed !== null && committed.result !== null) return committed
+      if (committed !== null) {
+        const requests = committed.plan.candidates.flatMap((candidate) =>
+          candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request.requestId] : [],
+        )
+        const { evidence, observationHashes } = yield* readJevEvaluationEvidence(sql, requests)
+        const candidates: JevBatchResult['candidates'][number][] = []
+        for (const candidate of committed.plan.candidates) {
+          if (candidate.status === JevCandidatePlanStatus.Excluded) {
+            candidates.push({ symbol: candidate.symbol, status: JevCandidateResultStatus.Excluded })
+            continue
+          }
+          const recorded = evidence.get(candidate.request.requestId)
+          if (recorded === undefined || recorded.resolution === null) break
+          candidates.push({
+            symbol: candidate.symbol,
+            status: JevCandidateResultStatus.Resolved,
+            requestId: candidate.request.requestId,
+            receipt: recorded.receipt,
+            resolution: recorded.resolution,
+          })
+        }
+        if (requests.length > 0 && candidates.length === committed.plan.candidates.length) {
+          if (!observationHashes.includes(committed.plan.observationHash))
+            return yield* persistError('Jev batch observation is not among its verified candidate sources')
+          // Do not append a second whole-cohort validation to the final receipt's
+          // synchronous chunk while competing finalizers still await socket I/O.
+          yield* Effect.yieldNow
+          const now = yield* Clock.currentTimeMillis
+          if (now < Date.parse(committed.plan.observedAt))
+            return yield* persistError('Jev batch clock regressed before observation')
+          const result = yield* Effect.fromResult(
+            makeJevBatchResult(committed.plan, {
+              schemaVersion: 'bayn.jev-batch-result.v1',
+              batchId,
+              completedAt: utcInstantFromEpochMillis(now),
+              candidates,
+            }),
+          )
+          // The plan, observation, requests and resolutions are already committed
+          // immutable evidence. Only unresolved claims require recovery locks.
+          return yield* recordResult(committed.plan, result)
+        }
+      }
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* Schema.decodeUnknownEffect(
+            OneBatch,
+            strictParseOptions,
+          )(
+            yield* sql`
+          SELECT batch_id FROM jev_batch_plans WHERE batch_id = ${batchId} FOR NO KEY UPDATE
+        `,
+          )
+          const saved = yield* read(batchId)
+          if (saved === null) return yield* persistError('Jev batch plan is missing during finalization')
+          if (saved.result !== null) return saved
+          const observations = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]),
+            strictParseOptions,
+          )(
+            yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${saved.plan.observationHash}`,
+          )
+          if ((yield* Effect.fromResult(canonicalHashV1Result(observations[0].payload))) !== saved.plan.observationHash)
+            return yield* persistError('Jev batch observation bytes differ from their stored hash')
+          const requested = saved.plan.candidates.flatMap((candidate) =>
+            candidate.status === JevCandidatePlanStatus.Requested
+              ? [{ requestId: candidate.request.requestId, symbol: candidate.symbol }]
+              : [],
+          )
+          const requestIds = requested.map((candidate) => candidate.requestId)
+          if (requested.length > 0) {
+            const rows = yield* Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  content_hash: Sha256Schema,
+                  payload: Schema.Unknown,
+                  matching_symbols: Schema.Array(SymbolSchema),
+                }),
+              ),
+              strictParseOptions,
+            )(
+              yield* sql`
+                SELECT observation.content_hash, observation.payload,
+                  ARRAY(
+                    SELECT candidate.symbol
+                    FROM jsonb_array_elements_text(observation.payload->'manifest'->'candidateSymbols') AS candidate(symbol)
+                    WHERE candidate.symbol IN ${sql.in(requested.map((candidate) => candidate.symbol))}
+                      AND NOT EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(observation.payload->'manifest'->'candidateExclusions') AS excluded
+                        WHERE excluded->>'symbol' = candidate.symbol
+                      )
+                  ) AS matching_symbols
+                FROM intraday_candidate_observations AS observation
+                WHERE observation.cycle_id = ${saved.plan.cycleId}
+                  AND observation.observed_at = ${saved.plan.observedAt}::timestamptz
+                  AND observation.payload->>'authorityGenerationHash' = ${saved.plan.authorityGenerationHash}
+                  AND observation.payload->>'observedAt' = ${saved.plan.observedAt}
+                  AND observation.payload->'manifest'->>'observedAt' = ${saved.plan.observedAt}
+                  AND observation.payload->'manifest'->>'snapshotId' = ${saved.plan.snapshotId}
+              `,
+            )
+            const matched = new Set<string>()
+            for (const row of rows) {
+              if (row.matching_symbols.length === 0) continue
+              if ((yield* Effect.fromResult(canonicalHashV1Result(row.payload))) !== row.content_hash)
+                return yield* persistError('Jev candidate observation content differs from its committed identity')
+              for (const symbol of row.matching_symbols) matched.add(symbol)
+            }
+            if (requested.some((candidate) => !matched.has(candidate.symbol)))
+              return yield* persistError('Jev batch request has no matching persisted candidate observation')
+          }
+          const rows =
+            requestIds.length === 0
+              ? []
+              : yield* Effect.gen(function* () {
+                  yield* sql`
+                    SELECT request_id FROM jev_evaluation_requests
+                    WHERE request_id IN ${sql.in(requestIds)} FOR UPDATE
+                  `
+                  return yield* Schema.decodeUnknownEffect(
+                    Schema.Array(StoredEvaluationRow),
+                    strictParseOptions,
+                  )(
+                    yield* sql`
+                    SELECT request.request_id, request.payload AS request, receipt.payload AS receipt,
+                      resolution.payload AS resolution
+                    FROM jev_evaluation_requests AS request
+                    LEFT JOIN jev_evaluation_receipts AS receipt USING (request_id)
+                    LEFT JOIN jev_evaluation_resolutions AS resolution USING (request_id)
+                    WHERE request.request_id IN ${sql.in(requestIds)}
+                  `,
+                  )
+                })
+          const evidenceByRequestId = new Map<string, JevEvaluationEvidence>()
+          for (const row of rows) {
+            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.request))
+            if (request.requestId !== row.request_id) return yield* persistError('Stored Jev request identity differs')
+            const receipt =
+              row.receipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, row.receipt))
+            const resolution =
+              row.resolution === null
+                ? null
+                : yield* Effect.fromResult(decodeJevResolution(request, receipt, row.resolution))
+            if (receipt !== null && resolution === null)
+              return yield* persistError('A Jev receipt has no committed resolution')
+            evidenceByRequestId.set(request.requestId, { request, receipt, resolution })
+          }
+          const pending = []
+          for (const planned of saved.plan.candidates) {
+            if (planned.status === JevCandidatePlanStatus.Excluded) continue
+            const evidence = evidenceByRequestId.get(planned.request.requestId) ?? null
+            pending.push({ planned, evidence })
+          }
+          const now = yield* Clock.currentTimeMillis
+          if (now < Date.parse(saved.plan.observedAt))
+            return yield* persistError('Jev batch clock regressed before observation')
+          const expired = now >= Date.parse(saved.plan.expiresAt)
+          if (!expired && pending.some(({ evidence }) => evidence?.resolution == null)) return saved
+          const completedAt = utcInstantFromEpochMillis(now)
+          const candidates: JevBatchResult['candidates'][number][] = []
+          for (const planned of saved.plan.candidates) {
+            if (planned.status === JevCandidatePlanStatus.Excluded) {
+              candidates.push({ symbol: planned.symbol, status: JevCandidateResultStatus.Excluded })
+              continue
+            }
+            const found = pending.find((entry) => entry.planned.symbol === planned.symbol)
+            if (found === undefined) return yield* persistError('Jev finalization lost a planned candidate')
+            if (found.evidence === null) {
+              candidates.push({
+                symbol: planned.symbol,
+                status: JevCandidateResultStatus.Unattempted,
+                requestId: planned.request.requestId,
+              })
+              continue
+            }
+            let resolution = found.evidence.resolution
+            if (resolution === null) {
+              resolution = yield* Effect.fromResult(
+                makeJevResolution(planned.request, found.evidence.receipt, {
+                  schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+                  requestId: planned.request.requestId,
+                  status: JevResolutionStatus.Abandoned,
+                  abandonedAt: completedAt,
+                }),
+              )
+              yield* sql`INSERT INTO jev_evaluation_resolutions (request_id, resolution_hash, payload)
+              VALUES (${resolution.requestId}, ${resolution.resolutionHash}, ${sql.json(resolution)})`
+            }
+            candidates.push({
+              symbol: planned.symbol,
+              status: JevCandidateResultStatus.Resolved,
+              requestId: planned.request.requestId,
+              receipt: found.evidence.receipt,
+              resolution,
+            })
+          }
+          const result = yield* Effect.fromResult(
+            makeJevBatchResult(saved.plan, {
+              schemaVersion: 'bayn.jev-batch-result.v1',
+              batchId,
+              completedAt,
+              candidates,
+            }),
+          )
+          return yield* recordResult(saved.plan, result)
+        }),
+      )
+    }).pipe(Effect.mapError(persistError))
+
+  const pending = (cycleId: string, authorityGenerationHash?: string) =>
+    Effect.gen(function* () {
+      yield* Schema.decodeUnknownEffect(Sha256Schema)(cycleId)
+      if (authorityGenerationHash !== undefined)
+        yield* Schema.decodeUnknownEffect(Sha256Schema)(authorityGenerationHash)
+      const rows = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ batch_id: Sha256Schema })),
+        strictParseOptions,
+      )(
+        yield* sql`
+          SELECT plan.batch_id FROM jev_batch_plans AS plan
+          LEFT JOIN jev_batch_results AS result USING (batch_id)
+          WHERE plan.cycle_id = ${cycleId}
+            AND ${authorityGenerationHash === undefined ? sql`true` : sql`plan.authority_generation_hash = ${authorityGenerationHash}`}
+            AND result.batch_id IS NULL
+          ORDER BY plan.payload->>'observedAt', plan.batch_id COLLATE "C"
+        `,
+      )
+      return rows.map((row) => row.batch_id)
+    }).pipe(Effect.mapError(persistError))
+
+  const complete = (sourcePlan: JevBatchPlan, observation: unknown, sourceResult: JevBatchResult) =>
+    Effect.gen(function* () {
+      yield* requireAutocommit
+      const source = readClaimedJevSource(observation)
+      if (source !== undefined && source.plan !== sourcePlan)
+        return yield* persistError('Completed batch claim differs from its admitted plan')
+      const { plan, result, entries } = yield* Effect.gen(function* () {
+        const plan = source?.plan ?? (yield* Effect.fromResult(decodeJevBatchPlan(sourcePlan)))
+        const result =
+          source !== undefined && isVerifiedJevCompletion(plan, sourceResult)
+            ? sourceResult
+            : yield* Effect.fromResult(decodeJevBatchResult(plan, sourceResult))
+        if (
+          source === undefined &&
+          (yield* Effect.fromResult(canonicalHashV1Result(observation))) !== plan.observationHash
+        )
+          return yield* persistError('Completed batch observation differs from its admitted source')
+        const entries = []
+        for (const [index, candidate] of result.candidates.entries()) {
+          if (candidate.status === JevCandidateResultStatus.Excluded) continue
+          const planned = plan.candidates[index]
+          if (
+            planned?.status !== JevCandidatePlanStatus.Requested ||
+            candidate.status !== JevCandidateResultStatus.Resolved ||
+            candidate.receipt === null ||
+            candidate.resolution.status !== JevResolutionStatus.Recorded
+          )
+            return yield* persistError('Normal batch completion requires every committed candidate result')
+          entries.push({ request: planned.request, receipt: candidate.receipt, resolution: candidate.resolution })
+        }
+        return { plan, result, entries }
+      }).pipe(
+        withObservedStage('bayn.jev.batch-completion.phase', {
+          operation: 'validation',
+          diagnosticOnly: true,
+        }),
+      )
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          // Take the batch lock before its request locks, as the independent receipt writer does.
+          // Everything compared here is immutable. The subsequent writes use a fresh snapshot after locking.
+          yield* sql`WITH locked_plan AS MATERIALIZED (
+            SELECT plan.batch_id, plan.cycle_id, plan.authority_generation_hash, plan.payload,
+              observation.payload AS observation
+            FROM jev_batch_plans plan
+            JOIN intraday_candidate_observations observation ON observation.content_hash=plan.observation_hash
+            WHERE plan.batch_id=${plan.batchId}
+              AND plan.payload=${sql.json(plan)} AND plan.observation_hash=${plan.observationHash}
+              AND plan.cycle_id=${plan.cycleId} AND plan.authority_generation_hash=${plan.authorityGenerationHash}
+              AND observation.cycle_id=plan.cycle_id AND observation.observed_at=${plan.observedAt}::timestamptz
+              AND ${
+                source === undefined
+                  ? sql`observation.payload=${sql.json(observation)}`
+                  : sql`EXISTS (
+                    SELECT 1 FROM jev_inference_work work WHERE work.batch_id=plan.batch_id
+                      AND work.claimed_at IS NOT NULL
+                      AND work.source_sha256=decode(${source.seal},'hex')
+                      AND sha256(convert_to(observation.payload::text, 'UTF8'))=work.source_sha256
+                  )`
+              }
+              AND observation.payload->>'authorityGenerationHash'=plan.authority_generation_hash
+              AND observation.payload->>'observedAt'=${plan.observedAt}
+              AND observation.payload#>>'{manifest,observedAt}'=${plan.observedAt}
+              AND observation.payload#>>'{manifest,snapshotId}'=${plan.snapshotId}
+            FOR UPDATE OF plan
+          ), requested AS MATERIALIZED (
+            SELECT candidate->>'symbol' AS symbol, candidate->'request' AS payload, plan.cycle_id,
+              plan.authority_generation_hash, plan.observation->'manifest' AS manifest
+            FROM locked_plan plan CROSS JOIN LATERAL jsonb_array_elements(plan.payload->'candidates') candidate
+            WHERE candidate->>'status'=${JevCandidatePlanStatus.Requested}
+          ), locked_requests AS MATERIALIZED (
+            SELECT request.request_id FROM requested
+            JOIN jev_evaluation_requests request ON request.request_id=requested.payload->>'requestId'
+              AND request.payload=requested.payload AND request.cycle_id=requested.cycle_id
+              AND request.authority_generation_hash=requested.authority_generation_hash
+            WHERE (requested.manifest->'candidateSymbols') ? requested.symbol
+              AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(requested.manifest->'candidateExclusions') excluded
+                WHERE excluded->>'symbol'=requested.symbol)
+            ORDER BY request.request_id COLLATE "C" FOR UPDATE OF request
+          )
+          SELECT EXISTS (SELECT 1 FROM locked_plan)
+            AND (SELECT count(*) FROM locked_requests)=${entries.length}
+            AND NOT EXISTS (
+              SELECT 1 FROM locked_requests
+              JOIN jev_evaluation_receipts receipt USING (request_id)
+              LEFT JOIN jev_evaluation_resolutions resolution USING (request_id)
+              WHERE resolution.request_id IS NULL
+            ) AS matches`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Matches, strictParseOptions)),
+            withObservedStage('bayn.jev.batch-completion.phase', {
+              dependency: 'postgresql',
+              operation: 'lock',
+              diagnosticOnly: true,
+            }),
+          )
+          if (Arr.isArrayNonEmpty(entries))
+            yield* insertJevEvaluationReceipts(sql, entries).pipe(
+              Effect.andThen(
+                insertJevEvaluationResolutions(
+                  sql,
+                  Arr.map(entries, ({ resolution }) => resolution),
+                ),
+              ),
+              withObservedStage('bayn.jev.batch-completion.phase', {
+                dependency: 'postgresql',
+                operation: 'receipts',
+                diagnosticOnly: true,
+              }),
+            )
+
+          // The receipt insert trigger checks the independent committed handoff.
+          // Conflicting receipts and prior abandonment cannot seal a fresh batch.
+          yield* sql`SELECT NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(${sql.json(result.candidates)}::jsonb) candidate
+            LEFT JOIN jev_evaluation_receipts receipt ON receipt.request_id=candidate->>'requestId'
+            LEFT JOIN jev_evaluation_resolutions resolution ON resolution.request_id=candidate->>'requestId'
+            WHERE candidate->>'status'=${JevCandidateResultStatus.Resolved}
+              AND (receipt.payload IS DISTINCT FROM candidate->'receipt'
+                OR resolution.payload IS DISTINCT FROM candidate->'resolution'
+                OR receipt.receipt_hash IS DISTINCT FROM candidate#>>'{receipt,receiptHash}'
+                OR resolution.resolution_hash IS DISTINCT FROM candidate#>>'{resolution,resolutionHash}')
+          ) AS matches`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Matches, strictParseOptions)),
+            withObservedStage('bayn.jev.batch-completion.phase', {
+              dependency: 'postgresql',
+              operation: 'evidence',
+              diagnosticOnly: true,
+            }),
+          )
+          return yield* recordResult(plan, result).pipe(
+            withObservedStage('bayn.jev.batch-completion.phase', {
+              dependency: 'postgresql',
+              operation: 'result',
+              diagnosticOnly: true,
+            }),
+          )
+        }),
+      )
+    }).pipe(Effect.mapError(persistError), withObservedStage('bayn.jev.batch-completion', { dependency: 'postgresql' }))
+
+  return { read, pending, begin, finish, complete } satisfies typeof JevBatchStore.Service
+})
+
+export const JevBatchStoreLive = Layer.effect(JevBatchStore, makeJevBatchStore)
+
+export interface JevTerminalBatchSettlementSummary {
+  readonly candidates: number
+  readonly sealed: number
+  readonly pending: number
+  readonly failed: number
+}
+
+export interface JevTerminalBatchSettlementCursor {
+  /** The account binding prevents a progress hint from being reused across owners. */
+  readonly accountId: string
+  /** Preserve database microseconds; Date truncation can repeat a page. Null restarts at the oldest row. */
+  position: { readonly terminalAt: string; readonly batchId: string } | null
+}
+
+export const makeJevTerminalBatchSettlementCursor = (accountId: string): JevTerminalBatchSettlementCursor => ({
+  accountId,
+  position: null,
+})
+
+/**
+ * Seal expired Jev batches from terminal cycles using the existing finalizer.
+ *
+ * The metadata query is intentionally bounded and does not select plan payloads. Only
+ * those candidate IDs are then decoded by `read`/`finish`, bounding payload reads
+ * and finalization work on each 30-second pass.
+ */
+export const settleExpiredTerminalJevBatches = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  cursor: JevTerminalBatchSettlementCursor = makeJevTerminalBatchSettlementCursor(accountId),
+) =>
+  Effect.gen(function* () {
+    if (cursor.accountId !== accountId)
+      return yield* operationalError({
+        component: 'database',
+        operation: 'jev-terminal-batch-settlement',
+        message: 'Jev terminal batch settlement cursor belongs to another account',
+      })
+    const batches = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
+    let candidates = 0
+    let sealed = 0
+    let pending = 0
+    let failed = 0
+    for (let page = 0; page < jevTerminalBatchSettlementScanPages; page += 1) {
+      const after: Statement.Fragment =
+        cursor.position === null
+          ? sql``
+          : sql`AND (
+              cycle.terminal_at > ${cursor.position.terminalAt}::timestamptz
+              OR (
+                cycle.terminal_at = ${cursor.position.terminalAt}::timestamptz
+                AND plan.batch_id COLLATE "C" > ${cursor.position.batchId} COLLATE "C"
+              )
+            )`
+      const rows: ReadonlyArray<{ readonly batch_id: string; readonly terminal_at: string }> =
+        yield* Schema.decodeUnknownEffect(
+          SettlementBatchIds,
+          strictParseOptions,
+        )(
+          yield* sql`
+          WITH metadata_candidates AS MATERIALIZED (
+            SELECT plan.batch_id, cycle.terminal_at AS terminal_at_sort,
+              to_char(cycle.terminal_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS terminal_at
+            FROM jev_batch_plans AS plan
+            JOIN autonomous_cycles AS cycle ON cycle.cycle_id = plan.cycle_id
+            WHERE cycle.account_id = ${accountId}
+              AND cycle.strategy_name = 'jev'
+              AND cycle.state IN ('COMPLETED', 'NO_TRADE', 'BLOCKED')
+              AND cycle.terminal_at IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = plan.batch_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM jev_inference_work AS work WHERE work.batch_id = plan.batch_id
+              )
+              ${after}
+            ORDER BY cycle.terminal_at, plan.batch_id COLLATE "C"
+            LIMIT ${jevTerminalBatchSettlementLimit}
+          )
+          SELECT batch_id, terminal_at FROM metadata_candidates
+          ORDER BY terminal_at_sort, batch_id COLLATE "C"
+        `,
+        )
+      if (rows.length === 0) {
+        // Reaching the end wraps the non-authoritative hint. A later pass retries
+        // failures from the beginning without allowing this pass to rescan them.
+        cursor.position = null
+        break
+      }
+
+      for (const { batch_id: batchId, terminal_at: terminalAt } of rows) {
+        cursor.position = { terminalAt, batchId }
+        candidates += 1
+        const result = yield* Effect.gen(function* () {
+          const saved = yield* batches.read(batchId)
+          if (saved === null) return 'failed' as const
+          if (saved.result !== null) return 'sealed' as const
+          if ((yield* Clock.currentTimeMillis) < Date.parse(saved.plan.expiresAt)) return 'pending' as const
+          const finished = yield* batches.finish(batchId)
+          return finished.result === null ? ('pending' as const) : ('sealed' as const)
+        }).pipe(Effect.exit)
+        if (Exit.isFailure(result)) {
+          if (Cause.hasInterrupts(result.cause) || Cause.hasDies(result.cause))
+            return yield* Effect.failCause(result.cause)
+          failed += 1
+          yield* Effect.logWarning('Jev terminal batch settlement failed').pipe(
+            Effect.annotateLogs({ batchId, settlement: 'FINISH_FAILED', cause: Cause.pretty(result.cause) }),
+          )
+        } else if (result.value === 'sealed') sealed += 1
+        else if (result.value === 'pending') pending += 1
+        else {
+          failed += 1
+          yield* Effect.logWarning('Jev terminal batch plan disappeared during settlement').pipe(
+            Effect.annotateLogs({ batchId, settlement: 'MISSING_PLAN' }),
+          )
+        }
+      }
+
+      if (rows.length < jevTerminalBatchSettlementLimit) {
+        // The next invocation starts a fresh cycle. This keeps failed rows retryable
+        // while giving later rows a bounded opportunity on this pass.
+        cursor.position = null
+        break
+      }
+    }
+    return { candidates, sealed, pending, failed } satisfies JevTerminalBatchSettlementSummary
+  }).pipe(Effect.provideService(PgClient.PgClient, sql))

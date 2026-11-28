@@ -3,7 +3,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: proompteng
-  namespace: lab-delivery
+  namespace: ofz-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -21,11 +21,11 @@ spec:
   requestedFreight:
     - origin:
         kind: Warehouse
-        name: proompteng
+        name: ofz
       sources:
-        direct: true
+        stages: [tengri]
         autoPromotionOptions:
-          selectionPolicy: NewestFreight
+          selectionPolicy: MatchUpstream
   promotionTemplate:
     spec:
       steps:
@@ -36,7 +36,7 @@ spec:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
@@ -68,7 +68,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -77,12 +77,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://proompteng.proompteng.svc.cluster.local/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: app
-  namespace: lab-delivery
+  namespace: app-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -147,7 +156,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -156,12 +165,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://app.app.svc.cluster.local:3000/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: synthesis
-  namespace: lab-delivery
+  namespace: synthesis-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -226,7 +244,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -235,12 +253,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://synthesis.synthesis.svc.cluster.local:3000/api/feed
+    - name: pattern
+      value: '"items"[[:space:]]*:'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: docs
-  namespace: lab-delivery
+  namespace: docs-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -305,7 +332,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -314,12 +341,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://docs.docs.svc.cluster.local/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: bumba
-  namespace: lab-delivery
+  namespace: bumba-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -390,7 +426,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -399,12 +435,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://kargo-smoke-bumba.jangar.svc.cluster.local:3001/readyz
+    - name: pattern
+      value: '"status"[[:space:]]*:[[:space:]]*"ok"'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: oirat
-  namespace: lab-delivery
+  namespace: oirat-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -469,7 +514,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -478,12 +523,23 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-discord-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: namespace
+      value: oirat
+    - name: resource
+      value: deployment/oirat
+    - name: image
+      value: registry.ide-newton.ts.net/lab/oirat@${{ imageFrom("registry.ide-newton.ts.net/lab/oirat").Digest }}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: attic
-  namespace: lab-delivery
+  namespace: attic-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -548,7 +604,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -557,12 +613,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://attic.attic.svc.cluster.local/
+    - name: pattern
+      value: <html>
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: froussard
-  namespace: lab-delivery
+  namespace: froussard-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -617,6 +682,16 @@ spec:
                 value: '${{ imageFrom(vars.imageRepo).Tag }}'
               - key: spec.template.spec.containers.0.env.16.value
                 value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/froussard/approval-worker.yaml
+            updates:
+              - key: spec.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.template.spec.containers.0.env.3.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.template.spec.containers.0.env.4.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
         - uses: git-commit
           as: commit
           config:
@@ -631,7 +706,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -640,12 +715,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://froussard.froussard.svc.cluster.local/health/readiness
+    - name: pattern
+      value: ^OK$
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: arc-runner
-  namespace: lab-delivery
+  namespace: arc-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -706,6 +790,18 @@ spec:
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.3.helm.valuesObject.template.spec.containers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.4.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.4.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.5.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.5.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.6.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.6.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
         - uses: git-commit
           as: commit
           config:
@@ -720,7 +816,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -729,12 +825,20 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-runner-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: image
+      value: registry.ide-newton.ts.net/lab/arc-runner@${{ imageFrom("registry.ide-newton.ts.net/lab/arc-runner").Digest
+        }}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: headlamp
-  namespace: lab-delivery
+  namespace: headlamp-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -799,7 +903,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -808,12 +912,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://headlamp.headlamp.svc.cluster.local/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: hermes-toolchain
-  namespace: lab-delivery
+  namespace: hermes-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -878,7 +991,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -887,12 +1000,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://hermes.hermes.svc.cluster.local:9119/api/status
+    - name: pattern
+      value: '"auth_required"[[:space:]]*:[[:space:]]*true'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: jangar
-  namespace: lab-delivery
+  namespace: jangar-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -953,15 +1075,15 @@ spec:
                 value: '${{ commitFrom(vars.gitRepo).ID }}'
               - key: spec.template.spec.containers.0.env.3.value
                 value: '${{ commitFrom(vars.gitRepo).ID }}'
-              - key: spec.template.spec.containers.0.env.132.value
+              - key: spec.template.spec.containers.0.env.129.value
                 value: "${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id']) }}"
-              - key: spec.template.spec.containers.0.env.133.value
+              - key: spec.template.spec.containers.0.env.130.value
                 value: "${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-build-conclusion']) }}"
-              - key: spec.template.spec.containers.0.env.134.value
+              - key: spec.template.spec.containers.0.env.131.value
                 value: '${{ imageFrom(vars.imageRepo).Digest }}'
-              - key: spec.template.spec.containers.0.env.135.value
+              - key: spec.template.spec.containers.0.env.132.value
                 value: '${{ commitFrom(vars.gitRepo).ID }}'
-              - key: spec.template.spec.containers.0.env.136.value
+              - key: spec.template.spec.containers.0.env.133.value
                 value: '${{ imageFrom(vars.imageRepo).Digest }}'
         - uses: git-commit
           as: commit
@@ -979,7 +1101,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -988,12 +1110,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://jangar.jangar.svc.cluster.local/health
+    - name: pattern
+      value: ok|healthy
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: symphony
-  namespace: lab-delivery
+  namespace: symphony-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1054,14 +1185,6 @@ spec:
                 value: '${{ imageFrom(vars.imageRepo).Tag }}'
               - key: images.0.digest
                 value: '${{ imageFrom(vars.imageRepo).Digest }}'
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/symphony-torghut/kustomization.yaml
-            updates:
-              - key: images.0.newTag
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: images.0.digest
-                value: '${{ imageFrom(vars.imageRepo).Digest }}'
         - uses: git-commit
           as: commit
           config:
@@ -1078,7 +1201,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1092,17 +1215,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
-              - name: symphony-torghut
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://symphony.jangar.svc.cluster.local:8080/api/v1/state
+    - name: pattern
+      value: '"running"|"counts"|"generatedAt"'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: torghut
-  namespace: lab-delivery
+  namespace: torghut-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1143,7 +1270,7 @@ spec:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
@@ -1163,37 +1290,13 @@ spec:
                 digest: ${{ imageFrom(vars.imageRepo).Digest }}
         - uses: kustomize-set-image
           config:
-            path: ./out/argocd/applications/torghut-options
-            images:
-              - image: ${{ vars.imageRepo }}
-                digest: ${{ imageFrom(vars.imageRepo).Digest }}
-        - uses: kustomize-set-image
-          config:
-            path: ./out/argocd/applications/torghut-hyperliquid-runtime
-            images:
-              - image: ${{ vars.imageRepo }}
-                digest: ${{ imageFrom(vars.imageRepo).Digest }}
-        - uses: kustomize-set-image
-          config:
             path: ./out/argocd/applications/torghut
             images:
               - image: ${{ vars.taImageRepo }}
                 digest: ${{ imageFrom(vars.taImageRepo).Digest }}
         - uses: kustomize-set-image
           config:
-            path: ./out/argocd/applications/torghut-options
-            images:
-              - image: ${{ vars.taImageRepo }}
-                digest: ${{ imageFrom(vars.taImageRepo).Digest }}
-        - uses: kustomize-set-image
-          config:
             path: ./out/argocd/applications/torghut
-            images:
-              - image: ${{ vars.wsImageRepo }}
-                digest: ${{ imageFrom(vars.wsImageRepo).Digest }}
-        - uses: kustomize-set-image
-          config:
-            path: ./out/argocd/applications/torghut-options
             images:
               - image: ${{ vars.wsImageRepo }}
                 digest: ${{ imageFrom(vars.wsImageRepo).Digest }}
@@ -1301,22 +1404,6 @@ spec:
                 value: linux/amd64,linux/arm64
         - uses: yaml-update
           config:
-            path: ./out/argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.0.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-              - key: spec.template.spec.containers.0.env.1.value
-                value: '${{ imageFrom(vars.imageRepo).Digest }}'
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.0.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-              - key: spec.template.spec.containers.0.env.1.value
-                value: '${{ imageFrom(vars.imageRepo).Digest }}'
-        - uses: yaml-update
-          config:
             path: ./out/argocd/applications/torghut/ta/flinkdeployment.yaml
             updates:
               - key: spec.image
@@ -1347,16 +1434,6 @@ spec:
                 value: "${{ trimPrefix(imageFrom(vars.taImageRepo).Tag, 'kargo-sha-') }}"
         - uses: yaml-update
           config:
-            path: ./out/argocd/applications/torghut-options/ta/flinkdeployment.yaml
-            updates:
-              - key: spec.image
-                value: "${{ vars.taImageRepo }}@${{ imageFrom(vars.taImageRepo).Digest }}"
-              - key: spec.podTemplate.spec.containers.0.env.11.value
-                value: '${{ imageFrom(vars.taImageRepo).Tag }}'
-              - key: spec.podTemplate.spec.containers.0.env.12.value
-                value: "${{ trimPrefix(imageFrom(vars.taImageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
             path: ./out/argocd/applications/torghut/ws/deployment.yaml
             updates:
               - key: spec.template.spec.containers.0.image
@@ -1365,40 +1442,6 @@ spec:
                 value: '${{ imageFrom(vars.wsImageRepo).Tag }}'
               - key: spec.template.spec.containers.0.env.8.value
                 value: "${{ trimPrefix(imageFrom(vars.wsImageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-options/ws/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.image
-                value: "${{ vars.wsImageRepo }}@${{ imageFrom(vars.wsImageRepo).Digest }}"
-              - key: spec.template.spec.containers.0.env.4.value
-                value: '${{ imageFrom(vars.wsImageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.5.value
-                value: "${{ trimPrefix(imageFrom(vars.wsImageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-options/archive/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.5.value
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.6.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-options/catalog/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.8.value
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.9.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-options/enricher/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.7.value
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.8.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
         - uses: git-commit
           as: commit
           config:
@@ -1406,7 +1449,7 @@ spec:
             message: |
               kargo(torghut): promote ${{ ctx.targetFreight.name }}
 
-              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
         - uses: git-push
           as: push
           config:
@@ -1415,7 +1458,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 105m
+            timeout: 1h45m0s
             errorThreshold: 3
           config:
             apps:
@@ -1424,113 +1467,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
-              - name: torghut-options
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
-              - name: torghut-hyperliquid-runtime
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
----
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Stage
-metadata:
-  name: torghut-hyperliquid-feed
-  namespace: lab-delivery
-  labels:
-    delivery.proompteng.ai/managed-by: kargo
-spec:
-  vars:
-    - name: gitRepo
-      value: git@github.com:proompteng/lab.git
-    - name: targetBranch
-      value: kargo/torghut-hyperliquid-feed
-    - name: srcPath
-      value: ./src
-    - name: outPath
-      value: ./out
-    - name: imageRepo
-      value: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed
-  requestedFreight:
-    - origin:
-        kind: Warehouse
-        name: torghut-hyperliquid-feed
-      sources:
-        direct: true
-        autoPromotionOptions:
-          selectionPolicy: NewestFreight
-  promotionTemplate:
-    spec:
-      steps:
-        - uses: git-clone
-          config:
-            repoURL: ${{ vars.gitRepo }}
-            author:
-              name: Kargo
-              email: kargo@proompteng.ai
-            checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
-                path: ${{ vars.srcPath }}
-              - branch: ${{ vars.targetBranch }}
-                create: true
-                path: ${{ vars.outPath }}
-        - uses: git-clear
-          config:
-            path: ${{ vars.outPath }}
-        - uses: copy
-          config:
-            inPath: ${{ vars.srcPath }}
-            outPath: ${{ vars.outPath }}
-        - uses: kustomize-set-image
-          config:
-            path: ./out/argocd/applications/torghut-hyperliquid-feed
-            images:
-              - image: ${{ vars.imageRepo }}
-                digest: ${{ imageFrom(vars.imageRepo).Digest }}
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-hyperliquid-feed/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.image
-                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
-              - key: spec.template.spec.containers.0.env.0.value
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.1.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-              - key: spec.template.spec.containers.0.env.2.value
-                value: '${{ imageFrom(vars.imageRepo).Digest }}'
-        - uses: git-commit
-          as: commit
-          config:
-            path: ${{ vars.outPath }}
-            message: |
-              kargo(torghut-hyperliquid-feed): promote ${{ ctx.targetFreight.name }}
-        - uses: git-push
-          as: push
-          config:
-            path: ${{ vars.outPath }}
-            targetBranch: ${{ vars.targetBranch }}
-        - uses: argocd-update
-          as: deploy
-          retry:
-            timeout: 20m
-            errorThreshold: 3
-          config:
-            apps:
-              - name: torghut-hyperliquid-feed
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://torghut-ta-rest.torghut.svc.cluster.local:8081/jobs/overview
+    - name: pattern
+      value: RUNNING
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: bilig
-  namespace: lab-delivery
+  namespace: bilig-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1595,7 +1546,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 1h15m0s
             errorThreshold: 3
           config:
             apps:
@@ -1604,12 +1555,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://bilig-app.bilig.svc.cluster.local/healthz
+    - name: pattern
+      value: ok|healthy
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: analysis
-  namespace: lab-delivery
+  namespace: analysis-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1674,7 +1634,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1683,12 +1643,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://analysis.analysis.svc.cluster.local/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: agents
-  namespace: lab-delivery
+  namespace: agents-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1808,7 +1777,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1817,12 +1786,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://agents.agents.svc.cluster.local/ready
+    - name: pattern
+      value: ok|ready
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: tengri
-  namespace: lab-delivery
+  namespace: ofz-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1844,11 +1822,11 @@ spec:
   requestedFreight:
     - origin:
         kind: Warehouse
-        name: tengri
+        name: ofz
       sources:
-        direct: true
+        stages: [ofz]
         autoPromotionOptions:
-          selectionPolicy: NewestFreight
+          selectionPolicy: MatchUpstream
   promotionTemplate:
     spec:
       steps:
@@ -1864,7 +1842,7 @@ spec:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
@@ -1902,7 +1880,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1911,12 +1889,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://tengri-gateway.tengri.svc.cluster.local:8080/readyz
+    - name: pattern
+      value: HTTP_STATUS_ONLY
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: buzz
-  namespace: lab-delivery
+  namespace: buzz-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1983,7 +1970,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1992,3 +1979,997 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://buzz.buzz.svc.cluster.local:8080/_readiness
+    - name: pattern
+      value: '"status"'
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: forgejo
+  namespace: forgejo-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+  - name: gitRepo
+    value: git@github.com:proompteng/lab.git
+  - name: targetBranch
+    value: kargo/forgejo
+  - name: srcPath
+    value: ./src
+  - name: outPath
+    value: ./out
+  - name: imageRepo
+    value: registry.ide-newton.ts.net/lab/forgejo
+  requestedFreight:
+  - origin:
+      kind: Warehouse
+      name: forgejo
+    sources:
+      direct: true
+      autoPromotionOptions:
+        selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+      - uses: git-clone
+        config:
+          repoURL: ${{ vars.gitRepo }}
+          author:
+            name: Kargo
+            email: kargo@proompteng.ai
+          checkout:
+          - commit: ${{ commitFrom(vars.gitRepo).ID }}
+            path: ${{ vars.srcPath }}
+          - branch: ${{ vars.targetBranch }}
+            create: true
+            path: ${{ vars.outPath }}
+      - uses: git-clear
+        config:
+          path: ${{ vars.outPath }}
+      - uses: copy
+        config:
+          inPath: ${{ vars.srcPath }}
+          outPath: ${{ vars.outPath }}
+      - uses: kustomize-set-image
+        config:
+          path: ./out/argocd/applications/forgejo
+          images:
+          - image: code.forgejo.org/forgejo/forgejo
+            newName: ${{ vars.imageRepo }}
+            digest: ${{ imageFrom(vars.imageRepo).Digest }}
+      - uses: yaml-update
+        config:
+          path: ./out/argocd/applications/forgejo/values.yaml
+          updates:
+          - key: image.tag
+            value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.version']
+              }}
+          - key: gitea.podAnnotations.delivery\.proompteng\.ai/source-revision
+            value: ${{ commitFrom(vars.gitRepo).ID }}
+          - key: gitea.podAnnotations.delivery\.proompteng\.ai/image-digest
+            value: ${{ imageFrom(vars.imageRepo).Digest }}
+          - key: gitea.podAnnotations.delivery\.proompteng\.ai/upstream-digest
+            value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.base.digest']
+              }}
+          - key: gitea.podAnnotations.delivery\.proompteng\.ai/created
+            value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.created']
+              }}
+      - uses: git-commit
+        as: commit
+        config:
+          path: ${{ vars.outPath }}
+          message: 'kargo(forgejo): promote ${{ ctx.targetFreight.name }}
+
+            '
+      - uses: git-push
+        as: push
+        config:
+          path: ${{ vars.outPath }}
+          targetBranch: ${{ vars.targetBranch }}
+      - uses: argocd-update
+        as: deploy
+        retry:
+          timeout: 45m0s
+          errorThreshold: 3
+        config:
+          apps:
+          - name: forgejo
+            namespace: argocd
+            sources:
+            - repoURL: https://github.com/proompteng/lab.git
+              desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://forgejo-http.forgejo.svc.cluster.local:3000/api/v1/version
+    - name: pattern
+      value: '"version"'
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: bayn
+  namespace: bayn-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/bayn
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/bayn
+    - name: researchImageRepo
+      value: registry.ide-newton.ts.net/lab/bayn-research
+    - name: brokerFeedImageRepo
+      value: registry.ide-newton.ts.net/lab/bayn-broker-feed
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: bayn
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-parse
+          as: baynDeployment
+          config:
+            path: ./src/argocd/applications/bayn/deployment.yaml
+            outputs:
+              - name: lineageIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
+              - name: digestIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
+        - uses: yaml-parse
+          as: baynLineage
+          config:
+            path: ./src/argocd/applications/bayn/alpaca-sealedsecret.yaml
+            outputs:
+              - name: mandate
+                fromExpression: metadata.annotations['proompteng.ai/bayn.mandate-identity'] ?? ''
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/bayn
+            images:
+              - image: bayn-main
+                newName: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+              - image: bayn-research
+                newName: ${{ vars.researchImageRepo }}
+                digest: ${{ imageFrom(vars.researchImageRepo).Digest }}
+              - image: bayn-broker-feed
+                newName: ${{ vars.brokerFeedImageRepo }}
+                digest: ${{ imageFrom(vars.brokerFeedImageRepo).Digest }}
+        - uses: yaml-update
+          if: ${{ outputs.baynLineage.mandate != '' && outputs.baynDeployment.lineageIndex != nil && outputs.baynDeployment.lineageIndex != '' && outputs.baynDeployment.lineageIndex != '-1' && outputs.baynDeployment.lineageIndex != '<nil>' }}
+          config:
+            path: ./out/argocd/applications/bayn/deployment.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynDeployment.lineageIndex) + '.value' }}
+                value: "${{ asJSON({schemaVersion: 'bayn.research-capital-build-lineage.v1', requestHash: fromJSON(outputs.baynLineage.mandate).requestHash, authoredActivation: fromJSON(outputs.baynLineage.mandate).authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bayn/deployment.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynDeployment.sourceIndex) + '.value' }}
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynDeployment.digestIndex) + '.value' }}
+                value: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-parse
+          as: baynController
+          config:
+            path: ./src/argocd/applications/bayn/execution-controller.yaml
+            outputs:
+              - name: lineageIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
+              - name: digestIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
+        - uses: yaml-update
+          if: ${{ outputs.baynLineage.mandate != '' && outputs.baynController.lineageIndex != nil && outputs.baynController.lineageIndex != '' && outputs.baynController.lineageIndex != '-1' && outputs.baynController.lineageIndex != '<nil>' }}
+          config:
+            path: ./out/argocd/applications/bayn/execution-controller.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.lineageIndex) + '.value' }}
+                value: "${{ asJSON({schemaVersion: 'bayn.research-capital-build-lineage.v1', requestHash: fromJSON(outputs.baynLineage.mandate).requestHash, authoredActivation: fromJSON(outputs.baynLineage.mandate).authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bayn/execution-controller.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.sourceIndex) + '.value' }}
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.digestIndex) + '.value' }}
+                value: ${{ imageFrom(vars.imageRepo).Digest }}
+              - key: spec.template.spec.containers.0.image
+                value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-parse
+          as: baynActivation
+          config:
+            path: ./src/argocd/applications/bayn/execution-activation.yaml
+            outputs:
+              - name: lineageIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
+              - name: digestIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
+              - name: generationIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_EXECUTION_ACTIVATION_GENERATION'))
+        - uses: yaml-update
+          if: ${{ outputs.baynLineage.mandate != '' && outputs.baynActivation.lineageIndex != nil && outputs.baynActivation.lineageIndex != '' && outputs.baynActivation.lineageIndex != '-1' && outputs.baynActivation.lineageIndex != '<nil>' }}
+          config:
+            path: ./out/argocd/applications/bayn/execution-activation.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.lineageIndex) + '.value' }}
+                value: "${{ asJSON({schemaVersion: 'bayn.research-capital-build-lineage.v1', requestHash: fromJSON(outputs.baynLineage.mandate).requestHash, authoredActivation: fromJSON(outputs.baynLineage.mandate).authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bayn/execution-activation.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.sourceIndex) + '.value' }}
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.digestIndex) + '.value' }}
+                value: ${{ imageFrom(vars.imageRepo).Digest }}
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.generationIndex) + '.value' }}
+                value: ${{ trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
+              - key: spec.template.spec.containers.0.image
+                value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
+              - key: metadata.name
+                value: bayn-execution-activate-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
+              - key: metadata.labels.app\.kubernetes\.io/version
+                value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
+              - key: spec.template.metadata.labels.app\.kubernetes\.io/version
+                value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
+        - uses: yaml-parse
+          as: baynBrokerFeed
+          config:
+            path: ./src/argocd/applications/bayn/broker-feed.yaml
+            outputs:
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'DORVUD_SOURCE_REVISION'))
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bayn/broker-feed.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynBrokerFeed.sourceIndex) + '.value' }}
+                value: ${{ imageFrom(vars.brokerFeedImageRepo).Annotations['org.opencontainers.image.revision'] }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(bayn): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+        - uses: git-push
+          as: push
+          retry:
+            timeout: 20m0s
+            errorThreshold: 5
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 30m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: bayn
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://bayn.bayn.svc.cluster.local/status-readyz
+    - name: pattern
+      value: ready|ok
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: restate
+  namespace: restate-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/restate
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/restate
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: restate
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/restate
+            images:
+              - image: restate-runtime
+                newName: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(restate): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
+              Build run: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: restate
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://restate.restate.svc.cluster.local:9070/services
+    - name: pattern
+      value: '"services"'
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: devbox
+  namespace: devbox-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/devbox
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/codex-devbox
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: devbox
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/devbox
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(devbox): promote ${{ ctx.targetFreight.name }}
+
+              Source: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              Build: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+        - uses: git-push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          retry:
+            timeout: 45m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: devbox
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://kargo-smoke-devbox.codex-devbox.svc.cluster.local:8080/healthz
+    - name: pattern
+      value: ^ready
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: temporal-worker
+  namespace: temporal-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/temporal-worker
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/temporal-worker
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: temporal-worker
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/temporal
+            images:
+              - image: temporal-worker-runtime
+                newName: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(temporal-worker): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
+              Build run: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: temporal
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-workload-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: namespace
+      value: temporal
+    - name: resource
+      value: deployment/temporal-worker
+    - name: image
+      value: registry.ide-newton.ts.net/lab/temporal-worker@${{ imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Digest
+        }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: ofz
+  namespace: ofz-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/ofz
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/ofz
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: ofz
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/ofz
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/ofz/kustomization.yaml
+            updates:
+              - key: commonAnnotations.delivery\.proompteng\.ai/source-revision
+                value: ${{ quote(imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision']) }}
+              - key: commonAnnotations.delivery\.proompteng\.ai/image-digest
+                value: ${{ quote(imageFrom(vars.imageRepo).Digest) }}
+              - key: commonAnnotations.delivery\.proompteng\.ai/github-run-id
+                value: ${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id']) }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: 'kargo(ofz): promote ${{ ctx.targetFreight.name }}
+
+
+              Source: ${{ imageFrom(vars.imageRepo).Annotations[''org.opencontainers.image.revision''] }}
+
+              Build: ${{ imageFrom(vars.imageRepo).Annotations[''ai.proompteng.github-actions-run-id''] }}
+
+              '
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: ofz
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-workload-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: namespace
+      value: ofz
+    - name: resource
+      value: deployment/ofz-api
+    - name: image
+      value: registry.ide-newton.ts.net/lab/ofz@${{ imageFrom('registry.ide-newton.ts.net/lab/ofz').Digest }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: opencode
+  namespace: opencode-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/opencode
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/opencode
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: opencode
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/opencode
+            images:
+              - image: opencode-main
+                newName: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(opencode): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: opencode
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://opencode.opencode.svc.cluster.local:4096/
+    - name: pattern
+      value: <[Hh][Tt][Mm][Ll]
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: relay
+  namespace: relay-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/relay
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/relay
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: relay
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/relay
+            images:
+              - image: relay-main
+                newName: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(relay): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: relay
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-workload-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: namespace
+      value: relay
+    - name: resource
+      value: deployment/relay
+    - name: image
+      value: registry.ide-newton.ts.net/lab/relay@${{ imageFrom("registry.ide-newton.ts.net/lab/relay").Digest }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: torghut-webull-feed
+  namespace: torghut-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/torghut-webull-feed
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/torghut-webull-feed
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: torghut-webull-feed
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut-webull-feed
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-webull-feed/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.0.value
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              - key: spec.template.spec.containers.0.env.1.value
+                value: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(torghut-webull-feed): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+        - uses: git-push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: torghut-webull-feed
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://torghut-webull-feed.torghut.svc.cluster.local/readyz
+    - name: pattern
+      value: ok|ready

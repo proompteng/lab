@@ -30,10 +30,10 @@ type ProjectionAuthorityClockServiceDefinition = {
   readonly now: Effect.Effect<Date>
 }
 
-export class ProjectionAuthorityClockService extends Context.Tag('agents/ProjectionAuthorityClockService')<
+export class ProjectionAuthorityClockService extends Context.Service<
   ProjectionAuthorityClockService,
   ProjectionAuthorityClockServiceDefinition
->() {}
+>()('agents/ProjectionAuthorityClockService') {}
 
 export type AgentRunProjectionAuthorityDeps = {
   storeFactory: () => AgentRunsApiStore
@@ -266,7 +266,7 @@ const listAgentRunsEffect = (
     const stores = yield* AgentRunStoreService
     return yield* Effect.acquireUseRelease(
       stores.open,
-      (store) => stores.ready(store).pipe(Effect.zipRight(stores.listRuns(store, input))),
+      (store) => stores.ready(store).pipe(Effect.andThen(stores.listRuns(store, input))),
       stores.close,
     )
   })
@@ -350,11 +350,15 @@ export const getAgentRunProjectionAuthorityHandler = async (
   const result = await Effect.runPromise(
     getAgentRunProjectionAuthorityEffect(request).pipe(
       Effect.provide(makeAgentRunProjectionAuthorityLayer(deps)),
-      Effect.either,
+      Effect.result,
     ),
   )
-  if (result._tag === 'Right') return okResponse(result.right)
-  return errorResponse(describeAgentRunSubmitError(result.left), errorStatus(result.left), errorDetails(result.left))
+  if (result._tag === 'Success') return okResponse(result.success)
+  return errorResponse(
+    describeAgentRunSubmitError(result.failure),
+    errorStatus(result.failure),
+    errorDetails(result.failure),
+  )
 }
 
 export const __test__ = {

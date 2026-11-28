@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "connectors": [
+    {
+      "type": "http",
+      "id": "google-project",
+      "endpoint": "https://cloudresourcemanager.googleapis.com/",
+      "authentication": {
+        "type": "workload_identity",
+        "federation": {
+          "spiffe_id": "spiffe://proompteng.ai/ns/relay/sa/relay",
+          "audience": "//iam.googleapis.com/projects/952507162578/locations/global/workloadIdentityPools/proompteng-ai/providers/spire",
+          "token_endpoint": "https://sts.googleapis.com/v1/token",
+          "scopes": ["https://www.googleapis.com/auth/cloud-platform.read-only"]
+        }
+      },
+      "operations": [
+        {
+          "operation": {
+            "name": "read",
+            "description": "Read the federation test project's metadata",
+            "action": "google.project.read",
+            "read_only": true,
+            "target": { "name": "proompteng-ai", "kind": "google.project", "id": "952507162578" },
+            "input_schema": { "type": "object", "properties": {}, "additionalProperties": false }
+          },
+          "method": "GET",
+          "path": "/v3/projects/952507162578"
+        }
+      ]
+    }
+  ]
+}

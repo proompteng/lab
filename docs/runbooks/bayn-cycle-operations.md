@@ -4,12 +4,86 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 
 ## Read the bounded state
 
-1. Read `GET /v1/status` and record `build`, `qualification`, `cycle`, `authority`, and `broker`.
+1. Read `GET /v1/status` and record `build`, `executionSession`, `cycle`, `authority`, and `broker`.
 2. Confirm `authority.brokerOrders=false` and `authority.capitalPromotion=false` before any OBSERVE investigation.
 3. Use `cycle.current.cycleId`, `cycle.last.cycleId`, the selected sessions, cutoff, phase, and reason to correlate
    structured Bayn logs. Cycle IDs are intentionally absent from Prometheus labels.
 4. Compare the durable mutation event count before and after the observation window. Do not infer zero mutation from
    readiness alone.
+5. Match `executionSession.executionSessionDate` to the broker calendar and its `controllerPlanHash` to the approved
+   plan. Verify the Restate controller's source revision against `build.sourceRevision` during release acceptance.
+   `PREOPEN` and `WARMUP` are usable prerequisites before a full signal window exists. A completed bootstrap proves
+   ownership, not session readiness. `RECOVERY_ONLY`, `BLOCKED`, `INPUT_UNAVAILABLE`, `EVALUATION_UNAVAILABLE` and
+   `DECISION_LAGGING` require investigation; ordinary `ABSTAINING` does not imply a system failure.
+
+## Bounded session-opening verification
+
+Resolve the broker calendar's exact session date and opening instant in `America/New_York`, then convert each
+requested check to `America/Los_Angeles` and UTC. A schedule without a timezone cannot establish a Pacific trigger.
+Read back the scheduler's next execution instant before treating a follow-up as installed. Reject a trigger already
+past its named session; do not silently advance it to a different trading day.
+
+Pre-open readiness requires the authorized account, compatible PAPER mandate, clear kill state, advancing native
+controller, broker mutation eligibility, fresh exact reconciliation, complete fill accounting, zero unresolved
+mutations, Jev availability, and stock-feed/feature-job readiness. At the open, inspect actual fresh equity bars,
+quotes, feature arrivals, and a durable decision or justified strategy abstention within the existing deadlines.
+Crypto activity and a healthy pod do not establish the equity boundary. Distinguish operational failures, source
+exclusions, strategy abstentions, submitted orders, broker fills, and profitability. End the follow-up after the
+requested opening check; retain its failure evidence when a check arrives late.
+
+## Native PAPER restoration
+
+The account controller owns routine restoration under the existing approved mandate. Compatible Kargo releases retain
+the request through build lineage. A runtime failure does not require a new request, manifest edits, a manual kill clear
+or a broker test order. Repair the reported dependency or evidence failure, then verify the native recovery result.
+
+Recovery first settles terminal intents and requires fresh exact, flat broker and accounting reconciliation. An already
+settled account can roll through clear OBSERVE and revalidate its PAPER mandate without running another close-only cycle.
+An unresolved order, position or mutation stays under the existing close-only recovery owner. Operator holds and account
+protection cannot be cleared by this path. Strategy identity changes still require an approved matching mandate.
+
+Check the deployed revision and the controller's `RECOVERED` pass, then verify `capitalActivation`, effective authority,
+the active kill state and current reconciliation in `GET /v1/status`. Confirm an actual usable decision or an explicit
+waiting reason in the native pass. A restored authority alone does not prove a decision, order or fill.
+
+### Expired entry recovery during a reconciliation outage
+
+An accepted BUY may still be working when its original approval or submission deadline expires. On a scheduled
+recovery pass, the existing PAPER owner can attempt a narrowly scoped cancellation before rebuilding full account
+history. Its current generation must match the bound decision, with either clear PAPER authority or a recognized
+system restriction. The immutable decision, risk commit, intent, client order and acknowledged broker parent must
+match. A fresh isolated parent lookup must report zero filled quantity; every native bracket exit must also be
+unfilled and held. True OBSERVE `RecoveryOnly` remains lookup-only and cannot issue this cancellation.
+
+The cancellation carries the observed authority generation/version and exact account, intent, client and parent
+identities. The existing fenced admission transaction checks them again and samples the intent account's execution
+commit clock after acquiring its locks: current database wall time for live accounts, and the existing bound source
+clock plus measured elapsed work for isolated replay. Expired evidence, a changed authority version/generation, an operator hold or a protective
+SELL rejects fresh admission. `CANCEL_STARTED` commits before broker I/O; replay and unknown outcomes use the
+existing durable mutation identity and lookup recovery. No new entry, capital activation or kill clear follows
+from this permission.
+
+Partial or filled parents, activated or filled exit legs, superseded generations, changed policy bindings, and
+unavailable or stale isolated lookup evidence return to ordinary reconciliation and protection recovery.
+Unresolved, unchanged or backed-off optional lookup recovery also falls through to full reconciliation on its
+normal due cadence. Durable uncertainty remains recorded and blocks fresh submission; a failed isolated lookup
+cannot indefinitely suppress healthy account, order-list or fill-history reconciliation. Integrity, persistence
+and fresh-cancellation failures retain their existing failure handling. An unrelated full-history failure may
+therefore leave these cases pending. An already bound generation with an incomplete reconciliation can construct
+its restricted driver, but settlement, rollover and restored PAPER authority still require their existing exact
+reconciliation gates.
+
+Under [Alpaca's order contract](https://docs.alpaca.markets/us/docs/orders-at-alpaca), bracket cancellation can
+cancel the remaining group orders. A zero-fill observation is not atomic with
+the broker DELETE: a partial or complete fill can race cancellation, including a terminal canceled order with
+nonzero fills. Keep its original quantity and accounting history, confirm the cancellation outcome, and obtain
+fresh complete reconciliation before sizing protection or declaring settlement. The entry deadline prevents
+fresh submission; it does not guarantee that an accepted broker order cannot fill after that deadline.
+
+The Restate recovery-window counter saturates at seven while bounded recovery deliveries continue at the
+existing recovery cadence. Retries retain the original command issue time and ownership identity; a new
+delivery does not renew a trade deadline. Check continuing durable delivery, the cancellation event and its
+confirmation, and a later exact reconciliation separately when accepting a repair.
 
 ## Trace one lifecycle pass
 
@@ -19,12 +93,162 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
    `bayn.reconciliation.run` spans. Broker and mutation spans remain children of the Bayn execution trace.
 3. Use the emitted `trace_id` and `span_id` fields to move between Tempo and the correlated JSON logs in Loki. Never
    use account identifiers, credentials, order payloads, or other high-cardinality business data as trace attributes.
+   The validated capture SHA-256 is a scoped exception on `bayn.capture.object.put_verified`: use it only to join
+   that object's trace to sanitized gateway receipts within a bounded window. It must never become a metric or Loki
+   label. The capture correlation procedure below defines the allowed fields and events.
    Query the bounded log stream with `{job="bayn", namespace="bayn"} |= "<trace_id>"`; the trace ID stays in the JSON
    payload rather than becoming a high-cardinality Loki label.
 4. Treat a missing segment as an observability failure: verify the workload's exact source revision, its OTLP endpoint,
    and the namespace-scoped NetworkPolicy path to the Tempo distributor. A partial trace is not execution proof.
 
+## Execution critical path
+
+Start with the completed or failed `bayn.execution.advance` pass for the exact deployed source revision. Its JSON
+log carries `controllerKey`, `epoch`, `sequence`, `sourceRevision`, `elapsedMs`, `outcome` and `stageTimings`, plus
+the receipt, waiting/blocking reason and next delay on a returned outcome. A failure or interruption retains the
+finished and interrupted stages after finalization. A retry has a new trace; correlate it by controller identity
+and sequence instead of treating it as a second successful execution.
+
+Use a bounded session window and the verified worker source in Tempo:
+
+```traceql
+{ resource.service.name = "bayn-execution-controller" && resource.service.version = "<source-revision>" && name = "bayn.execution.advance" && trace:duration > 5s }
+```
+
+Find the pass in Loki and inspect its profile and child stage logs:
+
+```logql
+{namespace="bayn", pod=~"bayn-execution-controller-.*"} |= "<trace_id>"
+```
+
+`stageTimings` groups only stages and operations executed in that pass. `count` reveals repeated work;
+`inclusiveElapsedMs` includes child stages; `maxElapsedMs` identifies its slowest call. `failures` and
+`interruptions` retain unsuccessful calls. These times overlap and must not be summed into a critical-path total.
+Use the trace waterfall for ordering, parallel work and gaps. Stage profiles are scoped to each advance and do
+not include the separate inference-expense background worker.
+
+Construction and verification have their own bounded stages. `bayn.market-data.snapshot` covers the source read
+and snapshot construction, with `bayn.operation` set to `signal`, `ENTRY_PRICING` or `LIQUIDATION`.
+`bayn.jev.observation` covers observation construction and durable recording; `bayn.jev.batch-plan` covers batch
+preparation. `bayn.jev.observation-integrity` covers each fresh persisted observation read and content-hash check;
+its count exposes repeated candidate verification. `bayn.jev.observation-reproduction` measures reconstruction
+when the existing verified-observation cut changes. `bayn.execution.decision-build` covers schema validation,
+risk reduction, immutable evidence reproduction and document hashing for entry and close, with operation
+`OBSERVE` or `PAPER`. Construction begins inside its Effect so synchronous work stays inside the span and pass
+profile. These stages reuse the existing aggregate profile and slow/failure diagnostics; they add no source,
+database or model requests and no healthy completion log.
+
+Pricing reuses a same-pass exact reconciliation while its refresh cadence remains open and its broker-risk
+freshness bound covers the execution quote's lifetime. The cadence determines when to refresh on the next read;
+it does not shorten the risk policy's validity deadline. Requiring the entire quote lifetime inside the cadence
+can trigger a slow database refresh after timely inference and expire an otherwise usable model decision.
+Current authority generation/version, accounting and unresolved-mutation checks still govern reuse.
+
+A position basis discrepancy first requires the exact broker response and accounted fills. Rounded-average
+reporting must reproduce both provider fields from native quantity and cost; do not clear a kill state with a broad
+cash or position tolerance. Current positions require cost basis and reject the retired cost-less encoding.
+
+An equity outage may outlast IEX data hours. Close recovery uses a maximum three-minute lease bounded by the
+verified provider session, fresh exact reconciliation and the existing forced-close LIMIT/DAY flow. It cannot
+open positions or renew unresolved broker orders. A closed broker session leaves recovery pending until a verified
+session permits the close.
+
+A rejected decision emits `Bayn decision evidence rejected` with schema
+`bayn.decision-evidence-rejection.v1`, a `mismatch` code and the cycle, snapshot and reconciliation hashes.
+`RECONCILIATION` means its exact durable identity, account, state hash, status or time cutoff did not match;
+`DECISION_MARKET_DATA` and `EXECUTION_MARKET_DATA` identify the respective immutable snapshot binding;
+`JEV` identifies the recorded observation, batch plan or result; `RISK_CONTEXT` identifies the retained
+authority, reconciliation time or accounting risk facts. The first failed check wins. Inspect the matching
+private evidence before changing the responsible path. The existing SQL request computes the reason and
+retains every admission check; it never logs the decision payload, account identity or raw query.
+
+The same warning records `plannedIntentCount`, `riskEvaluationCount`, `riskContextBound` and
+`firstRiskStatePresent`. A decision with zero intent targets and zero risk evaluations validates its bound
+risk context against the exact reconciliation row. It needs no first per-intent risk state. A nonempty plan
+still requires that state and its matching reconciliation cutoff. Empty plans retain the authority, policy,
+turnover, day-start equity, peak equity and unresolved-mutation checks. Both entry and close constructors bind the risk context
+from their already-read reconciliation and authority observation, independently of order count. Native execution
+documents without that binding fail execution admission, including no-trade and blocked plans. Retained immutable
+no-trade records remain readable for investigation; reading one grants no permission to admit it again.
+
+```logql
+{namespace="bayn", pod=~"bayn-execution-controller-.*"} |= "bayn.decision-evidence-rejection.v1"
+```
+
+1. `bayn.execution.generation-pass` measures the outer authority/settlement deadline, while
+   `bayn.execution.bounded-pass` measures the inner serialized cycle deadline. `bayn.execution.cycle-pass` excludes
+   the cycle permit wait. Each scope records once when entered; an authority hold records no inner cycle sample.
+   They are nested inclusive durations, not additive work or independent controller ticks. Before this separation,
+   the generation and cycle deadlines both recorded `bounded-pass`, inflating its operation count and mixing their
+   latency distributions. Compare source revisions separately. Deadline logs identify the scope with `stage`.
+2. Inspect `bayn.execution.submit` with `bayn.operation=entry` or `close`. Slow and failed submission logs include
+   `intentId` and `closeOnly`. Use the durable intent/mutation history to bind its request and order afterward.
+   Keep the identifiers in log payloads and persisted evidence, not Prometheus or Loki labels.
+3. Compare intent commit, final authorization and persistence with `bayn.alpaca.mutation`, whose
+   `bayn.operation` is `SUBMIT` or `CANCEL`. The broker stage includes response-body completion and classification.
+   Its duration is not time from signal to order acknowledgement. An interrupted or unknown response still needs
+   durable recovery; do not transmit a replacement order from a timing diagnosis.
+4. Distinguish connection acquisition, writer-lease acquisition/check, `BEGIN`, `COMMIT` and `ROLLBACK` spans.
+   Broker persistence reuses its owned writer transaction; healthy native snapshot passes need no nested savepoints.
+   Standalone store mutations acquire their own fence. A held-lock check remains a real database round trip.
+5. `bayn.execution-store.operation`, `bayn.postgres.operation`, `bayn.alpaca.read` and `bayn.tigerbeetle.request`
+   have bounded `bayn.dependency` and `bayn.operation` span attributes. Separate expensive operations before
+   attributing all database time to commit or all broker time to transmission.
+6. Compare `rate(container_cpu_cfs_throttled_periods_total{namespace="bayn"}[1m])` with
+   `rate(container_cpu_cfs_periods_total{namespace="bayn"}[1m])` on the same pod/container, and inspect
+   `rate(container_cpu_cfs_throttled_seconds_total{namespace="bayn"}[1m])`, CPU usage and configured limits.
+   The existing collector retains these counters for Bayn. Verify fresh series and scrape health before diagnosing
+   either throttling or its absence. `bayn.jev.inference` separately records the model request and response duration.
+
+For a post-session investigation, preserve the exact time bounds, source revision, trace completeness, correlated
+logs, durable cycle/intent/mutation/reconciliation records, broker state and accounting receipts in private evidence.
+Check Loki/Tempo retention and query completeness before calling the session reconstructed. Missing traces,
+missing CPU throttle metrics or an idle database sample remain UNKNOWN. Database waits and synchronous replication
+require the measurements below; a readiness endpoint or a fast idle pass does not prove session performance.
+
+The collector scrapes the `bayn-db` catalog diagnostics every five seconds and retains
+`scrape_duration_seconds{job="cnpg-postgres",namespace="bayn"}`. Bayn's Cluster sets `monitoring.metricsQueriesTTL`
+to one second so those scrapes refresh the catalog queries; CNPG's default thirty-second output cache otherwise
+repeats old observations with new scrape timestamps. Verify the live setting, both exporters' `up`, collection
+errors and scrape durations, and changes in the primary's replication reply-age or active walsender query-age
+samples. A thirty-second or stale sample can miss an entire multi-second commit stall; even the five-second
+cadence cannot attribute a shorter wait. Correlate `cnpg_bayn_waits_*`, WAL I/O counters
+and replication gauges with the `COMMIT` span and the server's slow-statement timestamp. Active query age is the
+age of the statement, rather than time spent in its current wait event. A missing wait sample remains UNKNOWN.
+
+The in-process research recorder has been removed. It emits no capture spans in the current worker. The following
+queries apply only to retained traces from older revisions, within their actual retention window. Current research
+archive collection and completion checks are unavailable until the independent
+[market-data archive](../bayn/market-data-archive.md) is implemented and verified.
+
+In historical capture traces, `bayn.capture.object.put_verified` describes conditional PUT and exact GET/readback
+verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
+`VALIDATING`, `CONDITIONAL_PUT`, `READBACK`, `VERIFY_BYTES` or `VERIFIED`. A failed PUT or GET and a stalled body
+therefore remain distinguishable after cancellation. The span also records the validated
+`bayn.capture.object.sha256`. In the same bounded session window, join that hash to sanitized gateway receipts in Loki:
+
+```logql
+{job="bayn-rgw"} | json | objectHash="<span SHA-256>"
+```
+
+Compare the gateway's method, HTTP status and latency with the span's timestamped events. The interval from
+`bayn.capture.object.put.started` to `bayn.capture.object.put.acknowledged` measures client PUT acknowledgement.
+`bayn.capture.object.readback.started` to `bayn.capture.object.readback.headers_received` covers GET response headers;
+the remaining interval to `bayn.capture.object.verified` covers exact-byte verification. A cancelled PUT has no client
+acknowledgement event, even if the gateway later logs HTTP 200. HTTP 412 records its actual PUT status and still requires
+exact readback. Retain missing terminal events as incomplete evidence. Hashes are trace attributes, never metric labels;
+credentials, endpoint, bucket, object keys and raw payloads are excluded. A verified object does not prove that its chunk
+committed to PostgreSQL, and an invalidated capture or unknown write outcome never qualifies a source.
+These historical events do not establish current runtime behavior or a complete original session.
+
 ## Alert actions
+
+For `SNAPSHOT_STALE`, correlate `Streaming market snapshot rejected` with the pass's trace ID in Loki. Inspect its
+exact `eventAt` and `ingestedAt`, `ingestionDelayDirection`, `publicationDelayMs`, and minimum or maximum publication
+bound. Fresh quotes and a complete bar/feature join do not establish timely original publication. A late required
+benchmark bar blocks every window that contains it; retain its source timestamps and never backdate a recovery.
+Kafka bootstrap, supervision and 30-second projection measurements use the native worker's structured JSON logger.
+Confirm the current Restate registration's label selector before comparing workers; retained revisions can coexist.
 
 - `BaynMetricsUnavailable`: verify the Bayn pod, the observability Alloy pod-discovery target, and the NetworkPolicy.
   If Bayn failed before HTTP startup, inspect startup logs and compare configured provenance with the embedded
@@ -35,40 +259,206 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 - `BaynEgressProxyReplicaTargetMissed`: compare the `bayn-egress-proxy` Deployment's desired and available replicas.
   Preserve both stateless proxy replicas and their hostname spread so one node loss does not remove broker read
   connectivity. Do not bypass the proxy or broaden broker egress.
-- `BaynExecutionWorkerUnavailable`: inspect the Restate-managed `bayn-execution-controller-*` ReplicaSets and pods,
-  then the active Restate worker revision and controller projection. Keep trading fail-closed until at least one
-  configured worker is Ready; never create a second scheduler or bypass Restate to recover execution.
-- `BaynExecutionWorkerReplicaTargetMissed`: compare the summed desired and Ready replicas across the
-  Restate-managed `bayn-execution-controller-*` ReplicaSets. A healthy active controller with fewer Ready workers than
-  desired has lost failover capacity. Restore the missing worker while preserving Restate serialization and the
-  PostgreSQL writer fence; do not promote a pod to an independent writer.
+- `BaynBrokerFeedUnavailable`: verify the single `bayn-broker-feed` pod's account check, authenticated WebSocket,
+  exact source revision, and `bayn.broker-source-projection.v1` acknowledgement. Readiness proves connection and
+  durable source acceptance only; use PostgreSQL source/projection evidence and canonical reconciliation before
+  declaring order, fill, or accounting recovery. Do not restore the deleted Kafka adapter or add a second socket.
+- `BaynBrokerSourceProjectionFallbackHigh`: group `bayn_broker_source_projection_total` by `reason` for the exact
+  deployed source. Preserve fail-closed reconciliation for invalid, unsupported, unbound, conflicting, or gapped
+  events. Repair the responsible parser, binding, or session boundary; do not convert a fallback into fabricated
+  broker state or relax the gate to clear the ratio.
+- `BaynBrokerSourceProjectionLatencyHigh`: compare Restate projector queue time with PostgreSQL writer-fence spans and
+  database latency over the same completed-event window. The projector owns source evidence only and has no
+  TigerBeetle dependency. Remove the measured queue or database bottleneck; do not move money posting onto the
+  WebSocket path or claim a latency gain from a restarted or empty histogram.
+- `BaynBrokerSourceProjectionStalled`: inspect pending count, oldest age, and
+  `bayn_broker_source_projection_observation_success`. The query covers retained events from every source revision;
+  a zero or absent observation-success gauge means the backlog itself is unknown. Trace the exact immutable event into
+  its Restate projector invocation and first projection receipt, then repair or resume that owner. Do not delete the
+  event, forge a terminal receipt, or hide a retired-revision backlog.
+- `BaynExecutionWorkerObservationUnavailable`: the current worker count is **unknown**, not zero or healthy.
+  Inspect the `bayn/bayn-execution-controller` RestateDeployment, its observed versus metadata generation, and the
+  existing kube-state-metrics/Alloy path. All four scalar observations and scrape health must be less than 90 seconds
+  old; conflicting fresh metadata generations also remain unknown. The warning fires after two minutes, allowing a
+  bounded rollout transition but never silently treating missing telemetry as a healthy worker count.
+- `BaynExecutionWorkerUnavailable`: current-generation RestateDeployment `status.readyReplicas` has been zero for
+  one minute while `spec.replicas` is positive. This status counts **updated** ready workers, not retained revisions.
+  Inspect the current revision's ReplicaSet and controller projection. Keep trading fail-closed until a configured
+  current worker is Ready; never create a second scheduler or bypass Restate to recover execution.
+- `BaynExecutionWorkerReplicaTargetMissed`: compare fresh current-generation `status.readyReplicas` with
+  `spec.replicas`, not a sum across retained ReplicaSets. Below-target readiness for two minutes loses current-revision
+  failover capacity. Restore the missing worker while preserving Restate serialization and the PostgreSQL writer
+  fence; do not promote a pod to an independent writer or delete retained workers.
+  These rules require the separately staged exporter/Alloy gauges from PR #15272 to be present in Mimir first.
+  Verify the exact namespace/resource labels, desired and observed generation, and updated-ready count against the
+  CR before installing the rules. Missing telemetry immediately removes the known-count record and starts the
+  observation warning's pending period; a cleared capacity alert alone never proves recovery. Worker readiness does
+  not establish successful activation, broker freshness, or durable execution progress.
 - `BaynExecutionControllerOverdue`: compare the active controller's `lastSequence`, `completedAt`, and `nextDueAt` in
   `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
   a replacement scheduler or bypass the PostgreSQL writer fence.
-- `BaynExecutionWindowUnready`: inspect the current ACTIVE cycle, its immutable `submissionOpenAt`, and
-  `bayn_execution_session_preflight_ready`. From ten minutes before submission opens until its cutoff, preflight
-  requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
+  Native recovery retains a bounded attempt budget per delivery and schedules another recovery window after thirty
+  seconds when those attempts fail. Its diagnostic window counter saturates at seven; reaching that value keeps
+  recovery scheduled with a new invocation-bound idempotency key and the original issuance time. This never renews
+  a trade admission deadline. A newly deployed
+  source rotates the controller epoch through the existing activation hook. Do not carry an old multi-hour
+  recovery timer into the new epoch.
+
+- `BaynExecutionWindowUnready`: inspect `executionSession.condition` and the active cycle or the opening projected
+  from the controller's retained broker calendar. With a verified opening and no cycle, failed prerequisites can
+  alert from ten minutes before submission opens. If prerequisites are ready, allow the first observation and the
+  configured decision-lag budget before treating a missing cycle as unready. The window ends at submission cutoff.
+  Readiness requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
   covering the latest mutation, zero unresolved mutations, an account-bound/readable broker, and an active readable
-  Restate controller. Repair the failed prerequisite through its existing owner. Do not move the session window,
+  Restate controller with a matching plan and a durable completion. No snapshot binding is required before the first
+  full observation. After warmup, unavailable signal inputs or inference also close readiness; input-window failures
+  and decision lag have dedicated alerts. Input-window failures are excluded per replica only while all dedicated-alert
+  gates qualify, preserving the generic unready signal when dedicated telemetry is incomplete. Ordinary abstention
+  remains ready. Repair the failed prerequisite through its existing owner. Do not move the session window,
   force a decision, or create another execution process.
-- `BaynExecutionDecisionLagging`: the session preflight is healthy and submission has opened, but the ACTIVE cycle is
-  still missing its immutable `decisionHash`. Follow the current Restate tick trace through decision construction,
+- `BaynInputWindowUnavailable`: the consumer reports `executionSession.condition=INPUT_UNAVAILABLE` on the first matching rule evaluation
+  on an ACTIVE, decision-unbound cycle, at or after `firstObservationAt` and before `submissionCutoffAt`.
+  Runtime readiness, cycle projection availability, and scrape health must all be true on that same replica before
+  replicas are aggregated. The group evaluates every 15 seconds with no additional pending period because continuous admissions can expire in one minute.
+  Check the retained pass's bounded readiness reason and required feature/window identity,
+  then the existing consumer bootstrap barriers and exact raw/feature lineage. A latest-minute bar or healthy producer
+  acknowledgement does not prove all 30 required minutes, matching features, or timely availability. Missing middle
+  minutes, absent/mismatched/late features, and incomplete offset/bootstrap evidence can withhold the window.
+  For `Streaming market snapshot rejected`, inspect the same observation's `inputCut.reasons` before attributing
+  complete bar coverage to a healthy consumer. `SOURCE_UNAVAILABLE` and `REQUIRED_PARTITIONS_MISSING` identify
+  incorporation/bootstrap setup; `AVAILABILITY_NOT_OBSERVED`, `EPOCH_MISMATCH` and `BOOTSTRAP_AFTER_OBSERVATION`
+  identify an ineligible cut, not missing producer data. `BOOTSTRAP_OFFSETS_INCOMPLETE` includes bounded pending
+  topic/partition positions and required end offsets for the existing consumer owner. Counts remain complete when
+  the eight-coordinate sample is truncated. An empty reason list clears only these gates; inspect the separate
+  feature/window diagnostics next. Correlate the exact replica and observation time with rollout/startup evidence,
+  and do not infer a current outage from a resolved notification or a later healthy sample.
+  Warmup, a bound decision, cutoff, and ordinary abstention do not trigger this alert. Restore the failed input owner;
+  do not relax freshness, admission, risk, or authority gates or force a trade.
+- `BaynExecutionDecisionLagging`: the session preflight is healthy, but the ACTIVE cycle remains unbound after
+  `bayn_cycle_decision_deadline_timestamp_seconds`. For the current Jev protocol, the first full observation is 30
+  minutes and two seconds after the exchange opens, bounded below by submission opening. Continuous crypto uses
+  completed rolling history immediately at submission opening. Both use the persisted `executionCalendarSchemaVersion`.
+  The deadline adds the protocol's maximum decision lag to the later
+  of that observation and the attempt's creation time. Follow the current Restate tick trace through decision construction,
   risk evaluation, and the PostgreSQL decision bind. Do not synthesize a decision or submit directly to the broker.
-  If no decision is durably bound by `submissionCutoffAt`, Bayn must classify the cycle as
-  `MISSED_SUBMISSION_CUTOFF` and close readiness rather than wait until execution close.
+  An unused native admission expires at the earlier of its one-minute lease and `submissionCutoffAt`.
+  `BLOCKED_UNUSED_ENTRY_EXPIRED` releases the empty slot through the existing approved controller after cooldown.
+  It does not authorize entries while an operator or capital restriction remains active.
 - `BaynCycleObservationUnavailable`: inspect `cycle.error` in `GET /v1/status`, then restore the existing PostgreSQL
   projection path. Do not substitute cached or synthetic state.
 - `BaynRuntimeDegraded`: inspect `operational`, all `dependencies` (including `cycleRunner`), `autonomousCycleLoop`,
   and the broker read/account-binding facts in `GET /v1/status`. Restore the failed dependency or the existing scoped
   loop; do not bypass OBSERVE or create a replacement scheduler.
+- `CASH_FEES_PENDING`: Alpaca's stream can report cash fees before REST provides the authoritative records.
+  When this is the only blocker, Bayn reports `cycle.condition=WAITING` and `executionSession.condition=BLOCKED`
+  without a cycle-failed or runtime-degraded page. A fresh broker cut with settled fees and exact reconciliation
+  are still required to resume submissions. The execution-window alert still checks readiness for a verified
+  submission window. If the wait persists, inspect the broker observation and the account activities; never
+  bypass the fee gate. A broker-snapshot wait is recorded as `outcome="pending"`, not a failure.
+- `BaynRepeatedEntryExpiry`: inspect the last ten minutes of durable cycle outcomes and their original deadlines.
+  This alert observes at least five changes to a replica's latest terminal timestamp while all sampled terminal
+  reasons remain `BLOCKED_UNUSED_ENTRY_EXPIRED`, within its current submission window and with fresh projection
+  telemetry. It does not depend on instantaneous readiness, so a newly armed cycle cannot hide repeated expiration.
+  The sampled transitions are not an exact cycle count or evidence of missed profitable trades. Check market-input
+  eligibility, admission work, provider completion and owner-resume latency separately, by source revision. A sampled
+  completed or no-trade result breaks the streak; missing or stale telemetry remains unknown. Preserve all freshness,
+  authority and risk gates rather than extending deadlines to silence the alert.
 - `BaynCycleStalled`: branch on `cycle.reason` in `GET /v1/status`. `submissionCutoffAt` remains a hard deadline for an
   ACTIVE cycle until its immutable decision is bound. A decision-bound ACTIVE cycle may continue broker recovery and
   reconciliation through `executionCloseAt`; an unbound ACTIVE cycle at the cutoff is a missed-submission incident.
-- `BaynCycleFailed`: preserve `cycle.reason` and the terminal cycle identity. Resolve the underlying authority,
-  reconciliation, mutation, or durable-cycle state through its existing writer contract. When
+- `BaynCycleFailed`: this is an operational fail-closed condition, not necessarily a terminal cycle failure.
+  Preserve `cycle.reason` and the matching current or last cycle identity. Reconciliation that predates a mutation,
+  an unresolved mutation, or active kill state can trigger it while an ACTIVE cycle is safely recovering.
+  Resolve the underlying authority, reconciliation, mutation, or durable-cycle state through its existing writer contract. When
   `cycle.reason=LAST_CYCLE_BLOCKED`, branch on the exact persisted `cycle.last.terminalReason`; never clear the alert
   by editing monitoring state.
+  The rule evaluates every 15 seconds, requires one minute of failed-condition observations, aggregates across
+  replicas, and retains firing for five minutes after the expression clears. Projection age, scrape timing and
+  replica differences can extend the observed interval; email grouping can delay both firing and resolution messages.
+  Notification timestamps are not incident onset or duration. A firing email may arrive after automatic recovery.
+  Correlate the historical per-replica `bayn_cycle_reason`, `bayn_cycle_condition` and `ALERTS` samples with the
+  matching controller trace, then verify current authority, reconciliation, unresolved mutations, orders and positions.
+  A terminal COMPLETED cycle can include a canceled, unfilled entry. Neither that terminal state nor a resolved alert
+  proves a fill, profit, or permission to trade; preserve the existing broker and authority safeguards.
 
-An alert clears only when its source-of-truth state changes and the next bounded projection or health probe confirms
-recovery.
+The underlying condition clears only when its source-of-truth state changes and the next bounded projection or
+health probe confirms recovery. Rule keep-firing periods and notification grouping can delay the resolved message.
+
+Missing telemetry is UNKNOWN, not a healthy input window. A stale runtime projection closes `bayn_runtime_ready`;
+an unavailable cycle projection and a failed scrape have their own alerts. This rule cannot diagnose the underlying
+input cause from the condition alone. Mimir ingestion uses the shared Kafka cluster, so this is not out-of-band
+detection of a Kafka or storage outage. No alert here proves storage repair, strategy alpha, or permission to trade.
+
+## Trace-export failures
+
+The **Trace export failures** panel counts failed export attempts in each rolling five-minute window, grouped by
+service, failure reason and HTTP status. **Trace export failure logs** shows up to 1,000 corresponding native warning
+records, newest first. Both use the existing Loki datasource and Bayn container log stream; they add no work to order
+execution or position closure.
+
+Open log details to inspect `annotations.sourceRevision`, `annotations.serviceName`, `annotations.failureReason`
+and, for HTTP failures, `annotations.httpStatus`. These are failed attempts, not a count of lost spans. Empty results
+may mean no recorded failures or unavailable logs. Verify the collector and Loki before treating an empty panel as
+recovery; these panels do not prove trace delivery.
+
+For HTTP 503 failures, correlate the same interval with Tempo distributor ingestion logs and the shared Kafka
+producer, quorum and storage evidence. Use retained logs and persisted transaction records alongside traces when
+ingestion is failing. An idle Kafka snapshot, current ISR membership or a ready distributor does not establish the
+cause of an earlier timeout or prove repair.
+
+## Database latency investigation
+
+The `bayn-postgres-monitoring` ConfigMap adds PostgreSQL 18 catalog queries to the existing CNPG scrape; it does not
+replace the platform's default metrics. Queries run read-only under the existing metrics role, without grants to
+application tables. Neither credentials, SQL text, process identifiers nor account data are exported as labels.
+
+1. Confirm both `cnpg_bayn_io_timing_relation_enabled` and `cnpg_bayn_io_timing_wal_enabled` are one on the relevant
+   primary/standby and that the scrape is healthy. A zero timing counter while collection is disabled is not proof of
+   fast I/O. Inspect `cnpg_bayn_io_stats_reset_seconds` and start with rates over a bounded interval after collection
+   was enabled. PostgreSQL 18 moved WAL write/sync statistics to `pg_stat_io`; do not query the removed `pg_stat_wal`
+   timing columns.
+2. Correlate `bayn.postgres.commit`, execution deadline/cancellation spans and database log timestamps with
+   `cnpg_bayn_waits_backends`. `IPC/SyncRep` identifies synchronous acknowledgement waiting; `IO/WALSync` identifies
+   WAL synchronization. A scrape samples current wait states and may miss short waits.
+   `cnpg_bayn_waits_active_query_age_seconds` is query age, not time spent in its current wait state.
+3. Compare primary and standby rates of `cnpg_bayn_io_write_seconds_total` and
+   `cnpg_bayn_io_fsync_seconds_total` by `object` and `backend_type`, alongside the default checkpointer counters.
+   Differentiate WAL flush, checkpoint file sync and relation I/O before attributing every slow commit to one cause.
+4. Check connected, streaming and synchronous standby counts in `cnpg_bayn_replication_*`, recent flush-lag coverage,
+   reply ages and outstanding WAL bytes. No connected standby is not zero replication latency. Flush lag can become
+   null during idle periods; pair it with `measured_flush_lag_standbys` and the sender counts.
+5. Correlate the same interval with the verified PVC/RBD/OSD/device mapping, Ceph commit/apply latency, recovery,
+   scrubbing, device errors and competing writers. A different PVC on the same bottleneck is not storage isolation.
+   Changes to another application's workload require that application's explicit authorization.
+
+Bayn enables SQL span propagation. Its `sql.transaction` span retains the actual `postgresql.pid` as a trace
+attribute. Join that PID to a contemporaneous backend observation, including the database instance and interval;
+PIDs can be reused. The existing `db.transaction.commit` and `db.transaction.rollback` events mark control start.
+Their `.completed` events mark driver completion, with `db.transaction.outcome` equal to `succeeded` or `failed`.
+Subtract these event timestamps to measure each control. PostgreSQL returning `ROLLBACK` for an aborted `COMMIT`
+remains a failed commit. A missing completion event means the control outcome and elapsed interval remain unknown.
+
+`db.transaction.connection.release.started` and `.completed` delimit closure of the acquired connection scope.
+Commit recovery, when configured, runs after failed commit completion and before connection release. Nested
+savepoints do not release the outer connection. These events add no SQL, child spans, payloads or metric labels;
+clients without SQL propagation, or with tracing disabled, retain their existing behavior. A long interval after
+the last statement is not enough to distinguish commit waiting from connection cleanup. Use the phase events and
+backend observations together before assigning a cause.
+
+Preserve synchronous replication, `fsync`, checksums, statement cancellation and freshness bounds. Do not diagnose a
+storage repair from an idle-only sample. Any changed timing overhead or database load must be measured, and the
+existing durability requirements must remain true through rollout and naturally observed session traffic.
+
+## Allocation and recovery explanations
+
+Inspect `cycle.last.entryAllocationReason` independently of the current cycle: the next session may already exist.
+`TURNOVER_BUDGET_EXHAUSTED` is a read-only explanation of the last retained zero-allocation decision, not permission
+to increase the mandate. `ZERO_ALLOCATION` or absent evidence must not be upgraded to a proven turnover cause.
+Immutable `TARGETS_SATISFIED` records remain unchanged. Closing existing risk may exceed the entry-admission turnover
+ceiling by design; a future hard round-trip budget would require a separately reviewed policy change.
+
+Kafka cycle-failure telemetry records only a bounded invalidation reason and recognized SDK failure codes. The first
+invalidation wins even when a later SDK/cleanup event follows. A recovery event links the prior and replacement
+epochs after required bootstrap barriers complete. Match these events to source freshness and controller progress;
+ready pods or a recovered transport alone do not prove a valid decision window.

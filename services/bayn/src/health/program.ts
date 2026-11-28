@@ -1,13 +1,10 @@
-import { Cause, Clock, Duration, Effect, Exit, Fiber, Ref, Result, Schedule } from 'effect'
+import { Cause, Clock, Effect, Exit, Fiber, Ref, Result } from 'effect'
 
-import {
-  OrderCollection,
-  SortDirection,
-  verifyBrokerAccountPermissions,
-  type BrokerAccountPreflightFailure,
-  type BrokerReadShape,
-} from '../broker/alpaca'
-import type { RuntimeConfig } from '../config'
+import { OrderCollection, SortDirection, type BrokerReadShape } from '../broker/alpaca/model'
+import { verifyBrokerAccountPermissions, type BrokerAccountPreflightFailure } from '../broker/alpaca/preflight'
+import { BrokerReadError } from '../broker/alpaca/failures'
+import { requireSettledCashFees, type ObservedBrokerState } from '../broker/alpaca/observed-snapshot'
+import type { RuntimeConfig } from '../config/model'
 import { operationalError } from '../errors'
 import { databaseOperation, withinDeadline } from '../operations'
 import { type BrokerConfiguration, type RuntimeState } from '../runtime-state'
@@ -24,7 +21,6 @@ import type {
   HealthProbeResults,
   ProbeResult,
 } from './model'
-import { Pipeable } from '../pipeable'
 
 const probeFailureMessage = <E>(cause: Cause.Cause<E>, fallback: string): string => {
   const errors = Cause.prettyErrors(cause).map((error) => error.message)
@@ -38,7 +34,19 @@ const observe = <A, E, R>(
   Effect.flatMap(Effect.exit(effect), (exit): Effect.Effect<ProbeResult<A>> => {
     if (Exit.isSuccess(exit)) return Effect.succeed({ _tag: 'Available', value: exit.value })
     if (Cause.hasInterrupts(exit.cause)) return Effect.interrupt
-    return Effect.succeed({ _tag: 'Unavailable', error: probeFailureMessage(exit.cause, fallback) })
+    const failure = Cause.findError(exit.cause)
+    const observationFailure =
+      exit.cause.reasons.length === 1 &&
+      Result.isSuccess(failure) &&
+      failure.success instanceof BrokerReadError &&
+      failure.success.observationFailure === 'NO_ADMISSIBLE_CUT'
+        ? failure.success.observationFailure
+        : undefined
+    return Effect.succeed({
+      _tag: 'Unavailable',
+      error: probeFailureMessage(exit.cause, fallback),
+      ...(observationFailure === undefined ? {} : { observationFailure }),
+    })
   })
 
 const renderBrokerPermissionFailure = (failure: BrokerAccountPreflightFailure): string => {
@@ -49,6 +57,8 @@ const renderBrokerPermissionFailure = (failure: BrokerAccountPreflightFailure): 
       return 'account is blocked'
     case 'BrokerTradingBlocked':
       return 'trading is blocked'
+    case 'BrokerTransfersBlocked':
+      return 'transfers are blocked'
     case 'BrokerTradingSuspendedByUser':
       return 'trading is suspended by the user'
     case 'BrokerFractionalTradingDisabled':
@@ -67,7 +77,7 @@ const namedBrokerRead = <A, E, R>(
         result._tag === 'Available'
           ? result
           : {
-              _tag: 'Unavailable',
+              ...result,
               error: `Alpaca ${behavior} unavailable: ${result.error}`,
             },
     ),
@@ -81,7 +91,7 @@ const namedBrokerRead = <A, E, R>(
     }),
   )
 
-const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<ProbeResult<BrokerHealthObservation>> =>
+const observeBrokerComponents = (read: BrokerReadShape, timeoutMs: number) =>
   Effect.all(
     {
       account: namedBrokerRead('account read', read.account, timeoutMs),
@@ -104,27 +114,91 @@ const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<
       ),
     },
     { concurrency: 6 },
+  ).pipe(Effect.map((results) => ({ ...results, pendingCashFeeCount: undefined })))
+
+const observeBrokerProjection = (snapshot: Effect.Effect<ObservedBrokerState, BrokerReadError>, timeoutMs: number) => {
+  const component = <A>(behavior: string, result: ProbeResult<A>): ProbeResult<A> =>
+    result._tag === 'Available' ? result : { ...result, error: `Alpaca ${behavior} unavailable: ${result.error}` }
+  return observe(snapshot).pipe(
+    Effect.map((result) => {
+      const select = <A>(behavior: string, get: (value: ObservedBrokerState) => A): ProbeResult<A> =>
+        component(behavior, result._tag === 'Available' ? { _tag: 'Available', value: get(result.value) } : result)
+      return {
+        account: select('account read', (value) => value.snapshot.account),
+        accountConfiguration: select('account configuration read', (value) => value.configuration),
+        positions: select('positions read', (value) => value.snapshot.positions),
+        openOrders: select('open orders read', (value) => value.openOrders),
+        recentOrders: select('recent orders read', (value) => value.recentOrders),
+        fills: select('recent fills read', (value) => value.recentFills),
+        pendingCashFeeCount: result._tag === 'Available' ? result.value.pendingCashFeeCount : undefined,
+      }
+    }),
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () => {
+        const timedOut = (behavior: string): ProbeResult<never> => ({
+          _tag: 'Unavailable',
+          error: `Alpaca ${behavior} timed out after ${timeoutMs}ms`,
+        })
+        return Effect.succeed({
+          account: timedOut('account read'),
+          accountConfiguration: timedOut('account configuration read'),
+          positions: timedOut('positions read'),
+          openOrders: timedOut('open orders read'),
+          recentOrders: timedOut('recent orders read'),
+          fills: timedOut('recent fills read'),
+          pendingCashFeeCount: undefined,
+        })
+      },
+    }),
+  )
+}
+
+const observeBroker = (
+  { read, expectedAccountId }: BrokerProbe,
+  timeoutMs: number,
+): Effect.Effect<ProbeResult<BrokerHealthObservation>> =>
+  (read.projection?.healthSnapshot === undefined
+    ? observeBrokerComponents(read, timeoutMs)
+    : observeBrokerProjection(read.projection.healthSnapshot, timeoutMs)
   ).pipe(
-    Effect.map((results): ProbeResult<BrokerHealthObservation> => {
-      const failures = Object.values(results).flatMap((result) => (result._tag === 'Unavailable' ? [result.error] : []))
-      if (failures.length > 0) return { _tag: 'Unavailable', error: failures.join('; ') }
+    Effect.flatMap(({ pendingCashFeeCount, ...results }): Effect.Effect<ProbeResult<BrokerHealthObservation>> => {
+      const failures = Object.values(results).flatMap((result) => (result._tag === 'Unavailable' ? [result] : []))
+      if (failures.length > 0) {
+        const observationFailure = failures[0]?.observationFailure
+        return Effect.succeed({
+          _tag: 'Unavailable',
+          error: failures.map((failure) => failure.error).join('; '),
+          ...(observationFailure !== undefined &&
+          failures.every((failure) => failure.observationFailure === observationFailure)
+            ? { observationFailure }
+            : {}),
+        })
+      }
 
       if (results.account._tag !== 'Available' || results.accountConfiguration._tag !== 'Available') {
-        return { _tag: 'Unavailable', error: 'Alpaca continuous broker-read health did not complete' }
+        return Effect.succeed({ _tag: 'Unavailable', error: 'Alpaca continuous broker-read health did not complete' })
       }
-      const permissions = verifyBrokerAccountPermissions(
-        results.account.value.value,
-        results.accountConfiguration.value.value,
+      const account = results.account.value.value
+      const permissions = verifyBrokerAccountPermissions(account, results.accountConfiguration.value.value)
+      const permissionError = Result.isFailure(permissions)
+        ? `Alpaca account permission drift detected: ${renderBrokerPermissionFailure(permissions.failure)}`
+        : null
+      const observed = { _tag: 'Available', value: { accountId: account.id, permissionError } } as const
+      // Only a current projection for the expected account with valid permissions can prove a fee-only wait.
+      if (permissionError !== null || account.id !== expectedAccountId || pendingCashFeeCount === undefined) {
+        return Effect.succeed(observed)
+      }
+      return requireSettledCashFees({ pendingCashFeeCount }).pipe(
+        Effect.match({
+          onSuccess: () => observed,
+          onFailure: ({ message, observationFailure }): ProbeResult<BrokerHealthObservation> => ({
+            _tag: 'Unavailable',
+            error: message,
+            ...(observationFailure === undefined ? {} : { observationFailure }),
+          }),
+        }),
       )
-      return {
-        _tag: 'Available',
-        value: {
-          accountId: results.account.value.value.id,
-          permissionError: Result.isFailure(permissions)
-            ? `Alpaca account permission drift detected: ${renderBrokerPermissionFailure(permissions.failure)}`
-            : null,
-        },
-      }
     }),
   )
 
@@ -177,14 +251,16 @@ const collectHealthProbeResults = (
             'continuous-health',
           ),
         ),
-        observe(
-          withinDeadline(
-            dependencies.marketData.check.pipe(Effect.asVoid),
-            config.operationTimeoutMs,
-            'market-data',
-            'continuous-health',
-          ),
-        ),
+        dependencies.marketData === undefined
+          ? Effect.void
+          : observe(
+              withinDeadline(
+                dependencies.marketData.check.pipe(Effect.asVoid),
+                config.operationTimeoutMs,
+                'market-data',
+                'continuous-health',
+              ),
+            ),
         observe(withinDeadline(dependencies.journal.check, config.operationTimeoutMs, 'journal', 'continuous-health')),
         observe(
           cycleBindingId === undefined
@@ -205,7 +281,7 @@ const collectHealthProbeResults = (
                 'cycle-observability',
               ),
         ),
-        broker === undefined ? Effect.succeed(null) : observeBroker(broker.read, config.operationTimeoutMs),
+        broker === undefined ? Effect.succeed(null) : observeBroker(broker, config.operationTimeoutMs),
         executionController === undefined
           ? Effect.succeed(null)
           : observe(
@@ -213,7 +289,7 @@ const collectHealthProbeResults = (
                 executionController.read(executionController.controllerKey).pipe(
                   Effect.mapError((cause) =>
                     operationalError({
-                      component: 'database',
+                      component: cause._tag === 'OperationalError' ? cause.component : 'database',
                       operation: 'execution-controller-status',
                       message: 'execution controller status read failed',
                       cause,
@@ -231,7 +307,7 @@ const collectHealthProbeResults = (
     ),
     ([postgresql, signal, tigerBeetle, cycle, brokerResult, executionControllerResult]) => ({
       postgresql,
-      signal,
+      ...(signal === undefined ? {} : { signal }),
       tigerBeetle,
       cycle,
       broker: brokerResult,
@@ -242,7 +318,7 @@ const collectHealthProbeResults = (
 
 const defaultCycleObservationBinding: CycleObservationBinding = { _tag: 'Unavailable' }
 
-const checkHealthDataFirst = (
+export const checkHealth = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   dependencies: HealthDependencies,
@@ -278,47 +354,3 @@ const checkHealthDataFirst = (
     })
     yield* interpretHealthLogs(deriveHealthLogDecisions(transition))
   }).pipe(Effect.withLogSpan('health'))
-
-export const checkHealth = Pipeable.by<
-  (
-    state: Ref.Ref<RuntimeState>,
-    dependencies: HealthDependencies,
-    broker?: BrokerProbe,
-    autonomousCycleFiber?: Fiber.Fiber<void, never>,
-    cycleObservation?: CycleObservationBinding,
-    executionController?: ExecutionControllerProbe,
-  ) => (config: RuntimeConfig) => ReturnType<typeof checkHealthDataFirst>,
-  typeof checkHealthDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'healthIntervalMs' in arguments_[0],
-  checkHealthDataFirst,
-)
-
-const runHealthMonitorDataFirst = (
-  config: RuntimeConfig,
-  state: Ref.Ref<RuntimeState>,
-  dependencies: HealthDependencies,
-  broker?: BrokerProbe,
-  autonomousCycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservation: CycleObservationBinding = defaultCycleObservationBinding,
-  executionController?: ExecutionControllerProbe,
-): Effect.Effect<void> =>
-  checkHealth(config, state, dependencies, broker, autonomousCycleFiber, cycleObservation, executionController).pipe(
-    Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
-    Effect.asVoid,
-  )
-
-export const runHealthMonitor = Pipeable.by<
-  (
-    state: Ref.Ref<RuntimeState>,
-    dependencies: HealthDependencies,
-    broker?: BrokerProbe,
-    autonomousCycleFiber?: Fiber.Fiber<void, never>,
-    cycleObservation?: CycleObservationBinding,
-    executionController?: ExecutionControllerProbe,
-  ) => (config: RuntimeConfig) => ReturnType<typeof runHealthMonitorDataFirst>,
-  typeof runHealthMonitorDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'healthIntervalMs' in arguments_[0],
-  runHealthMonitorDataFirst,
-)

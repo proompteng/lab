@@ -9,13 +9,25 @@ import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
 import type { verifyJobConfigMaps } from './job-runtime'
 import { resolveMemory } from './namespace-state'
-import { type ImagePolicyCandidate, validateAuthSecretPolicy, validateImagePolicy } from './policy'
+import {
+  extractProviderSecretEnvNames,
+  type ImagePolicyCandidate,
+  providerUsesControllerAuthSecret,
+  validateAuthSecretPolicy,
+  validateImagePolicy,
+  validateProviderSecretEnvPolicy,
+} from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
 import { resolveImplementation, resolveParameters } from './run-utils'
 import { buildRuntimeRef, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
 import { resolveSystemPrompt } from './system-prompt'
 import { collectBlockedSecrets, resolveAuthSecretConfig, resolveVcsContext } from './vcs-context'
-import { extractRunnerStatusFromJobPods, mergeAgentRunArtifacts, runnerStatusOutputArtifacts } from './runner-status'
+import {
+  extractRunnerStatusFromJobPods,
+  mergeAgentRunArtifacts,
+  runnerStatusOutputArtifacts,
+  type RunnerTerminalStatus,
+} from './runner-status'
 import {
   normalizeWorkflowStatus,
   parseWorkflowSteps,
@@ -37,6 +49,12 @@ type WorkflowContractCheck =
   | { ok: true; requiredKeys: string[] }
   | { ok: false; reason: string; message: string; requiredKeys: string[]; missing?: string[] }
 
+export type CompletedWorkflowRunner = {
+  runner: RunnerTerminalStatus
+  jobStartedAt: string | null
+  jobFinishedAt: string | null
+}
+
 type WorkflowReconcilerDependencies = {
   resolveRunnerServiceAccount: (
     runtimeConfig: Record<string, unknown>,
@@ -49,7 +67,12 @@ type WorkflowReconcilerDependencies = {
   ) => WorkflowContractCheck
   buildContractStatus: (result: WorkflowContractCheck) => Record<string, unknown> | undefined
   buildConditions: (resource: Record<string, unknown>) => Condition[]
-  setStatus: (kube: KubeClient, resource: Record<string, unknown>, status: Record<string, unknown>) => Promise<void>
+  setStatus: (
+    kube: KubeClient,
+    resource: Record<string, unknown>,
+    status: Record<string, unknown>,
+    completedRunners?: CompletedWorkflowRunner[],
+  ) => Promise<void>
   nowIso: () => string
   submitJobRun: (
     kube: KubeClient,
@@ -134,7 +157,7 @@ const evaluateLoopConditionExpression = (expression: string, context: LoopCondit
       }
       return { ok: true as const, value: result }
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.succeed({
           ok: false as const,
           message: error instanceof Error ? error.message : String(error),
@@ -239,7 +262,7 @@ const parseLoopControlPayload = (job: Record<string, unknown>, loopControlPath: 
       }
       return { kind: 'ok' as const, control }
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.succeed({
           kind: 'invalid' as const,
           message: error instanceof Error ? error.message : String(error),
@@ -318,7 +341,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
     const allowedSourceProviders = extractAllowedImplementationSourceProviders(asRecord(agent.spec) ?? {})
     const runSecrets = parseStringList(spec.secrets)
-    const authSecret = resolveAuthSecretConfig()
+    const authSecret = providerUsesControllerAuthSecret(provider) ? resolveAuthSecretConfig() : null
     if (allowedSecrets.length > 0) {
       const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
       if (forbidden.length > 0) {
@@ -331,8 +354,10 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     }
 
     const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+    const providerSecretNames = extractProviderSecretEnvNames(provider)
     const blockedSecrets = collectBlockedSecrets([
       ...runSecrets,
+      ...providerSecretNames,
       ...(memorySecretName ? [memorySecretName] : []),
       ...(authSecret ? [authSecret.name] : []),
     ])
@@ -347,6 +372,10 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     const authSecretPolicy = validateAuthSecretPolicy(allowedSecrets, authSecret)
     if (!authSecretPolicy.ok) {
       return authSecretPolicy
+    }
+    const providerSecretEnvPolicy = validateProviderSecretEnvPolicy(allowedSecrets, providerSecretNames)
+    if (!providerSecretEnvPolicy.ok) {
+      return providerSecretEnvPolicy
     }
     if (memorySecretName) {
       if (allowedSecrets.length > 0 && !allowedSecrets.includes(memorySecretName)) {
@@ -1168,15 +1197,22 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     }
 
     let completedJobOutputArtifacts: Record<string, unknown>[] = []
+    const completedRunners: CompletedWorkflowRunner[] = []
     for (const entry of completedJobs) {
       const jobName = asString(readNested(entry.job, ['metadata', 'name']))
       if (!jobName) continue
-      const runnerStatus = await extractRunnerStatusFromJobPods(kube, entry.namespace, jobName, [
+      const runner = await extractRunnerStatusFromJobPods(kube, entry.namespace, jobName, [
         'succeeded',
         'failed',
         'cancelled',
       ])
-      const runnerArtifacts = runnerStatus ? runnerStatusOutputArtifacts(runnerStatus) : []
+      if (!runner) continue
+      completedRunners.push({
+        runner,
+        jobStartedAt: asString(readNested(entry.job, ['status', 'startTime'])),
+        jobFinishedAt: asString(readNested(entry.job, ['status', 'completionTime'])),
+      })
+      const runnerArtifacts = runnerStatusOutputArtifacts(runner)
       if (runnerArtifacts.length > 0) {
         completedJobOutputArtifacts = mergeAgentRunArtifacts(completedJobOutputArtifacts, runnerArtifacts)
       }
@@ -1185,6 +1221,22 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       completedJobOutputArtifacts.length > 0
         ? { artifacts: mergeAgentRunArtifacts(status.artifacts, completedJobOutputArtifacts) }
         : {}
+
+    const commitProgress = async (nextStatus: Record<string, unknown>) => {
+      await deps.setStatus(
+        kube,
+        agentRun,
+        {
+          ...nextStatus,
+          ...artifactStatusUpdate,
+          ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
+        },
+        completedRunners,
+      )
+      for (const entry of completedJobs) {
+        await deps.applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
+      }
+    }
 
     if (workflowFailure) {
       setWorkflowPhase(workflowStatus, 'Failed')
@@ -1206,7 +1258,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         message: workflowFailure.message,
         durationMs: Date.now() - reconcileStartedAt,
       })
-      await deps.setStatus(kube, agentRun, {
+      await commitProgress({
         observedGeneration,
         phase: 'Failed',
         reason: workflowFailure.reason,
@@ -1217,12 +1269,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         conditions: updated,
         vcs: vcsStatus ?? undefined,
         contract: workflowContractStatus,
-        ...artifactStatusUpdate,
-        ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
       })
-      for (const entry of completedJobs) {
-        await deps.applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
-      }
       return
     }
 
@@ -1242,7 +1289,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         message: 'workflow completed',
         durationMs: Date.now() - reconcileStartedAt,
       })
-      await deps.setStatus(kube, agentRun, {
+      await commitProgress({
         observedGeneration,
         phase: 'Succeeded',
         reason: undefined,
@@ -1252,12 +1299,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         workflow: workflowStatus,
         conditions: updated,
         vcs: vcsStatus ?? undefined,
-        ...artifactStatusUpdate,
-        ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
       })
-      for (const entry of completedJobs) {
-        await deps.applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
-      }
       return
     }
 
@@ -1275,7 +1317,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         })
       }
       updated = upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' })
-      await deps.setStatus(kube, agentRun, {
+      await commitProgress({
         observedGeneration,
         phase: 'Running',
         reason: undefined,
@@ -1286,13 +1328,8 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         conditions: updated,
         vcs: vcsStatus ?? undefined,
         contract: workflowContractStatus,
-        ...artifactStatusUpdate,
         ...(options.initialSubmit ? { specHash: hashAgentRunImmutableSpec(agentRun) } : {}),
-        ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
       })
-      for (const entry of completedJobs) {
-        await deps.applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
-      }
     }
   }
 

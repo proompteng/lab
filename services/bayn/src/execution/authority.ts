@@ -14,7 +14,6 @@ import {
   UtcInstantSchema as UtcInstant,
   strictParseOptions as StrictParseOptions,
 } from '../schemas'
-import { Pipeable } from '../pipeable'
 
 export { BrokerEnvironment, BrokerEnvironmentSchema }
 
@@ -368,11 +367,5 @@ export const makeCapitalGrantRecord = (
   )
 
 export const decodeCapitalGrantRecord = (input: unknown) => decodeCapitalGrantRecordValue(input)
-const decodeCapitalGrantRevocationDataFirst = Schema.decodeUnknownResult(
-  CapitalGrantRevocationSchema,
-  StrictParseOptions,
-)
 
-export const decodeCapitalGrantRevocation = Pipeable.dual(1, (input: unknown) =>
-  decodeCapitalGrantRevocationDataFirst(input),
-)
+export const decodeCapitalGrantRevocation = Schema.decodeUnknownResult(CapitalGrantRevocationSchema, StrictParseOptions)

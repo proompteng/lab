@@ -1,0 +1,1828 @@
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+
+use restate_sdk::{ingress::ReqwestClient, prelude::*, service::IntoServiceDefinition};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tonic::Status;
+use uuid::Uuid;
+
+use crate::{auth::Principal, grpc::ControlPlane};
+
+pub(crate) mod reader;
+
+// Query expiry limits admission; an authorized response may arrive later.
+const STATUS_RESPONSE_WARNING: Duration = Duration::from_secs(5);
+const STATUS_RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+// Leave room for ingress authorization within the BFF's 130-second RPC deadline.
+const ADMISSION_RECOVERY_TIMEOUT: Duration = Duration::from_secs(120);
+
+async fn recover_status<T, F, Fut>(operation: &'static str, mut request: F) -> Result<T, Status>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Status>>,
+{
+    tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
+        let mut backoff = Duration::from_millis(100);
+        loop {
+            let response = request();
+            tokio::pin!(response);
+            let result =
+                match tokio::time::timeout(STATUS_RESPONSE_WARNING, response.as_mut()).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        tracing::warn!(operation, "durable run read response remains pending");
+                        response.await
+                    }
+                };
+            match result {
+                Ok(value) => return Ok(value),
+                Err(error)
+                    if !matches!(
+                        error.code(),
+                        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+                    ) =>
+                {
+                    return Err(error);
+                }
+                Err(_) => {}
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(Duration::from_secs(1));
+        }
+    })
+    .await
+    .map_err(|_| {
+        crate::metrics::global().record_run_read_failure();
+        tracing::warn!(operation, "durable run read recovery timed out");
+        Status::unavailable("durable run status recovery timed out")
+    })?
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Input {
+    pub id: String,
+    pub agent_id: String,
+    pub thread_id: String,
+    pub text: String,
+    pub model: String,
+    pub reasoning_effort: String,
+    pub images: Vec<Image>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Image {
+    pub path: String,
+    pub revision: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Envelope {
+    payload: String,
+    signature: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Admission {
+    input: Input,
+    principal: Principal,
+    digest: String,
+    claim: Claim,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Claim {
+    workspace_uid: String,
+    owner_hash: String,
+    thread_id: String,
+    run_id: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StopQuery {
+    claim: Claim,
+    known_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "phase",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum State {
+    Accepted,
+    WaitingForGuest {
+        reason: String,
+    },
+    Running {
+        turn_id: String,
+    },
+    WaitingForApproval {
+        turn_id: String,
+        approvals: Vec<PendingApproval>,
+    },
+    Cancelling {
+        turn_id: Option<String>,
+        reason: String,
+    },
+    Recovering {
+        turn_id: String,
+        reason: String,
+    },
+    Succeeded {
+        turn_id: String,
+    },
+    Failed {
+        turn_id: String,
+        reason: String,
+    },
+    Unconfirmed {
+        turn_id: Option<String>,
+        reason: String,
+    },
+    Cancelled {
+        turn_id: String,
+    },
+    NeedsReconciliation {
+        turn_id: Option<String>,
+        reason: String,
+    },
+    AuthorizationRequired {
+        turn_id: Option<String>,
+        reason: String,
+    },
+    Rejected {
+        reason: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PendingApproval {
+    approval_id: String,
+    raw: serde_json::Value,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Control {
+    pub id: String,
+    pub run_id: String,
+    pub agent_id: String,
+    pub principal: Principal,
+    pub method: String,
+    pub params: serde_json::Value,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ControlResult {
+    pub delivered: bool,
+    pub result: serde_json::Value,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlReceipt {
+    digest: String,
+    result: ControlResult,
+}
+
+fn control_digest(control: &Control) -> Result<String, Status> {
+    let bytes = serde_json::to_vec(&(
+        &control.id,
+        &control.run_id,
+        &control.agent_id,
+        &control.principal.owner_hash,
+        &control.principal.context.workspace_uid,
+        &control.method,
+        &control.params,
+    ))
+    .map_err(|_| Status::internal("encode control identity"))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+impl State {
+    pub(crate) fn terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded { .. }
+                | Self::Failed { .. }
+                | Self::Unconfirmed { .. }
+                | Self::Cancelled { .. }
+                | Self::Rejected { .. }
+        )
+    }
+
+    fn unconfirmed_after_restart(turn_id: Option<String>) -> Self {
+        Self::Unconfirmed {
+            turn_id,
+            reason: "The workspace restarted. Earlier actions may have taken effect.".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Snapshot {
+    pub run_id: String,
+    pub agent_id: String,
+    pub thread_id: String,
+    owner_hash: String,
+    workspace_uid: String,
+    digest: String,
+    pub state: State,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Query {
+    run_id: String,
+    owner_hash: String,
+    workspace_uid: String,
+    digest: Option<String>,
+    expires_at_ms: u64,
+}
+
+pub(crate) fn input_digest(input: &Input) -> Result<String, Status> {
+    let bytes = serde_json::to_vec(input).map_err(|_| Status::internal("encode agent run"))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+async fn seal<T: Serialize>(
+    service: &ControlPlane,
+    domain: &str,
+    value: &T,
+) -> Result<Envelope, Status> {
+    let payload =
+        serde_json::to_string(value).map_err(|_| Status::internal("encode run admission"))?;
+    let signature = service.auth.seal_run(domain, payload.as_bytes()).await?;
+    Ok(Envelope { payload, signature })
+}
+
+async fn open<T: for<'de> Deserialize<'de>>(
+    service: &ControlPlane,
+    domain: &str,
+    envelope: &Envelope,
+) -> Result<T, Status> {
+    service
+        .auth
+        .verify_run(domain, envelope.payload.as_bytes(), &envelope.signature)
+        .await?;
+    serde_json::from_str(&envelope.payload)
+        .map_err(|_| Status::invalid_argument("invalid run admission"))
+}
+
+fn ingress() -> Result<ReqwestClient, Status> {
+    static CLIENT: OnceLock<ReqwestClient> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let url = env::var("TENGRI_RESTATE_INGRESS")
+        .map_err(|_| Status::unavailable("durable run ingress is not configured"))?;
+    let url: http::Uri = url
+        .parse()
+        .map_err(|_| Status::internal("invalid durable run ingress"))?;
+    if !matches!(url.scheme_str(), Some("http" | "https")) || url.authority().is_none() {
+        return Err(Status::internal("invalid durable run ingress"));
+    }
+    let client = ReqwestClient::connect(url)
+        .map_err(|_| Status::unavailable("durable run ingress unavailable"))?;
+    Ok(CLIENT.get_or_init(|| client).clone())
+}
+
+pub(crate) async fn submit(
+    service: &ControlPlane,
+    principal: Principal,
+    input: Input,
+) -> Result<Snapshot, Status> {
+    let workspace_uid = principal.context.workspace_uid.clone();
+    let claim = Claim {
+        workspace_uid: workspace_uid.clone(),
+        owner_hash: principal.owner_hash.clone(),
+        thread_id: input.thread_id.clone(),
+        run_id: input.id.clone(),
+    };
+    let digest = input_digest(&input)?;
+    let admission = Admission {
+        input: input.clone(),
+        principal: principal.clone(),
+        digest: digest.clone(),
+        claim,
+    };
+    let envelope = seal(service, "admission", &admission).await?;
+    let client = TengriWorkspaceRunsIngressClient::from_client(ingress()?, workspace_uid);
+    confirm_admission(
+        async {
+            client
+                .admit(Json(envelope))
+                .call()
+                .await
+                .map_err(client_error)?
+                .into_body()
+                .map_err(client_error)
+        },
+        || read(&principal, &input.id, Some(digest.clone())),
+    )
+    .await
+}
+
+async fn confirm_admission<T, A, R, Fut>(admission: A, mut read: R) -> Result<T, Status>
+where
+    A: std::future::Future<Output = Result<(), Status>>,
+    R: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Status>>,
+{
+    tokio::time::timeout(ADMISSION_RECOVERY_TIMEOUT, async {
+        tokio::pin!(admission);
+        let accepted = match tokio::time::timeout(Duration::from_secs(10), admission.as_mut()).await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                // Keep the original request alive: the durable admission may still be queued.
+                // A committed snapshot can confirm it sooner when only the acknowledgement is lost.
+                tracing::warn!("durable admission remains pending; reconciling the existing run");
+                let snapshot = read();
+                tokio::pin!(snapshot);
+                tokio::select! {
+                    accepted = admission.as_mut() => {
+                        if let Err(error) = accepted {
+                            require_transient_admission(error)?;
+                        }
+                        return snapshot.await;
+                    }
+                    result = snapshot.as_mut() => match result {
+                        Ok(value) => return Ok(value),
+                        Err(error) => require_transient_admission(error)?,
+                    }
+                }
+                admission.await
+            }
+        };
+        if let Err(error) = accepted {
+            require_transient_admission(error)?;
+        }
+        read().await
+    })
+    .await
+    .map_err(|_| {
+        Status::unavailable("durable run acceptance timed out; retry the same operation")
+    })?
+}
+
+fn require_transient_admission(error: Status) -> Result<(), Status> {
+    if matches!(
+        error.code(),
+        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+    ) {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
+pub(crate) async fn read(
+    principal: &Principal,
+    id: &str,
+    digest: Option<String>,
+) -> Result<Snapshot, Status> {
+    let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::RunStatus);
+    recover_status("status", || async {
+        reader::client()?
+            .status(&Query {
+                run_id: id.into(),
+                owner_hash: principal.owner_hash.clone(),
+                workspace_uid: principal.context.workspace_uid.clone(),
+                digest: digest.clone(),
+                expires_at_ms: crate::ofz::now_ms()? + 2000,
+            })
+            .await
+    })
+    .await
+}
+
+pub(crate) async fn active(
+    principal: &Principal,
+    thread_id: &str,
+) -> Result<Vec<Snapshot>, Status> {
+    let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::ActiveRuns);
+    tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
+        let claims = active_claims(principal).await?;
+        futures::future::try_join_all(
+            claims
+                .iter()
+                .filter(|claim| claim.owner_hash == principal.owner_hash)
+                // Scope before reading snapshots: an unavailable conversation must not
+                // prevent observing another. A failed selected read still fails closed.
+                .filter(|claim| thread_id.is_empty() || claim.thread_id == thread_id)
+                .map(|claim| read(principal, &claim.run_id, None)),
+        )
+        .await
+    })
+    .await
+    .map_err(|_| {
+        crate::metrics::global().record_run_read_failure();
+        Status::unavailable("active run recovery timed out")
+    })?
+}
+
+pub(crate) async fn thread_active(principal: &Principal, thread_id: &str) -> Result<bool, Status> {
+    Ok(active_claims(principal)
+        .await?
+        .iter()
+        .any(|claim| claim.thread_id == thread_id))
+}
+
+async fn active_claims(principal: &Principal) -> Result<Vec<Claim>, Status> {
+    recover_status("active", || async {
+        reader::client()?
+            .active(&Query {
+                run_id: String::new(),
+                owner_hash: principal.owner_hash.clone(),
+                workspace_uid: principal.context.workspace_uid.clone(),
+                digest: None,
+                expires_at_ms: crate::ofz::now_ms()? + 2000,
+            })
+            .await
+    })
+    .await
+}
+
+pub(crate) async fn control(
+    service: &ControlPlane,
+    control: Control,
+) -> Result<ControlResult, Status> {
+    let digest = control_digest(&control)?;
+    let envelope = seal(service, "control", &control).await?;
+    let connection = ingress()?;
+    let workspace = TengriWorkspaceRunsIngressClient::from_client(
+        connection.clone(),
+        control.principal.context.workspace_uid.clone(),
+    );
+    let client = TengriRunControlIngressClient::from_client(connection, control.id.clone());
+    let receipt = tokio::time::timeout(
+        Duration::from_secs(20),
+        control_receipt(&workspace, &client, envelope),
+    )
+    .await
+    .map_err(|_| Status::unavailable("control accepted; retry the same operation"))?
+    .map_err(client_error)?;
+    if receipt.digest != digest {
+        return Err(Status::already_exists(
+            "control ID already has different input",
+        ));
+    }
+    let result = receipt.result;
+    if !result.delivered {
+        return Err(Status::failed_precondition(
+            "control outcome needs reconciliation; it was not resent",
+        ));
+    }
+    Ok(result)
+}
+
+async fn control_receipt(
+    workspace: &TengriWorkspaceRunsIngressClient<reqwest::Client>,
+    client: &TengriRunControlIngressClient<reqwest::Client>,
+    envelope: Envelope,
+) -> Result<ControlReceipt, restate_sdk::ingress::ClientError> {
+    workspace
+        .admit_control(Json(envelope))
+        .call()
+        .await?
+        .into_body()?;
+    Ok(client
+        .handle()
+        .await?
+        .attach()
+        .await?
+        .into_body()
+        .into_inner())
+}
+
+struct TengriRunControl;
+
+#[workflow(workflow_completion_retention = "7 days")]
+impl TengriRunControl {
+    #[handler(ingress_private = true)]
+    async fn run(
+        &self,
+        ctx: WorkflowContext<'_>,
+        control: Json<Control>,
+    ) -> HandlerResult<Json<ControlReceipt>> {
+        let id = ctx.key().to_owned();
+        let control = control.into_inner();
+        if control.id != id || Uuid::parse_str(&id).is_err() {
+            return Err(TerminalError::new_with_code(400, "invalid control identity").into());
+        }
+        let digest = control_digest(&control).map_err(terminal)?;
+        let result = ctx
+            .workflow_client::<TengriAgentRunClient>(&control.run_id)
+            .control(Json(control))
+            .call()
+            .await?
+            .into_inner();
+        Ok(Json(ControlReceipt { digest, result }))
+    }
+}
+
+fn client_error(error: restate_sdk::ingress::ClientError) -> Status {
+    match error.response().map(|response| response.status().as_u16()) {
+        Some(400) => Status::invalid_argument("durable run input or control was rejected"),
+        Some(401) => Status::unauthenticated("durable run authorization is invalid"),
+        Some(422) => Status::failed_precondition("Codex control was not dispatched"),
+        Some(403) => Status::permission_denied("run unavailable"),
+        Some(404) => Status::not_found("run is unavailable or its retention expired"),
+        Some(409) => Status::already_exists("run or operation conflicts with its recorded state"),
+        _ => Status::unavailable("durable run status unavailable"),
+    }
+}
+
+pub(crate) struct TengriAgentRun {
+    service: Arc<ControlPlane>,
+}
+
+#[workflow(workflow_completion_retention = "7 days")]
+impl TengriAgentRun {
+    #[handler(ingress_private = true)]
+    async fn run(
+        &self,
+        ctx: WorkflowContext<'_>,
+        admission: Json<Admission>,
+    ) -> HandlerResult<Json<State>> {
+        let run_id = ctx.key().to_owned();
+        let admission = admission.into_inner();
+        if admission.input.id != run_id || admission.claim.run_id != run_id {
+            return Err(TerminalError::new_with_code(400, "invalid run identity").into());
+        }
+        let mut snapshot = Snapshot {
+            run_id: admission.input.id.clone(),
+            agent_id: admission.input.agent_id.clone(),
+            thread_id: admission.input.thread_id.clone(),
+            owner_hash: admission.principal.owner_hash.clone(),
+            workspace_uid: admission.claim.workspace_uid.clone(),
+            digest: admission.digest.clone(),
+            state: State::Accepted,
+        };
+        // A slow cross-partition claim must not hide an already admitted run from its caller.
+        ctx.set("snapshot", Json(snapshot.clone()));
+        let workspace =
+            ctx.object_client::<TengriWorkspaceRunsClient>(&admission.claim.workspace_uid);
+        // Calls are queued eagerly; preparation can run while this claim is pending.
+        let claim = workspace.claim(Json(admission.claim.clone())).call();
+        let (prepared, started_at) = self.prepare_run(&ctx, &admission).await?;
+        let mut stop = None;
+        snapshot.state = match claim.await {
+            Ok(claimed) => {
+                stop = claimed.into_inner();
+                if stop.is_some() {
+                    State::Cancelled {
+                        turn_id: String::new(),
+                    }
+                } else if matches!(prepared, State::Accepted) {
+                    self.dispatch_prepared(&ctx, &admission).await?
+                } else {
+                    prepared
+                }
+            }
+            Err(error) if error.code() == 409 => State::Rejected {
+                reason: "conversation already has an active run".into(),
+            },
+            Err(error) => return Err(error.into()),
+        };
+        if !snapshot.state.terminal() {
+            ctx.set("snapshot", Json(snapshot.clone()));
+        }
+        let mut approval_started_at = None;
+        let mut recovery_attempt = 0_u32;
+        let mut principal = admission.principal.clone();
+        let mut recovery_wait = 0_u64;
+        while !snapshot.state.terminal() {
+            if matches!(
+                snapshot.state,
+                State::Recovering { .. }
+                    | State::AuthorizationRequired { .. }
+                    | State::NeedsReconciliation { .. }
+                    | State::Cancelling { .. }
+            ) && ctx
+                .run(|| async {
+                    Ok(self
+                        .service
+                        .workspace_removal_complete(&admission.principal.context.workspace_uid)
+                        .await?)
+                })
+                .name("read_permanent_removal_receipt")
+                .await?
+            {
+                snapshot.state = State::Cancelled {
+                    turn_id: turn_id(&snapshot.state).unwrap_or_default().into(),
+                };
+                break;
+            }
+            if turn_id(&snapshot.state).is_none()
+                && matches!(
+                    snapshot.state,
+                    State::NeedsReconciliation { .. } | State::AuthorizationRequired { .. }
+                )
+            {
+                snapshot.state = ctx
+                    .run(|| async {
+                        let next = self
+                            .service
+                            .reconcile_durable_run(&principal, &admission.input, &snapshot.state)
+                            .await;
+                        crate::metrics::global().observe_run_recovery(&next);
+                        Ok(Json(next))
+                    })
+                    .name("reconcile_dispatch_receipt")
+                    .await?
+                    .into_inner();
+                if !snapshot.state.terminal() {
+                    ctx.set("snapshot", Json(snapshot.clone()));
+                }
+            }
+            if snapshot.state.terminal() {
+                break;
+            }
+            if matches!(
+                snapshot.state,
+                State::NeedsReconciliation { .. } | State::AuthorizationRequired { .. }
+            ) {
+                recovery_wait += 1;
+                let key = format!("recovery/{recovery_wait}");
+                ctx.set("recovery_key", key.clone());
+                let delay = if matches!(snapshot.state, State::AuthorizationRequired { .. }) {
+                    60
+                } else {
+                    2_u64.pow(recovery_attempt.min(5) + 1).min(60)
+                };
+                recovery_attempt = recovery_attempt.saturating_add(1);
+                restate_sdk::select! {
+                    refreshed = ctx.promise::<Json<Principal>>(&key) => {
+                        principal = refreshed?.into_inner();
+                        recovery_attempt = 0;
+                        if let Some(stop) = &mut stop {
+                            stop.principal = principal.clone();
+                        }
+                    },
+                    elapsed = ctx.sleep(Duration::from_secs(delay)) => { elapsed?; },
+                }
+                ctx.clear("recovery_key");
+            } else {
+                recovery_attempt = 0;
+                ctx.sleep(Duration::from_secs(2)).await?;
+            }
+            if let Some(latest) = workspace
+                .latest_stop(Json(StopQuery {
+                    claim: admission.claim.clone(),
+                    known_id: stop
+                        .as_ref()
+                        .map(|control: &Control| control.id.clone())
+                        .unwrap_or_default(),
+                }))
+                .call()
+                .await?
+                .into_inner()
+            {
+                principal = latest.principal.clone();
+                stop = Some(latest);
+            }
+            let now: u64 = ctx
+                .run(|| async { Ok(crate::ofz::now_ms().map_err(terminal)?) })
+                .await?;
+            match &snapshot.state {
+                State::WaitingForApproval { approvals, .. } => {
+                    let ids: Vec<String> = approvals
+                        .iter()
+                        .map(|approval| approval.approval_id.clone())
+                        .collect();
+                    if approval_started_at
+                        .as_ref()
+                        .is_none_or(|(previous, _)| previous != &ids)
+                    {
+                        approval_started_at = Some((ids, now));
+                    }
+                }
+                State::Recovering { .. } => {}
+                _ => approval_started_at = None,
+            }
+            if stop.is_none()
+                && (now.saturating_sub(started_at) >= 24 * 60 * 60 * 1000
+                    || approval_started_at
+                        .as_ref()
+                        .is_some_and(|(_, at)| now.saturating_sub(*at) >= 30 * 60 * 1000))
+            {
+                let bytes: [u8; 16] = Sha256::digest(format!("{}:budget-stop", admission.input.id))
+                    [..16]
+                    .try_into()
+                    .expect("SHA256 prefix");
+                stop = Some(Control {
+                    id: Uuid::from_bytes(bytes).to_string(),
+                    run_id: admission.input.id.clone(),
+                    agent_id: admission.input.agent_id.clone(),
+                    principal: principal.clone(),
+                    method: "turn/interrupt".into(),
+                    params: serde_json::json!({}),
+                });
+            }
+            let changed =
+                if stop.is_none() && matches!(snapshot.state, State::WaitingForGuest { .. }) {
+                    let next = self.start_run(&ctx, &admission).await?;
+                    (next != snapshot.state).then_some(next)
+                } else {
+                    ctx.run(|| async {
+                        let next = if let Some(stop) = &stop {
+                            self.service
+                                .stop_durable_run(stop, &admission.input, &snapshot.state)
+                                .await
+                        } else {
+                            self.service
+                                .observe_durable_run(&principal, &admission.input, &snapshot.state)
+                                .await
+                        };
+                        crate::metrics::global().observe_run_recovery(&next);
+                        Ok(Json((next != snapshot.state).then_some(next)))
+                    })
+                    .name("observe_codex_turn")
+                    .await?
+                    .into_inner()
+                };
+            if let Some(next) = changed {
+                snapshot.state = next;
+                if !snapshot.state.terminal() {
+                    ctx.set("snapshot", Json(snapshot.clone()));
+                }
+            }
+        }
+        if snapshot.state.terminal() {
+            ctx.run(|| async {
+                self.service
+                    .release_run_pin(&principal, &admission.input)
+                    .await
+                    .map_err(HandlerError::from)?;
+                Ok(())
+            })
+            .name("release_sleep_fence")
+            .await?;
+            workspace.release(Json(admission.claim)).call().await?;
+        }
+        ctx.set("snapshot", Json(snapshot.clone()));
+        Ok(Json(snapshot.state))
+    }
+
+    #[handler(ingress_private = true)]
+    async fn control(
+        &self,
+        ctx: SharedWorkflowContext<'_>,
+        control: Json<Control>,
+    ) -> HandlerResult<Json<ControlResult>> {
+        let run_id = ctx.key().to_owned();
+        let mut control = control.into_inner();
+        if control.run_id != run_id {
+            return Err(TerminalError::new_with_code(400, "invalid run control").into());
+        }
+        let snapshot = ctx
+            .get::<Json<Snapshot>>("snapshot")
+            .await?
+            .ok_or_else(|| TerminalError::new_with_code(503, "run is being admitted"))?
+            .into_inner();
+        if snapshot.owner_hash != control.principal.owner_hash
+            || snapshot.workspace_uid != control.principal.context.workspace_uid
+            || snapshot.agent_id != control.agent_id
+        {
+            return Err(TerminalError::new_with_code(403, "run unavailable").into());
+        }
+        if control.method == "tengri/recoverRun" {
+            if snapshot.state.terminal() {
+                return Ok(Json(ControlResult {
+                    delivered: true,
+                    result: serde_json::json!({}),
+                }));
+            }
+            let key = ctx.get::<String>("recovery_key").await?.ok_or_else(|| {
+                TerminalError::new_with_code(422, "run recovery is already in progress")
+            })?;
+            ctx.resolve_promise(&key, Json(control.principal));
+            return Ok(Json(ControlResult {
+                delivered: true,
+                result: serde_json::json!({}),
+            }));
+        }
+        if control.method == "turn/interrupt" {
+            if !snapshot.state.terminal() {
+                if let Some(key) = ctx.get::<String>("recovery_key").await? {
+                    ctx.resolve_promise(&key, Json(control.principal.clone()));
+                }
+                ctx.object_client::<TengriWorkspaceRunsClient>(&snapshot.workspace_uid)
+                    .store_stop(Json(control))
+                    .call()
+                    .await?;
+            }
+            return Ok(Json(ControlResult {
+                delivered: true,
+                result: serde_json::json!({}),
+            }));
+        }
+        if snapshot.state.terminal()
+            || matches!(
+                snapshot.state,
+                State::NeedsReconciliation { .. }
+                    | State::AuthorizationRequired { .. }
+                    | State::Cancelling { .. }
+            )
+        {
+            return Err(TerminalError::new_with_code(422, "run cannot accept this control").into());
+        }
+        let turn = turn_id(&snapshot.state)
+            .ok_or_else(|| TerminalError::new_with_code(422, "run has not started"))?;
+        if control.method == "tengri/resolveApproval" {
+            control.params["expectedTurnId"] = serde_json::json!(turn);
+        }
+        if control
+            .params
+            .get("threadId")
+            .and_then(serde_json::Value::as_str)
+            != Some(&snapshot.thread_id)
+            || (control.method == "turn/steer"
+                && control
+                    .params
+                    .get("expectedTurnId")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(turn))
+        {
+            return Err(
+                TerminalError::new_with_code(422, "control belongs to another turn").into(),
+            );
+        }
+        let input = Input {
+            id: snapshot.run_id,
+            agent_id: snapshot.agent_id,
+            thread_id: snapshot.thread_id,
+            text: String::new(),
+            model: String::new(),
+            reasoning_effort: String::new(),
+            images: vec![],
+        };
+        if control.method == "tengri/resolveApproval" {
+            ctx.run(|| async {
+                let guest = self
+                    .service
+                    .run_guest(&control.principal, &input)
+                    .await
+                    .map_err(terminal)?;
+                let value = guest
+                    .codex_call(
+                        "tengri/pending",
+                        serde_json::json!({"threadId":input.thread_id}),
+                    )
+                    .await?;
+                let approvals: Vec<PendingApproval> = serde_json::from_value(value)?;
+                let id = control
+                    .params
+                    .get("approvalId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let approval = approvals
+                    .into_iter()
+                    .find(|approval| approval.approval_id == id)
+                    .ok_or_else(|| {
+                        TerminalError::new_with_code(422, "approval is stale or unavailable")
+                    })?;
+                Ok(Json(approval))
+            })
+            .name("record_exact_approval_intent")
+            .await?;
+        }
+        Ok(ctx
+            .run(|| async {
+                let guest = self
+                    .service
+                    .run_guest(&control.principal, &input)
+                    .await
+                    .map_err(terminal)?;
+                Ok(Json(
+                    match guest
+                        .codex_call(&control.method, control.params.clone())
+                        .await
+                    {
+                        Ok(value) => ControlResult {
+                            delivered: true,
+                            result: value,
+                        },
+                        Err(crate::guest::GuestError::CodexOperationRejected) => {
+                            return Err(TerminalError::new_with_code(
+                                422,
+                                "Codex rejected the control before dispatch",
+                            )
+                            .into());
+                        }
+                        Err(_) => ControlResult {
+                            delivered: false,
+                            result: serde_json::json!({}),
+                        },
+                    },
+                ))
+            })
+            .name("deliver_run_control")
+            .await?)
+    }
+}
+
+impl TengriAgentRun {
+    async fn start_run(
+        &self,
+        ctx: &WorkflowContext<'_>,
+        admission: &Admission,
+    ) -> HandlerResult<State> {
+        let (prepared, _) = self.prepare_run(ctx, admission).await?;
+        if !matches!(prepared, State::Accepted) {
+            return Ok(prepared);
+        }
+        self.dispatch_prepared(ctx, admission).await
+    }
+
+    async fn prepare_run(
+        &self,
+        ctx: &WorkflowContext<'_>,
+        admission: &Admission,
+    ) -> HandlerResult<(State, u64)> {
+        Ok(ctx
+            .run(|| async {
+                let prepared = self
+                    .service
+                    .prepare_durable_run(&admission.principal, &admission.input)
+                    .await;
+                Ok(Json((prepared, crate::ofz::now_ms().map_err(terminal)?)))
+            })
+            .name("prepare_codex_dispatch")
+            .await?
+            .into_inner())
+    }
+
+    async fn dispatch_prepared(
+        &self,
+        ctx: &WorkflowContext<'_>,
+        admission: &Admission,
+    ) -> HandlerResult<State> {
+        if ctx
+            .object_client::<TengriWorkspaceRunsClient>(&admission.claim.workspace_uid)
+            .latest_stop(Json(StopQuery {
+                claim: admission.claim.clone(),
+                known_id: String::new(),
+            }))
+            .call()
+            .await?
+            .into_inner()
+            .is_some()
+        {
+            return Ok(State::Cancelled {
+                turn_id: String::new(),
+            });
+        }
+        Ok(ctx
+            .run(|| async {
+                Ok(Json(
+                    self.service
+                        .dispatch_durable_run(&admission.principal, &admission.input)
+                        .await,
+                ))
+            })
+            .name("dispatch_codex_turn")
+            .await?
+            .into_inner())
+    }
+}
+
+struct TengriWorkspaceRuns {
+    service: Arc<ControlPlane>,
+}
+
+#[object]
+impl TengriWorkspaceRuns {
+    #[handler(journal_retention = "1 minute", idempotency_retention = "0s")]
+    async fn admit(
+        &self,
+        ctx: SharedObjectContext<'_>,
+        envelope: Json<Envelope>,
+    ) -> HandlerResult<()> {
+        let workspace_uid = ctx.key().to_owned();
+        let admission: Admission = ctx
+            .run(|| async {
+                let admission: Admission = open(&self.service, "admission", &envelope.0)
+                    .await
+                    .map_err(admission_error)?;
+                if admission.claim.workspace_uid != workspace_uid
+                    || admission.principal.context.workspace_uid != workspace_uid
+                    || admission.claim.run_id != admission.input.id
+                    || admission.claim.thread_id != admission.input.thread_id
+                    || admission.claim.owner_hash != admission.principal.owner_hash
+                    || Uuid::parse_str(&admission.input.id).is_err()
+                    || input_digest(&admission.input).map_err(terminal)? != admission.digest
+                {
+                    return Err(TerminalError::new_with_code(400, "invalid run identity").into());
+                }
+                Ok(Json(admission))
+            })
+            .await?
+            .into_inner();
+        let run_id = admission.input.id.clone();
+        ctx.workflow_client::<TengriAgentRunClient>(&run_id)
+            .run(Json(admission))
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    #[handler(journal_retention = "1 minute", idempotency_retention = "0s")]
+    async fn admit_control(
+        &self,
+        ctx: SharedObjectContext<'_>,
+        envelope: Json<Envelope>,
+    ) -> HandlerResult<()> {
+        let workspace_uid = ctx.key().to_owned();
+        let control: Control = ctx
+            .run(|| async {
+                let control: Control = open(&self.service, "control", &envelope.0)
+                    .await
+                    .map_err(admission_error)?;
+                if control.principal.context.workspace_uid != workspace_uid
+                    || Uuid::parse_str(&control.id).is_err()
+                    || Uuid::parse_str(&control.run_id).is_err()
+                    || !matches!(
+                        control.method.as_str(),
+                        "turn/steer"
+                            | "turn/interrupt"
+                            | "tengri/resolveApproval"
+                            | "tengri/recoverRun"
+                    )
+                {
+                    return Err(TerminalError::new_with_code(400, "invalid run control").into());
+                }
+                Ok(Json(control))
+            })
+            .await?
+            .into_inner();
+        let control_id = control.id.clone();
+        ctx.workflow_client::<TengriRunControlClient>(&control_id)
+            .run(Json(control))
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    #[handler(ingress_private = true)]
+    async fn store_stop(
+        &self,
+        ctx: ObjectContext<'_>,
+        control: Json<Control>,
+    ) -> HandlerResult<()> {
+        let workspace_uid = ctx.key().to_owned();
+        let control = control.into_inner();
+        if control.principal.context.workspace_uid != workspace_uid
+            || control.method != "turn/interrupt"
+        {
+            return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
+        }
+        if !ctx
+            .get::<Json<BTreeMap<String, Claim>>>("active")
+            .await?
+            .map(Json::into_inner)
+            .unwrap_or_default()
+            .values()
+            .any(|claim| claim.run_id == control.run_id)
+        {
+            return Err(TerminalError::new_with_code(409, "run is no longer active").into());
+        }
+        let key = format!("stop/{}", control.run_id);
+        let previous = ctx.get::<Json<Control>>(&key).await?;
+        if previous.as_ref().is_none_or(|previous| {
+            previous.0.principal.context.deadline_unix_ms
+                <= control.principal.context.deadline_unix_ms
+        }) {
+            ctx.set(&key, Json(control));
+        }
+        Ok(())
+    }
+
+    #[handler(
+        ingress_private = true,
+        journal_retention = "0s",
+        idempotency_retention = "0s"
+    )]
+    async fn latest_stop(
+        &self,
+        ctx: ObjectContext<'_>,
+        query: Json<StopQuery>,
+    ) -> HandlerResult<Json<Option<Control>>> {
+        if query.0.claim.workspace_uid != ctx.key()
+            || ctx
+                .get::<Json<BTreeMap<String, Claim>>>("active")
+                .await?
+                .is_none_or(|active| active.0.get(&query.0.claim.thread_id) != Some(&query.0.claim))
+        {
+            return Err(TerminalError::new_with_code(403, "run is no longer active").into());
+        }
+        let stop = ctx
+            .get::<Json<Control>>(&format!("stop/{}", query.0.claim.run_id))
+            .await?
+            .map(Json::into_inner)
+            .filter(|control| {
+                control.run_id == query.0.claim.run_id && control.id != query.0.known_id
+            });
+        Ok(Json(stop))
+    }
+
+    #[handler(ingress_private = true)]
+    async fn claim(
+        &self,
+        ctx: ObjectContext<'_>,
+        claim: Json<Claim>,
+    ) -> HandlerResult<Json<Option<Control>>> {
+        let mut active = ctx
+            .get::<Json<BTreeMap<String, Claim>>>("active")
+            .await?
+            .map(Json::into_inner)
+            .unwrap_or_default();
+        if active.get(&claim.0.thread_id) == Some(&claim.0) {
+            return Ok(Json(
+                ctx.get::<Json<Control>>(&format!("stop/{}", claim.0.run_id))
+                    .await?
+                    .map(Json::into_inner),
+            ));
+        }
+        if active.contains_key(&claim.0.thread_id) {
+            return Err(TerminalError::new_with_code(
+                409,
+                "conversation already has an active run",
+            )
+            .into());
+        }
+        if claim.0.workspace_uid != ctx.key()
+            || claim.0.thread_id.is_empty()
+            || Uuid::parse_str(&claim.0.run_id).is_err()
+        {
+            return Err(TerminalError::new_with_code(400, "workspace binding changed").into());
+        }
+        ctx.clear(&format!("stop/{}", claim.0.run_id));
+        active.insert(claim.0.thread_id.clone(), claim.0);
+        ctx.set("active", Json(active));
+        Ok(Json(None))
+    }
+
+    #[handler(ingress_private = true)]
+    async fn release(&self, ctx: ObjectContext<'_>, claim: Json<Claim>) -> HandlerResult<()> {
+        if claim.0.workspace_uid != ctx.key() {
+            return Err(TerminalError::new_with_code(400, "workspace binding changed").into());
+        }
+        let mut active = ctx
+            .get::<Json<BTreeMap<String, Claim>>>("active")
+            .await?
+            .map(Json::into_inner)
+            .unwrap_or_default();
+        if active.get(&claim.0.thread_id) == Some(&claim.0) {
+            active.remove(&claim.0.thread_id);
+            ctx.set("active", Json(active));
+            ctx.clear(&format!("stop/{}", claim.0.run_id));
+        }
+        Ok(())
+    }
+}
+
+impl ControlPlane {
+    async fn reconcile_durable_run(
+        &self,
+        principal: &Principal,
+        input: &Input,
+        state: &State,
+    ) -> State {
+        let guest = match self.run_guest(principal, input).await {
+            Ok(guest) => guest,
+            Err(error)
+                if matches!(
+                    error.code(),
+                    tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
+                ) =>
+            {
+                return State::AuthorizationRequired {
+                    turn_id: turn_id(state).map(str::to_owned),
+                    reason: "Use your current session to recover this run.".into(),
+                };
+            }
+            Err(_) => return state.clone(),
+        };
+        match guest
+            .codex_call(
+                "tengri/reconcileOperation",
+                serde_json::json!({"operationId":input.id,"threadId":input.thread_id}),
+            )
+            .await
+        {
+            Ok(value) => {
+                if value.get("outcome").and_then(serde_json::Value::as_str) == Some("unconfirmed") {
+                    return State::unconfirmed_after_restart(None);
+                }
+                let Some(turn_id) = value
+                    .pointer("/turn/id")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|id| !id.is_empty())
+                else {
+                    return state.clone();
+                };
+                self.observe_durable_run(
+                    principal,
+                    input,
+                    &State::Running {
+                        turn_id: turn_id.into(),
+                    },
+                )
+                .await
+            }
+            Err(crate::guest::GuestError::CodexOperationRejected) => State::Rejected {
+                reason: "Codex rejected the operation before dispatch".into(),
+            },
+            Err(_) => state.clone(),
+        }
+    }
+    async fn release_run_pin(&self, principal: &Principal, input: &Input) -> Result<(), Status> {
+        use kube::{Api, ResourceExt};
+        let api: Api<crate::crd::MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        match api.get(&input.agent_id).await {
+            Ok(agent) if agent.uid().as_deref() == Some(&principal.context.workspace_uid) => {
+                self.set_run_pin(&agent, input, false).await
+            }
+            Ok(_) => Ok(()),
+            Err(kube::Error::Api(error)) if error.code == 404 => Ok(()),
+            Err(_) => Err(Status::unavailable("run sleep fence cleanup unavailable")),
+        }
+    }
+
+    async fn set_run_pin(
+        &self,
+        agent: &crate::crd::MicroVM,
+        input: &Input,
+        active: bool,
+    ) -> Result<(), Status> {
+        use kube::{
+            Api, ResourceExt,
+            api::{Patch, PatchParams},
+        };
+        let current = agent
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get(crate::activity::ACTIVE_RUN_ANNOTATION));
+        if current.is_some_and(|value| crate::activity::is_idle_sleep_claim(value)) {
+            return if active {
+                Err(Status::unavailable("workspace is entering idle sleep"))
+            } else {
+                Ok(())
+            };
+        }
+        let mut pins: BTreeSet<String> = match current {
+            Some(value) => serde_json::from_str(value)
+                .map_err(|_| Status::failed_precondition("invalid active run sleep fence"))?,
+            None => BTreeSet::new(),
+        };
+        let changed = if active {
+            pins.insert(input.id.clone())
+        } else {
+            pins.remove(&input.id)
+        };
+        if !changed {
+            return Ok(());
+        }
+        let value = if pins.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::to_string(&pins)
+                    .map_err(|_| Status::internal("encode active run sleep fence"))?,
+            )
+        };
+        let api: Api<crate::crd::MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        let version = agent
+            .resource_version()
+            .ok_or_else(|| Status::unavailable("run sleep fence has no resource version"))?;
+        let uid = agent
+            .uid()
+            .ok_or_else(|| Status::unavailable("run sleep fence has no workspace UID"))?;
+        api.patch(&input.agent_id, &PatchParams::default(), &Patch::Merge(serde_json::json!({"metadata":{"uid":uid,"resourceVersion":version,"annotations":{crate::activity::ACTIVE_RUN_ANNOTATION: value}}}))).await.map_err(|_| Status::unavailable("run sleep fence could not be recorded"))?;
+        Ok(())
+    }
+
+    async fn run_guest(
+        &self,
+        principal: &Principal,
+        input: &Input,
+    ) -> Result<crate::guest::GuestClient, Status> {
+        let mut principal = principal.clone();
+        principal.refresh_run_context()?;
+        self.guest(&principal, &input.agent_id, &input.thread_id)
+            .await
+    }
+
+    async fn prepare_durable_run(&self, principal: &Principal, input: &Input) -> State {
+        let guest = match self.pinned_start_guest(principal, input).await {
+            Ok(guest) => guest,
+            Err(error)
+                if matches!(
+                    error.code(),
+                    tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
+                ) =>
+            {
+                return State::Rejected {
+                    reason: "run authority was revoked or expired before dispatch".into(),
+                };
+            }
+            Err(_) => {
+                return State::WaitingForGuest {
+                    reason: "waiting for the authorized guest".into(),
+                };
+            }
+        };
+        for image in &input.images {
+            if !guest
+                .read_file(&image.path)
+                .await
+                .is_ok_and(|file| file.revision == image.revision)
+            {
+                return State::Rejected {
+                    reason: "an accepted image is missing or changed".into(),
+                };
+            }
+        }
+        State::Accepted
+    }
+
+    async fn dispatch_durable_run(&self, principal: &Principal, input: &Input) -> State {
+        let guest = match self.pinned_start_guest(principal, input).await {
+            Ok(guest) => guest,
+            Err(_) => {
+                return State::NeedsReconciliation {
+                    turn_id: None,
+                    reason: "dispatch authority, sleep protection or transport is unavailable; a previous attempt may already have reached Codex".into(),
+                };
+            }
+        };
+        let mut parts = Vec::new();
+        if !input.text.trim().is_empty() {
+            parts.push(
+                serde_json::json!({"type":"text","text":input.text.trim(),"text_elements":[]}),
+            );
+        }
+        for image in &input.images {
+            parts.push(serde_json::json!({"type":"localImage","path":image.path}));
+        }
+        let options = match crate::guest::CodexOptions::parse(
+            input.model.clone(),
+            input.reasoning_effort.clone(),
+        ) {
+            Ok(options) => options,
+            Err(reason) => {
+                return State::Rejected {
+                    reason: reason.into(),
+                };
+            }
+        };
+        match guest
+            .codex_call(
+                "turn/start",
+                serde_json::json!({
+                    "threadId": input.thread_id, "clientUserMessageId": input.id,
+                    "model": options.model, "effort": options.reasoning_effort, "input": parts,
+                    "cwd": "/workspace", "runtimeWorkspaceRoots": ["/workspace"],
+                    "approvalPolicy": "on-request", "sandboxPolicy": {"type": "dangerFullAccess"},
+                }),
+            )
+            .await
+        {
+            Ok(value) => match value
+                .pointer("/turn/id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                Some(id) => State::Running { turn_id: id.into() },
+                None => State::NeedsReconciliation {
+                    turn_id: None,
+                    reason: "Codex accepted a request without a turn identity".into(),
+                },
+            },
+            Err(crate::guest::GuestError::CodexOperationRejected) => State::Rejected {
+                reason: "Codex rejected the operation before dispatch".into(),
+            },
+            Err(_) => State::NeedsReconciliation {
+                turn_id: None,
+                reason: "Codex dispatch outcome is uncertain; the request was not resent".into(),
+            },
+        }
+    }
+
+    async fn pinned_start_guest(
+        &self,
+        principal: &Principal,
+        input: &Input,
+    ) -> Result<crate::guest::GuestClient, Status> {
+        let mut principal = principal.clone();
+        principal.refresh_run_context()?;
+        principal.audit_scope = crate::ofz::AuditScope::RunStart(
+            Uuid::parse_str(&input.id).map_err(|_| Status::invalid_argument("invalid run ID"))?,
+        );
+        let (agent, access) = self
+            .agent_access(&principal, &input.agent_id, &input.id)
+            .await?;
+        self.set_run_pin(&agent, input, true).await?;
+        self.guest_from_access(&agent, &access).await
+    }
+
+    async fn observe_durable_run(
+        &self,
+        principal: &Principal,
+        input: &Input,
+        state: &State,
+    ) -> State {
+        let Some(turn_id) = turn_id(state) else {
+            return state.clone();
+        };
+        let guest = match self.run_guest(principal, input).await {
+            Ok(guest) => guest,
+            Err(error)
+                if matches!(
+                    error.code(),
+                    tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
+                ) =>
+            {
+                return State::AuthorizationRequired {
+                    turn_id: Some(turn_id.to_owned()),
+                    reason: "Use your current session to recover this run.".into(),
+                };
+            }
+            Err(_) => {
+                return State::Recovering {
+                    turn_id: turn_id.to_owned(),
+                    reason: "waiting for the authorized guest".into(),
+                };
+            }
+        };
+        let operation = guest.codex_call("tengri/operation", serde_json::json!({"threadId":input.thread_id,"operationId":input.id,"turnId":turn_id})).await.ok();
+        if let Some(status) = operation
+            .as_ref()
+            .and_then(|value| value.get("terminalStatus"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|status| matches!(*status, "completed" | "failed" | "interrupted"))
+        {
+            if status == "interrupted" {
+                return State::Cancelled {
+                    turn_id: turn_id.into(),
+                };
+            }
+            return observed_turn(
+                &serde_json::json!({"thread":{"turns":[{"id":turn_id,"status":status}]}}),
+                turn_id,
+            );
+        }
+        let metadata = match guest
+            .codex_call(
+                "thread/read",
+                serde_json::json!({"threadId": input.thread_id, "includeTurns": false}),
+            )
+            .await
+        {
+            Ok(value) => value,
+            Err(_) => {
+                return State::Recovering {
+                    turn_id: turn_id.to_owned(),
+                    reason: "waiting for Codex thread state".into(),
+                };
+            }
+        };
+        let recorded = if metadata
+            .pointer("/thread/historyMode")
+            .and_then(serde_json::Value::as_str)
+            == Some("paginated")
+        {
+            recorded_turn(&guest, &input.thread_id, turn_id).await
+        } else {
+            match guest
+                .codex_call(
+                    "thread/read",
+                    serde_json::json!({"threadId":input.thread_id,"includeTurns":true}),
+                )
+                .await
+            {
+                Ok(value) => observed_turn(&value, turn_id),
+                Err(_) => State::Recovering {
+                    turn_id: turn_id.into(),
+                    reason: "waiting for the recorded turn outcome".into(),
+                },
+            }
+        };
+        let recorded = bind_native_generation(
+            recorded,
+            operation.as_ref().is_some_and(|value| {
+                value
+                    .get("generationAlive")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+            }),
+            operation
+                .as_ref()
+                .and_then(|value| value.get("bootEnded"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            turn_id,
+        );
+        if !matches!(recorded, State::Running { .. }) {
+            return recorded;
+        }
+        if metadata
+            .pointer("/thread/status/type")
+            .and_then(serde_json::Value::as_str)
+            == Some("active")
+        {
+            let approvals = match guest
+                .codex_call(
+                    "tengri/pending",
+                    serde_json::json!({"threadId":input.thread_id}),
+                )
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<Vec<PendingApproval>>(value)
+                        .map_err(crate::guest::GuestError::from)
+                }) {
+                Ok(approvals) => approvals,
+                Err(_) => {
+                    return State::Recovering {
+                        turn_id: turn_id.into(),
+                        reason: "pending controls could not be recovered".into(),
+                    };
+                }
+            };
+            if !approvals.is_empty() {
+                return State::WaitingForApproval {
+                    turn_id: turn_id.into(),
+                    approvals,
+                };
+            }
+            return State::Running {
+                turn_id: turn_id.into(),
+            };
+        }
+        State::NeedsReconciliation {
+            turn_id: Some(turn_id.to_owned()),
+            reason: "the accepted turn is unfinished but its thread is no longer active".into(),
+        }
+    }
+
+    async fn stop_durable_run(&self, control: &Control, input: &Input, state: &State) -> State {
+        if matches!(state, State::Accepted | State::WaitingForGuest { .. }) {
+            return State::Cancelled {
+                turn_id: String::new(),
+            };
+        }
+        let mut principal = control.principal.clone();
+        if principal.refresh_run_context().is_ok()
+            && let Ok((agent, _)) = self
+                .agent_access(&principal, &input.agent_id, &input.id)
+                .await
+            && agent.spec.desired_state == crate::crd::MicroVMDesiredState::Sleeping
+            && agent
+                .status
+                .as_ref()
+                .is_some_and(|s| s.phase == crate::crd::MicroVMPhase::Sleeping)
+        {
+            return State::Cancelling {turn_id:turn_id(state).map(str::to_owned),reason:"Stop is recorded. The workspace is paused; resume it to confirm interruption of the preserved turn.".into()};
+        }
+        let recovered = if turn_id(state).is_none() {
+            self.reconcile_durable_run(&control.principal, input, state)
+                .await
+        } else {
+            state.clone()
+        };
+        if recovered.terminal()
+            || (turn_id(&recovered).is_none()
+                && matches!(recovered, State::AuthorizationRequired { .. }))
+        {
+            return recovered;
+        }
+        let Some(turn) = turn_id(&recovered) else {
+            return State::NeedsReconciliation {
+                turn_id: None,
+                reason: "Stop is pending. The accepted turn could not be identified; reconcile its execution before starting new work.".into(),
+            };
+        };
+        if let Ok(guest) = self.run_guest(&control.principal, input).await {
+            let _ = guest.codex_call("turn/interrupt", serde_json::json!({"threadId":input.thread_id,"turnId":turn,"clientUserMessageId":control.id})).await;
+        }
+        let observed = self
+            .observe_durable_run(
+                &control.principal,
+                input,
+                &State::Running {
+                    turn_id: turn.into(),
+                },
+            )
+            .await;
+        if observed.terminal()
+            || matches!(
+                observed,
+                State::AuthorizationRequired { .. } | State::NeedsReconciliation { .. }
+            )
+        {
+            return observed;
+        }
+        State::Cancelling {
+            turn_id: Some(turn.into()),
+            reason: "waiting for the exact turn to report a terminal outcome".into(),
+        }
+    }
+}
+
+fn bind_native_generation(recorded: State, alive: bool, boot_ended: bool, turn_id: &str) -> State {
+    if boot_ended && !matches!(recorded, State::Succeeded { .. } | State::Recovering { .. }) {
+        return State::unconfirmed_after_restart(Some(turn_id.into()));
+    }
+    if matches!(
+        recorded,
+        State::Succeeded { .. } | State::NeedsReconciliation { .. } | State::Recovering { .. }
+    ) || alive
+    {
+        return recorded;
+    }
+    State::NeedsReconciliation {
+        turn_id: Some(turn_id.to_owned()),
+        reason:
+            "The process that accepted this turn ended. Its external effects need reconciliation."
+                .into(),
+    }
+}
+
+fn turn_id(state: &State) -> Option<&str> {
+    match state {
+        State::Running { turn_id }
+        | State::WaitingForApproval { turn_id, .. }
+        | State::Recovering { turn_id, .. } => Some(turn_id),
+        State::Cancelling { turn_id, .. }
+        | State::NeedsReconciliation { turn_id, .. }
+        | State::AuthorizationRequired { turn_id, .. } => turn_id.as_deref(),
+        _ => None,
+    }
+}
+
+async fn recorded_turn(guest: &crate::guest::GuestClient, thread: &str, turn: &str) -> State {
+    let mut cursor = serde_json::Value::Null;
+    let mut seen = std::collections::HashSet::new();
+    let mut bytes = 0;
+    for _ in 0..256 {
+        let value = match guest.codex_call("thread/turns/list",serde_json::json!({"threadId":thread,"cursor":cursor,"limit":100,"sortDirection":"desc","itemsView":"notLoaded"})).await {
+            Ok(value)=>value,
+            Err(_)=>return State::Recovering{turn_id:turn.into(),reason:"waiting for the recorded turn outcome".into()},
+        };
+        bytes += value.to_string().len();
+        if bytes > 64 << 20 {
+            break;
+        }
+        let Some(data) = value.get("data").and_then(serde_json::Value::as_array) else {
+            break;
+        };
+        if let Some(found) = data
+            .iter()
+            .find(|value| value.get("id").and_then(serde_json::Value::as_str) == Some(turn))
+        {
+            return observed_turn(&serde_json::json!({"thread":{"turns":[found]}}), turn);
+        }
+        match value.get("nextCursor") {
+            Some(serde_json::Value::String(next))
+                if !next.is_empty() && seen.insert(next.clone()) =>
+            {
+                cursor = serde_json::json!(next)
+            }
+            _ => break,
+        }
+    }
+    State::NeedsReconciliation {
+        turn_id: Some(turn.to_owned()),
+        reason: "the accepted turn has no authoritative outcome in the bounded history".into(),
+    }
+}
+
+fn observed_turn(value: &serde_json::Value, turn_id: &str) -> State {
+    let turn = value
+        .pointer("/thread/turns")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|turns| {
+            turns
+                .iter()
+                .find(|turn| turn.get("id").and_then(serde_json::Value::as_str) == Some(turn_id))
+        });
+    match turn
+        .and_then(|turn| turn.get("status"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("completed") => State::Succeeded {
+            turn_id: turn_id.into(),
+        },
+        Some("failed") => State::Failed {
+            turn_id: turn_id.into(),
+            reason: "Codex reported a failed turn".into(),
+        },
+        Some("interrupted") => State::Cancelling {
+            turn_id: Some(turn_id.into()),
+            reason: "waiting for the interrupted turn's command cleanup receipt".into(),
+        },
+        Some("inProgress") => State::Running {
+            turn_id: turn_id.into(),
+        },
+        _ => State::NeedsReconciliation {
+            turn_id: Some(turn_id.to_owned()),
+            reason: "the accepted turn has no authoritative outcome".into(),
+        },
+    }
+}
+
+fn admission_error(status: Status) -> TerminalError {
+    if status.code() == tonic::Code::Unauthenticated {
+        TerminalError::new_with_code(
+            503,
+            "durable admission key changed; retry the same operation",
+        )
+    } else {
+        terminal(status)
+    }
+}
+
+fn terminal(status: Status) -> TerminalError {
+    let code = match status.code() {
+        tonic::Code::InvalidArgument => 400,
+        tonic::Code::Unauthenticated => 401,
+        tonic::Code::PermissionDenied => 403,
+        tonic::Code::AlreadyExists | tonic::Code::FailedPrecondition => 409,
+        _ => 503,
+    };
+    TerminalError::new_with_code(code, status.message())
+}
+
+pub(crate) async fn serve(service: ControlPlane) -> anyhow::Result<()> {
+    let key = env::var("RESTATE_REQUEST_IDENTITY_KEYS")?;
+    let service = Arc::new(service);
+    let endpoint = Endpoint::builder()
+        .identity_key(&key)?
+        .bind(
+            TengriAgentRun {
+                service: service.clone(),
+            }
+            .into_service_definition()
+            .options(
+                restate_sdk::endpoint::ServiceOptions::default()
+                    .journal_retention(Duration::from_secs(7 * 24 * 60 * 60))
+                    .idempotency_retention(Duration::from_secs(7 * 24 * 60 * 60)),
+            ),
+        )
+        .bind(
+            TengriRunControl.into_service_definition().options(
+                restate_sdk::endpoint::ServiceOptions::default()
+                    .journal_retention(Duration::from_secs(7 * 24 * 60 * 60))
+                    .idempotency_retention(Duration::from_secs(7 * 24 * 60 * 60)),
+            ),
+        )
+        .bind(
+            TengriWorkspaceRuns { service }
+                .into_service_definition()
+                .options(restate_sdk::endpoint::ServiceOptions::default()),
+        )
+        .build();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:9080").await?;
+    let health_listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    let health = axum::Router::new()
+        .route("/healthz", axum::routing::get(|| async { "ok" }))
+        .route(
+            "/metrics",
+            axum::routing::get(|| async { crate::metrics::global().render() }),
+        );
+    let mut health_task = tokio::spawn(async move { axum::serve(health_listener, health).await });
+    let serving = HttpServer::new(endpoint).serve_with_cancel(listener, async {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("install termination handler");
+        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+    });
+    tokio::select! {
+        _ = serving => { health_task.abort(); },
+        result = &mut health_task => { result??; anyhow::bail!("run worker health listener stopped"); },
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

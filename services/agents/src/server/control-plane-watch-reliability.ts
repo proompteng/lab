@@ -53,10 +53,10 @@ export class ControlPlaneWatchReliabilityError extends Data.TaggedError('Control
   readonly message: string
 }> {}
 
-export class ControlPlaneWatchReliabilityApi extends Context.Tag('ControlPlaneWatchReliabilityApi')<
+export class ControlPlaneWatchReliabilityApi extends Context.Service<
   ControlPlaneWatchReliabilityApi,
   ControlPlaneWatchReliabilityService
->() {}
+>()('ControlPlaneWatchReliabilityApi') {}
 
 const DEFAULT_WATCH_WINDOW_MINUTES = 15
 const DEFAULT_WATCH_STREAM_LIMIT = 20
@@ -184,6 +184,9 @@ const mapReasonsToRecord = (events: ReasonedWatchEvent[]) => {
   )
 }
 
+const failureRestarts = (stream: ControlPlaneWatchReliability['streams'][number]) =>
+  stream.restarts - (stream.restart_reasons?.closed ?? 0)
+
 export const createControlPlaneWatchReliabilityService = ({
   env = process.env,
   now = () => new Date(),
@@ -240,17 +243,17 @@ export const createControlPlaneWatchReliabilityService = ({
         }
 
         observedStreams.sort((a, b) => {
-          const delta = b.errors + b.restarts - (a.errors + a.restarts)
+          const delta = b.errors + failureRestarts(b) - (a.errors + failureRestarts(a))
           if (delta !== 0) return delta
           return b.events - a.events
         })
         const topStreams = observedStreams.slice(0, Math.min(config.streamLimit, TOP_STREAM_LIMIT))
-        const maxStreamRestarts = observedStreams.reduce(
-          (currentMax, stream) => Math.max(currentMax, stream.restarts),
+        const maxFailureRestarts = observedStreams.reduce(
+          (currentMax, stream) => Math.max(currentMax, failureRestarts(stream)),
           0,
         )
-        const status =
-          totalErrors > 0 || maxStreamRestarts >= config.restartDegradeThreshold
+        const status: ControlPlaneWatchReliability['status'] =
+          totalErrors > 0 || maxFailureRestarts >= config.restartDegradeThreshold
             ? 'degraded'
             : observedStreams.length > 0
               ? 'healthy'

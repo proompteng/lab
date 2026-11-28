@@ -1,6 +1,175 @@
+---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Project
 metadata:
-  name: lab-delivery
+  name: agents-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: analysis-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: app-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: arc-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: attic-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: bayn-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: bilig-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: bumba-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: buzz-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: devbox-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: docs-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: forgejo-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: froussard-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: headlamp-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: hermes-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: jangar-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: ofz-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: oirat-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: opencode-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: relay-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: restate-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: symphony-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: synthesis-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: temporal-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: torghut-release
   labels:
     delivery.proompteng.ai/managed-by: kargo

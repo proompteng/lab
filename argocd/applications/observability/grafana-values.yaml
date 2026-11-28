@@ -1,14 +1,58 @@
 adminUser: admin
 adminPassword: changeme
+grafana.ini:
+  database:
+    # Reduce reader/writer contention and bound retries for transient SQLite locks.
+    wal: true
+    query_retries: 5
+  users:
+    home_page: /d/ci-build-performance
+  auth.anonymous:
+    enabled: true
+    org_name: Main Org.
+    org_role: Viewer
 replicas: 1
+image:
+  tag: 13.3.2
+  sha: 81556409ba48b2b922e0adb69a2511337d8ba7578f11962eefa6149a2d815101
+shadowBundledPlugins: true
+plugins:
+  - elasticsearch@12.8.1
+  - grafana-postgresql-datasource@13.0.3
+  - grafana-pyroscope-datasource@13.0.4
+  - influxdb@13.1.1
+  - jaeger@13.0.1
+  - loki@13.1.0
+  - mssql@13.0.4
+  - mysql@13.1.1
+  - opentsdb@13.0.1
+  - prometheus@13.1.7
+  - stackdriver@12.6.1
+  - tempo@13.1.5
+  - zipkin@12.4.6
+  - grafana-advisor-app@1.0.2
+  - grafana-exploretraces-app@2.2.0
+  - grafana-lokiexplore-app@2.5.2
+  - grafana-metricsdrilldown-app@2.5.1
+  - grafana-pyroscope-app@2.3.0
 deploymentStrategy:
   type: RollingUpdate
   rollingUpdate:
     maxSurge: 0
     maxUnavailable: 1
+# Allow bounded plugin initialization before the existing liveness checks begin.
+startupProbe:
+  httpGet:
+    path: /api/health
+    port: grafana
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 60
 service:
   type: ClusterIP
 persistence:
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
   enabled: true
   storageClassName: rook-ceph-block
   size: 10Gi
@@ -35,6 +79,15 @@ datasources:
         access: proxy
         url: http://observability-mimir-gateway.observability.svc.cluster.local/prometheus
         isDefault: true
+      - name: Mimir Alertmanager
+        uid: mimir-alertmanager
+        type: alertmanager
+        access: proxy
+        url: http://observability-mimir-gateway.observability.svc.cluster.local
+        isDefault: false
+        jsonData:
+          implementation: mimir
+          handleGrafanaManagedAlerts: false
       - name: Tempo
         uid: tempo
         type: tempo
@@ -65,25 +118,26 @@ testFramework:
   enabled: false
 
 dashboardsConfigMaps:
-  graf-graf-dashboard: graf-graf-dashboard
+  ci-build-performance-dashboard: ci-build-performance-dashboard
   graf-bumba-dashboard: graf-bumba-dashboard
-  codex-pipeline-dashboard: codex-pipeline-dashboard
-  torghut-execution-recovery-dashboard: torghut-execution-recovery-dashboard
   arc-runner-capacity-dashboard: arc-runner-capacity-dashboard
+  agents-fleet-operations-dashboard: agents-fleet-operations-dashboard
   bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard
+  bayn-cache-performance-dashboard: bayn-cache-performance-dashboard
+  bayn-multi-sleeve-operations-dashboard: bayn-multi-sleeve-operations-dashboard
 
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
     providers:
-      - name: graf-graf-dashboard
+      - name: ci-build-performance-dashboard
         orgId: 1
         folder: ''
         type: file
         disableDeletion: false
         editable: true
         options:
-          path: /var/lib/grafana/dashboards/graf-graf-dashboard
+          path: /var/lib/grafana/dashboards/ci-build-performance-dashboard
       - name: graf-bumba-dashboard
         orgId: 1
         folder: ''
@@ -92,22 +146,6 @@ dashboardProviders:
         editable: true
         options:
           path: /var/lib/grafana/dashboards/graf-bumba-dashboard
-      - name: codex-pipeline-dashboard
-        orgId: 1
-        folder: ''
-        type: file
-        disableDeletion: false
-        editable: true
-        options:
-          path: /var/lib/grafana/dashboards/codex-pipeline-dashboard
-      - name: torghut-execution-recovery-dashboard
-        orgId: 1
-        folder: ''
-        type: file
-        disableDeletion: false
-        editable: true
-        options:
-          path: /var/lib/grafana/dashboards/torghut-execution-recovery-dashboard
       - name: arc-runner-capacity-dashboard
         orgId: 1
         folder: ''
@@ -122,5 +160,33 @@ dashboardProviders:
         type: file
         disableDeletion: false
         editable: true
+        updateIntervalSeconds: 30
         options:
           path: /var/lib/grafana/dashboards/bayn-cycle-operations-dashboard
+      - name: agents-fleet-operations-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/agents-fleet-operations-dashboard
+      - name: bayn-cache-performance-dashboard
+        orgId: 1
+        folder: Trading
+        type: file
+        disableDeletion: false
+        editable: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/bayn-cache-performance-dashboard
+      - name: bayn-multi-sleeve-operations-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/bayn-multi-sleeve-operations-dashboard

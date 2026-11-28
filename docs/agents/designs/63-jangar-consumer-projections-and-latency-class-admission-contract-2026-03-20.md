@@ -1,6 +1,6 @@
 # 63. Jangar Consumer Projections and Latency-Class Admission Contract (2026-03-20)
 
-Status: Approved for implementation (`plan`)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: `2026-03-20`
 Owner: Gideon Park (Torghut Traders)
 Mission: `codex/swarm-torghut-quant-plan`
@@ -15,9 +15,6 @@ Companion doc:
 
 Extends:
 
-- `62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
-- `61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
-- `60-jangar-recovery-ledger-and-consumer-attestation-contract-2026-03-20.md`
 - `57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md`
 
 ## Executive summary

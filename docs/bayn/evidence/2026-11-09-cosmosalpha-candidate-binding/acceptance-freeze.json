@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-candidate-binding-acceptance-freeze.v1",
+  "experimentId": "a03d6b441ffde7b69a5ee20def8f7eb8f7812fa79d7a283ae6a864482451f1c8",
+  "frozenAt": "2026-11-10T07:36:24.073408+00:00",
+  "kind": "acceptance",
+  "planSha256": "ceadebd3c9e898057b860a5e2eda8ff8abfbe5d9a0b25fb2931b9950f0ed5287",
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "sourceInventoryId": "651a11dfc78f75893051ae809e27979365e2bda11b1a294eb7027deb9d8524a9",
+  "sourceIdentitySha256": "e26973edc6128b7bb316392993f3b78b4079a115da38de62d1abe84bf20daa5c",
+  "importProvenance": {
+    "receiptSha256": "6a8e5f83625efa1ddc314851e067bcdca96554f679e3356640fff1f4daee8572",
+    "controllerRelativePath": "src/cosmosalpha/pipeline/mcts/controller.py",
+    "controllerSha256": "0f8f9a3f8d370fc867c585ee740f703b93596de89044026318f14a76c27498c6",
+    "packageAndControllerResolveInsideRepairedSourceRoot": true,
+    "pythonExecutableKind": "Pinned owned Linux Python 3.12.9 environment with explicit repaired-source PYTHONPATH",
+    "oldInstalledPackagePreserved": true
+  },
+  "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+  "targetVerificationSha256": "f46c3199adddc32240abfcac3d95b5ccd62ea4ad80bdaed339e7409fee82759f",
+  "consumptionVerificationSha256": "80c912bde2f11250864088e152605ed900d63e6fec2929b6d72b78351df8dc80",
+  "configurationAuditSha256": "701e2c56b1ea63b9cb8a5842e51afdb5d608457784fd631e61d9d9ccb1524fb8",
+  "modelIdentity": {
+    "model": "qwen38-flamingo",
+    "checkpoint": "482ca0f3832238542f8f5295dde86b5f22711d80",
+    "servingImage": "sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2",
+    "tokenizerRevision": "482ca0f3832238542f8f5295dde86b5f22711d80",
+    "chatTemplateRevision": "482ca0f3832238542f8f5295dde86b5f22711d80"
+  },
+  "modelProfile": {
+    "temperature": 0,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "repetition_penalty": 1,
+    "chat_template_kwargs": {
+      "enable_thinking": true
+    }
+  },
+  "runtime": {
+    "python": "3.12.9",
+    "platform": "Linux-6.18.58-talos-x86_64-with-glibc2.40",
+    "lightgbmBinarySha256": "573d57e8a2c6290c2271b99b87afa7a802e796eafc9e8d66aefa0913cbc1616a",
+    "installedDistributionCount": 197,
+    "dependencySnapshot": "../2026-11-09-cosmosalpha-root-acceptance/requirements-linux.txt"
+  },
+  "limitsPerArm": {
+    "evaluable_factors": 4,
+    "proposal_slots": 16,
+    "physical_requests": 80,
+    "completion_tokens": 800000,
+    "max_output_tokens": 20000
+  },
+  "runs": [
+    {
+      "runId": "calendar-acceptance-20260823-graph",
+      "seed": 20260823,
+      "arm": "graph",
+      "config": "calendar-acceptance-20260823-graph.toml",
+      "sha256": "4b24bba9ddb4350f83740f0e0a2bbe88a2bd48d5e4343429afccbd38b4108584",
+      "downstreamConfig": "calendar-acceptance-20260823-graph-model.toml",
+      "downstreamSha256": "445c80a277ccdb2e20e4baa21c89bc632ddb91bc373609ffbee4ded9c698cae3"
+    },
+    {
+      "runId": "calendar-acceptance-20260823-mcts",
+      "seed": 20260823,
+      "arm": "mcts",
+      "config": "calendar-acceptance-20260823-mcts.toml",
+      "sha256": "57f47fc7f0ba475ac36d419c5f237f7d31dc4efa038171190019c38d1664bf56",
+      "downstreamConfig": "calendar-acceptance-20260823-mcts-model.toml",
+      "downstreamSha256": "8be740ac383b738945efe7d79cd4ee917ca44b6c59580efab89a717feed3329b"
+    },
+    {
+      "runId": "calendar-acceptance-20260823-no-flow",
+      "seed": 20260823,
+      "arm": "no-flow",
+      "config": "calendar-acceptance-20260823-no-flow.toml",
+      "sha256": "7591efeac49ca0fcad74f952f45177ccec9adfae34e8ffdffa74241786db91ce",
+      "downstreamConfig": "calendar-acceptance-20260823-no-flow-model.toml",
+      "downstreamSha256": "863d8aa7ec92647b7451af411d8088372e4bc361c0c6e6ad27d002bf54c2715e"
+    }
+  ],
+  "implementation": [
+    {
+      "path": "cosmosalpha_experiment.py",
+      "sha256": "1cde8aa06e6252a3b015822f594c9546c9e3768d94e55b2d8b207e8df23b47fa"
+    },
+    {
+      "path": "cosmosalpha_native_experiment.py",
+      "sha256": "f24895d25b2048f9efb5fc0485b6864366af7a1378468ef1c2aedb9d58627377"
+    },
+    {
+      "path": "verify-cosmosalpha-targets.py",
+      "sha256": "a8ac4ba9fcac6c3f1b07d44250cf0b7077c32446068d61082d412c6a4d05d37e"
+    },
+    {
+      "path": "audit-cosmosalpha-study.ts",
+      "sha256": "2841fcd73071e65ba6af044cda1e0ff0978ace12ffbacc00b0c8360e0d69caf9"
+    }
+  ],
+  "execution": {
+    "submittedAt": "2026-11-10T07:39:20.801691+00:00",
+    "wallLimitSeconds": 5400,
+    "terminationGraceSeconds": 30,
+    "supervisorSha256": "f0a1cde7e8688b153286bd4146ae14b0ae71882cedac8710ceba800f1f9e34df",
+    "ownership": "Atomic exclusive owner and receipt directory; one launch, no resume or top-up"
+  },
+  "scope": "Pre-outcome registration of a separate three-arm functional acceptance. This receipt establishes source/import/target/config/runtime/budget identity, not completion. No nine-arm scientific matrix or capital authority."
+}

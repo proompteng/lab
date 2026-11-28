@@ -1,14 +1,13 @@
 import { Result, pipe } from 'effect'
 
-import type { FinalizedPublicationRequest, MarketDataContract, MarketDataInspection, SnapshotRequest } from '../model'
-import type { SignalManifestRow, SignalSessionRow, SnapshotRows } from '../rows'
+import type { SnapshotRequest } from '../model'
+import type { SignalManifestRow, SignalSessionRow } from '../rows'
 import type { InputManifest, SymbolCoverage } from '../../types'
 import type { MarketDataVerificationError, SessionField } from './errors'
 import { verifyManifest, type VerifiedManifest } from './manifest'
 import {
   canonicalHashResult,
   database,
-  fail,
   requireCondition,
   requireValue,
   tables,
@@ -16,7 +15,6 @@ import {
   validateBoundSessions,
   withoutSnapshot,
 } from './shared'
-import { Pipeable } from '../../pipeable'
 
 export interface VerifiedCalendar {
   readonly verifiedManifest: VerifiedManifest
@@ -73,7 +71,7 @@ const validateSession = (
     }),
   ])
 
-const verifyCalendarDataFirst = (
+export const verifyCalendar = (
   sessions: readonly SignalSessionRow[],
   manifests: readonly SignalManifestRow[],
   request: SnapshotRequest,
@@ -186,57 +184,3 @@ const verifyCalendarDataFirst = (
       )
     }),
   )
-
-export const verifyCalendar = Pipeable.dual(3, verifyCalendarDataFirst)
-
-const verifyFinalizedCalendarDataFirst = (
-  rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
-  request: SnapshotRequest,
-): Result.Result<MarketDataInspection, MarketDataVerificationError> =>
-  pipe(
-    verifyCalendar(rows.sessions, rows.manifests, request),
-    Result.flatMap((calendar) => {
-      const signalSession = calendar.boundedSessions.at(-1)
-      return signalSession === undefined
-        ? fail({ _tag: 'SignalSessionMissing', snapshotId: request.snapshotId })
-        : Result.succeed({
-            manifest: calendar.inputManifest,
-            sessionDates: calendar.boundedSessions.map((session) => session.session_date),
-            signalSession: {
-              calendar_version: signalSession.calendar_version,
-              session_date: signalSession.session_date,
-              close_time: signalSession.close_time,
-              timezone: signalSession.timezone,
-            },
-          })
-    }),
-  )
-
-export const verifyFinalizedCalendar = Pipeable.dual(2, verifyFinalizedCalendarDataFirst)
-
-const publicationSnapshotRequestDataFirst = (
-  manifest: SignalManifestRow,
-  input: FinalizedPublicationRequest,
-  contract: MarketDataContract,
-  observedAt: string,
-): SnapshotRequest => ({
-  snapshotId: manifest.snapshot_id,
-  publicationAsOf: input.signalSessionDate,
-  calendarVersion: input.signalCalendarVersion,
-  universe: contract.universe,
-  bounds: {
-    schemaVersion: 'bayn.evaluation-bounds.v1',
-    dataStart: contract.historyStart,
-    dataEnd: input.signalSessionDate,
-    lookbackStart: contract.historyStart,
-    evaluationStart: contract.evaluationStart,
-    evaluationEnd: input.signalSessionDate,
-  },
-  observedAt,
-  universeId: contract.universeId,
-  universeSymbolHash: contract.universeSymbolHash,
-  historyStart: contract.historyStart,
-  evaluationStart: contract.evaluationStart,
-})
-
-export const publicationSnapshotRequest = Pipeable.dual(4, publicationSnapshotRequestDataFirst)

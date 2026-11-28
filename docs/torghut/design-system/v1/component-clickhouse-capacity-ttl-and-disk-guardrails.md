@@ -1,23 +1,14 @@
 # Component: ClickHouse Capacity, TTL, and Disk Guardrails
 
+The ClickHouse guardrails exporter described here is retired. Its manifests and exporter-dependent
+alerts have been removed; the exporter query modes and commands below are historical. See
+[the current retirement record](../../../../argocd/applications/torghut/runtime-retirement.md#clickhouse-exporter-removal).
+
 ## Status
 
 - Version: `v1`
 - Last updated: **2026-02-23**
 - Source of truth (config): `argocd/applications/torghut/**`
-
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: metrics/renderers, structured logs and OpenTelemetry, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
-- Matched implementation area: Observability, metrics, traces, alerts, and operations.
-- Current source evidence:
-  - `services/torghut/app/metrics/core.py`
-  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
-  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
-  - `docs/torghut/production-readiness-proof-runbook.md`
-- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
-
 
 ## Purpose
 
@@ -130,7 +121,7 @@ Exporter telemetry for this path:
    - Check ClickHouse disk free.
 2. **Reduce write pressure**:
    - Temporarily pause TA writes by suspending `FlinkDeployment/torghut-ta` to prevent thrash.
-   - Runbook: `v1/operations-pause-ta-writes.md`
+   - Use the current [TA recovery procedures](../../../../argocd/applications/torghut/README.md) for pause and resume.
 3. **Reclaim disk**:
    - Drop old partitions if TTL cannot catch up fast enough.
    - Reduce retention TTLs _only via code-reviewed DDL change_.

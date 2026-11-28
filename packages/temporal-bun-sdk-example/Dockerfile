@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 
-FROM oven/bun:1.4.0
+FROM oven/bun:1.4.2
 WORKDIR /app
 
 COPY package.json bunfig.toml tsconfig.json ./

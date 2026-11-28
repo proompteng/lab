@@ -1,5 +1,28 @@
 # openclaw VM bootstrap notes
 
+## Disabled state and recovery
+
+OpenClaw is disabled with `enabled: "false"` in `argocd/applicationsets/platform.yaml`. Argo removes the Application,
+VM, SSH Service, cloud-init Secret, and VM service account/RBAC. The namespace and existing `openclaw-rootdisk-rbd`
+DataVolume/PVC are retained so the VM can be restored later.
+
+Before deploying a change that disables the ApplicationSet entry, verify `Prune=false,Delete=false` on the live
+namespace, DataVolume, and PVC. Preserve any other sync options already present. The DataVolume and managed namespace
+metadata declare this retention policy in Git, but disabling the entry removes the Application before it can sync
+child manifest changes. Retention must therefore be present and verified before the disable commit reaches `main`.
+The DataVolume must remain because it owns the PVC. Do not delete either storage object during disablement.
+
+After reconciliation, verify that the Application and VM are absent, there are no OpenClaw pods, and the retained PVC
+has the same UID and bound volume as before disablement.
+
+To restore OpenClaw, enable its ApplicationSet entry and sync the recreated Application to adopt the retained disk.
+The VM remains `Halted` until its `runStrategy` is explicitly changed to start it. The original clone source PVC
+`openclaw-rootdisk` no longer exists, so recreating the DataVolume cannot recover the retained disk's contents.
+
+See [Argo resource retention](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/#no-resource-deletion).
+
+## Bootstrap
+
 The `openclaw` VM consumes `cloud-init-secret.yaml` as a **SealedSecret**.
 
 > This repo intentionally does **not** store plaintext cloud-init userdata.
@@ -25,11 +48,9 @@ Cloud-init should ensure:
 
 ## Scheduling notes
 
-- The root disk is an existing `local-path` PVC. Kubernetes must schedule the VM
-  launcher on the node that owns the bound local PV.
-- Keep the VM memory request small enough to fit on that disk-owning node. If the
-  scheduler reports `Insufficient memory`, check the PVC's selected node and that
-  node's allocated memory before changing storage or recreating the disk.
+- The root disk is the existing `openclaw-rootdisk-rbd` PVC on `rook-ceph-block` storage.
+- The VM requires an amd64 node with capacity for its CPU and memory requests. Check node capacity before changing
+  storage or recreating the disk.
 
 ## VM access model
 

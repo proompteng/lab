@@ -3,6 +3,7 @@ import { Data, Result, Schema } from 'effect'
 import type { AdvanceExecutionCommand } from './advance'
 import { ExecutionControllerOutcome } from './controller-status'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
+import { ProtectionReleaseReferenceSchema } from './events'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
@@ -15,6 +16,10 @@ const DeliveryAttemptSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: executionControllerMaximumDeliveryAttempt }),
 )
 export const executionControllerMaximumRecoveryWindow = 7
+/** The counter saturates; a failed owner must keep its bounded recovery cadence alive. */
+export const nextExecutionControllerRecoveryWindow = (current: number): number =>
+  Math.min(current + 1, executionControllerMaximumRecoveryWindow)
+
 const RecoveryWindowSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: executionControllerMaximumRecoveryWindow }),
 )
@@ -30,42 +35,13 @@ export const ExecutionControllerActivationSchema = Schema.Struct({
 })
 export type ExecutionControllerActivation = typeof ExecutionControllerActivationSchema.Type
 
-export const ExecutionControllerBindingSchema = Schema.Struct({
-  planHash: Sha256Schema,
-  sourceRevision: GitSourceRevisionSchema,
-})
-export type ExecutionControllerBinding = typeof ExecutionControllerBindingSchema.Type
-
-export const resolveOptionalExecutionControllerBinding = (
-  planHash: string | undefined,
-  sourceRevision: string | undefined,
-): Result.Result<ExecutionControllerBinding | undefined, string> => {
-  if (planHash === undefined && sourceRevision === undefined) return Result.succeed(undefined)
-  return planHash !== undefined && sourceRevision !== undefined
-    ? Result.succeed({ planHash, sourceRevision })
-    : Result.fail('native Restate controller rotation requires both previous binding fields')
-}
-
-const ExecutionControllerBootstrapV2Schema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.execution-controller-bootstrap.v2'),
+export const ExecutionDeploymentActivationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-deployment-activation.v2'),
   controllerKey: Sha256Schema,
   planHash: Sha256Schema,
   sourceRevision: GitSourceRevisionSchema,
 })
-
-const ExecutionControllerBootstrapV3Schema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.execution-controller-bootstrap.v3'),
-  controllerKey: Sha256Schema,
-  planHash: Sha256Schema,
-  sourceRevision: GitSourceRevisionSchema,
-  previousBinding: ExecutionControllerBindingSchema,
-})
-
-export const ExecutionControllerBootstrapSchema = Schema.Union([
-  ExecutionControllerBootstrapV2Schema,
-  ExecutionControllerBootstrapV3Schema,
-])
-export type ExecutionControllerBootstrap = typeof ExecutionControllerBootstrapSchema.Type
+export type ExecutionDeploymentActivation = typeof ExecutionDeploymentActivationSchema.Type
 
 export const ExecutionControllerTickSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-controller-tick.v1'),
@@ -88,6 +64,13 @@ export const ExecutionControllerDeactivationSchema = Schema.Struct({
 })
 export type ExecutionControllerDeactivation = typeof ExecutionControllerDeactivationSchema.Type
 
+export const ExecutionControllerRotationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-controller-rotation.v1'),
+  deployment: ExecutionDeploymentActivationSchema,
+  predecessor: ExecutionControllerDeactivationSchema,
+})
+export type ExecutionControllerRotation = typeof ExecutionControllerRotationSchema.Type
+
 const CompletionSchema = Schema.Struct({
   sequence: CounterSchema,
   outcome: Schema.Enum(ExecutionControllerOutcome),
@@ -105,6 +88,20 @@ export const ExecutionControllerStateSchema = Schema.Struct({
   nextSequence: CounterSchema,
   lastCompletion: Schema.optionalKey(CompletionSchema),
   nextDueAt: Schema.optionalKey(UtcInstantSchema),
+  marketEligibleAt: Schema.optionalKey(UtcInstantSchema),
+  marketDataWakeSuppressed: Schema.optionalKey(Schema.Literal(true)),
+  wakeScheduledSequence: Schema.optionalKey(CounterSchema),
+  wakeAcceptedAt: Schema.optionalKey(UtcInstantSchema),
+  marketFrontier: Schema.optionalKey(
+    Schema.Struct({
+      producerId: Schema.String.check(Schema.isUUID(4)),
+      sequence: EpochSchema,
+    }),
+  ),
+  lastBrokerSnapshotHash: Schema.optionalKey(Sha256Schema),
+  lastProtectionRelease: Schema.optionalKey(
+    Schema.Struct({ ...ProtectionReleaseReferenceSchema.fields, sequence: CounterSchema }),
+  ),
 })
 export type ExecutionControllerState = typeof ExecutionControllerStateSchema.Type
 
@@ -115,6 +112,7 @@ export const ExecutionAdvanceStepResultSchema = Schema.Struct({
     _tag: Schema.Enum(ExecutionControllerOutcome),
     receiptHash: Sha256Schema,
     nextDelayMs: DelaySchema,
+    nextWakeAt: Schema.optionalKey(UtcInstantSchema),
   }),
 })
 export type ExecutionAdvanceStepResult = typeof ExecutionAdvanceStepResultSchema.Type
@@ -130,10 +128,10 @@ export type ExecutionControllerActivationDecision =
   | { readonly _tag: 'Replayed'; readonly state: ExecutionControllerState }
 
 export type ExecutionControllerTickDecision =
-  | { readonly _tag: 'Advance'; readonly command: AdvanceExecutionCommand }
+  | { readonly _tag: 'Advance'; readonly command: Omit<AdvanceExecutionCommand, 'issuedAt'> }
   | { readonly _tag: 'Ignored'; readonly reason: 'Inactive' | 'StaleEpoch' | 'StaleSequence' }
 
-export type ExecutionControllerBootstrapDecision =
+export type ExecutionDeploymentActivationDecision =
   | {
       readonly _tag: 'Activate'
       readonly state: ExecutionControllerState | null
@@ -145,8 +143,8 @@ export type ExecutionControllerBootstrapDecision =
 
 const sameBinding = (
   state: ExecutionControllerState,
-  request: Pick<ExecutionControllerActivation, 'planHash'>,
-): boolean => state.planHash === request.planHash
+  request: Pick<ExecutionControllerActivation, 'planHash' | 'sourceRevision'>,
+): boolean => state.planHash === request.planHash && state.sourceRevision === request.sourceRevision
 
 const conflict = (
   operation: ExecutionControllerDecisionError['operation'],
@@ -206,46 +204,36 @@ export const decideExecutionControllerActivation = (
   return conflict('activate', 'execution controller activation conflicts with durable controller state')
 }
 
-export const decideExecutionControllerBootstrap = (
+export const decideExecutionDeploymentActivation = (
   state: ExecutionControllerState | null,
-  request: ExecutionControllerBootstrap,
-): Result.Result<ExecutionControllerBootstrapDecision, ExecutionControllerDecisionError> => {
-  if (state === null) {
-    return request.schemaVersion === 'bayn.execution-controller-bootstrap.v2'
-      ? Result.succeed({ _tag: 'Activate', state })
-      : conflict('activate', 'execution controller rotation expected durable controller state')
+  request: ExecutionDeploymentActivation,
+): Result.Result<ExecutionDeploymentActivationDecision, ExecutionControllerDecisionError> => {
+  if (state === null || sameBinding(state, request) || !state.active) {
+    return Result.succeed({ _tag: 'Activate', state })
   }
-  if (sameBinding(state, request)) return Result.succeed({ _tag: 'Activate', state })
-  if (request.schemaVersion === 'bayn.execution-controller-bootstrap.v2') {
-    return conflict('activate', 'execution controller bootstrap conflicts with durable controller state')
-  }
-  if (!sameBinding(state, request.previousBinding)) {
-    return conflict('activate', 'execution controller rotation does not match the expected previous binding')
-  }
-  return state.active
-    ? Result.succeed({
-        _tag: 'Rotate',
-        deactivation: {
-          schemaVersion: 'bayn.execution-controller-deactivation.v1',
-          controllerKey: request.controllerKey,
-          epoch: state.epoch,
-          planHash: state.planHash,
-          sourceRevision: state.sourceRevision,
-        },
-      })
-    : Result.succeed({ _tag: 'Activate', state })
+  return Result.succeed({
+    _tag: 'Rotate',
+    deactivation: {
+      schemaVersion: 'bayn.execution-controller-deactivation.v1',
+      controllerKey: request.controllerKey,
+      epoch: state.epoch,
+      planHash: state.planHash,
+      sourceRevision: state.sourceRevision,
+    },
+  })
 }
 
 export const decideExecutionControllerTick = (
   state: ExecutionControllerState | null,
   tick: ExecutionControllerTick,
   controllerKey: string,
-  issuedAt: string,
   workerSourceRevision: string,
 ): Result.Result<ExecutionControllerTickDecision, ExecutionControllerDecisionError> => {
   if (state === null || !state.active) return Result.succeed({ _tag: 'Ignored', reason: 'Inactive' })
   if (tick.epoch !== state.epoch) return Result.succeed({ _tag: 'Ignored', reason: 'StaleEpoch' })
   if (tick.sequence !== state.nextSequence) return Result.succeed({ _tag: 'Ignored', reason: 'StaleSequence' })
+  if (state.sourceRevision !== workerSourceRevision)
+    return conflict('tick', 'execution controller worker does not own the active source')
   if (state.nextSequence === Number.MAX_SAFE_INTEGER) {
     return Result.fail(
       new ExecutionControllerDecisionError({
@@ -261,7 +249,6 @@ export const decideExecutionControllerTick = (
       controllerKey,
       epoch: state.epoch,
       sequence: state.nextSequence,
-      issuedAt,
       sourceRevision: workerSourceRevision,
     },
   })
@@ -273,7 +260,12 @@ export const completeExecutionControllerTick = (
   result: ExecutionAdvanceStepResult,
   workerSourceRevision: string,
 ): Result.Result<ExecutionControllerState, ExecutionControllerDecisionError> => {
-  if (!state.active || tick.epoch !== state.epoch || tick.sequence !== state.nextSequence) {
+  if (
+    !state.active ||
+    tick.epoch !== state.epoch ||
+    tick.sequence !== state.nextSequence ||
+    state.sourceRevision !== workerSourceRevision
+  ) {
     return conflict('complete', 'execution controller completion does not match durable controller state')
   }
   if (state.nextSequence === Number.MAX_SAFE_INTEGER) {
@@ -285,8 +277,51 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const schedule = executionControllerSuccessorSchedule(state, result)
+  if (Result.isFailure(schedule)) return Result.fail(schedule.failure)
+  const {
+    nextDueAt: _previousDeadline,
+    marketEligibleAt: _previousEligibility,
+    marketDataWakeSuppressed: _previousMarketSuppression,
+    wakeScheduledSequence: _previousWake,
+    wakeAcceptedAt: _previousWakeAcceptedAt,
+    ...completedState
+  } = state
+  return Result.succeed({
+    ...completedState,
+    nextSequence: state.nextSequence + 1,
+    lastCompletion: {
+      sequence: tick.sequence,
+      outcome: result.outcome._tag,
+      receiptHash: result.outcome.receiptHash,
+      completedAt: result.completedAt,
+    },
+    ...schedule.success,
+  })
+}
+
+/** Shared by the durable controller and versioned replay; a legacy delay never invents a timer. */
+export const executionControllerSuccessorSchedule = (
+  state: Pick<ExecutionControllerState, 'nextDueAt'>,
+  result: Pick<ExecutionAdvanceStepResult, 'completedAt' | 'observation'> & {
+    readonly outcome: Pick<ExecutionAdvanceStepResult['outcome'], '_tag' | 'nextWakeAt'>
+  },
+): Result.Result<
+  Pick<ExecutionControllerState, 'nextDueAt' | 'marketEligibleAt' | 'marketDataWakeSuppressed'>,
+  ExecutionControllerDecisionError
+> => {
+  const brokerReconciliationRetry =
+    result.outcome._tag === ExecutionControllerOutcome.Blocked &&
+    result.observation?.result === 'FAILURE' &&
+    result.observation.failure === 'market-data' &&
+    (result.observation.operation === 'reconcile' ||
+      (result.observation.operation === 'build-decision' &&
+        result.observation.brokerObservationFailure === 'NO_ADMISSIBLE_CUT'))
   const nextDueAt = Result.try({
-    try: () => new Date(Date.parse(result.completedAt) + result.outcome.nextDelayMs).toISOString(),
+    try: () => {
+      if (result.outcome.nextWakeAt === undefined) return undefined
+      return new Date(Date.parse(result.outcome.nextWakeAt)).toISOString()
+    },
     catch: () =>
       new ExecutionControllerDecisionError({
         operation: 'complete',
@@ -295,7 +330,8 @@ export const completeExecutionControllerTick = (
       }),
   })
   if (Result.isFailure(nextDueAt)) return Result.fail(nextDueAt.failure)
-  const decodedNextDueAt = decodeUtcInstant(nextDueAt.success)
+  const decodedNextDueAt =
+    nextDueAt.success === undefined ? Result.succeed(undefined) : decodeUtcInstant(nextDueAt.success)
   if (Result.isFailure(decodedNextDueAt)) {
     return Result.fail(
       new ExecutionControllerDecisionError({
@@ -305,17 +341,38 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const brokerObservationPending =
+    result.observation?.result === 'SUCCESS' && result.observation.waitReason === 'BROKER_OBSERVATION_PENDING'
+  // An early broker wake can revalidate and still wait. Keep its existing future obligation instead
+  // of restarting the backoff; a pass completing at or after that deadline establishes a new one.
+  const dueAt =
+    (brokerReconciliationRetry || brokerObservationPending) &&
+    state.nextDueAt !== undefined &&
+    state.nextDueAt > result.completedAt &&
+    decodedNextDueAt.success !== undefined &&
+    state.nextDueAt < decodedNextDueAt.success
+      ? state.nextDueAt
+      : decodedNextDueAt.success
+  // Market bursts cannot repair failed broker reconciliation. Honor its existing retry deadline,
+  // without inventing polling from a legacy delay; broker observations can still wake promptly.
+  const availableAt = brokerReconciliationRetry
+    ? dueAt
+    : result.observation?.result !== 'SUCCESS'
+      ? undefined
+      : result.observation.outcome === 'WINDOW_CLOSED' ||
+          result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
+          result.observation.waitReason === 'CLOSE_MARKET_DATA_UNAVAILABLE' ||
+          result.observation.waitReason === 'POST_MUTATION_RECONCILIATION'
+        ? dueAt
+        : result.observation.readiness?.availableAt
   return Result.succeed({
-    ...state,
-    sourceRevision: workerSourceRevision,
-    nextSequence: state.nextSequence + 1,
-    lastCompletion: {
-      sequence: tick.sequence,
-      outcome: result.outcome._tag,
-      receiptHash: result.outcome.receiptHash,
-      completedAt: result.completedAt,
-    },
-    nextDueAt: decodedNextDueAt.success,
+    ...(dueAt === undefined ? {} : { nextDueAt: dueAt }),
+    ...(availableAt !== undefined && availableAt > result.completedAt ? { marketEligibleAt: availableAt } : {}),
+    ...(result.observation?.result === 'SUCCESS' &&
+    (result.observation.waitReason === 'CLOSE_WINDOW_EXPIRED' ||
+      (result.observation.outcome === 'WINDOW_CLOSED' && decodedNextDueAt.success === undefined))
+      ? { marketDataWakeSuppressed: true as const }
+      : {}),
   })
 }
 
@@ -364,12 +421,44 @@ export const decideExecutionControllerDeactivation = (
   })
 }
 
+export const decideExecutionControllerRotation = (
+  state: ExecutionControllerState | null,
+  request: ExecutionControllerRotation,
+): Result.Result<ExecutionControllerActivationDecision, ExecutionControllerDecisionError> => {
+  if (request.deployment.controllerKey !== request.predecessor.controllerKey)
+    return conflict('activate', 'execution controller rotation account bindings differ')
+  if (
+    state !== null &&
+    state.active &&
+    state.epoch === request.predecessor.epoch + 1 &&
+    sameBinding(state, request.deployment)
+  )
+    return Result.succeed({ _tag: 'Replayed', state })
+  if (state === null || !state.active)
+    return conflict('activate', 'execution controller rotation cannot resume a deactivated predecessor')
+  // Derive the existing fenced transition without ever persisting its inactive intermediate state.
+  return Result.flatMap(decideExecutionControllerDeactivation(state, request.predecessor), ({ state: inactive }) =>
+    decideExecutionControllerActivation(inactive, {
+      schemaVersion: 'bayn.execution-controller-activation.v1',
+      controllerKey: request.deployment.controllerKey,
+      epoch: inactive.epoch,
+      firstSequence: inactive.nextSequence,
+      planHash: request.deployment.planHash,
+      sourceRevision: request.deployment.sourceRevision,
+    }),
+  )
+}
+
 export const decodeExecutionControllerActivation = Schema.decodeUnknownResult(
   ExecutionControllerActivationSchema,
   strictParseOptions,
 )
-export const decodeExecutionControllerBootstrap = Schema.decodeUnknownResult(
-  ExecutionControllerBootstrapSchema,
+export const decodeExecutionControllerRotation = Schema.decodeUnknownResult(
+  ExecutionControllerRotationSchema,
+  strictParseOptions,
+)
+export const decodeExecutionDeploymentActivation = Schema.decodeUnknownResult(
+  ExecutionDeploymentActivationSchema,
   strictParseOptions,
 )
 export const decodeExecutionControllerTick = Schema.decodeUnknownResult(
@@ -388,3 +477,18 @@ export const decodeExecutionAdvanceStepResult = Schema.decodeUnknownResult(
   ExecutionAdvanceStepResultSchema,
   strictParseOptions,
 )
+
+export const executionControllerSuccessorPassCompleted = (
+  state: ExecutionControllerState | null,
+  activation: Pick<ExecutionControllerActivation, 'epoch' | 'firstSequence' | 'planHash' | 'sourceRevision'>,
+): state is ExecutionControllerState & {
+  readonly lastCompletion: NonNullable<ExecutionControllerState['lastCompletion']>
+} =>
+  state !== null &&
+  state.active &&
+  state.epoch === activation.epoch &&
+  state.planHash === activation.planHash &&
+  state.sourceRevision === activation.sourceRevision &&
+  state.lastCompletion !== undefined &&
+  state.lastCompletion.sequence >= activation.firstSequence &&
+  state.nextSequence === state.lastCompletion.sequence + 1

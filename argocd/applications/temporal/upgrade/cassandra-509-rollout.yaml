@@ -1,0 +1,190 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: temporal-cassandra-509-v1-rollout
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-upgrade
+    temporal.proompteng.ai/backup-generation: 509-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-30'
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: temporal-cassandra-509-v1-rollout
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-upgrade
+    temporal.proompteng.ai/backup-generation: 509-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-30'
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  - persistentvolumeclaims
+  resourceNames:
+  - temporal-cassandra-0
+  - temporal-cassandra-1
+  - temporal-cassandra-2
+  - data-temporal-cassandra-0
+  - data-temporal-cassandra-1
+  - data-temporal-cassandra-2
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - pods/exec
+  resourceNames:
+  - temporal-cassandra-0
+  - temporal-cassandra-1
+  - temporal-cassandra-2
+  verbs:
+  - get
+  - create
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  resourceNames:
+  - temporal-cassandra
+  verbs:
+  - get
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  resourceNames:
+  - temporal-cassandra-509-v1-snapshot
+  - temporal-cassandra-509-v1-rehearsal
+  verbs:
+  - get
+- apiGroups:
+  - snapshot.storage.k8s.io
+  resources:
+  - volumesnapshots
+  resourceNames:
+  - temporal-cassandra-509-v1-0
+  - temporal-cassandra-509-v1-1
+  - temporal-cassandra-509-v1-2
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  resourceNames:
+  - temporal-cassandra-0
+  - temporal-cassandra-1
+  - temporal-cassandra-2
+  verbs:
+  - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: temporal-cassandra-509-v1-rollout
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-upgrade
+    temporal.proompteng.ai/backup-generation: 509-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-30'
+subjects:
+- kind: ServiceAccount
+  name: temporal-cassandra-509-v1-rollout
+  namespace: temporal
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: temporal-cassandra-509-v1-rollout
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: temporal-cassandra-509-v1-rollout
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-upgrade
+    temporal.proompteng.ai/backup-generation: 509-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '1'
+spec:
+  activeDeadlineSeconds: 10800
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: temporal
+        app.kubernetes.io/component: cassandra-rollout
+        temporal.proompteng.ai/backup-generation: 509-v1
+    spec:
+      restartPolicy: Never
+      serviceAccountName: temporal-cassandra-509-v1-rollout
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1001
+      containers:
+      - name: rollout
+        image: docker.io/bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7
+        command:
+        - /bin/bash
+        - -euc
+        - "set -o pipefail\ntest \"$(cat /proof/native-snapshot-generation)\" = \"\
+          $GENERATION\"\ngrep -Fq 5.0.9 /proof/target-version\nfor record in ring\
+          \ namespaces namespaces_by_id schema_version; do\n  cmp \"/proof/source-$record.sha256\"\
+          \ \"/proof/target-$record.sha256\"\n  printf 'Verified retained %s hash:\
+          \ ' \"$record\"\n  cat \"/proof/target-$record.sha256\"\ndone\nexec /bin/bash\
+          \ /scripts/cassandra-gate.sh rollout\n"
+        env:
+        - name: SOURCE_IMAGE
+          value: mirror.gcr.io/cassandra:4.1.12@sha256:3edbfb2be84f00f3467e206d7d785ddd4dbcf7042e6a126180e1d9faa5514474
+        - name: TARGET_IMAGE
+          value: mirror.gcr.io/cassandra:5.0.9@sha256:d35e159439b302146f964919904f84fd3c2cebf347272b8cb8c4368c1cf200e5
+        - name: GENERATION
+          value: 509-v1
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        - name: proof
+          mountPath: /proof
+          readOnly: true
+      volumes:
+      - name: scripts
+        configMap:
+          name: temporal-cassandra-upgrade-scripts-rollout
+      - name: tmp
+        emptyDir: {}
+      - name: proof
+        persistentVolumeClaim:
+          claimName: temporal-cassandra-509-v1-proof
+          readOnly: true

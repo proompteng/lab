@@ -4,6 +4,7 @@ export type AgentRunPayload = {
   agentRef: { name: string }
   namespace: string
   metadata?: {
+    name?: string
     generateName?: string
     labels?: Record<string, string>
     annotations?: Record<string, string>

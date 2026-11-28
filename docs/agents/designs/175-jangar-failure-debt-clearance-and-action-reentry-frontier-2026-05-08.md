@@ -1,6 +1,6 @@
 # 175. Jangar Failure-Debt Clearance And Action Reentry Frontier (2026-05-08)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-08
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane resilience, retained failure debt, source and GitOps settlement, observer-rights gaps,
@@ -10,13 +10,6 @@ gates.
 Companion Torghut contract:
 
 - `docs/torghut/design-system/v6/179-torghut-capital-repair-frontier-and-route-yield-clearance-2026-05-08.md`
-
-Extends:
-
-- `174-jangar-observer-rights-and-source-settled-capital-ledger-2026-05-08.md`
-- `173-jangar-action-broker-and-proof-carrying-rollout-cells-2026-05-08.md`
-- `172-jangar-revision-carry-ledger-and-source-to-serving-action-bonds-2026-05-08.md`
-- `docs/torghut/design-system/v6/178-torghut-route-sample-mint-and-capital-proof-ratchet-2026-05-08.md`
 
 ## Decision
 

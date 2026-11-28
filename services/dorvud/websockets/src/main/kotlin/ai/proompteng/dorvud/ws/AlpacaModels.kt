@@ -40,6 +40,7 @@ data class AlpacaSubscription(
   @SerialName("bars") val bars1m: List<String> = emptyList(),
   @SerialName("updatedBars") val updatedBars: List<String> = emptyList(),
   val dailyBars: List<String> = emptyList(),
+  val orderbooks: List<String> = emptyList(),
   val statuses: List<String> = emptyList(),
 ) : AlpacaMessage
 

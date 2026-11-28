@@ -37,6 +37,32 @@ data:
         regex         = "symphony-torghut"
         action        = "drop"
       }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "service"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        regex         = "(.+)"
+        target_label  = "service"
+      }
     }
 
     discovery.kubernetes "symphony_torghut" {
@@ -103,19 +129,6 @@ data:
       forward_to      = [prometheus.remote_write.mimir.receiver]
     }
 
-    // Scraping every revision-private endpoint prevents Knative from scaling
-    // inactive revisions to zero. The stable route always targets the current revision.
-    prometheus.scrape "torghut_api" {
-      job_name        = "torghut"
-      scrape_interval = "30s"
-      targets = [{
-        "__address__" = "torghut.torghut.svc.cluster.local:80",
-        "namespace"   = "torghut",
-        "service"     = "torghut",
-      }]
-      forward_to = [prometheus.remote_write.mimir.receiver]
-    }
-
     loki.write "default" {
       endpoint {
         url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
@@ -128,14 +141,6 @@ data:
     }
 
     loki.process "torghut_pod_logs" {
-      stage.labels {
-        values = {
-          namespace = "{{ .Labels.namespace }}",
-          pod       = "{{ .Labels.pod }}",
-          container = "{{ .Labels.container }}",
-        }
-      }
-
       stage.static_labels {
         values = {
           job = "torghut",

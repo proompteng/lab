@@ -1,0 +1,169 @@
+diff --git a/dist/lib/client/socket.js b/dist/lib/client/socket.js
+index b687730b4854b729444cc26d4dda0f77c9691592..f639be36e0ef3bad0baca4110c060b350e12df6a 100644
+--- a/dist/lib/client/socket.js
++++ b/dist/lib/client/socket.js
+@@ -20,6 +20,7 @@ class RedisSocket extends node_events_1.EventEmitter {
+     #clientId;
+     #maintenanceTimeout;
+     #socket;
++    #connectController;
+     #isOpen = false;
+     get isOpen() {
+         return this.#isOpen;
+@@ -92,8 +93,11 @@ class RedisSocket extends node_events_1.EventEmitter {
+                 writable: true
+             };
+             return {
+-                create() {
+-                    return node_tls_1.default.connect(withDefaults);
++                create(signal) {
++                    return node_tls_1.default.connect({
++                        ...withDefaults,
++                        signal: withDefaults.signal ? AbortSignal.any([withDefaults.signal, signal]) : signal
++                    });
+                 },
+                 event: 'secureConnect'
+             };
+@@ -108,8 +112,11 @@ class RedisSocket extends node_events_1.EventEmitter {
+                 writable: true
+             };
+             return {
+-                create() {
+-                    return node_net_1.default.createConnection(withDefaults);
++                create(signal) {
++                    return node_net_1.default.createConnection({
++                        ...withDefaults,
++                        signal: withDefaults.signal ? AbortSignal.any([withDefaults.signal, signal]) : signal
++                    });
+                 },
+                 event: 'connect'
+             };
+@@ -127,8 +134,11 @@ class RedisSocket extends node_events_1.EventEmitter {
+             writable: true
+         };
+         return {
+-            create() {
+-                return node_net_1.default.createConnection(withDefaults);
++            create(signal) {
++                return node_net_1.default.createConnection({
++                    ...withDefaults,
++                    signal: withDefaults.signal ? AbortSignal.any([withDefaults.signal, signal]) : signal
++                });
+             },
+             event: 'connect'
+         };
+@@ -173,14 +183,29 @@ class RedisSocket extends node_events_1.EventEmitter {
+         this.#isOpen = true;
+         return this.#connect();
+     }
+-    async #connect(retries = 0) {
++    #connect(retries = 0) {
++        const controller = new AbortController();
++        this.#connectController = controller;
++        return this.#connectWithSignal(retries, controller.signal).finally(() => {
++            if (this.#connectController === controller)
++                this.#connectController = undefined;
++        });
++    }
++    async #connectWithSignal(retries, signal) {
+         do {
+             try {
+                 const connectStartTime = performance.now();
+-                const socket = this.#socket = await this.#createSocket();
++                const socket = await this.#createSocket(signal);
++                if (signal.aborted) {
++                    socket.destroy();
++                    signal.throwIfAborted();
++                }
++                this.#socket = socket;
+                 this.emit('connect');
+                 try {
++                    signal.throwIfAborted();
+                     await this.#initiateWhileSocketAlive(socket);
++                    signal.throwIfAborted();
+                     // Check if socket was closed/destroyed during initiator execution
+                     if (!this.#socket || this.#socket.destroyed || !this.#socket.readable || !this.#socket.writable) {
+                         const error = new errors_1.SocketClosedUnexpectedlyError();
+@@ -193,7 +218,7 @@ class RedisSocket extends node_events_1.EventEmitter {
+                             this.#emitError(strategyError);
+                         if (!this.#isOpen)
+                             throw new errors_1.ClientClosedError();
+-                        await (0, promises_1.setTimeout)(retryIn);
++                        await (0, promises_1.setTimeout)(retryIn, undefined, { signal });
+                         if (!this.#isOpen)
+                             throw new errors_1.ClientClosedError();
+                         this.emit('reconnecting');
+@@ -201,10 +226,10 @@ class RedisSocket extends node_events_1.EventEmitter {
+                     }
+                 }
+                 catch (err) {
+-                    // #socket may already be undefined if the client was destroyed while
+-                    // the initiator was suspended (destroySocket cleared it).
+-                    this.#socket?.destroy();
+-                    this.#socket = undefined;
++                    // A cancelled initiator must not destroy a later connection's socket.
++                    socket.destroy();
++                    if (this.#socket === socket)
++                        this.#socket = undefined;
+                     throw err;
+                 }
+                 this.#isReady = true;
+@@ -221,7 +246,7 @@ class RedisSocket extends node_events_1.EventEmitter {
+                 // The client was closed while connecting (e.g. destroy()/quit() raced
+                 // an async initiator). Abort the attempt without emitting error/
+                 // reconnecting or scheduling a retry — the shutdown is intentional.
+-                if (!this.#isOpen)
++                if (!this.#isOpen || signal.aborted)
+                     throw err;
+                 const { retryIn, strategyError } = this.#shouldReconnect(retries++, err);
+                 if (typeof retryIn !== 'number') {
+@@ -232,7 +257,7 @@ class RedisSocket extends node_events_1.EventEmitter {
+                     this.#emitError(strategyError);
+                 if (!this.#isOpen)
+                     throw err;
+-                await (0, promises_1.setTimeout)(retryIn);
++                await (0, promises_1.setTimeout)(retryIn, undefined, { signal });
+                 if (!this.#isOpen)
+                     throw err;
+                 this.emit('reconnecting');
+@@ -285,8 +310,13 @@ class RedisSocket extends node_events_1.EventEmitter {
+             (0, tracing_1.publish)(tracing_1.CHANNELS.CONNECTION_RELAXED_TIMEOUT, () => ({ clientId: this.#clientId, value: -1 }));
+         }
+     }
+-    async #createSocket() {
+-        const socket = this.#socketFactory.create();
++    async #createSocket(signal) {
++        const socket = this.#socketFactory.create(signal);
++        // Observe native abort errors even between connect completion and ownership transfer.
++        socket.once('error', err => {
++            if (this.#socket === socket)
++                this.#onSocketError(err);
++        });
+         let onTimeout;
+         if (this.#connectTimeout !== undefined) {
+             onTimeout = () => socket.destroy(new errors_1.ConnectionTimeoutError());
+@@ -310,7 +340,6 @@ class RedisSocket extends node_events_1.EventEmitter {
+             socket.setTimeout(this.#socketTimeout);
+         }
+         socket
+-            .once('error', err => this.#onSocketError(err))
+             .once('close', hadError => {
+             if (hadError || !this.#isOpen || this.#socket !== socket)
+                 return;
+@@ -403,12 +432,15 @@ class RedisSocket extends node_events_1.EventEmitter {
+         // re-emit 'end'. But a graceful close() also leaves #isOpen === false while keeping the
+         // socket alive to drain, so key the guard on the socket too: while one remains, destroy()
+         // must still force-terminate it (e.g. when a caller escalates close() to destroy()).
+-        if (!this.#isOpen && !this.#socket)
++        if (!this.#isOpen && !this.#socket && !this.#connectController)
+             return;
+         this.#isOpen = false;
+         this.destroySocket();
+     }
+     destroySocket() {
++        // The native socket owns the signal before TCP/TLS has produced a ready handle.
++        this.#connectController?.abort();
++        this.#connectController = undefined;
+         const wasReady = this.#isReady;
+         this.#isReady = false;
+         if (this.#socket) {

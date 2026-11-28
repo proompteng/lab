@@ -1,5 +1,17 @@
 Jangar
 
+Production sets `JANGAR_TORGHUT_LEGACY_RETIRED=true` before removing the legacy Torghut API,
+simulation, and PostgreSQL workloads. Jangar returns HTTP 410 for their trading, decision-engine,
+simulation, and whitepaper routes, and stops quant background work and whitepaper finalization.
+The flag overrides legacy enablement flags and prevents opening the Torghut database connection.
+Market-context batches retain their open-session requirement and stop querying the retired trading
+status endpoint; an unknown session does not authorize a batch. Symbol management, TA/ClickHouse
+readers, and the other Jangar services remain available.
+
+Roll out this Jangar change through its normal Kargo stage and verify the retired routes return 410
+before pruning the Torghut workloads. Keep the flag enabled while they are absent. Recovery requires
+restoring the Torghut services and database before restoring their Jangar connection configuration.
+
 OpenAI-compatible chat completions endpoint, operator UI, and control-plane surface backed by the Codex app-server.
 
 ## Architecture
@@ -56,45 +68,12 @@ flowchart TD
 ## Development
 
 ```bash
-bun --cwd services/jangar run dev
+bun run --cwd services/jangar dev
 ```
 
-### Local Jangar + remote cluster deps (Tilt)
-
-From the repo root, run:
-
-```bash
-tilt up
-```
-
-This runs Jangar locally (Bun) and keeps `kubectl port-forward` sessions open to the remote cluster for:
-
-- Postgres (CNPG `jangar-db`)
-- Redis (OpenWebUI thread/worktree persistence)
-- NATS (agent comms)
-- ClickHouse (Torghut visuals)
-
-Tilt uses your default kubeconfig/current context. If you need to change ports or disable optional deps:
-
-```bash
-# run Jangar on a different port
-tilt up -- --jangar_port 3001
-
-# avoid conflicts with a local Postgres
-tilt up -- --db_local_port 15433
-
-# disable optional forwards
-tilt up -- --enable_redis=false --enable_nats=false --enable_clickhouse=false
-
-# self-hosted embeddings (recommended if your DB schema uses vector(4096))
-tilt up -- --openai_api_base_url http://127.0.0.1:11434/v1 --openai_embedding_api_base_url http://127.0.0.1:11434/v1 --openai_embedding_model qwen3-embedding-saigak:8b --openai_embedding_dimension 4096
-```
-
-Troubleshooting:
-
-- If a port-forward fails with "address already in use", change the corresponding `*_local_port`.
-- If you see "lost connection to pod" on a port-forward, Tilt will automatically retry.
-- If a secret lookup fails, confirm your kube context has access to the `jangar` namespace.
+For local development against live dependencies, set the relevant [environment variables](#environment) before
+starting Jangar. For cluster-only dependencies, use `kubectl port-forward` with the verified context and an explicit
+namespace, then point Jangar at the forwarded endpoints.
 
 ### Local OpenWebUI end-to-end regression
 
@@ -152,7 +131,7 @@ Optional overrides:
 - `JANGAR_CODEX_BINARY` (defaults to `codex`)
 - `CODEX_AUTH_JSON` (defaults to `~/.codex/auth.json` when staging the isolated `CODEX_HOME`)
 - `OPENWEBUI_E2E_CODEX_HOME` (defaults to `services/jangar/output/playwright/codex-home`)
-- `JANGAR_MODELS` / `JANGAR_DEFAULT_MODEL` / `OPENWEBUI_E2E_MODEL` (default `gpt-5.6-sol`)
+- `JANGAR_MODELS` / `JANGAR_DEFAULT_MODEL` / `OPENWEBUI_E2E_MODEL` (default `gpt-6.2-sol`)
 
 Requirements for the default mock-Codex path:
 
@@ -177,6 +156,9 @@ bun --cwd services/jangar run start:worker
 ```
 
 ## Temporal worker notes
+
+Jangar and Bumba use the workspace Temporal SDK and one Effect 4.1.4 runtime. Follow Bumba's
+[major-version cutover contract](../bumba/README.md#worker-deployment-routing) before replacing an Effect 3 worker.
 
 - API enqueue path: `JANGAR_BUMBA_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `bumba`).
 - Worker consume path: `JANGAR_WORKER_TEMPORAL_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `jangar`).
@@ -640,7 +622,7 @@ build through the Temporal SDK; the pinned legacy CLI is used only for workflow 
 - `x-jangar-openwebui-render-mode: rich-ui-v1` is optional and experimental; it only requests `delta.jangar_event` frames when OpenWebUI rich rendering is already enabled on the server.
 - Authentication and rate limiting are intentionally disabled because this endpoint is for internal use only; place it behind your own network guardrails when exposing it.
 - Usage totals are emitted only when the request includes `stream_options: { include_usage: true }`. The final SSE chunk (empty `choices` array) carries the normalized OpenAI-style `usage`, even when a turn ends with an upstream error or client abort.
-- Server-side Effect services follow `Context.Tag + Layer` patterns; see `src/server/effect-services.md`.
+- Server-side Effect services follow `Context.Service + Layer` patterns; see `src/server/effect-services.md`.
 
 ## agentctl
 
@@ -777,8 +759,15 @@ To use Flamingo for completions and the self-hosted embeddings model on `saigak`
 
 ```bash
 export OPENAI_API_BASE_URL='http://flamingo.flamingo.svc.cluster.local/v1'
+export JANGAR_FLAMINGO_MODEL='qwen38-flamingo'
+export JANGAR_FLAMINGO_REASONING_EFFORT='xhigh'
 export OPENAI_EMBEDDING_API_BASE_URL='http://saigak.saigak.svc.cluster.local:11434/v1'
 export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:8b'
 export OPENAI_EMBEDDING_DIMENSION='4096'
 # OPENAI_API_KEY is optional for these in-cluster OpenAI-compatible endpoints
 ```
+
+Jangar selects the `flamingo` Codex provider only for `JANGAR_FLAMINGO_MODEL`, using the configured Responses
+endpoint without OpenAI authentication. Flamingo accepts `low`, `medium` or `xhigh` reasoning. Hosted web search and
+ChatGPT Apps are disabled for this provider; the configured MCP servers remain available. Other advertised models,
+including GPT-6.2 Sol, retain the OpenAI provider.

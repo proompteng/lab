@@ -1,13 +1,19 @@
+import { observeRequest, reportServerWarning } from '@/lib/observability/server'
+import { isCodexDiagnosticLogWarning } from '@/lib/tengri/codex-diagnostics'
 import { normalizeCodexEvent, watchCodexEvents } from '@/lib/tengri/grpc'
-import { noStoreHeaders, requireSameOriginGet, requireTengriIdentity, tengriRouteError } from '@/lib/tengri/http'
+import { noStoreHeaders, requireSameOriginGet, requirePlatformIdentity, platformRouteError } from '@/lib/platform/http'
 import { acquireTengriEventStreamSlot, createTengriEventStream, tengriEventStreamHeaders } from '@/lib/tengri/sse'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
+  return observeRequest(request, 'tengri/events.get', () => handleGET(request))
+}
+
+async function handleGET(request: Request) {
   try {
     requireSameOriginGet(request)
-    const identity = await requireTengriIdentity(request)
+    const identity = await requirePlatformIdentity(request)
     const url = new URL(request.url)
     const agentId = url.searchParams.get('agentId') || ''
     const cursor = request.headers.get('last-event-id') || url.searchParams.get('after') || '0'
@@ -21,12 +27,17 @@ export async function GET(request: Request) {
     }
     let body: ReadableStream<Uint8Array>
     try {
-      const source = watchCodexEvents(identity.subject, agentId, after)
+      const source = await watchCodexEvents(identity, agentId, after)
+      let diagnosticReported = false
       body = createTengriEventStream(
         source,
         request.signal,
         (value) => {
           const event = normalizeCodexEvent(value)
+          if (!diagnosticReported && isCodexDiagnosticLogWarning(event)) {
+            diagnosticReported = true
+            reportServerWarning('Codex reported incomplete local diagnostic logs', 'tengri.codex.local_logs')
+          }
           return { id: event.sequence, data: event }
         },
         release,
@@ -39,6 +50,13 @@ export async function GET(request: Request) {
       headers: { ...noStoreHeaders(), ...tengriEventStreamHeaders() },
     })
   } catch (error) {
-    return tengriRouteError(error)
+    return platformRouteError(error)
   }
+}
+
+export function HEAD() {
+  return new Response(null, { status: 405, headers: { 'Cache-Control': 'no-store' } })
+}
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
 }

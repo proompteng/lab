@@ -197,8 +197,8 @@ const failOnGate = (args.get('fail-on-gate') ?? process.env.FLAMINGO_BENCH_FAIL_
 const kubeContext = args.get('context') ?? process.env.KUBE_CONTEXT ?? 'galactic-tailscale'
 const namespace = args.get('namespace') ?? process.env.FLAMINGO_NAMESPACE ?? 'flamingo'
 const deployment = args.get('deployment') ?? process.env.FLAMINGO_DEPLOYMENT ?? 'flamingo'
-const model = args.get('model') ?? process.env.FLAMINGO_MODEL ?? 'qwen36-flamingo'
-const tokenizer = args.get('tokenizer') ?? process.env.FLAMINGO_BENCH_TOKENIZER ?? 'unsloth/Qwen3.6-35B-A3B-NVFP4'
+const model = args.get('model') ?? process.env.FLAMINGO_MODEL ?? 'qwen38-flamingo'
+const tokenizer = args.get('tokenizer') ?? process.env.FLAMINGO_BENCH_TOKENIZER ?? 'nvidia/Qwen3.8-27B-NVFP4'
 const baseUrl = (
   args.get('base-url') ??
   process.env.FLAMINGO_BASE_URL ??
@@ -567,9 +567,9 @@ function validateToolCall(response: unknown): string[] {
 }
 
 export function validateChatSmokeResponse(label: string, response: unknown): string[] {
-  if (label === 'exact-no-thinking') return validateTextCompletion(response, 'qwen36-ready')
+  if (label === 'exact-no-thinking') return validateTextCompletion(response, 'qwen38-ready')
   if (label === 'medium-thinking') {
-    const errors = validateTextCompletion(response, 'qwen36-thinking-ready')
+    const errors = validateTextCompletion(response, 'qwen38-thinking-ready')
     const completionTokens =
       isRecord(response) && isRecord(response.usage) ? response.usage.completion_tokens : undefined
     if (typeof completionTokens !== 'number' || completionTokens <= 0) {
@@ -788,15 +788,15 @@ export function buildGateChecks(summary: RunSummary, baseline?: RunSummary): Gat
     threshold: 'none',
   })
   checks.push({
-    name: '/v1/models exposes only qwen36-flamingo',
-    ok: ids.length === 1 && ids[0] === 'qwen36-flamingo',
+    name: '/v1/models exposes only qwen38-flamingo',
+    ok: ids.length === 1 && ids[0] === 'qwen38-flamingo',
     actual: ids.join(','),
-    threshold: 'qwen36-flamingo',
+    threshold: 'qwen38-flamingo',
   })
   checks.push({
     name: '/v1/models max_model_len is 262144',
-    ok: modelMaxLen(summary.models, 'qwen36-flamingo') === 262144,
-    actual: modelMaxLen(summary.models, 'qwen36-flamingo'),
+    ok: modelMaxLen(summary.models, 'qwen38-flamingo') === 262144,
+    actual: modelMaxLen(summary.models, 'qwen38-flamingo'),
     threshold: 262144,
   })
   checks.push({ name: 'all chat smokes succeeded', ok: smokeFailures === 0, actual: smokeFailures, threshold: 0 })
@@ -807,8 +807,8 @@ export function buildGateChecks(summary: RunSummary, baseline?: RunSummary): Gat
     actual: benchmarkFailures,
     threshold: 0,
   })
-  addSmokeContentGate(checks, summary, 'exact-no-thinking', 'qwen36-ready')
-  addSmokeContentGate(checks, summary, 'medium-thinking', 'qwen36-thinking-ready')
+  addSmokeContentGate(checks, summary, 'exact-no-thinking', 'qwen38-ready')
+  addSmokeContentGate(checks, summary, 'medium-thinking', 'qwen38-thinking-ready')
 
   const toolSmoke = smokeByLabel(summary, 'tool-call')
   const toolCall = chatToolCalls(toolSmoke ?? { label: 'missing', ok: false, elapsedMs: 0 })[0]
@@ -1068,7 +1068,7 @@ async function main(): Promise<void> {
     summary.smokes.push(
       await chatSmoke('exact-no-thinking', {
         model,
-        messages: [{ role: 'user', content: 'Reply with exactly: qwen36-ready' }],
+        messages: [{ role: 'user', content: 'Reply with exactly: qwen38-ready' }],
         chat_template_kwargs: { enable_thinking: false },
         max_tokens: 16,
         temperature: 0,
@@ -1078,7 +1078,8 @@ async function main(): Promise<void> {
     summary.smokes.push(
       await chatSmoke('medium-thinking', {
         model,
-        messages: [{ role: 'user', content: 'Reason briefly, then answer exactly: qwen36-thinking-ready' }],
+        messages: [{ role: 'user', content: 'Reason briefly, then answer exactly: qwen38-thinking-ready' }],
+        reasoning_effort: 'medium',
         chat_template_kwargs: { enable_thinking: true },
         max_tokens: 2048,
         temperature: 0,

@@ -11,6 +11,11 @@ on:
         description: JSON array produced by the central PR impact router
         required: true
         type: string
+    secrets:
+      TS_OAUTH_CLIENT_ID:
+        required: false
+      TS_OAUTH_SECRET:
+        required: false
   push:
     branches:
       - main
@@ -18,11 +23,16 @@ on:
       - 'argocd/applications/argo-workflows/**'
       - 'argocd/applications/agents/**'
       - 'charts/agents/**'
+      - 'docs/agents/ontology/**'
       - 'flake.lock'
       - 'flake.nix'
       - 'nix/images/agents.nix'
       - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/relativize-bun-cache.sh'
+      - 'patches/effect@4.1.4.patch'
+      - 'nix/images/antigravity-cli.nix'
       - 'nix/images/openai-codex-cli.nix'
+      - 'nix/images/agentrun-tools.nix'
       - 'nix/packages.nix'
       - 'packages/agent-contracts/**'
       - 'packages/codex/**'
@@ -63,17 +73,29 @@ jobs:
       needs_local_agents_image: ${{ steps.classify.outputs.NEEDS_LOCAL_AGENTS_IMAGE }}
       image_mode: ${{ steps.classify.outputs.AGENTS_IMAGE_MODE }}
       image_targets: ${{ steps.classify.outputs.image_targets }}
+      verify_dependency_closure: ${{ steps.classify.outputs.verify_dependency_closure }}
       matched_paths: ${{ steps.classify.outputs.matched_paths }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          # The chart guard compares the PR merge commit to its base parent.
+          fetch-depth: ${{ github.event_name == 'push' && '0' || github.event_name == 'pull_request' && '2' || '1' }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
+
+      - name: Check Agents chart version bump
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if ! git cat-file -e "${BASE_SHA}^{commit}"; then
+            git fetch --no-tags --depth=1 origin "${BASE_SHA}"
+          fi
+          bun run packages/scripts/src/agents/check-chart-version-bump.ts "${BASE_SHA}"
 
       - name: Resolve changed files
         id: files
@@ -87,7 +109,9 @@ jobs:
           set -euo pipefail
           changed_files="${RUNNER_TEMP}/agents-changed-files.txt"
 
-          if [ -n "${CHANGED_FILES_JSON}" ]; then
+          if [ "${EVENT_NAME}" = merge_group ]; then
+            git ls-files > "${changed_files}"
+          elif [ -n "${CHANGED_FILES_JSON}" ]; then
             jq -e 'type == "array" and all(.[]; type == "string")' <<< "${CHANGED_FILES_JSON}" >/dev/null
             jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${changed_files}"
           elif [ "${EVENT_NAME}" = workflow_dispatch ]; then
@@ -112,6 +136,25 @@ jobs:
             --github-output "${GITHUB_OUTPUT}" \
             < "${CHANGED_FILES}" \
             | tee "${RUNNER_TEMP}/agents-ci-plan.txt"
+
+      - name: Require the complete queued Agents plan
+        if: github.event_name == 'merge_group'
+        shell: bash
+        env:
+          RUN_UNIT: ${{ steps.classify.outputs.run_unit }}
+          RUN_STATIC: ${{ steps.classify.outputs.run_static }}
+          RUN_INTEGRATION: ${{ steps.classify.outputs.run_integration }}
+          BUILD_LOCAL: ${{ steps.classify.outputs.NEEDS_LOCAL_AGENTS_IMAGE }}
+          VERIFY_CLOSURE: ${{ steps.classify.outputs.verify_dependency_closure }}
+          IMAGE_TARGETS: ${{ steps.classify.outputs.image_targets }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUN_UNIT}" != true || "${RUN_STATIC}" != true || "${RUN_INTEGRATION}" != true ||
+                "${BUILD_LOCAL}" != true || "${VERIFY_CLOSURE}" != true ]]; then
+            echo 'Queued Agents validation requires units, charts, local smoke, and dependency verification.' >&2
+            exit 1
+          fi
+          jq -e 'sort == ["agents-shell", "control-plane", "controller", "runner"]' <<< "${IMAGE_TARGETS}" >/dev/null
 
       - name: Summarize Agents plan
         env:
@@ -139,6 +182,16 @@ jobs:
     if: ${{ needs.plan.outputs.run_unit == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -146,7 +199,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Install dependencies
         run: >-
@@ -156,9 +209,20 @@ jobs:
           --filter @proompteng/codex
           --filter @proompteng/cx-tools
           --filter @proompteng/agents
+          --filter memories
           --filter @proompteng/otel
           --filter @proompteng/scripts
           --filter @proompteng/temporal-bun-sdk
+
+      - name: Install shell integration test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
+      - name: Install kubectl for shell context regression tests
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.37.0
 
       - name: Run Agents script unit tests
         env:
@@ -166,17 +230,27 @@ jobs:
         run: |
           bun test \
             packages/scripts/src/agents/__tests__/build-image.test.ts \
+            packages/scripts/src/agents/__tests__/check-chart-version-bump.test.ts \
             packages/scripts/src/agents/__tests__/resolve-agents-image-mode.test.ts \
             packages/scripts/src/agents/__tests__/resolve-published-agents-images.test.ts \
+            packages/scripts/src/agents/__tests__/resolve-smoke-runner-image.test.ts \
             packages/scripts/src/agents/__tests__/agentrun-ingestion-mitigation.test.ts \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
+            packages/scripts/src/agents/__tests__/sync-auto-ontology-bundle.test.ts \
+            packages/scripts/src/agents/__tests__/collect-smoke-diagnostics.test.ts \
+            packages/scripts/src/agents/__tests__/curate-ontology-deltas.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
+            packages/scripts/src/agents/__tests__/workspace-cache.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
 
       - name: Run Agents service typecheck and unit tests
+        env:
+          AGENTS_STORE_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
         run: |
+          bun services/relay/generate.ts --check
           bun run --cwd services/agents tsc
           bun run --cwd services/agents test
+          bun run --cwd services/memories test
 
   static:
     name: Validate Agents chart and CRDs
@@ -244,19 +318,10 @@ jobs:
 
   integration:
     name: Agents Kind smoke (${{ needs.plan.outputs.tier }})
-    needs:
-      - plan
-      - unit
-      - static
-    if: >-
-      ${{
-        always() &&
-        needs.plan.result == 'success' &&
-        needs.plan.outputs.run_integration == 'true' &&
-        (needs.unit.result == 'success' || needs.unit.result == 'skipped') &&
-        (needs.static.result == 'success' || needs.static.result == 'skipped')
-      }}
-    runs-on: arc-amd64
+    # The smoke job owns its fixtures. ci-pr still requires the entire called workflow to pass.
+    needs: plan
+    if: ${{ needs.plan.outputs.run_integration == 'true' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
       KIND_DOCKER_NETWORK_NAME: kind-${{ github.run_id }}-${{ github.run_attempt }}
@@ -267,10 +332,26 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      - name: Connect to the tailnet
+        if: github.event_name != 'merge_group'
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: registry.ide-newton.ts.net
+
+      - name: Verify internal registry access
+        if: github.event_name != 'merge_group'
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
+            https://registry.ide-newton.ts.net/v2/ >/dev/null
+
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -292,28 +373,22 @@ jobs:
       - name: Build agentctl binary
         run: bun run --filter @proompteng/agentctl build:bin
 
-      - name: Set up Nix for selected local Agents images
-        if: env.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
-        uses: ./.github/actions/setup-nix-toolchain
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          install-ci-toolchain: 'false'
-          require-preinstalled: 'true'
-          extra-nix-config: |
-            experimental-features = nix-command flakes
-            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
-            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
-            fallback = true
-
       - name: Resolve published Agents images from GitOps values
+        if: github.event_name != 'merge_group'
         id: published_agents_images
         run: |
           set -euo pipefail
+          git fetch --no-tags --depth=1 origin refs/heads/kargo/agents
+          PUBLISHED_GITOPS_REVISION="$(git rev-parse FETCH_HEAD)"
+          PUBLISHED_VALUES_PATH="${RUNNER_TEMP}/agents-published-values.yaml"
+          git show "${PUBLISHED_GITOPS_REVISION}:argocd/applications/agents/values.yaml" > "${PUBLISHED_VALUES_PATH}"
+          printf 'gitops_revision=%s\n' "${PUBLISHED_GITOPS_REVISION}" >> "${GITHUB_OUTPUT}"
           bun run packages/scripts/src/agents/resolve-published-agents-images.ts \
-            --values-path argocd/applications/agents/values.yaml \
+            --values-path "${PUBLISHED_VALUES_PATH}" \
             --output "${GITHUB_OUTPUT}"
 
       - name: Select published defaults for the smoke test
+        if: github.event_name != 'merge_group'
         env:
           CONTROL_PLANE_IMAGE_REPOSITORY: ${{ steps.published_agents_images.outputs.control_plane_image_repository }}
           CONTROL_PLANE_IMAGE_TAG: ${{ steps.published_agents_images.outputs.control_plane_image_tag }}
@@ -321,10 +396,6 @@ jobs:
           CONTROLLER_IMAGE_REPOSITORY: ${{ steps.published_agents_images.outputs.controller_image_repository }}
           CONTROLLER_IMAGE_TAG: ${{ steps.published_agents_images.outputs.controller_image_tag }}
           CONTROLLER_IMAGE_DIGEST: ${{ steps.published_agents_images.outputs.controller_image_digest }}
-          RUNNER_IMAGE_REPOSITORY: ${{ steps.published_agents_images.outputs.runner_image_repository }}
-          RUNNER_IMAGE_TAG: ${{ steps.published_agents_images.outputs.runner_image_tag }}
-          RUNNER_IMAGE_DIGEST: ${{ steps.published_agents_images.outputs.runner_image_digest }}
-          IMAGE_SOURCE_SHA: ${{ steps.published_agents_images.outputs.source_sha }}
         run: |
           set -euo pipefail
 
@@ -338,7 +409,6 @@ jobs:
           }
           require_published_digest control-plane "${CONTROL_PLANE_IMAGE_DIGEST}"
           require_published_digest controller "${CONTROLLER_IMAGE_DIGEST}"
-          require_published_digest runner "${RUNNER_IMAGE_DIGEST}"
 
           if [ "$(jq 'length' <<< "${IMAGE_TARGETS}")" -lt 4 ]; then
             if ! getent hosts registry.ide-newton.ts.net >/dev/null 2>&1; then
@@ -357,14 +427,58 @@ jobs:
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY=${CONTROLLER_IMAGE_REPOSITORY}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_TAG=${CONTROLLER_IMAGE_TAG}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST=${CONTROLLER_IMAGE_DIGEST}"
-            echo "BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY=${RUNNER_IMAGE_REPOSITORY}"
-            echo "BUILT_AGENTS_RUNNER_IMAGE_TAG=${RUNNER_IMAGE_TAG}"
-            echo "BUILT_AGENTS_RUNNER_IMAGE_DIGEST=${RUNNER_IMAGE_DIGEST}"
-            echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${IMAGE_SOURCE_SHA}"
           } >> "${GITHUB_ENV}"
+
+      - name: Select Agents lifecycle smoke runner
+        id: smoke_runner
+        env:
+          PUBLISHED_SOURCE_SHA: ${{ steps.published_agents_images.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${NEEDS_LOCAL_AGENTS_IMAGE}" = true ]; then
+            bun run packages/scripts/src/agents/resolve-smoke-runner-image.ts local
+          else
+            bun run packages/scripts/src/agents/resolve-smoke-runner-image.ts published "${PUBLISHED_SOURCE_SHA}"
+          fi
+
+      - name: Verify internal cache access for local images
+        if: github.event_name != 'merge_group' && steps.smoke_runner.outputs.build_local == 'true'
+        run: |
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
+            https://attic.ide-newton.ts.net/lab/nix-cache-info >/dev/null
+
+      - name: Set up Nix for selected local Agents images
+        if: steps.smoke_runner.outputs.build_local == 'true'
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          install-ci-toolchain: 'false'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = ${{ github.event_name != 'merge_group' && 'https://attic.ide-newton.ts.net/lab ' || '' }}https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ github.event_name != 'merge_group' && vars.ATTIC_PUBLIC_KEY || '' }}
+            fallback = true
+
+      - name: Verify selected Agents dependency closure without trusting a warm cache
+        if: needs.plan.outputs.verify_dependency_closure == 'true'
+        run: bash nix/check-bun-dependency-closure.sh agents-controller x86_64-linux
 
       - name: Ensure Kind Docker network
         run: scripts/agents/ensure-kind-network.sh
+
+      - name: Install pinned Kind binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          kind_bin="${RUNNER_TOOL_CACHE}/kind/v0.31.0/amd64/kind/bin"
+          mkdir -p "${kind_bin}"
+          # The anonymous release URL can return 403 on hosted runners.
+          gh release download v0.31.0 --repo kubernetes-sigs/kind \
+            --pattern kind-linux-amd64 --output "${RUNNER_TEMP}/kind-linux-amd64"
+          echo "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa  ${RUNNER_TEMP}/kind-linux-amd64" | sha256sum -c
+          # kind-action reuses this checksum-verified executable.
+          install -m 755 "${RUNNER_TEMP}/kind-linux-amd64" "${kind_bin}/kind"
 
       - name: Create Kind cluster
         uses: helm/kind-action@v1
@@ -376,11 +490,23 @@ jobs:
           node_image: mirror.gcr.io/kindest/node:v1.29.4
           kubectl_version: v1.29.4
           wait: 180s
-          # Functional cleanup runs explicitly below. A wedged ARC Docker teardown must not overwrite a passed smoke test.
+          # Functional cleanup runs explicitly below and must not overwrite a passed smoke test.
           ignore_failed_clean: 'true'
 
+      - name: Configure and verify Kind tailnet access
+        if: github.event_name != 'merge_group'
+        run: |
+          set -euo pipefail
+          # Containerd pulls images inside the node, which does not inherit the host's per-link MagicDNS.
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" sh -c \
+            'printf "nameserver 100.100.100.100\n" > /etc/resolv.conf'
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" getent hosts registry.ide-newton.ts.net
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" \
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
+            https://registry.ide-newton.ts.net/v2/ >/dev/null
+
       - name: Build and preload selected local Nix Agents images
-        if: env.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
+        if: steps.smoke_runner.outputs.build_local == 'true'
         timeout-minutes: 35
         run: |
           set -euo pipefail
@@ -430,6 +556,7 @@ jobs:
               controller) echo agents-controller-image ;;
               runner) echo agents-codex-runner-image ;;
               agents-shell) echo agents-shell-image ;;
+              smoke-runner) echo agents-smoke-runner-image ;;
               *) echo "Unknown Agents image target: $1" >&2; return 2 ;;
             esac
           }
@@ -445,26 +572,35 @@ jobs:
           }
 
           mapfile -t targets < <(jq -r '.[]' <<< "${IMAGE_TARGETS}")
-          if [ "${#targets[@]}" -eq 0 ]; then
+          if [ "${NEEDS_LOCAL_AGENTS_IMAGE}" = true ] && [ "${#targets[@]}" -eq 0 ]; then
             echo 'Local image mode selected without image targets.' >&2
             exit 2
           fi
 
+          build_targets=("${targets[@]}" smoke-runner)
           installables=()
-          for target in "${targets[@]}"; do
+          for target in "${build_targets[@]}"; do
             installables+=(".#$(image_attr "${target}")")
           done
 
-          IMAGE_LABEL="$(IFS=,; echo "${targets[*]}")"
+          IMAGE_LABEL="$(IFS=,; echo "${build_targets[*]}")"
           run_with_progress 'Nix image build' 30 nix build --no-link "${installables[@]}"
 
           load_archives=()
-          for target in "${targets[@]}"; do
+          for target in "${build_targets[@]}"; do
             package_attr="$(image_attr "${target}")"
             archive_path="$(nix path-info ".#${package_attr}")"
             if [ ! -f "${archive_path}" ]; then
               echo "Nix image ${package_attr} did not produce an archive at ${archive_path}." >&2
               exit 1
+            fi
+            if [ "${target}" = smoke-runner ]; then
+              archive_bytes="$(stat -c %s "${archive_path}")"
+              if [ "${archive_bytes}" -gt $((150 * 1024 * 1024)) ]; then
+                echo "Lifecycle smoke runner archive exceeds 150 MiB (${archive_bytes} bytes)." >&2
+                exit 1
+              fi
+              echo "Lifecycle smoke runner archive: ${archive_bytes} bytes."
             fi
 
             load_archive="${archive_path}"
@@ -480,7 +616,7 @@ jobs:
             load_archives+=("${load_archive}")
           done
 
-          IMAGE_LABEL="$(IFS=,; echo "${targets[*]}")"
+          IMAGE_LABEL="$(IFS=,; echo "${build_targets[*]}")"
           run_with_progress 'Kind image preload' 20 \
             kind load image-archive --name "${KIND_CLUSTER_NAME}" "${load_archives[@]}"
 
@@ -508,7 +644,6 @@ jobs:
                 {
                   echo "BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY=${repository}"
                   echo 'BUILT_AGENTS_RUNNER_IMAGE_TAG=nix'
-                  echo 'BUILT_AGENTS_RUNNER_IMAGE_DIGEST='
                 } >> "${GITHUB_ENV}"
                 ;;
               agents-shell)
@@ -520,7 +655,24 @@ jobs:
                 ;;
             esac
           done
-          echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Verify runner toolchain in a fresh Pod
+        if: ${{ contains(fromJSON(needs.plan.outputs.image_targets), 'runner') }}
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          image="${BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY}:${BUILT_AGENTS_RUNNER_IMAGE_TAG}"
+          kubectl create namespace agents-runner-ci --dry-run=client -o yaml | kubectl apply -f -
+          cleanup() {
+            kubectl -n agents-runner-ci logs runner-toolchain-smoke || true
+            kubectl -n agents-runner-ci delete pod runner-toolchain-smoke --ignore-not-found --wait=false
+          }
+          trap cleanup EXIT
+          kubectl -n agents-runner-ci run runner-toolchain-smoke \
+            --image="${image}" --image-pull-policy=IfNotPresent --restart=Never \
+            --command -- agentrun-acceptance --smoke
+          kubectl -n agents-runner-ci wait --for=jsonpath='{.status.phase}'=Succeeded \
+            pod/runner-toolchain-smoke --timeout=180s
 
       - name: Run Agents integration smoke test
         env:
@@ -540,13 +692,35 @@ jobs:
           AGENTS_CONTROLLER_IMAGE_REPOSITORY: ${{ env.BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY }}
           AGENTS_CONTROLLER_IMAGE_TAG: ${{ env.BUILT_AGENTS_CONTROLLER_IMAGE_TAG }}
           AGENTS_CONTROLLER_IMAGE_DIGEST: ${{ env.BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST }}
-          AGENTS_RUNNER_IMAGE_REPOSITORY: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY }}
-          AGENTS_RUNNER_IMAGE_TAG: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_TAG }}
-          AGENTS_RUNNER_IMAGE_DIGEST: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_DIGEST }}
+          AGENTS_SMOKE_RUNNER_IMAGE: ${{ steps.smoke_runner.outputs.image }}
           AGENTCTL_BIN: services/agents/agentctl/dist/agentctl
         run: |
           set -euo pipefail
+          : "${AGENTS_SMOKE_RUNNER_IMAGE:?No lifecycle smoke runner selected}"
           timeout -k 30s "${AGENTS_TIMEOUT}" bun run packages/scripts/src/agents/smoke-agents.ts
+
+      - name: Collect sanitized Agents fixture diagnostics
+        if: always()
+        timeout-minutes: 2
+        env:
+          AGENTS_DIAGNOSTICS_DIR: ${{ runner.temp }}/agents-fixture-diagnostics
+        run: |
+          mkdir -p "${AGENTS_DIAGNOSTICS_DIR}"
+          if command -v bun >/dev/null 2>&1 && [ -f packages/scripts/src/agents/collect-smoke-diagnostics.ts ]; then
+            bun run packages/scripts/src/agents/collect-smoke-diagnostics.ts || \
+              printf '{"collection":"unavailable"}\n' > "${AGENTS_DIAGNOSTICS_DIR}/collection-status.json"
+          else
+            printf '{"collection":"tooling_unavailable"}\n' > "${AGENTS_DIAGNOSTICS_DIR}/collection-status.json"
+          fi
+
+      - name: Upload sanitized Agents fixture diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agents-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agents-fixture-diagnostics
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Cleanup Agents integration resources
         if: always()

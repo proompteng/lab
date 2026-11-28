@@ -22,10 +22,9 @@ export type AgentCommsSubscriberService = {
   ready: Effect.Effect<void, Error>
 }
 
-export class AgentCommsSubscriber extends Context.Tag('AgentCommsSubscriber')<
-  AgentCommsSubscriber,
-  AgentCommsSubscriberService
->() {}
+export class AgentCommsSubscriber extends Context.Service<AgentCommsSubscriber, AgentCommsSubscriberService>()(
+  'AgentCommsSubscriber',
+) {}
 
 type SubscriberConfig = AgentCommsSubscriberConfig
 
@@ -493,7 +492,7 @@ const runSubscriberLoop = async (config: SubscriberConfig, abort: AbortSignal, m
   }
 }
 
-export const AgentCommsSubscriberLive = Layer.scoped(
+export const AgentCommsSubscriberLive = Layer.effect(
   AgentCommsSubscriber,
   Effect.gen(function* () {
     if (isSubscriberDisabled()) {
@@ -512,7 +511,7 @@ export const AgentCommsSubscriberLive = Layer.scoped(
           try: () => runSubscriberLoop(config, abortController.signal, readyGate.resolve),
           catch: (error) => (error instanceof Error ? error : new Error(String(error))),
         }),
-        Effect.catchAll((error) => {
+        Effect.catch((error) => {
           readyGate.reject(error)
           return Effect.sync(() => {
             console.warn('Agent comms subscriber stopped', error)
@@ -544,12 +543,12 @@ export const startAgentCommsSubscriber = () => {
           pipe(
             service.ready,
             Effect.tap(() => Effect.sync(() => readyGate.resolve())),
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.sync(() => {
                 readyGate.reject(error instanceof Error ? error : new Error(String(error)))
               }),
             ),
-            Effect.zipRight(Effect.never),
+            Effect.andThen(Effect.never),
           ),
         ),
       )

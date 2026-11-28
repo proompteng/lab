@@ -1,0 +1,165 @@
+import { Effect, Semaphore } from 'effect'
+import type { CycleRunnerError } from '../cycle/runner/model'
+
+import {
+  advanceRestrictedGenerationRecovery,
+  recognizeRestrictedGenerationRebind,
+  type TerminalGenerationRolloverReceipt,
+} from '../blocked-generation-recovery'
+import { Authority, KillState, type AuthorityState } from '../execution/contracts'
+import { isExecutionMandateRecoveryRestriction } from '../execution/mandate'
+import { OperationalError } from '../errors'
+import type { RecoveryFirstCycleAdvance, RecoveryFirstCycleDriver } from '../observe-composition/model'
+import { currentUtcInstant } from '../time'
+import { withObservedStage } from '../telemetry'
+import { runRestateAdvanceWithinTimeout } from '../observe-composition/recovery-driver'
+
+export const executionGenerationNeedsRecovery = (authority: AuthorityState): boolean =>
+  authority.maximum === Authority.Execution &&
+  authority.effective === Authority.Observe &&
+  authority.kill === KillState.Active &&
+  isExecutionMandateRecoveryRestriction(authority.reason)
+
+interface GenerationCycleInput {
+  readonly generationHash: string
+  readonly mode: 'Mutation' | 'CloseOnly'
+  readonly readAuthority: Effect.Effect<AuthorityState, OperationalError>
+  readonly reconcileWhenHeld: Effect.Effect<void, OperationalError>
+  readonly settle: Effect.Effect<TerminalGenerationRolloverReceipt, OperationalError>
+}
+
+export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver: RecoveryFirstCycleDriver<R>) =>
+  Effect.gen(function* () {
+    let rebind = false
+    const permit = yield* Semaphore.make(1)
+    const authorityReadBudgetMs = Math.max(1, Math.min(5_000, Math.floor(driver.timeoutMs / 6)))
+    const readAuthority = input.readAuthority.pipe(
+      Effect.timeoutOrElse({
+        duration: authorityReadBudgetMs,
+        orElse: () =>
+          Effect.fail(
+            new OperationalError({
+              component: 'database',
+              operation: 'read-authority',
+              retryable: true,
+              message: `Execution authority read exceeded its ${authorityReadBudgetMs}ms budget`,
+            }),
+          ),
+      }),
+      withObservedStage('bayn.execution.generation.read', { dependency: 'postgresql' }),
+    )
+    const disposition = (authority: AuthorityState): 'Continue' | 'Rebind' | 'Hold' => {
+      if (authority.generationHash !== input.generationHash) return 'Rebind'
+      if (executionGenerationNeedsRecovery(authority)) return input.mode === 'CloseOnly' ? 'Continue' : 'Rebind'
+      if (
+        authority.maximum === Authority.Execution &&
+        authority.effective === Authority.Execution &&
+        authority.kill === KillState.Clear
+      )
+        return input.mode === 'Mutation' ? 'Continue' : 'Rebind'
+      return 'Hold'
+    }
+    const settle = Effect.gen(function* () {
+      const recovery = yield* advanceRestrictedGenerationRecovery(
+        Effect.void,
+        input.settle.pipe(withObservedStage('bayn.execution.generation.settle')),
+      )
+      const authority = yield* readAuthority
+      const step = recognizeRestrictedGenerationRebind(recovery, input.generationHash, authority.generationHash)
+      const changed = step._tag !== 'Waiting'
+      if (changed) rebind = true
+      return { authority, changed }
+    })
+    const advance = Effect.gen(function* () {
+      let cycleInProgress = false
+      return yield* runRestateAdvanceWithinTimeout(
+        permit,
+        Effect.gen(function* () {
+          const before = disposition(yield* readAuthority)
+          if (before !== 'Continue') {
+            if (before === 'Rebind') rebind = true
+            else yield* input.reconcileWhenHeld.pipe(withObservedStage('bayn.execution.generation.reconcile-held'))
+            return {
+              observation: {
+                result: 'FAILURE',
+                observedAt: yield* currentUtcInstant,
+                operation: 'read-authority-slot',
+                failure: 'context',
+                message:
+                  before === 'Rebind'
+                    ? 'execution generation changed; preparing the current authority driver'
+                    : 'execution generation remains restricted by operator or authority policy',
+              },
+            } satisfies RecoveryFirstCycleAdvance
+          }
+          if (input.mode === 'CloseOnly') {
+            const recovery = yield* settle
+            if (recovery.changed) {
+              return {
+                observation: { result: 'SUCCESS', observedAt: yield* currentUtcInstant, outcome: 'RECOVERED' },
+              } satisfies RecoveryFirstCycleAdvance
+            }
+            if (disposition(recovery.authority) === 'Hold') {
+              yield* input.reconcileWhenHeld.pipe(withObservedStage('bayn.execution.generation.reconcile-held'))
+              return {
+                observation: {
+                  result: 'FAILURE',
+                  observedAt: yield* currentUtcInstant,
+                  operation: 'read-authority-slot',
+                  failure: 'context',
+                  message: 'execution generation remains restricted by operator or authority policy',
+                },
+              } satisfies RecoveryFirstCycleAdvance
+            }
+          }
+          cycleInProgress = true
+          const advanced = yield* driver.advance
+          cycleInProgress = false
+          const after = disposition(yield* readAuthority)
+          if (after === 'Rebind') rebind = true
+          if (after === 'Continue' && input.mode === 'CloseOnly' && advanced.result !== undefined) yield* settle
+          return advanced
+        }),
+        driver.timeoutMs,
+        (error) => (cycleInProgress ? driver.onTimeout(error) : Effect.fail(error)),
+        'bayn.execution.generation-pass',
+      )
+    }).pipe(Effect.catch((cause) => (cause instanceof OperationalError ? Effect.die(cause) : Effect.fail(cause))))
+    return {
+      driver: { ...driver, advance },
+      needsRebind: Effect.sync(() => rebind),
+    }
+  })
+
+export const makeRebindingCycleDriver = <R, R2>(
+  initial: {
+    readonly driver: RecoveryFirstCycleDriver<R>
+    readonly needsRebind: Effect.Effect<boolean>
+  },
+  prepareNext: Effect.Effect<
+    {
+      readonly driver: RecoveryFirstCycleDriver<R>
+      readonly needsRebind: Effect.Effect<boolean>
+    },
+    OperationalError,
+    R2
+  >,
+  runPass: (
+    advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError | OperationalError, R | R2>,
+  ) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError | OperationalError, R | R2> = (advance) => advance,
+) =>
+  Effect.gen(function* () {
+    let current = initial
+    const permit = yield* Semaphore.make(1)
+    return {
+      nextDelayMs: initial.driver.nextDelayMs,
+      advance: permit.withPermit(
+        runPass(
+          Effect.gen(function* () {
+            if (yield* current.needsRebind) current = yield* prepareNext
+            return yield* current.driver.advance
+          }),
+        ),
+      ),
+    }
+  })

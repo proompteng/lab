@@ -7,6 +7,7 @@ metadata:
   namespace: registry
 spec:
   replicas: 1
+  revisionHistoryLimit: 2
   strategy:
     type: Recreate
   selector:
@@ -20,12 +21,11 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
+      automountServiceAccountToken: false
       containers:
         - name: registry
           image: registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
-          env:
-            - name: REGISTRY_CONFIGURATION_PATH
-              value: /etc/docker/registry/config.yml
+          command: ["/bin/registry", "serve", "/etc/docker/registry/config.yml"]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -39,16 +39,22 @@ spec:
             requests:
               cpu: "200m"
               memory: "64Mi"
-          ports:
-            - name: registry-api
-              containerPort: 5000
           volumeMounts:
             - name: registry-config
               mountPath: /etc/docker/registry
             - name: registry-data
               mountPath: /var/lib/registry
         - name: registry-proxy
-          image: haproxy:3.2.21-alpine@sha256:66e25cc9a8332635f4e897f7f4b1e5622c25f09f0ee23cddc6ce9bdb3a24772a
+          image: haproxy:3.4.4-alpine@sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              umask 0007
+              if [ ! -f /control/freeze.map ]; then
+                printf 'freeze 0\n' > /control/freeze.map
+              fi
+              exec haproxy -W -db -f /usr/local/etc/haproxy/haproxy.cfg
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -60,11 +66,11 @@ spec:
             runAsUser: 99
           resources:
             limits:
-              cpu: "250m"
-              memory: "256Mi"
+              cpu: "1"
+              memory: "1Gi"
             requests:
-              cpu: "50m"
-              memory: "64Mi"
+              cpu: "250m"
+              memory: "512Mi"
           ports:
             - name: registry-http
               containerPort: 8080
@@ -86,11 +92,44 @@ spec:
             failureThreshold: 3
             periodSeconds: 10
           volumeMounts:
+            - name: maintenance-control
+              mountPath: /control
             - name: registry-proxy-config
               mountPath: /usr/local/etc/haproxy/haproxy.cfg
               subPath: haproxy.cfg
               readOnly: true
+        - name: registry-maintenance
+          image: python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
+          command: ["sleep", "infinity"]
+          securityContext:
+            runAsGroup: 99
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          resources:
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+            requests:
+              cpu: "5m"
+              memory: "16Mi"
+          volumeMounts:
+            - name: registry-data
+              mountPath: /var/lib/registry
+            - name: cleanup-scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: maintenance-control
+              mountPath: /control
       volumes:
+        - name: maintenance-control
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: cleanup-scripts
+          configMap:
+            name: registry-cleanup-scripts
         - name: registry-config
           configMap:
             name: registry-config

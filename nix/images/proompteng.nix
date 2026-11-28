@@ -4,6 +4,7 @@
   repoRoot,
   bun,
   nodejs,
+  repoRevision ? "dirty",
 }:
 
 import ./bun-workspace-service.nix {
@@ -11,8 +12,8 @@ import ./bun-workspace-service.nix {
   serviceName = "proompteng";
   packageName = "landing";
   depsHash = {
-    x86_64-linux = "sha256-zU6F/cG9/KbQmEn3XfNQ/j2rUUqGWRn7LIuVnW2GM50=";
-    aarch64-linux = "sha256-MYvTE3Gp+/B8tUeyKYFcyXfQYSIJ55ScJah+SP29REY=";
+    x86_64-linux = "sha256-CDVvOgEby87t3i+pVNPxZPiPx3QpapDWNPqEsPwhWX4=";
+    aarch64-linux = "sha256-8cgf08YPukdIROuQsi6o6IKqR0QVTq/WS7GbE6ZMv6I=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -26,6 +27,8 @@ import ./bun-workspace-service.nix {
     "packages/backend"
     "packages/design"
     "services/tengri/proto"
+    "services/tengri/migrations"
+    "services/tengri/fixtures"
   ];
   buildCommands = [
     "bun --cwd=apps/landing run prebuild"
@@ -38,8 +41,13 @@ import ./bun-workspace-service.nix {
     if [ -d "$TMPDIR/work/apps/landing/public" ]; then
       cp -R "$TMPDIR/work/apps/landing/public/." "$out/app/apps/landing/public/"
     fi
+    # Node resolves the standalone server inside the immutable Nix store. Point its cache at the writable volume.
+    rm -rf "$out/app/apps/landing/.next/cache"
+    ln -s /var/cache/proompteng "$out/app/apps/landing/.next/cache"
     mkdir -p "$out/app/services/tengri/proto"
     cp -R "$TMPDIR/work/services/tengri/proto/." "$out/app/services/tengri/proto/"
+    mkdir -p "$out/app/services/tengri/migrations"
+    cp -R "$TMPDIR/work/services/tengri/migrations/." "$out/app/services/tengri/migrations/"
   '';
   command = [
     "node"
@@ -47,6 +55,7 @@ import ./bun-workspace-service.nix {
   ];
   workingDir = "/app/apps/landing";
   env = [
+    "APP_SOURCE_REVISION=${repoRevision}"
     "PORT=3000"
     "HOSTNAME=0.0.0.0"
     "TENGRI_PROTO_PATH=/app/services/tengri/proto/proompteng/runtime/v1/microvm.proto"

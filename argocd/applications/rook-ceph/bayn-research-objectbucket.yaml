@@ -1,0 +1,28 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: bayn-research-captures
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  generateBucketName: bayn-research-captures
+  storageClassName: rook-ceph-bucket
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bayn-research-captures
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: bayn
+type: Opaque
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bayn-research-captures
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: bayn

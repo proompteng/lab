@@ -6,11 +6,11 @@
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented as topic contracts in service/GitOps config, but retention is still mostly an operational contract rather than fully declared beside every topic in this doc.** Current WS/TA code and manifests use the documented equity topics and additional trade-update topics.
-- Current source evidence:
+- Source evidence inspected:
   - `argocd/applications/torghut/ws/configmap.yaml` currently sets `TOPIC_TRADES=torghut.trades.v1`, `TOPIC_QUOTES=torghut.quotes.v1`, `TOPIC_BARS_1M=torghut.bars.1m.v1`, `TOPIC_STATUS=torghut.status.v1`, `TOPIC_TRADE_UPDATES=torghut.trade-updates.v1`, and `TOPIC_TRADE_UPDATES_V2=torghut.trade-updates.v2`.
   - `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderConfig.kt::TopicConfig` models trades, quotes, optional bars1m, status, and optional trade-updates topics.
   - `ForwarderApp.sendKafka` publishes with Kafka key `env.symbol`, preserving per-symbol ordering within partitions.

@@ -1,6 +1,6 @@
 # 168. Jangar Source Heartbeat Witness Settlement And Material Action Bonds (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-07
 Owner: Gideon Park, Torghut Traders Architecture
 Scope: Jangar material-action admission, source rollout truth, controller heartbeats, AgentRun ingestion, Torghut
@@ -13,7 +13,6 @@ Companion Torghut contract:
 Extends:
 
 - `167-jangar-terminal-evidence-half-life-and-debris-retirement-2026-05-07.md`
-- `166-jangar-repair-cadence-ledger-and-capital-surface-admission-2026-05-07.md`
 - `148-jangar-source-rollout-truth-exchange-and-proof-floor-settlement-2026-05-07.md`
 - `docs/torghut/design-system/v6/171-torghut-profit-evidence-half-life-and-capital-carry-governor-2026-05-07.md`
 

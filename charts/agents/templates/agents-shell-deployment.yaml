@@ -72,6 +72,10 @@ spec:
               value: {{ default "main" $workspaceBootstrap.branch | quote }}
             - name: GIT_TARGET_PATH
               value: {{ required "agentsShell.workspace.bootstrap.targetPath is required when bootstrap is enabled" $workspaceBootstrap.targetPath | quote }}
+            - name: AGENTS_SHELL_GIT_USER_NAME
+              value: {{ .Values.agentsShell.env.vars.AGENTS_SHELL_GIT_USER_NAME | default "Greg Konush" | quote }}
+            - name: AGENTS_SHELL_GIT_USER_EMAIL
+              value: {{ .Values.agentsShell.env.vars.AGENTS_SHELL_GIT_USER_EMAIL | default "12027037+gregkonush@users.noreply.github.com" | quote }}
             - name: GIT_DEPTH
               {{- if hasKey $workspaceBootstrap "depth" }}
               value: {{ $workspaceBootstrap.depth | quote }}
@@ -151,8 +155,8 @@ spec:
               fi
 
               git -C "${GIT_TARGET_PATH}" remote set-url origin "${GIT_REPOSITORY}"
-              git -C "${GIT_TARGET_PATH}" config user.name "Greg Konush"
-              git -C "${GIT_TARGET_PATH}" config user.email "greg@proompteng.ai"
+              git -C "${GIT_TARGET_PATH}" config user.name "${AGENTS_SHELL_GIT_USER_NAME}"
+              git -C "${GIT_TARGET_PATH}" config user.email "${AGENTS_SHELL_GIT_USER_EMAIL}"
               rm -f /tmp/git-credentials
           volumeMounts:
             - name: workspace

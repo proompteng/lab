@@ -6,31 +6,83 @@ metadata:
 data:
   config.json: |-
     {
-      "nodePathMap":[
-        {
-          "node":"talos-192-168-1-85",
-          "paths":["/var/mnt/local-path-provisioner"]
-        },
-        {
-          "node":"talos-192-168-1-194",
-          "paths":["/var/mnt/local-path-provisioner"]
-        },
-        {
-          "node":"talos-192-168-1-203",
-          "paths":["/var/mnt/local-path-provisioner"]
-        },
-        {
-          "node":"turin",
-          "paths":[
-            "/var/mnt/turin-nvme-intel",
-            "/var/mnt/turin-nvme-transcend"
+      "nodePathMap": [],
+      "storageClassConfigs": {
+        "local-path": {
+          "nodePathMap": [
+            {
+              "node": "talos-192-168-1-85",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "talos-192-168-1-194",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "talos-192-168-1-203",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "turin",
+              "paths": [
+                "/var/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": [
+                "/var/local-path-provisioner"
+              ]
+            }
           ]
         },
-        {
-          "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
-          "paths":["/var/local-path-provisioner"]
+        "local-path-bayn-wal": {
+          "nodePathMap": [
+            {
+              "node": "talos-192-168-1-85",
+              "paths": [
+                "/var/mnt/local-path-provisioner/bayn-wal"
+              ]
+            },
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-intel/bayn-wal"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
+        },
+        "local-path-ci-amd64": {
+          "nodePathMap": [
+            {
+              "node": "talos-192-168-1-194",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "turin",
+              "paths": [
+                "/var/lib/kubelet/ci-amd64"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
         }
-      ]
+      }
     }
   helperPod.yaml: |-
     apiVersion: v1

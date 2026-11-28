@@ -1,0 +1,99 @@
+{
+  "schemaVersion": "bayn.jev-prompt-regression.v1",
+  "observedAt": "2026-10-18T19:09:00.663Z",
+  "deployedSourceAtTest": "e55db139332a49cb55b0b52c1be501721aa769a4",
+  "deployedImageAtTest": "sha256:b28674abf4cc0162960a6e696bcf22a5932594e5dad0aa9874b87a7688a3bc9d",
+  "regressionChange": "https://github.com/proompteng/lab/pull/15139",
+  "nearestPreChangeEntryRequests": 35,
+  "nearestPreChangeEnterResponses": 9,
+  "postChangeRequests": 1359,
+  "postChangeValidResponses": 1338,
+  "postChangeEnterResponses": 0,
+  "differentMarketWindowsAreNotPairedEvidence": true,
+  "pairedDiagnostic": {
+    "inputStates": 21,
+    "statesPerAsset": 7,
+    "model": "jev-1.13.0",
+    "allNativeRequestAndResponseHashesVerified": 63,
+    "allResponsesValidAndWithinTenSeconds": true,
+    "originalMarketAndCostStateUnchanged": true,
+    "arms": [
+      {
+        "arm": "CURRENT_EXACT_QUESTIONS",
+        "validResponses": 21,
+        "enters": 0,
+        "supportedEconomics": 0,
+        "perAsset": [
+          {
+            "symbol": "BTC/USD",
+            "enters": 0
+          },
+          {
+            "symbol": "ETH/USD",
+            "enters": 0
+          },
+          {
+            "symbol": "SOL/USD",
+            "enters": 0
+          }
+        ]
+      },
+      {
+        "arm": "SETUP_ACTION_ONLY_WITH_NET_QUESTION",
+        "validResponses": 21,
+        "enters": 4,
+        "supportedEconomics": 0,
+        "perAsset": [
+          {
+            "symbol": "BTC/USD",
+            "enters": 1
+          },
+          {
+            "symbol": "ETH/USD",
+            "enters": 1
+          },
+          {
+            "symbol": "SOL/USD",
+            "enters": 2
+          }
+        ]
+      },
+      {
+        "arm": "PRE15139_QUESTIONS",
+        "validResponses": 21,
+        "enters": 2,
+        "supportedEconomics": 0,
+        "perAsset": [
+          {
+            "symbol": "BTC/USD",
+            "enters": 1
+          },
+          {
+            "symbol": "ETH/USD",
+            "enters": 0
+          },
+          {
+            "symbol": "SOL/USD",
+            "enters": 1
+          }
+        ]
+      }
+    ],
+    "registrationSha256": "83592f3edcb6c1f77aa0e0de4a82b9619a65c2aa2e3053d7e263724be69685b5",
+    "providerOutputSha256": "afdbf44369c3bff67e6e2e91b7a4736db046da23fe1b2389f790fee2bf6c2de7",
+    "providerInputTokens": "622857",
+    "providerOutputTokens": "11251",
+    "billedCost": "UNKNOWN",
+    "brokerOrders": false,
+    "productionSignals": false,
+    "limitations": [
+      "A single current provider evaluation per arm is a behavior diagnostic; two restored arms differ and provider/repeat variation remains.",
+      "Market states and cost context were held fixed, but no prospective profitability or actual fill was tested.",
+      "The retained cost veto blocks all restored-setup enters in this sample. Removing it alone does not fix the deployed action prompt.",
+      "These outputs are not original historical inference availability and cannot be used to create historical acceptance fills."
+    ]
+  },
+  "repair": "Restore pre15139 setup question and chosen model action, delete the extra economics judgment and veto, retain actual economics and native funded-price-risk checks. Protocol v10 hard cutover.",
+  "economicQualification": false,
+  "profitablePaperFillAcceptance": false
+}

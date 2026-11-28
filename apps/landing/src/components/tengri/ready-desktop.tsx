@@ -1,8 +1,9 @@
 'use client'
 
-import { FileCode2, Folder, LoaderCircle, LogOut, Moon, Settings, SquareTerminal, Trash2 } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { LoaderCircle, LogOut, Moon, Trash2 } from 'lucide-react'
+import { AnimatePresence } from 'motion/react'
 import {
+  memo,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -13,9 +14,11 @@ import {
   useSyncExternalStore,
 } from 'react'
 
-import { tengriAuthClient } from '@/lib/tengri/auth-client'
+import { signOut as signOutPlatform } from '@/lib/platform/auth-client'
+import { reportBrowserFailure } from '@/lib/observability/client'
+import type { TengriCodexRun } from '@/lib/tengri/codex-run'
+import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
-import { cn } from '@/lib/utils'
 import {
   APP_TITLES,
   initialWindowState,
@@ -28,6 +31,7 @@ import {
   windowReducer,
 } from '@/lib/tengri/window-manager'
 import { ChromeApp } from './chrome-app'
+import { AgentChat } from './agent-chat'
 import {
   beginTengriLifecycleTransition,
   getTengriGuestOperationSnapshot,
@@ -35,9 +39,10 @@ import {
   runTengriAction,
   subscribeTengriGuestOperations,
 } from './client'
-import { CodeEditor } from './code-editor'
+import { CodeWorkbench } from './code-workbench'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
+import { DesktopDock } from './desktop-dock'
 import { DesktopWindowFrame } from './desktop-window'
 import {
   clearDeletedDesktopState,
@@ -50,7 +55,9 @@ import { MenuBar } from './menu-bar'
 import { SettingsApp } from './settings-app'
 import { commitDesktopLifecycleAction, selectSleepRequestError } from './settings-model'
 import { Spotlight } from './spotlight'
+import { TengriMark } from './tengri-mark'
 import { TerminalApp } from './terminal-app'
+import { focusWindowContent } from './window-focus'
 
 type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
 type TargetedFinderOpenRequest = FinderOpenRequest & { targetWindowId: string }
@@ -63,12 +70,32 @@ type DesktopIdentityLease = {
   releaseTimer: ReturnType<typeof setTimeout> | null
 }
 
+const MemoizedFinderApp = memo(FinderApp)
+const MemoizedChromeApp = memo(ChromeApp)
+const MemoizedAgentChat = memo(AgentChat)
+const MemoizedTerminalApp = memo(TerminalApp)
+const MemoizedSettingsApp = memo(SettingsApp)
+
+const MemoizedCodeEditor = memo(function MemoizedCodeEditor({
+  onDirtyChange,
+  onFocus,
+  windowId,
+  ...props
+}: Omit<React.ComponentProps<typeof CodeWorkbench>, 'onDirtyChange' | 'onFocus'> & {
+  onDirtyChange: (windowId: string, dirty: boolean) => void
+  onFocus: (windowId: string) => void
+}) {
+  const handleDirtyChange = useCallback((dirty: boolean) => onDirtyChange(windowId, dirty), [onDirtyChange, windowId])
+  const handleFocus = useCallback(() => onFocus(windowId), [onFocus, windowId])
+  return <CodeWorkbench {...props} onDirtyChange={handleDirtyChange} onFocus={handleFocus} windowId={windowId} />
+})
+
 const getServerGuestOperationSnapshot = () => false
 const DESKTOP_ID_PATTERN = /^[0-9a-f]{32}$/
 const desktopIdentityLeases = new Map<string, DesktopIdentityLease>()
 
 function desktopLayoutStorageKey(agentId: string, desktopId: string) {
-  return `tengri:windows:${agentId}:${desktopId}`
+  return `tengri:windows:${agentId}:${desktopId}:v2`
 }
 
 function newDesktopId() {
@@ -227,11 +254,44 @@ export function ReadyDesktop({
   user: TengriUser
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
-  const [windowState, dispatch] = useReducer(windowReducer, { x: 0, y: 0, width: 1_280, height: 760 }, (viewport) =>
-    initialWindowState(viewport, ['finder', 'chrome']),
+  const desktopRef = useRef<HTMLElement | null>(null)
+  const desktopViewportRef = useRef<Bounds>({ x: 0, y: 0, width: 1_280, height: 760 })
+  const [windowState, dispatch] = useReducer(windowReducer, desktopViewportRef.current, (viewport) =>
+    initialWindowState(viewport, ['finder', 'tengri']),
   )
-  const [clock, setClock] = useState<Date | null>(null)
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
+  useEffect(() => {
+    if (busyAction !== null) return
+    const controller = new AbortController()
+    let pending = true
+    void renewWorkspaceConnections(agent.id, controller.signal).finally(() => {
+      pending = false
+    })
+    const renewActive = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const activeRuns = await runTengriAction<TengriCodexRun[]>(
+          { action: 'active-codex-runs', agentId: agent.id },
+          controller.signal,
+        )
+        if (controller.signal.aborted) return
+        if (activeRuns.some((run) => run.agentId !== agent.id))
+          throw new Error('Active run belongs to another workspace')
+        if (activeRuns.some((run) => run.state.phase === 'running' || run.state.phase === 'recovering'))
+          await renewWorkspaceConnections(agent.id, controller.signal)
+      } catch {
+        if (!controller.signal.aborted) reportBrowserFailure('tengri.connection-renewal')
+      } finally {
+        pending = false
+      }
+    }
+    const timer = window.setInterval(() => void renewActive(), 60_000)
+    return () => {
+      controller.abort()
+      window.clearInterval(timer)
+    }
+  }, [agent.id, agent.runtimeEpoch, busyAction])
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [codeRequest, setCodeRequest] = useState<TargetedCodeOpenRequest | null>(null)
@@ -246,7 +306,20 @@ export function ReadyDesktop({
   const finderRequestIdRef = useRef(0)
   const lifecycleTransitionReleaseRef = useRef<(() => void) | null>(null)
   const terminalCloseHandlersRef = useRef(new Map<string, () => void>())
-  const reducedMotion = useReducedMotion()
+  const codeGuardsRef = useRef(new Map<string, (close: boolean) => Promise<boolean>>())
+  const registerCodeGuard = useCallback((id: string, guard: (close: boolean) => Promise<boolean>) => {
+    codeGuardsRef.current.set(id, guard)
+    return () => {
+      if (codeGuardsRef.current.get(id) === guard) codeGuardsRef.current.delete(id)
+    }
+  }, [])
+  const windowStateRef = useRef(windowState)
+  const dirtyCodeWindowsRef = useRef(dirtyCodeWindows)
+
+  useLayoutEffect(() => {
+    windowStateRef.current = windowState
+    dirtyCodeWindowsRef.current = dirtyCodeWindows
+  }, [dirtyCodeWindows, windowState])
 
   useEffect(
     () =>
@@ -271,23 +344,32 @@ export function ReadyDesktop({
   )
 
   const viewport = useCallback((): Bounds => {
+    if (window.matchMedia('(max-width:767px), (pointer:coarse)').matches) return desktopViewportRef.current
     const rect = stageRef.current?.getBoundingClientRect()
-    return {
+    const measured = {
       x: 0,
       y: 0,
       width: rect?.width ?? globalThis.innerWidth,
       height: rect?.height ?? Math.max(0, globalThis.innerHeight - 30),
     }
+    if (measured.width > 0 && measured.height > 0) desktopViewportRef.current = measured
+    return desktopViewportRef.current
   }, [])
 
-  const requireWindowCapacity = useCallback(
-    (requiresNewWindow: boolean) => {
-      if (!requiresNewWindow || windowState.windows.length < MAX_DESKTOP_WINDOWS) return true
-      setError(`Tengri supports at most ${MAX_DESKTOP_WINDOWS} open windows. Close one before opening another.`)
-      return false
-    },
-    [windowState.windows.length],
-  )
+  const requireWindowCapacity = useCallback((requiresNewWindow: boolean) => {
+    if (!requiresNewWindow || windowStateRef.current.windows.length < MAX_DESKTOP_WINDOWS) return true
+    setError(`Tengri supports at most ${MAX_DESKTOP_WINDOWS} open windows. Close one before opening another.`)
+    return false
+  }, [])
+
+  const focusActiveContent = useCallback(() => {
+    const previousFocus = document.activeElement
+    requestAnimationFrame(() => {
+      if (document.activeElement !== previousFocus && document.activeElement !== document.body) return
+      const id = windowStateRef.current.activeWindowId
+      focusWindowContent(stageRef.current?.querySelector<HTMLElement>(`[data-window-id="${id}"]`) ?? null)
+    })
+  }, [])
 
   const appendDesktopWindow = useCallback(
     (app: TengriApp) => {
@@ -300,12 +382,13 @@ export function ReadyDesktop({
 
   const openDesktopApp = useCallback(
     (app: TengriApp) => {
-      const alreadyOpen = windowState.windows.some((candidate) => candidate.app === app)
+      const alreadyOpen = windowStateRef.current.windows.some((candidate) => candidate.app === app)
       if (!requireWindowCapacity(!alreadyOpen)) return false
       dispatch({ type: 'open', app, title: APP_TITLES[app], viewport: viewport() })
+      focusActiveContent()
       return true
     },
-    [requireWindowCapacity, viewport, windowState.windows],
+    [focusActiveContent, requireWindowCapacity, viewport],
   )
 
   const registerTerminalCloseHandler = useCallback((windowId: string, handler: () => void) => {
@@ -323,13 +406,13 @@ export function ReadyDesktop({
       setHydratedDesktopId(null)
       dispatch({
         type: 'hydrate',
-        state: initialWindowState(measuredViewport, ['finder', 'chrome']),
+        state: initialWindowState(measuredViewport, ['finder', 'tengri']),
         viewport: measuredViewport,
       })
       return
     }
 
-    let state: WindowManagerState = initialWindowState(measuredViewport, ['finder', 'chrome'])
+    let state: WindowManagerState = initialWindowState(measuredViewport, ['finder', 'tengri'])
     try {
       const persisted = sessionStorage.getItem(desktopLayoutStorageKey(agent.id, desktopId))
       if (persisted) state = JSON.parse(persisted) as WindowManagerState
@@ -361,18 +444,23 @@ export function ReadyDesktop({
     [agent.id],
   )
 
-  const closeWindow = useCallback(
-    (desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
-      if (desktopWindow.app === 'code' && dirtyCodeWindows.has(desktopWindow.id)) {
-        setError('Save or close every edited Code tab before closing the Code window.')
-        dispatch({ type: 'focus', id: desktopWindow.id })
-        return
-      }
-      if (desktopWindow.app === 'terminal') terminalCloseHandlersRef.current.get(desktopWindow.id)?.()
-      dispatch({ type: 'close', id: desktopWindow.id })
-    },
-    [dirtyCodeWindows],
-  )
+  const closeWindow = useCallback((desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
+    if (desktopWindow.app === 'code') {
+      const guard = codeGuardsRef.current.get(desktopWindow.id)
+      if (!guard) return
+      dispatch({ type: 'focus', id: desktopWindow.id })
+      void guard(true)
+        .then((canClose) => {
+          if (canClose) dispatch({ type: 'close', id: desktopWindow.id })
+        })
+        .catch((cause: unknown) =>
+          setError(cause instanceof Error ? cause.message : 'VS Code could not close its editors'),
+        )
+      return
+    }
+    if (desktopWindow.app === 'terminal') terminalCloseHandlersRef.current.get(desktopWindow.id)?.()
+    dispatch({ type: 'close', id: desktopWindow.id })
+  }, [])
 
   const handleCodeDirtyChange = useCallback((windowId: string, dirty: boolean) => {
     setDirtyCodeWindows((current) => updateDirtyCodeWindows(current, windowId, dirty))
@@ -385,22 +473,49 @@ export function ReadyDesktop({
   }, [dirtyCodeWindows])
 
   useEffect(() => {
-    setClock(new Date())
-    const timer = window.setInterval(() => setClock(new Date()), 30_000)
-    return () => window.clearInterval(timer)
-  }, [])
-
-  useEffect(() => {
     let frame = 0
-    const clampWindows = () => {
+    let previousWidth = -1
+    let previousHeight = -1
+    const mobileViewport = window.matchMedia('(max-width:767px), (pointer:coarse)')
+    const clampWindows = (event?: Event) => {
+      const mobile = mobileViewport.matches
+      if (!mobile && event?.currentTarget === window.visualViewport) return
       window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(() => dispatch({ type: 'viewport', viewport: viewport() }))
+      frame = window.requestAnimationFrame(() => {
+        const visual = window.visualViewport
+        if (mobile && visual && (visual.width <= 0 || visual.height <= 0)) return
+        desktopRef.current?.style.setProperty(
+          '--tengri-dock-space',
+          `${Math.max(0, 88 - (visual?.scale === 1 ? Math.max(0, window.innerHeight - visual.height) : 0))}px`,
+        )
+        if (mobile && visual?.scale === 1) {
+          desktopRef.current?.style.setProperty('--tengri-viewport-height', `${visual.height}px`)
+          desktopRef.current?.style.setProperty('--tengri-viewport-offset', `${visual.offsetTop}px`)
+        } else {
+          desktopRef.current?.style.removeProperty('--tengri-viewport-height')
+          desktopRef.current?.style.removeProperty('--tengri-viewport-offset')
+        }
+        if (mobile) return
+        const next = viewport()
+        if (next.width <= 0 || next.height <= 0) return
+        if (next.width !== previousWidth || next.height !== previousHeight) {
+          previousWidth = next.width
+          previousHeight = next.height
+          dispatch({ type: 'viewport', viewport: next })
+        }
+      })
     }
     clampWindows()
+    mobileViewport.addEventListener('change', clampWindows)
     window.addEventListener('resize', clampWindows)
+    window.visualViewport?.addEventListener('resize', clampWindows)
+    window.visualViewport?.addEventListener('scroll', clampWindows)
     return () => {
       window.cancelAnimationFrame(frame)
+      mobileViewport.removeEventListener('change', clampWindows)
       window.removeEventListener('resize', clampWindows)
+      window.visualViewport?.removeEventListener('resize', clampWindows)
+      window.visualViewport?.removeEventListener('scroll', clampWindows)
     }
   }, [viewport])
 
@@ -462,7 +577,6 @@ export function ReadyDesktop({
       appendDesktopWindow(app)
       return
     }
-    if (isEditableTarget(event.target)) return
     if (event.key === 'Tab') {
       event.preventDefault()
       const frontmostByApp = new Map<TengriApp, DesktopWindow>()
@@ -504,24 +618,29 @@ export function ReadyDesktop({
 
   const openSettings = useCallback(() => void openDesktopApp('settings'), [openDesktopApp])
 
+  useEffect(() => {
+    if (hydratedDesktopId === desktopId && new URL(window.location.href).searchParams.has('platform_connection'))
+      openSettings()
+  }, [desktopId, hydratedDesktopId, openSettings])
+
   const openChrome = useCallback(() => void openDesktopApp('chrome'), [openDesktopApp])
 
   const openFinder = useCallback(
     (path?: string) => {
-      const targetWindowId = windowIdForOpen(windowState, 'finder')
+      const targetWindowId = windowIdForOpen(windowStateRef.current, 'finder')
       if (!openDesktopApp('finder')) return
       if (path) setFinderRequest({ path, requestId: ++finderRequestIdRef.current, targetWindowId })
     },
-    [openDesktopApp, windowState],
+    [openDesktopApp],
   )
 
   const openCode = useCallback(
     (path?: string) => {
-      const targetWindowId = windowIdForOpen(windowState, 'code')
+      const targetWindowId = windowIdForOpen(windowStateRef.current, 'code')
       if (!openDesktopApp('code')) return
       if (path) setCodeRequest({ path, requestId: ++codeRequestIdRef.current, targetWindowId })
     },
-    [openDesktopApp, windowState],
+    [openDesktopApp],
   )
 
   const openTerminal = useCallback(() => void openDesktopApp('terminal'), [openDesktopApp])
@@ -538,6 +657,7 @@ export function ReadyDesktop({
   const openApp = useCallback(
     (app: TengriApp) => {
       if (app === 'chrome') openChrome()
+      else if (app === 'tengri') void openDesktopApp('tengri')
       else if (app === 'finder') openFinder()
       else if (app === 'code') openCode()
       else if (app === 'terminal') openTerminal()
@@ -545,72 +665,84 @@ export function ReadyDesktop({
       setMenuOpen(null)
       setSpotlightOpen(false)
     },
-    [openChrome, openCode, openFinder, openSettings, openTerminal],
+    [openChrome, openCode, openFinder, openSettings, openTerminal, openDesktopApp],
   )
 
   const newActiveWindow = useCallback(() => {
-    const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
-    const app = active?.app ?? windowState.activeApp
+    const current = windowStateRef.current
+    const active = current.windows.find((candidate) => candidate.id === current.activeWindowId)
+    const app = active?.app ?? current.activeApp
     appendDesktopWindow(app)
     setMenuOpen(null)
-  }, [appendDesktopWindow, windowState.activeApp, windowState.activeWindowId, windowState.windows])
+  }, [appendDesktopWindow])
 
-  async function mutate(action: 'delete-agent' | 'sleep-agent') {
-    if (lifecycleTransitionReleaseRef.current) return
-    if (hasActiveTengriGuestOperations(agent.id)) {
-      setError('Wait for the current guest request to finish before changing the agent lifecycle.')
-      return
-    }
-    if (dirtyCodeWindows.size > 0) {
-      setError('Save or close every edited Code tab before changing the agent lifecycle.')
-      return
-    }
-    const releaseLifecycleTransition = beginTengriLifecycleTransition(agent.id)
-    lifecycleTransitionReleaseRef.current = releaseLifecycleTransition
-    setBusyAction(action === 'delete-agent' ? 'delete' : 'sleep')
-    setError('')
-    let committed = false
-    try {
-      await commitDesktopLifecycleAction({
-        action,
-        request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id }),
-        onCommitted: (committedAction) => {
-          committed = true
-          setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
-          if (committedAction === 'delete-agent') {
-            for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
-            publishDeletedDesktopState(agent.id)
-            setConfirmOpen(false)
-          }
-        },
-      })
-      if (action === 'delete-agent') await onChanged()
-    } catch (cause) {
-      setError(
-        committed
-          ? 'The lifecycle request was accepted, but the latest controller state could not be loaded.'
-          : cause instanceof Error
-            ? cause.message
-            : 'The agent lifecycle request failed',
-      )
-    } finally {
-      if (!committed) {
-        releaseLifecycleTransition()
-        if (lifecycleTransitionReleaseRef.current === releaseLifecycleTransition) {
-          lifecycleTransitionReleaseRef.current = null
-        }
+  const mutate = useCallback(
+    async (action: 'delete-agent' | 'sleep-agent') => {
+      if (lifecycleTransitionReleaseRef.current) return
+      if (hasActiveTengriGuestOperations(agent.id)) {
+        setError('Wait for the current guest request to finish before changing the agent lifecycle.')
+        return
       }
-      setBusyAction(null)
-    }
-  }
+      if (dirtyCodeWindowsRef.current.size > 0) {
+        setError('Save or close every edited Code tab before changing the agent lifecycle.')
+        return
+      }
+      const releaseLifecycleTransition = beginTengriLifecycleTransition(agent.id)
+      lifecycleTransitionReleaseRef.current = releaseLifecycleTransition
+      setBusyAction(action === 'delete-agent' ? 'delete' : 'sleep')
+      setError('')
+      let committed = false
+      try {
+        for (const guard of codeGuardsRef.current.values()) {
+          if (!(await guard(false)))
+            throw new Error('Save or close every edited Code tab before changing the agent lifecycle.')
+        }
+        await commitDesktopLifecycleAction({
+          action,
+          request: () =>
+            runTengriAction<TengriAgent | null>(
+              { action, agentId: agent.id, workspaceUid: agent.uid },
+              { principalId: user.id },
+            ),
+          onCommitted: (committedAction) => {
+            committed = true
+            setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
+            if (committedAction === 'delete-agent') {
+              for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
+              publishDeletedDesktopState(agent.id)
+              setConfirmOpen(false)
+            }
+          },
+        })
+        if (action === 'delete-agent') await onChanged()
+      } catch (cause) {
+        setError(
+          committed
+            ? 'The lifecycle request was accepted, but the latest controller state could not be loaded.'
+            : cause instanceof Error
+              ? cause.message
+              : 'The agent lifecycle request failed',
+        )
+      } finally {
+        if (!committed) {
+          releaseLifecycleTransition()
+          if (lifecycleTransitionReleaseRef.current === releaseLifecycleTransition) {
+            lifecycleTransitionReleaseRef.current = null
+          }
+        }
+        setBusyAction(null)
+      }
+    },
+    [agent.id, agent.uid, user.id, onChanged],
+  )
 
-  async function signOut() {
+  const signOut = useCallback(async () => {
     if (lifecycleTransitionReleaseRef.current) return
     if (hasActiveTengriGuestOperations(agent.id)) {
       setError('Wait for the current guest request to finish before signing out.')
       return
     }
-    if (dirtyCodeWindows.size > 0) {
+    if (dirtyCodeWindowsRef.current.size > 0) {
       setError('Save or close every edited Code tab before signing out.')
       return
     }
@@ -620,8 +752,11 @@ export function ReadyDesktop({
     setError('')
     let committed = false
     try {
-      const result = await tengriAuthClient.signOut()
-      if (result.error) throw new Error(result.error.message || 'Tengri could not sign out')
+      for (const guard of codeGuardsRef.current.values()) {
+        if (!(await guard(false))) throw new Error('Save or close every edited Code tab before signing out.')
+      }
+      await runTengriAction<null>({ action: 'revoke-editor-sessions' })
+      await signOutPlatform()
       committed = true
       setCommittedTransition('sign-out')
       await onChanged()
@@ -636,15 +771,41 @@ export function ReadyDesktop({
       }
       setBusyAction(null)
     }
-  }
+  }, [agent.id, onChanged])
 
-  const chromeRunning = windowState.windows.some((candidate) => candidate.app === 'chrome')
-  const codeRunning = windowState.windows.some((candidate) => candidate.app === 'code')
-  const finderRunning = windowState.windows.some((candidate) => candidate.app === 'finder')
-  const settingsRunning = windowState.windows.some((candidate) => candidate.app === 'settings')
-  const terminalRunning = windowState.windows.some((candidate) => candidate.app === 'terminal')
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
   const activeApp = activeWindow?.app ?? windowState.activeApp
+  const closeActiveWindow = useCallback(() => {
+    const current = windowStateRef.current
+    const active = current.windows.find((candidate) => candidate.id === current.activeWindowId)
+    if (active) closeWindow(active)
+  }, [closeWindow])
+  const minimizeActiveWindow = useCallback(() => {
+    const activeId = windowStateRef.current.activeWindowId
+    if (activeId) dispatch({ type: 'minimize', id: activeId })
+  }, [])
+  const toggleMaximizeActiveWindow = useCallback(() => {
+    const activeId = windowStateRef.current.activeWindowId
+    if (activeId) dispatch({ type: 'toggle-maximize', id: activeId, viewport: viewport() })
+  }, [viewport])
+  const activateWindow = useCallback(
+    (id: string) => {
+      dispatch({ type: 'restore', id, viewport: viewport() })
+      setMenuOpen(null)
+      focusActiveContent()
+    },
+    [focusActiveContent, viewport],
+  )
+  const openSpotlight = useCallback(() => {
+    setMenuOpen(null)
+    setSpotlightOpen(true)
+  }, [])
+  const openDeleteConfirmation = useCallback(() => {
+    setError('')
+    setConfirmOpen(true)
+  }, [])
+  const handleSignOut = useCallback(() => void signOut(), [signOut])
+  const handleSleep = useCallback(() => void mutate('sleep-agent'), [mutate])
   const layoutReady = desktopId !== null && hydratedDesktopId === desktopId
 
   if (committedTransition) {
@@ -659,7 +820,11 @@ export function ReadyDesktop({
 
   if (!layoutReady) {
     return (
-      <main className="font-inter relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#050914] text-white">
+      <main
+        ref={desktopRef}
+        data-tengri-desktop
+        className="font-geist relative h-[var(--tengri-viewport-height,100dvh)] min-h-0 w-screen overflow-hidden bg-[#142849] text-white"
+      >
         <DesktopWallpaper />
         <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 grid place-items-center">
           <p className="flex items-center gap-2 text-sm text-white/62" role="status">
@@ -674,34 +839,33 @@ export function ReadyDesktop({
   return (
     <>
       <main
+        ref={desktopRef}
+        data-tengri-desktop
         aria-hidden={confirmOpen || spotlightOpen || undefined}
         inert={confirmOpen || spotlightOpen || undefined}
-        className="font-inter relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#050914] text-white selection:bg-[#78a9ff]/35"
+        className="tengri-theme font-geist relative isolate h-[var(--tengri-viewport-height,100dvh)] min-h-0 w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
       >
         <DesktopWallpaper />
         <MenuBar
           activeApp={activeApp}
+          activeWindow={activeWindow}
           agent={agent}
-          clock={clock}
           connectionWarning={connectionWarning}
           menuOpen={menuOpen}
-          onCloseActive={() => activeWindow && closeWindow(activeWindow)}
+          onCloseActive={closeActiveWindow}
           onMenuChange={setMenuOpen}
-          onMinimizeActive={() => activeWindow && dispatch({ type: 'minimize', id: activeWindow.id })}
+          onMinimizeActive={minimizeActiveWindow}
           onNewWindow={newActiveWindow}
           onOpenApp={openApp}
-          onOpenSpotlight={() => {
-            setMenuOpen(null)
-            setSpotlightOpen(true)
-          }}
-          onSignOut={() => void signOut()}
-          onToggleMaximize={() =>
-            activeWindow && dispatch({ type: 'toggle-maximize', id: activeWindow.id, viewport: viewport() })
-          }
+          onOpenSpotlight={openSpotlight}
+          onSignOut={handleSignOut}
+          onToggleMaximize={toggleMaximizeActiveWindow}
+          onActivateWindow={activateWindow}
+          windows={windowState.windows}
           userName={user.name}
         />
 
-        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 overflow-hidden">
+        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 overflow-visible">
           {connectionWarning ? (
             <p
               role="status"
@@ -727,133 +891,83 @@ export function ReadyDesktop({
               key={desktopWindow.id}
               onCloseRequest={() => closeWindow(desktopWindow)}
               stageRef={stageRef}
+              viewport={viewport}
               window={desktopWindow}
             >
               {desktopWindow.app === 'finder' ? (
-                <FinderApp
+                <MemoizedFinderApp
                   active={desktopWindow.id === windowState.activeWindowId}
                   agentId={agent.id}
                   onOpenFile={openCode}
                   request={finderRequest?.targetWindowId === desktopWindow.id ? finderRequest : null}
                 />
               ) : desktopWindow.app === 'chrome' ? (
-                <ChromeApp
-                  active={desktopWindow.id === windowState.activeWindowId}
+                <MemoizedChromeApp
                   agentId={agent.id}
+                  desktopId={desktopId}
+                  windowId={desktopWindow.id}
+                  onFocus={() => dispatch({ type: 'focus', id: desktopWindow.id })}
                   previewGatewayOrigin={previewGatewayOrigin}
                 />
+              ) : desktopWindow.app === 'tengri' ? (
+                <MemoizedAgentChat active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
               ) : desktopWindow.app === 'code' ? (
-                <CodeEditor
+                <MemoizedCodeEditor
+                  key={JSON.stringify([user.id, agent.id, agent.createdAt])}
                   agentId={agent.id}
-                  onDirtyChange={(dirty) => handleCodeDirtyChange(desktopWindow.id, dirty)}
+                  agentCreatedAt={agent.createdAt}
+                  ownerId={user.id}
+                  desktopId={desktopId}
+                  registerGuard={registerCodeGuard}
+                  lifecycleBusy={busyAction !== null}
+                  previewGatewayOrigin={previewGatewayOrigin}
+                  onFocus={(id) => dispatch({ type: 'focus', id })}
+                  onDirtyChange={handleCodeDirtyChange}
                   request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
+                  windowId={desktopWindow.id}
                 />
               ) : desktopWindow.app === 'terminal' ? (
-                <TerminalApp
+                <MemoizedTerminalApp
                   agentId={agent.id}
                   desktopId={desktopId}
                   registerCloseHandler={registerTerminalCloseHandler}
                   windowId={desktopWindow.id}
                 />
               ) : (
-                <SettingsApp
+                <MemoizedSettingsApp
                   active={desktopWindow.id === windowState.activeWindowId}
                   agent={agent}
                   busyAction={busyAction}
                   error={error}
                   instanceId={desktopWindow.id}
                   lifecycleDisabled={guestOperationActive}
-                  onDelete={() => {
-                    setError('')
-                    setConfirmOpen(true)
-                  }}
-                  onSignOut={() => void signOut()}
-                  onSleep={() => void mutate('sleep-agent')}
+                  onDelete={openDeleteConfirmation}
+                  onChanged={onChanged}
+                  onSignOut={handleSignOut}
+                  onSleep={handleSleep}
                   user={user}
                 />
               )}
             </DesktopWindowFrame>
           ))}
-
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[1500] flex justify-center">
-            <nav
-              aria-label="Dock"
-              className="pointer-events-auto flex h-[72px] items-end gap-2 rounded-[24px] border border-white/20 bg-[rgba(28,33,45,0.5)] px-3 pb-2 shadow-[0_20px_60px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-3xl"
-            >
-              <motion.button
-                type="button"
-                aria-label="Open Finder"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={() => openFinder()}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Finder" />
-                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#69b8ff] to-[#1266ce] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]">
-                  <Folder aria-hidden="true" className="h-7 w-7 fill-white/18 text-white" />
-                </span>
-                <DockIndicator running={finderRunning} />
-              </motion.button>
-              <motion.button
-                type="button"
-                aria-label="Open Chrome"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={openChrome}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Chrome" />
-                <ChromeDockIcon />
-                <DockIndicator running={chromeRunning} />
-              </motion.button>
-              <motion.button
-                type="button"
-                aria-label="Open Code"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={() => openCode()}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Code" />
-                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#5f6fff] via-[#775dd8] to-[#312d7d] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]">
-                  <FileCode2 aria-hidden="true" className="h-7 w-7 text-white" />
-                </span>
-                <DockIndicator running={codeRunning} />
-              </motion.button>
-              <motion.button
-                type="button"
-                aria-label="Open Terminal"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={openTerminal}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Terminal" />
-                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#323844] to-[#11141a] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.22)]">
-                  <SquareTerminal aria-hidden="true" className="h-7 w-7 text-white" />
-                </span>
-                <DockIndicator running={terminalRunning} />
-              </motion.button>
-              <motion.button
-                type="button"
-                aria-label="Open Settings"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={openSettings}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Settings" />
-                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#aeb8c8] to-[#596273] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]">
-                  <Settings aria-hidden="true" className="h-7 w-7 text-white" />
-                </span>
-                <DockIndicator running={settingsRunning} />
-              </motion.button>
-            </nav>
+        </div>
+        <div
+          data-tengri-dock-container
+          className={`pointer-events-none group/dock absolute inset-x-0 bottom-0 z-[1500] flex justify-center ${
+            activeWindow?.mode === 'maximized' ? 'hover:pointer-events-auto focus-within:pointer-events-auto' : ''
+          }`}
+        >
+          {activeWindow?.mode === 'maximized' ? (
+            <div aria-hidden="true" className="pointer-events-auto absolute inset-x-0 bottom-0 h-1" />
+          ) : null}
+          <div
+            className={`pb-3 ${
+              activeWindow?.mode === 'maximized'
+                ? 'translate-y-full transition-transform group-hover/dock:translate-y-0 group-focus-within/dock:translate-y-0 motion-reduce:transition-none'
+                : ''
+            }`}
+          >
+            <DesktopDock onOpenApp={openApp} windows={windowState.windows} />
           </div>
         </div>
       </main>
@@ -908,7 +1022,7 @@ function LifecycleTransitionScreen({
         : 'Tengri is closing this authenticated desktop session.'
 
   return (
-    <main className="font-inter relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#050914] px-5 text-white">
+    <main className="font-geist relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#142849] px-5 text-white">
       <DesktopWallpaper />
       <header className="absolute inset-x-0 top-0 z-20 flex h-[30px] items-center border-b border-white/10 bg-[rgba(16,20,31,0.5)] px-4 text-xs font-semibold text-white/90 backdrop-blur-2xl">
         <span className="mr-2">
@@ -941,58 +1055,11 @@ function LifecycleTransitionScreen({
   )
 }
 
-function DockTooltip({ label }: { label: string }) {
-  return (
-    <span className="pointer-events-none absolute -top-10 rounded-md border border-white/10 bg-black/65 px-2 py-1 text-[10px] text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-      {label}
-    </span>
-  )
-}
-
-function DockIndicator({ running }: { running: boolean }) {
-  return (
-    <span aria-hidden="true" className={cn('mt-1 h-1 w-1 rounded-full', running ? 'bg-white' : 'bg-transparent')} />
-  )
-}
-
-function ChromeDockIcon() {
-  return (
-    <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-[conic-gradient(from_210deg,#ef4b45_0_33%,#f4c447_33%_66%,#42b76a_66%_100%)] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)]">
-      <span className="grid h-6 w-6 place-items-center rounded-full border-2 border-white/80 bg-[#4f8ee8] shadow-inner">
-        <span className="h-2 w-2 rounded-full bg-white/28" />
-      </span>
-    </span>
-  )
-}
-
-function isEditableTarget(target: EventTarget | null) {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement ||
-    (target instanceof HTMLElement && target.isContentEditable)
-  )
-}
-
 function DesktopWallpaper() {
   return (
-    <div aria-hidden="true" className="absolute inset-0 overflow-hidden bg-[#07101d]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_24%_18%,rgba(57,128,206,0.34),transparent_34%),radial-gradient(circle_at_75%_72%,rgba(116,79,196,0.28),transparent_40%),linear-gradient(145deg,#07111f_0%,#12182c_48%,#0b0918_100%)]" />
-      <div className="absolute top-[-22%] left-[14%] h-[74%] w-[66%] -rotate-12 rounded-[50%] bg-[linear-gradient(115deg,rgba(96,179,255,0.16),rgba(115,82,220,0.05))] blur-3xl" />
-      <div className="absolute inset-0 opacity-20 [background-size:56px_56px] [background-image:linear-gradient(rgba(255,255,255,.018)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.018)_1px,transparent_1px)]" />
-    </div>
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 bg-[#142849] bg-[url('/tengri/wallpaper.webp')] bg-cover bg-center"
+    />
   )
 }
-
-function TengriMark() {
-  return (
-    <span aria-hidden="true" className="relative grid h-4 w-4 place-items-center rounded-full border border-white/60">
-      <span className="h-1.5 w-1.5 rounded-full bg-white/85" />
-      <span className="absolute -top-1 h-1.5 w-px bg-white/60" />
-    </span>
-  )
-}
-
-const dockHoverAnimation = { scale: 1.18, y: -8 }
-const dockTapAnimation = { scale: 0.96 }
-const dockTransition = { damping: 28, stiffness: 520, type: 'spring' as const }

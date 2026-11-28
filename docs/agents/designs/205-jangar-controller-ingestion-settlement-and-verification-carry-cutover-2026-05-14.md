@@ -1,6 +1,6 @@
 # 205. Jangar Controller-Ingestion Settlement And Verification-Carry Cutover (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-14
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar controller-ingestion settlement, verification-carry cutover, stage-clearance repair admission, Torghut
@@ -12,10 +12,6 @@ Companion Torghut contract:
 
 Extends:
 
-- `204-jangar-source-bound-verification-carry-exchange-and-repair-slot-reconciliation-2026-05-14.md`
-- `../torghut/design-system/v6/210-torghut-source-bound-verification-carry-import-and-no-delta-release-2026-05-14.md`
-- `203-jangar-foreclosure-carry-rollout-witness-and-stage-debt-repair-2026-05-14.md`
-- `202-jangar-verification-carry-export-and-repair-slot-reconciliation-2026-05-14.md`
 - `201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`
 - `200-jangar-revenue-repair-settlement-conveyor-and-stage-health-custody-2026-05-14.md`
 - `188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`

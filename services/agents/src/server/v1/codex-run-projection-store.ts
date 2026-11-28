@@ -159,10 +159,10 @@ export type CodexRunProjectionStoreServiceDefinition = {
   readonly close: (store: CodexRunProjectionStore) => Effect.Effect<void>
 }
 
-export class CodexRunProjectionStoreService extends Context.Tag('agents/CodexRunProjectionStoreService')<
+export class CodexRunProjectionStoreService extends Context.Service<
   CodexRunProjectionStoreService,
   CodexRunProjectionStoreServiceDefinition
->() {}
+>()('agents/CodexRunProjectionStoreService') {}
 
 export const codexRunProjectionStoreEffect = <A>(
   operation: CodexRunProjectionOperation,
@@ -183,7 +183,7 @@ export const waitForCodexRunProjectionStoreReadyEffect = (store: CodexRunProject
 
 export const closeCodexRunProjectionStoreEffect = (store: CodexRunProjectionStore) =>
   codexRunProjectionStoreEffect('close-codex-run-projection-store', () => store.close()).pipe(
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.sync(() => {
         console.warn('[agents] failed to close Codex run projection store', error)
       }),

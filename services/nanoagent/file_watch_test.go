@@ -61,7 +61,7 @@ func TestFileWatcherClearsCompletedRenameEchoesAfterKernelQueueOverflow(t *testi
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestFileWatcherClearsCompletedRenameEchoesAfterKernelQueueOverflow(t *testi
 	if err != nil {
 		t.Fatalf("begin paired rename: %v", err)
 	}
-	files.publishPairedRename(source, generation, fileEvent{Path: "/destination.txt"})
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
 	if paired := <-events; paired.Kind != "renamed" {
 		t.Fatalf("paired event = %#v, want renamed", paired)
 	}
@@ -85,7 +85,7 @@ func TestFileWatcherClearsCompletedRenameEchoesAfterKernelQueueOverflow(t *testi
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
 	select {
 	case reset := <-events:
-		if reset.Kind != "reset" || reset.Path != "/" {
+		if reset.Kind != "reset" || reset.Path != "/workspace" {
 			t.Fatalf("post-overflow raw rename = %#v, want reconciliation reset", reset)
 		}
 	case <-time.After(time.Second):
@@ -109,7 +109,7 @@ func TestFileWatcherRetainsInFlightRenameEchoSuppressionAcrossKernelQueueOverflo
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -126,8 +126,8 @@ func TestFileWatcherRetainsInFlightRenameEchoSuppressionAcrossKernelQueueOverflo
 		t.Fatalf("overflow event = %#v, want reset", reset)
 	}
 
-	files.publishPairedRename(source, generation, fileEvent{Path: "/destination.txt"})
-	if paired := <-events; paired.Kind != "renamed" || paired.PreviousPath != "/source.txt" {
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
+	if paired := <-events; paired.Kind != "renamed" || paired.PreviousPath != "/workspace/source.txt" {
 		t.Fatalf("paired event = %#v, want authoritative rename", paired)
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
@@ -135,6 +135,64 @@ func TestFileWatcherRetainsInFlightRenameEchoSuppressionAcrossKernelQueueOverflo
 	select {
 	case extra := <-events:
 		t.Fatalf("post-overflow API rename emitted an extra event: %#v", extra)
+	default:
+	}
+}
+
+func TestFileWatcherDiscardsStaleEventsAfterDeferredRenameOverflow(t *testing.T) {
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workspace.close()
+	files := &fileWatcher{
+		workspace:        workspace,
+		subscriptions:    make(map[uint64]fileSubscription),
+		watched:          make(map[string]uint32),
+		renameFence:      time.Second,
+		expectedRenames:  make(map[string]expectedFileRename),
+		completedRenames: make(map[uint64]completedFileRename),
+	}
+	id, events, err := files.subscribe(0, workspacePath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.unsubscribe(id)
+	files.publish(fileEvent{Kind: "modified", Path: "/workspace/obsolete.txt"})
+	<-events
+	source := filepath.Join(workspace.realRoot, "source.txt")
+	destination := filepath.Join(workspace.realRoot, "destination.txt")
+	generation, err := files.beginPairedRename(source, destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
+	for range fileRenameDeferredEventLimit + 2 {
+		files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Write})
+	}
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
+	if renamed := <-events; renamed.Kind != "renamed" {
+		t.Fatalf("missing authoritative rename: %#v", renamed)
+	}
+	if reset := <-events; reset.Kind != "reset" || reset.Path != workspacePath {
+		t.Fatalf("missing canonical reset: %#v", reset)
+	}
+	select {
+	case stale := <-events:
+		t.Fatalf("deferred event escaped after the reconciliation reset: %#v", stale)
+	default:
+	}
+	replayID, replay, err := files.subscribe(0, workspacePath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.unsubscribe(replayID)
+	if reset := <-replay; reset.Kind != "reset" || reset.Path != workspacePath {
+		t.Fatalf("obsolete history survived the reset: %#v", reset)
+	}
+	select {
+	case stale := <-replay:
+		t.Fatalf("obsolete event remained in replay history: %#v", stale)
 	default:
 	}
 }
@@ -155,7 +213,7 @@ func TestFileWatcherDiscardsDeferredEventsAfterKernelQueueOverflow(t *testing.T)
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -174,8 +232,8 @@ func TestFileWatcherDiscardsDeferredEventsAfterKernelQueueOverflow(t *testing.T)
 		t.Fatalf("overflow event = %#v, want reset", reset)
 	}
 
-	files.publishPairedRename(source, generation, fileEvent{Path: "/destination.txt"})
-	if paired := <-events; paired.Kind != "renamed" || paired.Path != "/destination.txt" {
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
+	if paired := <-events; paired.Kind != "renamed" || paired.Path != "/workspace/destination.txt" {
 		t.Fatalf("paired event = %#v, want authoritative rename", paired)
 	}
 	select {
@@ -198,7 +256,7 @@ func TestFileWatcherRepresentsRawRenameAsReconciliationReset(t *testing.T) {
 		subscriptions: make(map[uint64]fileSubscription),
 		watched:       make(map[string]uint32),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -207,7 +265,7 @@ func TestFileWatcherRepresentsRawRenameAsReconciliationReset(t *testing.T) {
 	files.handle(fsnotify.Event{Name: filepath.Join(workspace.realRoot, "old-name.txt"), Op: fsnotify.Rename})
 	select {
 	case event := <-events:
-		if event.Kind != "reset" || event.Path != "/" || event.PreviousPath != "" || event.Entry != nil {
+		if event.Kind != "reset" || event.Path != "/workspace" || event.PreviousPath != "" || event.Entry != nil {
 			t.Fatalf("raw rename event = %#v, want reconciliation reset", event)
 		}
 	case <-time.After(time.Second):
@@ -228,7 +286,7 @@ func TestFileWatcherReconcilesRapidExternalRenameAndRecreation(t *testing.T) {
 		subscriptions: make(map[uint64]fileSubscription),
 		watched:       make(map[string]uint32),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -241,10 +299,10 @@ func TestFileWatcherReconcilesRapidExternalRenameAndRecreation(t *testing.T) {
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Create})
 
-	if reset := <-events; reset.Kind != "reset" || reset.Path != "/" {
+	if reset := <-events; reset.Kind != "reset" || reset.Path != "/workspace" {
 		t.Fatalf("first replacement event = %#v, want reconciliation reset", reset)
 	}
-	if created := <-events; created.Kind != "created" || created.Path != "/source.txt" || created.Entry == nil {
+	if created := <-events; created.Kind != "created" || created.Path != "/workspace/source.txt" || created.Entry == nil {
 		t.Fatalf("second replacement event = %#v, want recreated source", created)
 	}
 }
@@ -262,19 +320,19 @@ func TestFileWatcherScopesExternalRenameResetToAffectedSubscriptions(t *testing.
 		subscriptions: make(map[uint64]fileSubscription),
 		watched:       make(map[string]uint32),
 	}
-	leftID, leftEvents, err := files.subscribe(0, "/left", "")
+	leftID, leftEvents, err := files.subscribe(0, "/workspace/left", "")
 	if err != nil {
 		t.Fatalf("subscribe left: %v", err)
 	}
 	defer files.unsubscribe(leftID)
-	rightID, rightEvents, err := files.subscribe(0, "/right", "")
+	rightID, rightEvents, err := files.subscribe(0, "/workspace/right", "")
 	if err != nil {
 		t.Fatalf("subscribe right: %v", err)
 	}
 	defer files.unsubscribe(rightID)
 
 	files.handle(fsnotify.Event{Name: filepath.Join(workspace.realRoot, "left", "renamed.txt"), Op: fsnotify.Rename})
-	if reset := <-leftEvents; reset.Kind != "reset" || reset.Path != "/left" {
+	if reset := <-leftEvents; reset.Kind != "reset" || reset.Path != "/workspace/left" {
 		t.Fatalf("left rename event = %#v, want scoped reset", reset)
 	}
 	select {
@@ -283,15 +341,15 @@ func TestFileWatcherScopesExternalRenameResetToAffectedSubscriptions(t *testing.
 	default:
 	}
 
-	leftReplayID, leftReplay, err := files.subscribe(0, "/left", "")
+	leftReplayID, leftReplay, err := files.subscribe(0, "/workspace/left", "")
 	if err != nil {
 		t.Fatalf("subscribe left replay: %v", err)
 	}
 	defer files.unsubscribe(leftReplayID)
-	if reset := <-leftReplay; reset.Kind != "reset" || reset.Path != "/left" {
+	if reset := <-leftReplay; reset.Kind != "reset" || reset.Path != "/workspace/left" {
 		t.Fatalf("left replay event = %#v, want scoped reset", reset)
 	}
-	rightReplayID, rightReplay, err := files.subscribe(0, "/right", "")
+	rightReplayID, rightReplay, err := files.subscribe(0, "/workspace/right", "")
 	if err != nil {
 		t.Fatalf("subscribe right replay: %v", err)
 	}
@@ -322,7 +380,7 @@ func TestFileWatcherCorrelatesRawAndPairedRenameInEitherOrder(t *testing.T) {
 				expectedRenames:  make(map[string]expectedFileRename),
 				completedRenames: make(map[uint64]completedFileRename),
 			}
-			id, events, err := files.subscribe(0, "/", "")
+			id, events, err := files.subscribe(0, "/workspace", "")
 			if err != nil {
 				t.Fatalf("subscribe: %v", err)
 			}
@@ -336,7 +394,7 @@ func TestFileWatcherCorrelatesRawAndPairedRenameInEitherOrder(t *testing.T) {
 			}
 			raw := func() { files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename}) }
 			paired := func() {
-				files.publishPairedRename(source, generation, fileEvent{Path: "/new-name.txt"})
+				files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/new-name.txt"})
 			}
 			if rawFirst {
 				raw()
@@ -348,7 +406,7 @@ func TestFileWatcherCorrelatesRawAndPairedRenameInEitherOrder(t *testing.T) {
 			files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
 
 			event := <-events
-			if event.Kind != "renamed" || event.Path != "/new-name.txt" || event.PreviousPath != "/old-name.txt" {
+			if event.Kind != "renamed" || event.Path != "/workspace/new-name.txt" || event.PreviousPath != "/workspace/old-name.txt" {
 				t.Fatalf("correlated rename event = %#v, want paired destination-side rename", event)
 			}
 			select {
@@ -357,6 +415,51 @@ func TestFileWatcherCorrelatesRawAndPairedRenameInEitherOrder(t *testing.T) {
 			case <-time.After(3 * files.renameFence):
 			}
 		})
+	}
+}
+
+func TestFileWatcherKeepsOrderedRenameFencePastFallbackDeadline(t *testing.T) {
+	t.Parallel()
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("new workspace: %v", err)
+	}
+	defer workspace.close()
+	files := &fileWatcher{
+		workspace:     workspace,
+		subscriptions: make(map[uint64]fileSubscription),
+	}
+	id, events, err := files.subscribe(0, "/workspace", "")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer files.unsubscribe(id)
+	source := filepath.Join(workspace.realRoot, "source.txt")
+	destination := filepath.Join(workspace.realRoot, "destination.txt")
+	generation, err := files.beginPairedRename(source, destination)
+	if err != nil {
+		t.Fatalf("begin paired rename: %v", err)
+	}
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
+	if event := <-events; event.Kind != "renamed" {
+		t.Fatalf("paired event = %#v, want renamed", event)
+	}
+
+	// The kernel's ordered rename echoes can be queued longer than the fallback deadline.
+	files.expireCompletedRename(generation)
+	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
+	files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
+	select {
+	case extra := <-events:
+		t.Fatalf("delayed rename echo escaped its ordered fence: %#v", extra)
+	default:
+	}
+	if len(files.completedRenames) != 0 {
+		t.Fatalf("completed fence remained after both ordered echoes: %#v", files.completedRenames)
+	}
+	files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
+	if event := <-events; event.Kind != "created" || event.Path != "/workspace/destination.txt" {
+		t.Fatalf("next generation event = %#v, want created", event)
 	}
 }
 
@@ -375,7 +478,7 @@ func TestFileWatcherPublishesObservedRawRenameWhenPairedRenameIsCanceled(t *test
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -397,7 +500,7 @@ func TestFileWatcherPublishesObservedRawRenameWhenPairedRenameIsCanceled(t *test
 
 	select {
 	case removed := <-events:
-		if removed.Kind != "removed" || removed.Path != "/source.txt" {
+		if removed.Kind != "removed" || removed.Path != "/workspace/source.txt" {
 			t.Fatalf("canceled paired rename event = %#v, want source removal", removed)
 		}
 	case <-time.After(time.Second):
@@ -420,7 +523,7 @@ func TestFileWatcherReconcilesSuppressedRemoveWhenPairedRenameIsCanceled(t *test
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/source.txt", "")
+	id, events, err := files.subscribe(0, "/workspace/source.txt", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -442,7 +545,7 @@ func TestFileWatcherReconcilesSuppressedRemoveWhenPairedRenameIsCanceled(t *test
 
 	select {
 	case reset := <-events:
-		if reset.Kind != "reset" || reset.Path != "/source.txt" {
+		if reset.Kind != "reset" || reset.Path != "/workspace/source.txt" {
 			t.Fatalf("canceled move event = %#v, want scoped reset", reset)
 		}
 	case <-time.After(time.Second):
@@ -465,7 +568,7 @@ func TestFileWatcherResetsWhenCanceledRenameSourceStillExists(t *testing.T) {
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -483,7 +586,7 @@ func TestFileWatcherResetsWhenCanceledRenameSourceStillExists(t *testing.T) {
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
 	files.cancelPairedRename(source, generation)
 
-	if reset := <-events; reset.Kind != "reset" || reset.Path != "/" {
+	if reset := <-events; reset.Kind != "reset" || reset.Path != "/workspace" {
 		t.Fatalf("canceled stale rename event = %#v, want workspace reset", reset)
 	}
 }
@@ -504,7 +607,7 @@ func TestFileWatcherDoesNotCorrelateExternalRenameWithLaterAPIMove(t *testing.T)
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -512,14 +615,14 @@ func TestFileWatcherDoesNotCorrelateExternalRenameWithLaterAPIMove(t *testing.T)
 
 	source := filepath.Join(workspace.realRoot, "source.txt")
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
-	if reset := <-events; reset.Kind != "reset" || reset.Path != "/" {
+	if reset := <-events; reset.Kind != "reset" || reset.Path != "/workspace" {
 		t.Fatalf("external rename event = %#v, want reconciliation reset", reset)
 	}
 	if err := os.WriteFile(source, []byte("replacement"), 0o600); err != nil {
 		t.Fatalf("recreate source: %v", err)
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Create})
-	if created := <-events; created.Kind != "created" || created.Path != "/source.txt" || created.Entry == nil {
+	if created := <-events; created.Kind != "created" || created.Path != "/workspace/source.txt" || created.Entry == nil {
 		t.Fatalf("recreation event = %#v, want recreated source", created)
 	}
 	destination := filepath.Join(workspace.realRoot, "destination.txt")
@@ -527,8 +630,8 @@ func TestFileWatcherDoesNotCorrelateExternalRenameWithLaterAPIMove(t *testing.T)
 	if err != nil {
 		t.Fatalf("begin API rename: %v", err)
 	}
-	files.publishPairedRename(source, generation, fileEvent{Path: "/destination.txt"})
-	if paired := <-events; paired.Kind != "renamed" || paired.Path != "/destination.txt" {
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
+	if paired := <-events; paired.Kind != "renamed" || paired.Path != "/workspace/destination.txt" {
 		t.Fatalf("API rename event = %#v, want paired rename", paired)
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
@@ -556,7 +659,7 @@ func TestFileWatcherSeparatesQueuedPreOperationRenameFromAPIEcho(t *testing.T) {
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -570,11 +673,11 @@ func TestFileWatcherSeparatesQueuedPreOperationRenameFromAPIEcho(t *testing.T) {
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Create})
-	files.publishPairedRename(source, generation, fileEvent{Path: "/destination.txt"})
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
 	files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
 
-	if paired := <-events; paired.Kind != "renamed" || paired.Path != "/destination.txt" || paired.PreviousPath != "/source.txt" {
+	if paired := <-events; paired.Kind != "renamed" || paired.Path != "/workspace/destination.txt" || paired.PreviousPath != "/workspace/source.txt" {
 		t.Fatalf("paired event = %#v, want one authoritative API rename", paired)
 	}
 	select {
@@ -587,11 +690,11 @@ func TestFileWatcherSeparatesQueuedPreOperationRenameFromAPIEcho(t *testing.T) {
 		t.Fatalf("recreate source after destination fence: %v", err)
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Create})
-	if created := <-events; created.Kind != "created" || created.Path != "/source.txt" {
+	if created := <-events; created.Kind != "created" || created.Path != "/workspace/source.txt" {
 		t.Fatalf("post-fence create = %#v, want new source generation", created)
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
-	if reset := <-events; reset.Kind != "reset" || reset.Path != "/" {
+	if reset := <-events; reset.Kind != "reset" || reset.Path != "/workspace" {
 		t.Fatalf("post-fence rename = %#v, want independent reconciliation reset", reset)
 	}
 }
@@ -612,7 +715,7 @@ func TestFileWatcherPublishesEventsObservedAfterDestinationFence(t *testing.T) {
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -641,11 +744,11 @@ func TestFileWatcherPublishesEventsObservedAfterDestinationFence(t *testing.T) {
 	default:
 	}
 
-	files.publishPairedRename(source, generation, fileEvent{Path: "/destination.txt"})
-	if paired := <-events; paired.Kind != "renamed" || paired.Path != "/destination.txt" || paired.PreviousPath != "/source.txt" {
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
+	if paired := <-events; paired.Kind != "renamed" || paired.Path != "/workspace/destination.txt" || paired.PreviousPath != "/workspace/source.txt" {
 		t.Fatalf("paired event = %#v, want authoritative rename", paired)
 	}
-	if created := <-events; created.Kind != "created" || created.Path != "/source.txt" || created.Entry == nil {
+	if created := <-events; created.Kind != "created" || created.Path != "/workspace/source.txt" || created.Entry == nil {
 		t.Fatalf("deferred source event = %#v, want recreated source", created)
 	}
 }
@@ -672,7 +775,7 @@ func TestFileWatcherDestinationFenceProtectsLateSourceSubscription(t *testing.T)
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	destinationID, destinationEvents, err := files.subscribe(0, "/destination.txt", "")
+	destinationID, destinationEvents, err := files.subscribe(0, "/workspace/destination.txt", "")
 	if err != nil {
 		t.Fatalf("subscribe destination: %v", err)
 	}
@@ -684,13 +787,13 @@ func TestFileWatcherDestinationFenceProtectsLateSourceSubscription(t *testing.T)
 	if err != nil {
 		t.Fatalf("begin paired rename: %v", err)
 	}
-	files.publishPairedRename(source, generation, fileEvent{Path: "/destination.txt"})
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
 	paired := <-destinationEvents
-	if paired.Kind != "renamed" || paired.PreviousPath != "/source.txt" {
+	if paired.Kind != "renamed" || paired.PreviousPath != "/workspace/source.txt" {
 		t.Fatalf("destination event = %#v, want paired API rename", paired)
 	}
 
-	sourceID, sourceEvents, err := files.subscribe(paired.Sequence, "/source.txt", "")
+	sourceID, sourceEvents, err := files.subscribe(paired.Sequence, "/workspace/source.txt", "")
 	if err != nil {
 		t.Fatalf("subscribe source after move: %v", err)
 	}
@@ -706,11 +809,11 @@ func TestFileWatcherDestinationFenceProtectsLateSourceSubscription(t *testing.T)
 		t.Fatalf("recreate source: %v", err)
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Create})
-	if created := <-sourceEvents; created.Kind != "created" || created.Path != "/source.txt" {
+	if created := <-sourceEvents; created.Kind != "created" || created.Path != "/workspace/source.txt" {
 		t.Fatalf("late subscriber create event = %#v, want new source generation", created)
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
-	if reset := <-sourceEvents; reset.Kind != "reset" || reset.Path != "/source.txt" {
+	if reset := <-sourceEvents; reset.Kind != "reset" || reset.Path != "/workspace/source.txt" {
 		t.Fatalf("late subscriber rename event = %#v, want independent reconciliation reset", reset)
 	}
 }
@@ -731,7 +834,7 @@ func TestFileWatcherPreservesEarlierEchoAcrossImmediateFollowUpMove(t *testing.T
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -744,17 +847,17 @@ func TestFileWatcherPreservesEarlierEchoAcrossImmediateFollowUpMove(t *testing.T
 	if err != nil {
 		t.Fatalf("begin first rename: %v", err)
 	}
-	files.publishPairedRename(source, firstGeneration, fileEvent{Path: "/b.txt"})
+	files.publishPairedRename(source, firstGeneration, fileEvent{Path: "/workspace/b.txt"})
 	secondGeneration, err := files.beginPairedRename(middle, destination)
 	if err != nil {
 		t.Fatalf("begin follow-up rename: %v", err)
 	}
-	files.publishPairedRename(middle, secondGeneration, fileEvent{Path: "/c.txt"})
+	files.publishPairedRename(middle, secondGeneration, fileEvent{Path: "/workspace/c.txt"})
 
 	for _, want := range []struct {
 		path     string
 		previous string
-	}{{path: "/b.txt", previous: "/a.txt"}, {path: "/c.txt", previous: "/b.txt"}} {
+	}{{path: "/workspace/b.txt", previous: "/workspace/a.txt"}, {path: "/workspace/c.txt", previous: "/workspace/b.txt"}} {
 		if event := <-events; event.Kind != "renamed" || event.Path != want.path || event.PreviousPath != want.previous {
 			t.Fatalf("paired event = %#v, want %s -> %s", event, want.previous, want.path)
 		}
@@ -793,7 +896,7 @@ func TestFileWatcherReleasesFallbackFenceAfterSourceEcho(t *testing.T) {
 		expectedRenames:  make(map[string]expectedFileRename),
 		completedRenames: make(map[uint64]completedFileRename),
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -804,14 +907,14 @@ func TestFileWatcherReleasesFallbackFenceAfterSourceEcho(t *testing.T) {
 	files.mu.Lock()
 	files.watched[workspace.realRoot] = 1
 	for index := 1; index < fileWatchDirectoryLimit; index++ {
-		files.watched[fmt.Sprintf("/already-watched/%03d", index)] = 1
+		files.watched[fmt.Sprintf("/workspace/already-watched/%03d", index)] = 1
 	}
 	files.mu.Unlock()
 	generation, err := files.beginPairedRename(source, destination)
 	if err != nil {
 		t.Fatalf("begin rename at watcher capacity: %v", err)
 	}
-	files.publishPairedRename(source, generation, fileEvent{Path: "/destination/moved.txt"})
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination/moved.txt"})
 	if paired := <-events; paired.Kind != "renamed" {
 		t.Fatalf("paired event = %#v, want renamed", paired)
 	}
@@ -823,7 +926,7 @@ func TestFileWatcherReleasesFallbackFenceAfterSourceEcho(t *testing.T) {
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Create})
 	select {
 	case created := <-events:
-		if created.Kind != "created" || created.Path != "/source.txt" {
+		if created.Kind != "created" || created.Path != "/workspace/source.txt" {
 			t.Fatalf("source recreation event = %#v, want created", created)
 		}
 	case <-time.After(time.Second):
@@ -858,7 +961,7 @@ func TestFileWatcherDeliversCorrelatedRenameBeforeInvalidatingRenamedDirectory(t
 	}
 	defer files.close()
 
-	id, events, err := files.subscribe(0, "/source", source)
+	id, events, err := files.subscribe(0, "/workspace/source", source)
 	if err != nil {
 		t.Fatalf("subscribe source directory: %v", err)
 	}
@@ -868,13 +971,13 @@ func TestFileWatcherDeliversCorrelatedRenameBeforeInvalidatingRenamedDirectory(t
 		t.Fatalf("begin paired directory rename: %v", err)
 	}
 	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
-	files.publishPairedRename(source, generation, fileEvent{Path: "/destination"})
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination"})
 
 	event, open := <-events
 	if !open {
 		t.Fatal("source directory subscription closed before delivering the correlated rename")
 	}
-	if event.Kind != "renamed" || event.Path != "/destination" || event.PreviousPath != "/source" {
+	if event.Kind != "renamed" || event.Path != "/workspace/destination" || event.PreviousPath != "/workspace/source" {
 		t.Fatalf("source directory event = %#v, want correlated rename", event)
 	}
 	if _, open := <-events; open {
@@ -892,12 +995,12 @@ func TestFileWatcherDeliversCorrelatedRenameBeforeInvalidatingRenamedDirectory(t
 func TestFileWatcherDeliversPairedRenameToSourceAndDestinationWatchers(t *testing.T) {
 	t.Parallel()
 	files := &fileWatcher{subscriptions: make(map[uint64]fileSubscription)}
-	sourceID, sourceEvents, err := files.subscribe(0, "/source", "")
+	sourceID, sourceEvents, err := files.subscribe(0, "/workspace/source", "")
 	if err != nil {
 		t.Fatalf("subscribe source: %v", err)
 	}
 	defer files.unsubscribe(sourceID)
-	destinationID, destinationEvents, err := files.subscribe(0, "/destination", "")
+	destinationID, destinationEvents, err := files.subscribe(0, "/workspace/destination", "")
 	if err != nil {
 		t.Fatalf("subscribe destination: %v", err)
 	}
@@ -905,8 +1008,8 @@ func TestFileWatcherDeliversPairedRenameToSourceAndDestinationWatchers(t *testin
 
 	files.publish(fileEvent{
 		Kind:         "renamed",
-		Path:         "/destination/file.txt",
-		PreviousPath: "/source/file.txt",
+		Path:         "/workspace/destination/file.txt",
+		PreviousPath: "/workspace/source/file.txt",
 	})
 	receive := func(name string, events <-chan fileEvent) fileEvent {
 		t.Helper()
@@ -923,17 +1026,17 @@ func TestFileWatcherDeliversPairedRenameToSourceAndDestinationWatchers(t *testin
 		"destination": destinationEvents,
 	} {
 		event := receive(name, events)
-		if event.Kind != "renamed" || event.Path != "/destination/file.txt" || event.PreviousPath != "/source/file.txt" {
+		if event.Kind != "renamed" || event.Path != "/workspace/destination/file.txt" || event.PreviousPath != "/workspace/source/file.txt" {
 			t.Fatalf("%s watcher event = %#v, want paired rename", name, event)
 		}
 	}
 
-	replayID, replay, err := files.subscribe(0, "/source", "")
+	replayID, replay, err := files.subscribe(0, "/workspace/source", "")
 	if err != nil {
 		t.Fatalf("subscribe source replay: %v", err)
 	}
 	defer files.unsubscribe(replayID)
-	if event := receive("source replay", replay); event.Kind != "renamed" || event.PreviousPath != "/source/file.txt" {
+	if event := receive("source replay", replay); event.Kind != "renamed" || event.PreviousPath != "/workspace/source/file.txt" {
 		t.Fatalf("source replay event = %#v, want paired rename", event)
 	}
 }
@@ -985,7 +1088,7 @@ func TestFileWatcherReplayIsBoundedAndDoesNotBlock(t *testing.T) {
 	for index := 0; index < fileEventBufferSize; index++ {
 		files.publish(fileEvent{Kind: "changed", Path: fmt.Sprintf("/workspace/%04d", index)})
 	}
-	id, events, err := files.subscribe(0, "/", "")
+	id, events, err := files.subscribe(0, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -1018,7 +1121,7 @@ func TestFileWatcherSignalsExpiredCursorAndDisconnectsSlowSubscriber(t *testing.
 	}
 	files.unsubscribe(id)
 
-	id, events, err = files.subscribe(files.sequence, "/", "")
+	id, events, err = files.subscribe(files.sequence, "/workspace", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -1055,16 +1158,89 @@ func TestFileWatcherSubscriberLimit(t *testing.T) {
 	files := &fileWatcher{subscriptions: make(map[uint64]fileSubscription)}
 	ids := make([]uint64, 0, fileSubscriberLimit)
 	for range fileSubscriberLimit {
-		id, _, err := files.subscribe(0, "/", "")
+		id, _, err := files.subscribe(0, "/workspace", "")
 		if err != nil {
 			t.Fatalf("subscribe within limit: %v", err)
 		}
 		ids = append(ids, id)
 	}
-	if _, _, err := files.subscribe(0, "/", ""); err == nil {
+	if _, _, err := files.subscribe(0, "/workspace", ""); err == nil {
 		t.Fatal("subscriber limit was not enforced")
 	}
 	for _, id := range ids {
 		files.unsubscribe(id)
+	}
+}
+
+func TestFileWatcherReleasesMoveResourcesAfterSubscribersClose(t *testing.T) {
+	for _, outcome := range []string{"rename", "cancel", "overflow", "pending-overflow"} {
+		t.Run(outcome, func(t *testing.T) {
+			t.Parallel()
+			workspace, err := newWorkspace(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer workspace.close()
+			left := filepath.Join(workspace.realRoot, "left")
+			right := filepath.Join(workspace.realRoot, "right")
+			for _, directory := range []string{left, right} {
+				if err := os.Mkdir(directory, 0o750); err != nil {
+					t.Fatal(err)
+				}
+			}
+			source := filepath.Join(left, "source.txt")
+			destination := filepath.Join(right, "destination.txt")
+			if err := os.WriteFile(source, []byte("move"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			files, err := newFileWatcher(workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer files.close()
+			first, _, err := files.subscribe(0, "/workspace/left", left)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, _, err := files.subscribe(0, "/workspace/right", right)
+			if err != nil {
+				t.Fatal(err)
+			}
+			generation, err := files.beginPairedRename(source, destination)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files.unsubscribe(first)
+			files.unsubscribe(second)
+			if outcome == "cancel" {
+				files.cancelPairedRename(source, generation)
+			} else {
+				if outcome == "pending-overflow" {
+					files.handleWatcherError(fsnotify.ErrEventOverflow)
+				}
+				if outcome == "rename" {
+					if err := os.Rename(source, destination); err != nil {
+						t.Fatal(err)
+					}
+				}
+				files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/right/destination.txt"})
+				if outcome == "overflow" {
+					files.handleWatcherError(fsnotify.ErrEventOverflow)
+				}
+			}
+			deadline := time.Now().Add(time.Second)
+			for {
+				files.mu.Lock()
+				pending, completed, watched := len(files.expectedRenames), len(files.completedRenames), len(files.watched)
+				files.mu.Unlock()
+				if pending == 0 && completed == 0 && watched == 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("move retained resources: pending=%d completed=%d watched=%d", pending, completed, watched)
+				}
+				time.Sleep(time.Millisecond)
+			}
+		})
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/proompteng/lab/services/nanoagent/internal/guestauth"
 )
 
 var dangerousForwardHeaders = []string{
@@ -19,6 +21,13 @@ var dangerousForwardHeaders = []string{
 	"X-Forwarded-For",
 	"X-Forwarded-Host",
 	"X-Forwarded-Proto",
+	guestauth.ContextHeader,
+	guestauth.SignatureHeader,
+	guestClaimUIDHeader,
+	guestClaimEpochHeader,
+	guestRuntimeEpochHeader,
+	"X-Tengri-Leader-Owner",
+	"X-Tengri-Leader-Generation",
 }
 
 type previewRequestTracker struct {
@@ -73,7 +82,7 @@ func (tracker *previewRequestTracker) close() {
 
 func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http.Request) {
 	port, err := strconv.Atoi(request.PathValue("port"))
-	if err != nil || validatePreviewPort(port) != nil {
+	if err != nil || (port != browserPort && validatePreviewPort(port) != nil) {
 		writeAPIError(writer, http.StatusBadRequest, "invalid preview port")
 		return
 	}
@@ -87,6 +96,18 @@ func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http
 		writeAPIError(writer, http.StatusBadRequest, "invalid preview path")
 		return
 	}
+	if port == editorPort && !allowedEditorProxyPath(path) {
+		writeAPIError(writer, http.StatusForbidden, "this guest port is reserved")
+		return
+	}
+	if port == editorPort && path == "/_tengri/editor-bridge" {
+		if server.editor == nil {
+			writeAPIError(writer, http.StatusServiceUnavailable, "VS Code is unavailable")
+			return
+		}
+		server.editor.bridge.browser(writer, request)
+		return
+	}
 	previewContext, release, tracked := server.previewRequests.track(request.Context())
 	if !tracked {
 		writeAPIError(writer, http.StatusServiceUnavailable, "Nanoagent is shutting down")
@@ -94,9 +115,20 @@ func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http
 	}
 	defer release()
 	request = request.WithContext(previewContext)
+	if port == browserPort {
+		if server.browser == nil {
+			writeAPIError(writer, http.StatusServiceUnavailable, "Chromium is unavailable")
+			return
+		}
+		server.browser.serve(writer, request, path)
+		return
+	}
 	target, _ := url.Parse(fmt.Sprintf("http://%s", loopbackAddress(port)))
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = server.previewTransport
+	if port == editorPort && server.editor != nil {
+		proxy.Transport = server.editor.transport
+	}
 	originalDirector := proxy.Director
 	proxy.Director = func(upstream *http.Request) {
 		originalDirector(upstream)
@@ -118,11 +150,24 @@ func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http
 		// must not be able to spoof an authentication failure and evict Tengri's cached guest binding.
 		response.Header.Del(nanoagentAuthFailureHeader)
 		response.Header.Del("Server")
-		response.Header.Set("Cache-Control", "no-store")
+		if port != editorPort {
+			response.Header.Set("Cache-Control", "no-store")
+		}
 		return nil
 	}
 	proxy.ErrorHandler = func(writer http.ResponseWriter, _ *http.Request, _ error) {
 		writeAPIError(writer, http.StatusBadGateway, "preview service is unavailable inside the microVM")
 	}
 	proxy.ServeHTTP(writer, request)
+}
+
+func allowedEditorProxyPath(path string) bool {
+	for _, prefix := range []string{"/proxy/", "/absproxy/"} {
+		if portPath, ok := strings.CutPrefix(path, prefix); ok {
+			portValue, _, _ := strings.Cut(portPath, "/")
+			port, err := strconv.Atoi(portValue)
+			return err == nil && validatePreviewPort(port) == nil && port != editorPort
+		}
+	}
+	return true
 }

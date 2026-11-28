@@ -1,21 +1,10 @@
 # 143. Jangar Route-Stable Status Snapshot Escrow And Repair Actuation Windows (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-07
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane resilience, route-stable status authority, scheduled runner preflight, bounded repair
 dispatch, safe rollout, validation, rollback, and Torghut capital handoff.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/147-torghut-stale-proof-repair-exchange-and-route-stable-capital-quorum-2026-05-07.md`
-
-Extends:
-
-- `142-jangar-repair-dividend-handoff-gates-and-actuation-contracts-2026-05-07.md`
-- `141-jangar-controller-witness-escrow-and-repair-dividend-settlement-2026-05-07.md`
-- `140-jangar-watch-reliability-state-exchange-and-capital-action-governor-2026-05-07.md`
-- `136-jangar-controller-authority-settlement-and-endpoint-parity-ledger-2026-05-07.md`
 
 ## Decision
 

@@ -29,24 +29,27 @@ argocd/
 
 ## ApplicationSets
 
-Applications in the `applications/` directory are automatically discovered and deployed by the ApplicationSet defined in `applicationsets/lovely-apps.yaml`. This removes the need for creating individual Application resources.
+The [root Application](root.yaml) loads the definitions in `applicationsets/`. The
+[bootstrap](applicationsets/bootstrap.yaml), [platform](applicationsets/platform.yaml), and
+[product](applicationsets/product.yaml) ApplicationSets use explicit lists, not directory discovery. A directory under
+`applications/` is not deployed just because it exists.
+
+Keep these directories even though they are not direct Application sources:
+
+- [ClickHouse upgrade acceptance](applications/clickhouse-upgrade-acceptance/README.md) contains the isolated ClickHouse
+  and Keeper rehearsals and tests used by the [upgrade runbook](../docs/runbooks/clickhouse-final-stable-upgrades.md).
+- [PostgreSQL upgrade acceptance](applications/postgres-upgrade-acceptance/README.md) contains the retained-snapshot
+  recovery rehearsal and the readiness gate exercised by the [PostgreSQL gate tests](../scripts/cluster-upgrades/postgres_upgrade_gate_test.py).
+- [Storage upgrade acceptance](applications/storage-upgrade-acceptance/README.md) contains the RBD, CephFS, and RGW
+  canaries exercised by the [Rook upgrade contract tests](../packages/scripts/src/shared/__tests__/rook-upgrade-contract.test.ts).
+- [`symphony-base`](applications/symphony-base/) is used by the Symphony overlays and watched by the
+  [Symphony Kargo Warehouse](applications/kargo/warehouses.yaml).
 
 ## Bootstrap MetalLB
 
-To install MetalLB and watch it become ready:
-
-```bash
-kubectl -n metallb-system create namespace metallb-system --dry-run=client -o yaml | kubectl -n metallb-system apply -f -
-kubectl -n metallb-system label namespace metallb-system \
-  pod-security.kubernetes.io/enforce=privileged \
-  pod-security.kubernetes.io/audit=privileged \
-  pod-security.kubernetes.io/warn=privileged --overwrite
-kubectl -n metallb-system annotate namespace metallb-system \
-  argocd.argoproj.io/sync-options=Prune=false --overwrite
-kubectl -n metallb-system apply -k argocd/applications/metallb-system
-kubectl -n metallb-system rollout status deploy/controller --timeout=180s
-kubectl -n metallb-system rollout status ds/speaker --timeout=300s
-```
+MetalLB stays manual because it owns cluster-critical networking. On a fresh or rebuilt cluster, follow the bounded,
+context-aware **Bootstrap MetalLB before the root handoff** gate in `devices/galactic/docs/bootstrap-argocd.md`. Do not
+use a direct manifest apply as a normal reconciliation path after the root Application adopts the resources.
 
 ## Kustomize Approach (kitty-krew)
 
@@ -94,7 +97,7 @@ To create a new application using this pattern:
 1. Copy the `kitty-krew` directory structure to a new directory with your application name
 2. Update resource names, labels, and selectors
 3. Modify environment-specific configurations in the overlays
-4. The ApplicationSet will automatically discover and deploy the new application
+4. Add an enabled entry to the appropriate ApplicationSet with the new source path
 
 ## Switching Environments
 

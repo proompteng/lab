@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "synthesis";
   packageName = "synthesis";
   depsHash = {
-    x86_64-linux = "sha256-+hMfTU2ovMU3ITIqMIG1h+8R7c5TPDwomCXRxAVDXpo=";
-    aarch64-linux = "sha256-SsBoDqTC6wizMrLgxUIjzwyXDwyLSwScs6BxnVxtxt0=";
+    x86_64-linux = "sha256-/UN/Ri8SBBTCf6VXaml5UoeyVswx+3Cv21zKz+NBsvs=";
+    aarch64-linux = "sha256-CimrGZh96Unw7EQ/g65fOuhNrrf6g6yAnkPYHxp6DXo=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -24,6 +24,7 @@ import ./bun-workspace-service.nix {
     "packages/design"
   ];
   buildCommands = [
+    ''patchShebangs --build "$(realpath apps/synthesis/node_modules/.bin/vite)"''
     "bun --cwd=apps/synthesis run build"
   ];
   runtimeInstallPhase = ''

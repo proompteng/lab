@@ -1,0 +1,779 @@
+import importlib.util
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location(
+    "cleanup", Path(__file__).with_name("cleanup.py")
+)
+cleanup = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cleanup)
+
+
+def check_worker_signal_orders():
+    def interrupt(signum, _frame):
+        raise InterruptedError(signal.Signals(signum).name)
+
+    signal.signal(signal.SIGTERM, interrupt)
+    signal.signal(signal.SIGALRM, interrupt)
+    for first, second in (
+        (signal.SIGTERM, signal.SIGALRM),
+        (signal.SIGALRM, signal.SIGTERM),
+    ):
+        started = threading.Event()
+        release = threading.Event()
+        done = threading.Event()
+
+        class SignaledExecutor(ThreadPoolExecutor):
+            def shutdown(self, wait=True, *, cancel_futures=False):
+                # Deliver the second signal at the join boundary while the worker is active.
+                try:
+                    assert wait
+                    signal.raise_signal(second)
+                finally:
+                    release.set()
+                super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+        def work(index):
+            if index == 0:
+                return
+            started.set()
+            assert release.wait(2)
+            done.set()
+
+        with patch.object(cleanup, "ThreadPoolExecutor", SignaledExecutor):
+            try:
+                with cleanup.worker_pool(1) as map_work:
+                    results = map_work(work, [0, 1])
+                    next(results)
+                    assert started.wait(2)
+                    signal.raise_signal(first)
+            except (InterruptedError, TimeoutError):
+                assert done.is_set(), f"{first.name} interrupted the worker join"
+            else:
+                raise AssertionError(f"{first.name} did not interrupt the phase")
+
+
+class CleanupTest(unittest.TestCase):
+    def test_failed_phase_cancels_queued_work_before_returning(self):
+        started = threading.Event()
+        release = threading.Event()
+        ran = []
+
+        class ObservedExecutor(ThreadPoolExecutor):
+            def submit(self, function, index):
+                future = super().submit(function, index)
+                if index == 100:
+                    # The running worker stays blocked until the last queued task is cancelled.
+                    future.add_done_callback(
+                        lambda result: release.set() if result.cancelled() else None
+                    )
+                return future
+
+        def work(index):
+            if index == 0:
+                return index
+            if index == 1:
+                started.set()
+                release.wait(2)
+            ran.append(index)
+            return index
+
+        with (
+            patch.object(cleanup, "ThreadPoolExecutor", ObservedExecutor),
+            self.assertRaisesRegex(RuntimeError, "interrupted phase"),
+        ):
+            with cleanup.worker_pool(1) as map_work:
+                results = map_work(work, range(101))
+                self.assertEqual(next(results), 0)
+                self.assertTrue(started.wait(1))
+                raise RuntimeError("interrupted phase")
+        self.assertTrue(release.is_set())
+        self.assertEqual(ran, [1])
+
+    def test_signal_orders_cannot_interrupt_joining_active_workers(self):
+        # A failed worker join can terminate the process.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from test_cleanup import check_worker_signal_orders; check_worker_signal_orders()",
+            ],
+            cwd=Path(__file__).parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_cooperative_deadline_reports_unfinished_quarantine(self):
+        orphan = self.blob(b"deadline candidate")
+        plan = self.prepare()
+        with patch.object(cleanup.time, "monotonic", side_effect=[0, 0.5, 2]):
+            result = self.collect(plan, seconds=1)
+        self.assertEqual(result["quarantinedBlobs"], 0)
+        self.assertTrue(result["collectionTimedOut"])
+        self.assertTrue(self.store.blob(orphan).exists())
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name) / "registry"
+        (self.root / "blobs/sha256").mkdir(parents=True)
+        (self.root / "repositories").mkdir()
+        self.store = cleanup.Store(self.root, workers=1)
+        self.old = time.time() - 10 * 86400
+        self.references = ["registry.example/lab/test:latest"]
+        self.layer = self.blob(b"retained layer")
+        self.image = self.image_manifest(self.layer)
+        self.tag("latest", self.image)
+
+    def blob(self, raw):
+        digest = "sha256:" + cleanup.hashlib.sha256(raw).hexdigest()
+        path = self.store.blob(digest)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        os.utime(path, (self.old, self.old))
+        return digest
+
+    def manifest(self, body, recent=False):
+        raw = json.dumps(body, separators=(",", ":")).encode()
+        digest = self.blob(raw)
+        link = (
+            self.store.repository("lab/test")
+            / "_manifests/revisions/sha256"
+            / cleanup.encoded(digest)
+            / "link"
+        )
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.write_text(digest)
+        if not recent:
+            os.utime(link, (self.old, self.old))
+        return digest
+
+    def descriptor(self, digest, media_type="application/octet-stream"):
+        return {
+            "mediaType": media_type,
+            "digest": digest,
+            "size": self.store.blob(digest).stat().st_size,
+        }
+
+    def image_manifest(self, layer, recent=False):
+        config = self.blob(b'{"architecture":"arm64","os":"linux"}')
+        return self.manifest(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "config": self.descriptor(
+                    config, "application/vnd.oci.image.config.v1+json"
+                ),
+                "layers": [self.descriptor(layer)],
+            },
+            recent,
+        )
+
+    def tag(self, name, digest, recent=False):
+        link = (
+            self.store.repository("lab/test")
+            / "_manifests/tags"
+            / name
+            / "current/link"
+        )
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.write_text(digest)
+        if not recent:
+            os.utime(link, (self.old, self.old))
+
+    def prepare(self, references=None, prune=False):
+        return {
+            **self.store.prepare(references or self.references, prune_tags=prune),
+            "pvcUid": "claim",
+            "pv": "volume",
+        }
+
+    def collect(self, plan, references=None, **kwargs):
+        return self.store.collect(
+            plan, references or self.references, lambda: None, **kwargs
+        )
+
+    def test_purge_survives_remount_for_blobs_and_tag_metadata(self):
+        self.blob(b"remounted orphan")
+        for number in range(6):
+            self.tag(format(number, "040x"), self.image)
+        result = self.collect(self.prepare(prune=True))
+        original = cleanup.signature
+
+        def remounted(path):
+            value = original(path)
+            return [value[0] + 1000, *value[1:]]
+
+        with patch.object(cleanup, "signature", side_effect=remounted):
+            purged = cleanup.Store(self.root / "_gc_quarantine").purge(
+                result["quarantineId"], "claim", "volume"
+            )
+        self.assertEqual(purged["deletedBlobs"], 1)
+        self.assertEqual(purged["deletedTags"], 1)
+
+    def quarantine_fixture(self):
+        orphan = self.blob(b"durable orphan")
+        for number in range(6):
+            self.tag(format(number, "040x"), self.image)
+        # Distribution also stores tag index links, not only current/link.
+        tag = self.store.repository("lab/test") / "_manifests/tags" / ("0" * 40)
+        index = tag / "index/sha256" / cleanup.encoded(self.image) / "link"
+        index.parent.mkdir(parents=True)
+        index.write_text(self.image)
+        result = self.collect(self.prepare(prune=True))
+        batch = result["quarantineId"]
+        root = self.root / "_gc_quarantine"
+        quarantine = root / batch
+        blob = quarantine / cleanup.encoded(orphan)[:2] / cleanup.encoded(orphan)
+        receipt = json.loads((quarantine / "receipt.json").read_text())
+        tag = self.store.quarantined_tag(quarantine, receipt["tags"][0])
+        return cleanup.Store(root, workers=1), batch, blob, tag
+
+    def test_empty_unreceipted_quarantine_is_removed(self):
+        root = self.root / "_gc_quarantine"
+        batch = "registry-collect-empty"
+        (root / batch).mkdir(parents=True)
+        result = cleanup.Store(root).purge(batch, "claim", "volume")
+        self.assertEqual(
+            result, {"deletedTags": 0, "deletedBlobs": 0, "deletedBytes": 0}
+        )
+        self.assertFalse((root / batch).exists())
+
+    def test_tag_inventory_propagates_filesystem_failures_and_deadlines(self):
+        tag = self.store.repository("lab/test") / "_manifests/tags/latest"
+        scandir = os.scandir
+        for error in (PermissionError, TimeoutError, InterruptedError):
+            with self.subTest(error=error.__name__):
+
+                def unreadable(path):
+                    if Path(path) == tag / "current":
+                        raise error("Cannot enumerate tag metadata")
+                    return scandir(path)
+
+                with (
+                    patch.object(cleanup.os, "scandir", side_effect=unreadable),
+                    self.assertRaises(error),
+                ):
+                    cleanup.tag_inventory(tag)
+
+    def test_failed_tag_inventory_does_not_create_quarantine_batch(self):
+        for number in range(6):
+            self.tag(format(number, "040x"), self.image)
+        plan = self.prepare(prune=True)
+        with (
+            patch.object(
+                cleanup, "tag_inventory", side_effect=TimeoutError("Inventory deadline")
+            ),
+            self.assertRaises(TimeoutError),
+        ):
+            self.collect(plan)
+        self.assertFalse(any((self.root / "_gc_quarantine").glob("registry-collect-*")))
+
+    def test_partial_tag_and_blob_purge_resumes_after_process_interruption_and_remount(
+        self,
+    ):
+        store, batch, blob, tag = self.quarantine_fixture()
+        unlink = Path.unlink
+        removed = []
+
+        def interrupt(path, *args, **kwargs):
+            if removed:
+                raise InterruptedError("process interrupted")
+            unlink(path, *args, **kwargs)
+            removed.append(path)
+
+        with (
+            patch.object(Path, "unlink", interrupt),
+            self.assertRaises(InterruptedError),
+        ):
+            store.purge(batch, "claim", "volume")
+        self.assertTrue((store.root / batch / "receipt.json").exists())
+        # Emulate a prior worker having deleted a blob before process interruption.
+        blob.unlink()
+        original = cleanup.signature
+        with patch.object(
+            cleanup, "signature", side_effect=lambda p: [999, *original(p)[1:]]
+        ):
+            result = cleanup.Store(store.root).purge(batch, "claim", "volume")
+        self.assertEqual(result["deletedBlobs"], 0)
+        self.assertFalse(tag.exists())
+
+    def test_purge_rejects_changed_content_inode_and_unreceipted_tag_metadata(self):
+        store, batch, blob, tag = self.quarantine_fixture()
+        for path in (tag / "current/link", blob):
+            with self.subTest(path=path.name):
+                raw, before = path.read_bytes(), path.stat()
+                path.write_bytes(b"x" * len(raw))
+                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+                with self.assertRaisesRegex(ValueError, "changed"):
+                    store.purge(batch, "claim", "volume")
+                path.write_bytes(raw)
+                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        # Replace an inode with identical bytes and timestamps.
+        before = blob.stat()
+        replacement = blob.with_suffix(".replacement")
+        replacement.write_bytes(blob.read_bytes())
+        os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+        replacement.replace(blob)
+        with self.assertRaisesRegex(ValueError, "changed"):
+            store.purge(batch, "claim", "volume")
+        self.assertTrue(blob.exists())
+
+    def test_purge_rejects_unknown_metadata_even_after_current_link_was_deleted(self):
+        store, batch, blob, tag = self.quarantine_fixture()
+        (tag / "current/link").unlink()
+        (tag / "unexpected").write_text("not receipted")
+        with self.assertRaisesRegex(ValueError, "tag changed"):
+            store.purge(batch, "claim", "volume")
+        self.assertTrue(blob.exists())
+
+    def test_storage_ownership_and_invalid_receipts_fail_before_deletion(self):
+        store, batch, blob, tag = self.quarantine_fixture()
+        path = store.root / batch / "receipt.json"
+        raw = path.read_text()
+        for uid, pv in (("other", "volume"), ("claim", "other")):
+            with self.assertRaisesRegex(ValueError, "claim/PV"):
+                store.purge(batch, uid, pv)
+        for mutation in (
+            {"version": 2},
+            {"batch": "other"},
+            {"inode": 0},
+            {"blobs": [{}]},
+        ):
+            value = json.loads(raw)
+            value.update(mutation)
+            path.write_text(json.dumps(value))
+            with self.assertRaises((ValueError, KeyError)):
+                store.purge(batch, "claim", "volume")
+            self.assertTrue(blob.exists())
+            self.assertTrue((tag / "current/link").exists())
+        path.write_text("invalid JSON")
+        with self.assertRaises(ValueError):
+            store.purge(batch, "claim", "volume")
+        path.unlink()
+        with self.assertRaises(FileNotFoundError):
+            store.purge(batch, "claim", "volume")
+        self.assertTrue(blob.exists())
+
+    def test_purge_rejects_unsafe_paths_and_symlinked_receipt_or_tag_contents(self):
+        store, batch, blob, tag = self.quarantine_fixture()
+        for name in ("../outside", "/outside"):
+            with self.assertRaises(ValueError):
+                store.purge(name, "claim", "volume")
+        link = tag / "current/link"
+        raw = link.read_bytes()
+        link.unlink()
+        link.symlink_to(self.store.blob(self.image))
+        with self.assertRaisesRegex(ValueError, "Symlink"):
+            store.purge(batch, "claim", "volume")
+        link.unlink()
+        link.write_bytes(raw)
+        receipt = store.root / batch / "receipt.json"
+        saved = store.root / "saved.json"
+        receipt.rename(saved)
+        receipt.symlink_to(saved)
+        with self.assertRaisesRegex(ValueError, "Symlink"):
+            store.purge(batch, "claim", "volume")
+        self.assertTrue(blob.exists())
+
+    def test_terminal_receipt_removal_is_resumable_at_each_interruption(self):
+        for after_receipt in (False, True):
+            with self.subTest(after_receipt=after_receipt):
+                store, batch, _, _ = self.quarantine_fixture()
+                unlink = Path.unlink
+
+                def interrupt(
+                    path, *args, after_receipt=after_receipt, unlink=unlink, **kwargs
+                ):
+                    if path.name == "receipt.json":
+                        if after_receipt:
+                            unlink(path, *args, **kwargs)
+                        raise InterruptedError("finalization interrupted")
+                    return unlink(path, *args, **kwargs)
+
+                with (
+                    patch.object(Path, "unlink", interrupt),
+                    self.assertRaises(InterruptedError),
+                ):
+                    store.purge(batch, "claim", "volume")
+                self.assertFalse((store.root / batch).exists())
+                self.assertTrue((store.root / (".purged-" + batch)).exists())
+                self.assertEqual(
+                    store.purge(batch, "claim", "volume")["deletedBytes"], 0
+                )
+                self.assertFalse((store.root / (".purged-" + batch)).exists())
+
+    def test_prepare_is_read_only_and_collection_reclaims_only_old_orphans(self):
+        self.store = cleanup.Store(self.root, workers=4)
+        orphan = self.blob(b"old orphan" * 100)
+        recent = self.blob(b"new in-progress content")
+        os.utime(self.store.blob(recent), None)
+        plan = self.prepare()
+        self.assertTrue(self.store.blob(orphan).exists())
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [orphan])
+        result = self.collect(plan)
+        self.assertEqual(result["quarantinedBytes"], 1000)
+        self.assertFalse(self.store.blob(orphan).exists())
+        cleanup.Store(self.root / "_gc_quarantine").purge(
+            result["quarantineId"], "claim", "volume"
+        )
+        self.assertTrue(self.store.blob(self.layer).exists())
+        self.assertTrue(self.store.blob(recent).exists())
+        self.assertEqual(self.prepare()["blobs"], [])
+
+    def test_prepare_does_not_restat_retained_layers_after_graph_validation(self):
+        orphan = self.blob(b"old orphan")
+        retained = self.store.blob(self.layer)
+        original_signature = cleanup.signature
+        reads = 0
+
+        def read_signature(path):
+            nonlocal reads
+            if path == retained:
+                reads += 1
+                if reads > 1:
+                    raise OSError("redundant retained-blob metadata read")
+            return original_signature(path)
+
+        with patch.object(cleanup, "signature", side_effect=read_signature):
+            plan = self.prepare()
+        self.assertEqual(reads, 1)
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [orphan])
+
+    def test_new_tag_and_fresh_kargo_reference_rescue_prepared_candidates(self):
+        layer = self.blob(b"previously orphaned layer")
+        image = self.image_manifest(layer)
+        plan = self.prepare()
+        self.assertEqual(
+            self.collect(
+                plan, self.references + ["registry.example/lab/test@" + image]
+            )["quarantinedBlobs"],
+            0,
+        )
+        self.assertTrue(self.store.blob(layer).exists())
+        self.tag("new-publication", image)
+        self.assertEqual(self.collect(plan)["quarantinedBlobs"], 0)
+        self.assertTrue(self.store.blob(layer).exists())
+
+    def test_index_preserves_all_platforms_and_attestations(self):
+        self.store = cleanup.Store(self.root, workers=4)
+        other_layer = self.blob(b"amd64 layer")
+        other = self.image_manifest(other_layer)
+        attestation = self.image_manifest(self.blob(b"attestation statement"))
+        index = self.manifest(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": [
+                    self.descriptor(image) for image in [self.image, other, attestation]
+                ],
+            }
+        )
+        self.tag("latest", index)
+        self.assertEqual(self.prepare()["blobs"], [])
+
+    def test_recent_untagged_manifest_keeps_its_old_layers(self):
+        layer = self.blob(b"old shared base")
+        self.image_manifest(layer, recent=True)
+        self.assertEqual(self.prepare()["blobs"], [])
+
+    def test_deleted_untagged_revision_does_not_block_cleanup(self):
+        orphan = self.blob(b"layer from a deleted manifest")
+        deleted = self.image_manifest(orphan, recent=True)
+        self.store.blob(deleted).unlink()
+        plan = self.prepare()
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [orphan])
+        result = self.collect(plan)
+        self.assertEqual(result["quarantinedBlobs"], 1)
+        self.assertTrue(self.store.blob(self.image).exists())
+        self.assertTrue(self.store.blob(self.layer).exists())
+
+    def test_reuploaded_untagged_manifest_rescues_prepared_layers(self):
+        layer = self.blob(b"layer from a reuploaded manifest")
+        image = self.image_manifest(layer, recent=True)
+        raw = self.store.blob(image).read_bytes()
+        self.store.blob(image).unlink()
+        plan = self.prepare()
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [layer])
+        self.blob(raw)
+        self.assertEqual(self.collect(plan)["quarantinedBlobs"], 0)
+        self.assertTrue(self.store.blob(layer).exists())
+
+    def test_missing_recent_tagged_manifest_still_fails_closed(self):
+        deleted = self.image_manifest(self.blob(b"tagged layer"), recent=True)
+        self.tag("release", deleted)
+        self.store.blob(deleted).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare()
+
+    def test_missing_recent_protected_manifest_still_fails_closed(self):
+        deleted = self.image_manifest(self.blob(b"protected layer"), recent=True)
+        self.store.blob(deleted).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare(self.references + ["registry.example/lab/test@" + deleted])
+
+    def test_missing_recent_index_child_still_fails_closed(self):
+        deleted = self.image_manifest(self.blob(b"platform layer"), recent=True)
+        index = self.manifest(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": [self.descriptor(self.image), self.descriptor(deleted)],
+            }
+        )
+        self.tag("latest", index)
+        self.store.blob(deleted).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare()
+
+    def test_unreadable_recent_untagged_manifest_is_not_ignored(self):
+        image = self.image_manifest(self.blob(b"unreadable layer"), recent=True)
+        unreadable = self.store.blob(image)
+        original = cleanup.signature
+
+        def read_signature(path):
+            if path == unreadable:
+                raise PermissionError("Cannot read a recent manifest")
+            return original(path)
+
+        with (
+            patch.object(cleanup, "signature", side_effect=read_signature),
+            self.assertRaises(PermissionError),
+        ):
+            self.prepare()
+
+    def test_retention_uses_upload_time_keeps_five_unknown_recent_and_protected(self):
+        for number in range(8):
+            self.tag("sha-" + format(number, "040x") + "-run-123-amd64", self.image)
+        self.tag("human-release", self.image)
+        self.tag("sha-" + "a" * 40, self.image, recent=True)
+        protected = "sha-" + format(0, "040x") + "-run-123-amd64"
+        refs = self.references + ["registry.example/lab/test:" + protected]
+        plan = self.prepare(refs, prune=True)
+        names = {row["tag"] for row in plan["deleteTags"]}
+        self.assertEqual(len(names), 3)
+        self.assertNotIn(protected, names)
+        self.assertNotIn("human-release", names)
+        self.assertNotIn("sha-" + "a" * 40, names)
+        self.collect(plan, refs)
+        tags, _ = self.store.scan_roots(plan["cutoffNs"])
+        self.assertEqual(len(tags["lab/test"]), 8)
+
+    def test_retargeted_tag_is_preserved(self):
+        for number in range(6):
+            self.tag(format(number, "040x"), self.image)
+        plan = self.prepare(prune=True)
+        candidate = plan["deleteTags"][0]["tag"]
+        replacement = self.image_manifest(self.blob(b"replacement"))
+        self.tag(candidate, replacement, recent=True)
+        result = self.collect(plan)
+        self.assertEqual(result["deletedTags"], 0)
+        self.assertTrue(self.store.blob(replacement).exists())
+
+    def test_fresh_retention_preserves_five_after_an_external_tag_delete(self):
+        for number in range(6):
+            self.tag(format(number, "040x"), self.image)
+        plan = self.prepare(prune=True)
+        candidate = plan["deleteTags"][0]["tag"]
+        kept = next(
+            format(number, "040x")
+            for number in range(6)
+            if format(number, "040x") != candidate
+        )
+        shutil.rmtree(self.store.repository("lab/test") / "_manifests/tags" / kept)
+        self.assertEqual(self.collect(plan)["deletedTags"], 0)
+        tags, _ = self.store.scan_roots(plan["cutoffNs"])
+        self.assertIn(candidate, tags["lab/test"])
+
+    def test_plan_cannot_remove_human_tags_or_weaken_minimum_retention(self):
+        self.tag("release", self.image)
+        plan = self.prepare()
+        tags, _ = self.store.scan_roots(plan["cutoffNs"])
+        plan["deleteTags"] = [
+            {
+                "repository": "lab/test",
+                "tag": "release",
+                "value": tags["lab/test"]["release"],
+            }
+        ]
+        self.assertEqual(self.collect(plan)["deletedTags"], 0)
+        plan["keep"] = 4
+        with self.assertRaisesRegex(ValueError, "weakens minimum retention"):
+            self.collect(plan)
+        plan["keep"] = 5
+        plan["cutoffNs"] = time.time_ns()
+        with self.assertRaisesRegex(ValueError, "weakens minimum retention"):
+            self.collect(plan)
+
+    def test_tags_are_renamed_while_frozen_and_purged_without_touching_republished_tags(
+        self,
+    ):
+        for number in range(6):
+            self.tag(format(number, "040x"), self.image)
+        plan = self.prepare(prune=True)
+        candidate = plan["deleteTags"][0]
+        with patch.object(
+            shutil,
+            "rmtree",
+            side_effect=AssertionError("No physical deletion while frozen"),
+        ):
+            result = self.collect(plan)
+        self.assertEqual(result["deletedTags"], 1)
+        quarantined = self.store.quarantined_tag(
+            self.root / "_gc_quarantine" / result["quarantineId"], candidate
+        )
+        self.assertTrue((quarantined / "current/link").exists())
+        self.tag(candidate["tag"], self.image, recent=True)
+        purged = cleanup.Store(self.root / "_gc_quarantine").purge(
+            result["quarantineId"], "claim", "volume"
+        )
+        self.assertEqual(purged["deletedTags"], 1)
+        tags, _ = self.store.scan_roots(plan["cutoffNs"])
+        self.assertIn(candidate["tag"], tags["lab/test"])
+
+    def test_partial_tag_purge_is_resumable(self):
+        for number in range(6):
+            self.tag(format(number, "040x"), self.image)
+        plan = self.prepare(prune=True)
+        result = self.collect(plan)
+        quarantined = self.store.quarantined_tag(
+            self.root / "_gc_quarantine" / result["quarantineId"], plan["deleteTags"][0]
+        )
+        (quarantined / "current/link").unlink()
+        self.assertEqual(
+            cleanup.Store(self.root / "_gc_quarantine").purge(
+                result["quarantineId"], "claim", "volume"
+            )["deletedTags"],
+            1,
+        )
+
+    def test_changed_candidate_fails_before_any_delete(self):
+        orphan = self.blob(b"orphan")
+        plan = self.prepare()
+        self.store.blob(orphan).write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "Candidate changed"):
+            self.collect(plan)
+        self.assertTrue(self.store.blob(orphan).exists())
+
+    def test_modified_cached_manifest_is_rejected_before_quarantine(self):
+        orphan = self.blob(b"orphan")
+        plan = self.prepare()
+        plan["manifests"][self.image]["raw"] = '{"schemaVersion":2}'
+        with self.assertRaisesRegex(ValueError, "Manifest digest mismatch"):
+            self.collect(plan)
+        self.assertTrue(self.store.blob(orphan).exists())
+
+    def test_zero_byte_orphan_and_already_collected_candidate_are_accounted(self):
+        orphan = self.blob(b"")
+        plan = self.prepare()
+        result = self.collect(plan)
+        self.assertEqual(result["quarantinedBlobs"], 1)
+        self.assertEqual(result["remainingCandidates"], 0)
+        purged = cleanup.Store(self.root / "_gc_quarantine").purge(
+            result["quarantineId"], "claim", "volume"
+        )
+        self.assertEqual(purged["deletedBlobs"], 1)
+        self.assertEqual(purged["deletedBytes"], 0)
+        self.assertEqual(self.collect(plan)["remainingCandidates"], 0)
+        self.assertFalse(self.store.blob(orphan).exists())
+
+    def test_online_purge_cannot_delete_a_reuploaded_live_blob(self):
+        raw = b"old unreferenced content"
+        orphan = self.blob(raw)
+        result = self.collect(self.prepare())
+        quarantined = (
+            self.root
+            / "_gc_quarantine"
+            / result["quarantineId"]
+            / cleanup.encoded(orphan)[:2]
+            / cleanup.encoded(orphan)
+        )
+        self.assertTrue(quarantined.exists())
+        # A new publication can reuse the same digest after uploads have reopened.
+        self.blob(raw)
+        self.tag("new-live-image", self.image_manifest(orphan), recent=True)
+        purged = cleanup.Store(self.root / "_gc_quarantine").purge(
+            result["quarantineId"], "claim", "volume"
+        )
+        self.assertEqual(purged["deletedBlobs"], 1)
+        self.assertEqual(self.store.blob(orphan).read_bytes(), raw)
+        self.assertFalse(quarantined.exists())
+
+    def test_quarantine_interruption_receipt_allows_purge_of_only_moved_files(self):
+        orphan = self.blob(b"orphan")
+        result = self.collect(self.prepare())
+        quarantine = self.root / "_gc_quarantine" / result["quarantineId"]
+        receipt = json.loads((quarantine / "receipt.json").read_text())
+        absent = {"digest": "sha256:" + "a" * 64, "signature": [1, 1, 1, 1]}
+        receipt["blobs"].append(absent)
+        (quarantine / "receipt.json").write_text(json.dumps(receipt))
+        purged = cleanup.Store(self.root / "_gc_quarantine").purge(
+            result["quarantineId"], "claim", "volume"
+        )
+        self.assertEqual(purged["deletedBlobs"], 1)
+        self.assertFalse(self.store.blob(orphan).exists())
+
+    def test_missing_or_unknown_retained_content_fails_closed(self):
+        self.store.blob(self.layer).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare()
+        bad = self.manifest({"schemaVersion": 2, "mediaType": "unknown"})
+        self.tag("latest", bad)
+        with self.assertRaisesRegex(ValueError, "Unsupported manifest media type"):
+            self.prepare()
+
+    def test_wrong_filesystem_and_writable_registry_refuse_collection(self):
+        orphan = self.blob(b"orphan")
+        plan = self.prepare()
+        plan["identity"] = [-1, -1]
+        with self.assertRaisesRegex(ValueError, "different registry filesystem"):
+            self.collect(plan)
+        plan["identity"] = self.store.identity()
+
+        def writable():
+            raise RuntimeError("Registry accepts uploads")
+
+        with self.assertRaisesRegex(RuntimeError, "accepts uploads"):
+            self.store.collect(plan, self.references, writable)
+        self.assertTrue(self.store.blob(orphan).exists())
+
+    def test_timeout_performs_no_deletes_and_batch_limit_prefers_largest(self):
+        small = self.blob(b"small")
+        large = self.blob(b"large" * 100)
+        plan = self.prepare()
+        with self.assertRaises(TimeoutError):
+            self.collect(plan, seconds=0)
+        self.assertTrue(self.store.blob(large).exists())
+        result = self.collect(plan, max_blobs=1)
+        self.assertEqual(result["quarantinedBlobs"], 1)
+        self.assertEqual(result["quarantinedBytes"], 500)
+        self.assertFalse(self.store.blob(large).exists())
+        self.assertTrue(self.store.blob(small).exists())
+
+    def test_path_traversal_and_symlink_files_fail_closed(self):
+        with self.assertRaises(ValueError):
+            self.store.repository("../outside")
+        with self.assertRaises(ValueError):
+            self.store.blob("sha256:../../outside")
+        path = self.store.blob(self.layer)
+        path.unlink()
+        path.symlink_to(__file__)
+        with self.assertRaises(ValueError):
+            self.prepare()
+
+
+if __name__ == "__main__":
+    unittest.main()

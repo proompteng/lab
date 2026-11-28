@@ -13,14 +13,17 @@ const agent: TengriAgent = {
   architecture: 'amd64',
   cpuMillis: 2_000,
   memoryMib: 4_096,
-  workspaceGib: 16,
+  workspaceGib: 32,
+  uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  runtimeEpoch: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+  policyVersion: '1',
+  power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',
   createdAt: '2026-08-27T12:00:00Z',
   readyAt: '2026-08-27T12:01:00Z',
   lastActivityAt: '2026-08-27T12:02:00Z',
   idleDeadline: '2026-08-27T13:02:00Z',
-  expiresAt: '2026-08-27T16:00:00Z',
   conditions: [],
 }
 
@@ -32,7 +35,7 @@ const user: TengriUser = {
 }
 
 describe('Tengri Settings', () => {
-  test('server-renders truthful runtime data with hydration-stable date placeholders', () => {
+  test('server-renders the General pane without mounting inactive settings', () => {
     const html = renderToString(
       createElement(SettingsApp, {
         active: false,
@@ -42,16 +45,19 @@ describe('Tengri Settings', () => {
         instanceId: 'settings-1',
         lifecycleDisabled: false,
         onDelete: () => undefined,
+        onChanged: async () => undefined,
         onSignOut: () => undefined,
         onSleep: () => undefined,
         user,
       }),
     )
 
-    expect(html).toContain('Kata Firecracker (kata-fc)')
-    expect(html).toContain('2 CPU · 4 GiB RAM')
-    expect(html).toContain('Checking login…')
-    expect(html).toContain('Sleep Agent')
+    expect(html).toContain('Settings sections')
+    expect(html).toContain('Search Settings')
+    expect(html).toContain('Open Power &amp; Sleep')
+    expect(html).toContain('Open About')
+    expect(html).not.toContain('Sleep when inactive')
+    expect(html).not.toContain('Checking login…')
     expect(html).not.toContain('2026-08-27')
   })
 })

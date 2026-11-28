@@ -1,16 +1,19 @@
 import { describe, expect, test } from 'bun:test'
 import { DateTime, Result } from 'effect'
+import fc from 'fast-check'
 
 import {
-  canonicalHashV1,
-  canonicalHashV1OrThrow,
   canonicalHashV1Result,
   canonicalJsonV1Result,
+  canonicalJsonEqualV1,
+  canonicalJsonWithHashV1Result,
   renderCanonicalJsonFailure,
+  sha256,
   stableU128,
   stableU64,
   type CanonicalJsonFailure,
 } from './hash'
+import { checkProperty } from './testing/property-test-support'
 
 const failureOf = <A>(result: Result.Result<A, CanonicalJsonFailure>): CanonicalJsonFailure => {
   expect(Result.isFailure(result)).toBe(true)
@@ -18,6 +21,92 @@ const failureOf = <A>(result: Result.Result<A, CanonicalJsonFailure>): Canonical
 }
 
 describe('canonical hashing', () => {
+  test('property: direct equality agrees with complete canonical bytes after deep key reordering', () => {
+    const reorder = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? value.map(reorder)
+        : value !== null && typeof value === 'object'
+          ? Object.fromEntries(
+              Object.entries(value)
+                .reverse()
+                .map(([key, item]) => [key, reorder(item)]),
+            )
+          : value
+    checkProperty(
+      'canonical-json-direct-equality',
+      fc.property(fc.jsonValue(), fc.jsonValue(), (left, right) => {
+        const expected = (a: unknown, b: unknown) => {
+          const x = canonicalJsonV1Result(a),
+            y = canonicalJsonV1Result(b)
+          return Result.isSuccess(x) && Result.isSuccess(y) && x.success === y.success
+        }
+        expect(canonicalJsonEqualV1(left, right)).toBe(expected(left, right))
+        expect(canonicalJsonEqualV1(left, reorder(left))).toBe(expected(left, reorder(left)))
+        expect(canonicalJsonEqualV1(left, left)).toBe(expected(left, left))
+      }),
+      2000,
+    )
+    expect(canonicalJsonEqualV1({ value: -0 }, { value: 0 })).toBe(true)
+    expect(canonicalJsonEqualV1(Object.assign(Object.create(null), { a: 1 }), { a: 1 })).toBe(true)
+  })
+
+  test('direct equality rejects malformed self-identical values and preserves non-cyclic aliases', () => {
+    let getterCalls = 0
+    const accessor = Object.defineProperty({}, 'value', {
+      enumerable: true,
+      get() {
+        getterCalls++
+        return 1
+      },
+    })
+    const hidden = Object.defineProperty({}, 'value', { value: 1 })
+    const symbolic = { value: 1, [Symbol('hidden')]: 1 }
+    const sparse = Array.from({ length: 2 }, () => 1)
+    delete sparse[0]
+    const custom = [1]
+    Object.assign(custom, { extra: 1 })
+    const cycle: { self?: unknown } = {}
+    cycle.self = cycle
+    for (const value of [
+      accessor,
+      hidden,
+      symbolic,
+      sparse,
+      custom,
+      cycle,
+      undefined,
+      NaN,
+      Infinity,
+      1n,
+      Symbol('value'),
+      () => 1,
+      new Date(),
+      '\ud800',
+      { '\ud800': 1 },
+    ])
+      expect(canonicalJsonEqualV1(value, value)).toBe(false)
+    expect(getterCalls).toBe(0)
+    const shared = { value: 1 }
+    expect(canonicalJsonEqualV1([shared, shared], [{ value: 1 }, { value: 1 }])).toBe(true)
+  })
+
+  test('direct equality defers proxy traps to the original complete serialization order', () => {
+    let reads = 0
+    const value = new Proxy(
+      { value: 1 },
+      {
+        getOwnPropertyDescriptor(target, key) {
+          const descriptor = Object.getOwnPropertyDescriptor(target, key)
+          return descriptor === undefined ? undefined : { ...descriptor, value: ++reads }
+        },
+      },
+    )
+    expect(canonicalJsonEqualV1({ nested: value }, { nested: value })).toBe(false)
+    expect(reads).toBe(2)
+    const revoked = Proxy.revocable({}, {})
+    revoked.revoke()
+    expect(canonicalJsonEqualV1(revoked.proxy, {})).toBe(false)
+  })
   test('preserves canonical bytes, UTF-16 key order, negative-zero normalization, and hash identity', () => {
     const value = {
       z: [null, true, false, -0, 1.25, 'é', '😀'],
@@ -28,16 +117,75 @@ describe('canonical hashing', () => {
 
     expect(canonicalJsonV1Result(value)).toEqual(Result.succeed(canonical))
     expect(canonicalHashV1Result(value)).toEqual(Result.succeed(hash))
-    expect(canonicalHashV1(value)).toBe(hash)
-    expect(canonicalHashV1OrThrow(value)).toBe(hash)
-    expect(canonicalHashV1({ b: 2, a: 1 })).toBe(canonicalHashV1({ a: 1, b: 2 }))
+    expect(canonicalJsonWithHashV1Result(value)).toEqual(Result.succeed({ body: canonical, hash }))
+    expect(Result.getOrThrow(canonicalHashV1Result({ b: 2, a: 1 }))).toBe(
+      Result.getOrThrow(canonicalHashV1Result({ a: 1, b: 2 })),
+    )
+  })
+
+  test('matches JSON scalar encoding at finite-number formatting boundaries', () => {
+    const numbers = [
+      0,
+      -0,
+      Number.MIN_VALUE,
+      -Number.MIN_VALUE,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      Number.MIN_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER,
+      1e-7,
+      1e-6,
+      1e20,
+      1e21,
+      Math.PI,
+    ]
+    for (const value of numbers) {
+      const body = JSON.stringify(value)
+      expect(canonicalJsonWithHashV1Result(value)).toEqual(Result.succeed({ body, hash: sha256(body) }))
+    }
+  })
+
+  test('preserves every JSON escape in values and keys alongside unescaped Unicode', () => {
+    const values = [
+      '',
+      'ordinary evidence text / 2026-09-04T14:30:02.000Z',
+      '"',
+      '\\',
+      'line\nbreak\tand\rreturn',
+      'é e\u0301 😀 \u2028 \u2029 \ufeff',
+      ...Array.from({ length: 32 }, (_, code) => String.fromCharCode(code)),
+    ]
+    for (const value of values) {
+      const input = { [value]: [value, value + ' tail'] }
+      const body = JSON.stringify(input)
+      expect(canonicalJsonWithHashV1Result(input)).toEqual(Result.succeed({ body, hash: sha256(body) }))
+    }
+  })
+
+  test('property: scalar encoding stays byte-identical to JSON for finite numbers and well-formed Unicode', () => {
+    checkProperty(
+      'canonical-json-scalar-encoding',
+      fc.property(
+        fc.double({ noNaN: true, noDefaultInfinity: true }),
+        fc.fullUnicodeString({ maxLength: 80 }),
+        fc.fullUnicodeString({ maxLength: 80 }),
+        (number, key, value) => {
+          const input = { [key]: [number, value] }
+          const body = JSON.stringify(input)
+          expect(canonicalJsonWithHashV1Result(input)).toEqual(Result.succeed({ body, hash: sha256(body) }))
+        },
+      ),
+      2000,
+    )
   })
 
   test('preserves valid Unicode exactly and rejects invalid value or key surrogates as data', () => {
     expect(canonicalJsonV1Result({ emoji: '\ud83d\ude00', composed: 'é', decomposed: 'e\u0301' })).toEqual(
       Result.succeed('{"composed":"é","decomposed":"é","emoji":"😀"}'),
     )
-    expect(canonicalHashV1({ value: 'é' })).not.toBe(canonicalHashV1({ value: 'e\u0301' }))
+    expect(Result.getOrThrow(canonicalHashV1Result({ value: 'é' }))).not.toBe(
+      Result.getOrThrow(canonicalHashV1Result({ value: 'e\u0301' })),
+    )
 
     expect(failureOf(canonicalJsonV1Result({ invalid: '\ud800' }))).toEqual({
       _tag: 'CanonicalJsonFailure',
@@ -151,6 +299,115 @@ describe('canonical hashing', () => {
     expect(getterCalls).toBe(0)
   })
 
+  test('property: ordinary array encodings agree with transparent proxies using the original key-membership proof', () => {
+    const proxyArrays = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? new Proxy(value.map(proxyArrays), {})
+        : value !== null && typeof value === 'object'
+          ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, proxyArrays(child)]))
+          : value
+    checkProperty(
+      'canonical-array-key-membership',
+      fc.property(fc.array(fc.jsonValue(), { maxLength: 30 }), (value) => {
+        expect(canonicalJsonV1Result(value)).toEqual(canonicalJsonV1Result(proxyArrays(value)))
+        expect(canonicalHashV1Result(value)).toEqual(canonicalHashV1Result(proxyArrays(value)))
+      }),
+      1000,
+    )
+  })
+
+  test('keeps dense subclass and inherited array data while rejecting every extra own key before element values', () => {
+    class DenseArray extends Array<unknown> {}
+    const subclass = new DenseArray(1, 2)
+    const inherited = Object.assign(Object.create(Array.prototype), { inherited: true })
+    const unusual = Object.setPrototypeOf([1, 2], inherited)
+    for (const value of [subclass, unusual, Object.freeze([1, 2]), []])
+      expect(canonicalJsonV1Result(value)).toEqual(Result.succeed(value.length === 0 ? '[]' : '[1,2]'))
+    for (const key of ['extra', '01', '-0', '4294967295', Symbol('hidden')]) {
+      const value = [NaN]
+      Object.defineProperty(value, key, { value: 2, enumerable: false })
+      expect(failureOf(canonicalJsonV1Result(value))).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path: '$',
+        reason: 'non-dense-array',
+        actualType: 'array',
+      })
+    }
+  })
+
+  test('retains changing proxy own-key lists rather than applying an ordinary-array cardinality proof', () => {
+    for (const secondKeys of [['length'], ['00', 'length'], [Symbol('hidden'), 'length']]) {
+      const trace: string[] = []
+      let reads = 0
+      const value = new Proxy([1], {
+        get(target, key, receiver) {
+          trace.push(`get:${String(key)}`)
+          return Reflect.get(target, key, receiver)
+        },
+        ownKeys() {
+          trace.push(`keys:${++reads}`)
+          return reads === 1 ? ['0', 'length'] : secondKeys
+        },
+        getOwnPropertyDescriptor(target, key) {
+          trace.push(`descriptor:${String(key)}`)
+          return Reflect.getOwnPropertyDescriptor(target, key)
+        },
+      })
+      const actual = canonicalJsonV1Result(value)
+      if (secondKeys.length === 1) {
+        expect(actual).toEqual(Result.succeed('[1]'))
+        expect(trace).toEqual(['get:length', 'keys:1', 'descriptor:0', 'descriptor:length', 'keys:2', 'descriptor:0'])
+      } else {
+        expect(failureOf(actual)).toEqual({
+          _tag: 'CanonicalJsonFailure',
+          path: '$',
+          reason: 'non-dense-array',
+          actualType: 'array',
+        })
+        expect(trace).toEqual(['get:length', 'keys:1', 'descriptor:0', 'descriptor:length', 'keys:2'])
+      }
+    }
+  })
+
+  test('preserves revocation after proxy key capture and later mutations by nested proxies', () => {
+    let reads = 0
+    const revoked = Proxy.revocable([1], {
+      ownKeys() {
+        if (++reads === 2) revoked.revoke()
+        return ['0', 'length']
+      },
+    })
+    expect(failureOf(canonicalJsonV1Result(revoked.proxy))).toMatchObject({
+      path: '$[0]',
+      reason: 'introspection-failed',
+      operation: 'property-descriptor',
+      cause: expect.any(TypeError),
+    })
+    for (const mutation of ['hidden', 'symbol', 'delete'] as const) {
+      const value: unknown[] = [undefined, 2]
+      const child = new Proxy(
+        { trigger: true },
+        {
+          getOwnPropertyDescriptor(target, key) {
+            if (mutation === 'delete') Reflect.deleteProperty(value, '1')
+            else Object.defineProperty(value, mutation === 'symbol' ? Symbol('late') : 'late', { value: true })
+            return Reflect.getOwnPropertyDescriptor(target, key)
+          },
+        },
+      )
+      value[0] = child
+      const actual = canonicalJsonV1Result(value)
+      if (mutation === 'delete')
+        expect(failureOf(actual)).toEqual({
+          _tag: 'CanonicalJsonFailure',
+          path: '$[1]',
+          reason: 'non-data-property',
+          actualType: 'array-property',
+        })
+      else expect(actual).toEqual(Result.succeed('[{"trigger":true},2]'))
+    }
+  })
+
   test('accepts plain data descriptors and rejects object accessors, hidden properties, symbols, and prototypes', () => {
     const data = Object.create(null) as Record<string, unknown>
     Object.defineProperty(data, 'value', {
@@ -251,11 +508,179 @@ describe('canonical hashing', () => {
     expect(canonicalHashV1Result(first)).toEqual(canonicalHashV1Result(second))
   })
 
+  test('preserves mixed nested failure paths after completed siblings', () => {
+    const hidden = Object.defineProperty({}, 'leaf', { enumerable: false, value: 1 })
+    let getterCalls = 0
+    const accessor = Object.defineProperty({}, 'leaf', {
+      enumerable: true,
+      get: () => {
+        getterCalls += 1
+        return 1
+      },
+    })
+    const symbolic = { [Symbol('leaf')]: true }
+    const cyclic: Record<string, unknown> = {}
+    cyclic['self'] = cyclic
+    const sparse: unknown[] = []
+    sparse.length = 1
+    const base = '$.outer[1].0'
+    const cases = [
+      [{ okay: [1], ['z\ud800']: true }, base, 'invalid-unicode-key', 'string'],
+      [hidden, `${base}.leaf`, 'non-data-property', 'object-property'],
+      [accessor, `${base}.leaf`, 'non-data-property', 'object-property'],
+      [symbolic, base, 'symbol-key', 'object'],
+      [Object.create({ inherited: true }), base, 'non-plain-object', 'object'],
+      [cyclic, `${base}.self`, 'cycle', 'object'],
+      [sparse, base, 'non-dense-array', 'array'],
+      [
+        { 'key.with[brackets]': [{ value: Number.NaN }] },
+        `${base}.key.with[brackets][0].value`,
+        'non-finite-number',
+        'number',
+      ],
+      [{ leaf: ['\ud800'] }, `${base}.leaf[0]`, 'invalid-unicode-surrogate', 'string'],
+      [{ leaf: [undefined] }, `${base}.leaf[0]`, 'non-json-type', 'undefined'],
+    ] as const
+    for (const [value, path, reason, actualType] of cases) {
+      const input = { outer: [{ completed: [{ okay: true }] }, { '0': value }] }
+      expect(failureOf(canonicalJsonV1Result(input))).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path,
+        reason,
+        actualType,
+      })
+      expect(canonicalJsonV1Result({ outer: [{ okay: true }] })).toEqual(Result.succeed('{"outer":[{"okay":true}]}'))
+    }
+    expect(getterCalls).toBe(0)
+  })
+
+  test('retains the precise nested reflection operation, path and cause', () => {
+    type IntrospectionFailure = Extract<CanonicalJsonFailure, { reason: 'introspection-failed' }>
+    const cause = new Error('nested reflection unavailable')
+    const fail = (): never => {
+      throw cause
+    }
+    const check = (
+      value: unknown,
+      operation: IntrospectionFailure['operation'],
+      actualType: IntrospectionFailure['actualType'],
+      suffix = '',
+    ) => {
+      const failure = failureOf(canonicalJsonV1Result({ outer: [{ completed: {} }, { value }] }))
+      expect(failure).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path: `$.outer[1].value${suffix}`,
+        reason: 'introspection-failed',
+        actualType,
+        operation,
+        cause,
+      })
+      expect(failure.reason === 'introspection-failed' && failure.cause).toBe(cause)
+    }
+    check(new Proxy({}, { getPrototypeOf: fail }), 'prototype', 'object')
+    check(new Proxy({}, { ownKeys: fail }), 'own-keys', 'object')
+    check(new Proxy({ leaf: true }, { getOwnPropertyDescriptor: fail }), 'property-descriptor', 'object', '.leaf')
+    check(new Proxy([1], { get: fail }), 'array-length', 'array')
+    check(new Proxy([1], { ownKeys: fail }), 'enumerable-own-keys', 'array')
+
+    let ownKeysCalls = 0
+    check(
+      new Proxy([1], {
+        ownKeys: (target) => {
+          ownKeysCalls += 1
+          return ownKeysCalls === 1 ? Reflect.ownKeys(target) : fail()
+        },
+      }),
+      'own-keys',
+      'array',
+    )
+    expect(ownKeysCalls).toBe(2)
+
+    let descriptorCalls = 0
+    check(
+      new Proxy([1], {
+        getOwnPropertyDescriptor: (target, key) => {
+          if (key === '0') {
+            descriptorCalls += 1
+            if (descriptorCalls === 2) return fail()
+          }
+          return Object.getOwnPropertyDescriptor(target, key)
+        },
+      }),
+      'property-descriptor',
+      'array',
+      '[0]',
+    )
+    expect(descriptorCalls).toBe(2)
+
+    const revoked = Proxy.revocable({}, {})
+    revoked.revoke()
+    expect(failureOf(canonicalJsonV1Result({ outer: [revoked.proxy] }))).toEqual({
+      _tag: 'CanonicalJsonFailure',
+      path: '$.outer[0]',
+      reason: 'introspection-failed',
+      actualType: 'object',
+      operation: 'array-classification',
+      cause: expect.any(TypeError),
+    })
+  })
+
+  test('keeps reentrant serialization paths independent inside reflection traps', () => {
+    const innerResults: Result.Result<string, CanonicalJsonFailure>[] = []
+    const value = new Proxy(
+      { leaf: Number.NaN },
+      {
+        getOwnPropertyDescriptor: (target, key) => {
+          innerResults.push(canonicalJsonV1Result({ inner: [{ leaf: undefined }] }))
+          innerResults.push(canonicalJsonV1Result({ ready: [true] }))
+          return Object.getOwnPropertyDescriptor(target, key)
+        },
+      },
+    )
+    expect(failureOf(canonicalJsonV1Result({ outer: [value] }))).toEqual({
+      _tag: 'CanonicalJsonFailure',
+      path: '$.outer[0].leaf',
+      reason: 'non-finite-number',
+      actualType: 'number',
+    })
+    expect(innerResults).toEqual([
+      Result.fail({
+        _tag: 'CanonicalJsonFailure',
+        path: '$.inner[0].leaf',
+        reason: 'non-json-type',
+        actualType: 'undefined',
+      }),
+      Result.succeed('{"ready":[true]}'),
+    ])
+  })
+
   test('produces stable non-zero TigerBeetle identifiers', () => {
     expect(stableU128('run', 'event')).toBe(54953207663554066615626984220646087740n)
     expect(stableU128('run', 'event')).not.toBe(stableU128('run', 'other'))
     expect(stableU128('run', 'event')).toBeGreaterThan(0n)
     expect(stableU64('run')).toBe(6267951632907394021n)
     expect(stableU64('run')).toBeLessThan(1n << 64n)
+  })
+
+  test('preserves UTF-8 hashing and sliced binary input bytes', () => {
+    expect(sha256('é😀\u0000')).toBe('8cf55c5c4856286bfebeedef3662d2f69ffcb06995ea7b996ea99f8c5c4efe47')
+    expect(sha256('\ud800')).toBe('83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097')
+    expect(sha256(new Uint8Array([9, 0, 255, 128, 10, 9]).subarray(1, 5))).toBe(
+      '6d6f7836f1e146dc0204afb5133dae52fdc05603d8ac2dc793b481b0e0829fd1',
+    )
+  })
+
+  test('preserves identifier prefixes, leading zero bytes, and empty or delimited parts', () => {
+    const cases = [
+      [[], 302652579918965577886386472538583578916n, 11167788843400149284n],
+      [['', 'run', ''], 203297556630472807729896709296947795744n, 13529013134131533600n],
+      [['\u0000', 'é', '😀'], 167810443443146597784475889661378185084n, 15443342425121769340n],
+      [['run', 'a\u001fb'], 283080920921371137441733279798744778907n, 2468675853728024731n],
+      [['leading-zero-182'], 1138895197157255809016834109682278535n, 1646656519654924423n],
+    ] as const
+    for (const [parts, u128, u64] of cases) {
+      expect(stableU128(...parts)).toBe(u128)
+      expect(stableU64(...parts)).toBe(u64)
+    }
   })
 })

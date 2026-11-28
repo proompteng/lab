@@ -7,5 +7,17 @@ resources:
   - linear-webhook-topic.yaml
   - coder-workspace-access.yaml
   - knative-service.yaml
+  - approval-worker.yaml
+  - approval-networkpolicy.yaml
   - knative-host-middleware.yaml
   - ingressroute.yaml
+patches:
+  - patch: |-
+      apiVersion: bitnami.com/v1alpha1
+      kind: SealedSecret
+      metadata:
+        name: froussard-github-token
+        namespace: froussard
+        annotations:
+          argocd.argoproj.io/sync-wave: "-1"
+          argocd.proompteng.ai/wait-for-sealed-secret: "true"

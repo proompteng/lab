@@ -7,7 +7,6 @@
       "path": "../fixtures/timer-workflow.json",
       "temporalServerVersion": "fixture",
       "sdkVersion": "0.8.0",
-      "bunVersion": "1.3.10",
       "workflowType": "timerWorkflow",
       "featureTags": [
         "timer",
@@ -27,7 +26,6 @@
       "path": "../fixtures/activity-retry-workflow.json",
       "temporalServerVersion": "fixture",
       "sdkVersion": "0.8.0",
-      "bunVersion": "1.3.10",
       "workflowType": "activityWorkflow",
       "featureTags": [
         "activity",
@@ -48,7 +46,6 @@
       "path": "../fixtures/child-continue-workflow.json",
       "temporalServerVersion": "fixture",
       "sdkVersion": "0.8.0",
-      "bunVersion": "1.3.10",
       "workflowType": "parentWorkflow",
       "featureTags": [
         "child-workflow",
@@ -70,7 +67,6 @@
       "path": "../fixtures/captured-timer-010ms.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationTimerWorkflow",
       "featureTags": [
         "timer",
@@ -102,7 +98,6 @@
       "path": "../fixtures/captured-timer-025ms.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationTimerWorkflow",
       "featureTags": [
         "timer",
@@ -134,7 +129,6 @@
       "path": "../fixtures/captured-timer-050ms.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationTimerWorkflow",
       "featureTags": [
         "timer",
@@ -166,7 +160,6 @@
       "path": "../fixtures/captured-timer-100ms.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationTimerWorkflow",
       "featureTags": [
         "timer",
@@ -198,7 +191,6 @@
       "path": "../fixtures/captured-timer-200ms.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationTimerWorkflow",
       "featureTags": [
         "timer",
@@ -230,7 +222,6 @@
       "path": "../fixtures/captured-timer-default.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationTimerWorkflow",
       "featureTags": [
         "timer",
@@ -262,7 +253,6 @@
       "path": "../fixtures/captured-activity-alpha.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationActivityWorkflow",
       "featureTags": [
         "activity",
@@ -296,7 +286,6 @@
       "path": "../fixtures/captured-activity-json.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationActivityWorkflow",
       "featureTags": [
         "activity",
@@ -330,7 +319,6 @@
       "path": "../fixtures/captured-activity-unicode.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationActivityWorkflow",
       "featureTags": [
         "activity",
@@ -364,7 +352,6 @@
       "path": "../fixtures/captured-activity-long.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationActivityWorkflow",
       "featureTags": [
         "activity",
@@ -398,7 +385,6 @@
       "path": "../fixtures/captured-activity-empty.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationActivityWorkflow",
       "featureTags": [
         "activity",
@@ -432,7 +418,6 @@
       "path": "../fixtures/captured-activity-punctuation.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationActivityWorkflow",
       "featureTags": [
         "activity",
@@ -466,7 +451,6 @@
       "path": "../fixtures/captured-child-alpha.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationParentWorkflow",
       "featureTags": [
         "child-workflow",
@@ -498,7 +482,6 @@
       "path": "../fixtures/captured-child-beta.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationParentWorkflow",
       "featureTags": [
         "child-workflow",
@@ -530,7 +513,6 @@
       "path": "../fixtures/captured-child-json.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationParentWorkflow",
       "featureTags": [
         "child-workflow",
@@ -563,7 +545,6 @@
       "path": "../fixtures/captured-child-long.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationParentWorkflow",
       "featureTags": [
         "child-workflow",
@@ -596,7 +577,6 @@
       "path": "../fixtures/captured-continue-two.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationContinueAsNewWorkflow",
       "featureTags": [
         "continue-as-new",
@@ -625,7 +605,6 @@
       "path": "../fixtures/captured-continue-three.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationContinueAsNewWorkflow",
       "featureTags": [
         "continue-as-new",
@@ -654,7 +633,6 @@
       "path": "../fixtures/captured-continue-counter.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationContinueAsNewWorkflow",
       "featureTags": [
         "continue-as-new",
@@ -684,7 +662,6 @@
       "path": "../fixtures/captured-continue-four.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationContinueAsNewWorkflow",
       "featureTags": [
         "continue-as-new",
@@ -713,7 +690,6 @@
       "path": "../fixtures/captured-heartbeat-short.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationHeartbeatWorkflow",
       "featureTags": [
         "activity",
@@ -747,7 +723,6 @@
       "path": "../fixtures/captured-heartbeat-medium.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationHeartbeatWorkflow",
       "featureTags": [
         "activity",
@@ -781,7 +756,6 @@
       "path": "../fixtures/captured-retry-once.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationRetryProbeWorkflow",
       "featureTags": [
         "activity",
@@ -816,7 +790,6 @@
       "path": "../fixtures/captured-retry-twice.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationRetryProbeWorkflow",
       "featureTags": [
         "activity",
@@ -851,7 +824,6 @@
       "path": "../fixtures/captured-retry-no-failure.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationRetryProbeWorkflow",
       "featureTags": [
         "activity",
@@ -885,7 +857,6 @@
       "path": "../fixtures/captured-metadata-search-side-effect-version.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationMetadataWorkflow",
       "featureTags": [
         "determinism",
@@ -924,7 +895,6 @@
       "path": "../fixtures/captured-timer-cancellation.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationTimerCancellationWorkflow",
       "featureTags": [
         "cancellation",
@@ -957,7 +927,6 @@
       "path": "../fixtures/captured-signal-query.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationSignalQueryWorkflow",
       "featureTags": [
         "determinism",
@@ -990,7 +959,6 @@
       "path": "../fixtures/captured-update-success.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationUpdateWorkflow",
       "featureTags": [
         "determinism",
@@ -1026,7 +994,6 @@
       "path": "../fixtures/captured-update-rejection.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationUpdateWorkflow",
       "featureTags": [
         "determinism",
@@ -1060,7 +1027,6 @@
       "path": "../fixtures/captured-external-cancellation.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationQueryOnlyWorkflow",
       "featureTags": [
         "cancellation",
@@ -1097,7 +1063,6 @@
       "path": "../fixtures/captured-workflow-task-failure.json",
       "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
       "sdkVersion": "0.9.1",
-      "bunVersion": "1.3.13",
       "workflowType": "integrationWorkflowTaskFailureWorkflow",
       "featureTags": [
         "failure",

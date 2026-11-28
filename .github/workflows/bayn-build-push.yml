@@ -5,25 +5,237 @@ permissions:
   contents: read
 
 on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: 'Exact current main commit to validate and publish after a blocked release'
+        required: true
+        type: string
   push:
     branches:
       - main
+    paths:
+      - 'services/bayn/**'
+      # Tests, operating guides, and standalone studies are not shipped in the cohort.
+      - '!services/bayn/**/*.test.ts'
+      - '!services/bayn/src/jev/native.test-support.ts'
+      - '!services/bayn/src/testing/postgres-template.test-support.ts'
+      - '!services/bayn/src/testing/streaming-market-fixture.ts'
+      - '!services/bayn/formal/**'
+      - '!services/bayn/**/*.md'
+      - '!services/bayn/.gitignore'
+      - '!services/bayn/tools/research-*.ts'
+      - '!services/bayn/tools/test-*.ts'
+      - '!services/bayn/tools/postgres-file-preload.ts'
+      - '!services/bayn/tools/postgres-test-databases.ts'
+      - '!services/bayn/tools/ci-*-timings.json'
+      - '!services/bayn/tools/verify-image-metadata.ts'
+      - '!services/bayn/scripts/test-streaming-integrations.sh'
+      - '!services/bayn/scripts/test_verify_integration_results.py'
+      - '!services/bayn/scripts/verify-integration-results.py'
+      # The retained acceptance protocol is imported by Bayn source.
+      - 'docs/bayn/jev-migration-acceptance-v2.json'
+      - 'services/dorvud/gradle/**'
+      - 'services/dorvud/gradlew'
+      - 'services/dorvud/gradle.properties'
+      - 'services/dorvud/settings.gradle.kts'
+      - 'services/dorvud/build.gradle.kts'
+      - 'services/dorvud/platform/**'
+      - '!services/dorvud/platform/src/test/**'
+      - '!services/dorvud/platform/README.md'
+      - 'services/dorvud/websockets/**'
+      - '!services/dorvud/websockets/src/test/**'
+      - '!services/dorvud/websockets/README.md'
+      - 'nix/images/bayn-broker-feed.nix'
+      - 'nix/images/dorvud-jvm-service.nix'
+      - 'nix/images/bayn.nix'
+      - 'nix/images/bayn-runtime-root.nix'
+      - 'nix/images/bayn-frozen-control.nix'
+      - 'nix/images/bayn-deps-hash.nix'
+      - 'nix/images/normalize-bayn-bun-deps.sh'
+      - 'nix/images/normalize-bayn-bun-deps.test.sh'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'nix/images/prune-bun-dependency-metadata.sh'
+      - 'nix/packages.nix'
+      - 'nix/verify-bayn-image-command.sh'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'bun.lock'
+      # services/bayn/** covers the only non-root workspace in Bayn's Bun install closure.
+      - 'package.json'
+      - '.npmrc'
+      - 'bunfig.toml'
+      - 'patches/**'
+      - 'tsconfig.base.json'
+      - 'argocd/applications/bayn/**'
+      - '!argocd/applications/bayn/README.md'
+      - 'argocd/applicationsets/product.yaml'
 
 concurrency:
-  group: ${{ github.workflow }}-main
-  cancel-in-progress: true
+  # Keep one pending run. Its planner compares against the last published cohort, not the previous push.
+  group: >-
+    ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.expected_main_sha == github.sha)
+        && format('{0}-main', github.workflow) || format('{0}-rejected-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.plan.outputs.image }}
+    steps:
+      - name: Require main publication ref
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Verify publication source
+        env:
+          BAYN_EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: bash packages/scripts/src/bayn/verify-publication-source.sh
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Plan from the last published cohort
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun run packages/scripts/src/bayn/plan-publication.ts
+
+  validation:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    uses: ./.github/workflows/bayn-ci.yml
+    secrets: inherit
+
+  broker-feed-validation:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    uses: ./.github/workflows/bayn-broker-feed-validation.yml
+
   image:
+    needs: [validation, broker-feed-validation]
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn
       package_attr: bayn-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
+      publish_index: false
       publish_kargo_tag: false
+      kargo_tag_include_run_id: true
       source_revision: ${{ github.sha }}
       pr_number: ''
-      latest: true
+      latest: false
       publish_on_dispatch: false
-      release_artifact_name: bayn-release-contract
     secrets: inherit
+
+  research-image:
+    needs: [validation, broker-feed-validation]
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bayn-research
+      package_attr: bayn-research-image
+      tmpfs: true
+      tag: sha-${{ github.sha }}
+      publish_index: false
+      publish_kargo_tag: false
+      kargo_tag_include_run_id: true
+      source_revision: ${{ github.sha }}
+      latest: false
+      publish_on_dispatch: false
+    secrets: inherit
+
+  broker-feed-image:
+    needs: [validation, broker-feed-validation]
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bayn-broker-feed
+      package_attr: bayn-broker-feed-image
+      tmpfs: true
+      tag: sha-${{ github.sha }}
+      publish_index: false
+      publish_kargo_tag: false
+      kargo_tag_include_run_id: true
+      source_revision: ${{ github.sha }}
+      latest: false
+      publish_on_dispatch: false
+    secrets: inherit
+
+  publish-cohort:
+    needs: [image, research-image, broker-feed-image]
+    runs-on: arc-amd64
+    timeout-minutes: 15
+    env:
+      KARGO_TAG: kargo-sha-${{ github.sha }}-run-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+      - name: Prepare all cohort indexes from the six successful platform builds
+        id: indexes
+        env:
+          BAYN_BUILD_RESULT: ${{ needs.image.result }}
+          RESEARCH_BUILD_RESULT: ${{ needs.research-image.result }}
+          BROKER_FEED_BUILD_RESULT: ${{ needs.broker-feed-image.result }}
+        run: bun run packages/scripts/src/bayn/prepare-image-cohort.ts
+      - name: Verify every immutable image before making the cohort discoverable
+        env:
+          BAYN_DIGEST: ${{ steps.indexes.outputs.bayn_digest }}
+          RESEARCH_DIGEST: ${{ steps.indexes.outputs.research_digest }}
+          BROKER_FEED_DIGEST: ${{ steps.indexes.outputs.broker_feed_digest }}
+        run: |
+          set -euo pipefail
+          for member in bayn bayn-research bayn-broker-feed; do
+            case "$member" in
+              bayn) digest="$BAYN_DIGEST" ;;
+              bayn-research) digest="$RESEARCH_DIGEST" ;;
+              bayn-broker-feed) digest="$BROKER_FEED_DIGEST" ;;
+            esac
+            reference="registry.ide-newton.ts.net/lab/${member}@${digest}"
+            bun run packages/scripts/src/shared/oci.ts assert "$reference" --platform linux/amd64 --platform linux/arm64
+            crane manifest "$reference" | jq -e --arg source "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" '
+              .annotations["org.opencontainers.image.revision"] == $source and
+              .annotations["org.opencontainers.image.source"] == "https://github.com/proompteng/lab" and
+              .annotations["ai.proompteng.github-actions-run-id"] == $run and
+              .annotations["ai.proompteng.github-actions-build-conclusion"] == "success"'
+          done
+          jq -n --arg source "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" --arg native "$BAYN_DIGEST" --arg research "$RESEARCH_DIGEST" --arg broker "$BROKER_FEED_DIGEST" \
+            '{sourceRevision: $source, runId: $run, tradingDigest: $native, researchDigest: $research, brokerFeedDigest: $broker}' > bayn-image-cohort.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: bayn-image-cohort
+          path: bayn-image-cohort.json
+          if-no-files-found: error
+          retention-days: 3
+      - name: Verify publication source before discovery
+        env:
+          BAYN_EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: bash packages/scripts/src/bayn/verify-publication-source.sh
+      - name: Publish the verified cohort for Kargo
+        env:
+          BAYN_DIGEST: ${{ steps.indexes.outputs.bayn_digest }}
+          RESEARCH_DIGEST: ${{ steps.indexes.outputs.research_digest }}
+          BROKER_FEED_DIGEST: ${{ steps.indexes.outputs.broker_feed_digest }}
+        run: |
+          set -euo pipefail
+          for member in bayn bayn-research bayn-broker-feed; do
+            case "$member" in
+              bayn) digest="$BAYN_DIGEST" ;;
+              bayn-research) digest="$RESEARCH_DIGEST" ;;
+              bayn-broker-feed) digest="$BROKER_FEED_DIGEST" ;;
+            esac
+            image="registry.ide-newton.ts.net/lab/${member}"
+            bun run packages/scripts/src/shared/oci.ts publish-kargo-tag \
+              --image "$image" --reference "${image}@${digest}" --kargo-tag "$KARGO_TAG"
+          done

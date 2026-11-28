@@ -34,7 +34,7 @@ const createSession = (
   return chatCompletionEncoderLive.create({
     id: 'chatcmpl-test',
     created: 123,
-    model: 'gpt-5.6-sol',
+    model: 'gpt-6.2-sol',
     includeUsage: options.includeUsage ?? false,
     toolRenderer,
     jangarRender: options.jangarRender,

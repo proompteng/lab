@@ -1,15 +1,23 @@
-import { Effect } from 'effect'
+import { Data, Effect } from 'effect'
 
-import { MutationOperation } from '../broker/alpaca-mutations'
-import { AuthorityRestrictionStore } from '../db/execution-store'
-import { MutationEventType, MutationStore, type MutationEvent } from '../execution/mutations'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
+import { CycleRunnerError } from '../cycle/runner/model'
+import { CycleStoreError } from '../cycle/store/model'
+import { AuthorityRestrictionStore } from '../db/execution-store/contract'
+import { OperationalError } from '../errors'
+import {
+  MutationEventType,
+  MutationStore,
+  type ExpiredEntryCancellationAdmission,
+  type MutationEvent,
+} from '../execution/mutations/model'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import type { ExecutionProgram } from '../execution/runtime-program'
+import type { PreparedProtectionClose } from '../execution/coordinator'
 import { WriterFence } from '../execution/writer-fence'
-import { CycleRunnerError } from '../cycle/runner'
 import { currentUtcInstant } from '../time'
 import { decideMutationIntentSettlement, type MutationIntentExecutionResult } from './mutation-decisions'
-import { Pipeable } from '../pipeable'
 
 export type ExecutionMutationExecutor<E, R> = {
   readonly submit?: (
@@ -21,9 +29,10 @@ export type ExecutionMutationExecutor<E, R> = {
   readonly recover: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, E, R>
 }
 
-export const mutationConsistencyDelayMs = 1_000
+export { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 
 export interface MutationRunnerErrorInput {
+  readonly operation?: CycleRunnerError['operation']
   readonly message: string
   readonly cause?: unknown
   readonly failure?: CycleRunnerError['failure']
@@ -31,13 +40,28 @@ export interface MutationRunnerErrorInput {
 
 export const mutationRunnerError = (input: MutationRunnerErrorInput): CycleRunnerError =>
   new CycleRunnerError({
-    operation: 'recover-cycle',
+    operation: input.operation ?? 'recover-cycle',
     failure: input.failure ?? 'operational',
     message: input.message,
     cause: input.cause,
   })
 
-const restrictMutationAuthorityDataFirst = (
+const isTransientCycleStoreFailure = (cause: unknown): cause is CycleStoreError =>
+  cause instanceof CycleStoreError &&
+  (cause.persistenceFailure === 'connectivity' || cause.persistenceFailure === 'transaction')
+
+const isRetryableReconciliationFailure = (error: CycleRunnerError): boolean =>
+  error.cause instanceof OperationalError && error.cause.operation === 'reconciliation' && error.cause.retryable
+
+/** These failures do not create an unknown broker mutation and are safe to retry. */
+export const shouldRestrictMutationLoopFailure = (error: CycleRunnerError): boolean =>
+  error.operation !== 'build-decision' &&
+  !isRetryableReconciliationFailure(error) &&
+  (error.operation !== 'read-oldest-unfinished' ||
+    error.failure !== 'store' ||
+    !isTransientCycleStoreFailure(error.cause))
+
+export const restrictMutationAuthority = (
   subject: string,
   reason: string,
 ): Effect.Effect<void, CycleRunnerError, AuthorityRestrictionStore | WriterFence> =>
@@ -58,8 +82,6 @@ const restrictMutationAuthorityDataFirst = (
       )
   })
 
-export const restrictMutationAuthority = Pipeable.dual(2, restrictMutationAuthorityDataFirst)
-
 export const restrictMutationLoopFailure = (
   error: CycleRunnerError,
 ): Effect.Effect<void, CycleRunnerError, AuthorityRestrictionStore | WriterFence> =>
@@ -75,6 +97,25 @@ export interface ExecuteMutationIntentInput<E, R> {
   readonly submitExpiresAt?: string | undefined
   readonly now?: Effect.Effect<string, never, R>
 }
+
+class UnresolvedMutationIntentError extends Data.TaggedError('UnresolvedMutationIntentError')<{
+  readonly intentId: string
+  readonly action: ExecuteMutationIntentInput<never, never>['action']
+  readonly event: MutationEvent
+}> {}
+
+/** Only a returned durable recovery outcome may defer optional containment to full reconciliation. */
+export const isUnresolvedMutationRecovery = (
+  error: CycleRunnerError,
+  intentId: string,
+  action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL',
+): boolean =>
+  error.failure === 'operational' &&
+  error.cause instanceof UnresolvedMutationIntentError &&
+  error.cause.intentId === intentId &&
+  error.cause.action === action &&
+  error.cause.event.intentId === intentId &&
+  error.cause.event.operation === (action === 'RECOVER_CANCEL' ? MutationOperation.Cancel : MutationOperation.Submit)
 
 export const executeMutationIntentWithExecutor = <E, R>(
   input: ExecuteMutationIntentInput<E, R>,
@@ -156,7 +197,7 @@ export const executeMutationIntentWithExecutor = <E, R>(
     if (settlement._tag === 'Unresolved') {
       return yield* mutationRunnerError({
         message: `guarded broker mutation remains unresolved at ${settlement.eventType}`,
-        cause: event,
+        cause: new UnresolvedMutationIntentError({ intentId, action, event }),
         failure: 'operational',
       })
     }
@@ -165,20 +206,29 @@ export const executeMutationIntentWithExecutor = <E, R>(
       consistencyDelayMs: event.consistencyDelayMs,
       operation,
       mutationAdvanced: existing?.eventId !== event.eventId,
+      ...(event.denialReason === undefined ? {} : { denialReason: event.denialReason }),
     }
   })
 }
 
-const executeMutationIntentDataFirst = (
+export const executeMutationIntent = (
   executionProgram: ExecutionProgram,
   intentId: string,
   action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
   submitExpiresAt?: string,
+  cancellationAdmission?: ExpiredEntryCancellationAdmission,
+  protectionClose?: PreparedProtectionClose,
 ): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore> =>
   executeMutationIntentWithExecutor({
     executor: {
-      submit: executionProgram.submit,
-      cancel: executionProgram.cancel,
+      submit:
+        protectionClose === undefined
+          ? executionProgram.submit
+          : (_intentId, delayMs) => executionProgram.submitProtectionClose(protectionClose, delayMs),
+      cancel:
+        cancellationAdmission === undefined
+          ? executionProgram.cancel
+          : (id, delayMs) => executionProgram.cancel(id, delayMs, cancellationAdmission),
       recover: executionProgram.recover,
     },
     intentId,
@@ -187,11 +237,30 @@ const executeMutationIntentDataFirst = (
     now: currentUtcInstant,
   })
 
-export const executeMutationIntent = Pipeable.by<
-  (
-    intentId: string,
-    action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
-    submitExpiresAt?: string,
-  ) => (executionProgram: ExecutionProgram) => ReturnType<typeof executeMutationIntentDataFirst>,
-  typeof executeMutationIntentDataFirst
->((arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null, executeMutationIntentDataFirst)
+/** A local continuation may confirm an accepted cancel; it cannot issue another broker mutation. */
+export const confirmAcceptedCancellation = <E, R>(
+  intentId: string,
+  executor: Pick<ExecutionMutationExecutor<E, R>, 'recover'>,
+  now: Effect.Effect<string, never, R> = currentUtcInstant,
+): Effect.Effect<{ readonly delayMs: number }, CycleRunnerError, MutationStore | R> =>
+  Effect.gen(function* () {
+    const store = yield* MutationStore
+    const latest = yield* store
+      .latest(intentId, MutationOperation.Cancel)
+      .pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'cancellation continuation evidence read failed', cause, failure: 'store' }),
+        ),
+      )
+    if (latest === undefined || latest.intentId !== intentId || latest.operation !== MutationOperation.Cancel)
+      return yield* mutationRunnerError({
+        message: 'cancellation continuation lost its durable identity',
+        failure: 'contract',
+      })
+    // A changed outcome returns to normal reconciliation and recovery, without treating it as settled.
+    if (latest.eventType !== MutationEventType.CancelAccepted) return { delayMs: 0 }
+    const delayMs = Date.parse(latest.occurredAt) + latest.consistencyDelayMs - Date.parse(yield* now)
+    if (delayMs > 0) return { delayMs }
+    yield* executeMutationIntentWithExecutor({ executor, intentId, action: 'RECOVER_CANCEL', now })
+    return { delayMs: 0 }
+  })

@@ -3,7 +3,7 @@
 ARG GO_BASE_IMAGE=mirror.gcr.io/golang
 ARG GO_VERSION=1.25.5
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 ARG NODE_BASE_IMAGE=mirror.gcr.io/node
 ARG NODE_VERSION=24.11.1
 ARG RUST_BASE_IMAGE=mirror.gcr.io/rust
@@ -18,10 +18,18 @@ ARG TARGETARCH
 ARG TARGETOS
 
 WORKDIR /src
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
+    rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-RUN go test ./... && \
+COPY internal ./internal
+COPY vscode-extension ./vscode-extension
+COPY test-guest-admin.sh /out/test-guest-admin.sh
+COPY browser-client.html browser-client.js ./
+COPY developer-profile.sh ./
+RUN --mount=type=tmpfs,target=/tmp go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
 
@@ -59,6 +67,13 @@ FROM ${UV_BASE_IMAGE}:${UV_VERSION} AS uv-runtime
 FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 
 ENV CARGO_HOME=/home/nanoagent/.cargo \
+    BROWSER_RUNTIME_ARCHIVE=/usr/share/nanoagent/browser-runtime.tar.xz \
+    BROWSER_BINARY=/usr/local/bin/launch-browser \
+    BROWSER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-browser \
+    BROWSER_ASSETS_DIRECTORY=/usr/share/nanoagent/novnc \
+    CHROMIUM_BINARY=/home/nanoagent/.local/bin/chromium \
+    CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
+    CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server \
     CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
     CODEX_HOME=/home/nanoagent/.codex \
@@ -71,15 +86,18 @@ ENV CARGO_HOME=/home/nanoagent/.cargo \
     NPM_CONFIG_PREFIX=/home/nanoagent/.local \
     PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain \
+    DEVELOPER_TOOLS_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-developer-tools \
     XDG_CACHE_HOME=/home/nanoagent/.cache
 
+# The build layer is disposable until this step succeeds. Flush once after package installation.
 RUN set -eux; \
     apt-get update -o Acquire::Retries=3; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-unsafe-io \
       bash \
       bubblewrap \
       ca-certificates \
       curl \
+      e2fsprogs \
       file \
       git \
       gzip \
@@ -92,11 +110,17 @@ RUN set -eux; \
       python3 \
       python3-venv \
       ripgrep \
+      sudo \
       tar \
       tini \
+      util-linux \
       xz-utils; \
+    sync -f /; \
     apt-get clean; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
+      /usr/share/man/* /usr/share/info/* /usr/share/locale/*; \
+    find /usr/share/doc -type f ! -name copyright -delete; \
+    find /usr/lib -type d -name __pycache__ -prune -exec rm -rf {} +; \
     runtime_group="$(getent group 1000 | cut -d: -f1 || true)"; \
     if [ -n "$runtime_group" ]; then \
       groupmod --new-name nanoagent "$runtime_group"; \
@@ -109,16 +133,186 @@ RUN set -eux; \
     else \
       useradd --uid 1000 --gid 1000 --home-dir /home/nanoagent --shell /bin/bash --create-home nanoagent; \
     fi; \
-    mkdir -p /home/nanoagent/.cache /home/nanoagent/.codex /home/nanoagent/.local/bin /home/nanoagent/workspace; \
+    mkdir -p /home/nanoagent/.cache/apt/lists /home/nanoagent/.cache/apt/archives \
+      /home/nanoagent/.codex /home/nanoagent/.local/bin /home/nanoagent/workspace; \
     ln -s /home/nanoagent/workspace /workspace; \
     chown -R 1000:1000 /home/nanoagent; \
+    printf 'nanoagent ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/nanoagent; \
+    chmod 0440 /etc/sudoers.d/nanoagent; \
+    visudo -cf /etc/sudoers.d/nanoagent; \
+    printf '%s\n' \
+      'Dir::State::lists "/home/nanoagent/.cache/apt/lists";' \
+      'Dir::Cache::archives "/home/nanoagent/.cache/apt/archives";' \
+      > /etc/apt/apt.conf.d/99tengri; \
     test -x /bin/bash
 
-COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
+COPY --chmod=0555 bootstrap-browser.sh /usr/local/bin/bootstrap-browser
+COPY --chmod=0555 bootstrap-browser-runtime.sh /usr/local/bin/bootstrap-browser-runtime
+COPY --chmod=0555 launch-browser.sh /usr/local/bin/launch-browser
+COPY --chmod=0555 browser-xkbcomp.sh /usr/bin/xkbcomp
+RUN set -eux; \
+    curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --retry 3 \
+      https://registry.npmjs.org/@novnc/novnc/-/novnc-1.7.0.tgz --output /tmp/novnc.tgz; \
+    printf '32689f18d6abe96bc6530828a6bd0b9ae33bda07c083a6575ed255b5a8f2e903  /tmp/novnc.tgz\n' | sha256sum --check --status -; \
+    mkdir -p /usr/share/nanoagent/novnc; \
+    tar -xzf /tmp/novnc.tgz --strip-components=1 --no-same-owner --no-same-permissions -C /usr/share/nanoagent/novnc; \
+    chmod -R a+rX /usr/share/nanoagent/novnc; \
+    rm /tmp/novnc.tgz
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
-RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
+COPY --chmod=0555 relay-client.mjs /usr/local/bin/tengri-relay
+COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
+COPY --chmod=0555 tengri-init.sh /usr/local/sbin/tengri-init
+COPY --chmod=0555 bootstrap-developer-tools.sh /usr/local/bin/bootstrap-developer-tools
+COPY --chmod=0444 astronvim-init.lua /usr/share/nanoagent/astronvim-init.lua
+RUN chmod 0755 /usr/share/nanoagent
+COPY --chmod=0444 developer-profile.sh /etc/profile.d/tengri-development.sh
+RUN test -x /usr/local/bin/bootstrap-codex
 
-FROM runtime AS development-toolchain-bundle
+# Keep the verified graphics packages in the immutable image instead of relying
+# on superseded Ubuntu archive URLs. Extract the bundle on the retained home.
+FROM runtime AS browser-runtime-bundle
+RUN set -eux; \
+    apt-get update -o Acquire::Retries=3; \
+    mkdir -p /out/runtime /tmp/browser-debs; \
+    apt-get -o Dir::Cache::archives=/tmp/browser-debs --download-only --yes --no-install-recommends install \
+      fonts-liberation \
+      libasound2t64 \
+      libatk-bridge2.0-0 \
+      libcups2 \
+      libdrm2 \
+      libgbm1 \
+      libgtk-3-0t64 \
+      libnss3 \
+      libxcomposite1 \
+      libxdamage1 \
+      libxfixes3 \
+      libxkbcommon0 \
+      libxrandr2 \
+      openbox \
+      scrot \
+      tigervnc-standalone-server \
+      x11-utils \
+      xauth \
+      xclip \
+      xdotool; \
+    for package in /tmp/browser-debs/*.deb; do dpkg-deb --extract "$package" /out/runtime; done; \
+    rm -rf /out/runtime/usr/share/man /out/runtime/usr/share/locale; \
+    find /out/runtime/usr/share/doc -type f ! -name copyright -delete; \
+    test -x /out/runtime/usr/bin/Xtigervnc; \
+    test -x /out/runtime/usr/bin/xclip; \
+    XZ_OPT='-T2 -8' tar --create --xz --file /out/browser-runtime.tar.xz \
+      --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner --directory /out/runtime .
+
+FROM runtime AS guest-admin-smoke
+
+USER 1000:1000
+RUN --mount=type=bind,source=test-guest-admin.sh,target=/tmp/test-guest-admin.sh,readonly \
+    bash /tmp/test-guest-admin.sh --filesystem > /tmp/guest-admin-validation.txt
+
+# The guest and its compiler can install their packages independently.
+FROM ${UBUNTU_BASE_IMAGE}:24.04 AS c-toolchain-packages
+
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-unsafe-io \
+      ca-certificates curl gcc git libc6-dev make && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* && \
+    sync -f /
+
+FROM c-toolchain-packages AS c-toolchain-runtime
+
+ARG TARGETARCH
+
+RUN set -eux; \
+    triplet="$(gcc -dumpmachine)"; \
+    compiler_major="$(gcc -dumpversion)"; \
+    compiler_version="$(gcc -dumpfullversion)"; \
+    case "$TARGETARCH" in \
+      amd64) \
+        expected_triplet='x86_64-linux-gnu'; \
+        loader_path='/lib64/ld-linux-x86-64.so.2'; \
+        loader_name='ld-linux-x86-64.so.2' \
+        ;; \
+      arm64) \
+        expected_triplet='aarch64-linux-gnu'; \
+        loader_path='/lib/ld-linux-aarch64.so.1'; \
+        loader_name='ld-linux-aarch64.so.1' \
+        ;; \
+      *) printf 'unsupported C compiler architecture: %s\n' "$TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    test "$triplet" = "$expected_triplet"; \
+    test "$compiler_major" = '13'; \
+    test "$compiler_version" = '13.3.0'; \
+    compiler_driver="$(command -v "${triplet}-gcc-${compiler_major}")"; \
+    assembler="$(command -v "${triplet}-as")"; \
+    linker="$(command -v "${triplet}-ld.bfd")"; \
+    compiler_library_root="$(dirname "$(gcc -print-libgcc-file-name)")"; \
+    compiler_program_root="$(dirname "$(gcc -print-prog-name=cc1)")"; \
+    output='/out/c'; \
+    mkdir -p \
+      "$output/bin" \
+      "$output/lib/gcc/$triplet/$compiler_major" \
+      "$output/libexec/gcc/$triplet/$compiler_major" \
+      "$output/runtime" \
+      "$output/sysroot/lib/$triplet" \
+      "$output/sysroot/usr/include" \
+      "$output/sysroot/usr/lib/$triplet"; \
+    cp -a "$compiler_driver" "$output/bin/"; \
+    cp -a "$assembler" "$output/bin/"; \
+    cp -a "$linker" "$output/bin/"; \
+    ln -s "${triplet}-as" "$output/bin/as"; \
+    ln -s "${triplet}-ld.bfd" "$output/bin/ld"; \
+    cp -a "$compiler_library_root/." "$output/lib/gcc/$triplet/$compiler_major/"; \
+    rm -rf \
+      "$output/lib/gcc/$triplet/$compiler_major/plugin" \
+      "$output/lib/gcc/$triplet/$compiler_major/include/sanitizer"; \
+    rm -f \
+      "$output/lib/gcc/$triplet/$compiler_major"/libasan* \
+      "$output/lib/gcc/$triplet/$compiler_major"/libhwasan* \
+      "$output/lib/gcc/$triplet/$compiler_major"/liblsan* \
+      "$output/lib/gcc/$triplet/$compiler_major"/libtsan* \
+      "$output/lib/gcc/$triplet/$compiler_major"/libubsan*; \
+    cp -a "$compiler_program_root/cc1" "$output/libexec/gcc/$triplet/$compiler_major/"; \
+    cp -a "$compiler_program_root/liblto_plugin.so" "$output/libexec/gcc/$triplet/$compiler_major/"; \
+    cp -a /usr/include/. "$output/sysroot/usr/include/"; \
+    for development_file in \
+      Scrt1.o crt1.o crti.o crtn.o gcrt1.o rcrt1.o \
+      libc.so libc_nonshared.a libdl.a libm.so libpthread.a libresolv.a librt.a libutil.a; do \
+      if [ -e "/usr/lib/$triplet/$development_file" ]; then \
+        cp -a "/usr/lib/$triplet/$development_file" "$output/sysroot/usr/lib/$triplet/"; \
+      fi; \
+    done; \
+    for runtime_file in \
+      libc.so.6 libdl.so.2 libgcc_s.so.1 libm.so.6 libmvec.so.1 libpthread.so.0 libresolv.so.2 librt.so.1 libutil.so.1; do \
+      if [ -e "/lib/$triplet/$runtime_file" ]; then \
+        ln -s "/lib/$triplet/$runtime_file" "$output/sysroot/lib/$triplet/$runtime_file"; \
+      fi; \
+    done; \
+    mkdir -p "$output/sysroot$(dirname "$loader_path")"; \
+    ln -s "$loader_path" "$output/sysroot$loader_path"; \
+    ln -s "/lib/$triplet/$loader_name" "$output/sysroot/lib/$triplet/$loader_name"; \
+    : > /tmp/c-toolchain-runtime-libraries; \
+    for binary in "$compiler_driver" "$compiler_program_root/cc1" "$assembler" "$linker"; do \
+      ldd "$binary" | awk '$2 == "=>" && $3 ~ /^\// { print $3 }' >> /tmp/c-toolchain-runtime-libraries; \
+    done; \
+    sort -u /tmp/c-toolchain-runtime-libraries | while IFS= read -r dependency; do \
+      dependency_name="$(basename "$dependency")"; \
+      case "$dependency_name" in \
+        libc.so.6|libm.so.6|libz.so.1|libzstd.so.1) ;; \
+        *) cp -aL "$dependency" "$output/runtime/$dependency_name" ;; \
+      esac; \
+    done; \
+    printf '%s\n' "$compiler_major" > "$output/compiler-major"; \
+    printf '%s\n' "$compiler_version" > "$output/compiler-version"; \
+    printf '%s\n' "$triplet" > "$output/compiler-triplet"; \
+    test -x "$output/bin/${triplet}-gcc-${compiler_major}"; \
+    test -x "$output/bin/as"; \
+    test -x "$output/bin/ld"; \
+    test -x "$output/libexec/gcc/$triplet/$compiler_major/cc1"; \
+    test -f "$output/sysroot/usr/include/stdlib.h"; \
+    test -f "$output/sysroot/usr/lib/$triplet/Scrt1.o"; \
+    test -L "$output/sysroot$loader_path"
+
+FROM runtime AS development-toolchain-layout
 
 ARG BUN_VERSION
 ARG GO_VERSION
@@ -129,6 +323,7 @@ ARG UV_VERSION
 COPY --from=node-runtime /usr/local/bin/node /bundle/node/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules/npm /bundle/node/lib/node_modules/npm
 COPY --from=bun-runtime /usr/local/bin/bun /bundle/bun/bin/bun
+COPY --from=c-toolchain-runtime /out/c /bundle/c
 COPY --from=go-runtime /usr/local/go /bundle/go
 COPY --from=rust-runtime /usr/local/rustup/toolchains /bundle/rust-toolchains
 COPY --from=rust-linker-runtime /out /bundle/linker
@@ -144,14 +339,27 @@ RUN set -eux; \
       /bundle/rust/bin/rust-gdbgui \
       /bundle/rust/bin/rust-lldb; \
     rm -rf /bundle/rust/etc /bundle/rust/share; \
+    rm -rf /bundle/go/api /bundle/go/doc /bundle/go/misc /bundle/go/test; \
     test "$(/bundle/node/bin/node --version)" = "v${NODE_VERSION}"; \
     test "$(/bundle/bun/bin/bun --version)" = "${BUN_VERSION}"; \
+    test "$(cat /bundle/c/compiler-version)" = '13.3.0'; \
     test "$(GOROOT=/bundle/go /bundle/go/bin/go version | cut -d' ' -f3)" = "go${GO_VERSION}"; \
     test "$(/bundle/rust/bin/rustc --version | cut -d' ' -f2)" = "${RUST_VERSION}"; \
     test "$(/bundle/rust/bin/cargo --version | cut -d' ' -f2)" = "${RUST_VERSION}"; \
-    test "$(/bundle/uv/bin/uv --version | cut -d' ' -f2)" = "${UV_VERSION}"; \
+    test "$(/bundle/uv/bin/uv --version | cut -d' ' -f2)" = "${UV_VERSION}"
+
+FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS development-toolchain-bundle
+
+RUN set -eux; \
+    apt-get update -o Acquire::Retries=3; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xz-utils; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+COPY --from=development-toolchain-layout /bundle /bundle
+
+RUN set -eux; \
     mkdir -p /out; \
-    XZ_OPT='-T0 -6' tar \
+    XZ_OPT='-T2 -8' tar \
       --create \
       --xz \
       --file /out/development-toolchain.tar.xz \
@@ -163,11 +371,32 @@ RUN set -eux; \
       --directory /bundle \
       .
 
+FROM c-toolchain-packages AS editor-build
+ARG TARGETARCH
+ENV HOME=/home/nanoagent
+COPY --chmod=0555 build-editor.sh /usr/local/bin/build-editor
+COPY --chmod=0444 astronvim-init.lua editor-manifest.lua launch-editor.sh blink-manual-library.patch /usr/share/nanoagent/
+RUN mkdir -p "$HOME" && build-editor "$TARGETARCH"
+
 FROM runtime AS runtime-with-toolchain
+
+COPY --from=editor-build /opt/tengri/editor /opt/tengri/editor
 
 COPY --from=development-toolchain-bundle /out/development-toolchain.tar.xz /usr/share/nanoagent/development-toolchain.tar.xz
 COPY --chmod=0555 bootstrap-toolchain.sh /usr/local/bin/bootstrap-toolchain
-RUN test -x /usr/local/bin/bootstrap-toolchain && bootstrap-toolchain --validate-manifest
+RUN test -x /usr/local/bin/bootstrap-toolchain && bootstrap-toolchain --validate-manifest && \
+    ln -s /home/nanoagent/.local/bin/cc /usr/bin/cc && \
+    ln -s /home/nanoagent/.local/bin/gcc /usr/bin/gcc && \
+    ln -s /home/nanoagent/.linuxbrew/bin/make /usr/bin/make
+
+COPY --from=browser-runtime-bundle /out/browser-runtime.tar.xz /usr/share/nanoagent/browser-runtime.tar.xz
+
+FROM runtime-with-toolchain AS browser-smoke
+USER 1000:1000
+RUN --network=none bootstrap-browser-runtime "$BROWSER_RUNTIME_ARCHIVE" && \
+    test -s "$HOME/.tengri/browser/runtime-path"
+RUN bootstrap-toolchain --install-only && bootstrap-browser --install-only && \
+    launch-browser --validate-install > /tmp/browser-version
 
 FROM runtime-with-toolchain AS toolchain-smoke
 
@@ -180,15 +409,19 @@ ENV BUN_INSTALL=/home/nanoagent/.toolchain-smoke/.local \
 USER 1000:1000
 RUN mkdir -p "$HOME" && \
     bootstrap-toolchain --install-only && \
+    python3 -B -c 'import json, sqlite3, ssl, venv; assert sqlite3.connect(":memory:").execute("SELECT 42").fetchone() == (42,); assert ssl.create_default_context(); assert json.loads("42") == 42' && \
     test "$(command -v bwrap)" = '/usr/bin/bwrap' && \
     test "$(node --version)" = 'v24.11.1' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
     test "$(npm config get prefix)" = "$HOME/.local" && \
-    test "$(bun --version)" = '1.4.0' && \
-    test "$(bunx --version)" = '1.4.0' && \
+    test "$(bun --version)" = '1.4.2' && \
+    test "$(bunx --version)" = '1.4.2' && \
     test "$(uv --version | cut -d' ' -f2)" = '0.11.14' && \
     test "$(go version | cut -d' ' -f3)" = 'go1.25.5' && \
     test "$(go env GOROOT)" = "$HOME/.local/go" && \
+    test "$(go env CGO_ENABLED)" = '1' && \
+    test "$(gcc -dumpfullversion)" = '13.3.0' && \
+    test "$(command -v cc)" = "$HOME/.local/bin/cc" && \
     test "$(rustc --version | cut -d' ' -f2)" = '1.90.0' && \
     test "$(cargo --version | cut -d' ' -f2)" = '1.90.0' && \
     test "$(rustdoc --version | cut -d' ' -f2)" = '1.90.0' && \
@@ -202,8 +435,8 @@ RUN mkdir -p "$HOME" && \
     (cd /tmp/cargo-library-smoke && cargo test --quiet) && \
     printf '#[no_mangle]\npub extern "C" fn answer() -> i32 { 42 }\n' > /tmp/rust-library-smoke.rs && \
     rustc --crate-type=cdylib /tmp/rust-library-smoke.rs -o /tmp/librust_library_smoke.so && \
-    printf 'package main\nimport "fmt"\nfunc main(){fmt.Println("go-ok")}\n' > /tmp/go-smoke.go && \
-    test "$(CGO_ENABLED=0 go run /tmp/go-smoke.go)" = 'go-ok' && \
+    printf 'package main\n/*\n#include <stdlib.h>\nstatic int answer(void) { return 42; }\n*/\nimport "C"\nimport "fmt"\nfunc main(){fmt.Println(C.answer())}\n' > /tmp/go-smoke.go && \
+    test "$(go run /tmp/go-smoke.go)" = '42' && \
     uv venv /tmp/uv-smoke >/dev/null && \
     mkdir -p "$BUN_INSTALL/install/global" && \
     printf '{"name":"nanoagent-global"}\n' > "$BUN_INSTALL/install/global/package.json" && \
@@ -220,7 +453,7 @@ RUN mkdir -p "$HOME" && \
 
 # Download and verify the pinned native Codex package during every image build. The
 # package is intentionally not copied into the final rootfs; a guest installs the
-# same verified package into its persistent 16 GiB home volume on first boot.
+# same verified package into its persistent 32 GiB home volume on first boot.
 FROM runtime AS codex-smoke
 
 ENV CODEX_BINARY=/home/nanoagent/.smoke/.local/bin/codex \
@@ -232,19 +465,69 @@ RUN mkdir -p "$HOME" "$CODEX_HOME" && \
     bootstrap-codex --install-only && \
     "$CODEX_BINARY" --version > /tmp/codex-version
 
-FROM runtime-with-toolchain
+FROM runtime AS code-server-smoke
 
-# Firecracker's Kata snapshotter extracts an OCI image into a 512 MiB blockfile.
-# Keep 32 MiB of explicit headroom for filesystem metadata and extraction overhead.
-ARG FIRECRACKER_ROOTFS_LIMIT_BYTES=503316480
+ENV HOME=/home/nanoagent/.vscode-smoke
+USER 1000:1000
+RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
+    "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
+
+FROM runtime-with-toolchain AS developer-tools-smoke
+COPY --chmod=0555 test-developer-tools-cache.sh /usr/local/bin/test-developer-tools-cache
+USER 1000:1000
+RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-only && \
+    . /etc/profile.d/tengri-development.sh && \
+    brew config > /tmp/developer-tools-version && \
+    brew list --versions >> /tmp/developer-tools-version && \
+    brew doctor && \
+    nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled)' '+if v:errmsg != "" | cquit 1 | endif' +qa && \
+    tree-sitter --version && \
+    test "$EDITOR" = nvim && test "$VISUAL" = nvim && \
+    test "$(node --version)" = v24.11.1 && \
+    test "$(gcc -dumpfullversion)" = 13.3.0 && \
+    gh --version && fd --version && fzf --version && lazygit --version && gdu --version && btm --version && tmux -V && \
+    kubectl version --client=true && \
+    make --version && cmake --version && pkg-config --version && \
+    printf '#include <iostream>\nint main(){std::cout << "cpp-ok";}\n' > /tmp/cpp-smoke.cpp && \
+    test "$(g++ /tmp/cpp-smoke.cpp -o /tmp/cpp-smoke && /tmp/cpp-smoke)" = cpp-ok && \
+    brew install --formula --force-bottle hello && \
+    test "$(hello)" = 'Hello, world!' && \
+    test-developer-tools-cache && \
+    sha256sum "$HOME/.config/nvim/init.lua" > /tmp/astronvim-config.sha256 && \
+    bootstrap-developer-tools --install-only && sha256sum --check /tmp/astronvim-config.sha256 && \
+    mkdir -p "$HOME/.custom-config/nvim" && \
+    printf 'vim.g.user_config_preserved = true\n' > "$HOME/.custom-config/nvim/init.lua" && \
+    XDG_CONFIG_HOME="$HOME/.custom-config" bootstrap-developer-tools --install-only && \
+    XDG_CONFIG_HOME="$HOME/.custom-config" nvim --headless '+lua assert(vim.g.user_config_preserved)' '+if v:errmsg != "" | cquit 1 | endif' +qa
+
+COPY --chmod=0555 test-editor-bundle.sh /usr/local/bin/test-editor-bundle
+RUN --network=none test-editor-bundle
+
+FROM runtime-with-toolchain AS guest-rootfs
+
+COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
+COPY --from=guest-admin-smoke /tmp/guest-admin-validation.txt /usr/share/nanoagent/guest-admin-validation.txt
+COPY --from=browser-smoke /tmp/browser-version /usr/share/nanoagent/browser-version
+COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
-RUN set -eux; \
-    rootfs_bytes="$(du -sx -B1 / 2>/dev/null | cut -f1)"; \
-    test "$rootfs_bytes" -le "$FIRECRACKER_ROOTFS_LIMIT_BYTES"; \
-    printf '%s\n' "$rootfs_bytes" > /usr/share/nanoagent/rootfs-size-bytes
+COPY --from=developer-tools-smoke /tmp/developer-tools-version /usr/share/nanoagent/developer-tools-version
 
-USER 1000:1000
-WORKDIR /home/nanoagent
-EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/nanoagent"]
+FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check
+
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+COPY --from=guest-rootfs / /rootfs/
+COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
+RUN test -x /rootfs/usr/local/bin/nanoagent && validate-rootfs /rootfs /rootfs-validation.txt
+
+FROM rootfs-check AS boot-artifacts
+ARG TARGETARCH
+COPY --chmod=0555 build-boot-artifacts.sh /usr/local/bin/build-boot-artifacts
+RUN build-boot-artifacts "$TARGETARCH"
+
+FROM ${UBUNTU_BASE_IMAGE}:24.04
+COPY --from=boot-artifacts /guest /guest
+USER 65532:65532
+ENTRYPOINT ["/bin/cp", "/guest/rootfs.ext4", "/guest/vmlinux", "/artifacts/"]

@@ -1,6 +1,6 @@
 # 155. Jangar Execution Cohort Settlement And Launch Quarantine (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-07
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane reliability, schedule-runner cohort settlement, source provenance, launch quarantine,
@@ -9,12 +9,6 @@ rollout safety, Torghut capital handoff, validation, rollback, and implementatio
 Companion Torghut contract:
 
 - `docs/torghut/design-system/v6/159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
-
-Extends:
-
-- `154-jangar-source-provenance-leases-and-material-action-escrow-2026-05-07.md`
-- `153-jangar-design-actuation-ledger-and-contract-convergence-gates-2026-05-07.md`
-- `150-jangar-controller-brownout-budgets-and-proof-spend-admission-exchange-2026-05-07.md`
 
 ## Decision
 

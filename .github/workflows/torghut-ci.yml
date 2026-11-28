@@ -17,6 +17,7 @@ on:
   pull_request:
     paths:
       - 'services/torghut/**'
+      - '.github/workflows/torghut-ci.yml'
       - 'packages/scripts/src/torghut/**'
       - '!packages/scripts/src/torghut/__tests__/**'
       - '!packages/scripts/src/torghut/**/*.test.ts'
@@ -27,6 +28,7 @@ on:
       - 'argocd/applications/torghut-options/**'
       - 'argocd/applications/torghut-hyperliquid-runtime/**'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   actions: read
@@ -34,7 +36,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  group: torghut-ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -58,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+          if [[ "${EVENT_NAME}" == workflow_dispatch || "${EVENT_NAME}" == merge_group ]]; then
             {
               echo "service=true"
               echo "manifests=true"
@@ -111,7 +113,7 @@ jobs:
 
           service=false
           manifests=false
-          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|git|nix-oci-deploy|oci-digest)\.ts$)'; then
+          if matches_any '^(\.github/workflows/torghut-ci\.yml$|services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|git|nix-oci-deploy|oci-digest)\.ts$)'; then
             service=true
           fi
           if matches_any '^argocd/applications/(torghut|torghut-options|torghut-hyperliquid-runtime)/'; then
@@ -130,7 +132,7 @@ jobs:
     runs-on: arc-amd64
     needs:
       - changes
-    if: ${{ needs.changes.outputs.service != 'true' && needs.changes.outputs.manifests == 'true' }}
+    if: ${{ needs.changes.outputs.manifests == 'true' && (github.event_name == 'merge_group' || needs.changes.outputs.service != 'true') }}
     steps:
       - name: Checkout
         shell: bash
@@ -161,7 +163,9 @@ jobs:
             fi
           else
             git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
-            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+            git checkout --force "${GITHUB_SHA}" || {
+              [ "${EVENT_NAME}" != merge_group ] && git checkout --force refs/remotes/origin/workflow
+            }
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
@@ -204,11 +208,15 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           BEFORE_SHA: ${{ github.event.before }}
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
 
           changed_files="$(mktemp)"
-          if [ "${EVENT_NAME}" = "pull_request" ]; then
+          if [ "${EVENT_NAME}" = merge_group ]; then
+            git merge-base --is-ancestor "${QUEUE_BASE_SHA}" HEAD
+            diff_base="${QUEUE_BASE_SHA}"
+          elif [ "${EVENT_NAME}" = "pull_request" ]; then
             if [ -z "${BASE_REF}" ]; then
               echo "BASE_REF is required for pull_request release manifest verification" >&2
               exit 1
@@ -255,25 +263,12 @@ jobs:
             ' "${manifest_path}"
           }
 
-          assert_multi_arch_image() {
-            local image_ref="$1"
-            local image_digest
-
-            image_digest="${image_ref#*@}"
-            if [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-              echo "Release manifest image is not digest pinned: ${image_ref}"
-              exit 1
-            fi
-
-            nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
-          }
-
           verify_image_contract() {
             local label="$1"
             local manifest_path="$2"
             local env_name="$3"
             local image_name="$4"
-            local source_sha image_ref
+            local source_sha image_ref image_digest base_source_sha base_image_ref
 
             source_sha="$(resolve_source_sha "${manifest_path}" "${env_name}")"
             if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
@@ -287,7 +282,24 @@ jobs:
               exit 1
             fi
 
-            assert_multi_arch_image "${image_ref}"
+            image_digest="${image_ref#*@}"
+            if [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Release manifest image is not digest pinned: ${image_ref}"
+              exit 1
+            fi
+
+            # Configuration changes publish a new cohort; retention may have
+            # already removed an unchanged older image from the registry.
+            if git cat-file -e "${diff_base}:${manifest_path}" 2>/dev/null; then
+              base_source_sha="$(git show "${diff_base}:${manifest_path}" | resolve_source_sha /dev/stdin "${env_name}")"
+              base_image_ref="$(git show "${diff_base}:${manifest_path}" | resolve_image_ref /dev/stdin "${image_name}")"
+              if [ "${source_sha}" = "${base_source_sha}" ] && [ "${image_ref}" = "${base_image_ref}" ]; then
+                echo "${label} image and source SHA are unchanged; no image receipt needs revalidation."
+                return
+              fi
+            fi
+
+            nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
             echo "${label} release manifest pins a multi-arch image digest for ${source_sha}: ${image_ref}"
           }
 
@@ -401,7 +413,9 @@ jobs:
             git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
           else
             git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
-            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+            git checkout --force "${GITHUB_SHA}" || {
+              [ "${EVENT_NAME}" != merge_group ] && git checkout --force refs/remotes/origin/workflow
+            }
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
@@ -473,7 +487,9 @@ jobs:
             git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
           else
             git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
-            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+            git checkout --force "${GITHUB_SHA}" || {
+              [ "${EVENT_NAME}" != merge_group ] && git checkout --force refs/remotes/origin/workflow
+            }
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
@@ -503,11 +519,15 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           BEFORE_SHA: ${{ github.event.before }}
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
 
           repo_root="$(git rev-parse --show-toplevel)"
-          if [ "${EVENT_NAME}" = "pull_request" ]; then
+          if [ "${EVENT_NAME}" = merge_group ]; then
+            git -C "${repo_root}" merge-base --is-ancestor "${QUEUE_BASE_SHA}" HEAD
+            base="${QUEUE_BASE_SHA}"
+          elif [ "${EVENT_NAME}" = "pull_request" ]; then
             if [ -z "${BASE_REF}" ]; then
               echo "BASE_REF is required for pull_request Torghut diff base resolution" >&2
               exit 1
@@ -684,7 +704,9 @@ jobs:
             git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
           else
             git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
-            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+            git checkout --force "${GITHUB_SHA}" || {
+              [ "${EVENT_NAME}" != merge_group ] && git checkout --force refs/remotes/origin/workflow
+            }
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
@@ -776,7 +798,9 @@ jobs:
             git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
           else
             git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
-            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+            git checkout --force "${GITHUB_SHA}" || {
+              [ "${EVENT_NAME}" != merge_group ] && git checkout --force refs/remotes/origin/workflow
+            }
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
@@ -874,7 +898,9 @@ jobs:
             git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
           else
             git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
-            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+            git checkout --force "${GITHUB_SHA}" || {
+              [ "${EVENT_NAME}" != merge_group ] && git checkout --force refs/remotes/origin/workflow
+            }
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
@@ -1005,7 +1031,9 @@ jobs:
             git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
           else
             git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
-            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+            git checkout --force "${GITHUB_SHA}" || {
+              [ "${EVENT_NAME}" != merge_group ] && git checkout --force refs/remotes/origin/workflow
+            }
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
@@ -1054,7 +1082,14 @@ jobs:
         env:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-        run: uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 80
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = merge_group ]; then
+            git merge-base --is-ancestor "${QUEUE_BASE_SHA}" HEAD
+          fi
+          uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 80 --base-ref "${QUEUE_BASE_SHA}"
 
   quality-signals:
     name: Quality signals (complexity + security)
@@ -1080,7 +1115,9 @@ jobs:
             git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
           else
             git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
-            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+            git checkout --force "${GITHUB_SHA}" || {
+              [ "${EVENT_NAME}" != merge_group ] && git checkout --force refs/remotes/origin/workflow
+            }
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 

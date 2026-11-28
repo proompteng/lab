@@ -5,14 +5,18 @@ import type { UnsignedRoundHalfUpFailure } from '../unsigned-round-half-up'
 
 export type AccountingMicrosField =
   | 'fill.feeMicros'
-  | 'fill.priceMicros'
-  | 'fill.quantityMicros'
+  | 'fill.priceAtoms'
+  | 'fill.quantityAtoms'
   | 'position.costMicros'
-  | 'position.quantityMicros'
+  | 'position.quantityAtoms'
 
 export type AccountingHashOperation = 'ledger-plan' | 'transaction-content' | 'transaction-id'
 
 export type AccountingFailure =
+  | {
+      readonly _tag: 'AccountingInvalidShortPosition'
+      readonly reason: 'EQUITY_REQUIRED' | 'INCOHERENT_POSITION' | 'COVER_EXCEEDS_POSITION'
+    }
   | {
       readonly _tag: 'AccountingMicrosParseFailed'
       readonly field: AccountingMicrosField
@@ -26,7 +30,7 @@ export type AccountingFailure =
     }
   | {
       readonly _tag: 'AccountingNegativePositionCost'
-      readonly quantityMicros: bigint
+      readonly quantityAtoms: bigint
       readonly costMicros: bigint
     }
   | {
@@ -35,13 +39,13 @@ export type AccountingFailure =
     }
   | {
       readonly _tag: 'AccountingFillNotionalRoundedToZero'
-      readonly quantityMicros: bigint
-      readonly priceMicros: bigint
+      readonly quantityAtoms: bigint
+      readonly priceAtoms: bigint
     }
   | {
       readonly _tag: 'AccountingSellQuantityExceedsPosition'
-      readonly saleQuantityMicros: bigint
-      readonly positionQuantityMicros: bigint
+      readonly saleQuantityAtoms: bigint
+      readonly positionQuantityAtoms: bigint
     }
   | {
       readonly _tag: 'AccountingCanonicalizationFailed'
@@ -72,18 +76,20 @@ export type AccountingFailure =
 
 export const renderAccountingFailure = (failure: AccountingFailure): string => {
   switch (failure._tag) {
+    case 'AccountingInvalidShortPosition':
+      return `equity short accounting rejected: ${failure.reason}`
     case 'AccountingMicrosParseFailed':
       return `${failure.field} is not an integer micros value: ${failure.value}`
     case 'AccountingUnsignedDivisionFailed':
       return `fixed-point division rejected ${failure.numerator}/${failure.denominator}`
     case 'AccountingNegativePositionCost':
-      return `position cost is negative: quantity=${failure.quantityMicros}, cost=${failure.costMicros}`
+      return `position cost is negative: quantity=${failure.quantityAtoms}, cost=${failure.costMicros}`
     case 'AccountingEmptyPositionRetainsCost':
       return `empty position retains cost basis ${failure.costMicros}`
     case 'AccountingFillNotionalRoundedToZero':
-      return `fill notional rounds to zero: quantity=${failure.quantityMicros}, price=${failure.priceMicros}`
+      return `fill notional rounds to zero: quantity=${failure.quantityAtoms}, price=${failure.priceAtoms}`
     case 'AccountingSellQuantityExceedsPosition':
-      return `sell quantity ${failure.saleQuantityMicros} exceeds position ${failure.positionQuantityMicros}`
+      return `sell quantity ${failure.saleQuantityAtoms} exceeds position ${failure.positionQuantityAtoms}`
     case 'AccountingCanonicalizationFailed':
       return `${failure.operation} material is not canonicalizable`
     case 'AccountingTransactionDecodeFailed':

@@ -20,12 +20,30 @@ import type { ThreadSource } from "./ThreadSource";
  */
 export type ThreadForkParams = { threadId: string,
 /**
+ * Start from the loaded parent's effective config, tools, environments, and
+ * persisted history to maximize prompt-cache reuse. Requires a loaded,
+ * persisted parent and `ephemeral: true`. Enables `features.reasoning_effort_override`
+ * on the fork. Only `config.thread_unload_delay_secs` may override the inherited
+ * config. Cannot be combined with `path`, `lastTurnId`, or `beforeTurnId`.
+ */
+experimentalPredictionMode?: boolean,
+/**
+ * Disable MCP servers in prediction mode when the inherited window uses incremental tools on Responses Lite.
+ * Requires `experimentalPredictionMode: true`.
+ */
+experimentalDisablePredictionMcp?: boolean,
+/**
  * Optional last turn id to fork through, inclusive.
  *
  * When specified, turns after `last_turn_id` are omitted from the fork.
  * The referenced turn cannot be in progress.
  */
 lastTurnId?: string | null,
+/**
+ * Optional turn id to fork before, excluding that turn and all later turns.
+ * Cannot be combined with `last_turn_id`.
+ */
+beforeTurnId?: string | null,
 /**
  * [UNSTABLE] Specify the rollout path to fork from.
  * If specified, the thread_id param will be ignored.
@@ -50,12 +68,26 @@ approvalsReviewer?: ApprovalsReviewer | null, sandbox?: SandboxMode | null,
  */
 permissions?: string | null, config?: { [key in string]?: JsonValue } | null, baseInstructions?: string | null, developerInstructions?: string | null, ephemeral?: boolean,
 /**
+ * Persist the fork as an attached thread of its resolved source, hidden from ordinary
+ * lists. The source cannot be deleted while attached threads exist. Requires a paginated source and local storage;
+ * incompatible with ephemeral and deferGoalContinuation. Omitted or false creates an ordinary fork.
+ */
+attachToSource?: boolean,
+/**
  * Optional client-supplied analytics source classification for this forked thread.
  */
 threadSource?: ThreadSource | null,
 /**
  * When true, return only thread metadata and live fork state without
  * populating `thread.turns`. This is useful when the client plans to call
- * `thread/turns/list` immediately after forking.
+ * `thread/turns/list` immediately after forking. Full-history hydration
+ * is deprecated for paginated threads; use this with `thread/turns/list`
+ * and `thread/items/list` instead.
  */
-excludeTurns?: boolean, };
+excludeTurns?: boolean,
+/**
+ * When true, carry the source thread's current goal into the fork without
+ * starting its initial automatic continuation. The next explicit turn owns
+ * the goal lifecycle, and normal automatic continuation resumes after it.
+ */
+deferGoalContinuation?: boolean, };

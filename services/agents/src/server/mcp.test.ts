@@ -35,6 +35,9 @@ const makeService = (): { service: MemoryNotesMcpService; saved: AgentsMemoryNot
           tags: tags ?? [],
           metadata: metadata ?? {},
           createdAt: new Date().toISOString(),
+          retiredAt: null,
+          retirementReason: null,
+          replacementId: null,
         }
         saved.push(record)
         return record
@@ -56,6 +59,7 @@ const makeAgentRunsService = () => {
     create: [],
     list: [],
     get: [],
+    cancel: [],
     listResources: [],
     getLogs: [],
     listTerminalEvents: [],
@@ -64,6 +68,11 @@ const makeAgentRunsService = () => {
   }
 
   const service: AgentRunsMcpService = {
+    cancel: (input) =>
+      Effect.sync(() => {
+        calls.cancel.push(input)
+        return { ok: true, cancellationRequested: true, agentRun: { id: input.id, status: 'Cancelling' } }
+      }),
     create: (input: AgentsAgentRunSubmitInput) =>
       Effect.sync(() => {
         calls.create.push(input)
@@ -273,7 +282,7 @@ describe('Agents MCP handler', () => {
           arguments: {
             deliveryId: 'delivery-1',
             payload: {
-              agentRef: { name: 'codex-spark-agent' },
+              agentRef: { name: 'codex-agent' },
               runtime: { type: 'workflow' },
               goal: { objective: 'prove mcp AgentRun creation' },
             },
@@ -289,7 +298,7 @@ describe('Agents MCP handler', () => {
       {
         deliveryId: 'delivery-1',
         payload: {
-          agentRef: { name: 'codex-spark-agent' },
+          agentRef: { name: 'codex-agent' },
           runtime: { type: 'workflow' },
           goal: { objective: 'prove mcp AgentRun creation' },
         },

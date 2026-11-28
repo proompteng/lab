@@ -1,6 +1,6 @@
 # CRD: AgentRun Workflow Loops With Shared State
 
-Status: Draft (2026-02-28)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 Docs index: [README](../README.md)
 

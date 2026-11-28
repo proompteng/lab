@@ -9,7 +9,7 @@ import {
 
 describe('Atlas file eligibility', () => {
   it('keeps the filter explicitly versioned', () => {
-    expect(ATLAS_ELIGIBILITY_VERSION).toBe('atlas-eligibility-v1')
+    expect(ATLAS_ELIGIBILITY_VERSION).toBe('atlas-eligibility-v2')
   })
 
   it('accepts regular source and documentation files', () => {

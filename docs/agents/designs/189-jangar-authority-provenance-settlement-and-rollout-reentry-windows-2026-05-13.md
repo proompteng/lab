@@ -1,6 +1,6 @@
 # 189. Jangar Authority Provenance Settlement And Rollout Reentry Windows (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane authority provenance, source-to-serving rollout truth, AgentRun dispatch safety, PR-to-rollout
@@ -14,16 +14,11 @@ Governing requirement:
   workload readiness, and service health after rollout; final handoff names the control-plane metric improved or the
   smallest blocker preventing improvement.
 
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/193-torghut-route-repair-yield-board-and-hypothesis-reentry-guardrails-2026-05-13.md`
-
 Extends:
 
 - `188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
 - `187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
 - `186-jangar-route-warrant-dispatch-custody-and-dependency-verdicts-2026-05-13.md`
-- `184-jangar-stage-evidence-credit-authority-and-freeze-reclock-2026-05-12.md`
 
 ## Decision
 

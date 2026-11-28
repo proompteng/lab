@@ -5,7 +5,11 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const dockerfile = () => readFileSync(new URL('../../../Dockerfile', import.meta.url), 'utf8')
+const agentsShellEntrypoint = () =>
+  readFileSync(new URL('../../../scripts/agents-shell-entrypoint.sh', import.meta.url), 'utf8')
+const agentsNixImage = () => readFileSync(new URL('../../../../../nix/images/agents.nix', import.meta.url), 'utf8')
 const sourceRoot = fileURLToPath(new URL('../../', import.meta.url))
+const pstackCommit = '6d25df69f0baf6600807d82975d75139f3b1ab92'
 
 const listProductionSources = (dir: string): string[] =>
   readdirSync(dir).flatMap((entry) => {
@@ -27,6 +31,13 @@ const dockerfileTarget = (target: string) => {
 }
 
 describe('Agents control-plane image layout', () => {
+  it('disables the unrotated optional audit file in both chart and production defaults', () => {
+    for (const path of ['charts/agents/values.yaml', 'argocd/applications/agents/values.yaml']) {
+      const content = readFileSync(new URL(`../../../../../${path}`, import.meta.url), 'utf8')
+      expect(content).toMatch(/AGENTS_SHELL_AUDIT_LOG_PATH:\s*(?:''|"")/)
+    }
+  })
+
   it('builds the Agents service for the control-plane target', () => {
     const content = dockerfileTarget('control-plane')
 
@@ -67,6 +78,46 @@ describe('Agents control-plane image layout', () => {
     expect(content).toContain('python3-venv')
     expect(content).toContain('python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERSION}"')
     expect(content).toContain('command -v bash git gh rg curl jq yq python3 uv ps wget kubectl apply_patch')
+  })
+
+  it('bundles the pinned Poteto pstack skills for agents-shell startup', () => {
+    const content = dockerfile()
+    const bundleTarget = dockerfileTarget('pstack-bundle')
+    const shellTarget = dockerfileTarget('agents-shell')
+
+    expect(content).toContain('ARG PSTACK_REPOSITORY=https://github.com/michael-denyer/pstack-claude.git')
+    expect(content).toContain(`ARG PSTACK_COMMIT=${pstackCommit}`)
+    expect(bundleTarget).toContain('FROM agents-tools AS pstack-bundle')
+    expect(bundleTarget).toContain(
+      'git -C /opt/agents-shell/pstack-source fetch -q --depth=1 origin "${PSTACK_COMMIT}"',
+    )
+    expect(bundleTarget).toContain('plugins/pstack/skills/poteto-mode/SKILL.md')
+    expect(bundleTarget).toContain('plugins/pstack/skills/poteto-mode/references/codex-tools.md')
+    expect(bundleTarget).toMatch(/SKILL\.md.*wc -l\)" = 68\b/)
+    expect(bundleTarget).not.toContain('.codex-plugin/prompts')
+    expect(shellTarget).toContain(
+      'COPY --from=pstack-bundle /opt/agents-shell/pstack-source/plugins/pstack /opt/agents-shell/pstack',
+    )
+    expect(shellTarget).toContain('chmod +x ./scripts/install-agents-shell-pstack.sh')
+    expect(agentsShellEntrypoint()).toContain('./scripts/install-agents-shell-pstack.sh')
+  })
+
+  it('bundles the same pinned pstack tree in the production Nix agents-shell image', () => {
+    const content = agentsNixImage()
+
+    expect(content).toContain('pstackVersion = "0.9.159"')
+    expect(content).toContain(`pstackCommit = "${pstackCommit}"`)
+    expect(content).toContain('hash = "sha256-dtC7o5ombOIT+Zbow5730fShruncV/YJMZzXVTEXotY="')
+    expect(content).toContain('pname = "agents-shell-pstack"')
+    expect(content).toContain('cp -R plugins/pstack "$out/opt/agents-shell/pstack"')
+    expect(content).toMatch(/SKILL\.md.*wc -l\)" = 68\b/)
+    expect(content).not.toContain('.codex-plugin/prompts')
+    expect(content).toContain('"$out/app/services/agents/scripts/install-agents-shell-pstack.sh"')
+    const shellContents = content.match(/agentsShellContents\s*=\s*commonContents\s*\+\+\s*\[([\s\S]*?)\]/)?.[1]
+    expect(shellContents?.trim().split(/\s+/)).toEqual(
+      expect.arrayContaining(['applyPatch', 'pstackBundle', 'agentsShellInterpreterCompat']),
+    )
+    expect(content).toContain('ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"')
   })
 
   it('runs package builds on the build platform while keeping runtime dependencies target-native', () => {

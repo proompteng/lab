@@ -1,19 +1,39 @@
+import { instrumentMarket, MarketKind } from '../../instruments'
+import type { SimulatedMarketSnapshot, SimulatedVerifiedMarketSnapshot } from '../streaming/snapshot'
+import type { SimulatedSnapshotReference } from '../streaming/simulation-service'
+import type { StreamingMarketSnapshot, StreamingVerifiedMarketSnapshot } from '../streaming/snapshot'
+import type { StreamingVerifiedSnapshotReference } from '../streaming/reference'
 import { Context, Data, Effect } from 'effect'
 
 import type { OperationalError } from '../../errors'
 import type { IsoDate } from '../../schemas'
-import type { MarketCalendarObservation } from '../../broker/alpaca/model'
+import type { MarketHours } from '../../market-hours'
 
-export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
-export type IntradayDelayClass = 'real_time_exchange_only' | 'real_time_consolidated' | 'delayed_15m_consolidated'
+export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip' | 'us'
+export type IntradayDelayClass =
+  | 'real_time_exchange_only'
+  | 'real_time_consolidated'
+  | 'delayed_15m_consolidated'
+  | 'real_time_crypto'
 export enum IntradaySnapshotPurpose {
   EntryPricing = 'ENTRY_PRICING',
   Liquidation = 'LIQUIDATION',
+  PositionCheckpoint = 'POSITION_CHECKPOINT',
+}
+
+export enum IntradayBenchmarkEvidencePolicy {
+  CompletedBars = 'bayn.benchmark-evidence.completed-bars.v1',
+}
+
+export enum IntradayCandidateEvidencePolicy {
+  QuoteWithWindowTrade = 'bayn.candidate-evidence.quote-window-trade.v1',
+  MarketQuotes = 'bayn.candidate-evidence.market-quotes.v1',
+  MarketQuotesV2 = 'bayn.candidate-evidence.market-quotes.v2',
 }
 
 export interface IntradaySnapshotQuery {
   readonly sessionDate: IsoDate
-  readonly calendar: MarketCalendarObservation
+  readonly calendar: MarketHours
   readonly rangeStartAt: string
   readonly rangeEndAt: string
   readonly observedAt: string
@@ -23,6 +43,11 @@ export interface IntradaySnapshotQuery {
   readonly universe: readonly string[]
   /** Canonical subset required by this snapshot. Omission means the full universe. */
   readonly symbols?: readonly string[]
+  /** Decision candidates whose unavailable data is recorded separately from the required benchmark. */
+  readonly candidateSymbols?: readonly string[]
+  readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
+  readonly benchmarkEvidencePolicy?: IntradayBenchmarkEvidencePolicy
+  readonly benchmarkSymbols?: readonly string[]
   /** Quote-only execution evidence; omission keeps the full decision-time bar and trade contract. */
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
@@ -42,6 +67,47 @@ export interface IntradayArchiveWatermark {
   readonly inclusiveLastOffset: string
 }
 
+type IntradaySource = Pick<
+  IntradaySnapshotQuery,
+  'universeId' | 'universeSymbolHash' | 'universe' | 'feed' | 'delayClass' | 'sourceTopics'
+>
+
+export const sameIntradaySource = (left: IntradaySource, right: IntradaySource): boolean =>
+  left.universeId === right.universeId &&
+  left.universeSymbolHash === right.universeSymbolHash &&
+  left.universe.length === right.universe.length &&
+  left.universe.every((symbol, index) => symbol === right.universe[index]) &&
+  left.feed === right.feed &&
+  left.delayClass === right.delayClass &&
+  left.sourceTopics.bars === right.sourceTopics.bars &&
+  left.sourceTopics.quotes === right.sourceTopics.quotes &&
+  left.sourceTopics.trades === right.sourceTopics.trades
+
+export const usesWindowTradeEvidence = (
+  request: Pick<IntradaySnapshotQuery, 'candidateEvidencePolicy' | 'candidateSymbols'>,
+  symbol: string,
+): boolean =>
+  request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.MarketQuotesV2 ||
+  ((request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade ||
+    request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.MarketQuotes) &&
+    (request.candidateSymbols?.includes(symbol) === true || instrumentMarket(symbol) === MarketKind.Crypto))
+
+export const usesOptionalTradeEvidence = (
+  request: Pick<IntradaySnapshotQuery, 'candidateEvidencePolicy'>,
+  symbol: string,
+): boolean =>
+  (request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.MarketQuotes ||
+    request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.MarketQuotesV2) &&
+  instrumentMarket(symbol) === MarketKind.Crypto
+
+export const usesCompletedBarBenchmark = (
+  request: Pick<IntradaySnapshotQuery, 'benchmarkEvidencePolicy' | 'benchmarkSymbols' | 'candidateSymbols'>,
+  symbol: string,
+): boolean =>
+  request.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars &&
+  request.benchmarkSymbols?.includes(symbol) === true &&
+  request.candidateSymbols?.includes(symbol) !== true
+
 export interface IntradaySnapshotRequest extends IntradaySnapshotQuery {
   /** Exact Kafka-backed archive version captured before this snapshot is loaded. */
   readonly archiveWatermarks: readonly IntradayArchiveWatermark[]
@@ -60,7 +126,8 @@ export interface IntradayRecordIdentity {
   readonly universeId: string
   readonly universeSymbolHash: string
   readonly feed: IntradayFeed
-  readonly marketSession: 'regular'
+  readonly marketSession: 'pre' | 'regular' | 'post' | 'continuous'
+  readonly nativePayload?: string
   readonly delayClass: IntradayDelayClass
   readonly symbol: string
   readonly eventAt: string
@@ -95,10 +162,16 @@ export interface IntradayTrade extends IntradayRecordIdentity {
   readonly size: number
 }
 
+export interface IntradayCandidateExclusion {
+  readonly symbol: string
+  readonly reason: 'not-ready' | 'freshness'
+  readonly message: string
+}
+
 export interface IntradaySnapshotManifest {
   readonly schemaVersion: 'bayn.intraday-market-snapshot.v1'
   readonly sessionDate: IsoDate
-  readonly calendar: MarketCalendarObservation
+  readonly calendar: MarketHours
   readonly rangeStartAt: string
   readonly rangeEndAt: string
   readonly observedAt: string
@@ -107,6 +180,11 @@ export interface IntradaySnapshotManifest {
   /** Added for subset snapshots; omitted only by legacy v1 material. */
   readonly universe?: readonly string[]
   readonly symbols: readonly string[]
+  readonly candidateSymbols?: readonly string[]
+  readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
+  readonly benchmarkEvidencePolicy?: IntradayBenchmarkEvidencePolicy
+  readonly benchmarkSymbols?: readonly string[]
+  readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
@@ -133,53 +211,15 @@ export interface IntradayMarketSnapshot {
   readonly manifest: IntradaySnapshotManifest
 }
 
-declare const ArchiveVerifiedIntradayMarketSnapshotTypeId: unique symbol
+export type VerifiedMarketSnapshot = StreamingVerifiedMarketSnapshot | SimulatedVerifiedMarketSnapshot
+export type MarketSnapshotReference = StreamingVerifiedSnapshotReference | SimulatedSnapshotReference
 
-/**
- * Opaque snapshot produced only after the immutable ClickHouse archive query
- * has selected each canonical quote and trade winner at the bound watermarks.
- * Persisted or caller-constructed snapshot documents must be reloaded through
- * IntradayMarketData before they can cross this boundary.
- */
-export type ArchiveVerifiedIntradayMarketSnapshot = IntradayMarketSnapshot & {
-  readonly [ArchiveVerifiedIntradayMarketSnapshotTypeId]: true
-}
-
-declare const ArchiveVerifiedIntradaySnapshotReferenceTypeId: unique symbol
-
-/** Compact durable identity derived only from a snapshot reverified against the immutable archive. */
-export type ArchiveVerifiedIntradaySnapshotReference = {
-  readonly schemaVersion: 'bayn.intraday-snapshot-reference.v1'
-  readonly manifest: IntradaySnapshotManifest
-  readonly [ArchiveVerifiedIntradaySnapshotReferenceTypeId]: true
-}
-
-export const archiveVerifiedIntradaySnapshotReference = (
-  snapshot: ArchiveVerifiedIntradayMarketSnapshot,
-): ArchiveVerifiedIntradaySnapshotReference =>
-  Object.freeze({
-    schemaVersion: 'bayn.intraday-snapshot-reference.v1',
-    manifest: snapshot.manifest,
-  }) as ArchiveVerifiedIntradaySnapshotReference
-
-/**
- * Verified intraday market-data boundary. This service is introduced with the
- * verifier and its ClickHouse implementation so callers can never obtain a
- * materialized snapshot without the immutable-row checks in this layer.
- */
 export interface IntradayMarketDataService {
-  /** Verifies that the three tables required by the active strategy are queryable. */
   readonly check: Effect.Effect<void, OperationalError>
-  readonly captureVersion: (
-    query: IntradaySnapshotQuery,
-  ) => Effect.Effect<readonly IntradayArchiveWatermark[], OperationalError>
-  readonly loadSnapshot: (
-    request: IntradaySnapshotRequest,
-  ) => Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError>
-  /** Re-query the bound immutable archive and reject a caller-provided snapshot that is not the canonical result. */
-  readonly verifyArchiveSnapshot: (
-    snapshot: IntradayMarketSnapshot,
-  ) => Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError>
+  readonly loadSnapshot: (query: IntradaySnapshotQuery) => Effect.Effect<VerifiedMarketSnapshot, OperationalError>
+  readonly verifyReference: (
+    snapshot: StreamingMarketSnapshot | SimulatedMarketSnapshot,
+  ) => Effect.Effect<MarketSnapshotReference, OperationalError>
 }
 
 export class IntradayMarketData extends Context.Service<IntradayMarketData, IntradayMarketDataService>()(
@@ -198,9 +238,15 @@ export type IntradaySnapshotFailureReason =
   | 'lineage'
   | 'hash'
 
+export enum IntradayIngestionDelayDirection {
+  BelowMinimum = 'below-minimum',
+  AboveMaximum = 'above-maximum',
+}
+
 export class IntradaySnapshotFailure extends Data.TaggedError('IntradaySnapshotFailure')<{
   readonly reason: IntradaySnapshotFailureReason
   readonly message: string
+  readonly ingestionDelayDirection?: IntradayIngestionDelayDirection
   readonly facts?: Readonly<Record<string, unknown>>
   readonly cause?: unknown
 }> {}

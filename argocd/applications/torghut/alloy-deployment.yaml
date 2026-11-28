@@ -15,8 +15,8 @@ spec:
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-03-19T06:31:00Z"
-        torghut.proompteng.ai/alloy-config-sha256: be2adb039b3b684c22547158b61e1903100df42fb7ea797401a49bfbfd6ff01c
+        kubectl.kubernetes.io/restartedAt: '2026-03-19T06:31:00Z'
+        torghut.proompteng.ai/alloy-config-sha256: 508994fdf02de19d8a1b279617e84616d7b6f63cfeae70877c3578c050497f83
       labels:
         app.kubernetes.io/name: torghut-alloy
         app.kubernetes.io/component: observability
@@ -24,7 +24,7 @@ spec:
       serviceAccountName: torghut-alloy
       containers:
         - name: alloy
-          image: grafana/alloy:v1.18.1
+          image: grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
           imagePullPolicy: IfNotPresent
           args:
             - run
@@ -44,10 +44,10 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              memory: 256Mi
             limits:
               cpu: 500m
-              memory: 256Mi
+              memory: 512Mi
           volumeMounts:
             - name: config
               mountPath: /etc/alloy

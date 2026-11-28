@@ -1,0 +1,11 @@
+--- a/crates/metadata-server/src/raft/storage/rocksdb.rs
++++ b/crates/metadata-server/src/raft/storage/rocksdb.rs
+@@ -330,7 +330,7 @@
+             .write_batch(
+                 "commit_write_batch",
+                 Priority::High,
+-                IoMode::Default,
++                IoMode::AlwaysBackground,
+                 Self::write_options(),
+                 write_batch,
+             )

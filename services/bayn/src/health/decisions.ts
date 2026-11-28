@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import {
   CycleOperationsCondition,
   deriveCycleOperationsStatusResult,
@@ -32,7 +32,6 @@ import type {
   HealthTransitionInput,
   ProbeResult,
 } from './model'
-import { Pipeable } from '../pipeable'
 
 const dependencyHealth = <A>(result: ProbeResult<A>, checkedAt: string | null): DependencyHealth => ({
   status: result._tag === 'Available' ? 'AVAILABLE' : 'UNAVAILABLE',
@@ -64,6 +63,7 @@ const cycleLoopHealth = (
   clock: HealthProbeClock,
   stallThresholdMs: number,
   required: boolean,
+  expectedSourceRevision: string,
 ): DependencyHealth => {
   const checkedAt = clock._tag === 'Available' ? clock.checkedAt : null
   const available = (): DependencyHealth => ({ status: 'AVAILABLE', checkedAt, error: null })
@@ -78,7 +78,7 @@ const cycleLoopHealth = (
     if (controllerResult._tag === 'Unavailable') {
       return unavailable(controllerResult.error)
     }
-    const status = controllerResult.value
+    const { status, operational } = controllerResult.value
     if (status === null) return unavailable('Restate lifecycle has not completed its first durable pass')
     if (status.controllerKey !== controller.controllerKey) {
       return unavailable('Restate execution-controller projection identity differs from the configured controller')
@@ -87,6 +87,18 @@ const cycleLoopHealth = (
       return unavailable('Restate execution-controller projection plan differs from the configured controller')
     }
     if (!status.active) return unavailable('Restate execution controller is durably inactive')
+    if (operational === null) return unavailable('Restate execution-controller operational state is unavailable')
+    if (operational.controllerKey !== controller.controllerKey)
+      return unavailable('Restate execution-controller operational identity differs from the configured controller')
+    if (operational.planHash !== controller.planHash)
+      return unavailable('Restate execution-controller operational plan differs from the configured controller')
+    if (operational.sourceRevision !== expectedSourceRevision)
+      return unavailable('Restate execution-controller operational source differs from the configured build')
+    if (operational.epoch !== status.epoch)
+      return unavailable('Restate execution-controller operational epoch differs from its completion projection')
+    if (status.nextSequence < operational.nextSequence)
+      return unavailable('Restate execution-controller completion projection is behind its operational state')
+    if (!operational.active) return unavailable('Restate execution controller is durably inactive')
     if (!executionControllerStatusHasCompletion(status)) {
       return unavailable('Restate lifecycle has not completed its first durable pass')
     }
@@ -94,17 +106,27 @@ const cycleLoopHealth = (
       return unavailable(`${loop.lastPass.operation}/${loop.lastPass.failure}: ${loop.lastPass.message}`)
     }
     const completedAtMs = Date.parse(status.completedAt)
-    const nextDueAtMs = status.nextDueAt === undefined ? Number.NaN : Date.parse(status.nextDueAt)
-    if (!Number.isFinite(completedAtMs) || !Number.isFinite(nextDueAtMs) || nextDueAtMs < completedAtMs) {
+    const nextDueAtMs = status.nextDueAt === undefined ? undefined : Date.parse(status.nextDueAt)
+    const operationalDueAtMs = operational.nextDueAt === undefined ? undefined : Date.parse(operational.nextDueAt)
+    const wakeAcceptedAtMs =
+      operational.pendingWake === undefined ? undefined : Date.parse(operational.pendingWake.acceptedAt)
+    const obligations = [nextDueAtMs, operationalDueAtMs, wakeAcceptedAtMs].filter(
+      (at): at is number => at !== undefined,
+    )
+    if (!Number.isFinite(completedAtMs) || obligations.some((at) => !Number.isFinite(at))) {
       return unavailable('Restate execution-controller projection has an invalid completion schedule')
     }
     if (clock._tag === 'Unavailable') return previous
     if (completedAtMs > clock.checkedAtMs) {
       return unavailable('Restate execution-controller completion time is in the future')
     }
-    const overdueMs = clock.checkedAtMs - nextDueAtMs
-    if (overdueMs >= stallThresholdMs) {
-      return unavailable(`Restate execution controller is overdue by ${overdueMs}ms`)
+    if (wakeAcceptedAtMs !== undefined && wakeAcceptedAtMs > clock.checkedAtMs)
+      return unavailable('Restate execution-controller wake acceptance time is in the future')
+    if (obligations.length > 0) {
+      const overdueMs = clock.checkedAtMs - Math.min(...obligations)
+      if (overdueMs >= stallThresholdMs) {
+        return unavailable(`Restate execution controller is overdue by ${overdueMs}ms`)
+      }
     }
     return available()
   }
@@ -145,7 +167,7 @@ const deriveExecutionControllerStatus = (
   return result._tag === 'Available'
     ? {
         ...current,
-        status: result.value,
+        status: result.value.status,
         readAvailable: true,
         checkedAt,
         error: null,
@@ -194,6 +216,9 @@ const deriveBrokerStatus = (
     readAvailable: observed._tag === 'Available' && observed.value.permissionError === null,
     checkedAt,
     error: bindingError,
+    ...(observed._tag === 'Unavailable' && observed.observationFailure !== undefined
+      ? { observationFailure: observed.observationFailure }
+      : {}),
     executionEligible: broker.executionEligible,
     executionDisabledReason: broker.executionDisabledReason,
   }
@@ -204,6 +229,7 @@ const deriveCycleStatus = (
   config: RuntimeConfig,
   runtime: RuntimeState,
   clock: HealthProbeClock,
+  awaitingCashFees: boolean,
 ): CycleOperationsStatus => {
   const clockError =
     clock._tag === 'Unavailable'
@@ -221,6 +247,7 @@ const deriveCycleStatus = (
         clock.checkedAtMs,
         runtime.capitalActivation?._tag === 'Realized' ? Authority.Execution : Authority.Observe,
         config,
+        awaitingCashFees,
       ),
       {
         onFailure: (failure) => ({
@@ -247,7 +274,7 @@ const deriveRuntimeHealth = (
   checkedAt,
   dependencies: {
     postgresql: dependencyHealth(results.postgresql, checkedAt),
-    signal: dependencyHealth(results.signal, checkedAt),
+    ...(results.signal === undefined ? {} : { signal: dependencyHealth(results.signal, checkedAt) }),
     tigerBeetle: dependencyHealth(results.tigerBeetle, checkedAt),
     cycle: dependencyHealth(results.cycle, checkedAt),
     cycleRunner,
@@ -315,7 +342,7 @@ const deriveNextRuntimeState = (
   }
 }
 
-const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTransitionInput): HealthTransition => {
+export const deriveHealthTransition = (current: RuntimeState, input: HealthTransitionInput): HealthTransition => {
   const checkedAt = input.clock._tag === 'Available' ? input.clock.checkedAt : null
   const clockFailure = input.clock._tag === 'Unavailable' ? input.clock.failure : null
   const clockError =
@@ -342,14 +369,22 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
     input.clock,
     input.config.cycleStallThresholdMs,
     input.broker !== undefined,
+    input.config.build.sourceRevision,
   )
   const projectedCurrent: RuntimeState =
     executionController === undefined
       ? { ...current, autonomousCycleLoop }
       : { ...current, autonomousCycleLoop, executionController }
-  const cycle = deriveCycleStatus(cycleObservation, input.config, projectedCurrent, input.clock)
   const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
   const health = deriveRuntimeHealth(current, { ...input.results, cycle: cycleObservation }, cycleRunner, checkedAt)
+  // Only classify healthy peers with a current cash fee wait as expected; don't mask another outage.
+  const awaitingCashFees =
+    input.results.broker?._tag === 'Unavailable' &&
+    input.results.broker.observationFailure === 'CASH_FEES_PENDING' &&
+    current.status !== 'FAILED' &&
+    current.capitalActivation?._tag !== 'Pending' &&
+    Object.values(health.dependencies).every(({ status }) => status === 'AVAILABLE')
+  const cycle = deriveCycleStatus(cycleObservation, input.config, projectedCurrent, input.clock, awaitingCashFees)
   const failures = summarizeHealthFailures(health, broker, cycle, clockError)
   const next = deriveNextRuntimeState(projectedCurrent, health, cycle, broker, executionController, failures)
   return {
@@ -361,8 +396,6 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
     clockFailure,
   }
 }
-
-export const deriveHealthTransition = Pipeable.dual(2, deriveHealthTransitionDataFirst)
 
 const runtimeStatusLogDecision = (transition: HealthTransition): HealthLogDecision | null => {
   if (transition.next.status === transition.current.status) return null

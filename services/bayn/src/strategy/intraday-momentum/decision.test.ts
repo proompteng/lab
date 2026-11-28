@@ -1,24 +1,22 @@
+import { makeIntradayMomentumDefinition } from './test-support'
+import { decodeIntradayMomentumProtocol, defaultIntradayMomentumProtocolDocument } from './protocol'
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
+import { streamingFixtureFromRaw } from '../../testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { makeExecutionCalendarObservation } from '../../cycle'
-import { canonicalHashV1 } from '../../hash'
-import { verifyIntradaySnapshot, type IntradayMarketSnapshot, type IntradaySnapshotRows } from '../../market-data'
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../../market-data/intraday/model'
+import { makeExecutionCalendarObservation } from '../../cycle/construction'
+import { canonicalHashV1Result } from '../../hash'
+import { verifyIntradaySnapshot, type IntradaySnapshotRows } from '../../market-data/intraday/verification'
+import type { IntradayMarketSnapshot } from '../../market-data/intraday/model'
 import { strictParseOptions } from '../../schemas'
-import { decideIntradayMomentum, makeIntradayMomentumDefinition } from './decision'
+import { decideIntradayMomentum } from './decision'
 import {
   compareIntradayMomentumSignalStrength,
   IntradayMomentumTargetPortfolioSchema,
   intradayMomentumPlanningTargetWeights,
   type IntradayMomentumRejectionReason,
 } from './model'
-import {
-  decodeDefaultIntradayMomentumProtocol,
-  decodeIntradayMomentumProtocol,
-  defaultIntradayMomentumProtocolDocument,
-  hashIntradayMomentumProtocol,
-} from './protocol'
 
 const symbols = [
   ...defaultIntradayMomentumProtocolDocument.candidateSymbols,
@@ -27,13 +25,13 @@ const symbols = [
 const barsTopic = 'torghut.bars.1m.v1'
 const quotesTopic = 'torghut.quotes.v1'
 const tradesTopic = 'torghut.trades.v1'
-const calendarMaterial = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendarMaterial = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: '2026-08-18', end: '2026-08-18' },
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
-}
+})
 
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 const error = <A, E>(result: Result.Result<A, E>): E => Result.getOrThrow(Result.flip(result))
@@ -54,6 +52,7 @@ interface FixtureOptions {
   readonly askSizeBySymbol?: Readonly<Record<string, number>>
   readonly baselineEventAt?: string
   readonly evidenceEventAt?: string
+  readonly candidateQuery?: boolean
   readonly omitFirstBarFor?: string
   readonly sourceTopics?: {
     readonly bars: string
@@ -63,7 +62,7 @@ interface FixtureOptions {
 }
 
 const marketContextAt = (options: FixtureOptions) => {
-  const boundCalendarMaterial = {
+  const boundCalendarMaterial = withProviderSessions({
     ...calendarMaterial,
     sessions: [
       {
@@ -71,10 +70,10 @@ const marketContextAt = (options: FixtureOptions) => {
         closeAt: options.sessionCloseAt ?? calendarMaterial.sessions[0]!.closeAt,
       },
     ],
-  }
+  })
   const boundCalendar = {
     ...boundCalendarMaterial,
-    normalizedResponseHash: canonicalHashV1(boundCalendarMaterial),
+    normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(boundCalendarMaterial)),
   }
   const boundExecutionCalendar = success(
     makeExecutionCalendarObservation({
@@ -146,7 +145,6 @@ const marketContextAt = (options: FixtureOptions) => {
       source_partition: '0',
       source_offset: String(quoteOffset++),
       schema_version: '1',
-      latest_payload_variants: '1',
       bid_price: String(midpoint - halfSpread),
       bid_size: String(
         options.bidSizeBySymbol?.[symbol] ?? options.displayedSizeBySymbol?.[symbol] ?? options.displayedSize ?? 100,
@@ -174,7 +172,6 @@ const marketContextAt = (options: FixtureOptions) => {
       source_partition: '0',
       source_offset: String(tradeOffset++),
       schema_version: '1',
-      latest_payload_variants: '1',
       price: String(reference * (1 + returnBps / 10_000)),
       size: '10',
     }
@@ -194,6 +191,7 @@ const marketContextAt = (options: FixtureOptions) => {
     universeSymbolHash: defaultIntradayMomentumProtocolDocument.universeSymbolHash,
     universe: defaultIntradayMomentumProtocolDocument.universe,
     symbols,
+    ...(options.candidateQuery ? { candidateSymbols: defaultIntradayMomentumProtocolDocument.candidateSymbols } : {}),
     feed: defaultIntradayMomentumProtocolDocument.feed,
     delayClass: defaultIntradayMomentumProtocolDocument.delayClass,
     sourceTopics,
@@ -211,28 +209,17 @@ const marketContextAt = (options: FixtureOptions) => {
     quotes,
     trades,
   } satisfies IntradaySnapshotRows
-  const snapshot = success(verifyIntradaySnapshot(request, rows)) as ArchiveVerifiedIntradayMarketSnapshot
-  return Object.freeze({ snapshot, session: boundSession })
+  const snapshot = success(verifyIntradaySnapshot(request, rows)) as IntradayMarketSnapshot
+  return Object.freeze({ snapshot: streamingFixtureFromRaw(snapshot, request).snapshot, session: boundSession })
 }
 
 const qualifyingReturns = Object.freeze({ AAPL: 50, AMZN: 45, NVDA: 40, SPY: 5 })
 
 describe('intraday momentum strategy', () => {
-  test('requires an archive-verified snapshot at the pure decision boundary', () => {
-    type DecisionSnapshot = Parameters<typeof decideIntradayMomentum>[0]['snapshot']
-    const acceptsArchiveVerified: ArchiveVerifiedIntradayMarketSnapshot extends DecisionSnapshot ? true : false = true
-    const rejectsEnvelopeOnly: IntradayMarketSnapshot extends DecisionSnapshot ? false : true = true
-
-    expect({ acceptsArchiveVerified, rejectsEnvelopeOnly }).toEqual({
-      acceptsArchiveVerified: true,
-      rejectsEnvelopeOnly: true,
-    })
-  })
-
   test('binds one small result-blind protocol to the full-session execution model', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     expect(protocol).toEqual(defaultIntradayMomentumProtocolDocument)
-    expect(success(hashIntradayMomentumProtocol(protocol))).toMatch(/^[0-9a-f]{64}$/)
+    expect(success(canonicalHashV1Result(protocol))).toMatch(/^[0-9a-f]{64}$/)
     expect(
       error(
         decodeIntradayMomentumProtocol({
@@ -311,7 +298,7 @@ describe('intraday momentum strategy', () => {
     ['late morning', '2026-08-18T16:00:00.000Z'],
     ['afternoon', '2026-08-18T18:30:00.000Z'],
   ])('evaluates an eligible rolling window in the %s', (_, rangeEndAt) => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const decision = success(
       decideIntradayMomentum(marketContextAt({ rangeEndAt, returnBps: qualifyingReturns }), protocol),
     )
@@ -340,7 +327,7 @@ describe('intraday momentum strategy', () => {
   })
 
   test('breaks equally scored signal ties by canonical code-unit order', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const decision = success(
       decideIntradayMomentum(
         marketContextAt({ rangeEndAt: '2026-08-18T16:00:00.000Z', returnBps: qualifyingReturns }),
@@ -370,7 +357,7 @@ describe('intraday momentum strategy', () => {
   })
 
   test('applies the residual threshold before basis-point rounding', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const decision = success(
       decideIntradayMomentum(
         marketContextAt({
@@ -391,7 +378,7 @@ describe('intraday momentum strategy', () => {
   })
 
   test('ranks eligible residual returns before basis-point rounding', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const decision = success(
       decideIntradayMomentum(
         marketContextAt({
@@ -417,7 +404,7 @@ describe('intraday momentum strategy', () => {
 
   test('uses the bound early-close duration and rejects only impossible decision intervals', () => {
     const earlyCloseAt = '2026-08-18T17:00:00.000Z'
-    const defaultProtocol = success(decodeDefaultIntradayMomentumProtocol())
+    const defaultProtocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     expect(
       success(
         decideIntradayMomentum(
@@ -460,24 +447,34 @@ describe('intraday momentum strategy', () => {
     ).toMatchObject({ reason: 'snapshot-window' })
   })
 
-  test('rejects the old opening-only decision window instead of silently reusing it all day', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+  test('admits the first complete rolling signal window without the extra opening delay', () => {
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     expect(
-      error(
+      success(
         decideIntradayMomentum(
           marketContextAt({ rangeEndAt: '2026-08-18T14:00:00.000Z', returnBps: qualifyingReturns }),
           protocol,
         ),
       ),
-    ).toMatchObject({ reason: 'snapshot-window' })
+    ).toMatchObject({ selectedSymbols: ['AAPL'] })
   })
 
+  test.each(['2026-08-18T19:00:00.000Z', '2026-08-18T19:30:00.000Z', '2026-08-18T19:54:00.000Z'])(
+    'admits a qualifying signal in the final trading hour at %s',
+    (rangeEndAt) => {
+      const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
+      expect(
+        success(decideIntradayMomentum(marketContextAt({ rangeEndAt, returnBps: qualifyingReturns }), protocol)),
+      ).toMatchObject({ selectedSymbols: ['AAPL'] })
+    },
+  )
+
   test('fails closed at the entry cutoff', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     expect(
       error(
         decideIntradayMomentum(
-          marketContextAt({ rangeEndAt: '2026-08-18T19:00:00.000Z', returnBps: qualifyingReturns }),
+          marketContextAt({ rangeEndAt: '2026-08-18T19:55:00.000Z', returnBps: qualifyingReturns }),
           protocol,
         ),
       ),
@@ -485,7 +482,7 @@ describe('intraday momentum strategy', () => {
   })
 
   test('rejects a snapshot observed after its rolling decision window', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     expect(
       error(
         decideIntradayMomentum(
@@ -501,7 +498,7 @@ describe('intraday momentum strategy', () => {
   })
 
   test('rejects a snapshot whose verified freshness contract is looser than the protocol', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     expect(
       error(
         decideIntradayMomentum(
@@ -516,10 +513,10 @@ describe('intraday momentum strategy', () => {
     ).toMatchObject({ reason: 'snapshot-identity' })
   })
 
-  test('rejects a fully verified snapshot sourced from alternate archive topics', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+  test('rejects alternate raw topics before admitting a strategy snapshot', () => {
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     expect(
-      error(
+      Result.isFailure(
         decideIntradayMomentum(
           marketContextAt({
             rangeEndAt: '2026-08-18T18:00:00.000Z',
@@ -533,11 +530,11 @@ describe('intraday momentum strategy', () => {
           protocol,
         ),
       ),
-    ).toMatchObject({ reason: 'snapshot-identity' })
+    ).toBe(true)
   })
 
   test('accepts a fresh snapshot at an arbitrary 30-second controller poll phase', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const decision = success(
       decideIntradayMomentum(
         marketContextAt({
@@ -553,8 +550,26 @@ describe('intraday momentum strategy', () => {
     expect(decision.selectedSymbols).toEqual(['AAPL'])
   })
 
+  test.each([4_648, 10_000])('evaluates executable archive evidence %i milliseconds old', (quoteAgeMs) => {
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
+    const decision = success(
+      decideIntradayMomentum(
+        marketContextAt({
+          rangeEndAt: '2026-08-18T18:00:00.000Z',
+          observedLagMs: 30_000,
+          quoteAgeMs,
+          returnBps: qualifyingReturns,
+        }),
+        protocol,
+      ),
+    )
+
+    expect(decision.selectedSymbols).toEqual(['AAPL'])
+    expect(decision.excludedCandidates).toEqual([])
+  })
+
   test('fails closed when the benchmark quote is stale while candidate evidence remains fresh', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     expect(
       error(
         decideIntradayMomentum(
@@ -574,7 +589,7 @@ describe('intraday momentum strategy', () => {
     ['bid', (symbol: string) => ({ bidSizeBySymbol: { [symbol]: 0 } })],
     ['ask', (symbol: string) => ({ askSizeBySymbol: { [symbol]: 0 } })],
   ])('fails closed when the benchmark %s has no executable displayed liquidity', (_, sizes) => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     expect(
       error(
         decideIntradayMomentum(
@@ -594,7 +609,14 @@ describe('intraday momentum strategy', () => {
   })
 
   test.each([
-    ['stale market data', { observedLagMs: 2_500, quoteAgeMs: 2_500 }, 'market-data-freshness'],
+    [
+      'stale market data',
+      {
+        observedLagMs: defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs + 1,
+        quoteAgeMs: defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs + 1,
+      },
+      'market-data-freshness',
+    ],
     ['wide spread', { spreadBps: 6 }, 'spread'],
     [
       'empty displayed book',
@@ -606,7 +628,7 @@ describe('intraday momentum strategy', () => {
       'displayed-liquidity',
     ],
   ])('rejects %s without rejecting fresh peers', (_, overrides, expectedReason) => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const decision = success(
       decideIntradayMomentum(
         marketContextAt({
@@ -619,18 +641,24 @@ describe('intraday momentum strategy', () => {
       ),
     )
     expect(decision.selectedSymbols).toEqual([])
-    expect(
-      decision.signals.every(({ rejectionReasons }) =>
-        rejectionReasons.includes(expectedReason as IntradayMomentumRejectionReason),
-      ),
-    ).toBe(true)
+    if (expectedReason === 'market-data-freshness') {
+      expect(decision.signals).toEqual([])
+      expect(decision.excludedCandidates).toHaveLength(protocol.candidateSymbols.length)
+      expect(decision.excludedCandidates.every(({ reason }) => reason === 'freshness')).toBe(true)
+    } else {
+      expect(
+        decision.signals.every(({ rejectionReasons }) =>
+          rejectionReasons.includes(expectedReason as IntradayMomentumRejectionReason),
+        ),
+      ).toBe(true)
+    }
   })
 
   test.each([
     ['a negative benchmark regime', { AAPL: 50, SPY: -5 }, 'benchmark-trend'],
     ['insufficient residual momentum', { AAPL: 30, SPY: 25 }, 'excess-return'],
   ])('rejects %s', (_, returnBps, expectedReason) => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const decision = success(
       decideIntradayMomentum(marketContextAt({ rangeEndAt: '2026-08-18T18:00:00.000Z', returnBps }), protocol),
     )
@@ -640,24 +668,36 @@ describe('intraday momentum strategy', () => {
     expect(signal?.rejectionReasons).toContain(expectedReason as IntradayMomentumRejectionReason)
   })
 
-  test('requires a complete rolling baseline for every configured liquid symbol', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
-    expect(
-      error(
-        decideIntradayMomentum(
-          marketContextAt({
-            rangeEndAt: '2026-08-18T18:00:00.000Z',
-            returnBps: qualifyingReturns,
-            omitFirstBarFor: 'AAPL',
-          }),
-          protocol,
-        ),
+  test('admits an observed window without inventing its missing first minute', () => {
+    const context = marketContextAt({
+      rangeEndAt: '2026-08-18T18:00:00.000Z',
+      returnBps: qualifyingReturns,
+      omitFirstBarFor: 'AAPL',
+    })
+    expect(context.snapshot.bars.filter((bar) => bar.symbol === 'AAPL')).toHaveLength(29)
+  })
+
+  test('evaluates a candidate with a missing historical minute alongside its peer', () => {
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
+    const decision = success(
+      decideIntradayMomentum(
+        marketContextAt({
+          rangeEndAt: '2026-08-18T18:00:00.000Z',
+          returnBps: qualifyingReturns,
+          omitFirstBarFor: 'AAPL',
+          candidateQuery: true,
+        }),
+        protocol,
       ),
-    ).toMatchObject({ reason: 'snapshot-coverage', symbol: 'AAPL' })
+    )
+
+    expect(decision.selectedSymbols).toEqual(['AAPL'])
+    expect(decision.signals.some(({ symbol }) => symbol === 'AAPL')).toBe(true)
+    expect(decision.excludedCandidates).toEqual([])
   })
 
   test('accepts a complete rolling baseline expressed at equivalent nanosecond precision', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const rangeEndAt = '2026-08-18T18:00:00.000Z'
     const baselineEventAt = instant(Date.parse(rangeEndAt) - protocol.lookbackMinutes * 60_000).replace(
       '.000Z',
@@ -684,7 +724,7 @@ describe('intraday momentum strategy', () => {
   })
 
   test('emits schema-valid signals from nanosecond quote and trade timestamps', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const decision = success(
       decideIntradayMomentum(
         marketContextAt({
@@ -703,7 +743,7 @@ describe('intraday momentum strategy', () => {
   })
 
   test('exposes one pure INTRADAY definition', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const definition = makeIntradayMomentumDefinition(protocol)
     expect(definition).toMatchObject({
       name: 'intraday-momentum',
@@ -719,8 +759,8 @@ describe('intraday momentum strategy', () => {
     ).toEqual(['AAPL'])
   })
 
-  test('retains the complete decision universe while adding held close targets', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+  test('plans positive targets and held close targets', () => {
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const decision = success(
       decideIntradayMomentum(
         marketContextAt({ rangeEndAt: '2026-08-18T18:30:00.000Z', returnBps: qualifyingReturns }),
@@ -729,7 +769,7 @@ describe('intraday momentum strategy', () => {
     )
     const planningWeights = intradayMomentumPlanningTargetWeights(decision, ['TSLA'])
 
-    expect(Object.keys(planningWeights)).toEqual([...protocol.candidateSymbols, 'TSLA'].sort())
+    expect(Object.keys(planningWeights)).toEqual(['AAPL', 'TSLA'])
     expect(planningWeights['TSLA']).toBe(0)
   })
 })

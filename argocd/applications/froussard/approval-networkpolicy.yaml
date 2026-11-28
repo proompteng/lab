@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: froussard-approval-sdk
+  namespace: froussard
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: froussard
+      app.kubernetes.io/component: approvals
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+      ports:
+        - protocol: TCP
+          port: 9080

@@ -1,5 +1,5 @@
 import { Effect } from 'effect'
-import { SqlClient } from 'effect/unstable/sql'
+import { SqlClient } from 'effect/sql'
 
 // The pre-v50 recovery path rotated this untouched future cycle through OBSERVE without forwarding its plan binding.
 // Keep the data repair incident-specific; the runtime guard below prevents the class of failure for future cycles.

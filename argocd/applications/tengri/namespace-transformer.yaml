@@ -1,0 +1,9 @@
+apiVersion: builtin
+kind: NamespaceTransformer
+metadata:
+  name: default-tengri-namespace
+  namespace: tengri
+unsetOnly: true
+fieldSpecs:
+  - path: metadata/namespace
+    create: true

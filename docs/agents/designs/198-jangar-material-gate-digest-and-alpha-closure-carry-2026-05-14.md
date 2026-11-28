@@ -1,6 +1,6 @@
 # 198. Jangar Material Gate Digest And Alpha Closure Carry (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-14
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar material-readiness proof, Torghut compact closure evidence carry, AgentRun launch admission, status-route
@@ -12,10 +12,6 @@ Companion Torghut contract:
 
 Extends:
 
-- `docs/agents/designs/197-jangar-compact-alpha-closure-ingestion-and-stage-credit-repair-gate-2026-05-14.md`
-- `docs/agents/designs/197-jangar-alpha-evidence-foreclosure-governor-and-runner-custody-2026-05-14.md`
-- `docs/torghut/design-system/v6/202-torghut-compact-alpha-closure-export-and-no-delta-lease-2026-05-14.md`
-- `docs/torghut/design-system/v6/202-torghut-alpha-evidence-foreclosure-and-routeable-candidate-reentry-2026-05-14.md`
 - `docs/agents/designs/188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
 
 ## Decision

@@ -14,20 +14,6 @@
   - `services/torghut/tests/test_policy_checks.py` (hard-fail reason-path coverage)
 - Rollout gap: Closeout. Stage-gated profitability evidence is now required for promotions; remaining closure risk is controlled by SLO monitoring and rollback gate policy in the runtime contract.
 
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: whitepaper ingestion, claim compilation, dispatch, finalization, and Jangar library/API surfaces exist.
-- Matched implementation area: Whitepaper/autoresearch workflow.
-- Current source evidence:
-  - `services/torghut/app/api/whitepaper.py`
-  - `services/torghut/app/whitepapers/workflow`
-  - `services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py`
-  - `services/jangar/src/routes/api/whitepapers/index.ts`
-  - `services/jangar/src/routes/library/whitepapers/index.tsx`
-- Design drift note: Old workflow-template assumptions are stale; current authority is service-owned workflow plus Jangar routes.
-
-
 ## Objective
 
 Profitability must be treated as a system property, not a model property.
@@ -233,8 +219,6 @@ Any red breach triggers:
 - `services/torghut/app/trading/scheduler.py`
 - `services/torghut/app/trading/tca.py`
 - `services/torghut/scripts/run_autonomous_lane.py`
-- `docs/torghut/design-system/v3/full-loop/10-audit-compliance-evidence-spec.md`
-- `docs/torghut/design-system/v3/full-loop/13-research-ledger-promotion-evidence-spec.md`
 - `argocd/applications/torghut/autonomy-gate-policy-configmap.yaml`
 
 ## AgentRun Lane Contract

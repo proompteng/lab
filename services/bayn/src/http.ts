@@ -1,19 +1,26 @@
+import { currentEntryMarkets } from './execution/trading-scope'
 import { createServer } from 'node:http'
 
 import { NodeHttpServer } from '@effect/platform-node'
-import { Clock, Effect, Ref, Scope } from 'effect'
-import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
+import { Clock, Effect, Metric, Ref, Scope } from 'effect'
+import { PrometheusMetrics } from 'effect/observability'
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http'
 
-import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
+import type { RuntimeBuildMetadata, RuntimeConfig } from './config/model'
 import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
-import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle/model'
+import { DecisionReadinessReason } from './cycle/runner/readiness'
+import { decodeInputReadiness } from './market-data/intraday/input-readiness'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
-import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
-import { Pipeable } from './pipeable'
+import { isReady, type AutonomousCyclePassObservation, type DependencyHealth, type RuntimeState } from './runtime-state'
+
+import { defaultJevProtocolDocument } from './jev/protocol'
+import { telemetryHeartbeat } from './telemetry'
+import { accountTradingDate } from './time'
 
 export type HttpResponseDecision =
   | {
@@ -48,8 +55,8 @@ const textDecision = (
   ...(headers === undefined ? {} : { headers }),
 })
 
-const verifiedState = (dependency: DependencyHealth) => {
-  if (dependency.status === 'UNKNOWN') return 'UNKNOWN'
+const verifiedState = (dependency: DependencyHealth | undefined) => {
+  if (dependency === undefined || dependency.status === 'UNKNOWN') return 'UNKNOWN'
   return dependency.status === 'AVAILABLE' ? 'CURRENT' : 'INVALID'
 }
 
@@ -72,6 +79,9 @@ const brokerPresentationReason = (broker: NonNullable<RuntimeState['broker']>): 
   if (broker.accountBound === null || broker.readAvailable === null) return 'BROKER_STATUS_NOT_CHECKED'
   if (broker.error?.startsWith('Alpaca account permission drift detected') === true) {
     return 'BROKER_ACCOUNT_PERMISSION_DRIFT'
+  }
+  if (broker.readAvailable === false && broker.observationFailure === 'CASH_FEES_PENDING') {
+    return 'BROKER_CASH_FEES_PENDING'
   }
   if (broker.readAvailable === false) return 'BROKER_READ_UNAVAILABLE'
   if (broker.accountBound === false) return 'BROKER_ACCOUNT_BINDING_UNAVAILABLE'
@@ -123,30 +133,52 @@ const publicDependencies = (state: RuntimeState) => ({
   },
 })
 
-const publicAutonomousCycleLoop = (state: RuntimeState) => {
-  const lastPass = state.autonomousCycleLoop.lastPass
+const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined) => {
+  if (pass === null || pass === undefined) return null
+  if (pass.result === 'FAILURE') {
+    return {
+      result: pass.result,
+      observedAt: pass.observedAt,
+      operation: pass.operation,
+      failure: pass.failure,
+      reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
+    } as const
+  }
+  const inputReadiness = decodeInputReadiness(pass.readiness?.inputReadiness)
   return {
-    configured: state.autonomousCycleLoop.configured,
-    owner: state.autonomousCycleLoop.owner ?? 'Process',
-    startedAt: state.autonomousCycleLoop.startedAt,
-    lastPass:
-      lastPass === null
-        ? null
-        : lastPass.result === 'SUCCESS'
-          ? {
-              result: lastPass.result,
-              observedAt: lastPass.observedAt,
-              outcome: lastPass.outcome,
-            }
-          : {
-              result: lastPass.result,
-              observedAt: lastPass.observedAt,
-              operation: lastPass.operation,
-              failure: lastPass.failure,
-              reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
-            },
+    result: pass.result,
+    observedAt: pass.observedAt,
+    outcome: pass.outcome,
+    ...(pass.recoveryAction === undefined ? {} : { recoveryAction: pass.recoveryAction }),
+    ...(pass.waitReason === undefined ? {} : { waitReason: pass.waitReason }),
+    ...(pass.admissionProtection === undefined ? {} : { admissionProtection: pass.admissionProtection }),
+    ...(pass.readiness === undefined
+      ? {}
+      : {
+          readiness: {
+            reason: pass.readiness.reason,
+            ...(pass.readiness.accountProtectionReasons === undefined
+              ? {}
+              : { accountProtectionReasons: pass.readiness.accountProtectionReasons }),
+            ...(pass.readiness.availableAt === undefined ? {} : { availableAt: pass.readiness.availableAt }),
+            ...(pass.readiness.symbol === undefined ? {} : { symbol: pass.readiness.symbol }),
+            ...(pass.readiness.eventAt === undefined ? {} : { eventAt: pass.readiness.eventAt }),
+            ...(pass.readiness.requiredFeature === undefined
+              ? {}
+              : { requiredFeature: pass.readiness.requiredFeature }),
+            ...(pass.readiness.snapshotQuery === undefined ? {} : { snapshotQuery: pass.readiness.snapshotQuery }),
+            ...(inputReadiness === undefined ? {} : { inputReadiness }),
+          },
+        }),
   } as const
 }
+
+const publicAutonomousCycleLoop = (state: RuntimeState) => ({
+  configured: state.autonomousCycleLoop.configured,
+  owner: state.autonomousCycleLoop.owner ?? 'Process',
+  startedAt: state.autonomousCycleLoop.startedAt,
+  lastPass: publicCyclePass(state.autonomousCycleLoop.lastPass),
+})
 
 const publicExecutionController = (state: RuntimeState) => {
   const controller = state.executionController
@@ -186,6 +218,7 @@ const publicExecutionController = (state: RuntimeState) => {
               lastReceiptHash: controller.status.lastReceiptHash,
               completedAt: controller.status.completedAt,
               nextDueAt: controller.status.nextDueAt ?? null,
+              lastPass: publicCyclePass(controller.status.lastPass),
             }
           : {
               active: controller.status.active,
@@ -196,6 +229,7 @@ const publicExecutionController = (state: RuntimeState) => {
               lastReceiptHash: null,
               completedAt: null,
               nextDueAt: null,
+              lastPass: null,
             },
     reasonCode,
   } as const
@@ -265,6 +299,7 @@ const publicCycleSnapshot = (snapshot: RuntimeState['cycle']['current']) =>
         cycleId: snapshot.cycleId,
         signalSessionDate: snapshot.signalSessionDate,
         executionSessionDate: snapshot.executionSessionDate,
+        executionCalendarSchemaVersion: snapshot.executionCalendarSchemaVersion,
         phase: snapshot.phase,
         snapshotId: snapshot.snapshotId,
         decisionHash: snapshot.decisionHash,
@@ -276,6 +311,9 @@ const publicCycleSnapshot = (snapshot: RuntimeState['cycle']['current']) =>
         createdAt: snapshot.createdAt,
         updatedAt: snapshot.updatedAt,
         terminalAt: snapshot.terminalAt,
+        ...(snapshot.entryAllocationReason === undefined
+          ? {}
+          : { entryAllocationReason: snapshot.entryAllocationReason }),
       }
 
 const publicCycleReconciliation = (reconciliation: RuntimeState['cycle']['reconciliation']) =>
@@ -309,7 +347,7 @@ const publicCycleState = (state: RuntimeState) =>
         error: cyclePresentationReason(state.cycle.error),
       }
 
-const statusFactsDataFirst = (
+export const statusFacts = (
   state: RuntimeState,
   execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
@@ -323,6 +361,7 @@ const statusFactsDataFirst = (
   const effectiveCapitalAuthority = capitalActivationRealized ? CapitalAuthorityKind.Granted : CapitalAuthorityKind.None
   return {
     service: 'bayn',
+    tradingScope: { entryMarkets: currentEntryMarkets, existingPositionExits: 'NORMAL_CAPITAL_AND_RISK_CHECKS' },
     operational: {
       status: state.status,
       ready: runtimeReady,
@@ -340,6 +379,7 @@ const statusFactsDataFirst = (
     cycle: publicCycleState(state),
     autonomousCycleLoop: publicAutonomousCycleLoop(state),
     executionController: publicExecutionController(state),
+    executionSession: executionSessionReadiness(state, runtimeReady),
     capitalActivation: state.capitalActivation ?? { _tag: 'NotConfigured' },
     broker,
     authority: {
@@ -382,17 +422,6 @@ const statusFactsDataFirst = (
   } as const
 }
 
-export const statusFacts = Pipeable.dual(4, statusFactsDataFirst)
-
-const statusResponseDecisionDataFirst = (
-  state: RuntimeState,
-  execution: ExecutionPolicy,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-): HttpResponseDecision => jsonDecision(statusFacts(state, execution, provenance, provenanceVerification))
-
-export const statusResponseDecision = Pipeable.dual(4, statusResponseDecisionDataFirst)
-
 const appendFailure = (failures: readonly string[], name: string, failed: boolean): readonly string[] =>
   failed && !failures.includes(name) ? [...failures, name] : failures
 
@@ -430,6 +459,28 @@ export const runtimeHealthIsFresh = (state: RuntimeState, input: RuntimeHealthFr
 
 const runtimeReadyWithFreshness = (state: RuntimeState, freshness?: RuntimeHealthFreshnessInput): boolean =>
   isReady(state) && (freshness === undefined || runtimeHealthIsFresh(state, freshness))
+
+export const statusReadinessResponseDecision = (
+  state: RuntimeState,
+  freshness: RuntimeHealthFreshnessInput,
+): HttpResponseDecision => {
+  const failedDependencies: string[] = (['postgresql', 'tigerBeetle', 'cycle'] as const).filter(
+    (name) => state.health.dependencies[name].status !== 'AVAILABLE',
+  )
+  if (!runtimeHealthIsFresh(state, freshness)) failedDependencies.push('health')
+  if (state.status !== 'READY' && state.status !== 'DEGRADED') failedDependencies.push('startup')
+  const ready = failedDependencies.length === 0
+  return jsonDecision(
+    {
+      ready,
+      status: state.status,
+      checkedAt: state.health.checkedAt,
+      probeSequence: state.health.sequence,
+      failedDependencies,
+    },
+    ready ? 200 : 503,
+  )
+}
 
 export const readinessResponseDecision = (
   state: RuntimeState,
@@ -501,14 +552,11 @@ const epochSeconds = (instant: string | null | undefined): number =>
 
 const booleanMetric = (value: boolean | null): number => (value === true ? 1 : 0)
 
-export const executionSessionPreflightReady = (state: RuntimeState, runtimeReady = isReady(state)): boolean => {
-  const current = state.cycle.current
+const executionPrerequisitesReady = (state: RuntimeState, runtimeReady: boolean): boolean => {
   const controller = state.executionController
+  const status = controller?.status
   return (
     runtimeReady &&
-    current !== null &&
-    current.phase === CycleState.Active &&
-    current.snapshotId !== null &&
     state.capitalActivation?._tag === 'Realized' &&
     state.cycle.authority?.maximum === Authority.Execution &&
     state.cycle.authority.effective === Authority.Execution &&
@@ -519,11 +567,202 @@ export const executionSessionPreflightReady = (state: RuntimeState, runtimeReady
     state.broker?.readAvailable === true &&
     state.broker.accountBound === true &&
     controller?.readAvailable === true &&
-    controller.status?.active === true
+    status !== null &&
+    status !== undefined &&
+    status.active &&
+    status.controllerKey === controller.controllerKey &&
+    status.planHash === controller.planHash &&
+    executionControllerStatusHasCompletion(status)
   )
 }
 
-const renderPrometheusMetricsDataFirst = (
+export const executionSessionPreflightReady = (state: RuntimeState, runtimeReady = isReady(state)): boolean =>
+  state.cycle.current?.phase === CycleState.Active &&
+  state.cycle.current.executionCalendarSchemaVersion !== 'bayn.continuous-market-hours.v1' &&
+  executionPrerequisitesReady(state, runtimeReady)
+
+enum ExecutionSessionCondition {
+  Unavailable = 'UNAVAILABLE',
+  Blocked = 'BLOCKED',
+  RecoveryOnly = 'RECOVERY_ONLY',
+  Preopen = 'PREOPEN',
+  Warmup = 'WARMUP',
+  AwaitingDecision = 'AWAITING_DECISION',
+  DecisionLagging = 'DECISION_LAGGING',
+  InputUnavailable = 'INPUT_UNAVAILABLE',
+  EvaluationUnavailable = 'EVALUATION_UNAVAILABLE',
+  Executing = 'EXECUTING',
+  Closing = 'CLOSING',
+  Abstaining = 'ABSTAINING',
+  Rearming = 'REARMING',
+  Closed = 'CLOSED',
+}
+
+const readySessionConditions = new Set([
+  ExecutionSessionCondition.Preopen,
+  ExecutionSessionCondition.Warmup,
+  ExecutionSessionCondition.AwaitingDecision,
+  ExecutionSessionCondition.Executing,
+  ExecutionSessionCondition.Closing,
+  ExecutionSessionCondition.Abstaining,
+  ExecutionSessionCondition.Rearming,
+])
+
+const hasCurrentAdmissionProtection = (state: RuntimeState, checkedAtMs: number): boolean => {
+  const pass = state.autonomousCycleLoop.lastPass
+  if (
+    pass?.result !== 'SUCCESS' ||
+    pass.outcome !== 'ADMISSION_WAITING' ||
+    (pass.readiness?.reason !== DecisionReadinessReason.AccountProtection &&
+      pass.readiness?.reason !== DecisionReadinessReason.TurnoverBudgetExhausted) ||
+    pass.admissionProtection === undefined ||
+    state.cycle.current !== null ||
+    state.cycle.unfinishedCycleCount !== 0 ||
+    !Number.isSafeInteger(checkedAtMs)
+  )
+    return false
+  const proof = pass.admissionProtection
+  return (
+    proof.authorityGenerationHash === state.cycle.authority?.generationHash &&
+    proof.authorityUpdatedAt === state.cycle.authority.updatedAt &&
+    proof.reconciliationId === state.cycle.reconciliation?.reconciliationId &&
+    proof.tradingDate === accountTradingDate(new Date(checkedAtMs).toISOString()) &&
+    Date.parse(pass.observedAt) <= checkedAtMs &&
+    checkedAtMs < Date.parse(proof.validUntil)
+  )
+}
+
+const expectedSessionWithoutCycle = (state: RuntimeState) => {
+  const controller = state.executionController
+  const status = controller?.status
+  if (controller === undefined || status == null) return undefined
+  const expected = status.expectedSession
+  if (
+    expected === undefined ||
+    status.controllerKey !== controller.controllerKey ||
+    status.planHash !== controller.planHash ||
+    state.cycle.current !== null ||
+    (state.cycle.last !== null && state.cycle.last.executionSessionDate >= expected.date)
+  )
+    return undefined
+  return expected
+}
+
+const executionSessionReadiness = (
+  state: RuntimeState,
+  runtimeReady: boolean,
+  expected = expectedSessionWithoutCycle(state),
+) => {
+  const session = expected === undefined ? (state.cycle.current ?? state.cycle.last) : null
+  const checkedAtMs = Date.parse(state.health.checkedAt ?? '')
+  const firstObservationMs =
+    expected !== undefined
+      ? Date.parse(expected.firstObservationAt)
+      : session === null
+        ? Number.NaN
+        : session.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+          ? Date.parse(session.submissionOpenAt)
+          : Math.max(
+              Date.parse(session.submissionOpenAt),
+              Date.parse(session.executionOpenAt) + 60_000 + defaultJevProtocolDocument.decisionDelaySeconds * 1_000,
+            )
+  const deadlineMs =
+    session === null
+      ? firstObservationMs + defaultJevProtocolDocument.maximumDecisionLagMs
+      : Math.max(firstObservationMs, Date.parse(session.createdAt)) + defaultJevProtocolDocument.maximumDecisionLagMs
+  const result = (condition: ExecutionSessionCondition) => ({
+    schemaVersion: 'bayn.execution-session-readiness.v1',
+    condition,
+    ready: readySessionConditions.has(condition),
+    executionSessionDate: expected?.date ?? session?.executionSessionDate ?? null,
+    cycleId: session?.cycleId ?? null,
+    controllerPlanHash: state.executionController?.planHash ?? null,
+    checkedAt: state.health.checkedAt,
+    firstObservationAt: Number.isFinite(firstObservationMs) ? new Date(firstObservationMs).toISOString() : null,
+    decisionDeadlineAt: Number.isFinite(deadlineMs) ? new Date(deadlineMs).toISOString() : null,
+  })
+  if (state.broker?.observationFailure === 'CASH_FEES_PENDING') return result(ExecutionSessionCondition.Blocked)
+  if (state.capitalActivation?._tag === 'Realized' && state.cycle.authority?.kill === KillState.Active) {
+    return result(ExecutionSessionCondition.RecoveryOnly)
+  }
+  if (
+    state.cycle.condition === CycleOperationsCondition.Failed ||
+    state.cycle.condition === CycleOperationsCondition.Stalled
+  ) {
+    return result(ExecutionSessionCondition.Blocked)
+  }
+  if (!Number.isFinite(checkedAtMs) || !executionPrerequisitesReady(state, runtimeReady)) {
+    return result(ExecutionSessionCondition.Unavailable)
+  }
+  if (hasCurrentAdmissionProtection(state, checkedAtMs)) return result(ExecutionSessionCondition.Blocked)
+  if (expected !== undefined) {
+    if (checkedAtMs >= Date.parse(expected.submissionCutoffAt)) return result(ExecutionSessionCondition.Closed)
+    if (checkedAtMs < Date.parse(expected.submissionOpenAt)) return result(ExecutionSessionCondition.Preopen)
+    if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
+    return result(
+      checkedAtMs < deadlineMs ? ExecutionSessionCondition.AwaitingDecision : ExecutionSessionCondition.Unavailable,
+    )
+  }
+  if (session === null) return result(ExecutionSessionCondition.Unavailable)
+  if (session.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1')
+    return result(
+      state.cycle.current === null ? ExecutionSessionCondition.Closed : ExecutionSessionCondition.RecoveryOnly,
+    )
+  if (checkedAtMs >= Date.parse(session.executionCloseAt)) return result(ExecutionSessionCondition.Closed)
+  if (state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined) {
+    return result(
+      checkedAtMs >= Date.parse(session.submissionCutoffAt)
+        ? ExecutionSessionCondition.Closing
+        : ExecutionSessionCondition.Executing,
+    )
+  }
+  if (checkedAtMs >= Date.parse(session.submissionCutoffAt)) return result(ExecutionSessionCondition.Closed)
+  if (state.cycle.current === null) {
+    return result(
+      session.phase === CycleState.NoTrade
+        ? ExecutionSessionCondition.Abstaining
+        : session.phase === CycleState.Completed || session.terminalReason === CycleTerminalReason.UnusedEntryExpired
+          ? ExecutionSessionCondition.Rearming
+          : ExecutionSessionCondition.Blocked,
+    )
+  }
+  if (state.cycle.current.phase !== CycleState.Active) return result(ExecutionSessionCondition.Unavailable)
+  if (checkedAtMs < Date.parse(session.submissionOpenAt)) return result(ExecutionSessionCondition.Preopen)
+  const pass = state.autonomousCycleLoop.lastPass
+  const readiness =
+    pass?.result === 'SUCCESS' &&
+    pass.outcome !== 'ADMISSION_WAITING' &&
+    pass.readiness !== undefined &&
+    Date.parse(pass.observedAt) >= Date.parse(session.updatedAt)
+      ? pass.readiness
+      : undefined
+  if (
+    readiness?.reason === DecisionReadinessReason.AccountProtection ||
+    readiness?.reason === DecisionReadinessReason.TurnoverBudgetExhausted
+  )
+    return result(ExecutionSessionCondition.Blocked)
+  if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
+  if (readiness !== undefined) {
+    if (readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
+      return result(ExecutionSessionCondition.Abstaining)
+    if (
+      readiness.reason === DecisionReadinessReason.InferenceUnavailable ||
+      readiness.reason === DecisionReadinessReason.InferenceExpired
+    )
+      return result(ExecutionSessionCondition.EvaluationUnavailable)
+    if (
+      readiness.reason !== DecisionReadinessReason.DecisionPending &&
+      readiness.reason !== DecisionReadinessReason.SignalWindowObserved
+    ) {
+      return result(ExecutionSessionCondition.InputUnavailable)
+    }
+  }
+  return result(
+    checkedAtMs >= deadlineMs ? ExecutionSessionCondition.DecisionLagging : ExecutionSessionCondition.AwaitingDecision,
+  )
+}
+
+export const renderPrometheusMetrics = (
   state: RuntimeState,
   config: Pick<
     RuntimeConfig,
@@ -554,6 +793,14 @@ const renderPrometheusMetricsDataFirst = (
   const cycleDecisionBound =
     state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined
   const sessionPreflightReady = executionSessionPreflightReady(state, runtimeReady)
+  const expectedSession = expectedSessionWithoutCycle(state)
+  const sessionReadiness = executionSessionReadiness(state, runtimeReady, expectedSession)
+  const missingCycleAlertStart =
+    expectedSession === undefined
+      ? 0
+      : sessionReadiness.ready
+        ? epochSeconds(sessionReadiness.decisionDeadlineAt)
+        : epochSeconds(expectedSession.submissionOpenAt) - 600
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
@@ -563,7 +810,7 @@ const renderPrometheusMetricsDataFirst = (
     state.capitalActivation?._tag === 'NotConfigured' || state.capitalActivation === undefined
       ? 'not_configured'
       : state.capitalActivation._tag.toLowerCase()
-  const capitalActivationStates = ['not_configured', 'pending', 'realized', 'completed'] as const
+  const capitalActivationStates = ['not_configured', 'pending', 'realized'] as const
   const loopHealthy =
     state.autonomousCycleLoop.configured &&
     state.health.dependencies.cycleRunner.status === 'AVAILABLE' &&
@@ -573,7 +820,7 @@ const renderPrometheusMetricsDataFirst = (
       ? undefined
       : Math.max(0, Date.parse(state.health.checkedAt) - Date.parse(state.autonomousCycleLoop.lastPass.observedAt))
   const executionController = state.executionController
-  const executionControllerOutcomes = ['unknown', 'completed', 'blocked'] as const
+  const executionControllerOutcomes = ['unknown', 'completed', 'blocked', 'waiting'] as const
   const executionControllerStatus = executionController?.status
   const executionControllerCompletion =
     executionControllerStatus !== null &&
@@ -668,6 +915,12 @@ const renderPrometheusMetricsDataFirst = (
                 '# HELP bayn_cycle_submission_cutoff_timestamp_seconds Bound broker submission cutoff.',
                 '# TYPE bayn_cycle_submission_cutoff_timestamp_seconds gauge',
                 `bayn_cycle_submission_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.submissionCutoffAt))}`,
+                '# HELP bayn_cycle_first_observation_timestamp_seconds First complete rolling observation for the current session.',
+                '# TYPE bayn_cycle_first_observation_timestamp_seconds gauge',
+                `bayn_cycle_first_observation_timestamp_seconds ${prometheusNumber(epochSeconds(sessionReadiness.firstObservationAt))}`,
+                '# HELP bayn_cycle_decision_deadline_timestamp_seconds First observation or new attempt time plus the strategy evaluation allowance.',
+                '# TYPE bayn_cycle_decision_deadline_timestamp_seconds gauge',
+                `bayn_cycle_decision_deadline_timestamp_seconds ${prometheusNumber(epochSeconds(sessionReadiness.decisionDeadlineAt))}`,
                 '# HELP bayn_cycle_execution_open_timestamp_seconds Bound current execution-session open.',
                 '# TYPE bayn_cycle_execution_open_timestamp_seconds gauge',
                 `bayn_cycle_execution_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.executionOpenAt))}`,
@@ -862,17 +1115,48 @@ const renderPrometheusMetricsDataFirst = (
                 '# TYPE bayn_cycle_latest_fill_timestamp_seconds gauge',
                 `bayn_cycle_latest_fill_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestFillAt))}`,
               ]),
+          ...(executionFunnel.maximumIntentToSubmitLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_intent_to_submit_latency_seconds Maximum current-cycle intent creation to SUBMIT_STARTED latency.',
+                '# TYPE bayn_cycle_intent_to_submit_latency_seconds gauge',
+                `bayn_cycle_intent_to_submit_latency_seconds ${prometheusNumber(executionFunnel.maximumIntentToSubmitLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumOrderObservationLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_order_observation_latency_seconds Maximum current-cycle intent creation to first local order observation latency.',
+                '# TYPE bayn_cycle_order_observation_latency_seconds gauge',
+                `bayn_cycle_order_observation_latency_seconds ${prometheusNumber(executionFunnel.maximumOrderObservationLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumIntentToBrokerFillLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_intent_to_broker_fill_latency_seconds Maximum current-cycle intent creation to broker fill source timestamp latency.',
+                '# TYPE bayn_cycle_intent_to_broker_fill_latency_seconds gauge',
+                `bayn_cycle_intent_to_broker_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumIntentToBrokerFillLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumFillIngestionLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_fill_ingestion_latency_seconds Maximum current-cycle broker fill source timestamp to local fill observation latency.',
+                '# TYPE bayn_cycle_fill_ingestion_latency_seconds gauge',
+                `bayn_cycle_fill_ingestion_latency_seconds ${prometheusNumber(executionFunnel.maximumFillIngestionLatencyMs / 1_000)}`,
+              ]),
+          '# HELP bayn_cycle_latency_clock_regressions Number of negative clock differences excluded from current-cycle latency samples.',
+          '# TYPE bayn_cycle_latency_clock_regressions gauge',
+          `bayn_cycle_latency_clock_regressions ${executionFunnel.latencyClockRegressionCount}`,
           ...(executionFunnel.maximumOrderAcknowledgementLatencyMs === null
             ? []
             : [
-                '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle intent-to-order acknowledgement latency.',
+                '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle SUBMIT_STARTED-to-SUBMIT_ACCEPTED latency, including local pretransmission work.',
                 '# TYPE bayn_cycle_order_acknowledgement_latency_seconds gauge',
                 `bayn_cycle_order_acknowledgement_latency_seconds ${prometheusNumber(executionFunnel.maximumOrderAcknowledgementLatencyMs / 1_000)}`,
               ]),
           ...(executionFunnel.maximumFillLatencyMs === null
             ? []
             : [
-                '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent-to-fill latency.',
+                '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent creation to local fill observation latency.',
                 '# TYPE bayn_cycle_fill_latency_seconds gauge',
                 `bayn_cycle_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumFillLatencyMs / 1_000)}`,
               ]),
@@ -996,7 +1280,7 @@ const renderPrometheusMetricsDataFirst = (
                 '# HELP bayn_forward_performance_accounting_exact Whether the terminal receipt proves exact accounting receipts and ledger replay.',
                 '# TYPE bayn_forward_performance_accounting_exact gauge',
                 `bayn_forward_performance_accounting_exact ${forwardPerformance.accountingReceiptsExact && forwardPerformance.ledgerExact ? 1 : 0}`,
-                '# HELP bayn_forward_performance_completed_execution_count Completed executions in the terminal performance receipt.',
+                '# HELP bayn_forward_performance_completed_execution_count Accounting transactions in the terminal performance receipt.',
                 '# TYPE bayn_forward_performance_completed_execution_count gauge',
                 `bayn_forward_performance_completed_execution_count ${forwardPerformance.completedExecutionCount}`,
                 '# HELP bayn_forward_performance_realized_close_count Realized closes in the terminal performance receipt.',
@@ -1099,14 +1383,30 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_execution_session_preflight_ready Whether durable execution, authority, reconciliation, broker, and controller prerequisites are ready for the current active session.',
     '# TYPE bayn_execution_session_preflight_ready gauge',
     `bayn_execution_session_preflight_ready ${sessionPreflightReady ? 1 : 0}`,
+    '# HELP bayn_execution_session_ready Whether the projected session is usable, including legitimate pre-open, warmup, holding and abstention states.',
+    '# TYPE bayn_execution_session_ready gauge',
+    `bayn_execution_session_ready ${sessionReadiness.ready ? 1 : 0}`,
+    '# HELP bayn_execution_missing_cycle_alert_start_timestamp_seconds Start of the unready interval for a verified equity session with no cycle, or zero if inapplicable.',
+    '# TYPE bayn_execution_missing_cycle_alert_start_timestamp_seconds gauge',
+    `bayn_execution_missing_cycle_alert_start_timestamp_seconds ${prometheusNumber(missingCycleAlertStart)}`,
+    '# HELP bayn_execution_missing_cycle_cutoff_timestamp_seconds Submission cutoff for a verified equity session with no cycle, or zero if inapplicable.',
+    '# TYPE bayn_execution_missing_cycle_cutoff_timestamp_seconds gauge',
+    `bayn_execution_missing_cycle_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(expectedSession?.submissionCutoffAt))}`,
+    '# HELP bayn_execution_session_condition Current session acceptance condition, separate from controller startup.',
+    '# TYPE bayn_execution_session_condition gauge',
+    ...Object.values(ExecutionSessionCondition).map(
+      (condition) =>
+        `bayn_execution_session_condition{condition="${condition.toLowerCase()}"} ${condition === sessionReadiness.condition ? 1 : 0}`,
+    ),
+    '# HELP bayn_operation_metrics_expected This service revision requires native operation metrics in production.',
+    '# TYPE bayn_operation_metrics_expected gauge',
+    `bayn_operation_metrics_expected{source_revision="${prometheusLabel(provenance.sourceRevision)}"} 1`,
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,
   ]
   return `${lines.join('\n')}\n`
 }
-
-export const renderPrometheusMetrics = Pipeable.dual(4, renderPrometheusMetricsDataFirst)
 
 const interpretResponseDecision = (
   decision: HttpResponseDecision,
@@ -1153,10 +1453,14 @@ const registerHttpRoutes = (
     Effect.map(({ current, nowMs }) => readinessResponseDecision(current, { nowMs, leaseMs: freshnessLeaseMs })),
     Effect.flatMap(interpretResponseDecision),
   )
+  const statusReady = currentStateAndTime.pipe(
+    Effect.map(({ current, nowMs }) => statusReadinessResponseDecision(current, { nowMs, leaseMs: freshnessLeaseMs })),
+    Effect.flatMap(interpretResponseDecision),
+  )
   const status = currentStateAndTime.pipe(
     Effect.map(({ current, nowMs }) =>
       jsonDecision(
-        statusFactsDataFirst(
+        statusFacts(
           current,
           config.execution,
           provenance,
@@ -1168,18 +1472,31 @@ const registerHttpRoutes = (
     Effect.flatMap(interpretResponseDecision),
   )
   const metrics = currentStateAndTime.pipe(
-    Effect.map(({ current, nowMs }) =>
-      textDecision(
-        renderPrometheusMetricsDataFirst(
-          current,
-          config,
-          provenance,
-          provenanceVerification,
-          runtimeReadyWithFreshness(current, { nowMs, leaseMs: freshnessLeaseMs }),
-        ),
-        'text/plain; version=0.0.4; charset=utf-8',
-        { 'cache-control': 'no-store' },
-      ),
+    Effect.flatMap(({ current, nowMs }) =>
+      Effect.gen(function* () {
+        yield* Metric.update(
+          telemetryHeartbeat.pipe(
+            Metric.withAttributes({
+              namespace: 'bayn',
+              service: 'bayn',
+              source_revision: provenance.sourceRevision,
+            }),
+          ),
+          nowMs / 1000,
+        )
+        const native = yield* PrometheusMetrics.format()
+        return textDecision(
+          renderPrometheusMetrics(
+            current,
+            config,
+            provenance,
+            provenanceVerification,
+            runtimeReadyWithFreshness(current, { nowMs, leaseMs: freshnessLeaseMs }),
+          ) + native,
+          'text/plain; version=0.0.4; charset=utf-8',
+          { 'cache-control': 'no-store' },
+        )
+      }),
     ),
     Effect.flatMap(interpretResponseDecision),
   )
@@ -1190,13 +1507,14 @@ const registerHttpRoutes = (
   return Effect.gen(function* () {
     yield* router.add('GET', '/livez', interpretResponseDecision(jsonDecision({ service: 'bayn', live: true })))
     yield* router.add('GET', '/readyz', ready)
+    yield* router.add('GET', '/status-readyz', statusReady)
     yield* router.add('GET', '/metrics', metrics)
     yield* router.add('GET', '/v1/status', status)
     yield* router.add('*', '*', fallback)
   })
 }
 
-const serveHttpDataFirst = (
+export const serveHttp = (
   config: HttpConfig,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
@@ -1211,14 +1529,3 @@ const serveHttpDataFirst = (
     const handler = router.asHttpEffect().pipe(Effect.orDie)
     yield* HttpServer.serveEffect(handler)
   })
-
-export const serveHttp = Pipeable.dual(4, serveHttpDataFirst)
-
-export const serveHttpWithCurrentTime = (
-  config: HttpConfig,
-  state: Ref.Ref<RuntimeState>,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-  currentTimeMillis: Effect.Effect<number>,
-): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
-  serveHttpDataFirst(config, state, provenance, provenanceVerification, currentTimeMillis)

@@ -1,0 +1,105 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 30s
+tests:
+  - name: capacity-only block stats cannot page as full filesystems
+    interval: 30s
+    input_series:
+      - series: kubelet_volume_stats_available_bytes{namespace="vm",persistentvolumeclaim="home",instance="node-a"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="vm",persistentvolumeclaim="home",instance="node-a"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_capacity_bytes{namespace="vm",persistentvolumeclaim="home",instance="node-a"}
+        values: 34359738368+0x80
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="home",instance="node-a"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="app",persistentvolumeclaim="home",instance="node-a"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_capacity_bytes{namespace="app",persistentvolumeclaim="home",instance="node-a"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="home",instance="node-b"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="app",persistentvolumeclaim="home",instance="node-b"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_capacity_bytes{namespace="app",persistentvolumeclaim="home",instance="node-b"}
+        values: 100+0x80
+    promql_expr_test:
+      - expr: count(ALERTS{alertname=~"PersistentVolumeFreeLow.*",namespace="vm"}) or vector(0)
+        eval_time: 35m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PersistentVolumeFreeLowCritical",namespace="app",alertstate="firing"}) or vector(0)
+        eval_time: 9m30s
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PersistentVolumeFreeLowCritical",namespace="app",alertstate="firing"})
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: absent or lost used-byte telemetry cannot suppress a full filesystem
+    interval: 30s
+    input_series:
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="missing-used"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_capacity_bytes{namespace="app",persistentvolumeclaim="missing-used"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="lost-used"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="app",persistentvolumeclaim="lost-used"}
+        values: 0+0x19 stale
+      - series: kubelet_volume_stats_capacity_bytes{namespace="app",persistentvolumeclaim="lost-used"}
+        values: 100+0x80
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="PersistentVolumeFreeLowCritical",persistentvolumeclaim="missing-used",alertstate="firing"})
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="PersistentVolumeFreeLowCritical",persistentvolumeclaim="lost-used",alertstate="firing"}) or vector(0)
+        eval_time: 19m30s
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PersistentVolumeFreeLowCritical",persistentvolumeclaim="lost-used",alertstate="firing"})
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: warning boundaries and empty filesystems retain their meaning
+    interval: 30s
+    input_series:
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="warning"}
+        values: 10+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="app",persistentvolumeclaim="warning"}
+        values: 90+0x80
+      - series: kubelet_volume_stats_capacity_bytes{namespace="app",persistentvolumeclaim="warning"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="five-percent"}
+        values: 5+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="app",persistentvolumeclaim="five-percent"}
+        values: 95+0x80
+      - series: kubelet_volume_stats_capacity_bytes{namespace="app",persistentvolumeclaim="five-percent"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="fifteen-percent"}
+        values: 15+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="app",persistentvolumeclaim="fifteen-percent"}
+        values: 85+0x80
+      - series: kubelet_volume_stats_capacity_bytes{namespace="app",persistentvolumeclaim="fifteen-percent"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="empty"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="app",persistentvolumeclaim="empty"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_capacity_bytes{namespace="app",persistentvolumeclaim="empty"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="no-capacity"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="app",persistentvolumeclaim="no-capacity"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_available_bytes{namespace="app",persistentvolumeclaim="zero-capacity"}
+        values: 0+0x80
+      - series: kubelet_volume_stats_used_bytes{namespace="app",persistentvolumeclaim="zero-capacity"}
+        values: 100+0x80
+      - series: kubelet_volume_stats_capacity_bytes{namespace="app",persistentvolumeclaim="zero-capacity"}
+        values: 0+0x80
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="PersistentVolumeFreeLowWarning",alertstate="firing"}) or vector(0)
+        eval_time: 29m30s
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PersistentVolumeFreeLowWarning",alertstate="firing"})
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 2}]
+      - expr: count(ALERTS{alertname="PersistentVolumeFreeLowCritical"}) or vector(0)
+        eval_time: 35m
+        exp_samples: [{labels: '{}', value: 0}]

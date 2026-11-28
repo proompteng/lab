@@ -1,6 +1,6 @@
 # 191. Jangar Rollout Proof Passports And Runner Capacity Futures (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane rollout truth, AgentRun launch reliability, runner capacity settlement, merge-ready
@@ -12,7 +12,6 @@ Companion Torghut contract:
 
 Extends:
 
-- `docs/agents/designs/132-jangar-renewable-passport-ledger-and-proof-floor-actuation-2026-05-07.md`
 - `docs/agents/designs/190-jangar-projection-foreclosure-notary-and-stage-custody-repair-2026-05-13.md`
 - `docs/agents/designs/188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
 - `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`

@@ -4,7 +4,11 @@ import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.AlpacaBarPayload
 import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.apache.flink.api.common.eventtime.WatermarkStrategy
 import org.apache.flink.api.common.functions.OpenContext
 import org.apache.flink.api.common.functions.RichFlatMapFunction
@@ -39,6 +43,11 @@ enum class ArchiveRecordKind {
   Trade,
 }
 
+data class ArchiveSourcePartition(
+  val topic: String,
+  val partition: Int,
+) : Serializable
+
 data class ArchiveUniverse(
   val id: String,
   val symbolHash: String,
@@ -49,6 +58,7 @@ data class ArchiveRoute(
   val feed: String,
   val universe: ArchiveUniverse,
   val kind: ArchiveRecordKind = ArchiveRecordKind.Bar,
+  val sipShadow: Boolean = false,
 ) : Serializable
 
 data class MarketDataArchiveConfig(
@@ -69,6 +79,11 @@ data class MarketDataArchiveConfig(
   val clickhouseBatchSize: Int,
   val clickhouseFlushMs: Long,
   val clickhouseMaxRetries: Int,
+  val featuresTopic: String? = null,
+  val technicalFeaturesTopic: String? = null,
+  val crypto: CryptoArchiveConfig? = null,
+  val cryptoFeaturesTopic: String? = null,
+  val webullTopic: String? = null,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -84,6 +99,7 @@ data class MarketDataArchiveConfig(
         idKey: String,
         symbolsKey: String,
         hashKey: String,
+        strictCsv: Boolean = false,
       ): ArchiveUniverse {
         val symbols =
           required(symbolsKey)
@@ -92,6 +108,11 @@ data class MarketDataArchiveConfig(
             .filter { it.isNotEmpty() }
         require(symbols.isNotEmpty()) { "$symbolsKey must contain at least one symbol" }
         require(symbols == symbols.distinct().sorted()) { "$symbolsKey must be unique and canonically sorted" }
+        if (strictCsv) {
+          require(env[symbolsKey] == symbols.joinToString(",") && symbols.none { '*' in it || it.any(Char::isWhitespace) }) {
+            "$symbolsKey must be uppercase CSV of explicit symbols without whitespace or empty entries"
+          }
+        }
         val id = required(idKey)
         require(id.matches(Regex("^[a-z0-9]+(?:[.-][a-z0-9]+)*$"))) {
           "$idKey must be a versioned lowercase identifier"
@@ -120,6 +141,11 @@ data class MarketDataArchiveConfig(
       require(coreFeed == "iex" || enrichedTopics.isNotEmpty()) {
         "ARCHIVE_CORE_FEED requires the complete quote and trade topic contract"
       }
+      val featuresTopic = optional("ARCHIVE_FEATURES_TOPIC")
+      val technicalFeaturesTopic = optional("ARCHIVE_TECHNICAL_FEATURES_TOPIC")
+      val crypto = CryptoArchiveConfig.fromEnv(env)
+      val cryptoFeaturesTopic = optional("ARCHIVE_CRYPTO_FEATURES_TOPIC")
+      val webullTopic = optional("ARCHIVE_WEBULL_TOPIC")
       val routes =
         buildMap {
           put(optional("ARCHIVE_CORE_BARS_TOPIC") ?: required("ARCHIVE_IEX_BARS_TOPIC"), ArchiveRoute(coreFeed, coreUniverse))
@@ -137,13 +163,38 @@ data class MarketDataArchiveConfig(
               ArchiveRoute("delayed_sip", observationUniverse, ArchiveRecordKind.Trade),
             )
           }
+          val expectedRouteCount = if (enrichedTopics.isEmpty()) 3 else 7
+          if (size != expectedRouteCount) error("archive market-data topics must be unique")
+
+          val shadowIdKey = "ARCHIVE_SIP_SHADOW_UNIVERSE_ID"
+          val shadowSymbolsKey = "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS"
+          val shadowHashKey = "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOL_HASH"
+          val shadowTopicKinds =
+            mapOf(
+              "ARCHIVE_SIP_SHADOW_BARS_TOPIC" to ArchiveRecordKind.Bar,
+              "ARCHIVE_SIP_SHADOW_QUOTES_TOPIC" to ArchiveRecordKind.Quote,
+              "ARCHIVE_SIP_SHADOW_TRADES_TOPIC" to ArchiveRecordKind.Trade,
+            )
+          val shadowKeys = shadowTopicKinds.keys + listOf(shadowIdKey, shadowSymbolsKey, shadowHashKey)
+          if (shadowKeys.any(env::containsKey)) {
+            val missingKeys = shadowKeys.filter { optional(it) == null }
+            require(missingKeys.isEmpty()) {
+              "ARCHIVE_SIP_SHADOW_* settings must be configured together; missing or blank: ${missingKeys.joinToString()}"
+            }
+            require(coreFeed != "sip") { "SIP shadow archive cannot be enabled with ARCHIVE_CORE_FEED=sip" }
+            val sipShadowUniverse = universe(shadowIdKey, shadowSymbolsKey, shadowHashKey, strictCsv = true)
+            val otherTopics = listOfNotNull(featuresTopic, technicalFeaturesTopic, crypto?.topic, cryptoFeaturesTopic, webullTopic)
+            for ((key, kind) in shadowTopicKinds) {
+              val topic = required(key)
+              require(topic !in this && topic !in otherTopics) { "$key topic '$topic' must be distinct from all other archive topics" }
+              put(topic, ArchiveRoute("sip", sipShadowUniverse, kind, sipShadow = true))
+            }
+          }
         }
-      val expectedRouteCount = if (enrichedTopics.isEmpty()) 3 else 7
-      if (routes.size != expectedRouteCount) error("archive market-data topics must be unique")
 
       val checkpointIntervalMs = env["ARCHIVE_CHECKPOINT_INTERVAL_MS"]?.toLongOrNull() ?: 60_000
       val parallelism = env["ARCHIVE_PARALLELISM"]?.toIntOrNull() ?: 3
-      val batchSize = env["ARCHIVE_CLICKHOUSE_BATCH_SIZE"]?.toIntOrNull() ?: 100
+      val batchSize = env["ARCHIVE_CLICKHOUSE_BATCH_SIZE"]?.toIntOrNull() ?: 1_000
       val flushMs = env["ARCHIVE_CLICKHOUSE_FLUSH_MS"]?.toLongOrNull() ?: 1_000
       val maxRetries = env["ARCHIVE_CLICKHOUSE_MAX_RETRIES"]?.toIntOrNull() ?: 3
       val offsetResetStrategy =
@@ -155,8 +206,8 @@ data class MarketDataArchiveConfig(
       val securityProtocol = env["ARCHIVE_KAFKA_SECURITY"] ?: "SASL_PLAINTEXT"
       val saslPassword = env["ARCHIVE_KAFKA_PASSWORD"]?.takeIf { it.isNotEmpty() }
       require(checkpointIntervalMs > 0) { "ARCHIVE_CHECKPOINT_INTERVAL_MS must be > 0" }
-      require(parallelism in 1..3) { "ARCHIVE_PARALLELISM must be within 1..3" }
-      require(batchSize in 1..1_000) { "ARCHIVE_CLICKHOUSE_BATCH_SIZE must be within 1..1000" }
+      require(parallelism in 1..16) { "ARCHIVE_PARALLELISM must be within 1..16" }
+      require(batchSize in 1..10_000) { "ARCHIVE_CLICKHOUSE_BATCH_SIZE must be within 1..10000" }
       require(flushMs >= 250) { "ARCHIVE_CLICKHOUSE_FLUSH_MS must be >= 250" }
       require(maxRetries in 0..10) { "ARCHIVE_CLICKHOUSE_MAX_RETRIES must be within 0..10" }
       if (securityProtocol.startsWith("SASL_")) {
@@ -181,6 +232,11 @@ data class MarketDataArchiveConfig(
         clickhouseBatchSize = batchSize,
         clickhouseFlushMs = flushMs,
         clickhouseMaxRetries = maxRetries,
+        featuresTopic = featuresTopic,
+        technicalFeaturesTopic = technicalFeaturesTopic,
+        crypto = crypto,
+        cryptoFeaturesTopic = cryptoFeaturesTopic,
+        webullTopic = webullTopic,
       )
     }
   }
@@ -259,6 +315,15 @@ data class IntradayTradeRecord(
 fun main() {
   val config = MarketDataArchiveConfig.fromEnv()
   val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+
+  configureMarketDataArchiveJob(environment, config)
+  environment.execute("Bayn market-data archive")
+}
+
+internal fun configureMarketDataArchiveJob(
+  environment: StreamExecutionEnvironment,
+  config: MarketDataArchiveConfig,
+) {
   environment.setParallelism(config.parallelism)
   environment.enableCheckpointing(config.checkpointIntervalMs)
 
@@ -269,6 +334,7 @@ fun main() {
   source
     .flatMap(ParseArchiveBar(config.routes))
     .returns(TypeInformation.of(IntradayBarRecord::class.java))
+    .keyBy { bar -> ArchiveSourcePartition(bar.sourceTopic, bar.sourcePartition) }
     .sinkTo(archiveClickhouseSink(config))
     .name("signal-intraday-bars-archive")
     .uid("signal-intraday-bars-archive-v1")
@@ -276,6 +342,7 @@ fun main() {
   source
     .flatMap(ParseArchiveQuote(config.routes))
     .returns(TypeInformation.of(IntradayQuoteRecord::class.java))
+    .keyBy { quote -> ArchiveSourcePartition(quote.sourceTopic, quote.sourcePartition) }
     .sinkTo(archiveQuoteClickhouseSink(config))
     .name("signal-intraday-quotes-archive")
     .uid("signal-intraday-quotes-archive-v1")
@@ -283,11 +350,27 @@ fun main() {
   source
     .flatMap(ParseArchiveTrade(config.routes))
     .returns(TypeInformation.of(IntradayTradeRecord::class.java))
+    .keyBy { trade -> ArchiveSourcePartition(trade.sourceTopic, trade.sourcePartition) }
     .sinkTo(archiveTradeClickhouseSink(config))
     .name("signal-intraday-trades-archive")
     .uid("signal-intraday-trades-archive-v1")
 
-  environment.execute("Bayn market-data archive")
+  // Keep generated IDs of the existing raw topology stable for savepoint restoration.
+  require(config.technicalFeaturesTopic == null || config.technicalFeaturesTopic != config.featuresTopic) { "feature topics must differ" }
+  config.featuresTopic?.let { configureMarketFeatureArchive(environment, config, it) }
+  config.technicalFeaturesTopic?.let { configureMarketFeatureArchive(environment, config, it, technical = true) }
+  config.crypto?.let { configureCryptoMarketDataArchive(environment, config, it) }
+  config.cryptoFeaturesTopic?.let { topic ->
+    configureCryptoMarketFeatureArchive(
+      environment,
+      config,
+      requireNotNull(config.crypto) {
+        "crypto features require their raw source"
+      },
+      topic,
+    )
+  }
+  config.webullTopic?.let { configureWebullMarketDataArchive(environment, config, it) }
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {
@@ -359,7 +442,7 @@ internal fun decodeArchiveBar(
   val universe = route.universe
   require(record.partition >= 0) { "archive source partition must be non-negative" }
   require(record.offset >= 0) { "archive source offset must be non-negative" }
-  val envelope = json.decodeFromString(Envelope.serializer(AlpacaBarPayload.serializer()), record.value)
+  val envelope = decodeArchivePayload(record, route, AlpacaBarPayload.serializer(), json)
   require(envelope.provider == "alpaca") { "archive envelope provider must be alpaca" }
   require(envelope.feed == expectedFeed) { "archive envelope feed does not match its source topic" }
   require(envelope.channel in supportedChannels) { "archive envelope channel must be bars or updatedBars" }
@@ -494,19 +577,43 @@ private data class DecodedArchiveEnvelope<Payload>(
   val envelope: Envelope<Payload>,
 )
 
+private fun <Payload> decodeArchivePayload(
+  record: ArchiveKafkaRecord,
+  route: ArchiveRoute,
+  serializer: KSerializer<Payload>,
+  json: Json,
+): Envelope<Payload> {
+  val envelopeSerializer = Envelope.serializer(serializer)
+  if (!route.sipShadow) return json.decodeFromString(envelopeSerializer, record.value)
+
+  // Adapt the Wave 7B wire fields here so the shared Envelope and Flink state layouts do not change.
+  val wire = json.parseToJsonElement(record.value).jsonObject
+  val delayClass = wire["delay_class"]
+  require(delayClass is JsonPrimitive && delayClass.isString) { "SIP shadow envelope delay_class is required" }
+  require("delayClass" !in wire) { "SIP shadow envelope must not contain delayClass" }
+  require(wire["universe_id"] == JsonPrimitive(route.universe.id)) {
+    "SIP shadow envelope universe_id does not match its source topic"
+  }
+  require(wire["universe_symbol_hash"] == JsonPrimitive(route.universe.symbolHash)) {
+    "SIP shadow envelope universe_symbol_hash does not match its source topic"
+  }
+  val normalized = JsonObject(wire - listOf("delay_class", "universe_id", "universe_symbol_hash") + ("delayClass" to delayClass))
+  return json.decodeFromJsonElement(envelopeSerializer, normalized)
+}
+
 private fun <Payload> decodeArchiveEnvelope(
   record: ArchiveKafkaRecord,
   routeByTopic: Map<String, ArchiveRoute>,
   kind: ArchiveRecordKind,
   channel: String,
-  serializer: kotlinx.serialization.KSerializer<Payload>,
+  serializer: KSerializer<Payload>,
   json: Json,
 ): DecodedArchiveEnvelope<Payload> {
   val route = routeByTopic[record.topic] ?: error("unexpected archive topic: ${record.topic}")
   require(route.kind == kind) { "archive topic is not configured for ${channel}s" }
   require(record.partition >= 0) { "archive source partition must be non-negative" }
   require(record.offset >= 0) { "archive source offset must be non-negative" }
-  val envelope = json.decodeFromString(Envelope.serializer(serializer), record.value)
+  val envelope = decodeArchivePayload(record, route, serializer, json)
   require(envelope.provider == "alpaca") { "archive envelope provider must be alpaca" }
   require(envelope.feed == route.feed) { "archive envelope feed does not match its source topic" }
   require(envelope.channel == channel) { "archive envelope channel must be $channel" }
@@ -543,7 +650,12 @@ internal fun decodeArchiveQuote(
   require(listOf(payload.bp, payload.bs, payload.ap, payload.`as`).all { it.isFinite() }) {
     "quote prices and sizes must be finite"
   }
-  require(payload.bp > 0 && payload.ap > 0 && payload.bp <= payload.ap) { "quote market must be positive and uncrossed" }
+  require(payload.bp >= 0 && payload.ap >= 0 && (payload.bp == 0.0 || payload.ap == 0.0 || payload.bp <= payload.ap)) {
+    "quote prices must be non-negative and uncrossed"
+  }
+  require((payload.bp > 0 || payload.bs == 0.0) && (payload.ap > 0 || payload.`as` == 0.0)) {
+    "withdrawn quote sides must have zero size"
+  }
   require(payload.bs >= 0 && payload.`as` >= 0) { "quote sizes must be non-negative" }
   return IntradayQuoteRecord(
     provider = "alpaca",
@@ -605,7 +717,7 @@ internal fun decodeArchiveTrade(
   )
 }
 
-private fun canonicalSymbolHash(symbols: Collection<String>): String =
+internal fun canonicalSymbolHash(symbols: Collection<String>): String =
   MessageDigest
     .getInstance("SHA-256")
     .digest(symbols.joinToString(",").toByteArray(StandardCharsets.UTF_8))
@@ -623,12 +735,15 @@ private fun expectedDelayClass(
     else -> error("unsupported archive feed: $feed")
   }
 
-private fun archiveKafkaSource(config: MarketDataArchiveConfig): KafkaSource<ArchiveKafkaRecord> {
+internal fun archiveKafkaSource(
+  config: MarketDataArchiveConfig,
+  topics: List<String> = config.routes.keys.toList(),
+): KafkaSource<ArchiveKafkaRecord> {
   val builder =
     KafkaSource
       .builder<ArchiveKafkaRecord>()
       .setBootstrapServers(config.bootstrapServers)
-      .setTopics(config.routes.keys.toList())
+      .setTopics(topics)
       .setClientIdPrefix(config.clientId)
       .setGroupId(config.groupId)
       .setDeserializer(ArchiveKafkaRecordDeserializer())
@@ -640,57 +755,29 @@ private fun archiveKafkaSource(config: MarketDataArchiveConfig): KafkaSource<Arc
   return builder.build()
 }
 
-private fun applyArchiveKafkaSecurity(
+internal fun applyArchiveKafkaSecurity(
   builder: KafkaSourceBuilder<ArchiveKafkaRecord>,
   config: MarketDataArchiveConfig,
 ) {
-  builder.setProperty("security.protocol", config.securityProtocol)
-  builder.setProperty("sasl.mechanism", config.saslMechanism)
-  config.saslPassword?.let { password ->
-    val escapedUsername = config.saslUsername.replace("\\", "\\\\").replace("\"", "\\\"")
-    val escapedPassword = password.replace("\\", "\\\\").replace("\"", "\\\"")
-    builder.setProperty(
-      "sasl.jaas.config",
-      "org.apache.kafka.common.security.scram.ScramLoginModule required " +
-        "username=\"$escapedUsername\" password=\"$escapedPassword\";",
-    )
-  }
+  archiveKafkaSecurityProperties(config).forEach { (name, value) -> builder.setProperty(name, value) }
 }
 
-private fun archiveClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayBarRecord> {
-  val sql =
-    """
-    INSERT INTO signal.intraday_bars_1m_v2 (
-      provider, universe_id, universe_symbol_hash, feed, channel, market_session, delay_class, symbol, event_ts, ingest_ts,
-      source_topic, source_partition, source_offset, is_final,
-      open, high, low, close, volume, vwap, trade_count, schema_version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """.trimIndent()
-  val statement =
-    JdbcStatementBuilder<IntradayBarRecord> { prepared, bar ->
-      prepared.setString(1, bar.provider)
-      prepared.setString(2, bar.universeId)
-      prepared.setString(3, bar.universeSymbolHash)
-      prepared.setString(4, bar.feed)
-      prepared.setString(5, bar.channel)
-      prepared.setString(6, bar.marketSession)
-      prepared.setString(7, bar.delayClass)
-      prepared.setString(8, bar.symbol)
-      prepared.setTimestamp(9, Timestamp.from(bar.eventTime))
-      prepared.setTimestamp(10, Timestamp.from(bar.ingestionTime))
-      prepared.setString(11, bar.sourceTopic)
-      prepared.setInt(12, bar.sourcePartition)
-      prepared.setLong(13, bar.sourceOffset)
-      prepared.setInt(14, if (bar.final) 1 else 0)
-      prepared.setDouble(15, bar.open)
-      prepared.setDouble(16, bar.high)
-      prepared.setDouble(17, bar.low)
-      prepared.setDouble(18, bar.close)
-      prepared.setDouble(19, bar.volume)
-      if (bar.vwap == null) prepared.setNull(20, java.sql.Types.DOUBLE) else prepared.setDouble(20, bar.vwap)
-      if (bar.tradeCount == null) prepared.setNull(21, java.sql.Types.BIGINT) else prepared.setLong(21, bar.tradeCount)
-      prepared.setInt(22, bar.schemaVersion)
+internal fun archiveKafkaSecurityProperties(config: MarketDataArchiveConfig): Map<String, String> =
+  buildMap {
+    put("security.protocol", config.securityProtocol)
+    put("sasl.mechanism", config.saslMechanism)
+    config.saslPassword?.let { password ->
+      val escapedUsername = config.saslUsername.replace("\\", "\\\\").replace("\"", "\\\"")
+      val escapedPassword = password.replace("\\", "\\\\").replace("\"", "\\\"")
+      put(
+        "sasl.jaas.config",
+        "org.apache.kafka.common.security.scram.ScramLoginModule required " +
+          "username=\"$escapedUsername\" password=\"$escapedPassword\";",
+      )
     }
+  }
+
+private fun archiveClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayBarRecord> {
   val execution =
     JdbcExecutionOptions
       .builder()
@@ -708,45 +795,90 @@ private fun archiveClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<Int
       .build()
   return JdbcSink
     .builder<IntradayBarRecord>()
-    .withQueryStatement(sql, statement)
+    .withQueryStatement(archiveBarInsertSql(), archiveBarStatement())
     .withExecutionOptions(execution)
     .buildAtLeastOnce(connection)
 }
 
-private fun archiveQuoteClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayQuoteRecord> {
-  val sql =
-    """
-    INSERT INTO signal.intraday_quotes_v1 (
-      provider, universe_id, universe_symbol_hash, feed, market_session, delay_class, symbol, event_ts, ingest_ts,
-      source_topic, source_partition, source_offset, bid_price, bid_size, ask_price, ask_size, schema_version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """.trimIndent()
-  val statement =
-    JdbcStatementBuilder<IntradayQuoteRecord> { prepared, quote ->
-      prepared.setString(1, quote.provider)
-      prepared.setString(2, quote.universeId)
-      prepared.setString(3, quote.universeSymbolHash)
-      prepared.setString(4, quote.feed)
-      prepared.setString(5, quote.marketSession)
-      prepared.setString(6, quote.delayClass)
-      prepared.setString(7, quote.symbol)
-      prepared.setTimestamp(8, Timestamp.from(quote.eventTime))
-      prepared.setTimestamp(9, Timestamp.from(quote.ingestionTime))
-      prepared.setString(10, quote.sourceTopic)
-      prepared.setInt(11, quote.sourcePartition)
-      prepared.setLong(12, quote.sourceOffset)
-      prepared.setDouble(13, quote.bidPrice)
-      prepared.setDouble(14, quote.bidSize)
-      prepared.setDouble(15, quote.askPrice)
-      prepared.setDouble(16, quote.askSize)
-      prepared.setInt(17, quote.schemaVersion)
-    }
-  return JdbcSink
+internal fun archiveBarInsertSql(): String =
+  """
+  INSERT INTO signal.intraday_bars_1m_v2 (
+    provider, universe_id, universe_symbol_hash, feed, channel, market_session, delay_class, symbol, event_ts, ingest_ts,
+    source_topic, source_partition, source_offset, is_final,
+    open, high, low, close, volume, vwap, trade_count, schema_version, event_ts_exact, ingest_ts_exact
+  ) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    reinterpretAsFloat64(CAST(? AS Int64)), reinterpretAsFloat64(CAST(? AS Int64)),
+    reinterpretAsFloat64(CAST(? AS Int64)), reinterpretAsFloat64(CAST(? AS Int64)),
+    reinterpretAsFloat64(CAST(? AS Int64)), reinterpretAsFloat64(CAST(? AS Nullable(Int64))), ?, ?, ?, ?
+  )
+  """.trimIndent()
+
+internal fun archiveBarStatement(): JdbcStatementBuilder<IntradayBarRecord> =
+  JdbcStatementBuilder<IntradayBarRecord> { prepared, bar ->
+    prepared.setString(1, bar.provider)
+    prepared.setString(2, bar.universeId)
+    prepared.setString(3, bar.universeSymbolHash)
+    prepared.setString(4, bar.feed)
+    prepared.setString(5, bar.channel)
+    prepared.setString(6, bar.marketSession)
+    prepared.setString(7, bar.delayClass)
+    prepared.setString(8, bar.symbol)
+    prepared.setTimestamp(9, Timestamp.from(bar.eventTime))
+    prepared.setTimestamp(10, Timestamp.from(bar.ingestionTime))
+    prepared.setString(11, bar.sourceTopic)
+    prepared.setInt(12, bar.sourcePartition)
+    prepared.setLong(13, bar.sourceOffset)
+    prepared.setInt(14, if (bar.final) 1 else 0)
+    prepared.setLong(15, bar.open.toRawBits())
+    prepared.setLong(16, bar.high.toRawBits())
+    prepared.setLong(17, bar.low.toRawBits())
+    prepared.setLong(18, bar.close.toRawBits())
+    prepared.setLong(19, bar.volume.toRawBits())
+    if (bar.vwap == null) prepared.setNull(20, java.sql.Types.BIGINT) else prepared.setLong(20, bar.vwap.toRawBits())
+    if (bar.tradeCount == null) prepared.setNull(21, java.sql.Types.BIGINT) else prepared.setLong(21, bar.tradeCount)
+    prepared.setInt(22, bar.schemaVersion)
+    prepared.setTimestamp(23, Timestamp.from(bar.eventTime))
+    prepared.setTimestamp(24, Timestamp.from(bar.ingestionTime))
+  }
+
+internal val archiveQuoteInsertSql =
+  """
+  INSERT INTO signal.intraday_quotes_v1 (
+    provider, universe_id, universe_symbol_hash, feed, market_session, delay_class, symbol, event_ts, ingest_ts,
+    source_topic, source_partition, source_offset, bid_price, bid_size, ask_price, ask_size, schema_version
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  """.trimIndent()
+
+internal fun bindArchiveQuote(
+  prepared: java.sql.PreparedStatement,
+  quote: IntradayQuoteRecord,
+) {
+  prepared.setString(1, quote.provider)
+  prepared.setString(2, quote.universeId)
+  prepared.setString(3, quote.universeSymbolHash)
+  prepared.setString(4, quote.feed)
+  prepared.setString(5, quote.marketSession)
+  prepared.setString(6, quote.delayClass)
+  prepared.setString(7, quote.symbol)
+  prepared.setTimestamp(8, Timestamp.from(quote.eventTime))
+  prepared.setTimestamp(9, Timestamp.from(quote.ingestionTime))
+  prepared.setString(10, quote.sourceTopic)
+  prepared.setInt(11, quote.sourcePartition)
+  prepared.setLong(12, quote.sourceOffset)
+  prepared.setDouble(13, quote.bidPrice)
+  prepared.setDouble(14, quote.bidSize)
+  prepared.setDouble(15, quote.askPrice)
+  prepared.setDouble(16, quote.askSize)
+  prepared.setInt(17, quote.schemaVersion)
+}
+
+private fun archiveQuoteClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayQuoteRecord> =
+  JdbcSink
     .builder<IntradayQuoteRecord>()
-    .withQueryStatement(sql, statement)
+    .withQueryStatement(archiveQuoteInsertSql, JdbcStatementBuilder(::bindArchiveQuote))
     .withExecutionOptions(archiveJdbcExecutionOptions(config))
     .buildAtLeastOnce(archiveJdbcConnectionOptions(config))
-}
 
 private fun archiveTradeClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayTradeRecord> {
   val sql =
@@ -781,7 +913,7 @@ private fun archiveTradeClickhouseSink(config: MarketDataArchiveConfig): JdbcSin
     .buildAtLeastOnce(archiveJdbcConnectionOptions(config))
 }
 
-private fun archiveJdbcExecutionOptions(config: MarketDataArchiveConfig): JdbcExecutionOptions =
+internal fun archiveJdbcExecutionOptions(config: MarketDataArchiveConfig): JdbcExecutionOptions =
   JdbcExecutionOptions
     .builder()
     .withBatchSize(config.clickhouseBatchSize)
@@ -789,7 +921,7 @@ private fun archiveJdbcExecutionOptions(config: MarketDataArchiveConfig): JdbcEx
     .withMaxRetries(config.clickhouseMaxRetries)
     .build()
 
-private fun archiveJdbcConnectionOptions(config: MarketDataArchiveConfig): JdbcConnectionOptions =
+internal fun archiveJdbcConnectionOptions(config: MarketDataArchiveConfig): JdbcConnectionOptions =
   JdbcConnectionOptions
     .JdbcConnectionOptionsBuilder()
     .withUrl(config.clickhouseUrl)

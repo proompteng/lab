@@ -13,6 +13,36 @@ persistence:
   enabled: true
   size: 5Gi
 
+initContainers:
+  - name: repair-git-cache
+    image: '{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{- with .Values.image.digest }}@{{ . }}{{- end }}'
+    imagePullPolicy: '{{ .Values.image.pullPolicy }}'
+    command:
+      - /bin/sh
+      - /opt/flipt-cache-repair/repair-git-cache.sh
+      - /var/opt/flipt/repositories/default
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 100
+      seccompProfile:
+        type: RuntimeDefault
+    volumeMounts:
+      - name: flipt-data
+        mountPath: /var/opt/flipt
+      - name: flipt-cache-repair
+        mountPath: /opt/flipt-cache-repair
+        readOnly: true
+
+extraVolumes:
+  - name: flipt-cache-repair
+    configMap:
+      name: feature-flags-git-cache-repair
+
 flipt:
   extraEnvVars:
     - name: FLIPT_GITHUB_TOKEN

@@ -10,6 +10,7 @@ on:
     paths:
       - 'services/sag/**'
       - 'nix/images/sag.nix'
+      - 'nix/images/openai-codex-cli.nix'
   workflow_dispatch:
 
 concurrency:
@@ -23,6 +24,7 @@ jobs:
     with:
       image_name: sag
       package_attr: sag-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: false
       pr_number: ${{ github.event.pull_request.number || '' }}

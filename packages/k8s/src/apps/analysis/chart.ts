@@ -20,6 +20,7 @@ export class AnalysisChart extends Chart {
         labels: appLabels,
       },
       spec: {
+        revisionHistoryLimit: 2,
         strategy: {
           type: 'RollingUpdate',
           rollingUpdate: {

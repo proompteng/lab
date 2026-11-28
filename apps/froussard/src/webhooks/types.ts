@@ -1,6 +1,8 @@
+import type { AppConfig } from '@/config'
 import type { DiscordResponseConfig } from '@/discord-commands'
 
 export interface WebhookConfig {
+  restate: AppConfig['restate']
   atlas: {
     baseUrl: string
     apiKey: string | null

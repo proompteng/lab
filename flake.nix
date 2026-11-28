@@ -54,6 +54,11 @@
             exact.kustomize
             exact.kubeconform
             exact.kubectl
+            exact.talosctl
+            exact.omnictl
+            pkgs.kubeseal
+            pkgs.curl
+            pkgs.coreutils
             exact.argo-workflows
             pkgs.argocd
             pkgs.buf
@@ -200,6 +205,11 @@
 
           linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux ({
             "atticd-image" = import ./nix/images/attic.nix { inherit pkgs lib; };
+            "relay-image" = import ./nix/images/relay.nix { inherit pkgs lib repoRevision; repoRoot = ./.; };
+            "ofz-image" = import ./nix/images/ofz.nix {
+              inherit pkgs lib repoRevision;
+              repoRoot = ./.;
+            };
             "arc-runner-image" = import ./nix/images/arc-runner.nix {
               inherit pkgs lib ciToolchain;
             };
@@ -240,7 +250,7 @@
               bun = exact.bun;
             };
             "proompteng-image" = import ./nix/images/proompteng.nix {
-              inherit pkgs lib nodejs;
+              inherit pkgs lib nodejs repoRevision;
               repoRoot = ./.;
               bun = exact.bun;
             };
@@ -259,10 +269,25 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "opencode-image" = import ./nix/images/opencode.nix {
+              inherit pkgs lib nodejs repoRevision ciToolchain;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
             "bayn-image" = import ./nix/images/bayn.nix {
               inherit pkgs lib nodejs repoRevision;
               repoRoot = ./.;
               bun = exact.bun;
+            };
+            "bayn-research-image" = import ./nix/images/bayn.nix {
+              inherit pkgs lib nodejs repoRevision;
+              repoRoot = ./.;
+              bun = exact.bun;
+              research = true;
+            };
+            "bayn-broker-feed-image" = import ./nix/images/bayn-broker-feed.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
             };
             "signal-publisher-image" = import ./nix/images/signal-publisher.nix {
               inherit pkgs lib nodejs repoRevision;
@@ -301,6 +326,10 @@
               repoRoot = ./.;
             };
             "torghut-hyperliquid-feed-image" = import ./nix/images/torghut-hyperliquid-feed.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
+            "torghut-webull-feed-image" = import ./nix/images/torghut-webull-feed.nix {
               inherit pkgs lib;
               repoRoot = ./.;
             };
@@ -346,6 +375,7 @@
               ;
             atticClient = pkgs.attic-client;
             atticServer = pkgs.attic-server;
+            buf = pkgs.buf;
           };
 
           apps = {
@@ -374,6 +404,24 @@
               ociPush
               inspectOciArchive
               writeOciReleaseContract
+            ];
+            shellHook = ''
+              export LAB_NIX_TOOLCHAIN=1
+            '';
+          };
+
+          devShells.bayn-replay = pkgs.mkShell {
+            packages = [
+              pkgs.nixVersions.nix_2_28
+              nodejs
+              exact.bun
+              pkgs.python312
+              pkgs.git
+              pkgs.docker-client
+              pkgs.docker-buildx
+              pkgs.go-containerregistry
+              pkgs.gnutar
+              pkgs.coreutils
             ];
             shellHook = ''
               export LAB_NIX_TOOLCHAIN=1

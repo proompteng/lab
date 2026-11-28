@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 
 FROM oven/bun:${BUN_VERSION} AS builder
 WORKDIR /workspace
@@ -33,7 +33,7 @@ COPY --from=builder /workspace/services/sag/.output ./.output
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
 RUN mkdir -p /home/bun/.bun /home/bun/.codex \
-  && bun add -g @openai/codex@0.144.4 \
+  && bun add -g @openai/codex@0.172.0 \
   && chown -R bun:bun /home/bun/.bun /home/bun/.codex
 
 USER bun

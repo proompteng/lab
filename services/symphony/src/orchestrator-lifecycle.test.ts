@@ -135,7 +135,7 @@ describe('orchestrator lifecycle', () => {
         Layer.provide(
           Layer.succeed(IssueRunnerService, {
             runAttempt: (_issue, _attempt, callbacks) =>
-              callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.zipRight(Effect.never)),
+              callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.andThen(Effect.never)),
           }),
         ),
         Layer.provide(deliveryLayer),
@@ -247,7 +247,7 @@ describe('orchestrator lifecycle', () => {
         Layer.provide(
           Layer.succeed(IssueRunnerService, {
             runAttempt: (_issue, _attempt, callbacks) =>
-              callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.zipRight(Effect.never)),
+              callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.andThen(Effect.never)),
           }),
         ),
         Layer.provide(deliveryLayer),
@@ -338,7 +338,7 @@ describe('orchestrator lifecycle', () => {
             runAttempt: (_issue, _attempt, callbacks) =>
               callbacks
                 .onWorkspacePath('/workspace/symphony/ABC-1')
-                .pipe(Effect.zipRight(Effect.succeed('/workspace/symphony/ABC-1'))),
+                .pipe(Effect.andThen(Effect.succeed('/workspace/symphony/ABC-1'))),
           }),
         ),
         Layer.provide(deliveryLayer),
@@ -723,7 +723,7 @@ describe('orchestrator lifecycle', () => {
         Layer.provide(
           Layer.succeed(IssueRunnerService, {
             runAttempt: (_issue, _attempt, callbacks) =>
-              callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.zipRight(Effect.never)),
+              callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.andThen(Effect.never)),
           }),
         ),
         Layer.provide(deliveryLayer),

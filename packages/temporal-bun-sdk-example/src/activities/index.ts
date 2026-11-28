@@ -1,12 +1,12 @@
-type SendOptions = {
-  readonly to: string
-  readonly message: string
-}
+import { Schema } from 'effect'
+
+const SendOptions = Schema.Struct({ to: Schema.String, message: Schema.String })
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export const activities = {
-  async sendGreeting({ to, message }: SendOptions): Promise<string> {
+  async sendGreeting(input: unknown): Promise<string> {
+    const { to, message } = Schema.decodeUnknownSync(SendOptions)(input)
     console.log(`[activity] sendGreeting start -> to=${to}, message="${message}"`)
     await sleep(50)
     const result = `Sent greeting to ${to}: ${message}`
@@ -14,7 +14,9 @@ export const activities = {
     return result
   },
 
-  async recordMetric(name: string, value: number): Promise<{ name: string; value: number }> {
+  async recordMetric(rawName: unknown, rawValue: unknown): Promise<{ name: string; value: number }> {
+    const name = Schema.decodeUnknownSync(Schema.String)(rawName)
+    const value = Schema.decodeUnknownSync(Schema.Number)(rawValue)
     console.log(`[activity] recordMetric start -> ${name}=${value}`)
     await sleep(10)
     const metric = { name, value }

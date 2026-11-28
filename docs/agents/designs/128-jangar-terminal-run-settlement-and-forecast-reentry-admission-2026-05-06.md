@@ -1,6 +1,6 @@
 # 128. Jangar Terminal Run Settlement And Forecast Reentry Admission (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar run settlement, terminal pod debt, safe schedule admission, rollout evidence, Torghut forecast authority,
@@ -12,8 +12,6 @@ Companion Torghut contract:
 
 Extends:
 
-- `127-jangar-activation-inventory-ledger-and-product-gap-fuses-2026-05-06.md`
-- `126-jangar-projection-witness-exchange-and-material-evidence-products-2026-05-06.md`
 - `125-jangar-run-settlement-watermarks-and-consumer-evidence-escrow-2026-05-06.md`
 - `120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
 

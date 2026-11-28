@@ -61,7 +61,7 @@ export type ResourceWatchService = {
   start: (options: WatchOptions) => Effect.Effect<WatchHandle>
 }
 
-export class ResourceWatch extends Context.Tag('ResourceWatch')<ResourceWatch, ResourceWatchService>() {}
+export class ResourceWatch extends Context.Service<ResourceWatch, ResourceWatchService>()('ResourceWatch') {}
 
 const DEFAULT_RESTART_DELAY_MS = 2_000
 const DEFAULT_MAX_RESTART_DELAY_MS = 60_000
@@ -206,6 +206,7 @@ export const createResourceWatchStarter = (deps: ResourceWatchStarterDependencie
       if (stopped) return
       watchStartResourceVersion = currentResourceVersion
       sawEventSinceStart = false
+      let streamError: Error | null = null
 
       void Promise.resolve(buildWatchPath(resource, namespace))
         .then((path) =>
@@ -221,6 +222,16 @@ export const createResourceWatchStarter = (deps: ResourceWatchStarterDependencie
             (type, object) => {
               if (!object || typeof object !== 'object' || Array.isArray(object)) return
               const payload = object as Record<string, unknown>
+              if (type === 'ERROR') {
+                // Kubernetes can send a terminal Status (e.g. an expired version) inside an HTTP 200 stream.
+                streamError = Object.assign(
+                  new Error(
+                    typeof payload.message === 'string' ? payload.message : 'Kubernetes watch returned an error',
+                  ),
+                  { statusCode: payload.code },
+                )
+                return
+              }
               const metadata =
                 payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)
                   ? (payload.metadata as Record<string, unknown>)
@@ -241,19 +252,23 @@ export const createResourceWatchStarter = (deps: ResourceWatchStarterDependencie
               })
               handleEvent({ type, object: payload })
             },
-            (error) => {
+            (transportError) => {
               if (stopped) return
-              clearStaleResourceVersionBeforeRestart()
-              if (error) {
-                const reason = isRateLimitError(error) ? 'watch_rate_limited' : 'watch_error'
-                recordError({
-                  resource: normalizedResource,
-                  namespace: normalizedNamespace,
-                  reason,
-                })
-                onError?.(new Error(`${logPrefix} ${resource} (${namespace}) watch failed: ${error.message}`))
+              const error = streamError ?? transportError
+              if (!error) {
+                scheduleRestart('closed')
+                return
               }
-              scheduleRestart(error ? (isRateLimitError(error) ? 'watch_rate_limited' : 'watch_error') : 'closed')
+              if (errorStatusCode(error) === 410) currentResourceVersion = null
+              else clearStaleResourceVersionBeforeRestart()
+              const reason = isRateLimitError(error) ? 'watch_rate_limited' : 'watch_error'
+              recordError({
+                resource: normalizedResource,
+                namespace: normalizedNamespace,
+                reason,
+              })
+              onError?.(new Error(`${logPrefix} ${resource} (${namespace}) watch failed: ${error.message}`))
+              scheduleRestart(reason)
             },
           ),
         )

@@ -8,7 +8,6 @@ import {
   recordWatchReliabilityError,
   recordWatchReliabilityEvent,
   recordWatchReliabilityRestart,
-  resolveControlPlaneWatchReliabilityConfig,
 } from './control-plane-watch-reliability'
 
 describe('control-plane watch reliability', () => {
@@ -52,6 +51,22 @@ describe('control-plane watch reliability', () => {
 
     expect(summary.status).toBe('degraded')
     expect(summary.total_restarts).toBe(2)
+  })
+
+  it('keeps routine watch recycling visible without degrading health', () => {
+    const stream = { resource: 'agentruns.agents.proompteng.ai', namespace: 'agents' }
+    recordWatchReliabilityRestart({ ...stream, reason: 'closed' })
+    recordWatchReliabilityRestart({ ...stream, reason: 'closed' })
+    recordWatchReliabilityRestart({ ...stream, reason: 'watch_error' })
+
+    expect(getWatchReliabilitySummary()).toMatchObject({
+      status: 'healthy',
+      total_restarts: 3,
+      streams: [{ restart_reasons: { closed: 2, watch_error: 1 } }],
+    })
+
+    recordWatchReliabilityRestart({ ...stream, reason: 'watch_error' })
+    expect(getWatchReliabilitySummary().status).toBe('degraded')
   })
 
   it('keeps independent single-stream restarts observable without degrading status', () => {

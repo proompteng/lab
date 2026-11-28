@@ -1,25 +1,31 @@
 import { Cause, Effect, Exit } from 'effect'
 
-import type { ExecutionStoreError, ReconciliationPersistence } from '../db/execution-store'
+import { BrokerReadError } from '../broker/alpaca/failures'
+import type { ExecutionStoreError, ReconciliationPersistence } from '../db/execution-store/contract'
 import type { WriterFenceError, WriterFenceService } from '../execution/writer-fence'
 import { ReconciliationError, incompletePassReason, type ReconciliationPassError } from './broker-reconciler-model'
-import { Pipeable } from '../pipeable'
 
 export type ContainmentDecision =
-  | { readonly _tag: 'PreserveInterruption' }
+  | { readonly _tag: 'PreserveAuthority' }
   | { readonly _tag: 'RestrictAuthority'; readonly reason: typeof incompletePassReason }
 
-export const decideContainment = <E>(cause: Cause.Cause<E>): ContainmentDecision =>
-  Cause.hasInterruptsOnly(cause)
-    ? { _tag: 'PreserveInterruption' }
+const isRetryableBrokerReadFailure = (cause: Cause.Cause<ReconciliationPassError>): boolean =>
+  cause.reasons.length > 0 &&
+  cause.reasons.every(
+    (reason) => Cause.isFailReason(reason) && reason.error instanceof BrokerReadError && reason.error.retryable,
+  )
+
+export const decideContainment = (cause: Cause.Cause<ReconciliationPassError>): ContainmentDecision =>
+  Cause.hasInterruptsOnly(cause) || isRetryableBrokerReadFailure(cause)
+    ? { _tag: 'PreserveAuthority' }
     : { _tag: 'RestrictAuthority', reason: incompletePassReason }
 
 const restrictAuthority = (
   store: ReconciliationPersistence,
   fence: WriterFenceService,
-  now: Effect.Effect<string>,
+  now: Effect.Effect<string, ReconciliationError>,
   decision: Extract<ContainmentDecision, { readonly _tag: 'RestrictAuthority' }>,
-): Effect.Effect<void, ExecutionStoreError | WriterFenceError> =>
+): Effect.Effect<void, ExecutionStoreError | WriterFenceError | ReconciliationError> =>
   now.pipe(
     Effect.flatMap((failedAt) =>
       fence.transaction(store.authorityRestriction.restrictAuthority(decision.reason, failedAt)),
@@ -31,7 +37,7 @@ const hasDefectOrInterruption = <E>(cause: Cause.Cause<E>): boolean =>
 
 const authorityRestrictionFailure = (
   reconciliationCause: Cause.Cause<ReconciliationPassError>,
-  restrictionCause: Cause.Cause<ExecutionStoreError | WriterFenceError>,
+  restrictionCause: Cause.Cause<ExecutionStoreError | WriterFenceError | ReconciliationError>,
 ): ReconciliationError =>
   new ReconciliationError({
     operation: 'containment',
@@ -41,7 +47,7 @@ const authorityRestrictionFailure = (
 
 const preserveFailureAfterContainment = (
   cause: Cause.Cause<ReconciliationPassError>,
-  containmentExit: Exit.Exit<void, ExecutionStoreError | WriterFenceError>,
+  containmentExit: Exit.Exit<void, ExecutionStoreError | WriterFenceError | ReconciliationError>,
 ): Effect.Effect<never, ReconciliationPassError> => {
   if (Exit.isSuccess(containmentExit)) return Effect.failCause(cause)
   if (hasDefectOrInterruption(containmentExit.cause)) {
@@ -53,28 +59,19 @@ const preserveFailureAfterContainment = (
     : Effect.fail(containmentError)
 }
 
-const containRuntimeFailureDataFirst = <A, R>(
+export const containRuntimeFailure = <A, R>(
   effect: Effect.Effect<A, ReconciliationPassError, R>,
   store: ReconciliationPersistence,
   fence: WriterFenceService,
-  now: Effect.Effect<string>,
+  now: Effect.Effect<string, ReconciliationError>,
 ): Effect.Effect<A, ReconciliationPassError, R> =>
   Effect.matchCauseEffect(effect, {
     onFailure: (cause) => {
       const decision = decideContainment(cause)
-      if (decision._tag === 'PreserveInterruption') return Effect.failCause(cause)
+      if (decision._tag === 'PreserveAuthority') return Effect.failCause(cause)
       return Effect.exit(restrictAuthority(store, fence, now, decision)).pipe(
         Effect.flatMap((containmentExit) => preserveFailureAfterContainment(cause, containmentExit)),
       )
     },
     onSuccess: Effect.succeed,
   })
-
-export const containRuntimeFailure = Pipeable.generic<
-  <A, R>(
-    store: ReconciliationPersistence,
-    fence: WriterFenceService,
-    now: Effect.Effect<string>,
-  ) => (effect: Effect.Effect<A, ReconciliationPassError, R>) => Effect.Effect<A, ReconciliationPassError, R>,
-  typeof containRuntimeFailureDataFirst
->(4, containRuntimeFailureDataFirst)

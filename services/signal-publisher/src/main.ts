@@ -26,7 +26,7 @@ const run = Effect.gen(function* () {
     request_timeout: config.operationTimeoutMs,
   })
   return yield* Effect.gen(function* () {
-    const repository = yield* makeSnapshotRepository
+    const repository = yield* makeSnapshotRepository(config.operationTimeoutMs)
     return yield* publish(config, args, repository)
   }).pipe(
     Effect.provide([database, NodeHttpClient.layerNodeHttp]),

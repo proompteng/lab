@@ -1,6 +1,6 @@
 # 187. Jangar Stage Credit Ledger And Runner Slot Futures (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane resilience, scheduled AgentRun admission, retained failure debt, runner-slot economics,
@@ -13,10 +13,6 @@ Extends:
 - `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
 - `docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md`
 - `services/jangar/README.md`
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/189-torghut-repair-yield-market-and-profit-hypothesis-guardrails-2026-05-12.md`
 
 ## Decision
 

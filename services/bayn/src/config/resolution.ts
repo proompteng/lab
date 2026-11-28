@@ -1,4 +1,4 @@
-import { Redacted, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { decodeBrokerConnection, type BrokerConnection } from '../broker/connection'
 import { EmbeddedBuildMetadataSchema, type EmbeddedBuildMetadata } from '../build'
@@ -14,35 +14,11 @@ import {
   type RuntimeConfigResolutionFailure,
   type RuntimeConfigResolutionInput,
 } from './model'
-import { evaluationBoundsDecoder } from './source'
 
 const decodeEmbeddedBuildMetadata = Schema.decodeUnknownResult(EmbeddedBuildMetadataSchema, StrictParseOptions)
 
 const fail = <A>(failure: RuntimeConfigResolutionFailure): Result.Result<A, RuntimeConfigResolutionFailure> =>
   Result.fail(failure)
-
-const decodeBounds = (
-  parsed: ParsedRuntimeConfig,
-): Result.Result<ParsedRuntimeConfig, RuntimeConfigResolutionFailure> => {
-  const decoded = evaluationBoundsDecoder(parsed.clickhouse.bounds)
-  return Result.isFailure(decoded)
-    ? fail({ _tag: 'InvalidEvaluationBounds', cause: decoded.failure })
-    : Result.succeed({
-        ...parsed,
-        clickhouse: { ...parsed.clickhouse, bounds: decoded.success },
-      })
-}
-
-const validateCycleTiming = (
-  parsed: ParsedRuntimeConfig,
-): Result.Result<ParsedRuntimeConfig, RuntimeConfigResolutionFailure> =>
-  parsed.cyclePollIntervalMs < parsed.cycleStallThresholdMs
-    ? Result.succeed(parsed)
-    : fail({
-        _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
-        cyclePollIntervalMs: parsed.cyclePollIntervalMs,
-        cycleStallThresholdMs: parsed.cycleStallThresholdMs,
-      })
 
 const validateExecutionReconciliationTiming = (
   parsed: ParsedRuntimeConfig,
@@ -85,7 +61,6 @@ const decodeAlpaca = (
   const count = configuredCredentialCount(configured)
   if (count === 0) return fail({ _tag: 'MissingAlpacaCredentials' })
   if (count !== 3) return fail({ _tag: 'IncompleteAlpacaCredentials', configured })
-  if (parsed.authorityGenerationHash === undefined) return fail({ _tag: 'MissingAlpacaAuthorityGeneration' })
 
   const accountId = parsed.configuredAlpaca.accountId
   const key = parsed.configuredAlpaca.key
@@ -108,7 +83,7 @@ const decodeAlpaca = (
     ? fail({ _tag: 'InvalidBrokerConnection', cause: decoded.failure })
     : Result.succeed({
         ...decoded.success,
-        authorityGenerationHash: parsed.authorityGenerationHash,
+        authorityGenerationHash: parsed.authorityGenerationHash ?? decoded.success.identity.identityHash,
         reconciliationIntervalMs: parsed.configuredAlpaca.reconciliationIntervalMs,
       })
 }
@@ -214,8 +189,9 @@ const baseConfig = (
   cycleStallThresholdMs: parsed.cycleStallThresholdMs,
   reconciliationStaleThresholdMs: parsed.reconciliationStaleThresholdMs,
   unknownMutationThresholdMs: parsed.unknownMutationThresholdMs,
-  cyclePollIntervalMs: parsed.cyclePollIntervalMs,
   alpaca,
+  kafka: parsed.kafka,
+  jevKey: parsed.jevKey,
   clickhouse: parsed.clickhouse,
   postgres: parsed.postgres,
   tigerBeetle: parsed.tigerBeetle,
@@ -239,11 +215,7 @@ const loadedConfig = (
 export const resolveRuntimeConfig = (
   input: RuntimeConfigResolutionInput,
 ): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
-  const bounds = decodeBounds(input.parsed)
-  if (Result.isFailure(bounds)) return Result.fail(bounds.failure)
-  const parsed = bounds.success
-  const timing = validateCycleTiming(parsed)
-  if (Result.isFailure(timing)) return Result.fail(timing.failure)
+  const parsed = input.parsed
   const alpaca = decodeAlpaca(parsed)
   if (Result.isFailure(alpaca)) return Result.fail(alpaca.failure)
   if (alpaca.success === undefined) return Result.fail({ _tag: 'MissingAlpacaCredentials' })
@@ -259,12 +231,5 @@ export const resolveRuntimeConfig = (
   if (Result.isFailure(build)) return Result.fail(build.failure)
   return loadedConfig(parsed, execution.success, build.success, alpaca.success)
 }
-
-export const redactedConfigSummary = (config: LoadedRuntimeConfig) => ({
-  ...config,
-  clickhouse: { ...config.clickhouse, password: Redacted.make('[REDACTED]') },
-  postgres: { ...config.postgres, url: Redacted.make('[REDACTED]') },
-  alpaca: { ...config.alpaca, key: Redacted.make('[REDACTED]'), secret: Redacted.make('[REDACTED]') },
-})
 
 export type { BrokerConnection }

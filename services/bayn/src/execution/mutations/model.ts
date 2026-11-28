@@ -2,10 +2,11 @@ import { Context, Data, Effect, Schema } from 'effect'
 
 import {
   MutationEvidenceSchema,
+  MutationRoutingSchema,
   MutationOperation,
   type MutationEvidence,
   type PartialMutationEvidence,
-} from '../../broker/alpaca-mutations'
+} from '../../broker/alpaca-mutations/model'
 import type { CanonicalHashFailure } from '../../hash'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion } from '../legacy-wire'
@@ -15,6 +16,7 @@ import {
   UtcInstantSchema as UtcInstant,
 } from '../../schemas'
 import type { WriterFenceError } from '../writer-fence'
+import { SubmissionDenialReasonSchema, type SubmissionDenialReason } from '../submission-denial'
 
 export enum MutationEventType {
   SubmitStarted = 'SUBMIT_STARTED',
@@ -49,9 +51,41 @@ export const MutationEventSchema = Schema.Struct({
   requestId: Schema.optionalKey(NonEmptyString),
   responseStatus: Schema.optionalKey(HttpStatus),
   responseContentHash: Schema.optionalKey(Sha256),
+  routing: Schema.optionalKey(MutationRoutingSchema),
+  denialReason: Schema.optionalKey(SubmissionDenialReasonSchema),
   occurredAt: UtcInstant,
 })
 export type MutationEvent = typeof MutationEventSchema.Type
+
+/** Evidence for the isolated expired-entry path, checked again at durable cancellation admission. */
+export const ExpiredEntryCancellationAdmissionSchema = Schema.Struct({
+  accountId: NonEmptyString,
+  authorityGenerationHash: Sha256,
+  authorityVersion: Schema.Int.check(Schema.isGreaterThan(0)),
+  intentId: Sha256,
+  clientOrderId: BrokerOrderId,
+  brokerOrderId: BrokerOrderId,
+  observedAt: UtcInstant,
+  validUntil: UtcInstant,
+})
+export type ExpiredEntryCancellationAdmission = typeof ExpiredEntryCancellationAdmissionSchema.Type
+
+export interface ExpiredEntryCancellationFacts {
+  readonly accountId: string
+  readonly authorityGenerationHash: string
+  readonly authorityVersion: number
+  readonly maximum: Authority
+  readonly effective: Authority
+  readonly killState: KillState
+  readonly reason?: string
+  readonly intentId: string
+  readonly intentAuthorityGenerationHash: string
+  readonly clientOrderId: string
+  readonly side: OrderSide
+  readonly protectionTag?: string | null
+  readonly brokerOrderId: string
+  readonly admittedAt: string
+}
 
 export const StartInputSchema = Schema.Struct({
   intentId: Sha256,
@@ -60,6 +94,8 @@ export const StartInputSchema = Schema.Struct({
   occurredAt: UtcInstant,
   brokerOrderId: Schema.optionalKey(BrokerOrderId),
   closeOnly: Schema.optionalKey(Schema.Literal(true)),
+  protectionProofId: Schema.optionalKey(Sha256),
+  expiredEntryCancellation: Schema.optionalKey(ExpiredEntryCancellationAdmissionSchema),
 })
 export const OutcomeInputSchema = Schema.Struct({
   intentId: Sha256,
@@ -67,6 +103,8 @@ export const OutcomeInputSchema = Schema.Struct({
   occurredAt: UtcInstant,
   brokerOrderId: Schema.optionalKey(BrokerOrderId),
   evidence: Schema.optionalKey(MutationEvidenceSchema),
+  routing: Schema.optionalKey(MutationRoutingSchema),
+  denialReason: Schema.optionalKey(SubmissionDenialReasonSchema),
 })
 
 export type MutationCanonicalizationFact =
@@ -108,6 +146,12 @@ export interface StartReceipt {
   readonly started: boolean
 }
 
+export interface ProtectionCloseCommit {
+  readonly proofId: string
+  readonly submitExpiresAt: string
+  readonly bind: Effect.Effect<void, MutationStoreError>
+}
+
 export interface MutationStoreShape {
   readonly authorizeSubmit: (
     intentId: string,
@@ -119,6 +163,7 @@ export interface MutationStoreShape {
     consistencyDelayMs: number,
     occurredAt: string,
     closeOnly?: boolean,
+    protectionClose?: ProtectionCloseCommit,
   ) => Effect.Effect<StartReceipt, MutationStoreError | WriterFenceError>
   readonly submitAccepted: (
     intentId: string,
@@ -136,6 +181,7 @@ export interface MutationStoreShape {
     intentId: string,
     requestHash: string,
     occurredAt: string,
+    denialReason?: SubmissionDenialReason,
   ) => Effect.Effect<MutationEvent, MutationStoreError | WriterFenceError>
   readonly submitUnknown: (
     intentId: string,
@@ -150,6 +196,7 @@ export interface MutationStoreShape {
     brokerOrderId: string,
     consistencyDelayMs: number,
     occurredAt: string,
+    expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
   ) => Effect.Effect<StartReceipt, MutationStoreError | WriterFenceError>
   readonly cancelAccepted: (
     intentId: string,

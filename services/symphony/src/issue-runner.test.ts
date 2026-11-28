@@ -31,9 +31,10 @@ const issue: Issue = {
 
 describe('issue runner runtime tools', () => {
   test('advertises github delivery actions and routes tool calls through DeliveryService', async () => {
-    const config = makeTestConfig({ agent: { maxTurns: 1 } })
+    const config = makeTestConfig({ agent: { maxTurns: 1 }, codex: { model: 'custom-model' } })
     const seenTools: string[][] = []
     const seenGithubCalls: Array<{ repo: string; headSha: string }> = []
+    let seenModel: string | null = null
 
     const runtime = ManagedRuntime.make(
       makeIssueRunnerLayer(createLogger({ test: 'issue-runner-tools' })).pipe(
@@ -99,6 +100,7 @@ describe('issue runner runtime tools', () => {
           Layer.succeed(CodexSessionService, {
             createSession: (options: CodexSessionOptions) =>
               Effect.sync(() => {
+                seenModel = options.model
                 seenTools.push(options.dynamicTools.map((tool) => tool.name))
                 return {
                   runTurn: () =>
@@ -146,6 +148,7 @@ describe('issue runner runtime tools', () => {
           })
 
           expect(workspacePath).toBe('/tmp/ABC-1')
+          expect(seenModel).toBe('custom-model')
           expect(seenTools[0]).toContain('linear_graphql')
           expect(seenTools[0]).toContain('github_delivery')
           expect(seenGithubCalls).toEqual([

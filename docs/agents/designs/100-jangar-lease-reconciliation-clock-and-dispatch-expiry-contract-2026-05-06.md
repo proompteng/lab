@@ -1,20 +1,13 @@
 # 100. Jangar Lease Reconciliation Clock And Dispatch Expiry Contract (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane resilience, conflicting evidence reconciliation, dispatch admission, merge-ready claims,
 Torghut capital holdbacks, and least-privilege deployment validation.
 
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/104-torghut-proof-expiry-clock-and-hypothesis-rehydration-lanes-2026-05-06.md`
-
 Extends:
 
-- `99-jangar-evidence-lease-cells-and-rollout-admission-arbiter-2026-05-06.md`
-- `98-jangar-action-slo-budget-and-profit-proof-exchange-2026-05-06.md`
-- `94-jangar-proof-backed-rollout-brake-and-repair-debt-ledger-2026-05-05.md`
 - `75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md`
 
 ## Decision

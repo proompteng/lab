@@ -127,7 +127,7 @@ metadata:
   namespace: agents
 spec:
   agentRef:
-    name: codex-spark-agent
+    name: codex-agent
   implementation:
     inline:
       text: |
@@ -184,7 +184,7 @@ metadata:
   namespace: agents
 spec:
   agentRef:
-    name: codex-spark-agent
+    name: codex-agent
   implementation:
     inline:
       text: |
@@ -335,6 +335,12 @@ Resource resolution order for Job containers (lowest to highest precedence):
 Use `spec.workload.resources` for normal per-run sizing. `spec.runtime.config.resources` is accepted for runtime-level
 submissions and is overridden by explicit workload resources.
 
+Jobs using the standard runner image default to memory-backed scratch. Standard GitHub Lab Codex Jobs with an
+8 GiB or larger `ephemeral-storage` request and 16 GiB or larger limit use disk for their generated `/workspace`
+and writable Bun cache instead, regardless of node cache availability. `/tmp` and the controller-created Codex
+home are still memory-backed. Use an explicit `spec.workload.volumes` mount for workspace data that must persist
+across Jobs. See [workspace cache](workspace-cache.md) for verification.
+
 ## Verify The Run Is Using The Spec Text
 
 After `kubectl apply`:
@@ -449,3 +455,11 @@ Do not use system prompt customization to compensate for an incorrect user promp
 - A secret referenced in `spec.secrets` does not exist in the run namespace (`CreateContainerConfigError`).
 - The repo is not in the allowlist configured for the controllers deployment.
 - You expected “followers not-ready” behavior without having implemented leader election in code and chart.
+
+## Submitting through Relay
+
+Tengri and standalone OpenCode can submit to an approved Agents target through the existing Relay connector.
+Use `start_run` with task text; namespace, agent, repository, credential bindings and runtime deadline are set by
+the target profile. The returned `runId` is also the Relay operation ID. If a reply is lost, call `get_run` with
+that same ID; never start another run to recover it. `read_logs`, `get_result` and `cancel_run` use that ID.
+See [Relay's connector contract](../../services/relay/README.md#agentrun-connector) for policies and rollout.

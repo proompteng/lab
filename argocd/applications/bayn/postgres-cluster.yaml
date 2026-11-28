@@ -11,12 +11,37 @@ metadata:
 spec:
   description: Bayn control and evaluation evidence
   instances: 2
-  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie@sha256:9287ce030c6f3ce822e383b019ae4aaf1e8370bff3b39f9c51dc10d69dc97219
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
   imagePullPolicy: IfNotPresent
   enablePDB: true
   enableSuperuserAccess: false
-  minSyncReplicas: 1
-  maxSyncReplicas: 1
+  managed:
+    roles:
+      - name: bayn_research
+        ensure: present
+        login: true
+        inherit: false
+        superuser: false
+        createdb: false
+        createrole: false
+        replication: false
+        bypassrls: false
+        connectionLimit: 2
+        comment: Isolated native Jev editor claims and receipts
+        passwordSecret:
+          name: bayn-research-db
+      - name: bayn_audit_ro
+        ensure: present
+        login: true
+        inherit: false
+        superuser: false
+        createdb: false
+        createrole: false
+        replication: false
+        bypassrls: false
+        comment: Read-only profitability audit and observation evidence
+        passwordSecret:
+          name: bayn-audit-ro-db
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   affinity:
@@ -24,23 +49,27 @@ spec:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
           - matchExpressions:
-              - key: kubernetes.io/arch
+              - key: network.proompteng.ai/100g
                 operator: In
                 values:
-                  - amd64
+                  - "true"
     podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname
   resources:
     requests:
       cpu: 250m
-      memory: 512Mi
+      memory: 2Gi
     limits:
       cpu: "2"
-      memory: 2Gi
+      memory: 8Gi
   storage:
-    storageClass: rook-ceph-block
-    size: 10Gi
-    resizeInUseVolumes: true
+    storageClass: local-path
+    size: 500Gi
+    resizeInUseVolumes: false
+  walStorage:
+    storageClass: local-path
+    size: 32Gi
+    resizeInUseVolumes: false
   bootstrap:
     initdb:
       database: bayn
@@ -48,9 +77,44 @@ spec:
       encoding: UTF8
       dataChecksums: true
   postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
     parameters:
+      jit: "off"
+      shared_buffers: 512MB
+      effective_cache_size: 4GB
+      work_mem: 8MB
+      random_page_cost: "1.5"
+      wal_buffers: 16MB
+      wal_compression: lz4
+      max_wal_size: 4GB
+      checkpoint_timeout: 15min
+      checkpoint_completion_target: "0.9"
+      autovacuum_vacuum_scale_factor: "0.1"
+      autovacuum_analyze_scale_factor: "0.05"
       password_encryption: scram-sha-256
       ssl_min_protocol_version: TLSv1.3
+      log_lock_waits: "on"
+      deadlock_timeout: 1s
+      log_min_duration_statement: 1000ms
+      log_parameter_max_length: "0"
+      log_parameter_max_length_on_error: "0"
+      track_io_timing: "on"
+      track_wal_io_timing: "on"
+      wal_sender_timeout: 60s
+      wal_receiver_timeout: 60s
+  monitoring:
+    metricsQueriesTTL: 1s
+    customQueriesConfigMap:
+      - name: cnpg-default-monitoring
+        key: queries
+      - name: bayn-postgres-monitoring
+        key: queries
+      - name: bayn-postgres-monitoring
+        key: financial-queries
+    disableDefaultQueries: false
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true

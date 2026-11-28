@@ -11,27 +11,19 @@ import ./bun-workspace-service.nix {
   serviceName = "froussard";
   packageName = "froussard";
   depsHash = {
-    x86_64-linux = "sha256-oKTSsF0H8dh8vk9CvJruJUOUH+IdMNQN9s8TystgE0Q=";
-    aarch64-linux = "sha256-dWXUZxQh/trI9XCDgqy1qfpDU6gf+hqkALR0WRfmZ5Y=";
+    x86_64-linux = "sha256-3oPKDecD6i+9Fvru+ZL4ScHhYrgu1+uUlpNnY0bMTB8=";
+    aarch64-linux = "sha256-8qdMrmwj7g1BJZunEzyjMfGcLXwUYrqLDpTDB6UZE9M=";
   };
   installFilters = [
     "@proompteng/agent-contracts"
-    "@proompteng/codex"
-    "@proompteng/discord"
-    "@proompteng/otel"
     "froussard"
   ];
   sourcePaths = [
     "apps/froussard"
     "packages/agent-contracts"
-    "packages/codex"
-    "packages/discord"
-    "packages/otel"
   ];
   buildCommands = [
     "bun --cwd=packages/agent-contracts run build"
-    "bun --cwd=packages/otel run build"
-    "bun --cwd=packages/discord run build"
     "bun --cwd=apps/froussard run build"
   ];
   command = [

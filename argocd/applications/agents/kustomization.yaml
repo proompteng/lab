@@ -2,24 +2,33 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: agents
 resources:
+  - postgres-upgrade-backup.yaml
+  - agents-audit-ro-db-sealedsecret.yaml
   - postgres-cluster.yaml
+  - codex-auth-master-externalsecret.yaml
   - codex-auth-externalsecret.yaml
+  - codex-auth-refresher.yaml
+  - google-adc-externalsecret.yaml
+  - workspace-cache-daemonset.yaml
   - hf-router-token-sealedsecret.yaml
+  - agents-shell-tunnel-runtime-sealedsecret.yaml
+  - agents-shell-tunnel-deployment.yaml
+  - agents-shell-tunnel-networkpolicy.yaml
+  - agents-shell-omni-externalsecret.yaml
+  - agents-shell-bmc-externalsecret.yaml
+  - agents-shell-paperless-secret.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
-  - graf-codex-agentprovider.yaml
-  - graf-codex-agent.yaml
-  - codex-spark-agent.yaml
-  - codex-spark-smoke-agentprovider.yaml
-  - codex-spark-smoke-agent.yaml
-  - codex-spark-smoke-agent-system-prompt-configmap.yaml
-  - codex-spark-smoke-implspec.yaml
+  - codex-smoke-agentprovider.yaml
+  - codex-smoke-agent.yaml
+  - codex-smoke-agent-system-prompt-configmap.yaml
+  - codex-smoke-implspec.yaml
   - anypi-agentprovider.yaml
-  - anypi-eval-agentprovider.yaml
   - anypi-agent.yaml
-  - anypi-eval-agent.yaml
+  - google-secretbinding.yaml
+  - google-agentprovider.yaml
+  - google-agent.yaml
   - codex-agentprovider.yaml
-  - codex-spark-agentprovider.yaml
   - codex-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml
   - codex-orchestrations.yaml
@@ -45,9 +54,87 @@ resources:
   - ingressroute-agents-api.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
+  - auto-ontology-mcp-token-sealedsecret.yaml
+  - ../../../docs/agents/ontology
+  - auto-ontology-networkpolicy.yaml
+  - auto-ontology-db-networkpolicy.yaml
+  - auto-ontology-sync-cronjob.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
+replacements:
+  - source:
+      kind: Deployment
+      name: agents-controllers
+      fieldPath: spec.template.spec.containers.0.env.[name=AGENTS_AGENT_RUNNER_IMAGE].value
+    targets:
+      - select:
+          kind: DaemonSet
+          name: agents-workspace-cache
+        fieldPaths:
+          - spec.template.spec.containers.[name=refresh].image
+  - source:
+      kind: Deployment
+      name: agents-controllers
+      fieldPath: spec.template.spec.containers.[name=agents-controllers].image
+    targets:
+      - select:
+          kind: CronJob
+          name: auto-ontology-sync
+        fieldPaths:
+          - spec.jobTemplate.spec.template.spec.containers.[name=sync].image
+  - source:
+      kind: SealedSecret
+      name: agents-shell-tunnel-runtime
+      fieldPath: spec.encryptedData.api-key
+    targets:
+      - select:
+          kind: Deployment
+          name: agents-shell-tunnel
+        fieldPaths:
+          - spec.template.metadata.annotations.[agents-shell.proompteng.ai/runtime-key-version]
+        options:
+          create: true
+patches:
+  - target:
+      kind: Deployment
+      name: agents-shell
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: agents-shell
+      spec:
+        template:
+          spec:
+            containers:
+              - name: agents-shell
+                volumeMounts:
+                  - name: omni
+                    mountPath: /var/run/secrets/agents-shell-omni
+                    readOnly: true
+                  - name: bmc
+                    mountPath: /var/run/secrets/agents-shell-bmc
+                    readOnly: true
+                  - name: paperless
+                    mountPath: /var/run/secrets/agents-shell-paperless
+                    readOnly: true
+            volumes:
+              - name: omni
+                secret:
+                  secretName: agents-shell-omni
+                  defaultMode: 0400
+                  items:
+                    - key: talosconfig
+                      path: talosconfig
+              - name: bmc
+                secret:
+                  secretName: agents-shell-bmc
+                  defaultMode: 0440
+              - name: paperless
+                secret:
+                  secretName: agents-shell-paperless
+                  defaultMode: 0440
 helmGlobals:
   chartHome: ../../../charts
 helmCharts:
@@ -56,3 +143,11 @@ helmCharts:
     namespace: agents
     valuesFile: values.yaml
     includeCRDs: true
+
+configMapGenerator:
+  - name: agents-workspace-cache-refresh
+    files:
+      - refresh.sh=workspace-cache-refresh.sh
+  - name: agents-relay-targets
+    files:
+      - relay-targets.json

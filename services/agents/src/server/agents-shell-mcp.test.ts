@@ -1,6 +1,10 @@
-import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { encodeOutputCursor } from './agents-shell/jobs'
+import childProcess, { execFileSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { syncBuiltinESMExports } from 'node:module'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -69,8 +73,25 @@ const linkedOauthScheme = [{ type: 'oauth2', scopes: ['agents-shell.read', 'offl
 
 const randomListenPort = () => 30_000 + Math.floor(Math.random() * 20_000)
 
-const connectServer = async (config: AgentsShellConfig, auth = makeAuth()) => {
-  const runner = new AgentsShellRunner(config)
+const initializeRepoFixture = (config: AgentsShellConfig) => {
+  const repo = join(config.workspaceRoot, 'lab')
+  const remote = join(config.workspaceRoot, 'origin.git')
+  mkdirSync(repo, { recursive: true })
+  execFileSync('git', ['init', '--bare', remote])
+  execFileSync('git', ['init', '-b', 'main', repo])
+  execFileSync('git', ['-C', repo, 'config', 'user.name', 'Agents Shell Test'])
+  execFileSync('git', ['-C', repo, 'config', 'user.email', 'agents-shell@example.test'])
+  execFileSync('git', ['-C', repo, 'config', 'commit.gpgsign', 'false'])
+  writeFileSync(join(repo, 'README.md'), '# fixture\n')
+  writeFileSync(join(repo, '.gitignore'), '.env\n')
+  execFileSync('git', ['-C', repo, 'add', 'README.md', '.gitignore'])
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'fixture'])
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', remote])
+  execFileSync('git', ['-C', repo, 'push', '-u', 'origin', 'main'])
+  return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+}
+
+const connectServer = async (config: AgentsShellConfig, auth = makeAuth(), runner = new AgentsShellRunner(config)) => {
   const server = createAgentsShellServer(config, runner, auth)
   const client = new Client({ name: 'agents-shell-test', version: '0.0.0' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -200,7 +221,7 @@ describe('agents-shell MCP OAuth metadata', () => {
 
     expect(response.status).toBe(200)
     const body = (await response.json()) as { result?: { tools?: Array<{ name?: string }> } }
-    expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['shell_run', 'kubectl']))
+    expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['exec', 'kubectl']))
   })
 
   it('keeps invalid bearer tokens inside the MCP challenge flow with safe diagnostics', async () => {
@@ -222,8 +243,8 @@ describe('agents-shell MCP OAuth metadata', () => {
             id: 1,
             method: 'tools/call',
             params: {
-              name: 'shell_run',
-              arguments: { command: 'echo should-not-run' },
+              name: 'exec',
+              arguments: { requestKey: crypto.randomUUID(), command: 'echo should-not-run' },
             },
           }),
         }),
@@ -272,7 +293,7 @@ describe('agents-shell MCP OAuth metadata', () => {
 
         expect(response.status).toBe(200)
         const body = (await response.json()) as { result?: { tools?: Array<{ name?: string }> } }
-        expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['shell_run', 'kubectl']))
+        expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['exec', 'kubectl']))
       } finally {
         server.stop(true)
       }
@@ -287,6 +308,31 @@ describe('agents-shell MCP OAuth metadata', () => {
 })
 
 describe('agents-shell MCP tools', () => {
+  it('rejects BMC controls and target overrides before invoking a process', async () => {
+    const config = makeConfig()
+    const runner = new AgentsShellRunner(config)
+    const processCall = vi.spyOn(runner, 'runProcess')
+    const { client, server } = await connectServer(config, makeAuth(['agents-shell.read']), runner)
+    try {
+      for (const args of [
+        { node: 'altra', operation: 'power_cycle' },
+        { node: 'turin', operation: 'raw' },
+        { node: 'other-host', operation: 'identity' },
+        { node: 'turin', operation: 'module_sensors' },
+        { node: 'turin', operation: 'fan_state' },
+      ]) {
+        const result = await client.callTool({ name: 'bmc', arguments: args })
+        expect(result.isError).toBe(true)
+      }
+      expect(processCall).not.toHaveBeenCalled()
+    } finally {
+      processCall.mockRestore()
+      runner.shutdown()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('lists focused tools with annotations and OAuth metadata', async () => {
     const config = makeConfig()
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
@@ -294,23 +340,42 @@ describe('agents-shell MCP tools', () => {
     const tools = await client.listTools()
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
       [
+        'repo_session_open',
+        'repo_session_status',
+        'repo_session_close',
         'search',
         'read_file',
         'apply_patch',
         'agent_guide',
-        'shell_run',
-        'shell_start',
-        'shell_read',
-        'shell_kill',
-        'shell_status',
+        'retrieve_context',
+        'memory_get',
+        'memory_list',
+        'memory_save',
+        'memory_retire',
+        'exec',
+        'read',
+        'cancel',
+        'status',
         'git',
         'git_write',
         'kubectl',
         'kubectl_admin',
-        'agent_start',
-        'agent_status',
-        'agent_read',
-        'agent_cancel',
+        'infrastructure',
+        'bmc',
+        'paperless_status',
+        'paperless_search',
+        'paperless_get_document',
+        'paperless_list_metadata',
+        'paperless_create_metadata',
+        'paperless_upload',
+        'paperless_get_task',
+        'paperless_update_document',
+        'paperless_download',
+        'paperless_ai_suggestions',
+        'create_agent_run',
+        'cancel_agent_run',
+        'get_agent_run',
+        'get_agent_run_logs',
       ].sort(),
     )
 
@@ -324,7 +389,7 @@ describe('agents-shell MCP tools', () => {
       'openai/toolInvocation/invoked': 'Tool complete',
     })
 
-    const shellRun = tools.tools.find((tool) => tool.name === 'shell_run')
+    const shellRun = tools.tools.find((tool) => tool.name === 'exec')
     expect(shellRun?.annotations?.destructiveHint).toBe(false)
     expect(shellRun?.annotations?.openWorldHint).toBe(true)
 
@@ -338,7 +403,7 @@ describe('agents-shell MCP tools', () => {
     const git = tools.tools.find((tool) => tool.name === 'git')
     expect(git?.annotations?.readOnlyHint).toBe(true)
     expect(git?.annotations?.destructiveHint).toBe(false)
-    expect(git?.annotations?.openWorldHint).toBe(false)
+    expect(git?.annotations?.openWorldHint).toBe(true)
     expect(git?._meta).toMatchObject({
       securitySchemes: linkedOauthScheme,
     })
@@ -364,8 +429,14 @@ describe('agents-shell MCP tools', () => {
       securitySchemes: linkedOauthScheme,
     })
 
-    const agentStart = tools.tools.find((tool) => tool.name === 'agent_start')
-    expect(agentStart?.annotations?.destructiveHint).toBe(true)
+    for (const name of ['infrastructure', 'bmc']) {
+      const tool = tools.tools.find((candidate) => candidate.name === name)
+      expect(tool?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: true })
+      expect(tool?._meta).toMatchObject({ securitySchemes: linkedOauthScheme })
+    }
+
+    const agentStart = tools.tools.find((tool) => tool.name === 'create_agent_run')
+    expect(agentStart?.annotations?.destructiveHint).toBe(false)
     expect(agentStart?.annotations?.openWorldHint).toBe(true)
     expect(agentStart?._meta).toMatchObject({
       securitySchemes: linkedOauthScheme,
@@ -377,7 +448,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(18_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(45_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
@@ -391,16 +462,17 @@ describe('agents-shell MCP tools', () => {
     expect(rawSearch?.inputSchema?.$schema).toBeUndefined()
     expect(rawSearch?.inputSchema?.additionalProperties).toBe(false)
 
-    const rawShellRun = rawTools.find((tool) => tool.name === 'shell_run')
+    const rawShellRun = rawTools.find((tool) => tool.name === 'exec')
     expect(rawShellRun).toBeDefined()
     const rawShellRunInputProperties = rawShellRun?.inputSchema?.properties as Record<string, Record<string, unknown>>
     expect(rawShellRunInputProperties.timeoutSeconds.maximum).toBeUndefined()
-    expect(rawShellRunInputProperties.maxOutputBytes.maximum).toBeUndefined()
+    expect(rawShellRunInputProperties.maxBytes.maximum).toBe(1_048_576)
+    expect(rawShellRun?.inputSchema?.required).toContain('sessionId')
     expect(rawShellRunInputProperties.timeoutSeconds.description).toBe(
       'Timeout in seconds. Default: 60. Server cap: 1800.',
     )
-    expect(rawShellRunInputProperties.maxOutputBytes.description).toBe(
-      'Per-stream output tail cap in bytes. Default: 20000. Server cap: 200000.',
+    expect(rawShellRunInputProperties.maxBytes.description).toBe(
+      'Total serialized MCP reply budget, including metadata and both streams. Default: 20000.',
     )
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
@@ -442,11 +514,11 @@ describe('agents-shell MCP tools', () => {
     const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth([]))
 
     const tools = await client.listTools()
-    expect(tools.tools.some((tool) => tool.name === 'shell_run')).toBe(true)
+    expect(tools.tools.some((tool) => tool.name === 'exec')).toBe(true)
 
     const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run' },
+      name: 'exec',
+      arguments: { requestKey: crypto.randomUUID(), command: 'echo should-not-run' },
     })
     expect(result.isError).toBe(true)
     expect(result._meta?.['mcp/www_authenticate']).toEqual([
@@ -459,9 +531,54 @@ describe('agents-shell MCP tools', () => {
     await server.close()
   })
 
+  it('drains process output delivered after the child exit event', async () => {
+    const runner = new AgentsShellRunner(makeConfig())
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    const child = Object.assign(new childProcess.ChildProcess(), {
+      stdin: new PassThrough(),
+      stdout,
+      stderr,
+    })
+    const outputClosed = new Promise<void>((resolve) => {
+      vi.spyOn(childProcess, 'spawn').mockImplementationOnce(() => {
+        setImmediate(() => {
+          child.emit('exit', 0, null)
+          setTimeout(() => {
+            stdout.end('0123456789abcdef0123456789abcdef01234567\n')
+            stderr.end('diagnostic after exit\n')
+            child.emit('close', 0, null)
+            resolve()
+          }, 25)
+        })
+        return child
+      })
+      syncBuiltinESMExports()
+    })
+
+    try {
+      const result = await runner.runProcess({
+        command: 'git',
+        args: ['rev-parse', '--verify', 'HEAD'],
+        auth: makeAuth(),
+        auditEvent: 'output_drain_probe',
+      })
+      await outputClosed
+      expect(result.exitCode).toBe(0)
+      expect(result.timedOut).toBe(false)
+      expect(result.stdout).toBe('0123456789abcdef0123456789abcdef01234567\n')
+      expect(result.stderr).toBe('diagnostic after exit\n')
+    } finally {
+      vi.restoreAllMocks()
+      syncBuiltinESMExports()
+    }
+  })
+
   it('finishes process tools when a git descendant keeps stdio open after child exit', async () => {
     const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const session = await runner.openRepoSession({ name: 'drain-test' }, makeAuth())
     const bin = join(config.workspaceRoot, 'bin')
     mkdirSync(bin, { recursive: true })
     writeFileSync(
@@ -480,13 +597,13 @@ printf '%s\\n' "$@"
     const previousPath = process.env.PATH
     process.env.PATH = `${bin}:${previousPath ?? ''}`
 
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(), runner)
 
     try {
       const startedAt = Date.now()
       const result = await client.callTool({
         name: 'git_write',
-        arguments: { args: ['fetch', 'origin', 'main'], cwd: 'lab', timeoutSeconds: 1 },
+        arguments: { args: ['fetch', 'origin', 'main'], sessionId: session.sessionId, timeoutSeconds: 1 },
       })
       const elapsedMs = Date.now() - startedAt
       expect(result.isError).not.toBe(true)
@@ -497,6 +614,10 @@ printf '%s\\n' "$@"
       }
       expect(content.exitCode).toBe(0)
       expect(content.timedOut).toBe(false)
+      expect(result.structuredContent).toMatchObject({
+        captureIncomplete: true,
+        outputCaptureError: expect.stringContaining('descendant pipes'),
+      })
       expect(content.stdout).toContain('fetched origin main')
       expect(elapsedMs).toBeLessThan(2_000)
     } finally {
@@ -515,10 +636,12 @@ printf '%s\\n' "$@"
 
   it('reads files and blocks apply_patch paths outside /workspace', async () => {
     const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
+    initializeRepoFixture(config)
     writeFileSync(join(config.workspaceRoot, 'hello.txt'), 'hello from agents-shell\n')
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
 
+    const opened = await client.callTool({ name: 'repo_session_open', arguments: { name: 'patch-escape-test' } })
+    const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
     const read = await client.callTool({
       name: 'read_file',
       arguments: { path: 'hello.txt' },
@@ -528,6 +651,7 @@ printf '%s\\n' "$@"
     const blocked = await client.callTool({
       name: 'apply_patch',
       arguments: {
+        sessionId,
         patch: '*** Begin Patch\n*** Update File: ../../escape.txt\n@@\n-old\n+new\n*** End Patch\n',
       },
     })
@@ -542,9 +666,449 @@ printf '%s\\n' "$@"
     await server.close()
   })
 
+  it('inspects branches through the read-only tool without creating or deleting refs', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const repo = join(config.workspaceRoot, 'lab')
+    const { client, server } = await connectServer(config, makeAuth(['agents-shell.read']))
+    try {
+      for (const args of [
+        ['branch', '--all'],
+        ['branch', '--no-merged', 'origin/main'],
+        ['branch', 'unrequested-branch'],
+      ]) {
+        const result = await client.callTool({ name: 'git', arguments: { cwd: repo, args } })
+        expect(result.isError).not.toBe(true)
+        expect(result.structuredContent).toMatchObject({ ok: true, exitCode: 0 })
+      }
+      const denied = await client.callTool({
+        name: 'git',
+        arguments: { cwd: repo, args: ['branch', '--list', '-D', 'main'] },
+      })
+      expect(denied.isError).toBe(true)
+      expect(
+        execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(refname)', 'refs/heads'], {
+          encoding: 'utf8',
+        }).trim(),
+      ).toBe('refs/heads/main')
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('requires an owned session for configured Git remote helpers', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const auth = makeAuth()
+    const session = await runner.openRepoSession({ name: 'remote-helper-test' }, auth)
+    const marker = join(config.workspaceRoot, 'remote-helper.called')
+    const helper = join(config.workspaceRoot, 'remote-helper')
+    writeFileSync(
+      helper,
+      `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'invoked')
+const result = require('node:child_process').spawnSync('git-upload-pack', [${JSON.stringify(join(config.workspaceRoot, 'origin.git'))}], { stdio: 'inherit' })
+process.exit(result.status ?? 1)
+`,
+    )
+    chmodSync(helper, 0o700)
+    const helperOperand = helper.replaceAll('%', '%%').replaceAll(' ', '% ')
+    execFileSync('git', [
+      '-C',
+      session.worktree,
+      'config',
+      `url.ext::${helperOperand} .insteadOf`,
+      'https://safe.example/',
+    ])
+    execFileSync('git', ['-C', session.worktree, 'config', 'remote.origin.url', 'https://safe.example/repo'])
+    execFileSync('git', ['-C', session.worktree, 'config', 'protocol.ext.allow', 'always'])
+    const inspector = await connectServer(config, makeAuth(['agents-shell.read']), runner)
+    const writer = await connectServer(config, auth, runner)
+    const foreign = await connectServer(
+      config,
+      { ...auth, subject: 'user-2', payload: { ...auth.payload, sub: 'user-2' } },
+      runner,
+    )
+    try {
+      for (const remote of ['origin', 'https://safe.example/repo']) {
+        const result = await inspector.client.callTool({
+          name: 'git',
+          arguments: { sessionId: session.sessionId, args: ['ls-remote', remote] },
+        })
+        expect(result.isError).toBe(true)
+        expect(JSON.stringify(result.content)).toContain('git_write')
+        expect(existsSync(marker)).toBe(false)
+      }
+      const missingSession = await inspector.client.callTool({
+        name: 'git_write',
+        arguments: { args: ['ls-remote', 'origin'] },
+      })
+      expect(missingSession.isError).toBe(true)
+      expect(existsSync(marker)).toBe(false)
+      const denied = await foreign.client.callTool({
+        name: 'git_write',
+        arguments: { sessionId: session.sessionId, args: ['ls-remote', 'origin'] },
+      })
+      expect(denied.isError).toBe(true)
+      expect(existsSync(marker)).toBe(false)
+      const allowed = await writer.client.callTool({
+        name: 'git_write',
+        arguments: { sessionId: session.sessionId, args: ['ls-remote', 'origin'] },
+      })
+      expect(allowed.isError).not.toBe(true)
+      expect(allowed.structuredContent).toMatchObject({ ok: true, taskId: session.sessionId })
+      expect((allowed.structuredContent as { stdout: string }).stdout).toContain('refs/heads/main')
+      expect(existsSync(marker)).toBe(true)
+    } finally {
+      for (const connection of [inspector, writer, foreign]) {
+        await connection.clientTransport.close()
+        await connection.serverTransport.close()
+        await connection.client.close()
+        await connection.server.close()
+      }
+    }
+  })
+
+  it('opens an isolated repo session and routes repo tools through its worktree', async () => {
+    const config = makeConfig()
+    const baseSha = initializeRepoFixture(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const opened = await client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'session-test' },
+      })
+
+      expect(opened.isError).not.toBe(true)
+      const session = opened.structuredContent as {
+        sessionId: string
+        branch: string
+        baseBranch: string
+        baseSha: string
+        headSha: string
+        worktree: string
+        dirty: boolean
+        ahead: number
+        behind: number
+      }
+      expect(opened.structuredContent).toMatchObject({ taskId: session.sessionId })
+      expect(session.sessionId).toMatch(/^repo-session-test-[0-9a-f]{8}$/)
+      expect(session.branch).toMatch(/^codex\/session-test-[0-9a-f]{8}$/)
+      expect(session.baseBranch).toBe('main')
+      expect(session.baseSha).toBe(baseSha)
+      expect(session.headSha).toBe(baseSha)
+      expect(session.dirty).toBe(false)
+      expect(session.ahead).toBe(0)
+      expect(session.behind).toBe(0)
+      expect(session.worktree).toContain(join('worktrees', 'lab', 'session-test-'))
+
+      const write = await client.callTool({
+        name: 'exec',
+        arguments: {
+          requestKey: crypto.randomUUID(),
+          sessionId: session.sessionId,
+          command: "printf '%s\\n' session-data > session.txt",
+        },
+      })
+      expect(write.isError).not.toBe(true)
+
+      const read = await client.callTool({
+        name: 'read_file',
+        arguments: { sessionId: session.sessionId, path: 'session.txt' },
+      })
+      expect((read.structuredContent as { content?: string }).content).toBe('session-data\n')
+
+      const gitStatus = await client.callTool({
+        name: 'git',
+        arguments: { sessionId: session.sessionId, args: ['status', '--short'] },
+      })
+      expect((gitStatus.structuredContent as { stdout?: string }).stdout).toContain('?? session.txt')
+
+      const status = await client.callTool({
+        name: 'repo_session_status',
+        arguments: { sessionId: session.sessionId },
+      })
+      expect((status.structuredContent as { dirty?: boolean }).dirty).toBe(true)
+
+      const blockedClose = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId: session.sessionId },
+      })
+      expect(blockedClose.isError).toBe(true)
+      expect(JSON.stringify(blockedClose.content)).toContain('uncommitted changes')
+
+      const cleanupArgs = { requestKey: 'cleanup', sessionId: session.sessionId, command: 'rm session.txt' }
+      const cleaned = await client.callTool({ name: 'exec', arguments: cleanupArgs })
+      const closed = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId: session.sessionId },
+      })
+      expect(closed.isError).not.toBe(true)
+      expect((closed.structuredContent as { closedAt?: string }).closedAt).toEqual(expect.any(String))
+      const replay = await client.callTool({ name: 'exec', arguments: cleanupArgs })
+      expect(replay.isError).not.toBe(true)
+      expect(replay.structuredContent).toEqual(cleaned.structuredContent)
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('restores repo sessions after the agents-shell runner restarts', async () => {
+    const config = makeConfig()
+    const baseSha = initializeRepoFixture(config)
+    const first = await connectServer(config)
+    let sessionId = ''
+
+    try {
+      const opened = await first.client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'restart-test' },
+      })
+      const session = opened.structuredContent as { sessionId?: string; baseSha?: string }
+      sessionId = session.sessionId ?? ''
+      expect(sessionId).not.toBe('')
+      expect(session.baseSha).toBe(baseSha)
+    } finally {
+      await first.clientTransport.close()
+      await first.serverTransport.close()
+      await first.client.close()
+      await first.server.close()
+    }
+
+    const second = await connectServer(config)
+    try {
+      const status = await second.client.callTool({
+        name: 'repo_session_status',
+        arguments: { sessionId },
+      })
+      expect(status.isError).not.toBe(true)
+      expect(status.structuredContent as { sessionId?: string; baseSha?: string }).toMatchObject({
+        sessionId,
+        baseSha,
+      })
+
+      const closed = await second.client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId },
+      })
+      expect(closed.isError).not.toBe(true)
+    } finally {
+      await second.clientTransport.close()
+      await second.serverTransport.close()
+      await second.client.close()
+      await second.server.close()
+    }
+  })
+
+  it('treats ignored files as dirty so safe close cannot delete them', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const opened = await client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'ignored-file-test' },
+      })
+      const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
+      await client.callTool({
+        name: 'exec',
+        arguments: { requestKey: crypto.randomUUID(), sessionId, command: "printf '%s\\n' secret > .env" },
+      })
+
+      const ordinaryGitStatus = await client.callTool({
+        name: 'git',
+        arguments: { sessionId, args: ['status', '--short'] },
+      })
+      expect((ordinaryGitStatus.structuredContent as { stdout?: string }).stdout).toBe('')
+
+      const status = await client.callTool({
+        name: 'repo_session_status',
+        arguments: { sessionId },
+      })
+      expect((status.structuredContent as { dirty?: boolean }).dirty).toBe(true)
+
+      const safeClose = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId },
+      })
+      expect(safeClose.isError).toBe(true)
+      expect(JSON.stringify(safeClose.content)).toContain('uncommitted changes')
+
+      const forcedClose = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId, force: true },
+      })
+      expect(forcedClose.isError).not.toBe(true)
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('marks a repo session as closing before asynchronous close checks', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+    const opened = await runner.openRepoSession({ name: 'closing-lock-test' }, auth)
+
+    const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
+    expect(() =>
+      runner.parseCommandInput({ requestKey: crypto.randomUUID(), command: 'pwd', sessionId: opened.sessionId }, auth),
+    ).toThrow(`repo session is closing: ${opened.sessionId}`)
+    await closing
+  })
+
+  it('waits for session-scoped process tools before checking and removing the worktree', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+    const opened = await runner.openRepoSession({ name: 'process-close-test' }, auth)
+    const readyPath = join(config.workspaceRoot, 'process-close-ready')
+
+    const process = runner.runProcess({
+      command: '/bin/bash',
+      args: ['-lc', `printf ready > ${JSON.stringify(readyPath)}; sleep 0.2; printf late > late.txt`],
+      sessionId: opened.sessionId,
+      auth,
+      auditEvent: 'repo_session_process_close_test',
+    })
+    for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    }
+    expect(existsSync(readyPath)).toBe(true)
+
+    const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
+    const processResult = await process
+    expect(processResult.ok).toBe(true)
+    await expect(closing).rejects.toThrow('repo session has uncommitted changes')
+
+    await runner.closeRepoSession({ sessionId: opened.sessionId, force: true }, auth)
+  })
+
+  it('tracks legacy cwd process tools inside a managed repo session worktree', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+    const opened = await runner.openRepoSession({ name: 'legacy-cwd-process' }, auth)
+    const readyPath = join(config.workspaceRoot, 'legacy-cwd-process-ready')
+
+    const process = runner.runProcess({
+      command: '/bin/bash',
+      args: ['-lc', `printf ready > ${JSON.stringify(readyPath)}; sleep 0.2; printf legacy > legacy.txt`],
+      cwd: opened.worktree,
+      auth,
+      auditEvent: 'repo_session_legacy_cwd_process_test',
+    })
+    for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    }
+    expect(existsSync(readyPath)).toBe(true)
+
+    const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
+    expect((await process).ok).toBe(true)
+    await expect(closing).rejects.toThrow('repo session has uncommitted changes')
+    expect(readFileSync(join(opened.worktree, 'legacy.txt'), 'utf8')).toBe('legacy')
+
+    await runner.closeRepoSession({ sessionId: opened.sessionId, force: true }, auth)
+  })
+
+  it('uses per-session fetch refs so concurrent opens do not share mutable fetch state', async () => {
+    const config = makeConfig()
+    const baseSha = initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+
+    const [first, second] = await Promise.all([
+      runner.openRepoSession({ name: 'parallel-a' }, auth),
+      runner.openRepoSession({ name: 'parallel-b' }, auth),
+    ])
+    expect(first.baseSha).toBe(baseSha)
+    expect(second.baseSha).toBe(baseSha)
+
+    const refs = execFileSync('git', ['-C', join(config.workspaceRoot, 'lab'), 'for-each-ref', 'refs/agents-shell/'], {
+      encoding: 'utf8',
+    })
+    expect(refs).toBe('')
+
+    await Promise.all([
+      runner.closeRepoSession({ sessionId: first.sessionId }, auth),
+      runner.closeRepoSession({ sessionId: second.sessionId }, auth),
+    ])
+  })
+
+  it('waits for stubborn session jobs to terminate before forced close', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const opened = await client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'forced-close-test' },
+      })
+      const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
+      const started = await client.callTool({
+        name: 'exec',
+        arguments: {
+          requestKey: crypto.randomUUID(),
+          waitMs: 0,
+          sessionId,
+          command: "trap '' TERM; printf '%s\\n' TRAP_READY; while :; do sleep 1; done",
+          timeoutSeconds: 30,
+        },
+      })
+      const jobId = (started.structuredContent as { jobId: string }).jobId
+      const cursor = encodeOutputCursor({ jobId, stdoutOffset: 0, stderrOffset: 0, outputEncoding: 'utf8' })
+
+      let trapReady = false
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const progress = await client.callTool({ name: 'read', arguments: { jobId, cursor } })
+        if ((progress.structuredContent as { stdout?: string }).stdout?.includes('TRAP_READY')) {
+          trapReady = true
+          break
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+      }
+      expect(trapReady).toBe(true)
+
+      const closed = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId, force: true },
+      })
+      expect(closed.isError).not.toBe(true)
+
+      const job = await client.callTool({ name: 'read', arguments: { jobId, cursor } })
+      expect(job.structuredContent).toMatchObject({
+        jobId,
+        state: 'cancelled',
+        finishedAt: expect.any(String),
+      })
+      expect((job.structuredContent as { signal?: string }).signal).toBe('SIGKILL')
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('applies Codex patch syntax through the apply_patch executable', async () => {
     const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab', 'src'), { recursive: true })
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const session = await runner.openRepoSession({ name: 'patch-test' }, makeAuth())
     const bin = join(config.workspaceRoot, 'bin')
     mkdirSync(bin, { recursive: true })
     writeFileSync(
@@ -556,19 +1120,19 @@ printf '%s\\n' "$@"
     const previousPath = process.env.PATH
     process.env.PATH = `${bin}:${previousPath ?? ''}`
 
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(), runner)
 
     try {
       const result = await client.callTool({
         name: 'apply_patch',
         arguments: {
-          cwd: 'lab',
+          sessionId: session.sessionId,
           patch: '*** Begin Patch\n*** Add File: src/example.ts\n+export const value = 1\n*** End Patch\n',
         },
       })
       expect(result.isError).not.toBe(true)
-      const content = result.structuredContent as { command?: string; changedFiles?: string[]; stdout?: string }
-      expect(content.command).toBe('apply_patch')
+      const content = result.structuredContent as { commandPreview?: string; changedFiles?: string[]; stdout?: string }
+      expect(content.commandPreview).toBe('apply_patch')
       expect(content.changedFiles).toEqual(['src/example.ts'])
       expect(content.stdout).toContain('Success. Updated the following files')
     } finally {
@@ -585,92 +1149,73 @@ printf '%s\\n' "$@"
     }
   })
 
-  it('starts and observes delegated AgentRun lifecycle through generic kubectl', async () => {
+  it('uses the canonical AgentRun API and preserves the delivery id across reconnects', async () => {
     const config = makeConfig()
-    const bin = join(config.workspaceRoot, 'bin')
-    mkdirSync(bin, { recursive: true })
-    writeFileSync(
-      join(bin, 'kubectl'),
-      `#!/bin/sh
-printf '%s\\n' "$@" >> "\${PWD}/kubectl-calls.txt"
-if [ "$1" = "apply" ]; then
-  cat > "\${PWD}/kubectl-stdin.json"
-  printf '%s\\n' 'agentrun.agents.proompteng.ai/created configured'
-elif [ "$1" = "get" ] && [ "$2" = "agentrun" ]; then
-  printf '%s\\n' '{"status":{"phase":"Running","vcs":{"headBranch":"codex/demo"}}}'
-elif [ "$1" = "get" ] && [ "$2" = "jobs" ]; then
-  printf '%s\\n' '{"items":[{"metadata":{"name":"job-1"}}]}'
-elif [ "$1" = "logs" ]; then
-  printf '%s\\n' 'delegated log line'
-elif [ "$1" = "delete" ]; then
-  printf '%s\\n' 'agentrun deleted'
-fi
-`,
-    )
-    chmodSync(join(bin, 'kubectl'), 0o755)
-
-    const previousPath = process.env.PATH
-    process.env.PATH = `${bin}:${previousPath ?? ''}`
-
-    const { client, server, clientTransport, serverTransport } = await connectServer(
-      config,
-      makeAuth(['agents-shell.read', 'agents-shell.write']),
-    )
-
+    const apiCalls: Array<{ path: string; idempotencyKey: string | null; body: unknown }> = []
+    const record = { id: 'run-1', externalRunId: 'codex-job-1', status: 'Running' }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = new URL(String(input))
+      const headers = new Headers(init?.headers)
+      apiCalls.push({
+        path: url.pathname,
+        idempotencyKey: headers.get('Idempotency-Key'),
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      })
+      if (url.pathname === '/v1/control-plane/logs') {
+        return Response.json({ ok: true, logs: 'delegated log line', pods: [] })
+      }
+      return Response.json({
+        ok: true,
+        agentRun: record,
+        resource: { kind: 'AgentRun', metadata: { name: record.externalRunId, namespace: 'agents' } },
+      })
+    })
+    const args = {
+      deliveryId: 'oracle-task-1',
+      secretBindingRef: 'codex-github-token',
+      payload: {
+        agentRef: { name: 'codex-agent' },
+        implementation: { text: 'Make a scoped change and return its test evidence.' },
+        goal: { objective: 'Complete the scoped change.' },
+        runtime: { type: 'job' },
+        parameters: { repository: 'proompteng/lab', base: 'main', head: 'codex/demo' },
+        secrets: ['codex-auth', 'github-token'],
+      },
+    }
+    const first = await connectServer(config)
     try {
-      const start = await client.callTool({
-        name: 'agent_start',
-        arguments: {
-          task: 'Make a small repo change, test it, commit, push, create a PR, and monitor CI.',
-          headBranch: 'codex/demo',
-        },
-      })
+      const start = await first.client.callTool({ name: 'create_agent_run', arguments: args })
       expect(start.isError).not.toBe(true)
-      const startContent = start.structuredContent as {
-        agentRunName?: string
-        headBranch?: string
-        apply?: { stdout?: string }
-      }
-      expect(startContent.headBranch).toBe('codex/demo')
-      expect(startContent.apply?.stdout).toContain('agentrun.agents.proompteng.ai/created configured')
-
-      const manifest = JSON.parse(readFileSync(join(config.workspaceRoot, 'kubectl-stdin.json'), 'utf8')) as {
-        spec?: {
-          implementation?: { inline?: { text?: string } }
-          parameters?: { repository?: string; base?: string; head?: string }
-          vcsPolicy?: { mode?: string }
-        }
-      }
-      expect(manifest.spec?.implementation?.inline?.text).toContain('Make a small repo change')
-      expect(manifest.spec?.parameters).toMatchObject({
-        repository: 'proompteng/lab',
-        base: 'main',
-        head: 'codex/demo',
+      expect(start.structuredContent).toMatchObject({ ok: true, result: { agentRun: record } })
+      expect(apiCalls[0]).toMatchObject({
+        path: '/v1/agent-runs',
+        idempotencyKey: args.deliveryId,
+        body: { ...args.payload, policy: { secretBindingRef: 'codex-github-token' } },
       })
-      expect(manifest.spec?.vcsPolicy?.mode).toBe('read-write')
-
-      const agentRunName = startContent.agentRunName!
-      const status = await client.callTool({ name: 'agent_status', arguments: { agentRunName } })
-      expect((status.structuredContent as { agentRun?: { status?: { phase?: string } } }).agentRun?.status?.phase).toBe(
-        'Running',
-      )
-
-      const logs = await client.callTool({ name: 'agent_read', arguments: { agentRunName } })
-      expect((logs.structuredContent as { stdout?: string }).stdout).toContain('delegated log line')
-
-      const cancel = await client.callTool({ name: 'agent_cancel', arguments: { agentRunName } })
-      expect((cancel.structuredContent as { stdout?: string }).stdout).toContain('agentrun deleted')
-    } finally {
-      await clientTransport.close()
-      await serverTransport.close()
-      await client.close()
-      await server.close()
-
-      if (previousPath == null) {
-        delete process.env.PATH
-      } else {
-        process.env.PATH = previousPath
+      await first.client.close()
+      await first.server.close()
+      const second = await connectServer(config)
+      try {
+        const replay = await second.client.callTool({ name: 'create_agent_run', arguments: args })
+        expect(replay.structuredContent).toMatchObject({ result: { agentRun: { id: record.id } } })
+        expect(apiCalls[1].idempotencyKey).toBe(args.deliveryId)
+        const status = await second.client.callTool({ name: 'get_agent_run', arguments: { id: record.id } })
+        expect(status.structuredContent).toMatchObject({ result: { agentRun: { status: 'Running' } } })
+        const logs = await second.client.callTool({
+          name: 'get_agent_run_logs',
+          arguments: { name: record.externalRunId, namespace: 'agents', tailLines: 5 },
+        })
+        expect(logs.structuredContent).toMatchObject({ result: { logs: 'delegated log line' } })
+        const legacy = await second.client.callTool({ name: 'agent_start', arguments: { task: 'legacy' } })
+        expect(legacy.isError).toBe(true)
+      } finally {
+        await second.client.close()
+        await second.server.close()
       }
+    } finally {
+      fetchMock.mockRestore()
+      await first.client.close()
+      await first.server.close()
     }
   })
 
@@ -685,7 +1230,7 @@ fi
     mkdirSync(bin, { recursive: true })
     writeFileSync(
       join(bin, 'rg'),
-      '#!/bin/sh\nprintf "%s\\n" "src/agents-shell.ts:1:export const createAgentsShellServer = true"\n',
+      '#!/bin/sh\nprintf "%s\\n" "$@" > .search-argv\nprintf "%s\\n" "src/agents-shell.ts:1:export const createAgentsShellServer = true"\n',
     )
     chmodSync(join(bin, 'rg'), 0o755)
 
@@ -700,15 +1245,16 @@ fi
         arguments: { query: 'createAgentsShellServer', path: 'lab', fixedStrings: true },
       })
       const content = result.structuredContent as {
-        command?: string
+        commandPreview?: string
         exitCode?: number
         stdout?: string
       }
-      expect(content.command).toContain('rg --line-number --no-heading --color=never --hidden')
-      expect(content.command).toContain('-g !.git/**')
-      expect(content.command).toContain('-g !node_modules/**')
-      expect(content.command).toContain('-g !schemas/custom/**')
-      expect(content.command).toContain('--fixed-strings createAgentsShellServer .')
+      expect(content.commandPreview).toContain('rg --line-number --no-heading --color=never --hidden')
+      expect(content.commandPreview).toContain("-g '!.git/**'")
+      expect(content.commandPreview).toContain("-g '!node_modules/**'")
+      const argv = readFileSync(join(config.workspaceRoot, 'lab', '.search-argv'), 'utf8').split('\n')
+      expect(argv).toEqual(expect.arrayContaining(['-g', '!schemas/custom/**', '--fixed-strings']))
+      expect(argv.slice(-4)).toEqual(['--', 'createAgentsShellServer', '.', ''])
       expect(content.exitCode).toBe(0)
       expect(content.stdout).toContain('src/agents-shell.ts:1:export const createAgentsShellServer = true')
     } finally {
@@ -725,6 +1271,44 @@ fi
     }
   })
 
+  it('searches file operands, directories, and dash-leading patterns with real ripgrep', async () => {
+    const config = makeConfig()
+    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
+    writeFileSync(join(config.workspaceRoot, 'lab', 'example.txt'), 'first\n-needle\nlast\n')
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    try {
+      for (const path of ['lab/example.txt', 'lab']) {
+        const result = await client.callTool({
+          name: 'search',
+          arguments: { query: '-needle', path, fixedStrings: true },
+        })
+        expect(result.isError).not.toBe(true)
+        expect(result.structuredContent).toMatchObject({ ok: true, exitCode: 0 })
+        expect((result.structuredContent as { stdout?: string })?.stdout).toContain('-needle')
+      }
+      const empty = await client.callTool({
+        name: 'search',
+        arguments: { query: 'not-present', path: 'lab/example.txt' },
+      })
+      expect(empty.structuredContent).toMatchObject({ ok: true, exitCode: 1, stdout: '' })
+      const missing = await client.callTool({
+        name: 'search',
+        arguments: { query: 'needle', path: 'lab/missing.txt' },
+      })
+      expect(missing.isError).toBe(true)
+      const escape = await client.callTool({
+        name: 'search',
+        arguments: { query: 'needle', path: '../outside' },
+      })
+      expect(escape.isError).toBe(true)
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('returns Codex-style operating guidance for the current ChatGPT model', async () => {
     const config = makeConfig()
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
@@ -735,10 +1319,10 @@ fi
       expect(content.guide).toContain('current ChatGPT model')
       expect(content.guide).toContain('AGENTS.md')
       expect(content.guide).toContain('Respect dirty worktrees')
-      expect(content.guide).toContain('/workspace/worktrees/lab')
-      expect(content.guide).toContain('cwd: "worktrees/lab/<branch-slug>"')
-      expect(content.guide).toContain('Never share a worktree or branch')
-      expect(content.guide).toContain('Do not use agent_start/status/read/cancel')
+      expect(content.guide).toContain('repo_session_open')
+      expect(content.guide).toContain('sessionId')
+      expect(content.guide).toContain('repo_session_close')
+      expect(content.guide).toContain('Delegated AgentRun work')
       expect(content.guide).toContain('apply_patch')
       expect(content.guide).toContain('Commit as Greg Konush')
       expect(content.guide).toContain('create a pull request with gh')
@@ -755,8 +1339,8 @@ fi
     const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(['openid']))
 
     const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run' },
+      name: 'exec',
+      arguments: { requestKey: crypto.randomUUID(), command: 'echo should-not-run' },
     })
     expect(result.isError).toBe(true)
     expect(result._meta?.['mcp/www_authenticate']).toEqual([
@@ -771,11 +1355,19 @@ fi
 
   it('does not turn ordinary tool failures into OAuth reconnect challenges', async () => {
     const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const session = await runner.openRepoSession({ name: 'ordinary-failure' }, makeAuth())
+    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(), runner)
 
     const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run', cwd: 'missing-worktree' },
+      name: 'exec',
+      arguments: {
+        sessionId: session.sessionId,
+        requestKey: crypto.randomUUID(),
+        command: 'echo should-not-run',
+        cwd: 'missing-worktree',
+      },
     })
 
     expect(result.isError).toBe(true)
@@ -793,13 +1385,13 @@ fi
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
 
     const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run', timeoutSeconds: 'bad' },
+      name: 'exec',
+      arguments: { requestKey: crypto.randomUUID(), command: 'echo should-not-run', timeoutSeconds: 'bad' },
     })
 
     expect(result.isError).toBe(true)
     expect(JSON.stringify(result.content)).toContain('Input validation error')
-    expect(JSON.stringify(result.content)).toContain('shell_run')
+    expect(JSON.stringify(result.content)).toContain('exec')
     expect(result._meta?.['mcp/www_authenticate']).toBeUndefined()
 
     await clientTransport.close()
@@ -818,9 +1410,12 @@ fi
     const previousPath = process.env.PATH
     process.env.PATH = `${bin}:${previousPath ?? ''}`
 
+    const runner = new AgentsShellRunner(config)
+    const runProcess = vi.spyOn(runner, 'runProcess')
     const { client, server, clientTransport, serverTransport } = await connectServer(
       config,
       makeAuth(['agents-shell.read', 'agents-shell.write']),
+      runner,
     )
 
     try {
@@ -833,22 +1428,36 @@ fi
         'get\npods\n-n\nagents\n-o\nwide\n',
       )
 
+      const args = ['-n', 'rook-ceph', 'exec', 'deployment/rook-ceph-tools', '--', 'ceph', 'fsid']
       const blocked = await client.callTool({
         name: 'kubectl',
-        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+        arguments: { args },
       })
       expect(blocked.isError).toBe(true)
       const blockedContent = blocked.content as Array<{ type: string; text?: string }>
       expect(blockedContent[0]?.text ?? '').toContain('use kubectl_admin')
+      expect(blocked.structuredContent).toMatchObject({
+        code: 'KUBECTL_REQUIRES_ADMIN',
+        layer: 'tool-policy',
+        requiredTool: 'kubectl_admin',
+        executionStarted: false,
+      })
+      expect(runProcess).toHaveBeenCalledTimes(1)
+      expect(blocked._meta?.['mcp/www_authenticate']).toBeUndefined()
+
+      const catalog = await client.listTools()
+      expect(catalog.tools.find((tool) => tool.name === 'kubectl')?.description).toContain('kubectl_admin')
+      expect(catalog.tools.find((tool) => tool.name === 'kubectl_admin')?.description).toContain(
+        'read-only diagnostics',
+      )
 
       const admin = await client.callTool({
         name: 'kubectl_admin',
-        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+        arguments: { args },
       })
       expect(admin.isError).not.toBe(true)
-      expect((admin.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(
-        'exec\npod/example\n--\necho\nok\n',
-      )
+      expect((admin.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(`${args.join('\n')}\n`)
+      expect(runProcess).toHaveBeenCalledTimes(2)
     } finally {
       await clientTransport.close()
       await serverTransport.close()

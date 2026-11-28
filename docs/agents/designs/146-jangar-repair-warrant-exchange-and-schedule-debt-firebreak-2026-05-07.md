@@ -1,21 +1,10 @@
 # 146. Jangar Repair Warrant Exchange And Schedule Debt Firebreak (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-07
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane resilience, schedule noise reduction, proof-backed repair admission, Torghut capital
 readiness, validation, rollout, rollback, and engineer/deployer handoff.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/150-torghut-repair-dividend-order-book-and-capital-warrants-2026-05-07.md`
-
-Extends:
-
-- `145-jangar-observation-epoch-tripwire-and-capital-contradiction-arbiter-2026-05-07.md`
-- `144-jangar-capital-evidence-return-lane-and-paper-gate-witness-quorum-2026-05-07.md`
-- `140-jangar-watch-reliability-state-exchange-and-capital-action-governor-2026-05-07.md`
-- `docs/torghut/design-system/v6/149-torghut-profit-evidence-convergence-epochs-and-quant-stage-arbitrage-2026-05-07.md`
 
 ## Decision
 

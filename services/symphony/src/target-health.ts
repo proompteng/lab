@@ -80,10 +80,10 @@ export interface TargetHealthDependenciesDefinition {
   ) => Effect.Effect<number, OrchestratorError, never>
 }
 
-export class TargetHealthDependencies extends Context.Tag('symphony/TargetHealthDependencies')<
+export class TargetHealthDependencies extends Context.Service<
   TargetHealthDependencies,
   TargetHealthDependenciesDefinition
->() {}
+>()('symphony/TargetHealthDependencies') {}
 
 const isTransientArgoObservation = (observed: string | null): boolean =>
   observed === 'Synced/Progressing' || observed === 'OutOfSync/Healthy' || observed === 'OutOfSync/Progressing'
@@ -160,7 +160,7 @@ const readOptionalFile = (filePath: string) =>
     catch: (error) => new OrchestratorError('target_health_check_failed', `failed to read ${filePath}`, error),
   }).pipe(
     Effect.map((value) => value.trim()),
-    Effect.catchAll(() => Effect.succeed<string | null>(null)),
+    Effect.catch(() => Effect.succeed<string | null>(null)),
   )
 
 const parseJson = <T>(body: string, message: string) =>
@@ -588,10 +588,9 @@ export interface TargetHealthServiceDefinition {
   readonly evaluatePreDispatch: Effect.Effect<TargetHealthSummary, never>
 }
 
-export class TargetHealthService extends Context.Tag('symphony/TargetHealthService')<
-  TargetHealthService,
-  TargetHealthServiceDefinition
->() {}
+export class TargetHealthService extends Context.Service<TargetHealthService, TargetHealthServiceDefinition>()(
+  'symphony/TargetHealthService',
+) {}
 
 export const makeTargetHealthLayer = (logger: Logger) =>
   Layer.effect(
@@ -631,7 +630,7 @@ export const makeTargetHealthLayer = (logger: Logger) =>
 
               const checks = yield* Effect.forEach(config.health.preDispatch, (check) =>
                 evaluateCheck(check, token, ca, httpCheckTimeoutMs, kubernetesRequestTimeoutMs, dependencies).pipe(
-                  Effect.catchAll((error) =>
+                  Effect.catch((error) =>
                     Effect.succeed({
                       name: check.name,
                       type: check.type,
@@ -652,7 +651,7 @@ export const makeTargetHealthLayer = (logger: Logger) =>
                   githubRequestTimeoutMs,
                 )
                 .pipe(
-                  Effect.catchAll((error) => {
+                  Effect.catch((error) => {
                     targetLogger.log('warn', 'target_health_github_query_failed', toLogError(error))
                     return Effect.succeed(-1)
                   }),
@@ -701,7 +700,7 @@ export const makeTargetHealthLayer = (logger: Logger) =>
               } satisfies TargetHealthSummary
             }),
           ),
-          Effect.catchAll((error) => {
+          Effect.catch((error) => {
             targetLogger.log('warn', 'target_health_evaluation_failed', toLogError(error))
             return dependencies.now.pipe(
               Effect.map(

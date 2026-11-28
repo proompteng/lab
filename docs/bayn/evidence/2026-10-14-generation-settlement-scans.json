@@ -1,0 +1,71 @@
+{
+  "source": "f81b839fc4b0caf11de7b27c7a6ffa43067efc55",
+  "capturedAt": "2026-10-15T00:26:48.199701+00:00",
+  "nativeTraces": 24,
+  "nativeGenerationSettlement": {
+    "name": "bayn.execution.generation.settle",
+    "count": 6,
+    "p50Ms": 1746.726288,
+    "maxMs": 1987.553394
+  },
+  "nativeValkeyRead": {
+    "name": "bayn.valkey.get",
+    "count": 12,
+    "p50Ms": 1.307014,
+    "maxMs": 1.833056
+  },
+  "nativeValkeyWrite": {
+    "name": "bayn.valkey.put",
+    "count": 36,
+    "p50Ms": 9.02048,
+    "maxMs": 12.631302
+  },
+  "readOnlySettlementReproduction": {
+    "scope": "Native selection and joins with data-changing CTEs replaced by SELECT and row locks removed; existing current account; no production writes",
+    "samples": [
+      {
+        "jit": "on",
+        "executionMs": 1392.738,
+        "planningMs": 14.221
+      },
+      {
+        "jit": "off",
+        "executionMs": 1480.846,
+        "planningMs": 14.744
+      },
+      {
+        "jit": "on",
+        "executionMs": 1407.83,
+        "planningMs": 14.432
+      },
+      {
+        "jit": "off",
+        "executionMs": 1419.377,
+        "planningMs": 15.488
+      }
+    ],
+    "sharedBlocks": 52044,
+    "sharedReadBlocks": 0,
+    "decisionRowsScanned": 250,
+    "unrelatedDocumentScanMs": 628.344,
+    "completionJoinMs": 761.956
+  },
+  "localPostgresRegression": {
+    "historicalDocuments": 256,
+    "evidenceItemsPerDocument": 2048,
+    "beforeTouchedBlocks": 6165,
+    "indexOnlyTouchedBlocks": 3089,
+    "afterTouchedBlocksUpperBoundExclusive": 128,
+    "verifiesMatchingGenerationBlocksUnusedRecovery": true
+  },
+  "change": [
+    "Expression index on document authority-generation binding",
+    "Correlated existence probe prevents hashing all historical document bindings"
+  ],
+  "limits": [
+    "Small purposive trace sample",
+    "Native mutation query was not replayed against production",
+    "No whole-controller improvement claimed before exact image rollout",
+    "Existing database recovery predicates, locks and authority controls remain required"
+  ]
+}

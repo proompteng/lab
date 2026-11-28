@@ -1,0 +1,355 @@
+--- a/src/cosmosalpha/pipeline/mcts/controller.py
++++ b/src/cosmosalpha/pipeline/mcts/controller.py
+@@ -191,22 +191,102 @@
+     return result
+ 
+ 
+-def _extract_eval_scores(
++@dataclass(frozen=True, slots=True)
++class _CandidateEvidence:
++    """One selected candidate and the evidence bound to its factor identity."""
++
++    factor: FactorSpec
++    evaluation: EvaluationResult
++    preprocessing: FactorPreprocessingResult
++
++
++def _select_candidate_evidence(
+     result: CosmosAlphaLoopResult,
+     objects: ExperimentRepository,
+-) -> dict[str, float | None]:
+-    """一次性提取 rank_ic、stability (IC_IR)、diversity (top3-mean).
++    *,
++    frequency: str,
++) -> _CandidateEvidence:
++    """Resolve one candidate without borrowing another candidate's evidence.
+ 
+-    合并 _extract_rank_ic + _extract_multi_dim_scores，避免重复 get_object。
++    Preserve candidate order: select the first accepted candidate, otherwise
++    the first validated factor. Missing or ambiguous evidence invalidates that
++    selection; it never causes a search for a higher score in another candidate.
+     """
+     record = result.experiment_record
+     if record is None:
+-        return {"rank_ic": None, "stability": 0.0, "diversity": 0.0}
+-    refs = record.evaluation_result_refs
+-    if not refs:
+-        return {"rank_ic": None, "stability": 0.0, "diversity": 0.0}
+-    eval_result = objects.get_object(refs[0], EvaluationResult)
+-    metrics = {m.name: m.value for m in eval_result.metrics}
++        raise ValueError("MCTS candidate requires an experiment record")
++    candidate = next(
++        (c for c in result.candidate_results if c.status == ExperimentStatus.ACCEPTED),
++        None,
++    )
++    if candidate is None:
++        candidate = next(
++            (c for c in result.candidate_results if c.factor_ref is not None), None
++        )
++    if candidate is None:
++        raise ValueError("MCTS candidate requires a validated factor")
++    for name, refs, object_type in (
++        ("proposal_ref", record.factor_proposal_refs, "factor_proposal"),
++        ("validation_report_ref", record.validation_report_refs, "validation_report"),
++        ("factor_ref", record.factor_refs, "factor_spec"),
++        (
++            "preprocessing_result_ref",
++            record.factor_preprocessing_result_refs,
++            "factor_preprocessing_result",
++        ),
++        ("evaluation_result_ref", record.evaluation_result_refs, "evaluation_result"),
++    ):
++        ref = getattr(candidate, name)
++        if (
++            ref is None
++            or ref.object_type != object_type
++            or refs.count(ref) != 1
++            or sum(getattr(c, name) == ref for c in result.candidate_results) != 1
++        ):
++            raise ValueError(f"MCTS candidate has missing or ambiguous {name}")
++    try:
++        factor = objects.get_object(candidate.factor_ref, FactorSpec)
++        validation = objects.get_object(
++            candidate.validation_report_ref, ValidationReport
++        )
++        evaluation = objects.get_object(
++            candidate.evaluation_result_ref, EvaluationResult
++        )
++        preprocessing = objects.get_object(
++            candidate.preprocessing_result_ref, FactorPreprocessingResult
++        )
++    except Exception as error:
++        raise ValueError("MCTS candidate evidence could not be resolved") from error
++    if (
++        not validation.is_valid
++        or validation.normalized_expression != factor.expression
++        or validation.factor_id != factor.factor_id
++        or validation.proposal_id != factor.proposal_id
++        or factor.proposal_id != candidate.proposal_ref.object_id
++        or factor.frequency != frequency
++        or evaluation.factor_id != factor.factor_id
++        or preprocessing.factor_id != factor.factor_id
++        or evaluation.data_snapshot_id != preprocessing.data_snapshot_id
++        or preprocessing.data_snapshot_id != record.data_version
++        or evaluation.factor_preprocessing_result_ref
++        != candidate.preprocessing_result_ref
++        or evaluation.raw_factor_values_ref != preprocessing.input_factor_values_ref
++        or evaluation.evaluated_factor_values_ref
++        != preprocessing.evaluated_factor_values_ref
++        or evaluation.forward_return_ref != preprocessing.forward_return_ref
++        or evaluation.preprocessing_protocol_id
++        != preprocessing.preprocessing_protocol_id
++    ):
++        raise ValueError("MCTS candidate evidence identities disagree")
++    metric_names = tuple(metric.name for metric in evaluation.metrics)
++    if len(metric_names) != len(set(metric_names)):
++        raise ValueError("MCTS candidate has ambiguous metric identities")
++    return _CandidateEvidence(factor, evaluation, preprocessing)
++
++
++def _extract_eval_scores(evidence: _CandidateEvidence) -> dict[str, float | None]:
++    """Read the selected candidate's metrics with the existing score defaults."""
++    metrics = {m.name: m.value for m in evidence.evaluation.metrics}
+     return {
+         "rank_ic": metrics.get("rank_ic_mean"),
+         "stability": float(metrics.get("rank_ic_ir", 0.0)),
+@@ -876,24 +956,17 @@
+             run_context=base_context,
+             complete_run=False,
+         )
+-        scores = _extract_eval_scores(loop_result, self._objects)
+-        expression = _extract_expression(loop_result, self._objects)
+-        if not expression or scores["rank_ic"] is None:
++        evidence = _select_candidate_evidence(
++            loop_result, self._objects, frequency=base_context.frequency
++        )
++        if _extract_eval_scores(evidence)["rank_ic"] is None:
+             raise ValueError(
+                 "MCTS root requires a validated expression and evaluated RankIC"
+             )
+-        factor_id = stable_sha256(
+-            {"expression": expression, "frequency": base_context.frequency}
+-        )
+         return self._build_node(
+-            factor_id=factor_id,
+-            expression=expression,
++            evidence=evidence,
+             experiment_ref=loop_result.experiment_ref,
+-            rank_ic_mean=scores["rank_ic"],
+             action_label="original",
+-            loop_result=loop_result,
+-            eval_scores=scores,
+-            frequency=base_context.frequency,
+         )
+ 
+     # ------------------------------------------------------------------
+@@ -1362,28 +1435,26 @@
+                 "MCTS candidate failed error=%s; continuing search", error_code(error)
+             )
+             return None
+-        scores = _extract_eval_scores(loop_result, self._objects)
+-        expression = _extract_expression(loop_result, self._objects)
+-        if expression is None:
++        try:
++            evidence = _select_candidate_evidence(
++                loop_result, self._objects, frequency=base_context.frequency
++            )
++            # Valid evaluated factors with a missing RankIC still count as nodes;
++            # a missing identity is not a measured zero or a low score.
++            return self._build_node(
++                evidence=evidence,
++                experiment_ref=loop_result.experiment_ref,
++                action_label=f"refine:{parent.factor_id}",
++                action_dimension=dimension,
++                parent=parent,
++                portrait_text=portrait.to_constraint_text() if portrait else "",
++            )
++        except Exception as error:
++            LOGGER.warning(
++                "MCTS candidate evidence failed error=%s; continuing search",
++                error_code(error),
++            )
+             return None
+-        # 论文：所有 IsValid(f) 的因子都成为树节点，低分节点被 UCT 自然避开
+-        # 即使 IC 无法计算（数据不足），也创建节点，overall_score 默认为 0
+-        factor_id = stable_sha256(
+-            {"expression": expression, "frequency": base_context.frequency}
+-        )
+-        return self._build_node(
+-            factor_id=factor_id,
+-            expression=expression,
+-            experiment_ref=loop_result.experiment_ref,
+-            rank_ic_mean=scores["rank_ic"],
+-            action_label=f"refine:{parent.factor_id}",
+-            action_dimension=dimension,
+-            loop_result=loop_result,
+-            parent=parent,
+-            eval_scores=scores,
+-            portrait_text=portrait.to_constraint_text() if portrait else "",
+-            frequency=base_context.frequency,
+-        )
+ 
+     # ------------------------------------------------------------------
+     # Node construction with multi-dimensional scoring
+@@ -1392,34 +1463,31 @@
+     def _build_node(
+         self,
+         *,
+-        factor_id: str,
+-        expression: str,
++        evidence: _CandidateEvidence,
+         experiment_ref: ObjectRef | None,
+-        rank_ic_mean: float | None,
+         action_label: str,
+         action_dimension: str = "",
+-        loop_result: CosmosAlphaLoopResult,
+         parent: MCTSNode | None = None,
+-        eval_scores: dict[str, float | None] | None = None,
+         portrait_text: str = "",
+-        frequency: str = "1d",
+     ) -> MCTSNode:
+-        """Build a MCTSNode with multi-dimensional scores from loop result."""
+-        if eval_scores is None:
+-            eval_scores = _extract_eval_scores(loop_result, self._objects)
+-        turnover = self._compute_turnover_from_result(loop_result)
++        """Build all node dimensions from one already-validated candidate."""
++        eval_scores = _extract_eval_scores(evidence)
++        turnover = self._compute_turnover_from_evidence(evidence)
+         # P1-5: diversity = 1 - max_abs_corr(against all current FZoo factors),
+         # overriding the evaluator's top-3 mean approximation.
+-        factor_values, factor_keys = self._extract_factor_values_from_result(
+-            loop_result
+-        )
++        factor_values, factor_keys = self._extract_factor_values_from_evidence(evidence)
+         diversity = self._compute_zoo_diversity(factor_values, factor_keys)
+         node = MCTSNode(
+-            factor_id=factor_id,
+-            expression=expression,
++            factor_id=stable_sha256(
++                {
++                    "expression": evidence.factor.expression,
++                    "frequency": evidence.factor.frequency,
++                }
++            ),
++            expression=evidence.factor.expression,
+             experiment_ref=experiment_ref,
+             parent=parent,
+-            rank_ic_mean=rank_ic_mean,
++            rank_ic_mean=eval_scores["rank_ic"],
+             stability=eval_scores.get("stability"),
+             diversity=diversity,
+             turnover=turnover,
+@@ -1442,27 +1510,12 @@
+         self._evaluated_factor_count += 1
+         return node
+ 
+-    def _compute_turnover_from_result(
+-        self, result: CosmosAlphaLoopResult
++    def _compute_turnover_from_evidence(
++        self, evidence: _CandidateEvidence
+     ) -> float | None:
+-        """Read factor values from preprocessing artifact, compute turnover."""
+-        for candidate in result.candidate_results:
+-            if candidate.preprocessing_result_ref is not None:
+-                try:
+-                    pre_result = self._objects.get_object(
+-                        candidate.preprocessing_result_ref,
+-                        FactorPreprocessingResult,
+-                    )
+-                    ref = getattr(
+-                        pre_result, "input_factor_values_ref", None
+-                    ) or getattr(pre_result, "evaluated_factor_values_ref", None)
+-                    if ref is not None:
+-                        data = self._artifacts.get_bytes(ref)
+-                        records = decode_record_artifact(data)
+-                        return _compute_turnover_from_records(records)
+-                except Exception:
+-                    pass
+-        return None
++        """Compute turnover only from this candidate's raw factor values."""
++        data = self._artifacts.get_bytes(evidence.preprocessing.input_factor_values_ref)
++        return _compute_turnover_from_records(decode_record_artifact(data))
+ 
+     def _fzoo_union(self) -> dict[str, FzooEntry]:
+         """Return the FzooEntry view over current tree alpha_zoo ∪ shared cross-tree zoo.
+@@ -1489,8 +1542,8 @@
+         union = self._fzoo_union()
+         return union if union else None
+ 
+-    def _extract_factor_values_from_result(
+-        self, result: CosmosAlphaLoopResult
++    def _extract_factor_values_from_evidence(
++        self, evidence: _CandidateEvidence
+     ) -> tuple[np.ndarray | None, tuple[str, ...]]:
+         """Read factor values and alignment keys from preprocessing artifacts.
+ 
+@@ -1498,30 +1551,12 @@
+         without instrument) so max correlation against FZoo factors can be
+         computed by aligning on stock and date.
+         """
+-        for candidate in result.candidate_results:
+-            if candidate.preprocessing_result_ref is None:
+-                continue
+-            try:
+-                pre_result = self._objects.get_object(
+-                    candidate.preprocessing_result_ref,
+-                    FactorPreprocessingResult,
+-                )
+-                ref = getattr(
+-                    pre_result, "evaluated_factor_values_ref", None
+-                ) or getattr(pre_result, "input_factor_values_ref", None)
+-                if ref is None:
+-                    continue
+-                data = self._artifacts.get_bytes(ref)
+-                records = decode_record_artifact(data)
+-                values, keys = records_to_aligned_values(
+-                    records,
+-                    preserve_missing=True,
+-                )
+-                if values is not None:
+-                    return values, keys
+-            except Exception:
+-                continue
+-        return None, ()
++        data = self._artifacts.get_bytes(
++            evidence.preprocessing.evaluated_factor_values_ref
++        )
++        return records_to_aligned_values(
++            decode_record_artifact(data), preserve_missing=True
++        )
+ 
+     def _compute_zoo_diversity(
+         self,
+@@ -1590,32 +1625,6 @@
+ # ------------------------------------------------------------------
+ # Helpers
+ # ------------------------------------------------------------------
+-
+-
+-def _extract_expression(
+-    result: CosmosAlphaLoopResult,
+-    objects: ExperimentRepository,
+-) -> str | None:
+-    """Get the first validated factor's normalized expression."""
+-    # Priority 1: accepted factors from experiment record
+-    for candidate in result.candidate_results:
+-        if candidate.status == ExperimentStatus.ACCEPTED and candidate.factor_ref:
+-            spec = objects.get_object(candidate.factor_ref, FactorSpec)
+-            return spec.expression
+-    # Priority 2: validated factors from validation reports
+-    if result.experiment_record:
+-        for vref in result.experiment_record.validation_report_refs:
+-            vr = objects.get_object(vref, ValidationReport)
+-            if vr.is_valid:
+-                expr = vr.normalized_expression
+-                if expr:
+-                    return expr
+-    # Priority 3: any factor_ref from candidates
+-    for candidate in result.candidate_results:
+-        if candidate.factor_ref:
+-            spec = objects.get_object(candidate.factor_ref, FactorSpec)
+-            return spec.expression
+-    return None
+ 
+ 
+ def _compute_turnover_from_records(

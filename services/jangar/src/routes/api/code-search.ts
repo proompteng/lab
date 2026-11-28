@@ -146,7 +146,7 @@ export const postCodeSearchHandlerEffect = (request: Request) =>
       const items = matches.map(toItem)
       return jsonResponse({ ok: true, matches, items, total: items.length, indexHealth })
     }),
-    Effect.catchAll((error) => Effect.succeed(resolveRequestError(error.message))),
+    Effect.catch((error) => Effect.succeed(resolveRequestError(error.message))),
   )
 
 export const postCodeSearchHandler = async (request: Request) => {

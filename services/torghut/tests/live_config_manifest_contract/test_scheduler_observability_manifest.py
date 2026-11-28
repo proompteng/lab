@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Mapping, cast
 from unittest import TestCase
@@ -68,13 +67,10 @@ class SchedulerObservabilityManifestTests(TestCase):
         rules = cast(list[Mapping[str, object]], trading_group["rules"])
         by_alert = {str(rule["alert"]): rule for rule in rules}
 
-        api_missing = str(by_alert["TorghutApiServiceMissing"]["expr"])
+        self.assertNotIn("TorghutApiServiceMissing", by_alert)
         api_down = str(by_alert["TorghutActiveApiRevisionMetricsDown"]["expr"])
-        self.assertIn("kube_service_info", api_missing)
-        self.assertIn('service="torghut"', api_missing)
         self.assertIn('service="torghut"', api_down)
         self.assertNotIn("-private", api_down)
-        self.assertNotIn('service="torghut-scheduler"', api_missing)
         self.assertNotIn('service="torghut-scheduler"', api_down)
 
         for alert in ("TorghutSchedulerMetricsMissing", "TorghutSchedulerMetricsDown"):
@@ -106,31 +102,18 @@ class SchedulerObservabilityManifestTests(TestCase):
             self.assertIn('service="torghut-scheduler"', expression)
             self.assertNotIn('service="torghut"', expression)
 
-    def test_execution_dashboard_reads_scheduler_metrics(self) -> None:
-        dashboard_json = _configmap_data(
-            "argocd/applications/observability/torghut-execution-recovery-dashboard-configmap.yaml",
-            "torghut-execution-recovery-dashboard.json",
-        )
-        dashboard = json.loads(dashboard_json)
-        expressions = [
-            str(target.get("expr", ""))
-            for panel in dashboard.get("panels", [])
-            for target in panel.get("targets", [])
-            if "torghut_trading_" in str(target.get("expr", ""))
-        ]
-        self.assertTrue(expressions)
-        for expression in expressions:
-            self.assertIn('service="torghut-scheduler"', expression)
-            self.assertNotIn('service="torghut"', expression)
-
-    def test_namespace_alloy_scrapes_api_through_stable_route(self) -> None:
+    def test_namespace_alloy_keeps_metrics_without_scraping_the_retired_api(
+        self,
+    ) -> None:
         alloy_config = _configmap_data(
             "argocd/applications/torghut/alloy-configmap.yaml",
             "config.river",
         )
         self.assertIn('regex         = "metric(s)?;.*"', alloy_config)
-        self.assertIn('prometheus.scrape "torghut_api"', alloy_config)
-        self.assertIn(
+        self.assertNotIn('prometheus.scrape "torghut_api"', alloy_config)
+        self.assertIn('prometheus.scrape "torghut"', alloy_config)
+        self.assertIn("discovery.relabel.torghut_metrics.output", alloy_config)
+        self.assertNotIn(
             '"__address__" = "torghut.torghut.svc.cluster.local:80"',
             alloy_config,
         )

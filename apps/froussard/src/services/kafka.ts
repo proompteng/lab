@@ -1,4 +1,4 @@
-import { Effect, Layer, Ref } from 'effect'
+import { Context, Effect, Layer, Ref } from 'effect'
 import * as Deferred from 'effect/Deferred'
 import * as Queue from 'effect/Queue'
 import { Kafka } from 'kafkajs'
@@ -21,16 +21,16 @@ export interface KafkaProducerService {
   readonly isReady: Effect.Effect<boolean>
 }
 
-export class KafkaProducer extends Effect.Tag('@froussard/KafkaProducer')<KafkaProducer, KafkaProducerService>() {}
+export class KafkaProducer extends Context.Service<KafkaProducer, KafkaProducerService>()('@froussard/KafkaProducer') {}
 
 interface QueuedMessage {
   readonly message: KafkaMessage
   readonly deferred: Deferred.Deferred<void, unknown>
 }
 
-export const KafkaProducerLayer = Layer.scoped(
+export const KafkaProducerLayer = Layer.effect(
   KafkaProducer,
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     const config = yield* AppConfigService
     const logger = yield* AppLogger
 
@@ -61,7 +61,7 @@ export const KafkaProducerLayer = Layer.scoped(
 
     const disconnect = Effect.tryPromise(() => producer.disconnect()).pipe(
       Effect.tap(() => logger.info('Kafka producer disconnected', { clientId: config.kafka.clientId })),
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         logger
           .warn('Kafka producer disconnect failed', {
             clientId: config.kafka.clientId,
@@ -103,11 +103,11 @@ export const KafkaProducerLayer = Layer.scoped(
             ),
             Effect.tapError((error) =>
               Ref.set(readyRef, false).pipe(
-                Effect.zipRight(
-                  Effect.tryPromise(() => producer.disconnect()).pipe(Effect.catchAll(() => Effect.succeed(undefined))),
+                Effect.andThen(
+                  Effect.tryPromise(() => producer.disconnect()).pipe(Effect.catch(() => Effect.succeed(undefined))),
                 ),
-                Effect.zipRight(resetProducer),
-                Effect.zipRight(
+                Effect.andThen(resetProducer),
+                Effect.andThen(
                   logger.error('failed to publish kafka message', {
                     err: error instanceof Error ? error.message : String(error),
                     topic: message.topic,
@@ -128,7 +128,7 @@ export const KafkaProducerLayer = Layer.scoped(
         Effect.matchEffect({
           onFailure: (error) =>
             Deferred.fail(item.deferred, error).pipe(
-              Effect.zipRight(
+              Effect.andThen(
                 logger.error('dropping kafka message after failure', {
                   topic: item.message.topic,
                   key: item.message.key,
@@ -139,12 +139,12 @@ export const KafkaProducerLayer = Layer.scoped(
         }),
       )
 
-    yield* queue.take.pipe(Effect.flatMap(processQueuedMessage), Effect.forever, Effect.forkScoped)
+    yield* Queue.take(queue).pipe(Effect.flatMap(processQueuedMessage), Effect.forever, Effect.forkScoped)
 
     const publish = (message: KafkaMessage) =>
-      Effect.gen(function* (_) {
+      Effect.gen(function* () {
         const deferred = yield* Deferred.make<void, unknown>()
-        yield* queue.offer({ message, deferred })
+        yield* Queue.offer(queue, { message, deferred })
         return yield* Deferred.await(deferred)
       })
 
@@ -156,7 +156,7 @@ export const KafkaProducerLayer = Layer.scoped(
         ensureConnected,
         isReady,
       }),
-      () => Queue.shutdown(queue).pipe(Effect.zipRight(disconnect), Effect.zipRight(resetProducer)),
+      () => Queue.shutdown(queue).pipe(Effect.andThen(disconnect), Effect.andThen(resetProducer)),
     )
   }),
 )

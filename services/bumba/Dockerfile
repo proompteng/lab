@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # This Dockerfile is intended to be built from a Turbo-pruned context:
 # `bunx turbo prune --scope=@proompteng/bumba --docker --out-dir <dir>`
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG LAB_GIT_SHA=dev
 
@@ -25,7 +25,8 @@ COPY json/ .
 COPY tsconfig.base.json ./
 RUN bun -e "const fs = require('fs'); const path = 'package.json'; const pkg = JSON.parse(fs.readFileSync(path, 'utf8')); if (Array.isArray(pkg.workspaces)) { pkg.workspaces = pkg.workspaces.filter((entry) => entry !== 'services/jangar/agentctl'); fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\\n'); }"
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --omit=dev --ignore-scripts --filter @proompteng/bumba
+  bun install --omit=dev --ignore-scripts --filter @proompteng/bumba \
+  && mkdir -p services/bumba/node_modules packages/temporal-bun-sdk/node_modules
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS runner
 WORKDIR /app
@@ -39,7 +40,11 @@ RUN --mount=type=cache,target=/var/cache/apt \
   apt-get install -y --no-install-recommends git ca-certificates; \
   rm -rf /var/lib/apt/lists/*
 COPY --from=deps-prod /app/node_modules ./node_modules
+COPY --from=build /app/packages/temporal-bun-sdk/package.json ./packages/temporal-bun-sdk/package.json
+COPY --from=build /app/packages/temporal-bun-sdk/dist ./packages/temporal-bun-sdk/dist
+COPY --from=deps-prod /app/packages/temporal-bun-sdk/node_modules ./packages/temporal-bun-sdk/node_modules
 COPY --from=build /app/services/bumba ./services/bumba
+COPY --from=deps-prod /app/services/bumba/node_modules ./services/bumba/node_modules
 COPY --from=build /app/tsconfig.base.json ./tsconfig.base.json
-COPY --from=build /app/packages/temporal-bun-sdk ./packages/temporal-bun-sdk
+RUN bun services/bumba/scripts/verify-temporal-runtime.ts services/bumba
 CMD ["bun", "services/bumba/src/worker.ts"]

@@ -2,7 +2,11 @@ self-hosted-runner:
   # Labels of self-hosted runner in array of strings.
   labels:
     - arc-amd64
+    - arc-amd64-tmpfs
+    - arc-amd64-tmpfs-large
     - arc-arm64
+    - arc-arm64-tmpfs
+    - arc-arm64-tmpfs-large
 
 # Configuration variables in array of strings defined in your repository or
 # organization. `null` means disabling configuration variables check.
@@ -17,5 +21,13 @@ config-variables: null
 # "ignore" is an array of regular expression patterns. Matched error messages
 # are ignored. This is similar to the "-ignore" command line option.
 paths:
-#  .github/workflows/**/*.yml:
-#    ignore: []
+  .github/workflows/bayn-formal.yml:
+    # Actionlint v1.7.12 records the deprecated jdkFile alias. setup-java@v5 declares jdk-file.
+    ignore:
+      - '^input "jdk-file" is not defined in action "actions/setup-java@v5"\. available inputs are .+$'
+  .github/workflows/temporal-bun-sdk.yml:
+    # GitHub supports queue: max; actionlint has not implemented it yet.
+    # https://github.com/rhysd/actionlint/issues/657
+    # temporal-static-libraries-workflow.test.ts checks these concurrency settings.
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'

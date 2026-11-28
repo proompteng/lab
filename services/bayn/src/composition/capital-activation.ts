@@ -1,18 +1,16 @@
-import { Effect, Option, Ref, Result } from 'effect'
-import type { ApplicationPlanFor } from '../app'
+import { Effect, Ref, Result } from 'effect'
+import type { ApplicationPlan } from '../app'
 import { executionObserveSuccessorGenerationHash } from '../blocked-generation-recovery'
-import { type BrokerSessionShape, type ReadPreflight } from '../broker/alpaca'
 import { BrokerEnvironment } from '../broker/identity'
 import {
-  AuthorityRestrictionStore,
   type AuthorityGenerationStoreShape,
-  type AuthorityRestrictionStoreShape,
   type CapitalGrantLifecycleStoreShape,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import { BrokerAccess, noCapitalAuthority, reconciliationIncompleteRestrictionReason } from '../execution/authority'
 import {
   Authority,
   KillState,
+  OrderStatus,
   ReconciliationStatus,
   type AuthorityState,
   type ResearchCapitalGrantGeneration,
@@ -32,21 +30,14 @@ import {
   type ResearchCapitalBuildContinuation,
   type ResearchCapitalBuildLineage,
 } from '../execution/configuration'
-import { WriterFence, type WriterFenceService } from '../execution/writer-fence'
-import { OperationalError } from '../errors'
-import {
-  decideExecutionMandateAuthority,
-  executionActivationRestrictionSubject,
-  validateExecutionMandateCloseWindow,
-} from '../execution/mandate'
+import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
+import { decideExecutionMandateAuthority, isExecutionCyclePreflightStoreRestriction } from '../execution/mandate'
 import { legacyAuthorityGenerationV3SchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
-import { executionMandateCloseExpiresAt, loadStrategyExecutionRiskPolicy } from '../observe-composition'
-import { restrictMutationAuthority } from '../observe-composition/mutation-interpreter'
-import { type ReconciliationPassError } from '../reconciler'
-import { currentUtcInstant } from '../time'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
+import { type ReconciliationPassError, type ReconciliationPassResult } from '../reconciler'
+import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import type { RuntimeState } from '../runtime-state'
-import { Pipeable } from '../pipeable'
 
 export type ReadOnlyExecutionPolicy = Extract<ExecutionPolicy, { readonly brokerAccess: BrokerAccess.ReadOnly }>
 
@@ -104,7 +95,7 @@ export const decodeConfiguredCapitalActivation = (
   return Result.succeed({ request: decoded.success, buildContinuation: null, buildLineage })
 }
 
-export const readOnlyExecutionPolicy = (plan: ApplicationPlanFor<'AutonomousService'>): ReadOnlyExecutionPolicy => ({
+export const readOnlyExecutionPolicy = (plan: ApplicationPlan): ReadOnlyExecutionPolicy => ({
   brokerIdentity: plan.config.alpaca.identity,
   brokerAccess: BrokerAccess.ReadOnly,
   capitalAuthority: noCapitalAuthority,
@@ -112,13 +103,8 @@ export const readOnlyExecutionPolicy = (plan: ApplicationPlanFor<'AutonomousServ
 
 const capitalActivationRequestIdentityIsCurrent = (
   request: ResearchCapitalActivationRequest,
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  observedAt: string,
-  allowCloseRecovery: boolean,
+  plan: ApplicationPlan,
 ): Result.Result<void, string> => {
-  if (!allowCloseRecovery && (request.expiresAt <= observedAt || request.cutoffAt <= observedAt)) {
-    return Result.fail('capital activation request is expired or past its immutable cutoff')
-  }
   if (request.strategy.protocolHash !== plan.strategyProtocolHash) {
     return Result.fail('capital activation request strategy protocol does not match the current strategy')
   }
@@ -133,7 +119,7 @@ const capitalActivationRequestIdentityIsCurrent = (
 
 const researchCapitalBrokerBindingIsCurrent = (
   request: ResearchCapitalActivationRequest,
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): Result.Result<void, string> => {
   if (request.activation.imageRepository !== plan.config.build.imageRepository) {
     return Result.fail('research capital request image repository does not match the current runtime')
@@ -152,30 +138,37 @@ const researchCapitalBrokerBindingIsCurrent = (
  */
 export const researchCapitalRecoveryRequestIsCompatible = (
   request: ResearchCapitalActivationRequest,
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  observedAt: string,
-  allowCloseRecovery = false,
+  plan: ApplicationPlan,
 ): Result.Result<void, string> => {
-  const identity = capitalActivationRequestIdentityIsCurrent(request, plan, observedAt, allowCloseRecovery)
+  const identity = capitalActivationRequestIdentityIsCurrent(request, plan)
   return Result.isFailure(identity) ? identity : researchCapitalBrokerBindingIsCurrent(request, plan)
+}
+
+export const configuredCapitalActivation = (
+  plan: ApplicationPlan,
+): Result.Result<ConfiguredCapitalActivation | null, string> => {
+  const serialized = plan.config.capitalActivationRequestJson
+  if (serialized === undefined) {
+    return plan.config.execution.brokerAccess === BrokerAccess.Mutation
+      ? Result.fail('configured granted capital requires an immutable execution mandate request')
+      : Result.succeed(null)
+  }
+  return decodeConfiguredCapitalActivation(serialized, plan.config.researchCapitalBuildLineageJson).pipe(
+    Result.flatMap((configured) =>
+      researchCapitalRecoveryRequestIsCompatible(configured.request, plan).pipe(Result.map(() => configured)),
+    ),
+  )
 }
 
 export const researchCapitalActivationRequestIsCurrent = (
   request: ResearchCapitalActivationRequest,
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  observedAt: string,
+  plan: ApplicationPlan,
   options: {
-    readonly allowCloseRecovery?: boolean
     readonly buildContinuation?: ResearchCapitalBuildContinuation | null
     readonly buildLineage?: ResearchCapitalBuildLineage | null
   } = {},
 ): Result.Result<void, string> => {
-  const identity = capitalActivationRequestIdentityIsCurrent(
-    request,
-    plan,
-    observedAt,
-    options.allowCloseRecovery === true,
-  )
+  const identity = capitalActivationRequestIdentityIsCurrent(request, plan)
   if (Result.isFailure(identity)) return identity
   const requestBuildIsCurrent =
     request.activation.sourceRevision === plan.config.build.sourceRevision &&
@@ -206,9 +199,7 @@ export const researchCapitalActivationRequestIsCurrent = (
   return researchCapitalBrokerBindingIsCurrent(request, plan)
 }
 
-const currentActivationBinding = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-): ResearchCapitalBuildLineage['activation'] => ({
+const currentActivationBinding = (plan: ApplicationPlan): ResearchCapitalBuildLineage['activation'] => ({
   sourceRevision: plan.config.build.sourceRevision,
   imageRepository: plan.config.build.imageRepository,
   imageDigest: plan.config.build.imageDigest,
@@ -238,18 +229,13 @@ const researchCapitalGenerationBinding = (
 }
 
 export const readBoundCapitalActivationGeneration = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   request: ResearchCapitalActivationRequest,
   buildContinuation: ResearchCapitalBuildContinuation | null,
   buildLineage: ResearchCapitalBuildLineage | null,
-  authorityStore: AuthorityGenerationStoreShape,
+  authorityStore: Pick<AuthorityGenerationStoreShape, 'readAuthorityState' | 'readResearchAuthorityGeneration'>,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
-    if (authorityStore.readAuthorityState === undefined) {
-      return yield* capitalActivationOperationalError(
-        'durable capital recovery requires authority history read capabilities',
-      )
-    }
     const authority = yield* authorityStore.readAuthorityState.pipe(
       Effect.mapError((cause) => capitalActivationOperationalError('durable capital authority read failed', cause)),
     )
@@ -262,11 +248,6 @@ export const readBoundCapitalActivationGeneration = (
     if (!closeAuthorityIsBound) {
       return yield* capitalActivationOperationalError(
         'durable capital recovery requires clear mutation or active OBSERVE close authority',
-      )
-    }
-    if (authorityStore.readResearchAuthorityGeneration === undefined) {
-      return yield* capitalActivationOperationalError(
-        'durable research capital recovery requires v3 authority history reads',
       )
     }
     const generation = yield* authorityStore
@@ -289,176 +270,34 @@ export const readBoundCapitalActivationGeneration = (
     return generation
   })
 
-export interface CompletedExecutionLifecycle {
-  readonly authorityGenerationHash: string
-  readonly receiptHash: string
-}
-
-export const readCompletedExecutionLifecycle = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  request: ResearchCapitalActivationRequest,
-  buildContinuation: ResearchCapitalBuildContinuation | null,
-  buildLineage: ResearchCapitalBuildLineage | null,
-  authorityStore: AuthorityGenerationStoreShape,
-  readReceiptHash: (authorityGenerationHash: string) => Effect.Effect<Option.Option<string>, OperationalError>,
-): Effect.Effect<CompletedExecutionLifecycle | undefined, OperationalError> =>
-  Effect.gen(function* () {
-    if (
-      authorityStore.readAuthorityState === undefined ||
-      authorityStore.readAuthorityGenerationLineage === undefined
-    ) {
-      return undefined
-    }
-    const authority = yield* authorityStore.readAuthorityState.pipe(
-      Effect.mapError((cause) =>
-        capitalActivationOperationalError('completed execution lifecycle authority read failed', cause),
-      ),
-    )
-    if (
-      authority.maximum !== Authority.Observe ||
-      authority.effective !== Authority.Observe ||
-      authority.kill !== KillState.Clear
-    ) {
-      return undefined
-    }
-    const lineage = yield* authorityStore
-      .readAuthorityGenerationLineage(authority.generationHash)
-      .pipe(
-        Effect.mapError((cause) =>
-          capitalActivationOperationalError('completed execution lifecycle lineage read failed', cause),
-        ),
-      )
-    if (
-      lineage === undefined ||
-      lineage.generationHash !== authority.generationHash ||
-      lineage.maximum !== Authority.Observe ||
-      lineage.previousGenerationHash === null
-    ) {
-      return undefined
-    }
-
-    const previousGenerationHash = lineage.previousGenerationHash
-    if (authorityStore.readResearchAuthorityGeneration === undefined) return undefined
-    const generation = yield* authorityStore
-      .readResearchAuthorityGeneration(previousGenerationHash)
-      .pipe(
-        Effect.mapError((cause) =>
-          capitalActivationOperationalError('completed research capital generation read failed', cause),
-        ),
-      )
-    if (generation === undefined) return undefined
-    const binding =
-      buildLineage === null
-        ? researchCapitalGenerationBinding(
-            request,
-            currentActivationBinding(plan),
-            generation.previousGenerationHash,
-            generation,
-            buildContinuation,
-            null,
-          )
-        : researchCapitalGenerationIsBoundToBuildLineage(
-            buildLineage,
-            request,
-            currentActivationBinding(plan),
-            generation.previousGenerationHash,
-            generation,
-          )
-    if (Result.isFailure(binding)) return undefined
-
-    const expectedSuccessorHash = yield* Effect.fromResult(
-      executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash: generation.generationHash }),
-    ).pipe(
-      Effect.mapError((cause) =>
-        capitalActivationOperationalError('completed execution lifecycle successor hashing failed', cause),
-      ),
-    )
-    if (expectedSuccessorHash !== authority.generationHash) {
-      return yield* capitalActivationOperationalError(
-        'completed execution lifecycle OBSERVE successor does not match the terminal capital generation',
-      )
-    }
-    const receiptHash = yield* readReceiptHash(generation.generationHash)
-    return Option.match(receiptHash, {
-      onNone: () => undefined,
-      onSome: (hash) => ({ authorityGenerationHash: generation.generationHash, receiptHash: hash }),
-    })
-  })
-
-export const recoverCapitalActivationGeneration = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  request: ResearchCapitalActivationRequest,
-  buildContinuation: ResearchCapitalBuildContinuation | null,
-  buildLineage: ResearchCapitalBuildLineage | null,
-  authorityStore: AuthorityGenerationStoreShape,
-  authorityRestrictionStore: AuthorityRestrictionStoreShape,
-  writerFence: WriterFenceService,
-): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
-  Effect.gen(function* () {
-    const observedAt = yield* currentUtcInstant
-    const requestValidation = researchCapitalRecoveryRequestIsCompatible(request, plan, observedAt, true)
-    yield* Effect.fromResult(requestValidation).pipe(
-      Effect.mapError((message) => capitalActivationOperationalError(message)),
-    )
-    const closeExpiresAt = executionMandateCloseExpiresAt(request.expiresAt)
-    if (observedAt >= closeExpiresAt) {
-      yield* restrictExpiredCapitalActivation(authorityRestrictionStore, writerFence)
-      return yield* capitalActivationOperationalError(
-        'durable capital close recovery is outside its immutable close lease',
-      )
-    }
-    if (observedAt < request.cutoffAt) {
-      return yield* capitalActivationOperationalError(
-        'durable capital close recovery is outside its immutable close lease',
-      )
-    }
-    return yield* readBoundCapitalActivationGeneration(plan, request, buildContinuation, buildLineage, authorityStore)
-  })
-
-export const recoverCapitalReceiptFinalizationGeneration = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  request: ResearchCapitalActivationRequest,
-  buildContinuation: ResearchCapitalBuildContinuation | null,
-  buildLineage: ResearchCapitalBuildLineage | null,
-  authorityStore: AuthorityGenerationStoreShape,
-  authorityRestrictionStore: AuthorityRestrictionStoreShape,
-  writerFence: WriterFenceService,
-): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
-  Effect.gen(function* () {
-    const observedAt = yield* currentUtcInstant
-    const requestValidation = researchCapitalRecoveryRequestIsCompatible(request, plan, observedAt, true)
-    yield* Effect.fromResult(requestValidation).pipe(
-      Effect.mapError((message) => capitalActivationOperationalError(message)),
-    )
-    if (observedAt < executionMandateCloseExpiresAt(request.expiresAt)) {
-      return yield* capitalActivationOperationalError(
-        'durable capital receipt finalization is outside its bounded lease',
-      )
-    }
-    yield* restrictExpiredCapitalActivation(authorityRestrictionStore, writerFence)
-    return yield* readBoundCapitalActivationGeneration(plan, request, buildContinuation, buildLineage, authorityStore)
-  })
-
-export type CapitalActivationStartupResolution =
-  | { readonly _tag: 'ReceiptFinalization'; readonly generation: ResearchCapitalGrantGeneration }
-  | { readonly _tag: 'Mutation'; readonly generation: ResearchCapitalGrantGeneration }
-
 export const validateResearchCapitalPreflight = (
   request: ResearchCapitalActivationRequest,
-  preflight: ReadPreflight,
+  account: ReconciledBrokerState,
 ): Result.Result<void, string> =>
-  preflight.environment === BrokerEnvironment.Sandbox &&
-  preflight.accountId === request.broker.accountId &&
-  preflight.openOrderCount === request.limits.maxOpenOrders &&
-  preflight.positionCount === request.limits.maxPositions
+  request.broker.environment === BrokerEnvironment.Sandbox &&
+  account.account.accountId === request.broker.accountId &&
+  account.reconciliation.accountId === request.broker.accountId &&
+  account.reconciliation.status === ReconciliationStatus.Exact &&
+  account.unknownOrderCount === 0 &&
+  account.orders.filter((order) =>
+    [OrderStatus.New, OrderStatus.PartiallyFilled, OrderStatus.Pending].includes(order.status),
+  ).length === request.limits.maxOpenOrders &&
+  account.positions.length === request.limits.maxPositions
     ? Result.succeed(undefined)
     : Result.fail('research capital preflight requires the exact empty sandbox account')
 
 export const validateResearchCapitalRiskPolicy = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   request: ResearchCapitalActivationRequest,
 ): Effect.Effect<void, OperationalError> =>
-  loadStrategyExecutionRiskPolicy(request.broker.accountId, plan.strategy).pipe(
+  Effect.fromResult(
+    strategyExecutionRiskPolicy(
+      request.broker.accountId,
+      plan.strategy,
+      request.broker.environment,
+      request.riskPolicyHash,
+    ),
+  ).pipe(
     Effect.mapError((cause) =>
       capitalActivationOperationalError('source-controlled capital risk policy is invalid', cause),
     ),
@@ -475,40 +314,6 @@ export const validateResearchCapitalRiskPolicy = (
     ),
   )
 
-export const validateResearchCapitalCloseLease = (
-  request: ResearchCapitalActivationRequest,
-  session: BrokerSessionShape,
-): Effect.Effect<void, OperationalError> => {
-  const requestedRange = { start: request.cutoffAt.slice(0, 10), end: request.expiresAt.slice(0, 10) }
-  return session.read.marketCalendar(requestedRange).pipe(
-    Effect.mapError((cause) => capitalActivationOperationalError('research capital close calendar read failed', cause)),
-    Effect.flatMap((calendar) =>
-      calendar.value.requestedRange.start === requestedRange.start &&
-      calendar.value.requestedRange.end === requestedRange.end
-        ? Effect.succeed(calendar.value.sessions)
-        : Effect.fail(
-            capitalActivationOperationalError('research capital close calendar did not cover the requested lease'),
-          ),
-    ),
-    Effect.flatMap((sessions) =>
-      Effect.fromResult(
-        validateExecutionMandateCloseWindow({
-          cutoffAt: request.cutoffAt,
-          expiresAt: request.expiresAt,
-          maximumCloseSessions: request.maximumCloseSessions,
-          sessions,
-        }),
-      ),
-    ),
-    Effect.mapError((cause) =>
-      cause instanceof OperationalError
-        ? cause
-        : capitalActivationOperationalError(`research capital close lease is invalid: ${cause._tag}`, cause),
-    ),
-    Effect.asVoid,
-  )
-}
-
 export const validateActivatedResearchAuthority = (authority: AuthorityState): Result.Result<void, string> =>
   authority.maximum === Authority.Execution &&
   authority.effective === Authority.Execution &&
@@ -518,14 +323,9 @@ export const validateActivatedResearchAuthority = (authority: AuthorityState): R
 
 export const readCurrentResearchCapitalGeneration = (
   authority: AuthorityState,
-  authorityStore: AuthorityGenerationStoreShape,
+  authorityStore: Pick<AuthorityGenerationStoreShape, 'readResearchAuthorityGeneration'>,
 ): Effect.Effect<ResearchCapitalGrantGeneration | undefined, OperationalError> => {
   if (authority.maximum !== Authority.Execution) return Effect.as(Effect.void, undefined)
-  if (authorityStore.readResearchAuthorityGeneration === undefined) {
-    return Effect.fail(
-      capitalActivationOperationalError('research capital startup requires v3 authority history reads'),
-    )
-  }
   return authorityStore.readResearchAuthorityGeneration(authority.generationHash).pipe(
     Effect.mapError((cause) => capitalActivationOperationalError('research capital generation read failed', cause)),
     Effect.flatMap((generation) =>
@@ -537,28 +337,26 @@ export const readCurrentResearchCapitalGeneration = (
 }
 
 export const prepareResearchCapitalActivation = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   request: ResearchCapitalActivationRequest,
   buildLineage: ResearchCapitalBuildLineage | null,
   sourceGenerationHash: string,
-  session: BrokerSessionShape,
-  authorityStore: AuthorityGenerationStoreShape,
+  account: ReconciledBrokerState,
+  authorityStore: Pick<AuthorityGenerationStoreShape, 'readAuthorityState' | 'readResearchAuthorityGeneration'>,
   lifecycle: CapitalGrantLifecycleStoreShape,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
-    const observedAt = yield* currentUtcInstant
-    yield* Effect.fromResult(
-      researchCapitalActivationRequestIsCurrent(request, plan, observedAt, { buildLineage }),
-    ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
-    yield* Effect.fromResult(validateResearchCapitalPreflight(request, session.preflight)).pipe(
+    yield* Effect.fromResult(researchCapitalActivationRequestIsCurrent(request, plan, { buildLineage })).pipe(
+      Effect.mapError((message) => capitalActivationOperationalError(message)),
+    )
+    yield* Effect.fromResult(validateResearchCapitalPreflight(request, account)).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
     )
     yield* validateResearchCapitalRiskPolicy(plan, request)
-    yield* validateResearchCapitalCloseLease(request, session)
 
     const proof = researchCapitalGrantProof(request, buildLineage?.activation)
     const authority = yield* lifecycle
-      .activateResearchCapitalGrant(proof, sourceGenerationHash, request.cutoffAt)
+      .activateResearchCapitalGrant(proof, sourceGenerationHash)
       .pipe(
         Effect.mapError((cause) =>
           capitalActivationOperationalError('research capital generation activation failed', cause),
@@ -584,10 +382,14 @@ interface CapitalActivationReconciliationObservation {
   }
 }
 
-export const refreshResearchCapitalActivationReconciliationDataFirst = <E, R>(
-  reconcile: Effect.Effect<CapitalActivationReconciliationObservation, E, R>,
+export const refreshResearchCapitalActivationReconciliation = <
+  A extends CapitalActivationReconciliationObservation,
+  E,
+  R,
+>(
+  reconcile: Effect.Effect<A, E, R>,
   operationTimeoutMs: number,
-): Effect.Effect<void, OperationalError, R> =>
+): Effect.Effect<A, OperationalError, R> =>
   reconcile.pipe(
     Effect.timeoutOrElse({
       duration: operationTimeoutMs,
@@ -599,42 +401,31 @@ export const refreshResearchCapitalActivationReconciliationDataFirst = <E, R>(
     ),
     Effect.flatMap((result) =>
       result.report.reconciliation.status === ReconciliationStatus.Exact
-        ? Effect.void
+        ? Effect.succeed(result)
         : Effect.fail(
-            capitalActivationOperationalError('research capital pre-activation reconciliation was not exact'),
+            capitalActivationOperationalError(
+              'research capital pre-activation reconciliation was not exact',
+              new CapitalActivationReconciliationNotExact({ status: result.report.reconciliation.status }),
+            ),
           ),
     ),
   )
 
-export const refreshResearchCapitalActivationReconciliation = Pipeable.generic<
-  <E, R>(
-    operationTimeoutMs: number,
-  ) => (
-    reconcile: Effect.Effect<CapitalActivationReconciliationObservation, E, R>,
-  ) => Effect.Effect<void, OperationalError, R>,
-  typeof refreshResearchCapitalActivationReconciliationDataFirst
->(2, refreshResearchCapitalActivationReconciliationDataFirst)
-
 export const prepareOrRecoverResearchCapitalActivation = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   request: ResearchCapitalActivationRequest,
   buildContinuation: ResearchCapitalBuildContinuation | null,
   buildLineage: ResearchCapitalBuildLineage | null,
-  session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
-  reconcile: Effect.Effect<CapitalActivationReconciliationObservation, ReconciliationPassError | OperationalError>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError | OperationalError>,
   operationTimeoutMs: number,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
-    const observedAt = yield* currentUtcInstant
-    yield* Effect.fromResult(researchCapitalRecoveryRequestIsCompatible(request, plan, observedAt)).pipe(
+    yield* Effect.fromResult(researchCapitalRecoveryRequestIsCompatible(request, plan)).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
     )
     const readAuthorityState = authorityStore.readAuthorityState
-    if (readAuthorityState === undefined) {
-      return yield* capitalActivationOperationalError('research capital startup requires durable authority state reads')
-    }
     const authority = yield* readAuthorityState.pipe(
       Effect.mapError((cause) => capitalActivationOperationalError('research capital authority read failed', cause)),
     )
@@ -692,17 +483,25 @@ export const prepareOrRecoverResearchCapitalActivation = (
       authority.reason === reconciliationIncompleteRestrictionReason &&
       currentGenerationMatchesRequest &&
       currentGeneration !== undefined
+    const currentPreflightStoreRecovery =
+      decision._tag === 'Rearm' &&
+      isExecutionCyclePreflightStoreRestriction(authority.reason) &&
+      currentGenerationMatchesRequest &&
+      currentGeneration !== undefined
+    const currentRestrictedSourceRecovery = currentReconciliationRecovery || currentPreflightStoreRecovery
     if (
       buildContinuation !== null &&
       decision._tag !== 'Resume' &&
       decision._tag !== 'ResumeRestricted' &&
-      !currentReconciliationRecovery
+      !currentRestrictedSourceRecovery
     ) {
       return yield* capitalActivationOperationalError(
         'research capital build continuation requires the exact active generation',
       )
     }
-    if (buildContinuation !== null && currentReconciliationRecovery) {
+    // A bound PAPER generation already owns its accepted orders. Reconciliation failure must not prevent
+    // constructing its restricted recovery driver; that driver retains the kill and exact settlement gates.
+    if (currentReconciliationRecovery) {
       if (currentGeneration === undefined) {
         return yield* capitalActivationOperationalError('research capital reconciliation recovery lost durable history')
       }
@@ -710,9 +509,9 @@ export const prepareOrRecoverResearchCapitalActivation = (
     }
     const activationRequired = decision._tag === 'Activate' || decision._tag === 'Rearm'
     if (activationRequired) {
-      yield* Effect.fromResult(
-        researchCapitalActivationRequestIsCurrent(request, plan, observedAt, { buildLineage }),
-      ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
+      yield* Effect.fromResult(researchCapitalActivationRequestIsCurrent(request, plan, { buildLineage })).pipe(
+        Effect.mapError((message) => capitalActivationOperationalError(message)),
+      )
     }
     const activationSourceGenerationHash =
       decision._tag === 'Rearm'
@@ -726,17 +525,15 @@ export const prepareOrRecoverResearchCapitalActivation = (
             ),
           )
         : currentSourceGenerationHash
-    if (activationRequired) {
-      // PostgreSQL requires broker evidence observed after the previous authority update. It must exist before a
-      // completed capital generation is rearmed, and the same observation then binds the new activation.
-      yield* refreshResearchCapitalActivationReconciliation(reconcile, operationTimeoutMs)
-    }
+    const activationReconciliation = activationRequired
+      ? yield* refreshResearchCapitalActivationReconciliation(reconcile, operationTimeoutMs)
+      : undefined
     if (decision._tag === 'Rearm') {
       const rearmResolution = yield* authorityStore
         .ensureAuthorityGeneration({
           generationHash: activationSourceGenerationHash,
           maximum: Authority.Observe,
-          ...(currentReconciliationRecovery && currentGeneration !== undefined
+          ...(currentRestrictedSourceRecovery && currentGeneration !== undefined
             ? { preserveCyclePlanHash: currentGeneration.proofPlanHash }
             : {}),
         })
@@ -794,13 +591,13 @@ export const prepareOrRecoverResearchCapitalActivation = (
         )
       }
     }
-    if (activationRequired) {
+    if (activationReconciliation !== undefined) {
       return yield* prepareResearchCapitalActivation(
         plan,
         request,
         buildLineage,
         activationSourceGenerationHash,
-        session,
+        activationReconciliation.brokerState,
         authorityStore,
         lifecycle,
       )
@@ -859,49 +656,9 @@ export const realizedCapitalActivation = (
       requestHash: request.requestHash,
       generationHash,
       grant: 'Research' as const,
-      cutoffAt: request.cutoffAt,
-      expiresAt: request.expiresAt,
-      maximumCloseSessions: request.maximumCloseSessions,
+      scope: 'Standing' as const,
     },
     broker:
       current.broker === null ? null : { ...current.broker, executionEligible: true, executionDisabledReason: null },
     error: null,
   }))
-
-export const completedCapitalActivation = (
-  state: Ref.Ref<RuntimeState>,
-  request: ResearchCapitalActivationRequest,
-  generationHash: string,
-  receiptHash: string,
-): Effect.Effect<void> =>
-  Ref.update(state, (current) => ({
-    ...current,
-    capitalActivation: {
-      _tag: 'Completed' as const,
-      requestHash: request.requestHash,
-      generationHash,
-      grant: 'Research' as const,
-      receiptHash,
-    },
-    broker:
-      current.broker === null
-        ? null
-        : {
-            ...current.broker,
-            executionEligible: false,
-            executionDisabledReason: 'EXECUTION_EPISODE_COMPLETED',
-          },
-    error: null,
-  }))
-
-export const restrictExpiredCapitalActivationDataFirst = (
-  authorityRestrictionStore: AuthorityRestrictionStoreShape,
-  writerFence: WriterFenceService,
-): Effect.Effect<void, OperationalError> =>
-  restrictMutationAuthority(executionActivationRestrictionSubject, 'immutable activation request expired').pipe(
-    Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
-    Effect.provideService(WriterFence, writerFence),
-    Effect.mapError((cause) => capitalActivationOperationalError('expired capital restriction failed', cause)),
-  )
-
-export const restrictExpiredCapitalActivation = Pipeable.dual(2, restrictExpiredCapitalActivationDataFirst)

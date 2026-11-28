@@ -45,16 +45,27 @@ describe('worker entrypoint', () => {
     expect(matches).toHaveLength(2)
   })
 
-  it('exposes hoisted dependencies to the copied bumba workspace in both runtime images', () => {
+  it('includes the workspace Bumba SDK and verifies both runtime images', () => {
     const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
     const bumbaCopy = 'COPY --from=jangar-build /app/services/bumba ./services/bumba'
-    const nodeModulesLink = 'ln -s /app/node_modules /app/services/bumba/node_modules'
+    const nodeModulesCopy =
+      'COPY --from=jangar-deps-prod /app/services/bumba/node_modules /app/services/bumba/node_modules'
+    const runtimeCheck =
+      'RUN bun /app/services/bumba/scripts/verify-temporal-runtime.ts /app/services/bumba /app/services/jangar'
 
     const runtimeBumbaCopies = dockerfile.match(new RegExp(bumbaCopy.replaceAll('/', '\\/'), 'g')) ?? []
-    const dependencyLinks = dockerfile.match(new RegExp(nodeModulesLink.replaceAll('/', '\\/'), 'g')) ?? []
+    const dependencyCopies = dockerfile.match(new RegExp(nodeModulesCopy.replaceAll('/', '\\/'), 'g')) ?? []
+    const runtimeChecks = dockerfile.match(new RegExp(runtimeCheck.replaceAll('/', '\\/'), 'g')) ?? []
 
     expect(runtimeBumbaCopies).toHaveLength(2)
-    expect(dependencyLinks).toHaveLength(2)
+    expect(dependencyCopies).toHaveLength(2)
+    expect(runtimeChecks).toHaveLength(2)
+    expect(dockerfile).toContain('RUN bun --cwd=packages/temporal-bun-sdk run build')
+    for (const path of ['package.json', 'dist']) {
+      const sdkCopy = `COPY --from=jangar-build /app/packages/temporal-bun-sdk/${path} ./packages/temporal-bun-sdk/${path}`
+      expect(dockerfile.split(sdkCopy)).toHaveLength(3)
+    }
+    expect(dockerfile).not.toContain('ln -s /app/node_modules /app/services/bumba/node_modules')
   })
 
   it('installs workspace tool build dependencies with dev dependencies enabled', () => {

@@ -22,7 +22,7 @@ export type KubernetesClient = {
     resource: string,
     name: string,
     namespace: string,
-    options?: { wait?: boolean; timeoutSeconds?: number },
+    options?: { wait?: boolean; timeoutSeconds?: number; uid?: string },
   ) => Promise<Record<string, unknown> | null>
   patch: (
     resource: string,
@@ -38,6 +38,7 @@ export type KubernetesClient = {
     namespace: string
     container?: string | null
     tailLines?: number | null
+    limitBytes?: number
   }) => Promise<string>
 }
 
@@ -451,10 +452,13 @@ const applyStatusResource = async (clients: KubeClients, resource: Record<string
   const customTarget = resolveCustomTargetFromObject(resource)
   const resourceKey = RESOURCE_MAP[target.kind as keyof typeof RESOURCE_MAP] ?? `${target.kind.toLowerCase()}s`
 
-  const current = customTarget
-    ? await readCustomObject(clients.customObjects, resourceKey, target.name, target.namespace ?? 'default')
-    : await readObject(clients.objects, resourceKey, target.name, target.namespace ?? 'default')
-  const resourceVersion = asString(asRecord(current.metadata)?.resourceVersion)
+  let resourceVersion = asString(asRecord(resource.metadata)?.resourceVersion)
+  if (!resourceVersion) {
+    const current = customTarget
+      ? await readCustomObject(clients.customObjects, resourceKey, target.name, target.namespace ?? 'default')
+      : await readObject(clients.objects, resourceKey, target.name, target.namespace ?? 'default')
+    resourceVersion = asString(asRecord(current.metadata)?.resourceVersion)
+  }
   const metadata = {
     name: target.name,
     ...(target.namespace ? { namespace: target.namespace } : {}),
@@ -521,6 +525,8 @@ export const createKubernetesClient = (): KubernetesClient => ({
   delete: async (resource, name, namespace, options) => {
     const objects = getKubeClients().objects
     const target = resolveTargetFromResource(resource)
+    // Kubernetes ignores query deletion options when a DeleteOptions body is present.
+    const gracePeriodSeconds = options?.timeoutSeconds ?? (options?.wait === false ? 0 : undefined)
     try {
       return (await objects.delete(
         {
@@ -533,13 +539,15 @@ export const createKubernetesClient = (): KubernetesClient => ({
         },
         undefined,
         undefined,
-        options?.wait === false ? 0 : undefined,
         undefined,
-        'Background',
+        undefined,
+        undefined,
         {
           apiVersion: 'v1',
           kind: 'DeleteOptions',
-          ...(options?.timeoutSeconds ? { gracePeriodSeconds: options.timeoutSeconds } : {}),
+          propagationPolicy: 'Background',
+          ...(options?.uid ? { preconditions: { uid: options.uid } } : {}),
+          ...(gracePeriodSeconds === undefined ? {} : { gracePeriodSeconds }),
         },
       )) as Record<string, unknown>
     } catch (error) {
@@ -621,7 +629,7 @@ export const createKubernetesClient = (): KubernetesClient => ({
       throw new Error(`kubernetes events failed: ${normalizeKubeErrorMessage(error)}`)
     }
   },
-  logs: async ({ pod, namespace, container, tailLines }) => {
+  logs: async ({ pod, namespace, container, tailLines, limitBytes }) => {
     const core = getKubeClients().core
     try {
       const logs = await core.readNamespacedPodLog({
@@ -629,6 +637,7 @@ export const createKubernetesClient = (): KubernetesClient => ({
         namespace,
         ...(container ? { container } : {}),
         ...(tailLines && Number.isFinite(tailLines) ? { tailLines: Math.max(1, Math.floor(tailLines)) } : {}),
+        ...(limitBytes ? { limitBytes } : {}),
       })
       return typeof logs === 'string' ? logs : JSON.stringify(logs)
     } catch (error) {

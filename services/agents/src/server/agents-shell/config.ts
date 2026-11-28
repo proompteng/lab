@@ -1,19 +1,12 @@
 import {
   AGENTS_SHELL_VERSION,
-  DEFAULT_AGENT_BASE_BRANCH,
-  DEFAULT_AGENT_NAME,
-  DEFAULT_AGENT_NAMESPACE,
-  DEFAULT_AGENT_REPOSITORY,
-  DEFAULT_AGENT_RUNTIME_SERVICE_ACCOUNT,
-  DEFAULT_AGENT_SECRETS,
-  DEFAULT_AGENT_TOKEN_BUDGET,
-  DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED,
-  DEFAULT_AGENT_VCS_REF,
+  DEFAULT_REPO_BASE_BRANCH,
   DEFAULT_ISSUER,
   DEFAULT_OUTPUT_BYTES,
   DEFAULT_RESOURCE,
   DEFAULT_TIMEOUT_SECONDS,
   MAX_OUTPUT_BYTES,
+  MAX_CONCURRENT_JOBS,
   MAX_TIMEOUT_SECONDS,
   SCOPES,
 } from './constants'
@@ -37,15 +30,7 @@ export type AgentsShellConfig = {
   auditLogPath: string | null
   allowedK8sNamespaces: Set<string>
   k8sApplyEnabled: boolean
-  agentNamespace: string
-  agentName: string
-  agentRepository: string
-  agentBaseBranch: string
-  agentVcsRef: string
-  agentRuntimeServiceAccount: string
-  agentSecrets: string[]
-  agentDefaultTokenBudget: number
-  agentDefaultTtlSecondsAfterFinished: number
+  repoBaseBranch: string
   port: number
   host: string
 }
@@ -57,11 +42,6 @@ const parseList = (value: string | undefined) =>
       .map((item) => item.trim())
       .filter(Boolean),
   )
-
-const parseArray = (value: string | undefined, fallback: string[]) => {
-  const parsed = Array.from(parseList(value))
-  return parsed.length > 0 ? parsed : fallback
-}
 
 const parseListenPort = (env: NodeJS.ProcessEnv) => {
   const raw = env.PORT ?? env.AGENTS_SHELL_LISTEN_PORT ?? '8080'
@@ -75,9 +55,30 @@ const parseListenPort = (env: NodeJS.ProcessEnv) => {
   return port
 }
 
+const parseBoundedInteger = (env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number) => {
+  const value = Number(env[key] ?? fallback)
+  if (!Number.isSafeInteger(value) || value < min || value > max)
+    throw new Error(`${key} must be an integer between ${min} and ${max}`)
+  return value
+}
+
 export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process.env): AgentsShellConfig => {
   const issuer = env.AGENTS_SHELL_OAUTH_ISSUER ?? DEFAULT_ISSUER
   const resource = env.AGENTS_SHELL_RESOURCE ?? DEFAULT_RESOURCE
+  const maxOutputBytes = parseBoundedInteger(
+    env,
+    'AGENTS_SHELL_MAX_OUTPUT_BYTES',
+    MAX_OUTPUT_BYTES,
+    4096,
+    MAX_OUTPUT_BYTES,
+  )
+  const maxTimeoutSeconds = parseBoundedInteger(
+    env,
+    'AGENTS_SHELL_MAX_TIMEOUT_SECONDS',
+    MAX_TIMEOUT_SECONDS,
+    1,
+    MAX_TIMEOUT_SECONDS,
+  )
 
   return {
     name: 'agents-shell',
@@ -90,25 +91,27 @@ export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process
     allowedUsernames: parseList(env.AGENTS_SHELL_ALLOWED_USERNAMES),
     allowedSubjects: parseList(env.AGENTS_SHELL_ALLOWED_SUBJECTS),
     workspaceRoot: env.AGENTS_SHELL_WORKSPACE_ROOT ?? '/workspace',
-    defaultTimeoutSeconds: Number(env.AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS ?? String(DEFAULT_TIMEOUT_SECONDS)),
-    maxTimeoutSeconds: Number(env.AGENTS_SHELL_MAX_TIMEOUT_SECONDS ?? String(MAX_TIMEOUT_SECONDS)),
-    defaultOutputBytes: Number(env.AGENTS_SHELL_DEFAULT_OUTPUT_BYTES ?? String(DEFAULT_OUTPUT_BYTES)),
-    maxOutputBytes: Number(env.AGENTS_SHELL_MAX_OUTPUT_BYTES ?? String(MAX_OUTPUT_BYTES)),
-    maxConcurrentJobs: Number(env.AGENTS_SHELL_MAX_CONCURRENT_JOBS ?? '4'),
-    auditLogPath: env.AGENTS_SHELL_AUDIT_LOG_PATH ?? '/workspace/.agents-shell/audit.jsonl',
+    defaultTimeoutSeconds: parseBoundedInteger(
+      env,
+      'AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS',
+      Math.min(DEFAULT_TIMEOUT_SECONDS, maxTimeoutSeconds),
+      1,
+      maxTimeoutSeconds,
+    ),
+    maxTimeoutSeconds,
+    defaultOutputBytes: parseBoundedInteger(
+      env,
+      'AGENTS_SHELL_DEFAULT_OUTPUT_BYTES',
+      Math.min(DEFAULT_OUTPUT_BYTES, maxOutputBytes),
+      4096,
+      maxOutputBytes,
+    ),
+    maxOutputBytes,
+    maxConcurrentJobs: parseBoundedInteger(env, 'AGENTS_SHELL_MAX_CONCURRENT_JOBS', 4, 1, MAX_CONCURRENT_JOBS),
+    auditLogPath: env.AGENTS_SHELL_AUDIT_LOG_PATH || null,
     allowedK8sNamespaces: parseList(env.AGENTS_SHELL_ALLOWED_K8S_NAMESPACES ?? 'agents'),
     k8sApplyEnabled: env.AGENTS_SHELL_ENABLE_K8S_APPLY === 'true',
-    agentNamespace: env.AGENTS_SHELL_AGENT_NAMESPACE ?? DEFAULT_AGENT_NAMESPACE,
-    agentName: env.AGENTS_SHELL_AGENT_NAME ?? DEFAULT_AGENT_NAME,
-    agentRepository: env.AGENTS_SHELL_AGENT_REPOSITORY ?? DEFAULT_AGENT_REPOSITORY,
-    agentBaseBranch: env.AGENTS_SHELL_AGENT_BASE_BRANCH ?? DEFAULT_AGENT_BASE_BRANCH,
-    agentVcsRef: env.AGENTS_SHELL_AGENT_VCS_REF ?? DEFAULT_AGENT_VCS_REF,
-    agentRuntimeServiceAccount: env.AGENTS_SHELL_AGENT_RUNTIME_SERVICE_ACCOUNT ?? DEFAULT_AGENT_RUNTIME_SERVICE_ACCOUNT,
-    agentSecrets: parseArray(env.AGENTS_SHELL_AGENT_SECRETS, DEFAULT_AGENT_SECRETS),
-    agentDefaultTokenBudget: Number(env.AGENTS_SHELL_AGENT_DEFAULT_TOKEN_BUDGET ?? DEFAULT_AGENT_TOKEN_BUDGET),
-    agentDefaultTtlSecondsAfterFinished: Number(
-      env.AGENTS_SHELL_AGENT_DEFAULT_TTL_SECONDS_AFTER_FINISHED ?? DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED,
-    ),
+    repoBaseBranch: env.AGENTS_SHELL_REPO_BASE_BRANCH ?? DEFAULT_REPO_BASE_BRANCH,
     port: parseListenPort(env),
     host: env.HOST ?? env.AGENTS_SHELL_HOST ?? '0.0.0.0',
   }

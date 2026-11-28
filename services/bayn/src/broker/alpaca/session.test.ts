@@ -1,11 +1,20 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Clock, Deferred, Effect, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
+import { Clock, Deferred, Effect, Exit, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
+import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
+import { BrokerObservations, observationUnavailable } from './observed-snapshot'
+import { observedBrokerSnapshotFixture } from './observed-snapshot.fixture'
+import { makeBrokerObservationCapture } from './snapshot-cache'
+import { makeBrokerObservationBudget } from './poll-budget'
+import { make as makeBrokerRead } from './http'
+import { layer as rawBrokerSessionLayer } from './session'
+import { currentUtcInstant } from '../../time'
+import { AlpacaBrokerResourcesLive } from './composition'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import { AccountStatus, BrokerRead } from './model'
 import {
@@ -16,6 +25,7 @@ import {
   layer,
   mapHttpAcquisitionError,
   retryRecoverableBrokerSessionAcquisition,
+  projectedReadLayer,
 } from './session'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
@@ -93,6 +103,7 @@ const completePreflightResponse = (
     url.pathname === '/v2/positions' ||
     url.pathname === '/v2/orders' ||
     url.pathname === '/v2/account/activities/FILL' ||
+    url.pathname === '/v2/account/activities' ||
     url.pathname === '/v2/calendar'
   ) {
     return jsonResponse(request, [], requestId)
@@ -101,6 +112,202 @@ const completePreflightResponse = (
 }
 
 describe('Alpaca broker session acquisition retry', () => {
+  test('starts the status read surface without broker HTTP and rechecks canonical availability on every read', async () => {
+    let requests = 0
+    let available = false
+    const unavailable = observationUnavailable('Canonical broker observation is unavailable')
+    const snapshot = observedBrokerSnapshotFixture(accountId, '2026-11-12T15:00:00.000Z')
+    const observed = Effect.suspend(() => (available ? Effect.succeed(snapshot) : Effect.fail(unavailable)))
+    const resources = projectedReadLayer(connection(0)).pipe(
+      Layer.provide(
+        Layer.succeed(BrokerObservations, {
+          read: observed,
+          readForReconciliation: observed.pipe(Effect.map((observation) => ({ observation, complete: Effect.void }))),
+          readState: observed,
+          readForSubmit: () => observed,
+          invalidate: Effect.void,
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests++
+            return Effect.succeed(jsonResponse(request, { code: 50010000, message: 'broker unavailable' }, 'cold', 503))
+          }),
+        ),
+      ),
+    )
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const read = yield* BrokerRead
+        expect(requests).toBe(0)
+        expect(yield* Effect.flip(read.account)).toBe(unavailable)
+        available = true
+        expect((yield* read.account).value.id).toBe(accountId)
+        const healthSnapshot = read.projection?.healthSnapshot
+        if (healthSnapshot === undefined) throw new Error('Status broker read has no canonical health projection')
+        expect((yield* healthSnapshot).snapshot.account.value.id).toBe(accountId)
+        available = false
+        expect(yield* Effect.flip(read.positions)).toBe(unavailable)
+        expect(requests).toBe(0)
+      }).pipe(Effect.provide(resources), Effect.provide(Logger.layer([]))),
+    )
+    expect(Exit.isSuccess(exit)).toBeTrue()
+    expect(requests).toBe(0)
+  })
+  test('publishes complete history with 50 cold requests and 28 retained-history requests', async () => {
+    const fills = Array.from({ length: 2_002 }, (_, index) => ({
+      activity_type: 'FILL',
+      id: `fill-${index}::62e69015-8549-4bfd-b9c3-01e75843f47d`,
+      account_id: accountId,
+      cum_qty: '1',
+      leaves_qty: '0',
+      price: '100',
+      qty: '1',
+      side: index % 2 === 0 ? 'buy' : 'sell',
+      symbol: 'AAPL',
+      transaction_time: '1969-12-31T23:00:00.000Z',
+      order_id: '62e69015-8549-4bfd-b9c3-01e75843f47d',
+      type: 'fill',
+      order_status: 'filled',
+    }))
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        const budget = yield* makeBrokerObservationBudget
+        let requests = 0
+        const client = budget.decorate(
+          HttpClient.make((request, url) =>
+            Effect.gen(function* () {
+              requests += 1
+              yield* Effect.sleep(250)
+              const response = (body: unknown) =>
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(JSON.stringify(body), {
+                    headers: {
+                      ...responseHeaders(`req-${requests}`),
+                      'x-ratelimit-remaining': String(200 - requests),
+                      'x-ratelimit-reset': '60',
+                    },
+                  }),
+                )
+              if (url.pathname === '/v2/account/activities/FILL') {
+                const token = url.searchParams.get('page_token')
+                const rows = url.searchParams.get('direction') === 'desc' ? fills.toReversed() : fills
+                const offset = token === null ? 0 : rows.findIndex((fill) => fill.id === token) + 1
+                const pageSize = Number(url.searchParams.get('page_size'))
+                return response(rows.slice(offset, offset + pageSize))
+              }
+              if (url.pathname === '/v2/account') return response(accountResponse)
+              if (url.pathname === '/v2/account/configurations') return response(accountConfigurationResponse)
+              if (['/v2/positions', '/v2/orders', '/v2/account/activities'].includes(url.pathname)) return response([])
+              return yield* Effect.die(new Error('Unexpected request in the paginated capture fixture'))
+            }),
+          ),
+        )
+        const read = yield* makeBrokerRead(connection(0)).pipe(Effect.provideService(HttpClient.HttpClient, client))
+        const pending = yield* captureBrokerObservation(
+          read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          30_000,
+        ).pipe(Effect.result, Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(30_000)
+        const result = yield* Fiber.join(pending)
+        if (Result.isFailure(result)) expect(result.failure.message).toContain('exceeded its deadline')
+        expect(Result.isSuccess(result)).toBe(true)
+        if (Result.isFailure(result)) throw result.failure
+        expect(result.success.snapshot.history.fills).toHaveLength(2_002)
+        expect(requests).toBe(50)
+        expect(Date.parse(result.success.completedAt)).toBeLessThan(30_000)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(30_000)
+        yield* budget.beginCapture
+        const second = yield* captureBrokerObservation(
+          read,
+          { generation: 2, startedAt: yield* currentUtcInstant },
+          30_000,
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(30_000)
+        expect((yield* Fiber.join(second)).snapshot.history.fills).toHaveLength(2_002)
+        expect(requests).toBe(78)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(46_800)
+        const last = fills.at(-1)
+        if (last === undefined) throw new Error('Expected a complete fill fixture')
+        fills.push({
+          ...last,
+          id: 'fill-2002::62e69015-8549-4bfd-b9c3-01e75843f47d',
+          transaction_time: '1970-01-01T00:00:00.000Z',
+        })
+        yield* budget.beginCapture
+        const changed = yield* captureBrokerObservation(
+          read,
+          { generation: 3, startedAt: yield* currentUtcInstant },
+          30_000,
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(30_000)
+        expect((yield* Fiber.join(changed)).snapshot.history.fills).toHaveLength(2_003)
+        // The invalidation probe is still charged before the new fill forces a full cold bracket.
+        expect(requests).toBe(129)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(90_600)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+  })
+  test('production resources share one durable observation projection without starting local pollers', async () => {
+    let requests = 0
+    const client = HttpClient.make((request, url) => {
+      requests += 1
+      return Effect.succeed(completePreflightResponse(request, url, `req-${requests}`))
+    })
+    const http = Layer.succeed(HttpClient.HttpClient, client)
+    const observation = await Effect.runPromise(
+      Effect.gen(function* () {
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        const session = yield* BrokerSession
+        return yield* captureBrokerObservation(
+          session.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          30_000,
+        )
+      }).pipe(
+        Effect.provide(rawBrokerSessionLayer(connection(0))),
+        Effect.provide(http),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    const resources = AlpacaBrokerResourcesLive(connection(0), http).pipe(
+      Layer.provide(
+        Layer.succeed(BrokerObservations, {
+          read: Effect.succeed(observation),
+          readForReconciliation: Effect.succeed({ observation, complete: Effect.void }),
+          readState: Effect.succeed(observation),
+          readForSubmit: () => Effect.succeed(observation),
+          invalidate: Effect.void,
+        }),
+      ),
+    )
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const session = yield* BrokerSession
+        const read = yield* BrokerRead
+        expect(session.read).toBe(read)
+        expect(session.preflight.accountId).toBe(accountId)
+        expect(read.projection).toBeDefined()
+        const initialRequests = requests
+        for (let n = 0; n < 10; n++) {
+          const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
+          expect(snapshot.account.value.id).toBe(accountId)
+          yield* read.accountConfiguration
+        }
+        expect(requests).toBe(initialRequests)
+        yield* TestClock.adjust(30_000)
+        yield* Effect.repeat(Effect.yieldNow, { times: 10 })
+        expect(requests).toBe(initialRequests)
+        expect((yield* read.account).evidence.observedAt).toBe(observation.snapshot.account.evidence.observedAt)
+      }).pipe(Effect.provide(resources), Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([]))),
+    )
+  })
+
   test('re-runs the complete preflight after request retry exhaustion and publishes one frozen verified session', async () => {
     const options = connection(1)
     let requests = 0
@@ -156,7 +363,7 @@ describe('Alpaca broker session acquisition retry', () => {
       orderByClientId: 'NOT_FOUND',
     })
     expect(accountRequests).toBe(3)
-    expect(requests).toBe(11)
+    expect(requests).toBe(10)
     const renderedLogs = JSON.stringify(logs)
     expect(renderedLogs).not.toContain(key)
     expect(renderedLogs).not.toContain(secret)
@@ -253,7 +460,8 @@ describe('Alpaca broker session acquisition retry', () => {
     const client = HttpClient.make((request) => {
       requests += 1
       const requestId = `req-${requests}`
-      return Effect.sleep(6_000).pipe(
+      // Each response arrives within the header bound; all three retries still exceed the 5-second session window.
+      return Effect.sleep(4_000).pipe(
         Effect.as(jsonResponse(request, { code: 50010000, message: 'slow temporary failure' }, requestId, 500)),
       )
     })
@@ -265,11 +473,11 @@ describe('Alpaca broker session acquisition retry', () => {
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(requests).toBe(1)
-        yield* TestClock.adjust(6_000)
+        yield* TestClock.adjust(4_000)
         expect(requests).toBe(2)
-        yield* TestClock.adjust(6_000)
+        yield* TestClock.adjust(4_000)
         expect(requests).toBe(3)
-        yield* TestClock.adjust(6_000)
+        yield* TestClock.adjust(4_000)
         return yield* Fiber.join(fiber)
       }).pipe(Effect.provide(TestClock.layer())),
     )
@@ -298,6 +506,8 @@ describe('Alpaca broker session acquisition retry', () => {
       currentTimeMillis: Effect.sync(readTime),
       currentTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
       currentTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
+      monotonicTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
+      monotonicTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
       sleep: () => Effect.void,
     }
     const cause = new BrokerReadError({

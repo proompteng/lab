@@ -1,19 +1,13 @@
 # 120. Jangar Material Action Verdict Arbiter And Clock Budget Parity (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar final action authority, dependency quorum, action SLO budgets, reconciled action clocks, Torghut
 capital gates, rollout safety, and deployer acceptance gates.
 
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/124-torghut-capital-action-verdict-consumer-and-profit-hypothesis-settlement-2026-05-06.md`
-
 Extends:
 
-- `119-jangar-empirical-proof-renewal-clearinghouse-and-capital-reentry-settlement-2026-05-06.md`
-- `118-jangar-repair-admission-governor-and-profit-renewal-bids-2026-05-06.md`
 - `111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md`
 - `100-jangar-lease-reconciliation-clock-and-dispatch-expiry-contract-2026-05-06.md`
 

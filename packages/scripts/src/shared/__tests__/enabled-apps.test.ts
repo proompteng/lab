@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -13,7 +15,9 @@ import {
 const inventory = loadEnabledAppInventory()
 const platformApplicationSet = readFileSync('argocd/applicationsets/platform.yaml', 'utf8')
 const bootstrapApplicationSet = readFileSync('argocd/applicationsets/bootstrap.yaml', 'utf8')
+const applicationSetsReadme = readFileSync('argocd/applicationsets/README.md', 'utf8')
 const argoCdKustomization = readFileSync('argocd/applications/argocd/kustomization.yaml', 'utf8')
+const argoCdReadme = readFileSync('argocd/applications/argocd/README.md', 'utf8')
 const argoCdApplicationSetCrdOverlay = readFileSync(
   'argocd/applications/argocd/overlays/argocd-applicationset-crd.yaml',
   'utf8',
@@ -156,6 +160,77 @@ const entry = (name: string) => {
 }
 
 describe('enabled app inventory', () => {
+  it('excludes unreferenced prepared directories and includes declared Kustomize inputs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'enabled-app-inputs-'))
+    const app = join(root, 'argocd/applications/example')
+    try {
+      mkdirSync(join(root, 'argocd/applicationsets'), { recursive: true })
+      for (const name of ['active', 'prepared', 'patches', 'values']) mkdirSync(join(app, name), { recursive: true })
+      writeFileSync(
+        join(root, 'argocd/applicationsets/test.yaml'),
+        YAML.stringify({
+          spec: { generators: [{ list: { elements: [{ name: 'example', path: 'argocd/applications/example' }] } }] },
+        }),
+      )
+      const manifest = (name: string) => YAML.stringify({ image: `registry.ide-newton.ts.net/lab/${name}` })
+      writeFileSync(join(app, 'active/deployment.yaml'), manifest('active'))
+      writeFileSync(join(app, 'prepared/deployment.yaml'), manifest('prepared'))
+      writeFileSync(join(app, 'patches/image.yaml'), manifest('patch'))
+      writeFileSync(join(app, 'values/chart.yaml'), manifest('chart'))
+      const input = {
+        resources: ['active'],
+        patches: [{ path: 'patches/image.yaml' }],
+        helmCharts: [{ valuesFile: 'values/chart.yaml' }],
+      }
+      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify(input))
+      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toEqual([
+        'registry.ide-newton.ts.net/lab/active',
+        'registry.ide-newton.ts.net/lab/chart',
+        'registry.ide-newton.ts.net/lab/patch',
+      ])
+      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify({ ...input, resources: ['active', 'prepared'] }))
+      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toContain('registry.ide-newton.ts.net/lab/prepared')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['devbox', 'codex-devbox', 'unpublished', '.github/workflows/codex-devbox.yml'],
+    ['ofz', 'ofz', 'unpromoted', '.github/workflows/ofz.yaml'],
+  ])(
+    'recognizes the inert %s promotion template without accepting arbitrary mutable images',
+    (name, image, tag, workflow) => {
+      const repository = `registry.ide-newton.ts.net/lab/${image}`
+      const template = {
+        name,
+        path: `argocd/applications/${name}`,
+        repoURL: 'https://github.com/proompteng/lab.git',
+        sourceFile: 'argocd/applicationsets/platform.yaml',
+        sourceKind: 'applicationset-element',
+        class: 'deferred',
+        enabled: true,
+        hasHelmChart: false,
+        repoImages: [`${repository}:${tag}`],
+        workflowPaths: [workflow, 'argocd/applications/kargo'],
+      } satisfies EnabledAppInventoryEntry
+      expect(classifyEnabledApp(template).class).toBe('workflow-image')
+      expect(classifyEnabledApp({ ...template, workflowPaths: [] }).class).toBe('deferred')
+      for (const reference of [
+        `${repository}:latest`,
+        `${repository}:unreviewed`,
+        `${repository}@sha256:${'0'.repeat(64)}`,
+      ]) {
+        expect(
+          classifyEnabledApp({
+            ...template,
+            repoImages: [reference],
+          }).class,
+        ).toBe('deferred')
+      }
+    },
+  )
+
   it('classifies Tengri as a Kargo-owned workflow image only with complete ownership evidence', () => {
     const tengri = {
       name: 'tengri',
@@ -224,7 +299,22 @@ describe('enabled app inventory', () => {
 
   it('loads only root-enabled ApplicationSet entries plus direct root-managed Applications', () => {
     expect(inventory.applicationSetEntryCount).toBeGreaterThan(0)
-    expect(inventory.directApplicationCount).toBe(1)
+    expect(inventory.directApplicationCount).toBe(2)
+    expect(
+      inventory.entries
+        .filter((candidate) => candidate.sourceKind === 'direct-application')
+        .map((candidate) => candidate.name)
+        .sort(),
+    ).toEqual(['agents-workspace', 'home-root'])
+    expect(entry('agents-workspace')).toMatchObject({
+      class: 'vendor-manifest',
+      sourceKind: 'direct-application',
+      sourceFile: 'argocd/applicationsets/agents-workspace.yaml',
+      path: 'argocd/applications/agents-workspace',
+      repoImages: [],
+      hasHelmChart: false,
+      workflowPaths: [],
+    })
     expect(inventory.entries).toHaveLength(inventory.applicationSetEntryCount + inventory.directApplicationCount)
     expect(inventory.entries.some((candidate) => candidate.name === 'facteur')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'bonjour')).toBe(false)
@@ -273,7 +363,7 @@ describe('enabled app inventory', () => {
       repoImages: [],
       hasHelmChart: false,
     })
-    expect(metricsServerEntry).toContain('targetRevision: v0.9.0')
+    expect(metricsServerEntry).toContain('targetRevision: v0.9.1')
     expect(entry('home-root')).toMatchObject({
       class: 'external-source',
       repoURL: 'git@github.com:gregkonush/home.git',
@@ -284,9 +374,9 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the identity and metrics controller upgrade wave', () => {
-    expect(certManagerKustomization).toContain('version: v1.21.1')
-    expect(externalSecretsKustomization).toContain('version: 2.8.0')
-    expect(platformApplicationSet).toContain('targetRevision: v0.9.0')
+    expect(certManagerKustomization).toContain('version: v1.21.3')
+    expect(externalSecretsKustomization).toContain('version: 2.15.0')
+    expect(platformApplicationSet).toContain('targetRevision: v0.9.1')
   })
 
   it('keeps database-critical Barman Cloud reconciliation manual', () => {
@@ -308,7 +398,7 @@ describe('enabled app inventory', () => {
     expect(metallbEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
   })
 
-  it('preserves Tengri state and keeps Kata runtime proof bounded', () => {
+  it('preserves Tengri state and keeps runtime validation isolated', () => {
     const tengriEntry = platformApplicationSet.match(
       /              - name: tengri\n[\s\S]*?(?=\n              - name:)/,
     )?.[0]
@@ -331,33 +421,33 @@ describe('enabled app inventory', () => {
     expect(talosUpgradeRunbook).not.toContain('The canaries are DaemonSets')
     expect(talosUpgradeRunbook).toContain('It deletes that Pod and its')
     expect(talosUpgradeRunbook).toContain('unique bootstrap Secret on success or failure')
-    expect(tengriOperations).toContain('`Tengri images` validates both services and CRDs')
-    expect(tengriOperations).toContain('emits the `kargo-sha-<40>` aliases')
-    expect(tengriOperations).toContain('argocd app sync kata --prune')
-    expect(tengriOperations).toContain('kubectl --context galactic-lan -n kata get daemonset -o name')
-    expect(tengriOperations).toContain('verify-runtimes.sh "$PROOF_DIR" talos-192-168-1-194 fc')
+    expect(tengriOperations).toContain('The paired publisher must withhold discoverable aliases')
+    expect(tengriOperations).toContain('and KVM acceptance pass')
+    expect(tengriOperations).toContain(
+      'Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes',
+    )
+    expect(tengriOperations).toContain('private container and volumes')
+    expect(tengriOperations).toContain('Measure at least 50 fresh prepared creations and 50 cold-cache resumes')
     expect(tengriOperations).not.toContain('`Manual OCI Mirror`')
     expect(tengriImagesWorkflow).toContain('TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri')
-    expect(tengriImagesWorkflow).toContain('runner: arc-amd64')
-    expect(tengriImagesWorkflow).toContain('runner: arc-arm64')
     expect(tengriImagesWorkflow).toContain('docker buildx imagetools create')
     expect(tengriImagesWorkflow).toContain('cosign sign --yes "${reference}"')
   })
 
   it('pins MetalLB to immutable 0.16.1 images without rendering its Namespace', () => {
-    expect(metallbKustomization.resources).toContain('github.com/metallb/metallb//config/native?ref=v0.16.1')
+    expect(metallbKustomization.resources).toContain('github.com/metallb/metallb//config/native?ref=v0.16.2')
     expect(metallbKustomization.images).toEqual([
       {
         name: 'quay.io/metallb/controller',
         newName: 'quay.io/metallb/controller',
-        newTag: 'v0.16.1',
-        digest: 'sha256:f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420',
+        newTag: 'v0.16.2',
+        digest: 'sha256:34a6f107f29c4fc6e9d084a7f3bdb781aae7b5ee2b534195a2775ab68c09c503',
       },
       {
         name: 'quay.io/metallb/speaker',
         newName: 'quay.io/metallb/speaker',
-        newTag: 'v0.16.1',
-        digest: 'sha256:16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc',
+        newTag: 'v0.16.2',
+        digest: 'sha256:01666518b091a6651d68891c802db84b2219495d7e0e41c2e61c46f9976be231',
       },
     ])
     expect(
@@ -368,7 +458,15 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
-    expect(argoCdKustomization).toContain('argo-cd/v3.4.6/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argo-cd/v3.6.3/manifests/ha/install.yaml')
+    expect(argoCdKustomization).not.toContain('argo-cd/v3.4.6/')
+    expect(applicationSetsReadme.split('argo-cd/v3.6.3/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
+    expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
+    expect(argoCdReadme).toContain('## Argo CD v3.6.3 upgrade')
+    expect(argoCdReadme).toContain('argocd login argocd.proompteng.ai --username admin --grpc-web')
+    expect(argoCdReadme).not.toContain('argocd login argocd.proompteng.ai --sso')
+    expect(argoCdReadme).toContain('kargo login https://kargo.ide-newton.ts.net --sso')
+    expect(argoCdReadme).toContain('first normal Kargo promotion')
     expect(argoCdKustomization).not.toContain('argocd-image-updater')
     expect(argoCdLovelyPluginOverlay).toContain('ghcr.io/crumbhole/lovely:1.2.5')
     expect(argoCdApplicationSetCrdOverlay).toContain(
@@ -384,17 +482,17 @@ describe('enabled app inventory', () => {
       /              - name: knative\n[\s\S]*?(?=\n              - name:)/,
     )?.[0]
 
-    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.9.0/')
+    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.10.0/')
     expect(kubeVirtKustomization).not.toContain('MultiArchitecture')
-    expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.0/')
-    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.0/operator.yaml')
+    expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.1/')
+    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.24.1/operator.yaml')
     expect(knativeKustomization).toContain('$patch: delete')
     expect(knativeKustomization).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
-    expect(knativeServingManifest).toContain('version: 1.23.0')
-    expect(knativeEventingManifest).toContain('version: 1.23.0')
+    expect(knativeServingManifest).toContain('version: 1.24.0')
+    expect(knativeEventingManifest).toContain('version: 1.24.0')
     expect(knativeEventingKustomization).toContain('eventing-kafka-controller.yaml')
     expect(knativeEventingKustomization).toContain('eventing-kafka-source.yaml')
-    expect(knativeEventingKustomization).toContain('knative-v1.23.0')
+    expect(knativeEventingKustomization).toContain('knative-v1.24.0')
     expect(knativeEventingKustomization).not.toContain('patchesStrategicMerge')
     expect(knativeEntry).toContain('app.kubernetes.io/managed-by: argocd')
     expect(knativeEntry).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
@@ -403,26 +501,26 @@ describe('enabled app inventory', () => {
 
   it('pins the enabled observability collector upgrade wave', () => {
     for (const deploymentPath of enabledAlloyDeploymentPaths) {
-      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.18.1')
+      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.22.0')
     }
     expect(readFileSync('argocd/applications/buzz/alloy-deployment.yaml', 'utf8')).toContain(
-      'sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33',
+      'sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189',
     )
-    expect(natsKustomization).toContain('newTag: v1.18.1')
-    expect(observabilityKustomization).toContain('version: 8.2.0')
+    expect(natsKustomization).toContain('newTag: v1.22.0')
+    expect(observabilityKustomization).toContain('version: 9.1.0')
   })
 
   it('pins the enabled service image upgrade wave', () => {
-    expect(featureFlagsKustomization).toContain('version: 2.11.0')
-    expect(featureFlagsKustomization).toContain('newTag: v2.11.0')
+    expect(featureFlagsKustomization).toContain('version: 2.14.2')
+    expect(featureFlagsKustomization).toContain('newTag: v2.14.2')
     expect(featureFlagsKustomization).toContain(
-      'digest: sha256:d20384874048ef6ac326f4937cee64f1db175a1878a87db32916cc8db46c740e',
+      'digest: sha256:121830e237c3a0d2b875f73905944d6ff301fdd7881c5abdec5f24f5549537e8',
     )
     expect(cloudflaredDeployment).toContain(
-      'cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf',
+      'cloudflare/cloudflared:2026.11.2@sha256:55c7e3e8d89d5e8d20b75a82f3602cbf98e06db406e73e282073cfdc5a9a3af6',
     )
     expect(karapaceManifest).toContain(
-      'ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c',
+      'ghcr.io/aiven-open/karapace:6.2.4@sha256:005eda40272a09f34e60605ae40b1c205c0a5119164b8a090a51ad7f939f79f3',
     )
     expect(karapaceManifest).toContain('app.proompteng.ai/schema-storage-generation: compact-v1')
   })
@@ -448,53 +546,64 @@ describe('enabled app inventory', () => {
     })
   })
 
-  it('pins the Temporal patch wave to immutable multi-architecture images', () => {
+  it('pins the Temporal upgrade wave to immutable multi-architecture images', () => {
     expect(temporalKustomization.helmCharts?.find((chart) => chart.name === 'temporal')).toMatchObject({
-      version: '1.6.0',
+      version: '1.8.0',
     })
     expect(temporalKustomization.images).toEqual([
       {
+        name: 'temporal-worker-runtime',
+        newName: 'mirror.gcr.io/temporalio/server',
+        newTag: '1.32.2',
+        digest: 'sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670',
+      },
+      {
+        name: 'docker.elastic.co/elasticsearch/elasticsearch',
+        newTag: '8.19.21',
+        digest: 'sha256:cbf5cd6cfe5532a9c02d510c66d238bf329cd51fe3d57170a2a880aca7d47419',
+      },
+      {
         name: 'mirror.gcr.io/temporalio/server',
         newName: 'mirror.gcr.io/temporalio/server',
-        newTag: '1.31.2',
-        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
+        newTag: '1.32.2',
+        digest: 'sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670',
       },
       {
         name: 'mirror.gcr.io/temporalio/admin-tools',
         newName: 'mirror.gcr.io/temporalio/admin-tools',
-        newTag: '1.31.2',
-        digest: 'sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107',
+        newTag: '1.32.2',
+        digest: 'sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754',
       },
       {
         name: 'mirror.gcr.io/temporalio/ui',
         newName: 'mirror.gcr.io/temporalio/ui',
-        newTag: '2.52.0',
-        digest: 'sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa',
+        newTag: '2.58.1',
+        digest: 'sha256:ac3c13eddb4547d830991bb5eee93a5d97140134522b7297fdb2be1fe25ef925',
       },
     ])
   })
 
   it('pins the Open WebUI migration wave to its immutable image', () => {
     expect(jangarKustomization.helmCharts?.find((chart) => chart.name === 'open-webui')).toMatchObject({
-      version: '16.0.0',
+      version: '18.4.0',
     })
     expect(jangarKustomization.images?.find((image) => image.name === 'ghcr.io/open-webui/open-webui')).toEqual({
       name: 'ghcr.io/open-webui/open-webui',
-      newTag: 'v0.11.0',
-      digest: 'sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228',
+      newTag: 'v0.13.4',
+      digest: 'sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901',
     })
-    expect(openWebUIValues.image?.tag).toBe('v0.11.0')
+    expect(openWebUIValues.image?.tag).toBe('v0.13.4')
   })
 
-  it('pins both Saigak Ollama containers to the immutable multi-architecture image', () => {
+  it('pins both Saigak Ollama containers to the immutable ROCm image', () => {
     const podSpec = saigakStatefulSet.spec?.template?.spec
     const ollamaImages = [...(podSpec?.initContainers ?? []), ...(podSpec?.containers ?? [])]
       .filter((container) => container.name === 'model-init' || container.name === 'ollama')
       .map((container) => container.image)
 
     expect(ollamaImages).toEqual([
-      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
-      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
+      'ollama/ollama:0.40.19-rocm@sha256:4f73cdd3226204f3778e1c81f87c0b10ed92fd33270ccfcc815ffffc0b2600cd',
+      'ollama/ollama:0.40.19-rocm@sha256:4f73cdd3226204f3778e1c81f87c0b10ed92fd33270ccfcc815ffffc0b2600cd',
     ])
   })
 
@@ -502,26 +611,26 @@ describe('enabled app inventory', () => {
     const vllm = flamingoDeployment.spec?.template?.spec?.containers?.find((container) => container.name === 'vllm')
 
     expect(vllm?.image).toBe(
-      'vllm/vllm-openai:v0.26.0-x86_64-cu129@sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541',
+      'vllm/vllm-openai:v0.34.0@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1',
     )
   })
 
   it('pins Keycloak to the immutable multi-architecture security release', () => {
     expect(keycloakManifest).toContain(
-      'quay.io/keycloak/keycloak:26.7.1@sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6',
+      'quay.io/keycloak/keycloak:26.8.2@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3',
     )
   })
 
   it('pins Coder to the immutable multi-architecture stable release', () => {
     expect(coderChart).toMatchObject({
-      appVersion: '2.35.3',
-      version: '2.35.3',
+      appVersion: '2.38.10',
+      version: '2.38.10',
     })
-    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.35.3')
+    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.38.10')
     expect(coderValues.coder?.coder).toMatchObject({
       replicaCount: 1,
       image: {
-        tag: 'v2.35.3@sha256:8e34e774ebde1813f03294498374cd955264eee6cd2b61a72baf7634a0ca7de4',
+        tag: 'v2.38.10@sha256:f94f80a3bcc002b9a4e32b551d18e5331a0b9c936e0663412e8a9894339e94cf',
       },
     })
   })
@@ -542,7 +651,7 @@ describe('enabled app inventory', () => {
   it('pins both custom NVIDIA device plugins to the immutable security release', () => {
     for (const manifest of nvidiaDevicePluginManifests) {
       expect(manifest).toContain(
-        'nvcr.io/nvidia/k8s-device-plugin:v0.19.3@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77',
+        'nvcr.io/nvidia/k8s-device-plugin:v0.20.2@sha256:7673383d44a84bece724d9ca8feeadf4eee69cd46475fdff614cbbca6732d463',
       )
       expect(manifest).not.toContain('nvcr.io/nvidia/k8s-device-plugin:v0.19.0')
     }
@@ -600,12 +709,8 @@ describe('enabled app inventory', () => {
       'attic',
       'symphony',
       'symphony-jangar',
-      'symphony-torghut',
       'jangar',
       'torghut',
-      'torghut-hyperliquid-feed',
-      'torghut-hyperliquid-runtime',
-      'torghut-options',
     ]) {
       expect(entry(name).class).toBe('nix-image')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
@@ -625,12 +730,8 @@ describe('enabled app inventory', () => {
     expect(entry('arc').nixImageAttr).toBe('arc-runner-image')
     expect(entry('symphony').nixImageAttr).toBe('symphony-image')
     expect(entry('symphony-jangar').nixImageAttr).toBe('symphony-image')
-    expect(entry('symphony-torghut').nixImageAttr).toBe('symphony-image')
     expect(entry('jangar').nixImageAttr).toBe('jangar-image')
     expect(entry('torghut').nixImageAttr).toBe('torghut-image')
-    expect(entry('torghut-hyperliquid-feed').nixImageAttr).toBe('torghut-hyperliquid-feed-image')
-    expect(entry('torghut-hyperliquid-runtime').nixImageAttr).toBe('torghut-image')
-    expect(entry('torghut-options').nixImageAttr).toBe('torghut-image')
   })
 
   it('tracks the live Attic image through both GitHub Actions and manual deploy paths', () => {
@@ -643,14 +744,14 @@ describe('enabled app inventory', () => {
     expect(entry('attic').workflowPaths).toContain('.github/workflows/attic-build-push.yaml')
   })
 
-  it('tracks ARC runner images through both GitHub Actions and manual Nix image paths', () => {
+  it('tracks ARC runner images through the single GitHub Actions and Kargo path', () => {
     expect(entry('arc')).toMatchObject({
       class: 'nix-image',
       nixImageAttr: 'arc-runner-image',
-      buildScriptPath: 'packages/scripts/src/arc-runner/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/arc-runner/deploy-service.ts',
     })
     expect(entry('arc').workflowPaths).toContain('.github/workflows/arc-runner-build-push.yml')
+    expect(entry('arc').buildScriptPath).toBeUndefined()
+    expect(entry('arc').deployScriptPath).toBeUndefined()
   })
 
   it('tracks Froussard through both GitHub Actions and manual Nix image paths', () => {
@@ -673,47 +774,26 @@ describe('enabled app inventory', () => {
     expect(entry('jangar').workflowPaths).toContain('.github/workflows/jangar-build-push.yaml')
   })
 
-  it('tracks Symphony derivative apps through the shared Symphony Nix image path', () => {
-    for (const name of ['symphony-jangar', 'symphony-torghut']) {
-      expect(entry(name)).toMatchObject({
-        class: 'nix-image',
-        nixImageAttr: 'symphony-image',
-        buildScriptPath: 'packages/scripts/src/symphony/build-image.ts',
-        deployScriptPath: 'packages/scripts/src/symphony/deploy-service.ts',
-      })
-      expect(entry(name).workflowPaths).toContain('.github/workflows/symphony-build-push.yaml')
-      expect(entry(name).deferredReason).toBeUndefined()
-    }
+  it('tracks the Symphony Jangar derivative through the shared Symphony Nix image path', () => {
+    expect(entry('symphony-jangar')).toMatchObject({
+      class: 'nix-image',
+      nixImageAttr: 'symphony-image',
+      buildScriptPath: 'packages/scripts/src/symphony/build-image.ts',
+      deployScriptPath: 'packages/scripts/src/symphony/deploy-service.ts',
+    })
+    expect(entry('symphony-jangar').workflowPaths).toContain('.github/workflows/symphony-build-push.yaml')
+    expect(entry('symphony-jangar').deferredReason).toBeUndefined()
   })
 
-  it('tracks Torghut-family enabled apps through explicit Nix image ownership paths', () => {
-    expect(entry('torghut-hyperliquid-feed')).toMatchObject({
-      class: 'nix-image',
-      nixImageAttr: 'torghut-hyperliquid-feed-image',
-      buildScriptPath: 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts',
-      deployScriptPath: 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts',
-    })
-    expect(entry('torghut-hyperliquid-feed').workflowPaths).toContain(
-      '.github/workflows/torghut-hyperliquid-feed-build-push.yaml',
-    )
-
-    expect(entry('torghut-hyperliquid-runtime')).toMatchObject({
-      class: 'nix-image',
-      nixImageAttr: 'torghut-image',
-      buildScriptPath: 'packages/scripts/src/torghut/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/torghut/update-manifests.ts',
-    })
-    expect(entry('torghut-hyperliquid-runtime').workflowPaths).toContain('.github/workflows/torghut-build-push.yaml')
-
-    expect(entry('torghut-options')).toMatchObject({
-      class: 'nix-image',
-      nixImageAttr: 'torghut-image',
-      buildScriptPath: 'packages/scripts/src/torghut/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/torghut/update-manifests.ts',
-    })
-    expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-build-push.yaml')
-    expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-ws-build-push.yaml')
-    expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-ta-build-push.yaml')
+  it('excludes retired Torghut applications from the enabled inventory', () => {
+    for (const name of [
+      'symphony-torghut',
+      'torghut-options',
+      'torghut-hyperliquid-feed',
+      'torghut-hyperliquid-runtime',
+    ]) {
+      expect(inventory.entries.some((candidate) => candidate.name === name)).toBe(false)
+    }
   })
 
   it('keeps repo-image apps without local build ownership out of Nix migration state', () => {
@@ -734,7 +814,7 @@ describe('enabled app inventory', () => {
       repoImages: [
         'registry.ide-newton.ts.net/lab/buzz@sha256:16d08bf8e2772a93924de1a49746a034d3410387d6095b214ed2e798aa7d6cfb',
       ],
-      workflowPaths: ['.github/workflows/buzz-relay-build-push.yml'],
+      workflowPaths: ['.github/workflows/buzz-relay-build-push.yml', '.github/workflows/buzz-relay-cache.yml'],
     })
     expect(entry('buzz').deferredReason).toContain('block/buzz')
   })
@@ -744,7 +824,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: false,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283',
       ],
     })
     expect(entry('hermes').deferredReason).toContain('NousResearch/hermes-agent')
@@ -755,7 +835,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: true,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/tigresse@sha256:b04308528a46291e2c65562d04c2ac7644c4e7f25f2c247dae282b70f8856e2c',
+        'registry.ide-newton.ts.net/lab/tigresse@sha256:e5174fe7f584ac12d4c50ef372b346cbffe4b0f377b552e795f046fca1e85172',
       ],
     })
     expect(entry('tigresse').deferredReason).toContain('proompteng/tigresse')

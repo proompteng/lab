@@ -1,6 +1,8 @@
+import { isDeepStrictEqual } from 'node:util'
 import { Chunk, Effect, HashMap, HashSet, Option, Result, pipe } from 'effect'
 
-import type { FillActivity, Order as BrokerOrder } from '../broker/alpaca'
+import type { FillActivity, Order as BrokerOrder } from '../broker/alpaca/model'
+import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import {
   accountObservation,
   fillObservation,
@@ -8,8 +10,8 @@ import {
   positionSnapshot,
   type PositionSnapshotInput,
 } from '../broker/observations'
-import type { ReconciliationPersistence } from '../db/execution-store'
-import type { IntentBinding } from '../db/reconciliation'
+import type { ReconciliationPersistence } from '../db/execution-store/contract'
+import type { IntentBinding } from '../db/intent-bindings'
 import {
   compareText,
   mapObservationFailure,
@@ -21,9 +23,9 @@ import {
   type Observed,
   type OrderEventInput,
   type ReconciliationError,
+  type ReconciledProtectionGroup,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
-import { Pipeable } from '../pipeable'
 
 const indexBindings = (
   bindings: readonly IntentBinding[],
@@ -144,20 +146,92 @@ const normalizePositions = (
 ): Result.Result<PositionSnapshotInput, ReconciliationError> =>
   mapObservationFailure('positions', accountId, positionSnapshot(accountId, positions))
 
-const normalizeSnapshotDataFirst = (
+const sameProtectionChild = (nested: BrokerOrder, standalone: BrokerOrder): boolean => {
+  const { observedAt: _nestedRead, parentBrokerOrderId: parent, ...nestedContent } = nested
+  const { observedAt: _standaloneRead, parentBrokerOrderId: claimedParent, ...standaloneContent } = standalone
+  return (
+    (claimedParent === undefined || claimedParent === parent) && isDeepStrictEqual(nestedContent, standaloneContent)
+  )
+}
+
+export const normalizeSnapshot = (
   snapshot: StableBrokerSnapshot,
   bindings: readonly IntentBinding[],
 ): Result.Result<NormalizedBrokerSnapshot, ReconciliationError> =>
   Result.gen(function* () {
-    const intentByClient = yield* indexBindings(bindings)
-    const orders = yield* normalizeOrders(snapshot.history.orders.rows, intentByClient)
+    const expandedBindings = [...bindings]
+    const bindingByClient = new Map<string, IntentBinding>()
+    for (const binding of bindings) {
+      // Preserve the first binding and defer duplicate validation until after protection verification.
+      if (!bindingByClient.has(binding.clientOrderId)) bindingByClient.set(binding.clientOrderId, binding)
+    }
+    const rows: Observed<BrokerOrder>[] = []
+    const protectionGroups: ReconciledProtectionGroup[] = []
+    const verifiedChildren = new Map<string, BrokerOrder>()
+    for (const observed of snapshot.history.orders.rows) {
+      rows.push(observed)
+      const parent = observed.value
+      if (parent.legs === undefined) continue
+      const binding = bindingByClient.get(parent.clientOrderId)
+      if (binding?.protection === undefined || binding.symbol === undefined || binding.quantityAtoms === undefined)
+        return yield* Result.fail(
+          validationFailure('UnexpectedOrderEvent', 'broker children have no immutable strategy protection intent'),
+        )
+      const children = verifyProtectionGroup(parent, {
+        symbol: binding.symbol,
+        quantityAtoms: binding.quantityAtoms,
+        protection: binding.protection,
+      })
+      if (Result.isFailure(children))
+        return yield* Result.fail(validationFailure('UnexpectedOrderEvent', children.failure))
+      protectionGroups.push({
+        intentId: binding.intentId,
+        symbol: binding.symbol,
+        quantityAtoms: binding.quantityAtoms,
+        protection: binding.protection,
+        parent: observed,
+      })
+      for (const child of children.success) {
+        if (verifiedChildren.has(child.brokerOrderId))
+          return yield* Result.fail(
+            validationFailure('UnexpectedOrderEvent', 'broker child belongs to multiple protection groups'),
+          )
+        verifiedChildren.set(child.brokerOrderId, child)
+        expandedBindings.push({ intentId: binding.intentId, clientOrderId: child.clientOrderId })
+        rows.push({ value: child, evidence: observed.evidence })
+      }
+    }
+    const intentByClient = yield* indexBindings(expandedBindings)
+    const standaloneIds = new Set<string>()
+    const aliases = new Set<Observed<BrokerOrder>>()
+    for (const observed of snapshot.history.orders.rows) {
+      const order = observed.value
+      if (standaloneIds.has(order.brokerOrderId))
+        return yield* Result.fail(validationFailure('UnexpectedOrderEvent', 'duplicate top-level broker order ID'))
+      standaloneIds.add(order.brokerOrderId)
+      const child = verifiedChildren.get(order.brokerOrderId)
+      if (child === undefined) continue
+      if (!sameProtectionChild(child, order))
+        return yield* Result.fail(validationFailure('UnexpectedOrderEvent', 'conflicting standalone protection child'))
+      aliases.add(observed)
+    }
+    const orders = yield* normalizeOrders(
+      rows.filter((observed) => !aliases.has(observed)),
+      intentByClient,
+    )
     const fillEvents = yield* normalizeFills(snapshot.history.fills, orders, intentByClient)
     const account = yield* normalizeAccount(snapshot.account)
     const positions = yield* normalizePositions(snapshot.account.value.id, snapshot.positions)
-    return { account, positions, orderEvents: Chunk.toReadonlyArray(orders.events), fillEvents }
+    return {
+      account,
+      cashReportingQuantumMicros: snapshot.account.value.cashReportingQuantumMicros,
+      positions,
+      orderEvents: Chunk.toReadonlyArray(orders.events),
+      protectionGroups,
+      fillEvents,
+      fees: snapshot.history.fees,
+    }
   })
-
-export const normalizeSnapshot = Pipeable.dual(2, normalizeSnapshotDataFirst)
 
 export const decideAccountBaseline = (hasAccountBaseline: boolean): Result.Result<void, ReconciliationError> =>
   hasAccountBaseline
@@ -169,14 +243,12 @@ export const decideAccountBaseline = (hasAccountBaseline: boolean): Result.Resul
         ),
       )
 
-const prepareNormalizedSnapshotDataFirst = (store: ReconciliationPersistence, snapshot: StableBrokerSnapshot) =>
+export const prepareNormalizedSnapshot = (store: ReconciliationPersistence, snapshot: StableBrokerSnapshot) =>
   Effect.gen(function* () {
     const bindings = yield* store.reconciliation.bindings(snapshot.account.value.id)
-    if (snapshot.history.fills.length > 0) {
+    if (snapshot.history.fills.length > 0 || snapshot.history.fees.length > 0) {
       const hasAccountBaseline = yield* store.valuation.hasAccountBaseline(snapshot.account.value.id)
       yield* Effect.fromResult(decideAccountBaseline(hasAccountBaseline))
     }
     return yield* Effect.fromResult(normalizeSnapshot(snapshot, bindings))
   })
-
-export const prepareNormalizedSnapshot = Pipeable.dual(2, prepareNormalizedSnapshotDataFirst)

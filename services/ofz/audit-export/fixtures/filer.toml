@@ -1,0 +1,6 @@
+[leveldb2]
+enabled = false
+
+[sqlite]
+enabled = true
+dbFile = "file:/data/filer.sqlite3?_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)"

@@ -18,6 +18,18 @@ interface ReplayFixture {
 }
 
 const FIXTURE_DIR = join(import.meta.dir, 'fixtures')
+const MANIFEST_PATH = join(import.meta.dir, 'corpus', 'manifest.json')
+
+test('replay corpus excludes runtime-version provenance', async () => {
+  const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8')) as {
+    readonly fixtures?: readonly Record<string, unknown>[]
+  }
+
+  expect(manifest.fixtures?.length ?? 0).toBeGreaterThan(0)
+  for (const entry of manifest.fixtures ?? []) {
+    expect(entry).not.toHaveProperty('bunVersion')
+  }
+})
 
 test('replay fixtures remain deterministic', async () => {
   const fixtures = await loadReplayFixtures()

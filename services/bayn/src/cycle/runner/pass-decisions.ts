@@ -1,20 +1,25 @@
 import { Result } from 'effect'
 
-import { Pipeable } from '../../pipeable'
+import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
+import { OperationalError } from '../../errors'
 import { CycleState, type AutonomousCycle } from '../model'
-import type { CycleRecoverySelection } from '../recovery'
-import { runnerError, type CyclePassObservation, type CycleRunnerError, type CycleRunResult } from './model'
+import type { CycleRecoverySelection } from './recovery-model'
+import {
+  CycleDecisionBuildError,
+  runnerError,
+  type CyclePassObservation,
+  type CycleRunnerError,
+  type CycleRunResult,
+} from './model'
 import type { RetainedAutonomousCyclePassObservation } from './pass-observation'
 
 export type { RetainedAutonomousCyclePassObservation } from './pass-observation'
 
-const finishRecoveryResultDataFirst = (
+export const finishRecoveryResult = (
   selection: Extract<CycleRecoverySelection, { readonly action: 'FINISH' }>,
   cycle: AutonomousCycle,
 ): Result.Result<CycleRunResult, CycleRunnerError> => {
-  const result = (
-    action: Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['action'],
-  ): Result.Result<CycleRunResult, CycleRunnerError> =>
+  const result = (action: 'BLOCKED' | 'COMPLETED' | 'NO_TRADE'): Result.Result<CycleRunResult, CycleRunnerError> =>
     Result.succeed({ outcome: 'RECOVERED', action, observedAt: selection.observedAt, cycle })
 
   switch (cycle.state) {
@@ -35,17 +40,45 @@ const finishRecoveryResultDataFirst = (
   }
 }
 
-export const finishRecoveryResult = Pipeable.dual(2, finishRecoveryResultDataFirst)
-
 export interface CyclePassLogFacts {
   readonly level: 'INFO' | 'ERROR'
   readonly message: string
   readonly annotations: Readonly<Partial<Record<string, string | boolean>>>
 }
 
+const isMissingBrokerObservation = (error: CycleRunnerError): boolean => {
+  const cause =
+    error.operation === 'build-decision' &&
+    error.cause instanceof CycleDecisionBuildError &&
+    error.cause.failure === 'market-data'
+      ? error.cause.cause
+      : error.operation === 'reconcile'
+        ? error.cause
+        : undefined
+  return (
+    error.failure === 'market-data' &&
+    cause instanceof OperationalError &&
+    cause.component === 'market-data' &&
+    cause.operation === 'reconciliation' &&
+    cause.retryable &&
+    cause.cause instanceof BrokerReadError &&
+    cause.cause.operation === 'preflight' &&
+    cause.cause.kind === BrokerReadErrorKind.Timeout &&
+    cause.cause.retryable &&
+    cause.cause.observationFailure === 'NO_ADMISSIBLE_CUT'
+  )
+}
+
 export const retainAutonomousCyclePassObservation = (
   observation: CyclePassObservation,
 ): RetainedAutonomousCyclePassObservation => {
+  if (observation.outcome === 'WAITING')
+    return {
+      result: 'SUCCESS',
+      outcome: 'WAITING',
+      observedAt: observation.observedAt,
+      waitReason: observation.waitReason,
+    }
   if (observation.outcome === 'FAILED') {
     return {
       result: 'FAILURE',
@@ -53,13 +86,47 @@ export const retainAutonomousCyclePassObservation = (
       operation: observation.error.operation,
       failure: observation.error.failure,
       message: observation.error.message,
+      ...(isMissingBrokerObservation(observation.error)
+        ? { brokerObservationFailure: 'NO_ADMISSIBLE_CUT' as const }
+        : {}),
     }
   }
 
   return {
     result: 'SUCCESS',
-    observedAt: observation.observedAt,
+    // Admission evidence was recognized at the result clock; pass completion may cross its original boundary.
+    observedAt:
+      observation.result.outcome === 'ADMISSION_WAITING' ||
+      (observation.result.outcome === 'ALREADY_TERMINAL' && observation.result.readiness !== undefined)
+        ? observation.result.observedAt
+        : observation.observedAt,
     outcome: observation.result.outcome,
+    ...(observation.result.outcome === 'WINDOW_CLOSED' && observation.result.closedEntryWindow !== undefined
+      ? { closedEntryWindow: observation.result.closedEntryWindow }
+      : {}),
+    ...(observation.result.outcome === 'ADMISSION_WAITING'
+      ? { readiness: observation.result.readiness, admissionProtection: observation.result.admissionProtection }
+      : {}),
+    ...(observation.result.outcome === 'ALREADY_TERMINAL' && observation.result.readiness !== undefined
+      ? { readiness: observation.result.readiness }
+      : {}),
+    ...(observation.result.outcome === 'RECOVERED'
+      ? {
+          recoveryAction: observation.result.action,
+          ...('positionHold' in observation.result && observation.result.positionHold !== undefined
+            ? { positionHold: observation.result.positionHold }
+            : {}),
+          ...('protectionReleaseCycleId' in observation.result &&
+          observation.result.protectionReleaseCycleId !== undefined
+            ? { protectionReleaseCycleId: observation.result.protectionReleaseCycleId }
+            : {}),
+          ...('entryAbstention' in observation.result && observation.result.entryAbstention !== undefined
+            ? { entryAbstention: observation.result.entryAbstention }
+            : {}),
+          ...(observation.result.waitReason === undefined ? {} : { waitReason: observation.result.waitReason }),
+          ...(observation.result.readiness === undefined ? {} : { readiness: observation.result.readiness }),
+        }
+      : {}),
   }
 }
 
@@ -70,6 +137,12 @@ const cycleAnnotations = (cycle: AutonomousCycle): Readonly<Partial<Record<strin
 })
 
 export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassLogFacts => {
+  if (observation.outcome === 'WAITING')
+    return {
+      level: 'INFO',
+      message: 'Bayn autonomous cycle pass is awaiting a fresh broker observation',
+      annotations: { waitReason: observation.waitReason, observedAt: observation.observedAt },
+    }
   if (observation.outcome === 'FAILED') {
     return {
       level: 'ERROR',
@@ -84,6 +157,21 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
 
   const result = observation.result
   switch (result.outcome) {
+    case 'ADMISSION_WAITING':
+      return {
+        level: 'INFO',
+        message: 'Bayn entry admission is waiting for account protection',
+        annotations: {
+          outcome: result.outcome,
+          observedAt: result.observedAt,
+          readiness: JSON.stringify(result.readiness),
+          authorityGenerationHash: result.admissionProtection.authorityGenerationHash,
+          authorityUpdatedAt: result.admissionProtection.authorityUpdatedAt,
+          reconciliationId: result.admissionProtection.reconciliationId,
+          tradingDate: result.admissionProtection.tradingDate,
+          validUntil: result.admissionProtection.validUntil,
+        },
+      }
     case 'WINDOW_CLOSED':
       return {
         level: 'INFO',
@@ -113,6 +201,9 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         annotations: {
           outcome: result.outcome,
           observedAt: result.observedAt,
+          ...(result.outcome === 'ALREADY_TERMINAL' && result.readiness !== undefined
+            ? { readiness: JSON.stringify(result.readiness) }
+            : {}),
           ...cycleAnnotations(result.cycle),
         },
       }
@@ -123,20 +214,11 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         annotations: {
           outcome: result.outcome,
           recoveryAction: result.action,
+          ...(result.waitReason === undefined ? {} : { waitReason: result.waitReason }),
+          ...(result.readiness === undefined ? {} : { readiness: JSON.stringify(result.readiness) }),
           observedAt: result.observedAt,
           ...cycleAnnotations(result.cycle),
         },
       }
   }
 }
-
-export const validateCycleLoopInterval = (pollIntervalMs: number): Result.Result<number, CycleRunnerError> =>
-  Number.isSafeInteger(pollIntervalMs) && pollIntervalMs > 0
-    ? Result.succeed(pollIntervalMs)
-    : Result.fail(
-        runnerError({
-          operation: 'configure',
-          failure: 'invalid-config',
-          message: 'cycle loop interval must be a positive safe integer',
-        }),
-      )

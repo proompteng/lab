@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/component: model-server
 spec:
   replicas: 1
+  revisionHistoryLimit: 2
   progressDeadlineSeconds: 14400
   strategy:
     type: Recreate
@@ -36,7 +37,7 @@ spec:
       terminationGracePeriodSeconds: 120
       containers:
         - name: vllm
-          image: vllm/vllm-openai:v0.26.0-x86_64-cu129@sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541
+          image: vllm/vllm-openai:v0.34.0@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1
           imagePullPolicy: IfNotPresent
           args:
             - --host
@@ -44,22 +45,26 @@ spec:
             - --port
             - "8000"
             - --model
-            - unsloth/Qwen3.6-35B-A3B-NVFP4
+            - nvidia/Qwen3.8-27B-NVFP4
+            - --revision
+            - 482ca0f3832238542f8f5295dde86b5f22711d80
+            - --tokenizer-revision
+            - 482ca0f3832238542f8f5295dde86b5f22711d80
             - --served-model-name
-            - qwen36-flamingo
+            - qwen38-flamingo
             - --trust-remote-code
             - --dtype
             - bfloat16
             - --max-model-len
             - "262144"
             - --gpu-memory-utilization
-            - "0.85"
+            - "0.90"
             - --kv-cache-dtype
             - fp8
             - --max-num-seqs
-            - "16"
+            - "8"
             - --max-num-batched-tokens
-            - "16384"
+            - "8192"
             - --enable-prefix-caching
             - --reasoning-parser
             - qwen3
@@ -68,7 +73,13 @@ spec:
             - qwen3_coder
             - --optimization-level
             - "2"
+            - --middleware
+            - serving_identity.ServingIdentityMiddleware
           env:
+            - name: PYTHONPATH
+              value: /opt/flamingo
+            - name: FLAMINGO_SERVING_IMAGE
+              value: sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1
             - name: HF_HOME
               value: /models/huggingface
             - name: VLLM_CACHE_ROOT
@@ -103,11 +114,11 @@ spec:
           resources:
             requests:
               cpu: "4"
-              memory: 32Gi
+              memory: 40Gi
               nvidia.com/gpu: "1"
             limits:
               cpu: "8"
-              memory: 40Gi
+              memory: 48Gi
               nvidia.com/gpu: "1"
           securityContext:
             allowPrivilegeEscalation: false
@@ -115,11 +126,17 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            - name: serving-identity
+              mountPath: /opt/flamingo
+              readOnly: true
             - name: model-cache
               mountPath: /models
             - name: shm
               mountPath: /dev/shm
       volumes:
+        - name: serving-identity
+          configMap:
+            name: flamingo-serving-identity
         - name: model-cache
           persistentVolumeClaim:
             claimName: flamingo-model-cache

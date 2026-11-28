@@ -23,6 +23,7 @@ metadata:
     app.kubernetes.io/name: karapace
 spec:
   replicas: 1
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: karapace
@@ -35,7 +36,7 @@ spec:
     spec:
       containers:
         - name: karapace
-          image: ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c
+          image: ghcr.io/aiven-open/karapace:6.2.4@sha256:005eda40272a09f34e60605ae40b1c205c0a5119164b8a090a51ad7f939f79f3
           imagePullPolicy: IfNotPresent
           command:
             - python3

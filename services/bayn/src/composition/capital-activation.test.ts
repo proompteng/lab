@@ -1,0 +1,542 @@
+import { retainedJevProtocolV39Document } from '../jev/protocol'
+import { expect, test } from 'bun:test'
+import { Effect, Redacted, Result } from 'effect'
+
+import type { ApplicationPlan } from '../app'
+import { alpacaSandboxBaseUrl } from '../broker/connection'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { makeStrategyProtocolHashResult } from '../contracts'
+import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
+import {
+  makeResearchCapitalActivationRequest,
+  makeResearchCapitalPlanHash,
+  researchCapitalGrantProof,
+  type ResearchCapitalActivationRequest,
+} from '../execution/configuration'
+import { config, fixtureRuntime } from '../testing/runtime-fixtures'
+import {
+  AccountStatus,
+  Authority,
+  KillState,
+  ReconciliationStatus,
+  makeResearchCapitalGrantGenerationResult,
+  type AuthorityState,
+} from '../execution/contracts'
+import type { AuthorityGenerationStoreShape, CapitalGrantLifecycleStoreShape } from '../db/execution-store/contract'
+import { executionObserveSuccessorGenerationHash } from '../blocked-generation-recovery'
+import { strategyProtocolCutoverRestrictionReason } from '../execution/mandate'
+import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
+import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
+import { canonicalHashV1Result } from '../hash'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
+import {
+  configuredCapitalActivation,
+  readBoundCapitalActivationGeneration,
+  researchCapitalRecoveryRequestIsCompatible,
+  prepareOrRecoverResearchCapitalActivation,
+  refreshResearchCapitalActivationReconciliation,
+  validateResearchCapitalPreflight,
+  validateResearchCapitalRiskPolicy,
+} from './capital-activation'
+
+const accountId = '123e4567-e89b-42d3-a456-426614174000'
+const identity = Result.getOrThrow(
+  makeBrokerIdentity({
+    schemaVersion: 'bayn.broker-identity.v2',
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    accountId,
+  }),
+)
+const strategy = {
+  ...fixtureRuntime.provenance.strategy,
+  protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
+}
+const request = (
+  overrides: Partial<ResearchCapitalActivationRequest['strategy']> = {},
+  riskPolicyHash = 'a'.repeat(64),
+) => {
+  const material: Omit<ResearchCapitalActivationRequest, 'schemaVersion' | 'grant' | 'requestHash'> = {
+    activation: {
+      sourceRevision: config.build.sourceRevision,
+      imageRepository: config.build.imageRepository,
+      imageDigest: config.build.imageDigest,
+    },
+    strategy: { ...strategy, ...overrides },
+    broker: { environment: BrokerEnvironment.Sandbox, accountId, identityHash: identity.identityHash },
+    riskPolicyHash,
+    limits: { maxOpenOrders: 0, maxPositions: 0 } as const,
+  }
+  const planHash = Result.getOrThrow(
+    makeResearchCapitalPlanHash({ schemaVersion: 'bayn.research-execution-plan.v1', ...material }),
+  )
+  return Result.getOrThrow(
+    makeResearchCapitalActivationRequest({
+      schemaVersion: 'bayn.research-execution-mandate.v1',
+      grant: { _tag: 'Research', planHash },
+      ...material,
+    }),
+  )
+}
+const plan = (serialized?: string): ApplicationPlan => ({
+  _tag: 'AutonomousService',
+  config: {
+    ...config,
+    runtimeMode: 'AutonomousService',
+    execution: {
+      brokerIdentity: identity,
+      brokerAccess: BrokerAccess.ReadOnly,
+      capitalAuthority: { _tag: CapitalAuthorityKind.None },
+    },
+    capitalActivationRequestJson: serialized,
+    alpaca: {
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      identity,
+      baseUrl: alpacaSandboxBaseUrl,
+      expectedAccountId: accountId,
+      authorityGenerationHash: 'b'.repeat(64),
+      key: Redacted.make('fixture-key'),
+      secret: Redacted.make('fixture-secret'),
+      proxyUrl: 'http://proxy.test:3128',
+      operationTimeoutMs: 30_000,
+      retryAttempts: 0,
+      reconciliationIntervalMs: 30_000,
+    },
+  },
+  strategy: fixtureRuntime,
+  parameterHash: strategy.parameterHash,
+  strategyProtocolHash: strategy.protocolHash,
+})
+
+const generation = (mandate: ResearchCapitalActivationRequest, previousGenerationHash: string) => {
+  const { schemaVersion: _proofSchema, ...proof } = researchCapitalGrantProof(mandate)
+  return Result.getOrThrow(
+    makeResearchCapitalGrantGenerationResult({
+      ...proof,
+      schemaVersion: 'bayn.paper-authority-generation.v3',
+      maximum: Authority.Execution,
+      previousGenerationHash,
+      reconciliationId: '2'.repeat(64),
+      reconciliationContentHash: '3'.repeat(64),
+    }),
+  )
+}
+
+test('a compatible sealed request cannot label a durable generation created by another request', async () => {
+  const policy = Result.getOrThrow(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe))
+  const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
+  const other = request({}, 'b'.repeat(64))
+  expect(Result.isSuccess(configuredCapitalActivation(plan(JSON.stringify(other))))).toBeTrue()
+  for (const matching of [true, false]) {
+    const retained = generation(matching ? current : other, 'a'.repeat(64))
+    const authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: retained.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      version: 1,
+      updatedAt: '2026-11-09T14:29:59.000Z',
+    }
+    const result = await Effect.runPromise(
+      readBoundCapitalActivationGeneration(plan(JSON.stringify(current)), current, null, null, {
+        readAuthorityState: Effect.succeed(authority),
+        readResearchAuthorityGeneration: (hash) => {
+          expect(hash).toBe(retained.generationHash)
+          return Effect.succeed(retained)
+        },
+      }).pipe(Effect.result),
+    )
+    expect(Result.isSuccess(result)).toBe(matching)
+  }
+})
+
+test('rejects an otherwise valid sealed mandate for the previous strategy before runtime preparation', () => {
+  for (const [field, message] of [
+    ['behaviorHash', 'capital activation request strategy identity does not match the current strategy'],
+    ['protocolHash', 'capital activation request strategy protocol does not match the current strategy'],
+  ] as const) {
+    const previous = request({ [field]: 'f'.repeat(64) })
+    expect(configuredCapitalActivation(plan(JSON.stringify(previous)))).toEqual(Result.fail(message))
+  }
+})
+
+test('retains the exact compatible mandate without changing its account or risk binding', () => {
+  const current = request()
+  expect(configuredCapitalActivation(plan(JSON.stringify(current)))).toEqual(
+    Result.succeed({ request: current, buildContinuation: null, buildLineage: null }),
+  )
+})
+
+test('v39 requires a reviewed strategy rebind even when the v38 account, grant class and risk remain identical', () => {
+  const previousStrategy = {
+    ...strategy,
+    parameterSchemaVersion: 'bayn.jev.protocol.v38',
+    parameterHash: Result.getOrThrow(
+      canonicalHashV1Result({
+        ...retainedJevProtocolV39Document,
+        schemaVersion: 'bayn.jev.protocol.v38',
+      }),
+    ),
+  }
+  const previous = request({
+    ...previousStrategy,
+    protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(previousStrategy)),
+  })
+  const current = request()
+  expect(previous.broker).toEqual(current.broker)
+  expect(previous.riskPolicyHash).toBe(current.riskPolicyHash)
+  expect(previous.limits).toEqual(current.limits)
+  expect(previous.grant._tag).toBe(current.grant._tag)
+  expect(previous.strategy.behaviorHash).toBe(current.strategy.behaviorHash)
+  expect(Result.isFailure(configuredCapitalActivation(plan(JSON.stringify(previous))))).toBe(true)
+  expect(Result.isFailure(researchCapitalRecoveryRequestIsCompatible(previous, plan()))).toBe(true)
+  expect(previous.requestHash).not.toBe(current.requestHash)
+})
+
+test('validates both exact sandbox mandate policies while rejecting an unknown hash', async () => {
+  for (const environment of [BrokerEnvironment.Sandbox, BrokerEnvironment.Live]) {
+    const policy = await Effect.runPromise(
+      Effect.fromResult(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe, environment)),
+    )
+    const hash = Result.getOrThrow(canonicalHashV1Result(policy))
+    const outcome = await Effect.runPromise(
+      validateResearchCapitalRiskPolicy(plan(), request({}, hash)).pipe(Effect.result),
+    )
+    expect(Result.isSuccess(outcome)).toBe(true)
+  }
+  const unknown = await Effect.runPromise(
+    validateResearchCapitalRiskPolicy(plan(), request({}, 'f'.repeat(64))).pipe(Effect.result),
+  )
+  expect(Result.isFailure(unknown)).toBe(true)
+})
+
+test('rejects malformed sealed content with its configuration reason', () => {
+  expect(configuredCapitalActivation(plan('{'))).toEqual(Result.fail('configured capital activation is not valid JSON'))
+})
+
+test('requires a mandate for mutation access while allowing an unconfigured read-only runtime', () => {
+  const readOnly = plan()
+  expect(configuredCapitalActivation(readOnly)).toEqual(Result.succeed(null))
+  expect(
+    configuredCapitalActivation({
+      ...readOnly,
+      config: {
+        ...readOnly.config,
+        execution: {
+          brokerIdentity: identity,
+          brokerAccess: BrokerAccess.Mutation,
+          capitalAuthority: { _tag: CapitalAuthorityKind.Granted, authorityGenerationHash: 'b'.repeat(64) },
+        },
+      },
+    }),
+  ).toEqual(Result.fail('configured granted capital requires an immutable execution mandate request'))
+})
+
+test('activation consumes the current reconciliation rather than the startup position count', async () => {
+  const at = '2026-09-25T15:10:15.000Z'
+  const flat: ReconciledBrokerState = {
+    account: {
+      schemaVersion: 'bayn.paper-account-snapshot.v2',
+      cryptoFeeTier: null,
+      accountId,
+      status: AccountStatus.Active,
+      currency: 'USD',
+      cashMicros: '100000000000',
+      equityMicros: '100000000000',
+      buyingPowerMicros: '100000000000',
+      observedAt: at,
+    },
+    positions: [],
+    orders: [],
+    positionsObservedAt: at,
+    ordersObservedAt: at,
+    accountingHash: '1'.repeat(64),
+    unknownOrderCount: 0,
+    reconciliation: {
+      schemaVersion: 'bayn.paper-reconciliation.v1',
+      accountId,
+      reconciliationId: '2'.repeat(64),
+      contentHash: '3'.repeat(64),
+      expectedHash: '4'.repeat(64),
+      observedHash: '4'.repeat(64),
+      status: ReconciliationStatus.Exact,
+      discrepancies: [],
+      reconciledAt: at,
+    },
+  }
+  const occupied: ReconciledBrokerState = {
+    ...flat,
+    positions: [
+      {
+        schemaVersion: 'bayn.position.v2',
+        costBasisMicros: '2015820000',
+        accountId,
+        symbol: 'AAPL',
+        quantityAtoms: '6000000000',
+        averageEntryPriceMicros: '335970000',
+        marketPriceMicros: '335970000',
+        marketValueMicros: '2015820000',
+        unrealizedPnlMicros: '0',
+        observedAt: at,
+      },
+    ],
+  }
+  let current = occupied
+  const reconcile = Effect.sync(() => ({ report: { reconciliation: current.reconciliation }, brokerState: current }))
+  const activate = refreshResearchCapitalActivationReconciliation(reconcile, 1000).pipe(
+    Effect.map((result) => validateResearchCapitalPreflight(request(), result.brokerState)),
+  )
+  expect(Result.isFailure(await Effect.runPromise(activate))).toBe(true)
+  current = flat
+  expect(await Effect.runPromise(activate)).toEqual(Result.succeed(undefined))
+  current = occupied
+  expect(Result.isFailure(await Effect.runPromise(activate))).toBe(true)
+  expect(Result.isFailure(validateResearchCapitalPreflight(request(), { ...flat, unknownOrderCount: 1 }))).toBe(true)
+  expect(
+    Result.isFailure(
+      validateResearchCapitalPreflight(request(), {
+        ...flat,
+        account: { ...flat.account, accountId: 'different-account' },
+      }),
+    ),
+  ).toBe(true)
+})
+
+test('pre-activation retains a typed nonexact reconciliation failure until a later exact observation', async () => {
+  let status = ReconciliationStatus.Discrepancy
+  const refresh = refreshResearchCapitalActivationReconciliation(
+    Effect.sync(() => ({ report: { reconciliation: { status } } })),
+    1000,
+  )
+  const blocked = await Effect.runPromise(refresh.pipe(Effect.result))
+  expect(Result.isFailure(blocked)).toBe(true)
+  if (Result.isFailure(blocked)) {
+    expect(blocked.failure).toBeInstanceOf(OperationalError)
+    expect(blocked.failure.cause).toBeInstanceOf(CapitalActivationReconciliationNotExact)
+    expect(blocked.failure.cause).toMatchObject({ status: ReconciliationStatus.Discrepancy })
+  }
+  status = ReconciliationStatus.Exact
+  expect(await Effect.runPromise(refresh)).toEqual({
+    report: { reconciliation: { status: ReconciliationStatus.Exact } },
+  })
+})
+
+test('a cutover mandate rearms through current proof and exact reconciliation before activation', async () => {
+  const at = '2026-10-23T10:50:00.000Z'
+  const policy = await Effect.runPromise(
+    Effect.fromResult(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe)),
+  )
+  const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
+  const retired = request({ behaviorHash: 'f'.repeat(64), parameterSchemaVersion: 'bayn.jev.protocol.v18' })
+  const previous = generation(retired, 'a'.repeat(64))
+  const successorHash = Result.getOrThrow(
+    executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash: previous.generationHash }),
+  )
+  for (const scenario of ['current', 'nonexact', 'stale-build', 'stale-strategy', 'operator-kill'] as const) {
+    let authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: previous.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: scenario === 'operator-kill' ? 'operator kill' : strategyProtocolCutoverRestrictionReason,
+      version: 2,
+      updatedAt: at,
+    }
+    const history = new Map([[previous.generationHash, previous]])
+    const steps: string[] = []
+    const unexpected = Effect.die('unexpected authority operation')
+    const authorityStore: AuthorityGenerationStoreShape = {
+      readAuthorityState: Effect.sync(() => authority),
+      readResearchAuthorityGeneration: (hash) => Effect.succeed(history.get(hash)),
+      readOrInitializeObserveAuthority: () => unexpected,
+      readAuthorityGenerationLineage: () => unexpected,
+      ensureAuthorityGeneration: (input) =>
+        Effect.sync(() => {
+          steps.push('observe-successor')
+          expect(input).toEqual({ generationHash: successorHash, maximum: Authority.Observe })
+          authority = {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash: successorHash,
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+            kill: KillState.Clear,
+            version: 3,
+            updatedAt: at,
+          }
+          return authority
+        }),
+    }
+    const lifecycle: CapitalGrantLifecycleStoreShape = {
+      activateResearchCapitalGrant: (proof, sourceHash) =>
+        Effect.sync(() => {
+          steps.push('activate')
+          expect(sourceHash).toBe(successorHash)
+          expect(proof).toEqual(researchCapitalGrantProof(current))
+          const next = generation(current, sourceHash)
+          history.set(next.generationHash, next)
+          authority = {
+            ...authority,
+            generationHash: next.generationHash,
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            version: 4,
+          }
+          return authority
+        }),
+    }
+    const reconciliation = {
+      schemaVersion: 'bayn.paper-reconciliation.v1' as const,
+      accountId,
+      reconciliationId: '2'.repeat(64),
+      contentHash: '3'.repeat(64),
+      expectedHash: '4'.repeat(64),
+      observedHash: '4'.repeat(64),
+      status: scenario === 'nonexact' ? ReconciliationStatus.Discrepancy : ReconciliationStatus.Exact,
+      discrepancies: [],
+      reconciledAt: at,
+    }
+    const brokerState: ReconciledBrokerState = {
+      account: {
+        schemaVersion: 'bayn.paper-account-snapshot.v2',
+        cryptoFeeTier: null,
+        accountId,
+        status: AccountStatus.Active,
+        currency: 'USD',
+        cashMicros: '100000000000',
+        equityMicros: '100000000000',
+        buyingPowerMicros: '100000000000',
+        observedAt: at,
+      },
+      positions: [],
+      orders: [],
+      positionsObservedAt: at,
+      ordersObservedAt: at,
+      accountingHash: '1'.repeat(64),
+      unknownOrderCount: 0,
+      reconciliation,
+    }
+    const reconcile = Effect.sync(() => {
+      steps.push('reconcile')
+      return {
+        report: {
+          reconciliation,
+          metrics: {
+            brokerPollAgeMs: 0,
+            oldestUnknownMutationAgeMs: 0,
+            cashDifferenceMicros: '0',
+            positionDifferenceMicros: '0',
+            equityDifferenceMicros: '0',
+            accountingExact: true,
+            discrepancyCount: scenario === 'nonexact' ? 1 : 0,
+          },
+        },
+        brokerState,
+        riskContext: {
+          tradingDate: '2026-10-23' as const,
+          authority,
+          authorityObservedAt: at,
+          unknownMutationCount: 0,
+          dailyTradedNotionalMicros: '0',
+          dayStartEquityMicros: brokerState.account.equityMicros,
+          peakEquityMicros: brokerState.account.equityMicros,
+        },
+      }
+    })
+    const candidate = scenario === 'stale-strategy' ? retired : current
+    const runtime = plan()
+    const candidatePlan =
+      scenario === 'stale-build'
+        ? {
+            ...runtime,
+            config: { ...runtime.config, build: { ...runtime.config.build, sourceRevision: 'f'.repeat(40) } },
+          }
+        : runtime
+    const outcome = await Effect.runPromise(
+      prepareOrRecoverResearchCapitalActivation(
+        candidatePlan,
+        candidate,
+        null,
+        null,
+        authorityStore,
+        lifecycle,
+        reconcile,
+        1000,
+      ).pipe(Effect.result),
+    )
+    expect(history.get(previous.generationHash)).toEqual(previous)
+    if (scenario === 'current') {
+      expect(outcome).toEqual(Result.succeed(generation(current, successorHash)))
+      expect(steps).toEqual(['reconcile', 'observe-successor', 'activate'])
+      expect(authority).toMatchObject({
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
+        kill: KillState.Clear,
+      })
+    } else {
+      expect(Result.isFailure(outcome)).toBe(true)
+      expect(steps).toEqual(scenario === 'nonexact' ? ['reconcile'] : [])
+      expect(authority.generationHash).toBe(previous.generationHash)
+      expect(history.size).toBe(1)
+    }
+  }
+})
+
+test('an incomplete reconciliation retains only the exact restricted generation for cancellation recovery', async () => {
+  const policy = Result.getOrThrow(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe))
+  const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
+  const retained = generation(current, 'a'.repeat(64))
+  for (const scenario of ['bound', 'operator-hold', 'foreign-request'] as const) {
+    const authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: retained.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: scenario === 'operator-hold' ? 'operator hold' : 'reconciliation pass incomplete',
+      version: 2,
+      updatedAt: '2026-11-10T16:49:33.128Z',
+    }
+    const forbidden = Effect.die(
+      'restricted recovery must not reconcile, activate or clear authority during acquisition',
+    )
+    const store: AuthorityGenerationStoreShape = {
+      readAuthorityState: Effect.succeed(authority),
+      readResearchAuthorityGeneration: () => Effect.succeed(retained),
+      readOrInitializeObserveAuthority: () => forbidden,
+      readAuthorityGenerationLineage: () => forbidden,
+      ensureAuthorityGeneration: () => forbidden,
+    }
+    const result = await Effect.runPromise(
+      prepareOrRecoverResearchCapitalActivation(
+        plan(),
+        scenario === 'foreign-request' ? request({}, 'b'.repeat(64)) : current,
+        null,
+        null,
+        store,
+        { activateResearchCapitalGrant: () => forbidden },
+        Effect.fail(
+          new OperationalError({
+            component: 'http',
+            operation: 'reconciliation',
+            retryable: false,
+            message: 'unavailable full history',
+          }),
+        ),
+        1000,
+      ).pipe(Effect.result),
+    )
+    expect(result).toEqual(
+      scenario === 'bound' ? Result.succeed(retained) : expect.objectContaining({ _tag: 'Failure' }),
+    )
+    expect(authority).toMatchObject({
+      generationHash: retained.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      version: 2,
+    })
+  }
+})

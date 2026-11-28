@@ -29,6 +29,8 @@ Docs:
 
 - `devices/turin/docs/cluster-join-plan.md` (join + Ceph OSD migration plan)
 - `devices/turin/docs/bmc-fan-bringup.md` (BMC and fan alert notes)
+- [Restore the Talos boot default](docs/talos-boot-default.md) (ORICO UEFI entry and persistent image verification)
+- [Diagnose the XFS quota boot delay](docs/xfs-quota-boot-recovery.md) (quota recount, pending growth fix, and Ceph recovery profile)
 - `docs/runbooks/galactic-storage-and-workload-recovery.md` (BMC, NVMe, Ceph, filesystem, and workload recovery)
 - `devices/turin/docs/nvidia-gpu-on-talos.md` (NVIDIA driver/runtime plan)
 - `devices/turin/docs/kubevirt-on-turin.md` (KubeVirt runtime and canary checks)
@@ -44,7 +46,7 @@ Manifests:
 - `devices/turin/manifests/hostname.patch.yaml` (Talos hostname patch)
 - `devices/turin/manifests/etcd-lan-subnet.patch.yaml` (pin etcd peer/client addressing to the Turin LAN subnet)
 - `devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml` (pin kubelet node IP selection to the Turin LAN subnet)
-- `devices/turin/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 500)
+- `devices/turin/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 250)
 - `devices/turin/manifests/nvidia-kernel-modules.patch.yaml` (load the NVIDIA kernel modules from the Talos system extension)
 - `devices/turin/manifests/time-servers.patch.yaml` (match the working control-plane nodes' explicit NTP servers)
 - `devices/turin/manifests/tailscale-dns.patch.yaml` (Talos DNS settings for node-level Tailscale)
@@ -53,8 +55,8 @@ Manifests:
 - `devices/turin/manifests/local-path-scratch-intel.patch.yaml` (gated local-only scratch user volume on the Intel 256GB NVMe)
 - `devices/turin/manifests/local-path-scratch-transcend.patch.yaml` (gated local-only scratch user volume on the Transcend 256GB NVMe)
 
-The 500-pod kubelet cap is a deliberate high-density exception; validate `/23`
-PodCIDR allocation and node pressure before increasing ARC runner concurrency.
+The 250-pod kubelet cap keeps scheduler capacity below Turin's `/24` PodCIDR. Existing pods are not evicted when the
+cap changes; new pods schedule on another eligible node once Turin reaches the cap.
 
 Related:
 

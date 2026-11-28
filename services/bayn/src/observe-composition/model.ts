@@ -1,8 +1,12 @@
 import type { Effect } from 'effect'
-import { BrokerRead } from '../broker/alpaca'
-import type { CycleExecutionPolicy } from '../cycle'
-import type { CycleRunnerError, CycleRunResult } from '../cycle/runner'
-import { CycleStore } from '../cycle/store'
+import type { DecisionConstruction } from '../decision-construction'
+import type { BrokerEnvironment } from '../broker/identity'
+import type { readCurrentProtectionClose } from '../db/protection-release'
+import type { ProtectionReleaseReference } from '../execution/events'
+import { BrokerRead } from '../broker/alpaca/model'
+import type { CycleExecutionPolicy } from '../cycle/model'
+import type { CycleRunnerError, CycleRunResult } from '../cycle/runner/model'
+import { CycleStore } from '../cycle/store/model'
 import {
   BrokerEventStore,
   AuthorityGenerationStore,
@@ -10,42 +14,27 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import type { ExecutionCycleClosureStoreShape } from '../db/execution-cycle-closure'
-import { IntentStore, type BlockedCycleIntentStoreShape } from '../execution/intents'
-import { MutationStore } from '../execution/mutations'
+import { IntentStore } from '../execution/intents/domain'
+import { type BlockedCycleIntentStoreShape } from '../execution/intents/blocked-cycle'
+import { MutationStore } from '../execution/mutations/model'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
 import type { CycleExecutionModel } from '../execution-model-contract'
-import type { IntradayMarketDataService } from '../market-data'
+import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
-import { utcInstantFromEpochMillis } from '../time'
+import { CandidateObservationStore } from './candidate-observation'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevClient } from '../jev/client'
+import { EntryInferenceJournal } from '../jev/entry-inference'
+import { JevPositionStore } from '../jev/portfolio'
 
-export type LifecycleAdvanceDisposition = 'CONTINUE' | 'COMPLETED'
-
-export type LifecycleAdvanceMaintenance = {
-  /** Restricts expired authority before any reconciliation or cycle work can reach broker mutation. */
-  readonly beforeReconciliation: Effect.Effect<void, CycleRunnerError>
-  /** Finalizes a receipt only after the same advance has reconciled successfully. */
-  readonly afterReconciliation: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>
-}
-
-export const executionMandateCloseGraceMs = 15 * 60_000
-
-export const executionMandateCloseExpiresAt = (authorityExpiresAt: string): string =>
-  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + executionMandateCloseGraceMs)
-
-/** Receipt finalization remains bounded, but survives late close settlement and transient read failures. */
-export const executionMandateReceiptFinalizationGraceMs = 15 * 60_000
-
-export const executionMandateReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
-  utcInstantFromEpochMillis(
-    Date.parse(executionMandateCloseExpiresAt(authorityExpiresAt)) + executionMandateReceiptFinalizationGraceMs,
-  )
-
-export type ObserveDecisionRuntime =
+export type ReconciliationRuntime =
+  | CandidateObservationStore
   | BrokerRead
   | BrokerEventStore
   | FillAccountingStore
@@ -55,12 +44,21 @@ export type ObserveDecisionRuntime =
   | AuthorityRestrictionStore
   | WriterFence
 
+export type ObserveDecisionRuntime =
+  | ReconciliationRuntime
+  | DecisionConstruction
+  | JevBatchStore
+  | JevEvaluationStore
+  | JevClient
+  | EntryInferenceJournal
+  | JevPositionStore
+
 type ObserveRuntime = CycleStore | ObserveDecisionRuntime
 
 export type RecoveryFirstRuntime = ObserveRuntime | IntentStore | MutationStore
 
 export type ObserveStartupPreparation = {
-  readonly executionModel: Extract<CycleExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v5' }>
+  readonly executionModel: Extract<CycleExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v6' }>
   readonly executionPolicy: Extract<
     CycleExecutionPolicy,
     { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
@@ -73,46 +71,47 @@ export type RecoveryFirstCycleAdvance = {
   readonly result?: CycleRunResult
   /** Optional one-shot durable scheduling override for the next Restate command. */
   readonly nextDelayMs?: number
+  /** Absolute cap retained until completion, so post-pass work cannot extend a selected wake. */
+  readonly nextWakeAt?: string
 }
 
-export type RecoveryFirstCycleDriver = {
-  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, RecoveryFirstRuntime>
-  /** Restate must schedule the next production command no later than either the cycle or reconciliation cadence. */
+export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {
+  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
+  readonly timeoutMs: number
+  readonly onTimeout: (error: CycleRunnerError) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
+  /** Retained receipt budget; only an explicit nextWakeAt schedules another command. */
   readonly nextDelayMs: number
 }
 
-export type RecoveryFirstCycleDriverOwner = (
-  driver: RecoveryFirstCycleDriver,
-) => Effect.Effect<void, never, RecoveryFirstRuntime>
-
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
+  readonly brokerEnvironment?: BrokerEnvironment
+  /** The exact policy hash from the verified durable mandate; absence retains the original policy. */
+  readonly riskPolicyHash?: string
   readonly authorityGenerationHash: string
-  readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
+  readonly simulation?: { readonly runId: string }
   /** Explicit archive dependency; required only for an INTRADAY strategy. */
   readonly intradayMarketData?: IntradayMarketDataService
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape
+  readonly readProtectionClose?: (
+    reference: ProtectionReleaseReference,
+    maximumObservationAgeMs: number,
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<typeof readCurrentProtectionClose>>,
+    Effect.Error<ReturnType<typeof readCurrentProtectionClose>>
+  >
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
-  readonly executionMandateCutoffAt?: string
-  readonly executionMandateCloseSubmitCutoffAt?: string
-  readonly executionMandateExpiresAt?: string
-  readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
-  /** Runs phased lifecycle maintenance inside the same serialized command as reconciliation and the cycle pass. */
-  readonly lifecycleMaintenance?: LifecycleAdvanceMaintenance
+  readonly executionCycleCloseSubmitCutoffAt?: string
+  readonly executionCycleCloseExpiresAt?: string
 }
 
 export const executionDecisionFinalizationHeadroomMs = (
-  input: Pick<
-    ObserveAutonomousCycleInput,
-    'pollIntervalMs' | 'reconciliationIntervalMs' | 'reconciliationPassTimeoutMs'
-  >,
-): number =>
-  Math.min(input.pollIntervalMs, input.reconciliationIntervalMs) +
-  Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
+  input: Pick<ObserveAutonomousCycleInput, 'reconciliationIntervalMs' | 'reconciliationPassTimeoutMs'>,
+): number => Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs) * 2
 
 export type MutationAutonomousCycleInput = ObserveAutonomousCycleInput & {
   readonly executionProgram: ExecutionProgram
@@ -120,7 +119,9 @@ export type MutationAutonomousCycleInput = ObserveAutonomousCycleInput & {
 
 export type ExecutionCapability =
   | { readonly _tag: 'RecoveryOnly' }
-  | { readonly _tag: 'Mutation'; readonly executionProgram: ExecutionProgram }
+  | { readonly _tag: 'Mutation' | 'CloseOnly'; readonly executionProgram: ExecutionProgram }
+
+export type MutationCycleExecutionMode = ExecutionCapability['_tag']
 
 export type ExecutionMutationLogContext = {
   readonly cycleId: string
@@ -131,10 +132,13 @@ export type ExecutionMutationLogContext = {
 
 export type PostMutationReconciliation = {
   readonly _tag: 'PostMutationReconciliation'
-  readonly cycle: import('../cycle').AutonomousCycle
+  readonly cycle: import('../cycle/model').AutonomousCycle
   readonly delayMs: number
   readonly logContext: ExecutionMutationLogContext
   readonly observedAt: string
+  /** Only ordinary durable cancel intents support lookup-only confirmation before reconciliation. */
+  readonly cancellationConfirmationIntentId?: string | undefined
+  readonly protectionReleaseCycleId?: string
 }
 
 export type BoundExecutionCycleOutcome = BoundMutationCycleOutcome | PostMutationReconciliation

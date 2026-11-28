@@ -1,0 +1,133 @@
+import { Data, Result } from 'effect'
+import { canonicalJsonEqualV1 } from '../../hash'
+import { topicPartitionKey } from './projection'
+
+export class KafkaBootstrapFailure extends Data.TaggedError('KafkaBootstrapFailure')<{ readonly message: string }> {}
+
+export const kafkaBootstrapDeadlineMs = 300_000
+
+export enum KafkaHandoffReadiness {
+  Ready = 'READY',
+  Waiting = 'WAITING',
+  Failed = 'FAILED',
+  Expired = 'EXPIRED',
+}
+
+export const kafkaHandoffReadiness = (
+  status: { readonly ready: boolean; readonly failure?: string; readonly bootstrapDeadlineAtMs: number | null },
+  now: number,
+): KafkaHandoffReadiness =>
+  status.failure !== undefined
+    ? KafkaHandoffReadiness.Failed
+    : status.ready
+      ? KafkaHandoffReadiness.Ready
+      : status.bootstrapDeadlineAtMs !== null && now > status.bootstrapDeadlineAtMs
+        ? KafkaHandoffReadiness.Expired
+        : KafkaHandoffReadiness.Waiting
+
+export enum KafkaBootstrapTimestampPolicy {
+  ProducerClock = 'dorvud.producer-clock.v1',
+  RetainedBeginning = 'retained-beginning',
+}
+export interface KafkaPartitionPosition {
+  readonly topic: string
+  readonly partition: number
+  readonly offset: string
+}
+export interface KafkaBootstrapPartition {
+  readonly topic: string
+  readonly partition: number
+  readonly logStartOffset: string
+  readonly startOffset: string
+  readonly endOffset: string
+}
+export interface KafkaBootstrapEvidence {
+  readonly schemaVersion: 'bayn.kafka-bootstrap.v1'
+  readonly epoch: string
+  readonly observedAtMs: number
+  readonly lowerTimestampMs: number
+  readonly timestampPolicy: KafkaBootstrapTimestampPolicy
+  readonly partitions: readonly KafkaBootstrapPartition[]
+}
+export const canonicalPositions = (positions: readonly KafkaPartitionPosition[]) =>
+  positions.toSorted((a, b) => (a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : a.partition - b.partition))
+export const bootstrapKafkaPartitions = (
+  starts: readonly KafkaPartitionPosition[],
+  ends: readonly KafkaPartitionPosition[],
+  seek: readonly KafkaPartitionPosition[],
+): readonly KafkaBootstrapPartition[] => {
+  const canonical = canonicalPositions(ends)
+  const logStarts = canonicalPositions(starts)
+  const seeks = canonicalPositions(seek)
+  const keys = canonical.map((position) => topicPartitionKey(position.topic, position.partition))
+  if (
+    keys.length === 0 ||
+    new Set(keys).size !== keys.length ||
+    [logStarts, seeks].some(
+      (positions) =>
+        positions.map((position) => topicPartitionKey(position.topic, position.partition)).join('|') !== keys.join('|'),
+    )
+  )
+    throw new KafkaBootstrapFailure({ message: 'Kafka partition set changed during bootstrap' })
+  return canonical.map((end, index) => {
+    const start = logStarts[index]
+    const requested = seeks[index]
+    if (start === undefined || requested === undefined)
+      throw new KafkaBootstrapFailure({ message: 'Kafka bootstrap positions are missing' })
+    const first = BigInt(start.offset)
+    const last = BigInt(end.offset)
+    const requestedOffset = BigInt(requested.offset)
+    // A timestamp lookup can observe an append after the end was captured. Start at the frozen barrier
+    // so consumption includes that entire append interval; neither a newer seek nor -1 moves the barrier.
+    const chosen = requestedOffset === -1n || requestedOffset > last ? last : requestedOffset
+    if (first < 0n || last < first || chosen < first)
+      throw new KafkaBootstrapFailure({ message: 'Kafka retention or partition bounds changed during bootstrap' })
+    return {
+      topic: end.topic,
+      partition: end.partition,
+      logStartOffset: start.offset,
+      startOffset: String(chosen),
+      endOffset: end.offset,
+    }
+  })
+}
+
+export const verifyKafkaSourceBounds = (
+  bootstrap: KafkaBootstrapEvidence,
+  positions: readonly KafkaPartitionPosition[],
+) =>
+  Result.try({
+    try: () => {
+      const bounds = bootstrapKafkaPartitions(
+        bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.logStartOffset })),
+        bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.endOffset })),
+        bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.startOffset })),
+      )
+      if (
+        !canonicalJsonEqualV1(bounds, bootstrap.partitions) ||
+        new Set(positions.map((position) => topicPartitionKey(position.topic, position.partition))).size !==
+          positions.length ||
+        canonicalPositions(positions).some((position, index) => position !== positions[index])
+      )
+        throw new KafkaBootstrapFailure({ message: 'Kafka source bounds are not canonical' })
+    },
+    catch: (cause) =>
+      cause instanceof KafkaBootstrapFailure
+        ? cause
+        : new KafkaBootstrapFailure({ message: 'Kafka source bounds are invalid' }),
+  })
+export const kafkaBootstrapComplete = (
+  evidence: KafkaBootstrapEvidence,
+  positions: readonly KafkaPartitionPosition[],
+) => {
+  const current = new Map(
+    positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
+  )
+  return (
+    current.size === evidence.partitions.length &&
+    evidence.partitions.every(
+      (partition) =>
+        (current.get(topicPartitionKey(partition.topic, partition.partition)) ?? -1n) >= BigInt(partition.endOffset),
+    )
+  )
+}

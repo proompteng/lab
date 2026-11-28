@@ -1,19 +1,26 @@
 name: dorvud-ci
 
+permissions:
+  contents: read
+
 on:
   # Run once for PRs targeting main; push runs only on main to avoid double CI for PR branches.
   pull_request:
     branches: [main]
     paths:
       - 'services/dorvud/**'
+      - 'services/bayn/src/market-data/features/fixtures/**'
+      - '.github/workflows/dorvud.yml'
+  workflow_call:
   push:
     branches: [main]
     paths:
       - 'services/dorvud/**'
+      - 'services/bayn/src/market-data/features/fixtures/**'
       - '.github/workflows/dorvud.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: dorvud-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,6 +42,6 @@ jobs:
         run: ./gradlew ktlintCheck
         working-directory: services/dorvud
 
-      - name: Run tests (platform, websockets, technical-analysis, hyperliquid-feed)
-        run: ./gradlew :platform:test :websockets:test :technical-analysis:test :hyperliquid-feed:test
+      - name: Run Dorvud tests
+        run: ./gradlew :platform:test :websockets:test :technical-analysis:test :technical-analysis-flink:test :hyperliquid-feed:test :webull-feed:test
         working-directory: services/dorvud

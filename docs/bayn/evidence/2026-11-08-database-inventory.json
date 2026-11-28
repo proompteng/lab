@@ -1,0 +1,5301 @@
+{
+  "schemaVersion": "bayn.database-audit-inventory.v1",
+  "scope": "Read-only catalog, sizes and approximate row statistics. Contains no account records or credentials.",
+  "databases": {
+    "bayn": {
+      "capturedAt": "2026-11-08T23:00:08.868854+00:00",
+      "replica": false,
+      "databaseBytes": 60700030655,
+      "tables": [
+        {
+          "name": "account_cash_reporting",
+          "total_bytes": 11616256,
+          "approximate_live_rows": 2616,
+          "columns": [
+            {
+              "name": "account_event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "quantum_micros",
+              "type": "integer",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "account_cash_reporting_pkey",
+              "definition": "CREATE UNIQUE INDEX account_cash_reporting_pkey ON public.account_cash_reporting USING btree (account_event_id)"
+            }
+          ]
+        },
+        {
+          "name": "account_snapshots",
+          "total_bytes": 76513280,
+          "approximate_live_rows": 2616,
+          "columns": [
+            {
+              "name": "event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "event_kind",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "currency",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cash_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "equity_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "buying_power_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "crypto_fee_tier",
+              "type": "integer",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "account_snapshots_pkey",
+              "definition": "CREATE UNIQUE INDEX account_snapshots_pkey ON public.account_snapshots USING btree (event_id)"
+            }
+          ]
+        },
+        {
+          "name": "accounting_receipts",
+          "total_bytes": 1007616,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "receipt_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "intent_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "broker_event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_cluster_id",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_ledger",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "account_ids",
+              "type": "numeric(39,0)[]",
+              "nullable": false
+            },
+            {
+              "name": "transfer_ids",
+              "type": "numeric(39,0)[]",
+              "nullable": false
+            },
+            {
+              "name": "debit_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "credit_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "recorded_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "accounting_receipts_broker_event_unique",
+              "definition": "CREATE UNIQUE INDEX accounting_receipts_broker_event_unique ON public.accounting_receipts USING btree (broker_event_id)"
+            },
+            {
+              "name": "accounting_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX accounting_receipts_pkey ON public.accounting_receipts USING btree (receipt_id)"
+            }
+          ]
+        },
+        {
+          "name": "accounting_transactions",
+          "total_bytes": 3366912,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "transaction_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker_event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "intent_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "symbol",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "side",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "quantity_atoms",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "price_atoms",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "notional_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "fee_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "cost_basis_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "realized_pnl_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "quantity_delta_atoms",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "cost_basis_delta_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "cash_delta_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "ledger_plan_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "accounting_transactions_broker_event_id_key",
+              "definition": "CREATE UNIQUE INDEX accounting_transactions_broker_event_id_key ON public.accounting_transactions USING btree (broker_event_id)"
+            },
+            {
+              "name": "accounting_transactions_pkey",
+              "definition": "CREATE UNIQUE INDEX accounting_transactions_pkey ON public.accounting_transactions USING btree (transaction_id)"
+            },
+            {
+              "name": "accounting_transactions_position_idx",
+              "definition": "CREATE INDEX accounting_transactions_position_idx ON public.accounting_transactions USING btree (account_id, symbol)"
+            }
+          ]
+        },
+        {
+          "name": "authority_generations",
+          "total_bytes": 1138688,
+          "approximate_live_rows": 12,
+          "columns": [
+            {
+              "name": "generation_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "activation_schema_version",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "previous_generation_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "maximum",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "authority_version",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "qualification_run_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "qualification_lock_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "qualification_result_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "protocol_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "qualification_execution_policy_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "qualification_source_revision",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "qualification_image_repository",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "qualification_image_digest",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "activation_source_revision",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "activation_image_repository",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "activation_image_digest",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "strategy_name",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "strategy_behavior_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "strategy_parameter_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "strategy_parameter_schema_version",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "risk_policy_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "proof_plan_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "reconciliation_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "reconciliation_content_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "activated_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "broker_identity_schema_version",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "broker_identity_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "broker_provider",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "broker_environment",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "research_plan_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "strategy_protocol_hash",
+              "type": "text",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "authority_generations_authority_version_key",
+              "definition": "CREATE UNIQUE INDEX authority_generations_authority_version_key ON public.authority_generations USING btree (authority_version)"
+            },
+            {
+              "name": "authority_generations_pkey",
+              "definition": "CREATE UNIQUE INDEX authority_generations_pkey ON public.authority_generations USING btree (generation_hash)"
+            }
+          ]
+        },
+        {
+          "name": "authority_state",
+          "total_bytes": 65536,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "singleton",
+              "type": "boolean",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "generation_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "maximum",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "effective",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "kill_state",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "reason",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "version",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "authority_state_pkey",
+              "definition": "CREATE UNIQUE INDEX authority_state_pkey ON public.authority_state USING btree (singleton)"
+            }
+          ]
+        },
+        {
+          "name": "autonomous_cycle_paper_close_replans",
+          "total_bytes": 39485440,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "document",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "expires_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "close_decision_hash",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "autonomous_cycle_paper_close_replans_latest",
+              "definition": "CREATE INDEX autonomous_cycle_paper_close_replans_latest ON public.autonomous_cycle_paper_close_replans USING btree (cycle_id, created_at DESC, content_hash DESC)"
+            },
+            {
+              "name": "autonomous_cycle_paper_close_replans_pkey",
+              "definition": "CREATE UNIQUE INDEX autonomous_cycle_paper_close_replans_pkey ON public.autonomous_cycle_paper_close_replans USING btree (content_hash)"
+            }
+          ]
+        },
+        {
+          "name": "autonomous_cycle_paper_closures",
+          "total_bytes": 70189056,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "document",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "expires_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "close_decision_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "autonomous_cycle_paper_closures_pkey",
+              "definition": "CREATE UNIQUE INDEX autonomous_cycle_paper_closures_pkey ON public.autonomous_cycle_paper_closures USING btree (cycle_id)"
+            }
+          ]
+        },
+        {
+          "name": "autonomous_cycle_shadow_decisions",
+          "total_bytes": 5928894464,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "document",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "decision_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "autonomous_cycle_shadow_decisions_cycle_id_decision_hash_key",
+              "definition": "CREATE UNIQUE INDEX autonomous_cycle_shadow_decisions_cycle_id_decision_hash_key ON public.autonomous_cycle_shadow_decisions USING btree (cycle_id, decision_hash)"
+            },
+            {
+              "name": "autonomous_cycle_shadow_decisions_generation_idx",
+              "definition": "CREATE INDEX autonomous_cycle_shadow_decisions_generation_idx ON public.autonomous_cycle_shadow_decisions USING btree (((document #>> '{bindings,authorityGenerationHash}'::text[])))"
+            },
+            {
+              "name": "autonomous_cycle_shadow_decisions_pkey",
+              "definition": "CREATE UNIQUE INDEX autonomous_cycle_shadow_decisions_pkey ON public.autonomous_cycle_shadow_decisions USING btree (cycle_id)"
+            }
+          ]
+        },
+        {
+          "name": "autonomous_cycles",
+          "total_bytes": 23584768,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "identity_schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "strategy_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "qualification_run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "strategy_protocol_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "signal_session_date",
+              "type": "date",
+              "nullable": true
+            },
+            {
+              "name": "signal_calendar_version",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "execution_policy_schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "execution_policy_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "strategy_execution_model_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "submission_window_ms",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "submission_cutoff_before_open_ms",
+              "type": "integer",
+              "nullable": true
+            },
+            {
+              "name": "window_schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "execution_calendar_schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "execution_calendar_source",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "execution_calendar_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "execution_session_date",
+              "type": "date",
+              "nullable": false
+            },
+            {
+              "name": "signal_close_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "publication_deadline_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "submission_open_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "execution_open_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "execution_close_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "submission_cutoff_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "state",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "decision_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "terminal_reason",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "state_version",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "terminal_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "submission_cutoff_after_open_ms",
+              "type": "integer",
+              "nullable": true
+            },
+            {
+              "name": "warmup_after_open_ms",
+              "type": "integer",
+              "nullable": true
+            },
+            {
+              "name": "submission_cutoff_before_close_ms",
+              "type": "integer",
+              "nullable": true
+            },
+            {
+              "name": "entry_attempt_ordinal",
+              "type": "integer",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "autonomous_cycles_authority_slot_key",
+              "definition": "CREATE UNIQUE INDEX autonomous_cycles_authority_slot_key ON public.autonomous_cycles USING btree (qualification_run_id, account_id, signal_session_date)"
+            },
+            {
+              "name": "autonomous_cycles_inference_expense_scope",
+              "definition": "CREATE INDEX autonomous_cycles_inference_expense_scope ON public.autonomous_cycles USING btree (account_id, execution_session_date, cycle_id) WHERE (execution_session_date >= '2026-10-05'::date)"
+            },
+            {
+              "name": "autonomous_cycles_intraday_authority_slot_key",
+              "definition": "CREATE UNIQUE INDEX autonomous_cycles_intraday_authority_slot_key ON public.autonomous_cycles USING btree (qualification_run_id, account_id, execution_session_date, entry_attempt_ordinal) WHERE (schema_version = ANY (ARRAY['bayn.autonomous-cycle.v2'::text, 'bayn.autonomous-cycle.v3'::text, 'bayn.autonomous-cycle.v4'::text]))"
+            },
+            {
+              "name": "autonomous_cycles_pkey",
+              "definition": "CREATE UNIQUE INDEX autonomous_cycles_pkey ON public.autonomous_cycles USING btree (cycle_id)"
+            },
+            {
+              "name": "autonomous_cycles_unfinished_idx",
+              "definition": "CREATE INDEX autonomous_cycles_unfinished_idx ON public.autonomous_cycles USING btree (execution_session_date, cycle_id) WHERE (state = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text]))"
+            }
+          ]
+        },
+        {
+          "name": "autonomous_forward_performance_receipts",
+          "total_bytes": 16384,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "authority_generation_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "document",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "autonomous_forward_performance_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX autonomous_forward_performance_receipts_pkey ON public.autonomous_forward_performance_receipts USING btree (authority_generation_hash)"
+            }
+          ]
+        },
+        {
+          "name": "broker_cash_settlements",
+          "total_bytes": 778240,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "settlement_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "transaction_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "precision_account_event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "rounding_delta_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "data",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ledger_plan_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_cluster_id",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_ledger",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "prepared_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "posted_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "broker_cash_settlements_account",
+              "definition": "CREATE INDEX broker_cash_settlements_account ON public.broker_cash_settlements USING btree (account_id, transaction_id)"
+            },
+            {
+              "name": "broker_cash_settlements_pkey",
+              "definition": "CREATE UNIQUE INDEX broker_cash_settlements_pkey ON public.broker_cash_settlements USING btree (settlement_id)"
+            },
+            {
+              "name": "broker_cash_settlements_transaction_id_key",
+              "definition": "CREATE UNIQUE INDEX broker_cash_settlements_transaction_id_key ON public.broker_cash_settlements USING btree (transaction_id)"
+            }
+          ]
+        },
+        {
+          "name": "broker_events",
+          "total_bytes": 700456960,
+          "approximate_live_rows": 2616,
+          "columns": [
+            {
+              "name": "event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "event_kind",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_sequence",
+              "type": "numeric(20,0)",
+              "nullable": false
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "normalized_content_hash",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "broker_events_account_observed_at_idx",
+              "definition": "CREATE INDEX broker_events_account_observed_at_idx ON public.broker_events USING btree (account_id, observed_at DESC)"
+            },
+            {
+              "name": "broker_events_account_snapshot_clock_idx",
+              "definition": "CREATE INDEX broker_events_account_snapshot_clock_idx ON public.broker_events USING btree (account_id, observed_at DESC, source_sequence DESC, event_id DESC) WHERE (event_kind = 'ACCOUNT'::text)"
+            },
+            {
+              "name": "broker_events_account_snapshot_order_idx",
+              "definition": "CREATE INDEX broker_events_account_snapshot_order_idx ON public.broker_events USING btree (account_id, source_sequence DESC, observed_at DESC, event_id DESC) WHERE (event_kind = 'ACCOUNT'::text)"
+            },
+            {
+              "name": "broker_events_broker_account_id_source_event_id_key",
+              "definition": "CREATE UNIQUE INDEX broker_events_broker_account_id_source_event_id_key ON public.broker_events USING btree (broker, account_id, source_event_id)"
+            },
+            {
+              "name": "broker_events_broker_account_id_source_sequence_key",
+              "definition": "CREATE UNIQUE INDEX broker_events_broker_account_id_source_sequence_key ON public.broker_events USING btree (broker, account_id, source_sequence)"
+            },
+            {
+              "name": "broker_events_event_id_account_id_event_kind_key",
+              "definition": "CREATE UNIQUE INDEX broker_events_event_id_account_id_event_kind_key ON public.broker_events USING btree (event_id, account_id, event_kind)"
+            },
+            {
+              "name": "broker_events_pkey",
+              "definition": "CREATE UNIQUE INDEX broker_events_pkey ON public.broker_events USING btree (event_id)"
+            }
+          ]
+        },
+        {
+          "name": "broker_fee_accounting",
+          "total_bytes": 565248,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "activity_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "fee_date",
+              "type": "date",
+              "nullable": false
+            },
+            {
+              "name": "net_amount_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "data",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "read_evidence",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ledger_plan_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_cluster_id",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_ledger",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "first_observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "posted_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "coin_cost_basis_micros",
+              "type": "numeric(39,0)",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "broker_fee_accounting_pkey",
+              "definition": "CREATE UNIQUE INDEX broker_fee_accounting_pkey ON public.broker_fee_accounting USING btree (account_id, activity_id)"
+            }
+          ]
+        },
+        {
+          "name": "broker_fee_accrual_matches",
+          "total_bytes": 286720,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "accrual_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "activity_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "coin_quantity_atoms",
+              "type": "numeric(39,0)",
+              "nullable": true
+            },
+            {
+              "name": "activity_cash_micros",
+              "type": "numeric(39,0)",
+              "nullable": true
+            },
+            {
+              "name": "accrual_cash_micros",
+              "type": "numeric(39,0)",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "broker_fee_accrual_matches_pkey",
+              "definition": "CREATE UNIQUE INDEX broker_fee_accrual_matches_pkey ON public.broker_fee_accrual_matches USING btree (accrual_id, account_id, activity_id)"
+            }
+          ]
+        },
+        {
+          "name": "broker_fee_accruals",
+          "total_bytes": 442368,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "accrual_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "kind",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "symbol",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "fee_date",
+              "type": "date",
+              "nullable": false
+            },
+            {
+              "name": "position_snapshot_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "account_event_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "coin_quantity_atoms",
+              "type": "numeric(39,0)",
+              "nullable": true
+            },
+            {
+              "name": "cash_debit_micros",
+              "type": "numeric(39,0)",
+              "nullable": true
+            },
+            {
+              "name": "expense_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "data",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ledger_plan_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_cluster_id",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_ledger",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "posted_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "broker_fee_accruals_cycle",
+              "definition": "CREATE INDEX broker_fee_accruals_cycle ON public.broker_fee_accruals USING btree (account_id, cycle_id)"
+            },
+            {
+              "name": "broker_fee_accruals_date",
+              "definition": "CREATE INDEX broker_fee_accruals_date ON public.broker_fee_accruals USING btree (account_id, symbol, fee_date)"
+            },
+            {
+              "name": "broker_fee_accruals_pkey",
+              "definition": "CREATE UNIQUE INDEX broker_fee_accruals_pkey ON public.broker_fee_accruals USING btree (accrual_id)"
+            }
+          ]
+        },
+        {
+          "name": "broker_fee_match_corrections",
+          "total_bytes": 49152,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "correction_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "activity_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "accrual_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cash_debit_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "data",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ledger_plan_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_cluster_id",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "tigerbeetle_ledger",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "posted_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "broker_fee_match_corrections_accrual_id_account_id_activity_key",
+              "definition": "CREATE UNIQUE INDEX broker_fee_match_corrections_accrual_id_account_id_activity_key ON public.broker_fee_match_corrections USING btree (accrual_id, account_id, activity_id)"
+            },
+            {
+              "name": "broker_fee_match_corrections_pkey",
+              "definition": "CREATE UNIQUE INDEX broker_fee_match_corrections_pkey ON public.broker_fee_match_corrections USING btree (correction_id)"
+            }
+          ]
+        },
+        {
+          "name": "broker_fee_posting_acknowledgements",
+          "total_bytes": 253952,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_kind",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ledger_plan_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "acknowledged_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "broker_fee_posting_acknowledgements_pkey",
+              "definition": "CREATE UNIQUE INDEX broker_fee_posting_acknowledgements_pkey ON public.broker_fee_posting_acknowledgements USING btree (account_id, source_kind, source_id)"
+            }
+          ]
+        },
+        {
+          "name": "broker_observation_captures",
+          "total_bytes": 36356096,
+          "approximate_live_rows": 107759,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "capture_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "generation",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "settled",
+              "type": "boolean",
+              "nullable": false
+            },
+            {
+              "name": "claimed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "broker_observation_captures_account_id_generation_key",
+              "definition": "CREATE UNIQUE INDEX broker_observation_captures_account_id_generation_key ON public.broker_observation_captures USING btree (account_id, generation)"
+            },
+            {
+              "name": "broker_observation_captures_pkey",
+              "definition": "CREATE UNIQUE INDEX broker_observation_captures_pkey ON public.broker_observation_captures USING btree (account_id, capture_id)"
+            }
+          ]
+        },
+        {
+          "name": "broker_observations",
+          "total_bytes": 155648,
+          "approximate_live_rows": 1,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_revision",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "generation",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "available",
+              "type": "boolean",
+              "nullable": false
+            },
+            {
+              "name": "poll_started_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "completed_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "snapshot_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "next_poll_not_before",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "quota_generation",
+              "type": "bigint",
+              "nullable": true
+            },
+            {
+              "name": "state_hash",
+              "type": "text",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "broker_observations_pkey",
+              "definition": "CREATE UNIQUE INDEX broker_observations_pkey ON public.broker_observations USING btree (account_id)"
+            }
+          ]
+        },
+        {
+          "name": "evaluation_artifacts",
+          "total_bytes": 5693440,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "artifact_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "evaluation_artifacts_pkey",
+              "definition": "CREATE UNIQUE INDEX evaluation_artifacts_pkey ON public.evaluation_artifacts USING btree (run_id, artifact_name)"
+            }
+          ]
+        },
+        {
+          "name": "evaluation_events",
+          "total_bytes": 4046848,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ordinal",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "event_kind",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "evaluation_events_pkey",
+              "definition": "CREATE UNIQUE INDEX evaluation_events_pkey ON public.evaluation_events USING btree (run_id, ordinal)"
+            },
+            {
+              "name": "evaluation_events_run_id_event_id_key",
+              "definition": "CREATE UNIQUE INDEX evaluation_events_run_id_event_id_key ON public.evaluation_events USING btree (run_id, event_id)"
+            }
+          ]
+        },
+        {
+          "name": "evaluation_runs",
+          "total_bytes": 32768,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "protocol_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "evaluation_schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_revision",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "image_repository",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "image_digest",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "strategy_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "initial_capital_micros",
+              "type": "numeric(38,0)",
+              "nullable": false
+            },
+            {
+              "name": "expected_artifact_count",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "expected_event_count",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "expected_gate_count",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "completed_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "evaluation_runs_pkey",
+              "definition": "CREATE UNIQUE INDEX evaluation_runs_pkey ON public.evaluation_runs USING btree (run_id)"
+            }
+          ]
+        },
+        {
+          "name": "execution_controller_observations",
+          "total_bytes": 358416384,
+          "approximate_live_rows": 48075,
+          "columns": [
+            {
+              "name": "observation_id",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "controller_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "recorded_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "execution_controller_observations_pkey",
+              "definition": "CREATE UNIQUE INDEX execution_controller_observations_pkey ON public.execution_controller_observations USING btree (observation_id)"
+            },
+            {
+              "name": "execution_controller_observations_time",
+              "definition": "CREATE INDEX execution_controller_observations_time ON public.execution_controller_observations USING btree (controller_key, recorded_at)"
+            }
+          ]
+        },
+        {
+          "name": "execution_controller_status",
+          "total_bytes": 425984,
+          "approximate_live_rows": 1,
+          "columns": [
+            {
+              "name": "controller_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "epoch",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "last_sequence",
+              "type": "bigint",
+              "nullable": true
+            },
+            {
+              "name": "last_outcome",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "last_receipt_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "completed_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "next_due_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "active",
+              "type": "boolean",
+              "nullable": false
+            },
+            {
+              "name": "plan_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "next_sequence",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "last_pass",
+              "type": "jsonb",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "execution_controller_status_pkey",
+              "definition": "CREATE UNIQUE INDEX execution_controller_status_pkey ON public.execution_controller_status USING btree (controller_key)"
+            }
+          ]
+        },
+        {
+          "name": "execution_decision_admissions",
+          "total_bytes": 98304,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "decision_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "execution_decision_admissions_pkey",
+              "definition": "CREATE UNIQUE INDEX execution_decision_admissions_pkey ON public.execution_decision_admissions USING btree (event_id, decision_id)"
+            }
+          ]
+        },
+        {
+          "name": "execution_unit_cutover_archive",
+          "total_bytes": 190898176,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "table_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "original_record",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "original_record_hash",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "execution_unit_cutover_archive_pkey",
+              "definition": "CREATE UNIQUE INDEX execution_unit_cutover_archive_pkey ON public.execution_unit_cutover_archive USING btree (table_name, row_id)"
+            }
+          ]
+        },
+        {
+          "name": "fills",
+          "total_bytes": 3244032,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "event_kind",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "fill_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker_order_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "client_order_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "intent_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "symbol",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "side",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "quantity_atoms",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "price_atoms",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "fee_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "source_timestamp",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "fills_account_intent_idx",
+              "definition": "CREATE INDEX fills_account_intent_idx ON public.fills USING btree (account_id, intent_id)"
+            },
+            {
+              "name": "fills_account_source_order_idx",
+              "definition": "CREATE INDEX fills_account_source_order_idx ON public.fills USING btree (account_id, symbol, source_timestamp COLLATE \"C\", fill_id COLLATE \"C\")"
+            },
+            {
+              "name": "fills_fill_id_key",
+              "definition": "CREATE UNIQUE INDEX fills_fill_id_key ON public.fills USING btree (fill_id)"
+            },
+            {
+              "name": "fills_pkey",
+              "definition": "CREATE UNIQUE INDEX fills_pkey ON public.fills USING btree (event_id)"
+            }
+          ]
+        },
+        {
+          "name": "gate_outcomes",
+          "total_bytes": 81920,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ordinal",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "gate_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "passed",
+              "type": "boolean",
+              "nullable": false
+            },
+            {
+              "name": "actual",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "required",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "gate_outcomes_pkey",
+              "definition": "CREATE UNIQUE INDEX gate_outcomes_pkey ON public.gate_outcomes USING btree (run_id, ordinal)"
+            },
+            {
+              "name": "gate_outcomes_run_id_gate_name_key",
+              "definition": "CREATE UNIQUE INDEX gate_outcomes_run_id_gate_name_key ON public.gate_outcomes USING btree (run_id, gate_name)"
+            }
+          ]
+        },
+        {
+          "name": "inference_expense_quotes",
+          "total_bytes": 197271552,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "quote_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "session_date",
+              "type": "date",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "receipt_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "verified_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "provider_stage",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "handoff_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "chart_claim_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "chart_terminal_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "stage_claim_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "stage_terminal_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "stage_skip_hash",
+              "type": "text",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "inference_expense_quotes_pending",
+              "definition": "CREATE INDEX inference_expense_quotes_pending ON public.inference_expense_quotes USING btree (account_id, quote_hash) WHERE (verified_at IS NULL)"
+            },
+            {
+              "name": "inference_expense_quotes_pkey",
+              "definition": "CREATE UNIQUE INDEX inference_expense_quotes_pkey ON public.inference_expense_quotes USING btree (quote_hash)"
+            },
+            {
+              "name": "inference_expense_quotes_session",
+              "definition": "CREATE INDEX inference_expense_quotes_session ON public.inference_expense_quotes USING btree (account_id, session_date, quote_hash)"
+            },
+            {
+              "name": "inference_expense_staged_identity",
+              "definition": "CREATE UNIQUE INDEX inference_expense_staged_identity ON public.inference_expense_quotes USING btree (request_id, provider_stage, receipt_hash, handoff_hash, chart_claim_hash, chart_terminal_hash, stage_claim_hash, stage_terminal_hash, stage_skip_hash) NULLS NOT DISTINCT"
+            }
+          ]
+        },
+        {
+          "name": "inference_expense_source_pending",
+          "total_bytes": 778240,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "revision",
+              "type": "bigint",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "inference_expense_source_pending_pkey",
+              "definition": "CREATE UNIQUE INDEX inference_expense_source_pending_pkey ON public.inference_expense_source_pending USING btree (request_id)"
+            }
+          ]
+        },
+        {
+          "name": "intents",
+          "total_bytes": 2203648,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "intent_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "risk_decision_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "client_order_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "symbol",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "side",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "order_type",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "time_in_force",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "quantity_atoms",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "notional_limit_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "state",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "terminal_outcome",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "state_version",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "strategy_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "decision_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "policy_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "authority_generation_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "replan_generation_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "limit_price_micros",
+              "type": "numeric(39,0)",
+              "nullable": true
+            },
+            {
+              "name": "protection",
+              "type": "jsonb",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "intents_account_cycle_idx",
+              "definition": "CREATE INDEX intents_account_cycle_idx ON public.intents USING btree (account_id, cycle_id)"
+            },
+            {
+              "name": "intents_account_id_client_order_id_key",
+              "definition": "CREATE UNIQUE INDEX intents_account_id_client_order_id_key ON public.intents USING btree (account_id, client_order_id)"
+            },
+            {
+              "name": "intents_decision_target_generation_unique",
+              "definition": "CREATE UNIQUE INDEX intents_decision_target_generation_unique ON public.intents USING btree (account_id, strategy_name, cycle_id, decision_hash, symbol, COALESCE(replan_generation_hash, ''::text))"
+            },
+            {
+              "name": "intents_intent_id_account_id_key",
+              "definition": "CREATE UNIQUE INDEX intents_intent_id_account_id_key ON public.intents USING btree (intent_id, account_id)"
+            },
+            {
+              "name": "intents_pkey",
+              "definition": "CREATE UNIQUE INDEX intents_pkey ON public.intents USING btree (intent_id)"
+            }
+          ]
+        },
+        {
+          "name": "intraday_archive_availability",
+          "total_bytes": 31662080,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "reader_endpoint_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "record_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "record_content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "verification",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "read_started_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "available_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "receipt_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "receipt",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "recorded_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "intraday_archive_availability_pkey",
+              "definition": "CREATE UNIQUE INDEX intraday_archive_availability_pkey ON public.intraday_archive_availability USING btree (reader_endpoint_hash, record_id, verification)"
+            },
+            {
+              "name": "intraday_archive_availability_receipt_hash_key",
+              "definition": "CREATE UNIQUE INDEX intraday_archive_availability_receipt_hash_key ON public.intraday_archive_availability USING btree (receipt_hash)"
+            }
+          ]
+        },
+        {
+          "name": "intraday_candidate_observations",
+          "total_bytes": 4243595264,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "intraday_candidate_observations_cycle_time",
+              "definition": "CREATE INDEX intraday_candidate_observations_cycle_time ON public.intraday_candidate_observations USING btree (cycle_id, observed_at)"
+            },
+            {
+              "name": "intraday_candidate_observations_jev_entry_window",
+              "definition": "CREATE INDEX intraday_candidate_observations_jev_entry_window ON public.intraday_candidate_observations USING btree (((payload #>> '{portfolio,purpose}'::text[])), ((payload #>> '{manifest,rangeEndAt}'::text[])) DESC, cycle_id) WHERE ((payload ->> 'schemaVersion'::text) = 'bayn.jev-observation.v1'::text)"
+            },
+            {
+              "name": "intraday_candidate_observations_jev_window",
+              "definition": "CREATE INDEX intraday_candidate_observations_jev_window ON public.intraday_candidate_observations USING btree (cycle_id, ((payload #>> '{portfolio,purpose}'::text[])), ((payload #>> '{manifest,rangeEndAt}'::text[]))) WHERE ((payload ->> 'schemaVersion'::text) = 'bayn.jev-observation.v1'::text)"
+            },
+            {
+              "name": "intraday_candidate_observations_pkey",
+              "definition": "CREATE UNIQUE INDEX intraday_candidate_observations_pkey ON public.intraday_candidate_observations USING btree (content_hash)"
+            }
+          ]
+        },
+        {
+          "name": "intraday_snapshot_references",
+          "total_bytes": 49152,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "manifest",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "intraday_snapshot_references_pkey",
+              "definition": "CREATE UNIQUE INDEX intraday_snapshot_references_pkey ON public.intraday_snapshot_references USING btree (snapshot_id)"
+            }
+          ]
+        },
+        {
+          "name": "jev_batch_plans",
+          "total_bytes": 499441664,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "batch_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "authority_generation_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observation_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_batch_plans_assessment_window",
+              "definition": "CREATE INDEX jev_batch_plans_assessment_window ON public.jev_batch_plans USING btree (authority_generation_hash, ((payload ->> 'observedAt'::text)))"
+            },
+            {
+              "name": "jev_batch_plans_cycle_id_authority_generation_hash_snapshot_key",
+              "definition": "CREATE UNIQUE INDEX jev_batch_plans_cycle_id_authority_generation_hash_snapshot_key ON public.jev_batch_plans USING btree (cycle_id, authority_generation_hash, snapshot_id)"
+            },
+            {
+              "name": "jev_batch_plans_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_batch_plans_pkey ON public.jev_batch_plans USING btree (batch_id)"
+            }
+          ]
+        },
+        {
+          "name": "jev_batch_results",
+          "total_bytes": 89096192,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "batch_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "result_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_batch_results_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_batch_results_pkey ON public.jev_batch_results USING btree (batch_id)"
+            },
+            {
+              "name": "jev_batch_results_result_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_batch_results_result_hash_key ON public.jev_batch_results USING btree (result_hash)"
+            }
+          ]
+        },
+        {
+          "name": "jev_chart_dispatch_claims",
+          "total_bytes": 98304,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "claim_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_chart_dispatch_claims_claim_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_chart_dispatch_claims_claim_hash_key ON public.jev_chart_dispatch_claims USING btree (claim_hash)"
+            },
+            {
+              "name": "jev_chart_dispatch_claims_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_chart_dispatch_claims_pkey ON public.jev_chart_dispatch_claims USING btree (request_id)"
+            },
+            {
+              "name": "jev_chart_dispatch_claims_request_id_claim_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_chart_dispatch_claims_request_id_claim_hash_key ON public.jev_chart_dispatch_claims USING btree (request_id, claim_hash)"
+            }
+          ]
+        },
+        {
+          "name": "jev_chart_terminal_receipts",
+          "total_bytes": 204800,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "claim_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "terminal_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_chart_terminal_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_chart_terminal_receipts_pkey ON public.jev_chart_terminal_receipts USING btree (request_id)"
+            },
+            {
+              "name": "jev_chart_terminal_receipts_request_id_terminal_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_chart_terminal_receipts_request_id_terminal_hash_key ON public.jev_chart_terminal_receipts USING btree (request_id, terminal_hash)"
+            },
+            {
+              "name": "jev_chart_terminal_receipts_terminal_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_chart_terminal_receipts_terminal_hash_key ON public.jev_chart_terminal_receipts USING btree (terminal_hash)"
+            }
+          ]
+        },
+        {
+          "name": "jev_evaluation_receipts",
+          "total_bytes": 122806272,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "receipt_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_evaluation_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_evaluation_receipts_pkey ON public.jev_evaluation_receipts USING btree (request_id)"
+            },
+            {
+              "name": "jev_evaluation_receipts_receipt_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_evaluation_receipts_receipt_hash_key ON public.jev_evaluation_receipts USING btree (receipt_hash)"
+            },
+            {
+              "name": "jev_receipt_request_hash",
+              "definition": "CREATE UNIQUE INDEX jev_receipt_request_hash ON public.jev_evaluation_receipts USING btree (request_id, receipt_hash)"
+            }
+          ]
+        },
+        {
+          "name": "jev_evaluation_requests",
+          "total_bytes": 551821312,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cycle_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "authority_generation_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "symbol",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_evaluation_requests_authority_cycle",
+              "definition": "CREATE INDEX jev_evaluation_requests_authority_cycle ON public.jev_evaluation_requests USING btree (authority_generation_hash, cycle_id)"
+            },
+            {
+              "name": "jev_evaluation_requests_cycle",
+              "definition": "CREATE INDEX jev_evaluation_requests_cycle ON public.jev_evaluation_requests USING btree (cycle_id)"
+            },
+            {
+              "name": "jev_evaluation_requests_cycle_id_authority_generation_hash__key",
+              "definition": "CREATE UNIQUE INDEX jev_evaluation_requests_cycle_id_authority_generation_hash__key ON public.jev_evaluation_requests USING btree (cycle_id, authority_generation_hash, snapshot_id, symbol)"
+            },
+            {
+              "name": "jev_evaluation_requests_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_evaluation_requests_pkey ON public.jev_evaluation_requests USING btree (request_id)"
+            }
+          ]
+        },
+        {
+          "name": "jev_evaluation_resolutions",
+          "total_bytes": 37011456,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "resolution_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "receipt_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_evaluation_resolutions_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_evaluation_resolutions_pkey ON public.jev_evaluation_resolutions USING btree (request_id)"
+            },
+            {
+              "name": "jev_evaluation_resolutions_resolution_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_evaluation_resolutions_resolution_hash_key ON public.jev_evaluation_resolutions USING btree (resolution_hash)"
+            }
+          ]
+        },
+        {
+          "name": "jev_inference_handoffs",
+          "total_bytes": 72032256,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "handoff_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_inference_handoffs_handoff_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_inference_handoffs_handoff_hash_key ON public.jev_inference_handoffs USING btree (handoff_hash)"
+            },
+            {
+              "name": "jev_inference_handoffs_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_inference_handoffs_pkey ON public.jev_inference_handoffs USING btree (request_id)"
+            },
+            {
+              "name": "jev_inference_handoffs_request_id_handoff_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_inference_handoffs_request_id_handoff_hash_key ON public.jev_inference_handoffs USING btree (request_id, handoff_hash)"
+            }
+          ]
+        },
+        {
+          "name": "jev_staged_dispatch_claims",
+          "total_bytes": 18538496,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "stage",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "claim_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_staged_dispatch_claims_claim_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_staged_dispatch_claims_claim_hash_key ON public.jev_staged_dispatch_claims USING btree (claim_hash)"
+            },
+            {
+              "name": "jev_staged_dispatch_claims_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_staged_dispatch_claims_pkey ON public.jev_staged_dispatch_claims USING btree (request_id, stage)"
+            },
+            {
+              "name": "jev_staged_dispatch_claims_request_id_stage_claim_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_staged_dispatch_claims_request_id_stage_claim_hash_key ON public.jev_staged_dispatch_claims USING btree (request_id, stage, claim_hash)"
+            }
+          ]
+        },
+        {
+          "name": "jev_staged_skip_receipts",
+          "total_bytes": 16687104,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "stage",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "skip_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_staged_skip_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_staged_skip_receipts_pkey ON public.jev_staged_skip_receipts USING btree (request_id, stage)"
+            },
+            {
+              "name": "jev_staged_skip_receipts_request_id_stage_skip_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_staged_skip_receipts_request_id_stage_skip_hash_key ON public.jev_staged_skip_receipts USING btree (request_id, stage, skip_hash)"
+            },
+            {
+              "name": "jev_staged_skip_receipts_skip_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_staged_skip_receipts_skip_hash_key ON public.jev_staged_skip_receipts USING btree (skip_hash)"
+            }
+          ]
+        },
+        {
+          "name": "jev_staged_terminal_receipts",
+          "total_bytes": 36446208,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "stage",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "claim_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "terminal_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "jev_staged_terminal_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX jev_staged_terminal_receipts_pkey ON public.jev_staged_terminal_receipts USING btree (request_id, stage)"
+            },
+            {
+              "name": "jev_staged_terminal_receipts_request_id_stage_terminal_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_staged_terminal_receipts_request_id_stage_terminal_hash_key ON public.jev_staged_terminal_receipts USING btree (request_id, stage, terminal_hash)"
+            },
+            {
+              "name": "jev_staged_terminal_receipts_terminal_hash_key",
+              "definition": "CREATE UNIQUE INDEX jev_staged_terminal_receipts_terminal_hash_key ON public.jev_staged_terminal_receipts USING btree (terminal_hash)"
+            }
+          ]
+        },
+        {
+          "name": "lifecycle_commands",
+          "total_bytes": 4284416,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "controller_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "command_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "sequence",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "issued_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "outcome",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "operation",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "failure",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "message",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "cadence_decision",
+              "type": "jsonb",
+              "nullable": true
+            },
+            {
+              "name": "started_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "completed_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "not_due_reason",
+              "type": "text",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "lifecycle_commands_controller_key_sequence_key",
+              "definition": "CREATE UNIQUE INDEX lifecycle_commands_controller_key_sequence_key ON public.lifecycle_commands USING btree (controller_key, sequence)"
+            },
+            {
+              "name": "lifecycle_commands_pkey",
+              "definition": "CREATE UNIQUE INDEX lifecycle_commands_pkey ON public.lifecycle_commands USING btree (controller_key, command_id)"
+            }
+          ]
+        },
+        {
+          "name": "live_capital_grant_revocations",
+          "total_bytes": 16384,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "grant_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "revoked_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "revoked_by",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "reason",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "live_capital_grant_revocations_pkey",
+              "definition": "CREATE UNIQUE INDEX live_capital_grant_revocations_pkey ON public.live_capital_grant_revocations USING btree (grant_hash)"
+            }
+          ]
+        },
+        {
+          "name": "live_capital_grants",
+          "total_bytes": 16384,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "grant_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker_identity_schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker_identity_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker_provider",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker_environment",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "authority_generation_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "strategy_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "strategy_behavior_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "strategy_parameter_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "strategy_parameter_schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "max_gross_notional_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "max_order_notional_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "max_position_notional_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "max_daily_loss_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "max_open_orders",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "valid_from",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "valid_until",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "issued_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "issued_by",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "live_capital_grants_pkey",
+              "definition": "CREATE UNIQUE INDEX live_capital_grants_pkey ON public.live_capital_grants USING btree (grant_hash)"
+            }
+          ]
+        },
+        {
+          "name": "mutation_events",
+          "total_bytes": 2695168,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "mutation_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "intent_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "sequence",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "operation",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "event_type",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "request_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "consistency_delay_ms",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "broker_order_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "response_status",
+              "type": "smallint",
+              "nullable": true
+            },
+            {
+              "name": "response_content_hash",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "request_body",
+              "type": "jsonb",
+              "nullable": true
+            },
+            {
+              "name": "denial_reason",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "routing",
+              "type": "jsonb",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "mutation_events_intent_id_operation_sequence_key",
+              "definition": "CREATE UNIQUE INDEX mutation_events_intent_id_operation_sequence_key ON public.mutation_events USING btree (intent_id, operation, sequence)"
+            },
+            {
+              "name": "mutation_events_mutation_id_sequence_key",
+              "definition": "CREATE UNIQUE INDEX mutation_events_mutation_id_sequence_key ON public.mutation_events USING btree (mutation_id, sequence)"
+            },
+            {
+              "name": "mutation_events_one_start",
+              "definition": "CREATE UNIQUE INDEX mutation_events_one_start ON public.mutation_events USING btree (intent_id, operation) WHERE (sequence = 1)"
+            },
+            {
+              "name": "mutation_events_pkey",
+              "definition": "CREATE UNIQUE INDEX mutation_events_pkey ON public.mutation_events USING btree (event_id)"
+            }
+          ]
+        },
+        {
+          "name": "native_arrival_chunks",
+          "total_bytes": 45734297600,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "capture_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ordinal",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "header",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "compressed",
+              "type": "bytea",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "native_arrival_chunks_pkey",
+              "definition": "CREATE UNIQUE INDEX native_arrival_chunks_pkey ON public.native_arrival_chunks USING btree (capture_id, ordinal)"
+            }
+          ]
+        },
+        {
+          "name": "native_arrival_ends",
+          "total_bytes": 237568,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "capture_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "recorded_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "native_arrival_ends_pkey",
+              "definition": "CREATE UNIQUE INDEX native_arrival_ends_pkey ON public.native_arrival_ends USING btree (capture_id)"
+            }
+          ]
+        },
+        {
+          "name": "native_arrival_epochs",
+          "total_bytes": 1245184,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "capture_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "recorded_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "native_arrival_epochs_pkey",
+              "definition": "CREATE UNIQUE INDEX native_arrival_epochs_pkey ON public.native_arrival_epochs USING btree (capture_id)"
+            }
+          ]
+        },
+        {
+          "name": "native_protection_cancel_commands",
+          "total_bytes": 5931008,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "intent_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker_order_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "requested_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "exit_target",
+              "type": "jsonb",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "native_protection_cancel_commands_pkey",
+              "definition": "CREATE UNIQUE INDEX native_protection_cancel_commands_pkey ON public.native_protection_cancel_commands USING btree (intent_id, broker_order_id, requested_at)"
+            }
+          ]
+        },
+        {
+          "name": "native_protection_cancel_receipts",
+          "total_bytes": 16384,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "intent_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker_order_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "requested_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "request_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "request_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "response_status",
+              "type": "smallint",
+              "nullable": false
+            },
+            {
+              "name": "response_content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "routing",
+              "type": "jsonb",
+              "nullable": true
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "native_protection_cancel_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX native_protection_cancel_receipts_pkey ON public.native_protection_cancel_receipts USING btree (intent_id, broker_order_id, requested_at)"
+            }
+          ]
+        },
+        {
+          "name": "operational_assessment_receipts",
+          "total_bytes": 335872,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "assessment_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "registration_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_cut_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "as_of",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "verdict",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "input_text",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "assessment_text",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "operational_assessment_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX operational_assessment_receipts_pkey ON public.operational_assessment_receipts USING btree (assessment_hash)"
+            }
+          ]
+        },
+        {
+          "name": "operational_safety_authority_transitions",
+          "total_bytes": 98304,
+          "approximate_live_rows": 17,
+          "columns": [
+            {
+              "name": "authority_version",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "captured_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "previous_state",
+              "type": "jsonb",
+              "nullable": true
+            },
+            {
+              "name": "authority_state",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "operational_safety_authority_transitions_pkey",
+              "definition": "CREATE UNIQUE INDEX operational_safety_authority_transitions_pkey ON public.operational_safety_authority_transitions USING btree (authority_version)"
+            }
+          ]
+        },
+        {
+          "name": "operational_safety_baselines",
+          "total_bytes": 32768,
+          "approximate_live_rows": 1,
+          "columns": [
+            {
+              "name": "registration_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "captured_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "authority_state",
+              "type": "jsonb",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "operational_safety_baselines_pkey",
+              "definition": "CREATE UNIQUE INDEX operational_safety_baselines_pkey ON public.operational_safety_baselines USING btree (registration_hash)"
+            }
+          ]
+        },
+        {
+          "name": "operational_safety_mutation_admissions",
+          "total_bytes": 73728,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "captured_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "authority_state",
+              "type": "jsonb",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "operational_safety_mutation_admissions_pkey",
+              "definition": "CREATE UNIQUE INDEX operational_safety_mutation_admissions_pkey ON public.operational_safety_mutation_admissions USING btree (event_id)"
+            }
+          ]
+        },
+        {
+          "name": "orders",
+          "total_bytes": 2916352,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "event_kind",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "broker_order_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "client_order_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "intent_id",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "symbol",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "side",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "order_type",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "time_in_force",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "quantity_atoms",
+              "type": "numeric(39,0)",
+              "nullable": true
+            },
+            {
+              "name": "filled_quantity_atoms",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "limit_price_micros",
+              "type": "numeric(39,0)",
+              "nullable": true
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "notional_micros",
+              "type": "numeric(39,0)",
+              "nullable": true
+            },
+            {
+              "name": "stop_price_micros",
+              "type": "numeric(39,0)",
+              "nullable": true
+            },
+            {
+              "name": "parent_broker_order_id",
+              "type": "text",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "orders_account_broker_order_idx",
+              "definition": "CREATE INDEX orders_account_broker_order_idx ON public.orders USING btree (account_id, broker_order_id)"
+            },
+            {
+              "name": "orders_account_client_order_idx",
+              "definition": "CREATE INDEX orders_account_client_order_idx ON public.orders USING btree (account_id, client_order_id)"
+            },
+            {
+              "name": "orders_account_intent_idx",
+              "definition": "CREATE INDEX orders_account_intent_idx ON public.orders USING btree (account_id, intent_id)"
+            },
+            {
+              "name": "orders_pkey",
+              "definition": "CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (event_id)"
+            }
+          ]
+        },
+        {
+          "name": "position_snapshots",
+          "total_bytes": 239648768,
+          "approximate_live_rows": 2616,
+          "columns": [
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "position_count",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ingestion_sequence",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "ingestion_order_trusted",
+              "type": "boolean",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "position_snapshots_account_id_source_hash_observed_at_key",
+              "definition": "CREATE UNIQUE INDEX position_snapshots_account_id_source_hash_observed_at_key ON public.position_snapshots USING btree (account_id, source_hash, observed_at)"
+            },
+            {
+              "name": "position_snapshots_account_ingestion_sequence_idx",
+              "definition": "CREATE INDEX position_snapshots_account_ingestion_sequence_idx ON public.position_snapshots USING btree (account_id, ingestion_sequence DESC) WHERE ingestion_order_trusted"
+            },
+            {
+              "name": "position_snapshots_account_observed_at_idx",
+              "definition": "CREATE INDEX position_snapshots_account_observed_at_idx ON public.position_snapshots USING btree (account_id, observed_at DESC)"
+            },
+            {
+              "name": "position_snapshots_ingestion_sequence_idx",
+              "definition": "CREATE UNIQUE INDEX position_snapshots_ingestion_sequence_idx ON public.position_snapshots USING btree (ingestion_sequence)"
+            },
+            {
+              "name": "position_snapshots_pkey",
+              "definition": "CREATE UNIQUE INDEX position_snapshots_pkey ON public.position_snapshots USING btree (snapshot_id)"
+            },
+            {
+              "name": "position_snapshots_snapshot_id_account_id_key",
+              "definition": "CREATE UNIQUE INDEX position_snapshots_snapshot_id_account_id_key ON public.position_snapshots USING btree (snapshot_id, account_id)"
+            }
+          ]
+        },
+        {
+          "name": "positions",
+          "total_bytes": 12623872,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "event_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "event_kind",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "symbol",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "quantity_atoms",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "average_entry_price_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "market_price_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "market_value_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "unrealized_pnl_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cost_basis_micros",
+              "type": "numeric(39,0)",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "positions_pkey",
+              "definition": "CREATE UNIQUE INDEX positions_pkey ON public.positions USING btree (event_id)"
+            },
+            {
+              "name": "positions_snapshot_idx",
+              "definition": "CREATE INDEX positions_snapshot_idx ON public.positions USING btree (snapshot_id)"
+            }
+          ]
+        },
+        {
+          "name": "protocol_locks",
+          "total_bytes": 81920,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "protocol_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "strategy_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "behavior_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "parameter_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "parameters",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "protocol_locks_pkey",
+              "definition": "CREATE UNIQUE INDEX protocol_locks_pkey ON public.protocol_locks USING btree (protocol_hash)"
+            }
+          ]
+        },
+        {
+          "name": "qualification_locks",
+          "total_bytes": 131072,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "lock_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "candidate_run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "protocol_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_revision",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "image_repository",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "image_digest",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "qualification_locks_candidate_run_id_key",
+              "definition": "CREATE UNIQUE INDEX qualification_locks_candidate_run_id_key ON public.qualification_locks USING btree (candidate_run_id)"
+            },
+            {
+              "name": "qualification_locks_pkey",
+              "definition": "CREATE UNIQUE INDEX qualification_locks_pkey ON public.qualification_locks USING btree (lock_id)"
+            },
+            {
+              "name": "qualification_locks_snapshot_id_key",
+              "definition": "CREATE UNIQUE INDEX qualification_locks_snapshot_id_key ON public.qualification_locks USING btree (snapshot_id)"
+            }
+          ]
+        },
+        {
+          "name": "qualification_results",
+          "total_bytes": 753664,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "lock_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "verdict",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "committed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "analysis_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "result_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "qualification_results_pkey",
+              "definition": "CREATE UNIQUE INDEX qualification_results_pkey ON public.qualification_results USING btree (lock_id)"
+            },
+            {
+              "name": "qualification_results_result_hash_key",
+              "definition": "CREATE UNIQUE INDEX qualification_results_result_hash_key ON public.qualification_results USING btree (result_hash)"
+            },
+            {
+              "name": "qualification_results_run_id_key",
+              "definition": "CREATE UNIQUE INDEX qualification_results_run_id_key ON public.qualification_results USING btree (run_id)"
+            }
+          ]
+        },
+        {
+          "name": "qualification_trials",
+          "total_bytes": 16384,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "reason_codes",
+              "type": "text[]",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "recorded_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "qualification_trials_pkey",
+              "definition": "CREATE UNIQUE INDEX qualification_trials_pkey ON public.qualification_trials USING btree (run_id)"
+            }
+          ]
+        },
+        {
+          "name": "reconciliations",
+          "total_bytes": 144777216,
+          "approximate_live_rows": 2619,
+          "columns": [
+            {
+              "name": "reconciliation_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "expected_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "discrepancies",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "reconciled_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "reconciliations_account_reconciled_at_idx",
+              "definition": "CREATE INDEX reconciliations_account_reconciled_at_idx ON public.reconciliations USING btree (account_id, reconciled_at DESC)"
+            },
+            {
+              "name": "reconciliations_pkey",
+              "definition": "CREATE UNIQUE INDEX reconciliations_pkey ON public.reconciliations USING btree (reconciliation_id)"
+            }
+          ]
+        },
+        {
+          "name": "research_capture_chunks",
+          "total_bytes": 729088,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "chunk_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "capture_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "chunk_ordinal",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "research_capture_chunks_capture_id_chunk_ordinal_key",
+              "definition": "CREATE UNIQUE INDEX research_capture_chunks_capture_id_chunk_ordinal_key ON public.research_capture_chunks USING btree (capture_id, chunk_ordinal)"
+            },
+            {
+              "name": "research_capture_chunks_pkey",
+              "definition": "CREATE UNIQUE INDEX research_capture_chunks_pkey ON public.research_capture_chunks USING btree (chunk_id)"
+            }
+          ]
+        },
+        {
+          "name": "research_capture_seals",
+          "total_bytes": 65536,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "capture_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "research_capture_seals_pkey",
+              "definition": "CREATE UNIQUE INDEX research_capture_seals_pkey ON public.research_capture_seals USING btree (capture_id)"
+            }
+          ]
+        },
+        {
+          "name": "research_inference_receipts",
+          "total_bytes": 2162688,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "receipt_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "verified_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "research_inference_receipts_pending",
+              "definition": "CREATE INDEX research_inference_receipts_pending ON public.research_inference_receipts USING btree (run_id) WHERE (verified_at IS NULL)"
+            },
+            {
+              "name": "research_inference_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX research_inference_receipts_pkey ON public.research_inference_receipts USING btree (run_id)"
+            }
+          ]
+        },
+        {
+          "name": "research_inference_runs",
+          "total_bytes": 557056,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "claimed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "research_inference_runs_pkey",
+              "definition": "CREATE UNIQUE INDEX research_inference_runs_pkey ON public.research_inference_runs USING btree (run_id)"
+            }
+          ]
+        },
+        {
+          "name": "risk_decisions",
+          "total_bytes": 729088,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "decision_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "input_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "intent_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "policy_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "outcome",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "reason_codes",
+              "type": "text[]",
+              "nullable": false
+            },
+            {
+              "name": "decided_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "expires_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "risk_decisions_decision_id_intent_id_key",
+              "definition": "CREATE UNIQUE INDEX risk_decisions_decision_id_intent_id_key ON public.risk_decisions USING btree (decision_id, intent_id)"
+            },
+            {
+              "name": "risk_decisions_intent_id_key",
+              "definition": "CREATE UNIQUE INDEX risk_decisions_intent_id_key ON public.risk_decisions USING btree (intent_id)"
+            },
+            {
+              "name": "risk_decisions_pkey",
+              "definition": "CREATE UNIQUE INDEX risk_decisions_pkey ON public.risk_decisions USING btree (decision_id)"
+            }
+          ]
+        },
+        {
+          "name": "schema_migrations",
+          "total_bytes": 81920,
+          "approximate_live_rows": 3,
+          "columns": [
+            {
+              "name": "migration_id",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "schema_migrations_pkey",
+              "definition": "CREATE UNIQUE INDEX schema_migrations_pkey ON public.schema_migrations USING btree (migration_id)"
+            }
+          ]
+        },
+        {
+          "name": "simulated_broker_checkpoints",
+          "total_bytes": 24576,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "ordinal",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_manifest_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "checkpoint_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "simulated_broker_checkpoints_account_id_checkpoint_hash_key",
+              "definition": "CREATE UNIQUE INDEX simulated_broker_checkpoints_account_id_checkpoint_hash_key ON public.simulated_broker_checkpoints USING btree (account_id, checkpoint_hash)"
+            },
+            {
+              "name": "simulated_broker_checkpoints_pkey",
+              "definition": "CREATE UNIQUE INDEX simulated_broker_checkpoints_pkey ON public.simulated_broker_checkpoints USING btree (ordinal)"
+            }
+          ]
+        },
+        {
+          "name": "simulated_execution_clocks",
+          "total_bytes": 16384,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_manifest_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "measured_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "measured_observed_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            },
+            {
+              "name": "source_read_started_at",
+              "type": "timestamp with time zone",
+              "nullable": true
+            }
+          ],
+          "indexes": [
+            {
+              "name": "simulated_execution_clocks_pkey",
+              "definition": "CREATE UNIQUE INDEX simulated_execution_clocks_pkey ON public.simulated_execution_clocks USING btree (account_id)"
+            }
+          ]
+        },
+        {
+          "name": "simulated_snapshot_references",
+          "total_bytes": 16384,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "manifest",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "simulated_snapshot_references_pkey",
+              "definition": "CREATE UNIQUE INDEX simulated_snapshot_references_pkey ON public.simulated_snapshot_references USING btree (snapshot_id)"
+            }
+          ]
+        },
+        {
+          "name": "snapshot_references",
+          "total_bytes": 73728,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "database_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "table_name",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "dataset_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_feed",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "adjustment",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_count",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "first_session",
+              "type": "date",
+              "nullable": false
+            },
+            {
+              "name": "last_session",
+              "type": "date",
+              "nullable": false
+            },
+            {
+              "name": "manifest",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "snapshot_references_pkey",
+              "definition": "CREATE UNIQUE INDEX snapshot_references_pkey ON public.snapshot_references USING btree (snapshot_id)"
+            }
+          ]
+        },
+        {
+          "name": "status_history",
+          "total_bytes": 65536,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "sequence",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "run_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "detail",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "recorded_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "status_history_pkey",
+              "definition": "CREATE UNIQUE INDEX status_history_pkey ON public.status_history USING btree (sequence)"
+            },
+            {
+              "name": "status_history_run_id_status_key",
+              "definition": "CREATE UNIQUE INDEX status_history_run_id_status_key ON public.status_history USING btree (run_id, status)"
+            },
+            {
+              "name": "status_history_run_sequence_idx",
+              "definition": "CREATE INDEX status_history_run_sequence_idx ON public.status_history USING btree (run_id, sequence)"
+            }
+          ]
+        },
+        {
+          "name": "streaming_snapshot_references",
+          "total_bytes": 922796032,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "snapshot_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "manifest",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "streaming_snapshot_references_pkey",
+              "definition": "CREATE UNIQUE INDEX streaming_snapshot_references_pkey ON public.streaming_snapshot_references USING btree (snapshot_id)"
+            }
+          ]
+        },
+        {
+          "name": "system_assessment_receipts",
+          "total_bytes": 16384,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "assessment_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "registration_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_cut_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "as_of",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "verdict",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "input_text",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "assessment_text",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "system_assessment_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX system_assessment_receipts_pkey ON public.system_assessment_receipts USING btree (assessment_hash)"
+            }
+          ]
+        },
+        {
+          "name": "system_durable_observations",
+          "total_bytes": 4939776,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "registration_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "kind",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "witnessed_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "correct",
+              "type": "boolean",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "system_durable_observations_pkey",
+              "definition": "CREATE UNIQUE INDEX system_durable_observations_pkey ON public.system_durable_observations USING btree (registration_hash, kind, source_hash)"
+            }
+          ]
+        },
+        {
+          "name": "system_evidence_cuts",
+          "total_bytes": 8101888,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "source_cut_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "registration_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "as_of",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "payload_text",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "system_evidence_cuts_pkey",
+              "definition": "CREATE UNIQUE INDEX system_evidence_cuts_pkey ON public.system_evidence_cuts USING btree (source_cut_hash)"
+            }
+          ]
+        },
+        {
+          "name": "system_pending_evidence",
+          "total_bytes": 1695744,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "registration_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "kind",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "correct",
+              "type": "boolean",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "system_pending_evidence_due",
+              "definition": "CREATE INDEX system_pending_evidence_due ON public.system_pending_evidence USING btree (registration_hash, source_at)"
+            },
+            {
+              "name": "system_pending_evidence_pkey",
+              "definition": "CREATE UNIQUE INDEX system_pending_evidence_pkey ON public.system_pending_evidence USING btree (registration_hash, kind, source_hash)"
+            }
+          ]
+        },
+        {
+          "name": "system_qualification_origin",
+          "total_bytes": 32768,
+          "approximate_live_rows": 1,
+          "columns": [
+            {
+              "name": "program",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "prior_attempt_count",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "prior_attempt_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "history_evidence_text",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "history_evidence_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "system_qualification_origin_pkey",
+              "definition": "CREATE UNIQUE INDEX system_qualification_origin_pkey ON public.system_qualification_origin USING btree (program)"
+            }
+          ]
+        },
+        {
+          "name": "system_qualification_registrations",
+          "total_bytes": 188416,
+          "approximate_live_rows": 1,
+          "columns": [
+            {
+              "name": "registration_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "program",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "attempt_index",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "prior_attempt_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "registered_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "first_open_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "last_close_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "payload_text",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "system_qualification_registration_window",
+              "definition": "CREATE INDEX system_qualification_registration_window ON public.system_qualification_registrations USING btree (last_close_at, first_open_at)"
+            },
+            {
+              "name": "system_qualification_registrations_pkey",
+              "definition": "CREATE UNIQUE INDEX system_qualification_registrations_pkey ON public.system_qualification_registrations USING btree (registration_hash)"
+            },
+            {
+              "name": "system_qualification_registrations_program_attempt_index_key",
+              "definition": "CREATE UNIQUE INDEX system_qualification_registrations_program_attempt_index_key ON public.system_qualification_registrations USING btree (program, attempt_index)"
+            }
+          ]
+        },
+        {
+          "name": "system_replay_execution_receipts",
+          "total_bytes": 16384,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "receipt_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "registration_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_cut_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "container_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "report_file_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload_text",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "system_replay_execution_receipts_pkey",
+              "definition": "CREATE UNIQUE INDEX system_replay_execution_receipts_pkey ON public.system_replay_execution_receipts USING btree (receipt_hash)"
+            }
+          ]
+        },
+        {
+          "name": "system_source_records",
+          "total_bytes": 29966336,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "record_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "kind",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload_text",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "system_source_records_pkey",
+              "definition": "CREATE UNIQUE INDEX system_source_records_pkey ON public.system_source_records USING btree (record_hash)"
+            }
+          ]
+        },
+        {
+          "name": "valuations",
+          "total_bytes": 184451072,
+          "approximate_live_rows": 2616,
+          "columns": [
+            {
+              "name": "valuation_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "schema_version",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "account_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "source_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "cash_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "long_market_value_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "short_market_value_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "equity_micros",
+              "type": "numeric(39,0)",
+              "nullable": false
+            },
+            {
+              "name": "as_of",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "valuations_account_peak_idx",
+              "definition": "CREATE INDEX valuations_account_peak_idx ON public.valuations USING btree (account_id, equity_micros DESC, as_of)"
+            },
+            {
+              "name": "valuations_account_session_open_idx",
+              "definition": "CREATE INDEX valuations_account_session_open_idx ON public.valuations USING btree (account_id, (((as_of AT TIME ZONE 'America/New_York'::text))::date), as_of, valuation_id COLLATE \"C\") INCLUDE (equity_micros)"
+            },
+            {
+              "name": "valuations_account_source_unique",
+              "definition": "CREATE UNIQUE INDEX valuations_account_source_unique ON public.valuations USING btree (account_id, source_hash)"
+            },
+            {
+              "name": "valuations_pkey",
+              "definition": "CREATE UNIQUE INDEX valuations_pkey ON public.valuations USING btree (valuation_id)"
+            }
+          ]
+        }
+      ]
+    },
+    "bayn_native_arrival": {
+      "capturedAt": "2026-11-08T23:00:09.199162+00:00",
+      "replica": false,
+      "databaseBytes": 126350358207,
+      "tables": [
+        {
+          "name": "native_arrival_chunks",
+          "total_bytes": 126340186112,
+          "approximate_live_rows": 220143,
+          "columns": [
+            {
+              "name": "capture_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "ordinal",
+              "type": "bigint",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "header",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "compressed",
+              "type": "bytea",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "native_arrival_chunks_pkey",
+              "definition": "CREATE UNIQUE INDEX native_arrival_chunks_pkey ON public.native_arrival_chunks USING btree (capture_id, ordinal)"
+            }
+          ]
+        },
+        {
+          "name": "native_arrival_ends",
+          "total_bytes": 270336,
+          "approximate_live_rows": 27,
+          "columns": [
+            {
+              "name": "capture_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "nullable": false
+            },
+            {
+              "name": "recorded_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "native_arrival_ends_pkey",
+              "definition": "CREATE UNIQUE INDEX native_arrival_ends_pkey ON public.native_arrival_ends USING btree (capture_id)"
+            }
+          ]
+        },
+        {
+          "name": "native_arrival_epochs",
+          "total_bytes": 1425408,
+          "approximate_live_rows": 29,
+          "columns": [
+            {
+              "name": "capture_id",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "content_hash",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "payload",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "recorded_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "native_arrival_epochs_pkey",
+              "definition": "CREATE UNIQUE INDEX native_arrival_epochs_pkey ON public.native_arrival_epochs USING btree (capture_id)"
+            }
+          ]
+        },
+        {
+          "name": "native_arrival_schema_migrations",
+          "total_bytes": 32768,
+          "approximate_live_rows": 0,
+          "columns": [
+            {
+              "name": "migration_id",
+              "type": "integer",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "indexes": [
+            {
+              "name": "native_arrival_schema_migrations_pkey",
+              "definition": "CREATE UNIQUE INDEX native_arrival_schema_migrations_pkey ON public.native_arrival_schema_migrations USING btree (migration_id)"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "observedRolePrivileges": {
+    "role": "bayn_app",
+    "table": "public.intents",
+    "canInsert": true,
+    "canUpdate": true,
+    "method": "Read-only has_table_privilege query; status Deployment uses the CNPG app secret."
+  }
+}

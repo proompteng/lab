@@ -4,6 +4,7 @@ import { Effect } from 'effect'
 import type { LogFields, Logger, LogLevel } from '../observability/logger'
 import type { WorkflowInfo } from './context'
 import type { DeterminismGuard } from './determinism'
+import type { WorkflowGuardsMode } from './guards'
 
 export type WorkflowLogger = Logger
 
@@ -11,6 +12,7 @@ export type WorkflowLogContext = {
   readonly info: WorkflowInfo
   readonly guard: DeterminismGuard
   readonly logger: WorkflowLogger
+  readonly guardMode?: WorkflowGuardsMode
 }
 
 const workflowLogStorage = new AsyncLocalStorage<WorkflowLogContext>()

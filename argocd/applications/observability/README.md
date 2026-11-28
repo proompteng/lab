@@ -1,21 +1,101 @@
 # Observability object storage (Ceph RGW)
 
+For image-build timing, cache evidence, dashboards and alerts, see [CI performance observability](ci/README.md).
+
 Observability uses Ceph RGW object storage, not MinIO.
 Loki, Mimir, and Tempo read S3 access credentials from secret `rook-ceph-rgw-loki` in the `observability`
 namespace.
 That secret should be a reflected copy of the Rook-managed source secret
 `rook-ceph-object-user-objectstore-loki` in namespace `rook-ceph`, not a hand-sealed credential copy.
-The RGW endpoint is not sourced from the reflected secret. Keep it explicit in the Helm values as
-`rook-ceph-rgw-objectstore.rook-ceph.svc:80` (or `http://...` only where the chart expects a URL string).
+Keep the RGW endpoint explicit in Helm values; it is not sourced from the reflected secret. Loki, Mimir and Tempo
+use the internal TLS endpoint `rook-ceph-rgw-tls.rook-ceph.svc:443` with `insecure: false` and TLS server name
+`ceph.k8s.proompteng.ai`. Loki 3 uses its supported Thanos object-store client and retains the `loki-data` bucket
+and existing BoltDB Shipper schema. The compatibility gateway Service preserves the original client address.
+Follow the [Loki 3 migration](../../../docs/runbooks/loki-3-migration.md) for the verified drain, cutover and recovery
+procedure. The sole Loki 3 compactor uses a retained 10 GiB Ceph claim; log retention remains disabled.
+Loki bounds push bodies at 8 MiB on the wire and 16 MiB decoded, and rejects lines over 2 MiB without truncating
+records. The [cluster performance runbook](../../../docs/runbooks/cluster-performance-audit-2026-11-27.md#lgtm)
+covers these limits, the Mimir and Tempo capacity changes, and mixed-load acceptance.
+Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, and Alertmanager. Follow the
+[Mimir 3.2 rollout](../../../docs/runbooks/mimir-3-2-upgrade.md) for the native configuration gate, ordered sync waves,
+and live acceptance. Mimir uses the shared Strimzi Kafka cluster at
+`kafka-kafka-bootstrap.kafka.svc.cluster.local:9093`, on `observability.mimir.ingest.v1`.
+The topic has three partitions, replication factor three, and minimum ISR two. Topic creation belongs to the Kafka
+application; Mimir's bundled Kafka chart is disabled. Increase topic partitions before scaling ingesters above three.
+The [shared Kafka migration runbook](../../../docs/runbooks/mimir-shared-kafka.md) describes the hard cutover,
+offset handling, and verification. Historical Kafka snapshot/restore PVCs remain as retained data without a workload.
+
+Distributors and the ruler's internal distributor use a 15-second downstream budget, allowing Kafka's existing
+10-second write timeout plus two-second overhead to finish within Alloy's 30-second client timeout. The former
+HTTP distributor budget was five seconds; the ruler's was ten. Component arguments limit this change to
+distributor and ruler rollouts. Verify their effective `/config` values and fresh samples after deployment;
+Kafka write failures and stale telemetry remain failures.
+
+The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
+Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
+[compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.
+Its Tempo 2 buffer-reload procedure is historical and does not apply to the production Tempo 3 deployment.
+
+Tempo 3 owns production ingestion, queries, and compaction. The compatibility Services preserve the original
+Tempo distributor, gateway, and query-frontend addresses; do not remove them while clients use those names.
+See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) for buffer-drain and recovery evidence.
 
 ## Sources of truth
+
+Torghut websocket scrape loss pages after five minutes, including a disappeared target. Failed or missing readiness
+pages after two minutes on a reachable target, including overnight crypto operation. Both alerts require an enabled
+deployment and aggregate by service so a failed old pod cannot override a healthy replacement. Kafka publication
+stalls retain the existing UTC market window and page only while readiness is healthy. All three use `notify: email`.
+Recent container restarts remain visible as warnings for ten minutes; availability alerts own sustained failures.
+
+`RegistryCleanupMissed` warns by email when the latest scheduled cleanup has no subsequent success after its two-hour
+Job deadline and five-minute alert delay. It uses the CronJob's native last-success timestamp, so an owned recovery
+clears it without deleting retained failed Jobs. [Native scenarios](tests/torghut-registry-alerts.yaml) cover outage,
+recovery, missing telemetry, pod replacement, scale-to-zero, restart expiry and cleanup deadlines.
+
+The cluster Alloy collector retains Bayn API, execution, activation, research, PostgreSQL, broker egress-proxy and
+TigerBeetle logs by an explicit container allowlist. Valkey logs use their existing failover-pod discovery. Current
+Loki readback must verify the actual container and pod labels; an `up` scrape establishes metric delivery only.
+
+Loki, Mimir and Tempo Deployments and StatefulSets require `network.proompteng.ai/100g=true` on Turin or Altra.
+Their stateless Kafka and RGW clients also require this label; the Ryzen Ceph-volume exclusion alone cannot keep
+these network workloads off its slower link. Tempo keeps three block builders and three live stores with a two-plus-one
+host spread. The Loki canary and node collectors retain all-host coverage. Move retained storage clients individually
+and verify native rings, Kafka offsets, ingestion and historical queries before advancing the rollout.
 
 1. `argocd/applications/rook-ceph/rook-ceph-objectstore-loki-user.yaml`
 2. `argocd/applications/rook-ceph/rook-ceph-object-user-objectstore-loki-reflector-source.yaml`
 3. `argocd/applications/observability/rook-ceph-rgw-loki-reflected-secret.yaml`
-4. `argocd/applications/observability/loki-values.yaml`
+4. `argocd/applications/observability/loki-v3-values.yaml`
 5. `argocd/applications/observability/mimir-values.yaml`
-6. `argocd/applications/observability/tempo-values.yaml`
+6. `argocd/applications/observability/tempo-v3-values.yaml`
+
+## Ofz and Relay platform alerts
+
+The `ofz-relay-platform.rules` group in [the Mimir rules](graf-mimir-rules.yaml) covers the `ofz`, `relay`, `tengri`,
+`proompteng` and standalone `opencode` Applications and Kargo Stages. It alerts on missing or unhealthy Argo observations,
+persistent sync drift, failed promotions, and active promotions that exceed thirty minutes. Missing Stage telemetry has
+its own alert so collection failure cannot silently disable promotion alerts.
+
+Kube-state-metrics reads Kargo `Stage` v1alpha1 status with list/watch access to Stages. It exports the last promotion's
+phase and the current promotion's start timestamp. Idle Stages have no current-start sample; exporting zero would
+incorrectly report an idle Stage as stalled. Alloy forwards both bounded metric families without Freight IDs or image
+tags as labels. The status paths match the installed Kargo CRD. During rollout, verify all five Stage observations in
+Mimir before relying on the promotion rules.
+
+Ofz database rules cover loss of all PostgreSQL metrics targets, database collection errors, replica target loss, and
+the absence of a completed cluster-labelled backup within thirty-six hours. All-zero `up` samples remain a
+failure. These observations do not establish replication correctness or a successful restore. The generic
+`CloudNativePgWalArchiveBacklog` rule also covers Ofz.
+
+The rules use the existing `notify: email` route. Native Prometheus scenarios in [platform-alerts.yaml](tests/platform-alerts.yaml)
+exercise firing delays, recovery, idle promotions and missing observations. Argo health and scrape health remain
+infrastructure evidence; application acceptance still requires actual authorized connector results and durable receipts.
+
+`PlatformApplicationUnhealthy` owns Tengri's Argo health alert too, so one unhealthy application produces one alert.
+Restate replica scrape and failure-detector degradation warn after five minutes, allowing a short single-node
+replacement. Missing metadata quorum still pages after two minutes, including when all metadata telemetry disappears.
+[Restate scenarios](tests/restate-alerts.yaml) exercise both recovery and sustained quorum loss.
 
 ## Required buckets
 
@@ -56,6 +136,12 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 - Mimir nginx: `mimir.ide-newton.ts.net`
 - Tempo gateway: `tempo.ide-newton.ts.net`
 
+Grafana permits anonymous Viewer access to dashboards and data source queries on the private Tailscale and
+`grafana.k8s.proompteng.ai` routes. Optional administrator sign-in remains available for editing and cleanup;
+ordinary dashboard access requires no login. Keep these routes private when changing ingress or network exposure.
+The home page opens CI Build Performance directly; Grafana's personal home screen requests account-only stars and
+team APIs that return 401 for anonymous visitors.
+
 ## Reflect RGW credentials
 
 1. Keep `CephObjectStoreUser/loki` and the source secret annotation manifests owned by the `rook-ceph` app.
@@ -65,8 +151,8 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 4. Restart components if needed:
 
 ```bash
-kubectl -n observability rollout restart deploy observability-loki-loki-distributed-distributor
-kubectl -n observability rollout restart deploy observability-tempo-distributor
+kubectl -n observability rollout restart deploy observability-loki-v3-distributor
+kubectl -n observability rollout restart deploy observability-tempo-v3-distributor
 kubectl -n observability rollout restart deploy observability-mimir-distributor
 ```
 
@@ -85,16 +171,134 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
 - `observability-kube-state-metrics`: Kubernetes object state and request/limit/allocatable metrics, plus
   CloudNativePG backup and scheduled-backup timestamps.
 - `observability-cluster-metrics-alloy`: scrapes kube-state-metrics, kubelet, every CloudNativePG instance, the Ceph
-  manager, Bayn's bounded service metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
+  manager, Bayn's bounded service and financial-model metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
   including logical-slot WAL retention and pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
-- `bayn-cycle-operations-dashboard`: Grafana dashboard for current trading readiness, execution authority, cycle
-  reason and phase, session timing, economic evidence, accounting coverage, safety freshness, and replica-reduced
-  lifecycle history. Running accounting is distinct from immutable terminal profit, cost, and return evidence; missing
-  terminal evidence is never displayed as zero profit.
+- `bayn-cycle-operations-dashboard`: nine overview panels for the current condition, blocker, planner outcome, runtime, authority,
+  ledger, accounting coverage and execution funnel. Expand execution, account/P&L and export diagnostics as needed.
+  Running accounting is distinct from terminal qualification; missing terminal evidence never becomes zero profit.
+- `bayn-multi-sleeve-operations-dashboard`: current cycle and controller outcome, controller stage errors, last successful
+  and unrecovered failed daily Jobs, Bayn database streaming and flush lag, and advisory Auto Ontology availability.
+- `bayn-cache-performance-dashboard`: critical-path activity, outcomes and p95 duration, plus broker snapshot age
+  relative to its configured limit. Expand cache replication, dependency failures and PostgreSQL diagnostics after
+  identifying the affected path. The API uses
+  its existing scrape and workers use native Effect OTLP metrics. See the
+  [cache observability runbook](../../../docs/runbooks/bayn-cache-observability.md) for collection, alerts and acceptance.
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
-  health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
+  health, stale Buzz and Bayn backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
+
+`BaynDatabaseBackupStale` uses the existing cluster-labelled CNPG completion metric and email route. It fires after
+five minutes without an observed completed `bayn-db` backup from the last thirty-six hours, including missing
+completion telemetry. The newest completed backup wins; running or failed backups and the retired native-arrival
+cluster cannot clear it. A daily full backup can take hours, so this is not a short running-job timeout. A completed
+backup does not establish a successful restore. [Native scenarios](tests/bayn-backup-alerts.yaml) cover the age and
+hold boundaries, recovery, missing telemetry, excluded clusters and stable alert identity.
+
+`BaynExecutionControllerErrorBurst` fires when any tracked stage estimates at least four errors or interruptions
+in three minutes for one minute. Broker-snapshot and liquidation reads are tracked separately because the enclosing
+cycle pass can report success after handling a failed read. The dashboard shows the same counts as errors per minute.
+`BaynDailyCronJobFailed` checks terminal failures of Jobs owned by `bayn-macro-daily-sleeves` and
+`bayn-daily-scorecard`; a newer CronJob success clears retained failures. `BaynDailyCronJobStale` uses Kubernetes
+schedule timestamps and a two-hour budget, not a fixed weekday cadence. It warns after five minutes when a scheduled
+run has not succeeded or an expected run was never scheduled. Suspend and terminal-failure observations suppress
+the staleness alert. Before the CronJobs exist, there is no schedule to alert on.
+
+The Jobs collector uses the chart's read-only Job list/watch grant; Alloy forwards only the Job families for those
+two name prefixes and the rules verify owner references. `AutoOntologyDeploymentUnavailable` warns after five
+minutes below the desired replica count. It is advisory (no email route) and is not a trading-readiness check.
+
+The Agents catalog sync has separate platform warnings for zero available MCP gateway replicas for five minutes,
+terminal failures of Jobs owned by `auto-ontology-sync`, and no successful run in 36 hours. Alloy forwards Job
+metrics only for the scheduled sync Job name prefix and the failure rule checks the actual controller owner.
+See the [sync runbook](../../../docs/agents/ontology/README.md#nightly-sync-and-alerts) and
+[promtool scenarios](tests/agents-auto-ontology-alerts.yaml).
+
+Run the [multi-sleeve scenarios](tests/bayn-multi-sleeve-alerts.yaml) against the loaded Mimir rule file:
+
+```sh
+rules_dir="$(mktemp -d)"
+trap 'rm -rf "$rules_dir"' EXIT
+yq -r '.data["graf-rules.yaml"]' argocd/applications/observability/graf-mimir-rules.yaml > "$rules_dir/rules.yaml"
+cp argocd/applications/observability/tests/bayn-multi-sleeve-alerts.yaml "$rules_dir/"
+promtool test rules "$rules_dir/bayn-multi-sleeve-alerts.yaml"
+```
+
+The TA and market-data archive scrapes retain separate pipeline identities. Their critical email alerts detect a
+missing scrape, no running Flink job, and stalled or missing checkpoints, with mutually exclusive failure conditions
+to avoid duplicate pages for one failed pipeline. Bayn runtime degradation still fires after one minute. Its service-level identity survives Pod replacement, and
+cycle, input, cache and runtime incidents hold brief recoveries for five minutes. Input warnings still fire on the
+first qualifying evaluation. Email subjects include `FIRING` or `RESOLVED`, service and firing/resolved counts;
+mailbox delivery alone does not establish the current alert state.
+
+The adjusted-daily publisher has a separate warning email when its latest scheduled run remains newer than its last
+successful completion beyond the two-hour start and execution budget, followed by a five-minute hold. An owned
+recovery completion resolves the incident; a successful Friday publication does not page over the weekend. The
+collector retains both CronJob timestamps; the publisher alert does not depend on the Jobs collector.
+Alertmanager sends warnings carrying `notify="email"` to the existing email receiver, with a four-hour repeat
+interval and fifteen-minute group updates. Critical group updates use five minutes. This includes the existing
+Bayn input, execution and replica warnings and Restate metadata lag. Warnings
+without that opt-in remain quiet. Mimir ingester telemetry detects live series capacity, rejected samples and
+incomplete ingestion. See [metric admission failures](../../../docs/runbooks/mimir-email-alerting.md#metric-admission-failures)
+for the shared tenant budget and cardinality controls.
+Apply a fallback configuration update before a separately
+reviewed Alertmanager revision bump, as described in the [email runbook](../../../docs/runbooks/mimir-email-alerting.md).
+
+Ceph host read-latency incidents have a dedicated route with ten-second first delivery, fifteen-minute updates and
+four-hour repeats. Their stable node identity and ten-minute recovery hold avoid OSD membership churn while the
+annotations retain individual OSD latencies. Other critical Ceph alerts keep the general critical route.
+
+Ceph queue wait, commit latency, health warning and scrub-debt incidents require ten continuous minutes of recovery
+before resolving. Detection thresholds and firing delays are unchanged. The generic health warning excludes
+scrub-only debt, which has its own thirty-minute alert. Any additional active health check keeps the generic warning,
+and missing detail telemetry cannot suppress it. Its notification lists the active check names. Review a retained
+crash with `ceph crash info <id>` before acknowledging that exact report with `ceph crash archive <id>`;
+archiving preserves the crash evidence and leaves new-crash detection enabled.
+
+PVC free-space alerts retain the 15% warning for thirty minutes and 5% critical for ten minutes.
+The critical rule excludes capacity-only block-device observations with both available and used bytes zero.
+Alloy retains kubelet used bytes alongside available and capacity bytes. Missing used-byte telemetry leaves
+critical detection enabled, and any positive used-byte observation preserves detection of a completely full filesystem.
+Raw block-device capacity does not establish free space inside a VM; that requires guest filesystem telemetry.
+
+The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
+The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
+and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn`, including its shared `torghut-ws` producer. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
+Containers in the `torghut` namespace are excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
+than zero throttling. See [producer stall diagnostics](../../../services/dorvud/README.md#producer-stall-diagnostics)
+for JVM, Kafka, probe, and restart correlation.
+The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic
+series declared by Bayn's catalog-only monitoring queries, including timing-enabled flags and statistics-reset times.
+Bayn's `bayn-db` instances are scraped every five seconds with a four-second scrape timeout; the other CNPG
+targets retain their thirty-second cadence. Complementary target filters prevent duplicate scrapes and preserve the
+`cnpg-postgres` job labels. `scrape_duration_seconds` is retained alongside exporter collection errors to expose the
+cost and availability of this sampling. These catalog reads run in the collector, outside the execution and closure
+paths. A wait shorter than five seconds can still be missed; correlate retained samples with application spans and
+PostgreSQL slow-statement logs before attributing a commit stall to WAL I/O or synchronous replication.
+It also retains bounded exporter collection errors and durations so a failed built-in collector cannot be mistaken
+for zero I/O. Unknown future metric families and unrelated PostgreSQL settings remain excluded. A new exporter
+metric requires both its query definition and this ingestion policy; direct endpoint availability is not Mimir proof.
+The storage-observability contract test exercises the configured allow-list against every declared metric name and
+negative examples. Verify both database pods in Mimir after the collector's configuration-digest rollout.
+The Rook application owns a read-only host Alloy DaemonSet (`node-storage` job) for disk latency/queue depth,
+NIC throughput/link speed/drops, CPU, memory, and pressure. It pushes to the same Mimir gateway without exposing
+a listener on the provider LAN. See the [Ceph telemetry runbook](../../../docs/runbooks/ceph-performance-telemetry.md)
+for ingestion acceptance, recording-rule units, missing-data alerts, and the bounded recovery-override cleanup.
+
+The same central Alloy retains sanitized Bayn object-store access receipts as `job="bayn-rgw"` in the existing Loki
+destination. Discovery selects `app=rook-ceph-rgw,rgw=objectstore` pods in `rook-ceph` and only their `rgw` container.
+The approved namespace Role grants `GET pods/log` to the existing collector service account. RBAC permits reading
+all pod logs in that namespace; it cannot constrain this grant by pod label. The pipeline drops unrelated and malformed
+records, then replaces matching content-hash access lines with `bayn.rgw-access.v1` JSON containing only method,
+object hash, HTTP status, the native logged-byte field and gateway latency. It retains no query strings, headers,
+principals, agents or bucket names. Object hashes stay in log content rather than metric or stream labels.
+The receipt filter accepts the LF or CRLF terminator preserved by Alloy's Kubernetes log reader. The native Alloy
+regression in `packages/scripts/src/shared/__tests__/bayn-rgw-observability-contract.test.ts` exercises that reader
+shape, malformed records and query redaction through the deployed version's processing stages.
+
+After the configuration-digest rollout, verify native `get pods --subresource=log` authorization for
+`system:serviceaccount:observability:observability-cluster-metrics-alloy` in `rook-ceph`, both discovered RGW pods,
+and exact content-hash receipt joins in Loki. Collector readiness alone does not establish receipt ingestion.
 
 Validate the Mimir tenant after sync:
 
@@ -116,3 +320,16 @@ curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
   --data-urlencode 'query=topk(10, ceph_storage:rbd_pod_write_bytes_per_second:rate5m)' \
   http://127.0.0.1:19090/prometheus/api/v1/query
 ```
+
+## Bayn research model
+
+Bayn's GEPA editor uses the shared Flamingo vLLM deployment. Central Alloy scrapes its metrics every fifteen
+seconds, including `up` and `vllm:*`. `FlamingoModelUnavailable` detects an idle outage while the deployment is
+enabled. Request/response bodies remain disabled in vLLM request logs.
+
+The Bayn log pipeline retains the independent `research` container with namespace, pod, container and service
+identity. Its Effect metrics reach Mimir through the gateway's pod port 8080; the research egress policy must allow
+that destination port even though the Service exposes port 80. `bayn-research.rules` covers worker heartbeat,
+failed attempts and incomplete expense coverage. A proposal-model outage does not change Bayn execution readiness.
+See [native Jev optimization](../../../docs/bayn/jev-optimization.md) and the
+[shared model runbook](../flamingo/README.md).

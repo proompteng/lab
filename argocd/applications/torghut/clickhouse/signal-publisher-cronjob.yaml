@@ -14,13 +14,13 @@ spec:
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   suspend: false
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
       backoffLimit: 3
-      activeDeadlineSeconds: 900
-      ttlSecondsAfterFinished: 86400
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 1800
       template:
         metadata:
           labels:

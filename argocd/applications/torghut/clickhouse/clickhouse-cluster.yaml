@@ -7,10 +7,20 @@ metadata:
     app.kubernetes.io/name: torghut-clickhouse
     app.kubernetes.io/part-of: torghut
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: '1'
 spec:
   configuration:
     files:
+      config.d/99-upgrade-compatibility.xml: |-
+        <yandex>
+          <merge_tree>
+            <serialization_info_version>basic</serialization_info_version>
+            <string_serialization_version>single_stream</string_serialization_version>
+            <propagate_types_serialization_versions_to_nested_types>false</propagate_types_serialization_versions_to_nested_types>
+            <object_serialization_version>v2</object_serialization_version>
+            <dynamic_serialization_version>v2</dynamic_serialization_version>
+          </merge_tree>
+        </yandex>
       config.d/99-prometheus.xml: |-
         <yandex>
           <prometheus>
@@ -75,6 +85,9 @@ spec:
         <yandex>
           <profiles>
             <default>
+              <compatibility>25.8</compatibility>
+              <async_insert>0</async_insert>
+              <output_format_json_quote_64bit_integers>1</output_format_json_quote_64bit_integers>
               <!-- Disable sampling profiler logs to keep system tables small. -->
               <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
               <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
@@ -83,6 +96,9 @@ spec:
           </profiles>
         </yandex>
     profiles:
+      bayn/compatibility: '25.8'
+      bayn/async_insert: 0
+      bayn/output_format_json_quote_64bit_integers: 1
       bayn/readonly: 1
       bayn/max_execution_time: 60
       bayn/max_result_rows: 1000000
@@ -92,6 +108,9 @@ spec:
       # Watermark capture and paged snapshot reads may hit different replicas.
       # Refuse a stale replica instead of returning a partial quorum-confirmed prefix.
       bayn/select_sequential_consistency: 1
+      signal_publisher/compatibility: '25.8'
+      signal_publisher/async_insert: 0
+      signal_publisher/output_format_json_quote_64bit_integers: 1
       signal_publisher/max_execution_time: 120
       signal_publisher/max_result_rows: 1000000
       signal_publisher/result_overflow_mode: throw
@@ -102,11 +121,23 @@ spec:
       signal_publisher/insert_quorum_timeout: 60000
       signal_publisher/select_sequential_consistency: 1
       notebook/readonly: 1
+      notebook/compatibility: '25.8'
+      notebook/async_insert: 0
+      notebook/output_format_json_quote_64bit_integers: 1
       notebook/max_execution_time: 30
       notebook/max_result_rows: 100000
       notebook/result_overflow_mode: throw
       notebook/max_memory_usage: 2147483648
       notebook/max_threads: 4
+      auto_ontology_ro/readonly: 1
+      auto_ontology_ro/max_execution_time: 30
+      auto_ontology_ro/max_result_rows: 50000
+      auto_ontology_ro/result_overflow_mode: break
+      auto_ontology_ro/max_memory_usage: 2147483648
+      # Match the connector's fixed result settings and let probes shorten, never remove, the deadline.
+      auto_ontology_ro/constraints/max_execution_time/changeable_in_readonly: 1
+      auto_ontology_ro/constraints/max_execution_time/min: 1
+      auto_ontology_ro/constraints/max_execution_time/max: 30
     zookeeper:
       nodes:
         - host: keeper-torghut-keeper
@@ -131,6 +162,9 @@ spec:
         - GRANT SELECT ON signal.intraday_bars_1m_v2
         - GRANT SELECT ON signal.intraday_quotes_v1
         - GRANT SELECT ON signal.intraday_trades_v1
+        - GRANT SELECT ON signal.intraday_features_v1
+        - GRANT SELECT ON signal.crypto_market_events_v1
+        - GRANT SELECT ON signal.webull_research_events_v1
         - GRANT SELECT ON signal.snapshot_manifests_v1
         - GRANT SELECT ON signal.snapshot_manifests_v2
       signal_publisher/password_sha256_hex:
@@ -145,12 +179,16 @@ spec:
         - 172.16.0.0/12
         - 192.168.0.0/16
       signal_publisher/grants/query:
+        - GRANT INSERT ON signal.webull_market_events_v1
         - GRANT SELECT, INSERT ON signal.adjusted_daily_bars_v2
         - GRANT SELECT, INSERT ON signal.exchange_sessions_v1
         - GRANT INSERT ON signal.intraday_bars_1m_v1
         - GRANT INSERT ON signal.intraday_bars_1m_v2
         - GRANT INSERT ON signal.intraday_quotes_v1
         - GRANT INSERT ON signal.intraday_trades_v1
+        - GRANT INSERT ON signal.intraday_features_v1
+        - GRANT INSERT ON signal.crypto_market_events_v1
+        - GRANT INSERT ON signal.crypto_market_features_v1
         - GRANT SELECT, INSERT ON signal.snapshot_manifests_v1
         - GRANT SELECT, INSERT ON signal.snapshot_manifests_v2
       default/password_sha256_hex:
@@ -184,6 +222,7 @@ spec:
         - 10.0.0.0/8
         - 172.16.0.0/12
         - 192.168.0.0/16
+      # Enable torghut_audit_ro here in the same commit that seals torghut/torghut-audit-ro-clickhouse.
     clusters:
       - name: default
         layout:
@@ -208,7 +247,7 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: clickhouse
-              image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+              image: altinity/clickhouse-server:26.3.60.10002.altinitystable@sha256:53e81c410a22ab052a4d967adc2886b547c91e67370e2d02f5c2ea1177d4d3aa
               resources:
                 requests:
                   cpu: 1
@@ -223,8 +262,8 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 50Gi
-          storageClassName: rook-ceph-block
+              storage: 200Gi
+          storageClassName: local-path
   defaults:
     templates:
       podTemplate: chi-default

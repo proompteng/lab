@@ -1,10 +1,9 @@
-import { createHash } from 'node:crypto'
+import { hash } from 'node:crypto'
+import { types } from 'node:util'
 
 import { pipe, Result } from 'effect'
 
-export const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
-
-const compareUtf16 = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+export const sha256 = (value: string | Uint8Array): string => hash('sha256', value, 'hex')
 
 type CanonicalJsonValidationReason =
   | 'cycle'
@@ -67,198 +66,249 @@ export const renderCanonicalJsonFailure = (failure: CanonicalJsonFailure): strin
   }
 }
 
+class CanonicalJsonError extends Error {
+  constructor(readonly failure: CanonicalJsonFailure) {
+    super(renderCanonicalJsonFailure(failure))
+  }
+}
+
+// Successful serialization needs no diagnostic strings; each call owns its path segments.
+type CanonicalJsonPath = (string | number)[]
+
+const renderCanonicalJsonPath = (path: readonly (string | number)[]): string =>
+  '$' + path.map((key) => (typeof key === 'number' ? `[${key}]` : `.${key}`)).join('')
+
 const validationFailure = (
-  path: string,
+  path: CanonicalJsonPath,
   reason: CanonicalJsonValidationReason,
   actualType: string,
-): Result.Result<never, CanonicalJsonFailure> => Result.fail({ _tag: 'CanonicalJsonFailure', path, reason, actualType })
+): never => {
+  throw new CanonicalJsonError({
+    _tag: 'CanonicalJsonFailure',
+    path: renderCanonicalJsonPath(path),
+    reason,
+    actualType,
+  })
+}
 
 const inspect = <A>(
-  path: string,
+  path: CanonicalJsonPath,
   actualType: CanonicalJsonIntrospectionFailure['actualType'],
   operation: CanonicalJsonIntrospectionOperation,
   evaluate: () => A,
-): Result.Result<A, CanonicalJsonFailure> =>
-  Result.try({
-    try: evaluate,
-    catch: (cause): CanonicalJsonIntrospectionFailure => ({
+): A => {
+  try {
+    return evaluate()
+  } catch (cause) {
+    throw new CanonicalJsonError({
       _tag: 'CanonicalJsonFailure',
-      path,
+      path: renderCanonicalJsonPath(path),
       reason: 'introspection-failed',
       actualType,
       operation,
       cause,
-    }),
-  })
-
-const hasInvalidUnicodeSurrogate = (value: string): boolean => {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1)
-      if (index + 1 >= value.length || next < 0xdc00 || next > 0xdfff) return true
-      index += 1
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return true
-    }
+    })
   }
-  return false
 }
-
-const arrayLength = (value: readonly unknown[], path: string): Result.Result<number, CanonicalJsonFailure> =>
-  inspect(path, 'array', 'array-length', () => value.length)
-
-const enumerableArrayKeys = (
-  value: readonly unknown[],
-  path: string,
-): Result.Result<readonly string[], CanonicalJsonFailure> =>
-  inspect(path, 'array', 'enumerable-own-keys', () => Object.keys(value))
-
-const arrayOwnKeys = (
-  value: readonly unknown[],
-  path: string,
-): Result.Result<readonly PropertyKey[], CanonicalJsonFailure> =>
-  inspect(path, 'array', 'own-keys', () => Reflect.ownKeys(value))
 
 const dataProperty = (
   value: object,
   key: PropertyKey,
-  path: string,
+  path: CanonicalJsonPath,
   actualType: CanonicalJsonIntrospectionFailure['actualType'],
-): Result.Result<unknown, CanonicalJsonFailure> =>
-  pipe(
-    inspect(path, actualType, 'property-descriptor', () => Object.getOwnPropertyDescriptor(value, key)),
-    Result.flatMap((descriptor) =>
-      descriptor?.enumerable === true && 'value' in descriptor
-        ? Result.succeed(descriptor.value)
-        : validationFailure(path, 'non-data-property', `${actualType}-property`),
-    ),
-  )
+): unknown => {
+  let descriptor: PropertyDescriptor | undefined
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, key)
+  } catch (cause) {
+    throw new CanonicalJsonError({
+      _tag: 'CanonicalJsonFailure',
+      path: renderCanonicalJsonPath(path),
+      reason: 'introspection-failed',
+      actualType,
+      operation: 'property-descriptor',
+      cause,
+    })
+  }
+  return descriptor?.enumerable === true && 'value' in descriptor
+    ? descriptor.value
+    : validationFailure(path, 'non-data-property', `${actualType}-property`)
+}
 
-const serializeArrayResult = (
+const canonicalArrayKeys = (value: readonly unknown[], path: CanonicalJsonPath): string[] => {
+  const length = inspect(path, 'array', 'array-length', () => value.length)
+  const enumerableKeys = inspect(path, 'array', 'enumerable-own-keys', () => Object.keys(value))
+  const ownKeys = inspect(path, 'array', 'own-keys', () => Reflect.ownKeys(value))
+  if (
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    enumerableKeys.length !== length ||
+    enumerableKeys.some((key, index) => key !== String(index)) ||
+    ownKeys.some(
+      (key) => key !== 'length' && (typeof key !== 'string' || !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= length),
+    )
+  )
+    return validationFailure(path, 'non-dense-array', 'array')
+  return enumerableKeys
+}
+
+const canonicalObjectKeys = (value: object, path: CanonicalJsonPath): string[] => {
+  const prototype = inspect(path, 'object', 'prototype', () => Object.getPrototypeOf(value))
+  if (prototype !== Object.prototype && prototype !== null) return validationFailure(path, 'non-plain-object', 'object')
+  const keys = inspect(path, 'object', 'own-keys', () => Reflect.ownKeys(value))
+  if (!keys.every((key) => typeof key === 'string')) return validationFailure(path, 'symbol-key', 'object')
+  return keys.sort()
+}
+
+const serializeArray = (
   value: readonly unknown[],
-  ancestors: readonly object[],
-  path: string,
-): Result.Result<string, CanonicalJsonFailure> => {
-  if (ancestors.includes(value)) return validationFailure(path, 'cycle', 'array')
+  ancestors: Set<object>,
+  path: CanonicalJsonPath,
+  quotedKeys: Map<string, string>,
+): string => {
+  if (ancestors.has(value)) return validationFailure(path, 'cycle', 'array')
 
-  return pipe(
-    Result.all({
-      length: arrayLength(value, path),
-      enumerableKeys: enumerableArrayKeys(value, path),
-      ownKeys: arrayOwnKeys(value, path),
-    }),
-    Result.flatMap(({ enumerableKeys, length, ownKeys }) => {
-      const invalidShape =
-        !Number.isSafeInteger(length) ||
-        length < 0 ||
-        enumerableKeys.length !== length ||
-        enumerableKeys.some((key, index) => key !== String(index)) ||
-        ownKeys.some(
-          (key) =>
-            key !== 'length' && (typeof key !== 'string' || !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= length),
-        )
+  const enumerableKeys = canonicalArrayKeys(value, path)
 
-      if (invalidShape) return validationFailure(path, 'non-dense-array', 'array')
-
-      const nextAncestors = [...ancestors, value]
-      return pipe(
-        Result.all(
-          enumerableKeys.map((key, index) =>
-            pipe(
-              dataProperty(value, key, `${path}[${key}]`, 'array'),
-              Result.flatMap((nested) => serializeCanonicalValueResult(nested, nextAncestors, `${path}[${index}]`)),
-            ),
-          ),
-        ),
-        Result.map((values) => `[${values.join(',')}]`),
-      )
-    }),
-  )
+  ancestors.add(value)
+  const entries: string[] = []
+  for (const key of enumerableKeys) {
+    path.push(Number(key))
+    try {
+      entries.push(serializeCanonicalValue(dataProperty(value, key, path, 'array'), ancestors, path, quotedKeys))
+    } finally {
+      path.pop()
+    }
+  }
+  ancestors.delete(value)
+  return `[${entries.join(',')}]`
 }
 
-const objectPrototype = (value: object, path: string): Result.Result<object | null, CanonicalJsonFailure> =>
-  inspect(path, 'object', 'prototype', () => Object.getPrototypeOf(value))
+// Most evidence keys and scalar values need no JSON escaping.
+const quoteCanonicalString = (value: string): string =>
+  /["\\\u0000-\u001f]/u.test(value) ? JSON.stringify(value) : `"${value}"`
 
-const objectOwnKeys = (value: object, path: string): Result.Result<readonly PropertyKey[], CanonicalJsonFailure> =>
-  inspect(path, 'object', 'own-keys', () => Reflect.ownKeys(value))
-
-const serializeObjectResult = (
+const serializeObject = (
   value: object,
-  ancestors: readonly object[],
-  path: string,
-): Result.Result<string, CanonicalJsonFailure> => {
-  if (ancestors.includes(value)) return validationFailure(path, 'cycle', 'object')
+  ancestors: Set<object>,
+  path: CanonicalJsonPath,
+  quotedKeys: Map<string, string>,
+): string => {
+  if (ancestors.has(value)) return validationFailure(path, 'cycle', 'object')
 
-  return pipe(
-    objectPrototype(value, path),
-    Result.flatMap((prototype) =>
-      prototype === Object.prototype || prototype === null
-        ? objectOwnKeys(value, path)
-        : validationFailure(path, 'non-plain-object', 'object'),
-    ),
-    Result.flatMap((keys) => {
-      if (keys.some((key) => typeof key !== 'string')) {
-        return validationFailure(path, 'symbol-key', 'object')
+  const keys = canonicalObjectKeys(value, path)
+
+  ancestors.add(value)
+  let body = '{'
+  let separator = ''
+  for (const key of keys) {
+    if (!key.isWellFormed()) return validationFailure(path, 'invalid-unicode-key', 'string')
+    path.push(key)
+    try {
+      const nested = serializeCanonicalValue(dataProperty(value, key, path, 'object'), ancestors, path, quotedKeys)
+      let quotedKey = quotedKeys.get(key)
+      if (quotedKey === undefined) {
+        quotedKey = quoteCanonicalString(key)
+        quotedKeys.set(key, quotedKey)
       }
-
-      const nextAncestors = [...ancestors, value]
-      return pipe(
-        Result.all(
-          (keys as readonly string[])
-            .slice()
-            .sort(compareUtf16)
-            .map((key) => {
-              if (hasInvalidUnicodeSurrogate(key)) {
-                return validationFailure(path, 'invalid-unicode-key', 'string')
-              }
-              return pipe(
-                dataProperty(value, key, `${path}.${key}`, 'object'),
-                Result.flatMap((nested) => serializeCanonicalValueResult(nested, nextAncestors, `${path}.${key}`)),
-                Result.map((nested) => `${JSON.stringify(key)}:${nested}`),
-              )
-            }),
-        ),
-        Result.map((entries) => `{${entries.join(',')}}`),
-      )
-    }),
-  )
+      body += `${separator}${quotedKey}:${nested}`
+      separator = ','
+    } finally {
+      path.pop()
+    }
+  }
+  ancestors.delete(value)
+  return `${body}}`
 }
 
-const classifyArray = (value: object, path: string): Result.Result<boolean, CanonicalJsonFailure> =>
-  inspect(path, 'object', 'array-classification', () => Array.isArray(value))
-
-const serializeCanonicalValueResult = (
+const serializeCanonicalValue = (
   value: unknown,
-  ancestors: readonly object[],
-  path: string,
-): Result.Result<string, CanonicalJsonFailure> => {
-  if (value === null) return Result.succeed('null')
-  if (typeof value === 'boolean') return Result.succeed(value ? 'true' : 'false')
+  ancestors: Set<object>,
+  path: CanonicalJsonPath,
+  quotedKeys: Map<string, string>,
+): string => {
+  if (value === null) return 'null'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'string') {
-    return hasInvalidUnicodeSurrogate(value)
-      ? validationFailure(path, 'invalid-unicode-surrogate', 'string')
-      : Result.succeed(JSON.stringify(value))
+    return value.isWellFormed()
+      ? quoteCanonicalString(value)
+      : validationFailure(path, 'invalid-unicode-surrogate', 'string')
   }
   if (typeof value === 'number') {
-    return Number.isFinite(value)
-      ? Result.succeed(JSON.stringify(Object.is(value, -0) ? 0 : value))
-      : validationFailure(path, 'non-finite-number', 'number')
+    return Number.isFinite(value) ? String(value) : validationFailure(path, 'non-finite-number', 'number')
   }
   if (typeof value !== 'object') return validationFailure(path, 'non-json-type', typeof value)
 
-  return pipe(
-    classifyArray(value, path),
-    Result.flatMap((isArray) =>
-      isArray
-        ? serializeArrayResult(value as readonly unknown[], ancestors, path)
-        : serializeObjectResult(value, ancestors, path),
-    ),
-  )
+  return inspect(path, 'object', 'array-classification', () => Array.isArray(value))
+    ? serializeArray(value as readonly unknown[], ancestors, path, quotedKeys)
+    : serializeObject(value, ancestors, path, quotedKeys)
 }
 
-export const canonicalJsonV1Result = (value: unknown): Result.Result<string, CanonicalJsonFailure> =>
-  serializeCanonicalValueResult(value, [], '$')
+export const canonicalJsonV1Result = (value: unknown): Result.Result<string, CanonicalJsonFailure> => {
+  try {
+    // Reuse only immutable key encodings within this call; every property and value is still inspected.
+    return Result.succeed(serializeCanonicalValue(value, new Set(), [], new Map()))
+  } catch (cause) {
+    if (cause instanceof CanonicalJsonError) return Result.fail(cause.failure)
+    throw cause
+  }
+}
+
+const equalCanonicalValue = (
+  left: unknown,
+  right: unknown,
+  leftAncestors: Set<object>,
+  rightAncestors: Set<object>,
+  path: CanonicalJsonPath,
+): boolean | undefined => {
+  if (left === null || right === null) return left === null && right === null
+  if (typeof left !== typeof right) return false
+  if (typeof left === 'boolean') return left === right
+  if (typeof left === 'number') return Number.isFinite(left) && Number.isFinite(right) && left === right
+  if (typeof left === 'string')
+    return typeof right === 'string' && left.isWellFormed() && right.isWellFormed() && left === right
+  if (typeof left !== 'object' || typeof right !== 'object') return false
+  // Reflection traps can depend on traversal order. Defer before invoking one so the original serializers own it.
+  if (types.isProxy(left) || types.isProxy(right)) return undefined
+  if (leftAncestors.has(left) || rightAncestors.has(right)) return false
+  const array = Array.isArray(left)
+  if (array !== Array.isArray(right)) return false
+  const leftKeys = array ? canonicalArrayKeys(left, path) : canonicalObjectKeys(left, path)
+  const rightKeys = array ? canonicalArrayKeys(right as readonly unknown[], path) : canonicalObjectKeys(right, path)
+  if (leftKeys.length !== rightKeys.length || leftKeys.some((key, index) => key !== rightKeys[index])) return false
+  leftAncestors.add(left)
+  rightAncestors.add(right)
+  for (const key of leftKeys) {
+    if (!array && !key.isWellFormed()) return false
+    path.push(array ? Number(key) : key)
+    const equal = equalCanonicalValue(
+      dataProperty(left, key, path, array ? 'array' : 'object'),
+      dataProperty(right, key, path, array ? 'array' : 'object'),
+      leftAncestors,
+      rightAncestors,
+      path,
+    )
+    path.pop()
+    if (equal !== true) return equal
+  }
+  leftAncestors.delete(left)
+  rightAncestors.delete(right)
+  return true
+}
+
+/** Compare canonical data without allocating its encodings; invalid evidence never compares equal. */
+export const canonicalJsonEqualV1 = (left: unknown, right: unknown): boolean => {
+  try {
+    const equal = equalCanonicalValue(left, right, new Set(), new Set(), [])
+    if (equal !== undefined) return equal
+  } catch (cause) {
+    if (cause instanceof CanonicalJsonError) return false
+    throw cause
+  }
+  const a = canonicalJsonV1Result(left),
+    b = canonicalJsonV1Result(right)
+  return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
+}
 
 const hashCanonicalJsonResult = (canonicalJson: string): Result.Result<string, CanonicalJsonFailure> =>
   Result.try({
@@ -276,44 +326,13 @@ const hashCanonicalJsonResult = (canonicalJson: string): Result.Result<string, C
 export const canonicalHashV1Result = (value: unknown): Result.Result<string, CanonicalHashFailure> =>
   pipe(canonicalJsonV1Result(value), Result.flatMap(hashCanonicalJsonResult))
 
-const compatibilityError = (failure: CanonicalJsonFailure): unknown => {
-  switch (failure.reason) {
-    case 'cycle':
-      return new TypeError(`${failure.path} contains a cycle`)
-    case 'invalid-unicode-key':
-      return new TypeError(`${failure.path} contains an invalid Unicode key`)
-    case 'invalid-unicode-surrogate':
-      return new TypeError(`${failure.path} contains an invalid Unicode surrogate`)
-    case 'non-data-property':
-      return new TypeError(`${failure.path} must be an enumerable data property`)
-    case 'non-dense-array':
-      return new TypeError(`${failure.path} must be a dense array without custom properties`)
-    case 'non-finite-number':
-      return new TypeError(`${failure.path} contains a non-finite number`)
-    case 'non-json-type':
-      return new TypeError(`${failure.path} contains a non-JSON ${failure.actualType} value`)
-    case 'non-plain-object':
-      return new TypeError(`${failure.path} must contain only plain JSON objects`)
-    case 'symbol-key':
-      return new TypeError(`${failure.path} contains a symbol key`)
-    case 'introspection-failed':
-    case 'sha256-failed':
-      return failure.cause
-  }
-}
-
-export const canonicalHashV1OrThrow = (value: unknown): string =>
-  pipe(canonicalHashV1Result(value), Result.getOrThrowWith(compatibilityError))
-
-/** @deprecated Use canonicalHashV1Result. This alias remains while callers migrate to total canonicalization. */
-export const canonicalHashV1 = canonicalHashV1OrThrow
+export const canonicalJsonWithHashV1Result = (value: unknown) =>
+  canonicalJsonV1Result(value).pipe(
+    Result.flatMap((body) => hashCanonicalJsonResult(body).pipe(Result.map((hash) => ({ body, hash })))),
+  )
 
 export const stableU128 = (...parts: readonly string[]): bigint => {
-  const bytes = createHash('sha256').update(parts.join('\u001f')).digest().subarray(0, 16)
-  let value = 0n
-  for (const byte of bytes) {
-    value = (value << 8n) | BigInt(byte)
-  }
+  const value = BigInt(`0x${sha256(parts.join('\u001f')).slice(0, 32)}`)
   return value === 0n ? 1n : value
 }
 

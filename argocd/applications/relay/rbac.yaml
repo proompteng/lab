@@ -1,0 +1,133 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: relay-namespace-identity
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - namespaces
+  resourceNames:
+  - ofz
+  - tengri
+  - opencode
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: relay-namespace-identity
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: relay-namespace-identity
+subjects:
+- kind: ServiceAccount
+  name: relay
+  namespace: relay
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: relay-observation
+  namespace: ofz
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  - events
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - ''
+  resources:
+  - pods/log
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: relay-observation
+  namespace: ofz
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: relay-observation
+subjects:
+- kind: ServiceAccount
+  name: relay
+  namespace: relay
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: relay-observation
+  namespace: tengri
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  - events
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - ''
+  resources:
+  - pods/log
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: relay-observation
+  namespace: tengri
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: relay-observation
+subjects:
+- kind: ServiceAccount
+  name: relay
+  namespace: relay
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: relay-observation
+  namespace: opencode
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  - events
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - ''
+  resources:
+  - pods/log
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: relay-observation
+  namespace: opencode
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: relay-observation
+subjects:
+- kind: ServiceAccount
+  name: relay
+  namespace: relay

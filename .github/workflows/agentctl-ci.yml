@@ -1,21 +1,24 @@
 name: agentctl packaging checks
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - 'services/agents/agentctl/**'
+      - 'docs/agents/agentctl-cli-design.md'
       - 'docs/agents/agentctl-release.md'
   push:
     branches:
       - main
     paths:
       - 'services/agents/agentctl/**'
+      - 'docs/agents/agentctl-cli-design.md'
       - 'docs/agents/agentctl-release.md'
       - '.github/workflows/agentctl-*.yml'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: agentctl packaging checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,7 +32,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agentctl --filter @proompteng/codex

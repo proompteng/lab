@@ -1,4 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
+import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from '../clock'
 import { Effect, Schema } from 'effect'
 
 import {
@@ -38,7 +39,7 @@ export const authorityStateFromRow = (
     kill: row.kill_state,
     ...(row.reason === null ? {} : { reason: row.reason }),
     version,
-    updatedAt: row.updated_at.toISOString(),
+    updatedAt: row.updated_at,
   })
 }
 
@@ -104,7 +105,7 @@ export interface LockedCapitalGrant {
   readonly history: AuthorityGenerationRow
 }
 
-export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
+export const makeAuthorityPostgres = (sql: PgClient.PgClient, clock: DatabaseClock = postgresWallClock(sql)) => {
   const lockAuthorityGenerations = Effect.gen(function* () {
     yield* sql`
       SELECT pg_advisory_xact_lock(
@@ -154,10 +155,10 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
     )
 
   const nextAuthorityInstant = sql<Record<string, unknown>>`
-    SELECT greatest(
-      clock_timestamp(),
+    SELECT to_char(greatest(
+      ${clock.now},
       updated_at + interval '1 millisecond'
-    ) AS activated_at
+    ) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS activated_at
     FROM authority_state
     WHERE singleton
   `.pipe(
@@ -182,7 +183,8 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
         const currentRows = yield* sql<Record<string, unknown>>`
           SELECT
             schema_version, generation_hash, maximum, effective, kill_state, reason,
-            version::text AS version, updated_at, clock_timestamp() AS observed_at
+            version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
+            ${clock.now} AS observed_at
           FROM authority_state
           WHERE singleton
           FOR UPDATE
@@ -205,6 +207,7 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
     )
 
   return {
+    clock,
     lockAuthorityGenerations,
     readGeneration,
     verifyCurrentGenerationHistory,

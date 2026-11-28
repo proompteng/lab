@@ -1,10 +1,13 @@
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { instrumentMarket } from '../instruments'
 import { Result, Schema, pipe } from 'effect'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { OrderSide } from '../execution/contracts'
 import { legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
-import { MICROS } from '../execution-model'
+import { quantityScale } from '../quantity'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
+import { equityShortIsEligible } from '../execution/equity-short'
 import {
   canonicalizePlannerOutputFailure,
   decodePlannerOutputFailure,
@@ -15,6 +18,7 @@ import {
   TargetPlanStatus,
   blockedTargetPlanReasons,
   referenceTargetPlanSchemaVersion,
+  shortTargetCollateralMicros,
   type PlannedTargetQuantity,
   type ReferenceTargetIntent,
   type TargetPlannerFailure,
@@ -31,7 +35,7 @@ const NoTradeTargetPlanResultSchema = Schema.Struct({
   ...TargetPlanResultFields,
   status: Schema.Literal(TargetPlanStatus.NoTrade),
   reason: Schema.Literal(TargetPlanReason.TargetsSatisfied),
-  targets: Schema.Array(PlannedTargetQuantitySchema).check(Schema.isMinLength(1)),
+  targets: Schema.Array(PlannedTargetQuantitySchema),
   intentTargets: Schema.Tuple([]),
 })
 
@@ -80,14 +84,14 @@ const deriveTargetPlanSemanticFacts = (result: typeof TargetPlanResultBase.Type)
   let nonzeroDeltaCount = 0
   let positiveDeltaCount = 0
   const deltas = result.targets.map((target, index): TargetPlanDeltaFact => {
-    const currentQuantity = BigInt(target.currentQuantityMicros)
-    const targetQuantity = BigInt(target.targetQuantityMicros)
+    const currentQuantity = BigInt(target.currentQuantityAtoms)
+    const targetQuantity = BigInt(target.targetQuantityAtoms)
     const delta = targetQuantity - currentQuantity
     if (delta !== 0n) nonzeroDeltaCount += 1
     const exactShortCover = currentQuantity < 0n && targetQuantity === 0n && delta === -currentQuantity
     if (delta > 0n && !exactShortCover) {
       positiveDeltaCount += 1
-      requiredReferenceBuyNotional += (delta * BigInt(target.referencePriceMicros) + MICROS - 1n) / MICROS
+      requiredReferenceBuyNotional += (delta * BigInt(target.referencePriceMicros) + quantityScale - 1n) / quantityScale
     }
     return {
       index,
@@ -143,7 +147,7 @@ const targetQuantityIssues = (facts: TargetPlanSemanticFacts): readonly Schema.F
   for (const { index, target, targetQuantity } of facts.deltas) {
     if (target.targetWeight === 0 && targetQuantity !== 0n) {
       issues.push({
-        path: ['targets', index, 'targetQuantityMicros'],
+        path: ['targets', index, 'targetQuantityAtoms'],
         issue: 'must be zero when the target weight is zero',
       })
     }
@@ -158,12 +162,9 @@ const plannedIntentIssues = (
   if (result.status !== TargetPlanStatus.Planned) return []
   const issues: Schema.FilterIssue[] = []
   const firstIntent = result.intentTargets[0]
-  const supportedExecutionTerms = (
-    intent: ReferenceTargetIntent,
-    target: typeof PlannedTargetQuantitySchema.Type,
-  ): boolean => {
+  const supportedExecutionTerms = (intent: ReferenceTargetIntent): boolean => {
     if (result.schemaVersion === legacyReferenceTargetPlanSchemaVersion) {
-      return intent.orderType === OrderType.Market && intent.timeInForce === TimeInForce.Day
+      return intent.timeInForce === cashSpotLimitTimeInForce(instrumentMarket(intent.symbol))
     }
     const executionTerms = result.executionTerms
     if (
@@ -174,12 +175,7 @@ const plannedIntentIssues = (
     ) {
       return false
     }
-    if (executionTerms.orderType === OrderType.Limit) return true
-    return (
-      BigInt(target.targetQuantityMicros) === 0n &&
-      ((intent.side === OrderSide.Sell && BigInt(target.currentQuantityMicros) > 0n) ||
-        (intent.side === OrderSide.Buy && BigInt(target.currentQuantityMicros) < 0n))
-    )
+    return true
   }
   for (const { delta, index, intent, target } of facts.deltas) {
     if (delta === 0n && intent !== undefined) {
@@ -193,8 +189,8 @@ const plannedIntentIssues = (
     if (
       intent !== undefined &&
       (intent.side !== (delta > 0n ? OrderSide.Buy : OrderSide.Sell) ||
-        BigInt(intent.quantityMicros) !== (delta < 0n ? -delta : delta) ||
-        !supportedExecutionTerms(intent, target))
+        BigInt(intent.quantityAtoms) !== (delta < 0n ? -delta : delta) ||
+        !supportedExecutionTerms(intent))
     ) {
       issues.push({ path: ['intentTargets', index], issue: 'must exactly encode the target quantity delta' })
     }
@@ -224,6 +220,13 @@ const targetPlanStatusIssues = (
   facts: TargetPlanSemanticFacts,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
+  if (
+    result.schemaVersion === legacyReferenceTargetPlanSchemaVersion &&
+    result.status === TargetPlanStatus.NoTrade &&
+    result.targets.length === 0
+  ) {
+    issues.push({ path: ['targets'], issue: 'legacy no-trade plans require at least one target' })
+  }
   if (result.status === TargetPlanStatus.NoTrade && facts.nonzeroDeltaCount !== 0) {
     issues.push({ path: ['status'], issue: 'NO_TRADE requires every target quantity to be satisfied' })
   }
@@ -240,6 +243,32 @@ const targetPlanStatusIssues = (
 }
 
 const targetPlanExecutionTermsIssues = (result: typeof TargetPlanResultBase.Type): readonly Schema.FilterIssue[] => {
+  for (const target of result.targets) {
+    if (target.targetWeight < 0 || BigInt(target.targetQuantityAtoms) < 0n) {
+      const intent = result.intentTargets.find((value) => value.symbol === target.symbol)
+      if (
+        result.schemaVersion === legacyReferenceTargetPlanSchemaVersion ||
+        result.executionTerms === undefined ||
+        BigInt(target.currentQuantityAtoms) !== 0n ||
+        target.targetWeight >= 0 ||
+        (BigInt(target.targetQuantityAtoms) >= 0n &&
+          !(
+            result.status === TargetPlanStatus.NoTrade &&
+            target.targetQuantityAtoms === '0' &&
+            intent === undefined
+          )) ||
+        (result.status === TargetPlanStatus.Planned &&
+          (intent === undefined ||
+            !equityShortIsEligible(
+              result.executionTerms.equityShortEntries?.[target.symbol],
+              intent.accountId,
+              target.symbol,
+              intent.createdAt,
+            )))
+      )
+        return [{ path: ['targets'], issue: 'a negative target must bind a fresh eligible flat-to-short equity entry' }]
+    }
+  }
   if (result.schemaVersion === legacyReferenceTargetPlanSchemaVersion) {
     return result.executionTerms === undefined
       ? []
@@ -249,8 +278,8 @@ const targetPlanExecutionTermsIssues = (result: typeof TargetPlanResultBase.Type
     return [{ path: ['executionTerms'], issue: 'quote-bound target plans require durable execution-term evidence' }]
   }
   if (
-    result.executionTerms.executionPurpose !== undefined &&
-    result.targets.some((target) => target.targetWeight !== 0 || BigInt(target.targetQuantityMicros) !== 0n)
+    result.executionTerms.executionPurpose === 'forced-close' &&
+    result.targets.some((target) => target.targetWeight !== 0 || BigInt(target.targetQuantityAtoms) !== 0n)
   ) {
     return [{ path: ['executionTerms', 'executionPurpose'], issue: 'close execution must target a flat account' }]
   }
@@ -265,23 +294,31 @@ const targetPlanBuyingPowerIssues = (
   const required = BigInt(result.requiredReferenceBuyNotionalMicros)
   const available = BigInt(result.availableBuyingPowerMicros)
   const residual = BigInt(result.residualBuyingPowerMicros)
+  const collateral = shortTargetCollateralMicros(result.targets)
+  if (BigInt(result.requiredShortCollateralMicros ?? '0') !== collateral)
+    issues.push({
+      path: ['requiredShortCollateralMicros'],
+      issue: 'must equal initial collateral for each new short, excluding its sale proceeds',
+    })
   if (required !== facts.requiredReferenceBuyNotional) {
     issues.push({
       path: ['requiredReferenceBuyNotionalMicros'],
       issue: 'must equal the exact aggregate reference notional of positive target deltas',
     })
   }
-  const expectedResidual = result.status === TargetPlanStatus.Blocked ? available : available - required
+  const expectedResidual = result.status === TargetPlanStatus.Blocked ? available : available - required - collateral
   if (residual !== expectedResidual) {
     issues.push({ path: ['residualBuyingPowerMicros'], issue: 'must agree with target-plan buying-power arithmetic' })
   }
-  if (result.status === TargetPlanStatus.Planned && required > 0n && required > available) {
+  if (result.status === TargetPlanStatus.Planned && required + collateral > 0n && required + collateral > available) {
     issues.push({ path: ['status'], issue: 'PLANNED requires sufficient current buying power' })
   }
   if (
     result.status === TargetPlanStatus.Blocked &&
     result.reason === TargetPlanReason.InsufficientBuyingPower &&
-    (facts.positiveDeltaCount === 0 || required === 0n || required <= available)
+    ((facts.positiveDeltaCount === 0 && collateral === 0n) ||
+      required + collateral === 0n ||
+      required + collateral <= available)
   ) {
     issues.push({
       path: ['reason'],

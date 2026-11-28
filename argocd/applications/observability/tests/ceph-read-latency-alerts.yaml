@@ -1,0 +1,126 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 30s
+tests:
+  - name: one host incident contains both slow OSDs after five minutes
+    interval: 30s
+    input_series:
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.0"}
+        values: 0.6+0x40
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.1"}
+        values: 0.8+0x40
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="altra",ceph_daemon="osd.3"}
+        values: 0.1+0x40
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 4m30s
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count by(node)(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"})
+        eval_time: 5m
+        exp_samples: [{labels: '{node="turin"}', value: 1}]
+    alert_rule_test:
+      - alertname: CephHostReadLatencyHigh
+        eval_time: 5m
+        exp_alerts:
+          - exp_labels:
+              node: turin
+              severity: critical
+              service: ceph-storage
+              team: platform
+              notify: email
+            exp_annotations:
+              summary: Ceph client reads are severely delayed on turin
+              description: "The highest OSD five-minute mean on turin has stayed above 500 ms per client read for five minutes. Current above-threshold OSDs: osd.0=600ms; osd.1=800ms; This is a counter-derived mean, not a percentile."
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md
+  - name: exactly 500 milliseconds stays quiet
+    interval: 30s
+    input_series:
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.0"}
+        values: 0.5+0x40
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: a burst shorter than five minutes stays quiet
+    interval: 30s
+    input_series:
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.0"}
+        values: 0.6+0x8 0.1+0x40
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: distinct affected hosts retain independent incidents
+    interval: 30s
+    input_series:
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.0"}
+        values: 0.6+0x40
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="altra",ceph_daemon="osd.3"}
+        values: 0.7+0x40
+    promql_expr_test:
+      - expr: count by(node)(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"})
+        eval_time: 5m
+        exp_samples:
+          - {labels: '{node="turin"}', value: 1}
+          - {labels: '{node="altra"}', value: 1}
+  - name: rotating slow OSDs do not reset sustained host detection
+    interval: 30s
+    input_series:
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.0"}
+        values: 0.6+0x5 0.1+0x40
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.1"}
+        values: 0.1+0x5 0.7+0x40
+    promql_expr_test:
+      - expr: count by(node)(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"})
+        eval_time: 5m
+        exp_samples: [{labels: '{node="turin"}', value: 1}]
+      - expr: count by(node)(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"})
+        eval_time: 10m
+        exp_samples: [{labels: '{node="turin"}', value: 1}]
+  - name: relapse retains the incident and recovery requires ten continuous minutes
+    interval: 30s
+    input_series:
+      - series: ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.0"}
+        values: 0.6+0x15 0.1+0x7 0.6+0x7 0.1+0x40
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 11m30s
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 12m30s
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 25m30s
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 26m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: absent or idle observations do not fabricate latency estimates
+    interval: 30s
+    input_series: []
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephHostReadLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: higher severity Ceph conditions retain their five minute detection
+    interval: 30s
+    input_series:
+      - series: ceph_health_status{job="ceph-storage"}
+        values: 2+0x40
+      - series: ceph_healthcheck_slow_ops{job="ceph-storage"}
+        values: 1+0x40
+      - series: ceph_storage:osd_commit_latency_ms:max
+        values: 151+0x40
+    promql_expr_test:
+      - expr: count(ALERTS{alertname=~"CephClusterHealthError|CephSlowOps|CephOsdCommitLatencyCritical",alertstate="firing"}) or vector(0)
+        eval_time: 4m30s
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count by(alertname)(ALERTS{alertname=~"CephClusterHealthError|CephSlowOps|CephOsdCommitLatencyCritical",alertstate="firing"})
+        eval_time: 5m
+        exp_samples:
+          - {labels: '{alertname="CephClusterHealthError"}', value: 1}
+          - {labels: '{alertname="CephSlowOps"}', value: 1}
+          - {labels: '{alertname="CephOsdCommitLatencyCritical"}', value: 1}

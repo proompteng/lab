@@ -1,6 +1,6 @@
 # Bumba and Temporal failure modes
 
-Last updated: 2026-07-14
+Last updated: 2026-10-03
 
 ## Healthy data flow
 
@@ -106,6 +106,13 @@ only when all of the following are proven:
 Unused versions are normally garbage-collected. Do not delete a version merely to force propagation, weaken the startup
 gate, or bypass Temporal's drainage checks with `--skip-drainage`.
 
+The `routing-propagation-v1` Temporal worker patch prevents a delivered completion signal from being lost when the
+deployment workflow continues as new. For an already-retained completion, it also supports a conflict-token-fenced
+same-current reconciliation that rechecks every retained task queue before clearing the corresponding pending revision.
+Follow the [Temporal worker recovery procedure](../../services/temporal-worker/README.md#recover-a-retained-propagation-completion)
+only after the patched image and current poller are verified. Keep the patched worker until that internal recovery run
+continues as new; rolling back earlier would leave the new activity history incompatible with the old worker.
+
 ## Rebuild activity is running after its worker died
 
 Symptoms:
@@ -139,6 +146,29 @@ Symptoms:
 This is expected serialization. Each batch checks the database build ID and target commit. Let the active workflow
 finish or fail. A Temporal retry reuses its own build ID; an unrelated build can take over only after the database lease
 expires. Do not clear the lease while its worker is alive.
+
+## Binary model admitted to the text manifest
+
+An activity failure such as `eligible Atlas file contains NUL bytes: .../arena.glb` means the Git manifest admitted a
+binary asset. Binary glTF (`.glb`) models below the file-size limit exposed this gap. Eligibility version
+`atlas-eligibility-v2` excludes `.glb` case-insensitively; textual `.gltf` remains eligible. The writer and verifier use
+the same manifest rule. Deploy that fix before retrying the repository build. Keep the NUL-byte validation in place.
+
+## Reconciliation stuck in nondeterministic replay
+
+Repeated `Workflow did not replay all history entries` failures can leave an execution reported as running after its
+reconciliation activity has timed out. Inspect its history and pending activities; a running visibility row alone does
+not prove useful work. Replay the saved history against the intended worker before choosing a recovery.
+
+The September 21 execution retained a clock read from the previous runtime (`missingTime=1`, `missingCommands=0`). A
+fresh reconciliation on the current runtime can replay an activity timeout and persist terminal failure. Recovery is a
+new execution on that runtime, without relaxing determinism checks or adding compatibility for the retired history.
+
+For an authorized replacement, first deploy the preparation fix and verify that the old execution has no pending
+activity that can still write. Retire that exact workflow/run pair, then let the consumer start one reconciliation under
+the existing repository-scoped workflow ID. If history deletion is requested, save the diagnostic history first and use
+Temporal's delete API for the exact pair. Verify the new build and `atlas:verify`; deleting the old execution alone does
+not restore the corpus.
 
 ## Event consumer is disabled
 

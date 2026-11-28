@@ -1,5 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
+import { withObservedStage } from '../../telemetry'
+import { databaseUtcInstant } from '../clock'
 
 import {
   BrokerEnvironment,
@@ -7,9 +9,13 @@ import {
   decodePersistedBrokerIdentity,
   type BrokerIdentity,
 } from '../../broker/identity'
-import { Authority, type AuthorityState, type ResearchCapitalGrantGeneration } from '../../execution/contracts'
+import { Authority, type AuthorityState } from '../../execution/contracts'
+import { acquireExecutionWriterFence } from '../../execution/writer-fence'
+import { sha256 } from '../../hash'
 import {
+  strategyProtocolCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
+  reconciliationDiscrepancyRestrictionPattern,
   executionMandateCompletedRestrictionReason,
   executionMandateFailureRestrictionPrefix,
   legacyExecutionActivationExpiredRestrictionReason,
@@ -26,11 +32,12 @@ import {
 } from '../../execution/capital-grant-algebra'
 import {
   authorityStateFromRow,
+  makeAuthorityPostgres,
   researchCapitalGrantGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
-import type { AuthorityGenerationLineage, EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
-import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
+import type { AuthorityGenerationStoreShape, EnsureAuthorityGenerationInput } from './contract'
+import { executionStoreError, failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeAuthorityStateObservationRows,
   decodeAuthorityStateRows,
@@ -38,10 +45,40 @@ import {
   decodeEnsureAuthorityGenerationInput,
   type AuthorityGenerationRow,
 } from './rows'
-import { Pipeable } from '../../pipeable'
 
 export const LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH =
   'd290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063'
+
+export const readAuthorityState = (sql: PgClient.PgClient) => {
+  const statement = sql`
+    SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
+      version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
+    FROM authority_state
+    WHERE singleton
+  `
+  return runExecutionOperation(
+    'authority',
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transaction = yield* Effect.serviceOption(sql.transactionService)
+        const connection = Option.isSome(transaction)
+          ? transaction.value[0]
+          : yield* sql.reserve.pipe(withObservedStage('bayn.postgres.connection-acquire', { dependency: 'postgresql' }))
+        const [query, parameters] = statement.compile()
+        return yield* connection
+          .execute(query, parameters, undefined)
+          .pipe(withObservedStage('bayn.postgres.authority-query', { dependency: 'postgresql' }))
+      }),
+    ).pipe(
+      Effect.flatMap(decodeAuthorityStateRows),
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? failExecutionStore('authority', 'invariant', 'durable authority state is missing')
+          : authorityStateFromRow(rows[0]),
+      ),
+    ),
+  )
+}
 
 export interface ObserveGenerationBrokerIdentityFailure {
   readonly failure: 'conflict' | 'invariant'
@@ -65,7 +102,7 @@ const legacyAutonomousObserveCompatible = (history: AuthorityGenerationRow, conf
   configured.provider === BrokerProvider.Alpaca &&
   configured.environment === BrokerEnvironment.Sandbox
 
-const validateObserveGenerationBrokerIdentityReplayDataFirst = (
+const validateObserveGenerationBrokerIdentityReplay = (
   history: AuthorityGenerationRow,
   configured: BrokerIdentity | undefined,
 ): Result.Result<void, ObserveGenerationBrokerIdentityFailure> => {
@@ -116,32 +153,125 @@ const validateObserveGenerationBrokerIdentityReplayDataFirst = (
       })
 }
 
-export const validateObserveGenerationBrokerIdentityReplay = Pipeable.dual(
-  2,
-  validateObserveGenerationBrokerIdentityReplayDataFirst,
-)
+export const previousConfiguredController = (sql: PgClient.PgClient, identity: BrokerIdentity) =>
+  sql`
+    SELECT parent.broker_identity_hash AS controller_key
+    FROM authority_state s JOIN authority_generations g USING (generation_hash)
+    JOIN authority_generations parent ON parent.generation_hash = g.previous_generation_hash
+    WHERE s.singleton AND s.maximum = 'OBSERVE' AND g.broker_identity_hash = ${identity.identityHash}
+      AND parent.broker_identity_hash <> g.broker_identity_hash
+  `.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ controller_key: Schema.String })))),
+    Effect.map((rows) => rows[0]?.controller_key ?? null),
+  )
 
-export interface ObserveAuthorityInterpreter {
-  readonly ensureAuthorityGeneration: (
-    input: EnsureAuthorityGenerationInput,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readOrInitializeObserveAuthority: (
-    input: EnsureAuthorityGenerationInput,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readAuthorityState: Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readResearchAuthorityGeneration: (
-    generationHash: string,
-  ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
-  readonly readAuthorityGenerationLineage: (
-    generationHash: string,
-  ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
-}
+export const selectConfiguredBrokerAccount = (
+  identity: BrokerIdentity,
+  staleThresholdMs: number,
+  allowAccountHandoff = true,
+) =>
+  Effect.flatMap(PgClient.PgClient, (sql) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* acquireExecutionWriterFence(sql)
+        const authority = makeAuthorityPostgres(sql)
+        yield* authority.lockAuthorityGenerations
+        const [current] = yield* sql`
+          SELECT generation_hash FROM authority_state WHERE singleton FOR UPDATE
+        `.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ generation_hash: Schema.String })))),
+        )
+        if (current === undefined) return null
+        const [source] = yield* authority.readGeneration(current.generation_hash)
+        if (source === undefined)
+          return yield* failExecutionStore('authority', 'invariant', 'authority history is missing')
+        const binding = validateObserveGenerationBrokerIdentityReplay(source, identity)
+        if (Result.isSuccess(binding)) {
+          return !allowAccountHandoff || source.broker_identity_hash === null
+            ? null
+            : yield* previousConfiguredController(sql, identity)
+        }
+        if (binding.failure.failure === 'invariant' || source.broker_identity_hash === null) {
+          return yield* executionStoreError({ operation: 'authority', ...binding.failure })
+        }
+        // A namespaced controller cannot retire a predecessor in another Restate namespace.
+        if (!allowAccountHandoff)
+          return yield* failExecutionStore(
+            'authority',
+            'conflict',
+            'a prefixed Restate sleeve requires its own Postgres database and broker account',
+          )
+        const predecessor = source.broker_identity_hash
+        const activatedAt = yield* authority.nextAuthorityInstant
+        const generationHash = sha256(
+          ['bayn.observe-account', current.generation_hash, identity.identityHash].join('\u0000'),
+        )
+        const inserted = yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, account_id, broker_identity_schema_version, broker_identity_hash,
+            broker_provider, broker_environment, activated_at
+          )
+          SELECT ${generationHash}, 'bayn.authority-generation-history.v1', s.generation_hash, 'OBSERVE',
+            s.version + 1, ${identity.accountId}, ${identity.schemaVersion}, ${identity.identityHash},
+            ${identity.provider}, ${identity.environment}, ${activatedAt}
+          FROM authority_state s JOIN authority_generations g USING (generation_hash)
+          JOIN LATERAL (
+            SELECT * FROM reconciliations WHERE account_id = g.account_id
+            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1
+          ) r ON true
+          JOIN LATERAL (
+            SELECT position_count, observed_at FROM position_snapshots
+            WHERE account_id = g.account_id AND ingestion_order_trusted
+            ORDER BY ingestion_sequence DESC LIMIT 1
+          ) position ON true
+          WHERE s.singleton AND s.generation_hash = ${current.generation_hash}
+            AND s.maximum = s.effective AND s.kill_state = 'CLEAR' AND s.reason IS NULL
+            AND g.broker_provider = ${identity.provider} AND g.broker_environment = ${identity.environment}
+            AND r.status = 'EXACT' AND r.expected_hash = r.observed_hash
+            AND r.reconciled_at >= s.updated_at AND r.reconciled_at <= clock_timestamp()
+            AND r.reconciled_at > clock_timestamp() - ${staleThresholdMs}::bigint * interval '1 millisecond'
+            AND position.position_count = 0 AND position.observed_at <= r.reconciled_at
+            AND observe_recovery_account_settled(s.generation_hash, g.account_id, r.reconciled_at)
+            AND NOT EXISTS (
+              WITH pending_inference AS MATERIALIZED (
+                SELECT request.payload FROM jev_evaluation_requests request
+                JOIN autonomous_cycles cycle USING (cycle_id)
+                LEFT JOIN jev_evaluation_resolutions resolution USING (request_id)
+                WHERE cycle.account_id = g.account_id AND resolution.request_id IS NULL
+                UNION ALL
+                SELECT plan.payload FROM jev_inference_work work JOIN jev_batch_plans plan USING (batch_id)
+                JOIN autonomous_cycles cycle ON cycle.cycle_id = plan.cycle_id
+                LEFT JOIN jev_batch_results result USING (batch_id)
+                WHERE cycle.account_id = g.account_id AND result.batch_id IS NULL
+              )
+              SELECT 1 FROM autonomous_cycles WHERE account_id = g.account_id AND state IN ('PENDING', 'ACTIVE')
+              UNION ALL
+              SELECT 1 FROM intents WHERE account_id = g.account_id AND state <> 'TERMINAL'
+              UNION ALL
+              SELECT 1 FROM pending_inference WHERE (payload ->> 'expiresAt')::timestamptz > clock_timestamp()
+            )
+          RETURNING generation_hash
+        `
+        if (inserted.length === 0) {
+          return yield* failExecutionStore('authority', 'conflict', 'the current broker account has not settled')
+        }
+        yield* sql`
+          UPDATE authority_state
+          SET generation_hash = ${generationHash}, maximum = 'OBSERVE', effective = 'OBSERVE',
+            version = version + 1, updated_at = ${activatedAt}
+          WHERE singleton AND generation_hash = ${current.generation_hash}
+        `
+        return predecessor
+      }),
+    ),
+  )
 
-const makeObserveAuthorityInterpreterDataFirst = (
+export const makeObserveAuthorityInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   brokerIdentity: BrokerIdentity | undefined,
-): ObserveAuthorityInterpreter => {
+): AuthorityGenerationStoreShape => {
   const requireBrokerIdentity = () =>
     brokerIdentity === undefined
       ? failExecutionStore('authority', 'invariant', 'authority generation requires a configured broker identity')
@@ -154,7 +284,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const [existing] = yield* authority.readGeneration(decision.generationHash)
       yield* authority.requireUnusedGeneration(decision.generationHash, existing)
       const [databaseTime] = yield* sql<Record<string, unknown>>`
-        SELECT clock_timestamp() AS activated_at
+        SELECT to_char(${authority.clock.now} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS activated_at
       `.pipe(Effect.flatMap(decodeDatabaseInstant))
       if (databaseTime === undefined) {
         return yield* failExecutionStore('authority', 'invariant', 'authority initialization time is unavailable')
@@ -183,7 +313,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
         )
         RETURNING
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const insertedRow = inserted[0]
       if (insertedRow === undefined) {
@@ -206,10 +336,10 @@ const makeObserveAuthorityInterpreterDataFirst = (
       return current
     })
 
-  const terminalizeUnusedPreSubmissionResearchCycles = (
+  const terminalizeUnusedResearchCycles = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
     request: ObserveGenerationRequest,
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     sql`
       UPDATE autonomous_cycles AS cycle
@@ -245,6 +375,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason = ${incompletePassReason}
+              OR state.reason = ${strategyProtocolCutoverRestrictionReason}
+              OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR (
                 state.reason IN (
                   ${executionMandateCompletedRestrictionReason},
@@ -252,10 +384,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   ${legacyV1CompletedRestrictionReason},
                   ${legacyExecutionActivationExpiredRestrictionReason}
                 )
-                AND EXISTS (
-                  SELECT 1
-                  FROM autonomous_forward_performance_receipts AS receipt
-                  WHERE receipt.authority_generation_hash = state.generation_hash
+                AND (
+                  EXISTS (
+                    SELECT 1
+                    FROM autonomous_forward_performance_receipts AS receipt
+                    WHERE receipt.authority_generation_hash = state.generation_hash
+                  )
+                  OR research_paper_expired_zero_execution_settled(state.generation_hash)
                 )
               )
             )
@@ -275,7 +410,18 @@ const makeObserveAuthorityInterpreterDataFirst = (
         AND cycle.state IN ('PENDING', 'ACTIVE')
         AND cycle.decision_hash IS NULL
         AND cycle.updated_at <= ${activatedAt}
-        AND ${activatedAt} < cycle.submission_open_at
+        AND (
+          ${activatedAt} < cycle.submission_open_at
+          OR (
+            state.reason = ${strategyProtocolCutoverRestrictionReason}
+            AND cycle.snapshot_id IS NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM autonomous_cycle_shadow_decisions AS decision
+              WHERE decision.cycle_id = cycle.cycle_id
+            )
+          )
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM intents AS intent
@@ -307,7 +453,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           ${activatedAt}
         )
       `
-      yield* terminalizeUnusedPreSubmissionResearchCycles(decision, request, activatedAt)
+      yield* terminalizeUnusedResearchCycles(decision, request, activatedAt)
       const rotated = yield* sql<Record<string, unknown>>`
         WITH latest_reconciliation AS (
           SELECT
@@ -353,11 +499,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
             AND jsonb_array_length(reconciliation.discrepancies) = 0
             AND reconciliation.reconciled_at > state.updated_at
             AND reconciliation.reconciled_at < ${activatedAt}
-            AND NOT EXISTS (
-              SELECT 1
-              FROM mutation_events AS mutation
-              JOIN intents AS intent ON intent.intent_id = mutation.intent_id
-              WHERE intent.account_id = ${identity.accountId}
+            AND observe_recovery_account_settled(
+              state.generation_hash, ${identity.accountId}, reconciliation.reconciled_at
             ) AS eligible
           FROM authority_state AS state
           JOIN authority_generations AS previous_generation
@@ -375,6 +518,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
                   OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
                   OR state.reason = ${incompletePassReason}
+                  OR state.reason = ${strategyProtocolCutoverRestrictionReason}
+                  OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
                   OR (
                     state.reason IN (
                       ${executionMandateCompletedRestrictionReason},
@@ -382,10 +527,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
                       ${legacyV1CompletedRestrictionReason},
                       ${legacyExecutionActivationExpiredRestrictionReason}
                     )
-                    AND EXISTS (
-                      SELECT 1
-                      FROM autonomous_forward_performance_receipts AS receipt
-                      WHERE receipt.authority_generation_hash = state.generation_hash
+                    AND (
+                      EXISTS (
+                        SELECT 1
+                        FROM autonomous_forward_performance_receipts AS receipt
+                        WHERE receipt.authority_generation_hash = state.generation_hash
+                      )
+                      OR research_paper_expired_zero_execution_settled(state.generation_hash)
                     )
                   )
                 )
@@ -431,7 +579,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           AND (NOT research_rearm.candidate OR research_rearm.eligible)
         RETURNING
           state.schema_version, state.generation_hash, state.maximum, state.effective, state.kill_state, state.reason,
-          state.version::text AS version, state.updated_at
+          state.version::text AS version, ${databaseUtcInstant(sql, sql`state.updated_at`)} AS updated_at
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const rotatedRow = rotated[0]
       if (rotatedRow === undefined) {
@@ -446,7 +594,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at, clock_timestamp() AS observed_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
+          ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE
@@ -485,7 +634,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at, clock_timestamp() AS observed_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
+          ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE
@@ -518,23 +668,6 @@ const makeObserveAuthorityInterpreterDataFirst = (
         ),
       ),
     )
-
-  const readAuthorityState = runExecutionOperation(
-    'authority',
-    sql<Record<string, unknown>>`
-        SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at
-        FROM authority_state
-        WHERE singleton
-      `.pipe(
-      Effect.flatMap(decodeAuthorityStateRows),
-      Effect.flatMap((rows) =>
-        rows[0] === undefined
-          ? failExecutionStore('authority', 'invariant', 'durable authority state is missing')
-          : authorityStateFromRow(rows[0]),
-      ),
-    ),
-  )
 
   const readResearchAuthorityGeneration = (generationHash: string) =>
     runExecutionOperation(
@@ -574,10 +707,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
   return {
     ensureAuthorityGeneration,
     readOrInitializeObserveAuthority,
-    readAuthorityState,
+    readAuthorityState: readAuthorityState(sql),
     readResearchAuthorityGeneration,
     readAuthorityGenerationLineage,
   }
 }
-
-export const makeObserveAuthorityInterpreter = Pipeable.dual(3, makeObserveAuthorityInterpreterDataFirst)

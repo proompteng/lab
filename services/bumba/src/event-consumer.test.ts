@@ -12,7 +12,6 @@ const ENV_KEYS = [
   'BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS',
   'BUMBA_GITHUB_EVENT_BATCH_SIZE',
   'BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK',
-  'BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS',
   'BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES',
   'BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS',
   'BUMBA_ATLAS_DEFAULT_REF',
@@ -66,7 +65,7 @@ test('extractEventFilePaths returns sorted, deduped, indexable paths', () => {
   expect(paths).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/z.ts'])
 })
 
-test('extractEventFilePaths retains every target for batched dispatch', () => {
+test('extractEventFilePaths retains every changed path for merge-note metadata', () => {
   const payload = {
     commits: [
       {
@@ -85,7 +84,6 @@ const eventConsumerConfig = (overrides: Record<string, unknown> = {}) =>
     pollIntervalMs: 10_000,
     batchSize: 20,
     maxDispatchEventsPerTick: 2,
-    maxEventFileTargets: 200,
     maxDispatchFailures: 6,
     nonterminalIngestionStaleMs: 12 * 60 * 60 * 1000,
     taskQueue: 'bumba',
@@ -314,7 +312,7 @@ test('publishMainMergeMemoryNote saves Flamingo-generated knowledge through the 
 
 test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge', async () => {
   process.env.OPENAI_API_BASE_URL = 'http://flamingo.test/v1'
-  process.env.OPENAI_COMPLETION_MODEL = 'qwen36-flamingo'
+  process.env.OPENAI_COMPLETION_MODEL = 'qwen38-flamingo'
   let requestBody: Record<string, unknown> | undefined
   globalThis.fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
     requestBody = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
@@ -366,9 +364,10 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
     tags: ['bumba', 'temporal', 'event-consumer'],
   })
   expect(requestBody).toMatchObject({
-    model: 'qwen36-flamingo',
+    model: 'qwen38-flamingo',
     stream: false,
     temperature: 0.1,
+    top_p: 0.8,
     reasoning_effort: 'none',
     response_format: { type: 'json_object' },
   })
@@ -386,6 +385,55 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
   expect(userContent.indexOf('File: src/a.ts')).toBeLessThan(
     userContent.indexOf('File: .github/workflows/bumba-ci.yml'),
   )
+})
+
+test('generateMainMergeMemoryNote omits unsupported GPT-6.2 Sol sampling parameters', async () => {
+  process.env.OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+  process.env.OPENAI_COMPLETION_MODEL = 'gpt-6.2-sol'
+  process.env.BUMBA_MERGE_NOTE_REASONING_EFFORT = 'minimal'
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+    requestBody = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+    return Response.json({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              decision: 'save',
+              reason: 'The merge establishes a durable completion invariant.',
+              summary: 'GPT-6.2 Sol merge notes omit unsupported sampling controls.',
+              content: 'The event consumer normalizes legacy reasoning settings for GPT-6.2 Sol.',
+              tags: ['bumba', 'gpt-6.2-sol'],
+            }),
+          },
+        },
+      ],
+    })
+  }) as typeof fetch
+
+  const event = githubPushEvent(['src/a.ts'])
+  const note = await __test__.generateMainMergeMemoryNote(
+    event,
+    event.payload,
+    [
+      {
+        path: 'src/a.ts',
+        summary: 'Dispatches enrichment.',
+        content: '- Deterministic workflow IDs prevent duplicates.',
+      },
+    ],
+    [{ path: 'src/a.ts', status: 'modified', patch: '@@ -1 +1 @@\n-old behavior\n+retry missing targets' }],
+  )
+
+  expect(note.decision).toBe('save')
+  expect(requestBody).toMatchObject({
+    model: 'gpt-6.2-sol',
+    stream: false,
+    reasoning_effort: 'low',
+    response_format: { type: 'json_object' },
+  })
+  expect(requestBody).not.toHaveProperty('temperature')
+  expect(requestBody).not.toHaveProperty('top_p')
 })
 
 test('publishMainMergeMemoryNote does not persist a low-value merge', async () => {
@@ -610,7 +658,6 @@ test('resolveConsumerConfig reads environment overrides', () => {
   process.env.BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS = '2500'
   process.env.BUMBA_GITHUB_EVENT_BATCH_SIZE = '11'
   process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK = '2'
-  process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS = '55'
   process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES = '3'
   process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS = '600000'
   process.env.TEMPORAL_TASK_QUEUE = 'jangar'
@@ -622,7 +669,6 @@ test('resolveConsumerConfig reads environment overrides', () => {
   expect(config.pollIntervalMs).toBe(2500)
   expect(config.batchSize).toBe(11)
   expect(config.maxDispatchEventsPerTick).toBe(2)
-  expect(config.maxEventFileTargets).toBe(55)
   expect(config.maxDispatchFailures).toBe(3)
   expect(config.nonterminalIngestionStaleMs).toBe(600000)
   expect(config.taskQueue).toBe('jangar')
@@ -681,7 +727,6 @@ test('runEventConsumerTick serializes reconciliation per repository while allowi
       pollIntervalMs: 10_000,
       batchSize: events.length,
       maxDispatchEventsPerTick: 1,
-      maxEventFileTargets: 200,
       maxDispatchFailures: 6,
       nonterminalIngestionStaleMs: 12 * 60 * 60 * 1000,
       taskQueue: 'bumba',
@@ -757,7 +802,6 @@ test('runEventConsumerTick blocks later events behind an already-started reposit
       pollIntervalMs: 10_000,
       batchSize: events.length,
       maxDispatchEventsPerTick: 1,
-      maxEventFileTargets: 200,
       maxDispatchFailures: 6,
       nonterminalIngestionStaleMs: 12 * 60 * 60 * 1000,
       taskQueue: 'bumba',

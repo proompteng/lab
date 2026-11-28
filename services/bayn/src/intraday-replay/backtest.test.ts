@@ -1,0 +1,1155 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
+import { defaultJevProtocolDocument } from '../jev/protocol'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
+import { registeredReplayInferenceTariff } from './inference-costs'
+import { jevInstructions } from '../jev/instructions'
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { cryptoMarketProfile, currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
+import { ReconciliationStatus } from '../execution/contracts'
+import { expect, test } from 'bun:test'
+import { Effect, FileSystem, Layer, Result, Schema } from 'effect'
+import { NodeServices } from '@effect/platform-node'
+import { TestClock } from 'effect/testing'
+import { JevProtocolSchema } from '../jev/protocol'
+import { JevBatchPlanVersion } from '../jev/batch'
+import { IsoDateSchema, strictParseOptions } from '../schemas'
+import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
+import { makeJevTradingSignalBatch } from '../jev/trading-signals'
+import { makeControlEntryObservation } from './control-entry'
+import { createControlPortfolio } from './control-portfolio'
+import { makeControlJevJournal } from './control-jev-journal'
+import { currentJevReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
+import { config } from '../testing/runtime-fixtures'
+import {
+  prepareBacktest as prepareWithCapture,
+  assessBacktestSession,
+  BacktestIssue,
+  qualifiesReplayValuation,
+  BacktestInputSchema,
+  backtestBrokerEvidenceConfig,
+} from './backtest'
+import {
+  bindLatencyReplayInput,
+  latencyReplayExecutionModelHash,
+  latencyReplayPolicyMaterial,
+} from '../system-assessment/latency-replay'
+import { nativeRegistrationFixture, registrationFixture, testHash } from '../system-assessment/fixtures.test-support'
+import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
+import { jevModel, prepareJevRequest } from '../jev/contract'
+import { prepareObserveStartup } from '../observe-composition/startup'
+import { backtestSourcePartitions, validateBacktestSourceReceipt } from './source'
+import { sha256, canonicalHashV1Result } from '../hash'
+import { validateResearchCapitalGrantProof } from '../execution/capital-grant-algebra'
+import { makeStrategyProtocolHashResult } from '../contracts'
+import { MarketSourcesSchema } from '../market-data/streaming/raw-events'
+import { JevResearchPolicy } from '../jev/acceptance'
+import { nativeReplayPolicyIdentity } from './native-policy'
+import { loadSharedJevProtocol, isIntradayAlphaRuntime } from '../strategy'
+import { alphaReplayBaselineFixture } from './alpha-replay.test-support'
+import { preparedReplayAlphaBaselineFixture } from './alpha-prepared-baseline.test-support'
+const fixture = () => {
+  const source = currentJevReplayFixture()
+  const { verification: _verification, ...build } = config.build
+  return {
+    schemaVersion: 'bayn.backtest.v11',
+    policy: 'JEV' as const,
+    latencyStress: null,
+    jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
+    inference: {
+      mode: 'measured-providers',
+      maximumCalls: 1000,
+      models: { jev: jevModel },
+      inputDefinition: 'bayn.jev-entry-state.v24',
+      costs: replayRateCardFixture({
+        jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+        chart: {
+          inputMicrosPerMillionTokens: '100000',
+          outputMicrosPerMillionTokens: '0',
+          cachedInputMicrosPerMillionTokens: '10000',
+          cacheWriteInputMicrosPerMillionTokens: '125000',
+        },
+      }),
+    },
+    allocatedDataCostPerSessionMicros: '0',
+    replicate: 'validation-test',
+    interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-04T20:00:00.000Z' },
+    source: {
+      ...source.manifest,
+      coverageStartMs: Date.parse('2026-09-04T13:30:00Z'),
+      coverageEndMs: Date.parse('2026-09-04T20:00:00Z'),
+      firstAvailableAtMs: Date.parse('2026-09-04T13:30:00Z'),
+      lastAvailableAtMs: Date.parse('2026-09-04T20:00:00Z'),
+    },
+    openingCashMicros: '100000000000',
+    fractionalTrading: false,
+    calendar: [
+      ...source.calendar,
+      { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+    ],
+    assets: equityMarketProfile.universe.map((symbol, index) => ({
+      id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
+      symbol,
+      class: 'us_equity',
+      exchange: 'NASDAQ',
+      status: 'active',
+      tradable: true,
+      fractionable: true,
+    })),
+    assetObservationAt: '2026-09-04T13:29:00.000Z',
+    assetObservationPolicy: 'retained-as-of-session',
+    build,
+    assumptions: {
+      instruments: replayTestInstruments,
+      latencyMs: 100,
+      slippageBps: 0,
+      availableLiquidityPpm: 1000000,
+      feeMultiplierPpm: 1000000,
+    },
+    cadence: {
+      pollIntervalMs: 30000,
+      reconciliationIntervalMs: 30000,
+      reconciliationPassTimeoutMs: 30000,
+      reconciliationStaleThresholdMs: 120000,
+    },
+  }
+}
+test.each([JevResearchPolicy.Candidate, JevResearchPolicy.Incumbent])(
+  'explicit %s alpha preparation selects the real engine and no provider capability',
+  (policy) => {
+    const retained = alphaReplayBaselineFixture()
+    const old = fixture()
+    const input = {
+      ...old,
+      schemaVersion: 'bayn.backtest.v12',
+      policy,
+      strategyBinding: retained.binding,
+      alphaBaselineSources: [retained.source],
+      build: {
+        ...old.build,
+        strategyBehaviorHash: retained.binding.strategy.behaviorHash,
+        strategyParameterHash: retained.binding.strategy.parameterHash,
+      },
+    }
+    const prepared = Result.getOrThrow(prepareBacktest(input))
+    expect(isIntradayAlphaRuntime(prepared.strategy)).toBe(true)
+    expect(Result.getOrThrow(canonicalHashV1Result(prepared.strategy.definition.parameters))).toBe(
+      Result.getOrThrow(canonicalHashV1Result(retained.binding.parameters)),
+    )
+    expect(prepared.policyIdentity.protocolHash).toBe(retained.binding.protocolHash)
+    expect(prepared.requiresInference).toBe(false)
+    expect(prepared.input.inference.costs.rates).toEqual([])
+    expect(prepared.alphaBaselineSources).toEqual([retained.source])
+    expect(Result.isFailure(prepareBacktest({ ...input, build: old.build }))).toBe(true)
+    expect(Result.isFailure(prepareBacktest({ ...input, schemaVersion: 'bayn.backtest.v11' }))).toBe(true)
+    expect(Result.isFailure(prepareBacktest({ ...input, alphaBaselineSources: undefined }))).toBe(true)
+    expect(Result.isFailure(prepareBacktest({ ...input, policy: JevResearchPolicy.Momentum }))).toBe(true)
+    const legacy = Result.getOrThrow(prepareBacktest(old))
+    expect(isIntradayAlphaRuntime(legacy.strategy)).toBe(false)
+    expect(legacy.policyIdentity.strategy.parameterSchemaVersion).toBe('bayn.jev.protocol.v44')
+  },
+)
+test('v13 preparation uses its explicit prospective source contract without accepting a v12 source fallback', () => {
+  const retained = preparedReplayAlphaBaselineFixture()
+  const old = fixture()
+  const input = {
+    ...old,
+    schemaVersion: 'bayn.backtest.v13',
+    strategyBinding: retained.binding,
+    alphaBaselinePreparations: [retained.source],
+    build: {
+      ...old.build,
+      strategyBehaviorHash: retained.binding.strategy.behaviorHash,
+      strategyParameterHash: retained.binding.strategy.parameterHash,
+    },
+  }
+  const prepared = Result.getOrThrow(prepareBacktest(input))
+  expect(isIntradayAlphaRuntime(prepared.strategy)).toBe(true)
+  expect(prepared.requiresInference).toBe(false)
+  expect(prepared.input.schemaVersion).toBe('bayn.backtest.v13')
+  expect(prepared.alphaBaselinePreparations).toEqual([retained.source])
+  expect(prepared.alphaBaselineSources).toEqual([])
+  expect(Result.isSuccess(prepareBacktest({ ...input, alphaBaselinePreparations: [] }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, alphaBaselinePreparations: undefined }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, schemaVersion: 'bayn.backtest.v12' }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, build: old.build }))).toBe(true)
+  expect(
+    Result.isFailure(prepareBacktest({ ...input, alphaBaselineSources: [alphaReplayBaselineFixture().source] })),
+  ).toBe(true)
+})
+test('session preparation freezes the unchanged strategy and complete calendar interval', () => {
+  const input = fixture()
+  const first = Result.getOrThrow(prepareBacktest(input))
+  expect(first.openMs).toBe(Date.parse('2026-09-04T13:30:00Z'))
+  expect(first.closeMs).toBe(Date.parse('2026-09-04T20:00:00Z'))
+  expect(first.identity.accountId).toBe(`replay-${first.runId}`)
+  expect(first.runId).toBe(Result.getOrThrow(prepareBacktest(input)).runId)
+  expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
+})
+
+test('preparation retains the configured Webull topic only with its independently bound source inventory', () => {
+  const input = fixture()
+  const configured = {
+    ...input.source,
+    marketSources: Schema.decodeUnknownSync(MarketSourcesSchema)(
+      input.source.marketSources.map((source) => ({
+        ...source,
+        topics: { ...source.topics, webullBars: 'synthetic.webull.raw' },
+      })),
+    ),
+  }
+  const source = {
+    ...configured,
+    positions: backtestSourcePartitions(configured).map(
+      ({ topic, partition }) =>
+        input.source.positions.find((position) => position.topic === topic && position.partition === partition) ?? {
+          topic,
+          partition,
+          startOffset: '0',
+          endOffsetExclusive: '0',
+        },
+    ),
+  }
+  const receipt = retainedReplayCaptureFixture(source)
+  const prepared = Result.getOrThrow(prepareWithCapture({ ...input, source }, receipt))
+  expect(prepared.input.source.marketSources[0]?.topics.webullBars).toBe('synthetic.webull.raw')
+  expect(Result.isFailure(prepareWithCapture({ ...input, source }, retainedReplayCaptureFixture(input.source)))).toBe(
+    true,
+  )
+  const changed = {
+    ...source,
+    marketSources: source.marketSources.map((source) => ({
+      ...source,
+      topics: { ...source.topics, webullBars: 'changed' },
+    })),
+  }
+  expect(Result.isFailure(prepareWithCapture({ ...input, source: changed }, receipt))).toBe(true)
+})
+
+test('momentum selects its own source-defined policy without an inference batch identity', () => {
+  const input = fixture()
+  const identity = Result.getOrThrow(
+    nativeReplayPolicyIdentity(JevResearchPolicy.Momentum, Result.getOrThrow(loadSharedJevProtocol())),
+  )
+  const declared = {
+    ...input,
+    policy: JevResearchPolicy.Momentum,
+    build: {
+      ...input.build,
+      strategyBehaviorHash: identity.strategy.behaviorHash,
+      strategyParameterHash: identity.strategy.parameterHash,
+    },
+  }
+  const prepared = Result.getOrThrow(prepareBacktest(declared))
+  expect(prepared.strategy.definition.parameters.schemaVersion).toBe('bayn.repeated-momentum-policy.v1')
+  expect(prepared.policyIdentity.planVersion).toBeNull()
+  expect(prepared.policyIdentity.strategy).toEqual(identity.strategy)
+  expect(prepared.buildEvidence.executableStrategy).not.toEqual(identity.strategy)
+  expect(Result.isFailure(prepareBacktest({ ...input, policy: JevResearchPolicy.Momentum }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...declared, policy: JevResearchPolicy.Candidate }))).toBe(true)
+})
+
+test('ablation replay has its own identity and cannot be selected with candidate build claims', () => {
+  const input = fixture()
+  const candidate = Result.getOrThrow(prepareBacktest(input))
+  const ablation = Result.getOrThrow(
+    nativeReplayPolicyIdentity(JevResearchPolicy.Ablation, Result.getOrThrow(loadSharedJevProtocol())),
+  )
+  const declared = {
+    ...input,
+    policy: JevResearchPolicy.Ablation,
+    build: {
+      ...input.build,
+      strategyBehaviorHash: ablation.strategy.behaviorHash,
+      strategyParameterHash: ablation.strategy.parameterHash,
+    },
+  }
+  const prepared = Result.getOrThrow(prepareBacktest(declared))
+  expect(prepared.strategy.provenance.strategy).toEqual(ablation.strategy)
+  expect(prepared.strategy.definition.parameters.schemaVersion).toBe('bayn.entry-ablation-policy.v1')
+  expect(prepared.policyIdentity.planVersion).toBe(JevBatchPlanVersion.Ablation)
+  expect(prepared.runId).not.toBe(candidate.runId)
+  expect(testHash(prepared.buildEvidence.executableStrategy)).toBe(testHash(candidate.strategy.provenance.strategy))
+  expect(Result.isFailure(prepareBacktest({ ...input, policy: JevResearchPolicy.Ablation }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...declared, policy: JevResearchPolicy.Candidate }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, policy: JevResearchPolicy.Momentum }))).toBe(true)
+  const request = Result.getOrThrow(
+    prepareJevRequest({
+      model: jevModel,
+      state: { symbol: 'AAPL' },
+      questions: { enter: { type: 'noul', instructions: 'Evaluate synthetic retained inputs.' } },
+    }),
+  )
+  const at = input.interval.startAt
+  const recording = {
+    schemaVersion: 'bayn.replay-inference-recording.v1',
+    sourceManifestHash: testHash(declared.source),
+    sourceRevision: declared.build.sourceRevision,
+    strategyBehaviorHash: declared.build.strategyBehaviorHash,
+    strategyParameterHash: declared.build.strategyParameterHash,
+    jevInstructionsHash: declared.jevInstructionsHash,
+    calls: [
+      {
+        schemaVersion: 'bayn.replay-inference-call.v2',
+        stage: 'JEV',
+        request: request.request,
+        requestHash: request.requestHash,
+        budgetMs: 1000,
+        simulatedStartedAt: at,
+        providerStartedAt: at,
+        providerCompletedAt: at,
+        outcome: { status: 'RECEIVED', inference: nativeJevInference(request.request, at) },
+      },
+    ],
+  }
+  const rejected = prepareBacktest({
+    ...declared,
+    inference: {
+      ...declared.inference,
+      mode: 'retained-responses',
+      recording,
+      recordingHash: testHash(recording),
+    },
+  })
+  expect(Result.isFailure(rejected)).toBe(true)
+  if (Result.isFailure(rejected))
+    expect(rejected.failure).toMatchObject({ message: expect.stringContaining('Retained inference differs') })
+})
+
+test('registered latency replay preserves every equity session and the exact candidate execution scope', () => {
+  const original = Schema.decodeUnknownSync(BacktestInputSchema)(fixture())
+  const base = registrationFixture()
+  const rawCalendar = base.calendar.sessions.map((session) => ({
+    date: session.sessionDate,
+    open: '09:30',
+    close: '16:00',
+    session_open: '0930',
+    session_close: '1600',
+  }))
+  const firstDate = rawCalendar[0]?.date
+  const lastDate = rawCalendar.at(-1)?.date
+  if (firstDate === undefined || lastDate === undefined) throw new Error('Missing synthetic registered dates')
+  const calendar = Result.getOrThrow(
+    normalizeMarketCalendarResult(rawCalendar, {
+      start: firstDate,
+      end: lastDate,
+    }),
+  )
+  const sessions = calendar.providerSessions.map((s) => ({
+    sessionDate: Schema.decodeUnknownSync(IsoDateSchema)(s.date),
+    openAt: s.regularOpenAt,
+    closeAt: s.regularCloseAt,
+  }))
+  const recording = {
+    schemaVersion: 'bayn.replay-inference-recording.v1' as const,
+    sourceManifestHash: testHash(original.source),
+    sourceRevision: original.build.sourceRevision,
+    strategyBehaviorHash: original.build.strategyBehaviorHash,
+    strategyParameterHash: original.build.strategyParameterHash,
+    jevInstructionsHash: original.jevInstructionsHash,
+    calls: [],
+  }
+  const config = base.obligations.configuration
+  if (config.schemaVersion !== 'bayn.qualification-runtime.v1')
+    throw new Error('Polling backtest fixture requires a retained polling runtime')
+  const input = {
+    ...original,
+    source: {
+      ...original.source,
+      marketSources: Schema.decodeUnknownSync(MarketSourcesSchema)(
+        base.obligations.configuration.protocol.marketProfiles.map((profile) => ({
+          universeId: profile.universeId,
+          universeSymbolHash: profile.universeSymbolHash,
+          symbols: profile.universe,
+          topics: { ...profile.sourceTopics, features: profile.streamingInput.featureTopic },
+        })),
+      ),
+    },
+    inference: {
+      ...original.inference,
+      costs: {
+        ...original.inference.costs,
+        rates: original.inference.costs.rates.filter((rate) => rate.provider === 'typesafe'),
+      },
+      mode: 'retained-responses' as const,
+      recording,
+      recordingHash: testHash(recording),
+    },
+    calendar: rawCalendar,
+    interval: { startAt: sessions[0]?.openAt ?? '', endAt: sessions.at(-1)?.closeAt ?? '' },
+    cadence: {
+      pollIntervalMs: config.cyclePollIntervalMs,
+      reconciliationIntervalMs: config.reconciliationIntervalMs,
+      reconciliationPassTimeoutMs: config.operationTimeoutMs,
+      reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+    },
+  }
+  const prepared = Result.getOrThrow(prepareBacktest(original))
+  const identity = prepared.identity
+  const material = Result.getOrThrow(
+    latencyReplayPolicyMaterial(
+      Result.getOrThrow(Schema.decodeUnknownResult(JevProtocolSchema)(config.protocol)),
+      identity.accountId,
+      original.policy,
+      Result.getOrThrow(makeExecutionRiskPolicy(identity.accountId, config.protocol.universe)),
+    ),
+  )
+  const registration = {
+    ...base,
+    calendar: { ...base.calendar, sourceHash: testHash(calendar), sessions },
+    latencyReplayExecutionModelHash: Result.getOrThrow(latencyReplayExecutionModelHash(input)),
+    policies: base.policies.map((p) =>
+      p.policy !== 'JEV'
+        ? p
+        : {
+            ...p,
+            sourceRevision: original.build.sourceRevision,
+            imageDigest: original.build.imageDigest.slice('sha256:'.length),
+            strategyHash: original.build.strategyBehaviorHash,
+            parametersHash: original.build.strategyParameterHash,
+            accountBindingHash: testHash({
+              schemaVersion: 'bayn.inference-cost-account.v1',
+              accountId: identity.accountId,
+            }),
+            riskPolicyHash: testHash(material.riskPolicy),
+            riskPolicy: material.riskPolicy,
+            inferenceRateCard: {
+              ...input.inference.costs,
+              rates: input.inference.costs.rates.filter((rate) => rate.provider === 'typesafe'),
+            },
+            promptsHash: testHash(material.prompts),
+            continuationAndExitsHash: testHash(material.continuationAndExits),
+            protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(prepared.strategy.provenance.strategy)),
+            executionModelHash: testHash(config.protocol.executionModel),
+          },
+    ),
+  }
+  const windows = Result.getOrThrow(bindLatencyReplayInput(input, registration, identity))
+  const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...streamingFields } = config
+  const streaming = bindLatencyReplayInput(
+    input,
+    {
+      ...registration,
+      obligations: {
+        ...registration.obligations,
+        configuration: {
+          ...streamingFields,
+          schemaVersion: 'bayn.qualification-runtime.v2',
+          decisionTrigger: 'streaming',
+        },
+      },
+    },
+    identity,
+  )
+  expect(streaming).toMatchObject({
+    _tag: 'Failure',
+    failure: { message: 'Polling latency replay cannot establish a streaming runtime registration' },
+  })
+  expect(windows).toEqual(sessions.map((s) => ({ date: s.sessionDate, openAt: s.openAt, closeAt: s.closeAt })))
+  expect(windows).toHaveLength(20)
+  const tariffBoundary = sessions[10]?.openAt
+  if (tariffBoundary === undefined) throw new Error('Missing registered tariff boundary')
+  const scheduledTariff = Result.getOrThrow(
+    registeredReplayInferenceTariff(
+      {
+        ...input.inference.costs,
+        rates: input.inference.costs.rates.flatMap((rate) => [
+          { ...rate, effectiveUntil: tariffBoundary },
+          { ...rate, effectiveFrom: tariffBoundary, inputMicrosPerMillionTokens: '200000' },
+        ]),
+      },
+      input.interval,
+      JevResearchPolicy.Candidate,
+      defaultJevProtocolDocument,
+    ),
+  )
+  const scheduledRegistration = {
+    ...registration,
+    policies: registration.policies.map((p) =>
+      p.policy === JevResearchPolicy.Candidate ? { ...p, inferenceRateCard: scheduledTariff } : p,
+    ),
+  }
+  expect(
+    Result.getOrThrow(
+      bindLatencyReplayInput(
+        {
+          ...input,
+          inference: {
+            ...input.inference,
+            costs: scheduledTariff,
+          },
+        },
+        scheduledRegistration,
+        identity,
+      ),
+    ),
+  ).toEqual(windows)
+  expect(Result.isFailure(bindLatencyReplayInput(input, scheduledRegistration, identity))).toBe(true)
+  for (const key of ['riskPolicyHash', 'promptsHash', 'continuationAndExitsHash'] as const)
+    expect(
+      Result.isFailure(
+        bindLatencyReplayInput(
+          input,
+          {
+            ...registration,
+            policies: registration.policies.map((p) =>
+              p.policy === 'JEV' ? { ...p, [key]: testHash({ changed: key }) } : p,
+            ),
+          },
+          identity,
+        ),
+      ),
+    ).toBe(true)
+  for (const changed of [
+    { ...input, source: original.source },
+    { ...input, inference: original.inference },
+    {
+      ...input,
+      build: {
+        ...input.build,
+        sourceRevision: input.build.sourceRevision === 'b'.repeat(40) ? 'c'.repeat(40) : 'b'.repeat(40),
+      },
+    },
+    { ...input, build: { ...input.build, imageDigest: `sha256:${sha256(input.build.imageDigest)}` } },
+    { ...input, openingCashMicros: '200000000000' },
+    { ...input, assetObservationPolicy: 'counterfactual-current-asset-eligibility' as const },
+    { ...input, interval: { ...input.interval, endAt: new Date(Date.parse(input.interval.endAt) - 1).toISOString() } },
+    { ...input, cadence: { ...input.cadence, pollIntervalMs: 1 } },
+    { ...input, assumptions: { ...input.assumptions, slippageBps: 1 } },
+    { ...input, fractionalTrading: !input.fractionalTrading },
+    {
+      ...input,
+      inference: {
+        ...input.inference,
+        costs: {
+          ...input.inference.costs,
+          rates: input.inference.costs.rates.map((rate) =>
+            rate.provider === 'typesafe' ? { ...rate, inputMicrosPerMillionTokens: '1' } : rate,
+          ),
+        },
+      },
+    },
+    {
+      ...input,
+      source: {
+        ...input.source,
+        marketSources: [{ ...input.source.marketSources[0], universeId: 'foreign' }] as const,
+      },
+    },
+    { ...input, calendar: input.calendar.slice(1) },
+    { ...input, calendar: input.calendar.map((day) => ({ ...day, close: '15:00' })) },
+  ])
+    expect(Result.isFailure(bindLatencyReplayInput(changed, registration, identity))).toBe(true)
+
+  const nativeCalendar = rawCalendar.map((day) => ({ ...day, session_open: '0400', session_close: '2000' }))
+  const native = nativeRegistrationFixture(
+    registration,
+    Result.getOrThrow(normalizeMarketCalendarResult(nativeCalendar, { start: firstDate, end: lastDate })),
+  )
+  const incumbent = native.policies.find((p) => p.policy === JevResearchPolicy.Incumbent)
+  const nativeFirst = native.calendar.sessions[0]
+  const nativeLast = native.calendar.sessions.at(-1)
+  if (incumbent === undefined || nativeFirst === undefined || nativeLast === undefined)
+    throw new Error('Missing independent incumbent or native calendar')
+  const incumbentInput = {
+    ...input,
+    policy: JevResearchPolicy.Incumbent as const,
+    calendar: nativeCalendar,
+    interval: { startAt: nativeFirst.openAt, endAt: nativeLast.closeAt },
+    build: { ...input.build, sourceRevision: incumbent.sourceRevision, imageDigest: `sha256:${incumbent.imageDigest}` },
+  }
+  expect(Result.getOrThrow(bindLatencyReplayInput(incumbentInput, native, identity))).toEqual(
+    native.calendar.sessions.map((s) => ({ date: s.sessionDate, openAt: s.openAt, closeAt: s.closeAt })),
+  )
+  for (const changed of [
+    { ...incumbentInput, calendar: rawCalendar },
+    { ...incumbentInput, build: input.build },
+    { ...incumbentInput, inference: { ...input.inference, costs: { ...input.inference.costs, rates: [] } } },
+  ])
+    expect(Result.isFailure(bindLatencyReplayInput(changed, native, identity))).toBe(true)
+})
+
+test('retained replay binds the recording to its exact source, source revision and policy', () => {
+  const original = fixture()
+  const recording = {
+    schemaVersion: 'bayn.replay-inference-recording.v1',
+    sourceManifestHash: Result.getOrThrow(canonicalHashV1Result(original.source)),
+    sourceRevision: original.build.sourceRevision,
+    strategyBehaviorHash: original.build.strategyBehaviorHash,
+    strategyParameterHash: original.build.strategyParameterHash,
+    jevInstructionsHash: original.jevInstructionsHash,
+    calls: [],
+  }
+  const input = (retained: unknown) => ({
+    ...original,
+    inference: {
+      ...original.inference,
+      costs: {
+        ...original.inference.costs,
+        rates: original.inference.costs.rates.filter((rate) => rate.provider === 'typesafe'),
+      },
+      mode: 'retained-responses',
+      recording: retained,
+      recordingHash: Result.getOrThrow(canonicalHashV1Result(retained)),
+    },
+  })
+  const candidate = Result.getOrThrow(prepareBacktest(input(recording)))
+  const incumbent = Result.getOrThrow(prepareBacktest({ ...input(recording), policy: JevResearchPolicy.Incumbent }))
+  expect(incumbent.policyIdentity.policy).toBe(JevResearchPolicy.Incumbent)
+  expect(incumbent.strategy.provenance).toEqual(candidate.strategy.provenance)
+  expect(incumbent.runId).not.toBe(candidate.runId)
+  for (const field of [
+    'sourceManifestHash',
+    'sourceRevision',
+    'strategyBehaviorHash',
+    'strategyParameterHash',
+    'jevInstructionsHash',
+  ] as const) {
+    const changed = {
+      ...recording,
+      [field]: field === 'sourceRevision' ? 'b'.repeat(40) : sha256(`different ${field}`),
+    }
+    expect(Result.isFailure(prepareBacktest(input(changed)))).toBe(true)
+  }
+})
+
+test('broker sessions retain regular hours when the provider includes wider data hours', () => {
+  const input = fixture()
+  const calendar = input.calendar.map((session) => ({ ...session, session_open: '0400', session_close: '2000' }))
+  const prepared = Result.getOrThrow(prepareBacktest({ ...input, calendar }))
+  expect(prepared.brokerSessions).toEqual([
+    { date: '2026-09-04', openAt: '2026-09-04T13:30:00.000Z', closeAt: '2026-09-04T20:00:00.000Z' },
+  ])
+  expect(Result.getOrThrow(canonicalHashV1Result(prepared.input.calendar))).toBe(
+    Result.getOrThrow(canonicalHashV1Result(calendar)),
+  )
+  expect(prepared.input.interval).toEqual(input.interval)
+})
+
+test('broker sessions retain an early regular close inside wider provider hours', () => {
+  const input = fixture()
+  const prepared = Result.getOrThrow(
+    prepareBacktest({
+      ...input,
+      interval: { ...input.interval, endAt: '2026-09-04T17:00:00.000Z' },
+      calendar: input.calendar.map((session) => ({
+        ...session,
+        ...(session.date === '2026-09-04' ? { close: '13:00' } : {}),
+        session_open: '0400',
+        session_close: '2000',
+      })),
+    }),
+  )
+  expect(prepared.brokerSessions).toEqual([
+    { date: '2026-09-04', openAt: '2026-09-04T13:30:00.000Z', closeAt: '2026-09-04T17:00:00.000Z' },
+  ])
+})
+
+test('native backtest binds Jev identity, provider cost assumptions and the unchanged financial grant', () => {
+  const input = fixture()
+  const prepared = Result.getOrThrow(prepareBacktest(input))
+  expect(prepared.strategy.provenance.strategy.name).toBe('jev')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v44')
+  expect(prepared.protocol.model).toBe(jevModel)
+  expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
+  expect(prepared.runtimeBuild).toMatchObject(input.build)
+  const strategy = prepared.strategy.provenance.strategy
+  const proof = {
+    schemaVersion: 'bayn.research-paper-grant-proof.v1' as const,
+    grant: { _tag: 'Research' as const, planHash: '0'.repeat(64) },
+    activationSourceRevision: input.build.sourceRevision,
+    activationImageRepository: input.build.imageRepository,
+    activationImageDigest: input.build.imageDigest,
+    strategyName: strategy.name,
+    strategyBehaviorHash: strategy.behaviorHash,
+    strategyParameterHash: strategy.parameterHash,
+    strategyParameterSchemaVersion: strategy.parameterSchemaVersion,
+    strategyProtocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(strategy)),
+    accountId: prepared.identity.accountId,
+    brokerIdentityHash: prepared.identity.identityHash,
+    riskPolicyHash: '0'.repeat(64),
+    proofPlanHash: '0'.repeat(64),
+  }
+  expect(
+    Result.isSuccess(
+      validateResearchCapitalGrantProof({
+        proof,
+        sourceGenerationHash: '0'.repeat(64),
+        accountId: prepared.identity.accountId,
+        brokerIdentityHash: prepared.identity.identityHash,
+        build: prepared.runtimeBuild,
+      }),
+    ),
+  ).toBe(true)
+  expect(
+    Result.isSuccess(
+      prepareObserveStartup({
+        accountId: prepared.identity.accountId,
+        authorityGenerationHash: '0'.repeat(64),
+        strategy: prepared.strategy,
+        ...input.cadence,
+      }),
+    ),
+  ).toBe(true)
+  expect(Result.getOrThrow(prepareBacktest({ ...input, allocatedDataCostPerSessionMicros: '1000000' })).runId).not.toBe(
+    prepared.runId,
+  )
+  expect(
+    Result.getOrThrow(
+      prepareBacktest({
+        ...input,
+        inference: {
+          ...input.inference,
+          costs: {
+            ...input.inference.costs,
+            rates: input.inference.costs.rates.map((rate) =>
+              rate.provider === 'typesafe' ? { ...rate, inputMicrosPerMillionTokens: '84000' } : rate,
+            ),
+          },
+        },
+      }),
+    ).runId,
+  ).not.toBe(prepared.runId)
+})
+
+test('native backtest rejects retired momentum inputs, missing inference provenance and arbitrary parameters', () => {
+  const input = fixture()
+  for (const invalid of [
+    { ...input, schemaVersion: 'bayn.backtest.v1' },
+    { ...input, schemaVersion: 'bayn.backtest.v9' },
+    { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: 'current' },
+    { ...input, exitTiming: 'current' },
+    { ...input, inference: undefined },
+    { ...input, jevInstructionsHash: '0'.repeat(64) },
+    { ...input, inference: { ...input.inference, maximumCalls: 0 } },
+    { ...input, inference: { ...input.inference, mode: 'constant-response' } },
+    { ...input, inference: { ...input.inference, model: 'unverified' } },
+    { ...input, inference: { ...input.inference, inputDefinition: 'bayn.jev-trading-signal-state.v4' } },
+    {
+      ...input,
+      inference: { ...input.inference, costs: { ...input.inference.costs, inputMicrosPerMillionTokens: '0' } },
+    },
+    { ...input, protocol: { minimumLookbackReturnBps: 0 } },
+    { ...input, build: { ...input.build, strategyParameterHash: '0'.repeat(64) } },
+    { ...input, build: { ...input.build, strategyBehaviorHash: '0'.repeat(64) } },
+  ])
+    expect(Result.isFailure(prepareBacktest(invalid))).toBe(true)
+})
+
+test('calendar must include a successor session before a backtest can start', () => {
+  const input = fixture()
+  const result = prepareBacktest({
+    ...input,
+    calendar: input.calendar.filter((session) => session.date <= '2026-09-04'),
+  })
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure).toMatchObject({
+      message: 'Backtest calendar must include the next broker session after the replay interval',
+    })
+})
+test('session preparation rejects changed strategy, partial hours, unknown calendar and future as-of metadata', () => {
+  const input = fixture()
+  for (const invalid of [
+    { ...input, source: { ...input.source, positions: [...input.source.positions].reverse() } },
+    { ...input, build: { ...input.build, strategyBehaviorHash: '0'.repeat(64) } },
+    { ...input, source: { ...input.source, coverageStartMs: Date.parse('2026-09-04T14:30:00Z') } },
+    { ...input, source: { ...input.source, coverageEndMs: Date.parse('2026-09-04T19:00:00Z') } },
+    { ...input, calendar: [] },
+    { ...input, assets: input.assets.slice(1) },
+    { ...input, assets: [...input.assets, { ...input.assets[0], symbol: 'XYZ' }] },
+    { ...input, assetObservationAt: '2026-09-05T00:00:00.000Z' },
+  ])
+    expect(Result.isFailure(prepareBacktest(invalid))).toBe(true)
+  expect(
+    Result.isSuccess(
+      prepareBacktest({
+        ...input,
+        assetObservationAt: '2026-09-05T00:00:00.000Z',
+        assetObservationPolicy: 'counterfactual-current-asset-eligibility',
+      }),
+    ),
+  ).toBe(true)
+})
+
+test('native short replay requires an explicit frozen account observation and preserves counterfactual timing', () => {
+  const input = fixture()
+  const enabled = {
+    shortingEnabled: true,
+    noShorting: false,
+    observedAt: '2026-09-04T13:29:00.000Z',
+    sourceHash: 'f'.repeat(64),
+    policy: 'retained-as-of-session' as const,
+  }
+  const configFor = (value: unknown) =>
+    Result.getOrThrow(backtestBrokerEvidenceConfig(Result.getOrThrow(prepareBacktest(value))))
+  expect(configFor(input).shortingEnabled).toBeUndefined()
+  expect(configFor({ ...input, equityShortAccount: enabled }).shortingEnabled).toBe(true)
+  expect(configFor({ ...input, equityShortAccount: { ...enabled, noShorting: true } }).shortingEnabled).toBe(false)
+  expect(configFor({ ...input, equityShortAccount: { ...enabled, shortingEnabled: false } }).shortingEnabled).toBe(
+    false,
+  )
+  const future = { ...enabled, observedAt: '2026-11-14T18:00:00.000Z' }
+  expect(Result.isFailure(prepareBacktest({ ...input, equityShortAccount: future }))).toBe(true)
+  const counterfactual = {
+    ...input,
+    equityShortAccount: { ...future, policy: 'counterfactual-current-account-eligibility' },
+  }
+  expect(configFor(counterfactual).shortingEnabled).toBe(true)
+  expect(Result.getOrThrow(prepareBacktest(counterfactual)).input.equityShortAccount?.policy).toBe(
+    'counterfactual-current-account-eligibility',
+  )
+  expect(Result.getOrThrow(prepareBacktest(counterfactual)).runId).not.toBe(
+    Result.getOrThrow(prepareBacktest({ ...input, equityShortAccount: enabled })).runId,
+  )
+})
+
+test('independently pinned full-session coverage permits quiet opening and closing intervals', () => {
+  const input = fixture()
+  const source = {
+    ...input.source,
+    firstAvailableAtMs: Date.parse('2026-09-04T13:31:00Z'),
+    lastAvailableAtMs: Date.parse('2026-09-04T19:59:00Z'),
+  }
+  expect(Result.isSuccess(prepareBacktest({ ...input, source }))).toBe(true)
+})
+
+test('asset response ordering cannot change replay identity or broker configuration', () => {
+  const input = fixture()
+  const canonical = Result.getOrThrow(prepareBacktest(input))
+  const reordered = Result.getOrThrow(prepareBacktest({ ...input, assets: [...input.assets].reverse() }))
+  expect(reordered.runId).toBe(canonical.runId)
+  expect(reordered.input).toEqual(canonical.input)
+  expect(reordered.assets).toEqual(canonical.assets)
+})
+
+test('the broker calendar successor does not extend the execution interval', () => {
+  const input = fixture()
+  const prepared = Result.getOrThrow(
+    prepareBacktest({
+      ...input,
+      calendar: input.calendar,
+    }),
+  )
+  expect(prepared.openMs).toBe(Date.parse('2026-09-04T13:30:00Z'))
+  expect(prepared.closeMs).toBe(Date.parse('2026-09-04T20:00:00Z'))
+  expect(prepared.input.calendar).toHaveLength(2)
+})
+
+test('retained predecessor calendar sessions do not change a frozen execution interval', () => {
+  const input = fixture()
+  const prepared = Result.getOrThrow(
+    prepareBacktest({
+      ...input,
+      calendar: [
+        { session_open: '0930', session_close: '1600', date: '2026-09-03', open: '09:30', close: '16:00' },
+        ...input.calendar,
+      ],
+    }),
+  )
+  expect(prepared.openMs).toBe(Date.parse(input.interval.startAt))
+  expect(prepared.closeMs).toBe(Date.parse(input.interval.endAt))
+})
+
+test('a declared mixed-market weekend interval preserves one account, broker assets and the unchanged strategy', () => {
+  const base = fixture()
+  const crypto = {
+    universeId: cryptoMarketProfile.universeId,
+    universeSymbolHash: cryptoMarketProfile.universeSymbolHash,
+    symbols: cryptoMarketProfile.universe,
+    topics: { ...cryptoMarketProfile.sourceTopics, features: cryptoMarketProfile.streamingInput.featureTopic },
+  }
+  const interval = { startAt: '2026-09-05T23:45:00.000Z', endAt: '2026-09-06T00:15:00.000Z' }
+  const material = {
+    ...base.source,
+    marketSources: [...base.source.marketSources, crypto] as const,
+    coverageStartMs: Date.parse(interval.startAt),
+    coverageEndMs: Date.parse(interval.endAt),
+    firstAvailableAtMs: Date.parse(interval.startAt),
+    lastAvailableAtMs: Date.parse(interval.endAt),
+  }
+  const positions = new Map(
+    base.source.positions.map((position) => [`${position.topic}:${position.partition}`, position]),
+  )
+  const source = {
+    ...material,
+    positions: backtestSourcePartitions(material).map(
+      ({ topic, partition }) =>
+        positions.get(`${topic}:${partition}`) ?? { topic, partition, startOffset: '0', endOffsetExclusive: '0' },
+    ),
+  }
+  const input = {
+    ...base,
+    interval,
+    source,
+    assets: [
+      ...base.assets,
+      ...cryptoMarketProfile.universe.map((symbol, index) => ({
+        id: `87654321-1234-4234-8234-${String(index).padStart(12, '0')}`,
+        symbol,
+        class: 'crypto',
+        exchange: 'CRYPTO',
+        status: 'active',
+        tradable: true,
+        fractionable: true,
+        min_order_size: '0.00001',
+        min_trade_increment: '0.000000001',
+        price_increment: '0.01',
+      })),
+    ],
+  }
+  const prepared = Result.getOrThrow(prepareWithCapture(input, retainedReplayCaptureFixture(source)))
+  expect(prepared.openMs).toBe(Date.parse(interval.startAt))
+  expect(prepared.closeMs).toBe(Date.parse(interval.endAt))
+  expect(prepared.reportingWindows.map((session) => session.date)).toEqual(['2026-09-05', '2026-09-06'])
+  expect(prepared.reportingWindows[0]?.closeAt).toBe('2026-09-06T00:00:00.000Z')
+  expect(prepared.reportingWindows[1]?.openAt).toBe(prepared.reportingWindows[0]?.closeAt)
+  expect(prepared.assets.map((asset) => asset.symbol)).toEqual(input.assets.map((asset) => asset.symbol).sort())
+  expect(prepared.strategy.provenance.strategy).toEqual(
+    Result.getOrThrow(prepareBacktest(base)).strategy.provenance.strategy,
+  )
+})
+
+test('normalized asset attributes determine identity independent of response representation', () => {
+  const input = fixture()
+  const base = Result.getOrThrow(prepareBacktest(input))
+  for (const attributes of [undefined, null, []]) {
+    const prepared = Result.getOrThrow(
+      prepareBacktest({
+        ...input,
+        assets: input.assets.map((asset) => ({ ...asset, ...(attributes === undefined ? {} : { attributes }) })),
+      }),
+    )
+    expect(prepared.runId).toBe(base.runId)
+    expect(prepared.assets).toEqual(base.assets)
+  }
+  const prepare = (attributes: string[]) =>
+    Result.getOrThrow(prepareBacktest({ ...input, assets: input.assets.map((asset) => ({ ...asset, attributes })) }))
+  expect(prepare(['ipo', 'ptp_no_exception', 'ipo']).runId).toBe(prepare(['ptp_no_exception', 'ipo']).runId)
+  expect(prepare(['ipo']).runId).not.toBe(base.runId)
+})
+
+const prepareBacktest = (input: unknown) => prepareWithCapture(input, retainedReplayCaptureFixture(fixture().source))
+
+test('one backtest advances continuously across weekends and normalizes its broker calendar', () => {
+  const base = fixture()
+  const input = {
+    ...base,
+    interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-08T20:00:00.000Z' },
+    calendar: [
+      ...base.calendar,
+      { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
+    ],
+    source: {
+      ...base.source,
+      coverageEndMs: Date.parse('2026-09-08T20:00:00Z'),
+      lastAvailableAtMs: Date.parse('2026-09-08T20:00:00Z'),
+    },
+  }
+  const capture = retainedReplayCaptureFixture(input.source)
+  const prepared = Result.getOrThrow(prepareWithCapture(input, capture))
+  expect(prepared.reportingWindows.map((session) => session.date)).toEqual([
+    '2026-09-04',
+    '2026-09-05',
+    '2026-09-06',
+    '2026-09-07',
+    '2026-09-08',
+  ])
+  for (let index = 1; index < prepared.reportingWindows.length; index++)
+    expect(prepared.reportingWindows[index]?.openAt).toBe(prepared.reportingWindows[index - 1]?.closeAt)
+  expect(prepared.closeMs).toBe(input.source.coverageEndMs)
+  expect(
+    Result.getOrThrow(prepareWithCapture({ ...input, calendar: [...input.calendar].reverse() }, capture)).runId,
+  ).toBe(prepared.runId)
+  for (const sessionDates of [[], ['2026-09-04', '2026-09-04'], ['2026-09-04', '2026-09-07']])
+    expect(Result.isFailure(prepareWithCapture({ ...input, sessionDates }, capture))).toBe(true)
+})
+
+test('continuous backtesting rejects an interval whose source stops before the requested end', () => {
+  const base = fixture()
+  const input = {
+    ...base,
+    interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-09T20:00:00.000Z' },
+    calendar: [
+      ...base.calendar,
+      { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-09-10', open: '09:30', close: '16:00' },
+    ],
+  }
+  const result = prepareWithCapture(input, retainedReplayCaptureFixture(input.source))
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure).toMatchObject({
+      message: 'Frozen source receipt does not cover market open through close',
+    })
+})
+
+test('obsolete single-session input is rejected by the canonical backtest command', () => {
+  const input = fixture()
+  expect(
+    Result.isFailure(
+      prepareBacktest({
+        ...input,
+        schemaVersion: 'bayn.execution-replay-session.v1',
+        sessionDate: '2026-09-04',
+      }),
+    ),
+  ).toBe(true)
+})
+
+test('run identity binds the independent capture receipt as well as the session input', () => {
+  const input = fixture()
+  const original = retainedReplayCaptureFixture(input.source)
+  const text = JSON.stringify({ ...original.value, origin: 'a separately captured observation' })
+  const other = Result.getOrThrow(validateBacktestSourceReceipt(text, sha256(text)))
+  expect(Result.getOrThrow(prepareWithCapture(input, other)).runId).not.toBe(
+    Result.getOrThrow(prepareWithCapture(input, original)).runId,
+  )
+})
+
+test('a completed schedule only qualifies economics with exact accounting and no unresolved exposure', () => {
+  const exact = {
+    finalWindow: true,
+    failedPassCount: 0,
+    unavailableDecisionPassCount: 0,
+    valuationFailureCount: 0,
+    remainingPositionCount: 0,
+    remainingOpenOrderCount: 0,
+    reconciliation: {
+      status: ReconciliationStatus.Exact,
+      unknownOrderCount: 0,
+      unknownMutationCount: 0,
+      metrics: {
+        accountingExact: true,
+        discrepancyCount: 0,
+        cashDifferenceMicros: '0',
+        positionDifferenceMicros: '0',
+        equityDifferenceMicros: '0',
+        brokerPollAgeMs: 0,
+        oldestUnknownMutationAgeMs: 0,
+      },
+    },
+  }
+  expect(assessBacktestSession(exact)).toEqual({ completion: 'COMPLETE', issues: [] })
+  expect(assessBacktestSession({ ...exact, remainingOpenOrderCount: 1 })).toEqual({
+    completion: 'INCOMPLETE',
+    issues: [BacktestIssue.UnclosedOrder],
+  })
+  expect(assessBacktestSession({ ...exact, finalWindow: false, remainingOpenOrderCount: 1 })).toEqual({
+    completion: 'COMPLETE',
+    issues: [],
+  })
+  expect(assessBacktestSession({ ...exact, unavailableDecisionPassCount: 1 })).toEqual({
+    completion: 'INCOMPLETE',
+    issues: [BacktestIssue.MissingDecisionData],
+  })
+  expect(assessBacktestSession({ ...exact, valuationFailureCount: 1 })).toEqual({
+    completion: 'INCOMPLETE',
+    issues: [BacktestIssue.MissingValuation],
+  })
+  expect(assessBacktestSession({ ...exact, failedPassCount: 1 })).toEqual({
+    completion: 'INCOMPLETE',
+    issues: [BacktestIssue.CycleFailure],
+  })
+  expect(assessBacktestSession({ ...exact, remainingPositionCount: 1 })).toEqual({
+    completion: 'INCOMPLETE',
+    issues: [BacktestIssue.UnclosedPosition],
+  })
+  expect(assessBacktestSession({ ...exact, finalWindow: false, remainingPositionCount: 1 })).toEqual({
+    completion: 'COMPLETE',
+    issues: [],
+  })
+  for (const metrics of [
+    { ...exact.reconciliation.metrics, accountingExact: false },
+    { ...exact.reconciliation.metrics, discrepancyCount: 1 },
+    { ...exact.reconciliation.metrics, cashDifferenceMicros: '1' },
+    { ...exact.reconciliation.metrics, positionDifferenceMicros: '1' },
+    { ...exact.reconciliation.metrics, equityDifferenceMicros: '1' },
+  ])
+    expect(assessBacktestSession({ ...exact, reconciliation: { ...exact.reconciliation, metrics } })).toEqual({
+      completion: 'INCOMPLETE',
+      issues: [BacktestIssue.InexactAccounting],
+    })
+  for (const reconciliation of [
+    { ...exact.reconciliation, unknownOrderCount: 1 },
+    { ...exact.reconciliation, unknownMutationCount: 1 },
+  ])
+    expect(assessBacktestSession({ ...exact, reconciliation })).toEqual({
+      completion: 'INCOMPLETE',
+      issues: [BacktestIssue.UnresolvedMutation],
+    })
+})
+
+test('stale held-position marks do not qualify replay economics', () => {
+  const mark = {
+    symbol: 'AAPL',
+    priceMicros: '100000000',
+    eventAt: '2026-09-08T13:30:00.000Z',
+    availableAtMs: Date.parse('2026-09-08T13:30:00.000Z'),
+    ageNanos: '1000000000',
+    staleForExecution: false,
+    bidLiquidityAvailable: true,
+    topic: 'quotes',
+    partition: 0,
+    offset: '1',
+    recordHash: 'a'.repeat(64),
+  }
+  const valuation = { model: 'last-observed-bid' as const, observedAt: '2026-09-08T13:30:01.000Z' }
+  expect(qualifiesReplayValuation({ ...valuation, marks: [] })).toBe(true)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [mark] })).toBe(true)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, staleForExecution: true }] })).toBe(false)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, bidLiquidityAvailable: false }] })).toBe(false)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, coverLiquidityAvailable: false }] })).toBe(false)
+  expect(
+    qualifiesReplayValuation({
+      ...valuation,
+      marks: [{ ...mark, bidLiquidityAvailable: false, coverLiquidityAvailable: true }],
+    }),
+  ).toBe(true)
+})
+
+test('prepared replay preserves the strict native protocol independently of the equity source profile', () => {
+  const prepared = Result.getOrThrow(prepareBacktest(fixture()))
+  const decoded = Result.getOrThrow(
+    Schema.decodeUnknownResult(JevProtocolSchema, strictParseOptions)(prepared.protocol),
+  )
+  expect(decoded.universe).toContain('BTC/USD')
+  expect(prepared.input.source.marketSources.flatMap((source) => source.symbols)).toEqual([
+    ...equityMarketProfile.universe,
+  ])
+})
+
+test('prepared replay admits a native control batch before any provider dispatch', () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const prepared = Result.getOrThrow(prepareBacktest(fixture()))
+      const snapshot = nativeJevFixture().snapshot
+      const observation = Result.getOrThrow(
+        makeControlEntryObservation({
+          runId: prepared.runId,
+          protocol: prepared.protocol,
+          snapshot,
+          portfolio: Result.getOrThrow(createControlPortfolio(prepared.input.openingCashMicros)),
+        }),
+      )
+      const plan = Result.getOrThrow(
+        makeJevTradingSignalBatch({
+          observation: observation.payload,
+          planVersion: JevBatchPlanVersion.V8,
+          expiresAt: new Date(
+            Date.parse(observation.payload.observedAt) + prepared.protocol.inferenceValidityMs,
+          ).toISOString(),
+        }),
+      )
+      const fs = yield* FileSystem.FileSystem
+      const directory = `${yield* fs.makeTempDirectoryScoped()}/journal`
+      const journal = yield* makeControlJevJournal(directory, prepared.runId)
+      yield* TestClock.setTime(Date.parse(observation.payload.observedAt))
+      const admitted = yield* beginRecordedJevBatch(journal.batches, plan, observation.payload)
+      if (admitted.dispatches === null) throw new Error('Offline replay must retain in-process dispatch rights')
+      expect(admitted.dispatches.length).toBeGreaterThan(0)
+      for (const dispatch of admitted.dispatches)
+        expect(yield* fs.exists(`${directory}/request-${dispatch.request.requestId}.json`)).toBeTrue()
+      expect(yield* journal.calls).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
+  ))

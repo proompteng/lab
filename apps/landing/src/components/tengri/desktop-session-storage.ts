@@ -105,18 +105,36 @@ export function createDesktopCoordinationChannel(
 }
 
 export function clearDeletedDesktopState(agentId: string) {
-  try {
-    const exactKeys = new Set([`tengri:desktop:${agentId}`, `tengri:terminal-cleanup:${agentId}`])
-    const prefixes = [`tengri:windows:${agentId}:`, `tengri:terminal:${agentId}:`]
+  const exactSessionKeys = new Set([
+    `tengri:desktop:${agentId}`,
+    `tengri:terminal-cleanup:${agentId}`,
+    `tengri-resources:${agentId}`,
+  ])
+  const sessionPrefixes = [`tengri:windows:${agentId}:`, `tengri:terminal:${agentId}:`]
 
+  try {
     for (let index = 0; index < sessionStorage.length; index += 1) {
       const key = sessionStorage.key(index)
-      if (key && prefixes.some((prefix) => key.startsWith(prefix))) exactKeys.add(key)
+      if (key && sessionPrefixes.some((prefix) => key.startsWith(prefix))) exactSessionKeys.add(key)
     }
 
-    for (const key of exactKeys) sessionStorage.removeItem(key)
+    for (const key of exactSessionKeys) sessionStorage.removeItem(key)
   } catch {
     // Deleted guest state is still authoritative when session storage is unavailable.
+  }
+
+  try {
+    for (const key of [
+      `tengri-thread:${agentId}`,
+      `tengri-approval-mode:${agentId}`,
+      `tengri-conversations:${agentId}`,
+      `tengri-resource-pins:${agentId}`,
+      `tengri:spotlight:${agentId}:recents`,
+    ]) {
+      localStorage.removeItem(key)
+    }
+  } catch {
+    // A new desktop can still start when local storage is unavailable.
   }
 }
 

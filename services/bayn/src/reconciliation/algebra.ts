@@ -1,15 +1,15 @@
+import { isDeepStrictEqual } from 'node:util'
+import { submittedOrderEvidence } from '../execution/submission-evidence'
 import { Result, Schema } from 'effect'
 
-import { rebuildAccountingLedger } from '../accounting/domain'
+import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
+import { AccountingInventorySide, prepareAccounting } from '../accounting/domain'
+import type { PositionCost, PreparedAccounting } from '../accounting/model'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
-import {
-  compatibleOrderRequestBody,
-  MutationOperation,
-  orderPriceBoundaryMicros,
-  orderRequestNotionalMicros,
-} from '../broker/alpaca-mutations'
-import { MutationEventType } from '../execution/mutations'
+import { equityShortAccountingSchemaVersion } from '../accounting/schema'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { MutationEventType } from '../execution/mutations/model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { LedgerPlan } from '../ledger-plan'
 import {
@@ -33,13 +33,12 @@ import {
   type Valuation,
 } from '../execution/contracts'
 import {
-  legacyAccountingStateSchemaVersion,
   legacyAuthorityStateSchemaVersion,
   legacyReconciliationIdSchemaVersion,
   legacyReconciliationSchemaVersion,
 } from '../execution/legacy-wire'
+import { compareReconciliation } from '../simulation-reconciliation/broker-compare'
 import {
-  compareReconciliation,
   reconciledStateHash,
   renderReconciliationDecisionError,
   type DurableFill,
@@ -48,9 +47,12 @@ import {
   type ReconciliationComparison,
   type ReconciliationDecisionError,
   type ReconciliationRiskContext,
-} from '../reconciliation'
+} from '../simulation-reconciliation/broker-model'
 import { strictParseOptions, type IsoDate } from '../schemas'
-import { Pipeable } from '../pipeable'
+
+import { reportedCashMicros, type CashReportingQuantum } from '../broker/alpaca/cash-reporting'
+import type { FeeAccrual } from '../accounting/fee-accrual'
+import { positionCostAnchor } from './position-cost-reporting'
 
 export interface IntentProjectionRow {
   readonly intent_id: string
@@ -59,7 +61,7 @@ export interface IntentProjectionRow {
   readonly side: OrderSide
   readonly order_type: OrderType
   readonly time_in_force: TimeInForce
-  readonly quantity_micros: string
+  readonly quantity_atoms: string
   readonly notional_limit_micros: string
   readonly state: IntentState
   readonly terminal_outcome: TerminalOutcome | null
@@ -67,6 +69,7 @@ export interface IntentProjectionRow {
   readonly mutation_operation: MutationOperation | null
   readonly mutation_event_type: MutationEventType | null
   readonly mutation_occurred_at: string | null
+  readonly submit_request_body?: unknown
   readonly submit_request_hash: string | null
 }
 
@@ -82,6 +85,7 @@ export interface OpeningCashRow {
 
 export interface ReconciliationSnapshotMaterial {
   readonly account: AccountSnapshot
+  readonly cashReportingQuantumMicros: CashReportingQuantum
   readonly positions: readonly Position[]
   readonly positionsObservedAt: string
   readonly orders: readonly Order[]
@@ -122,7 +126,7 @@ export interface RiskContextRow {
   readonly authority_kill: KillState | null
   readonly authority_reason: string | null
   readonly authority_version: string | null
-  readonly authority_updated_at: Date | null
+  readonly authority_updated_at: string | null
   readonly authority_observed_at: Date | null
   readonly daily_traded_notional_micros: string
   readonly day_start_equity_micros: string
@@ -136,6 +140,7 @@ type AccountingAmountSource = 'opening-cash' | 'transaction-cash-delta'
 type ReconciliationIdentityOperation = 'content-hash' | 'decode' | 'reconciliation-id'
 
 export type ReconciliationAlgebraFailure =
+  | { readonly _tag: 'AccountingTransactionMismatch'; readonly transactionId: string; readonly brokerEventId: string }
   | {
       readonly _tag: 'AccountingPlanFailed'
       readonly transactionId: string
@@ -147,6 +152,12 @@ export type ReconciliationAlgebraFailure =
       readonly _tag: 'ReceiptVerificationFailed'
       readonly brokerEventId: string
       readonly cause: CanonicalHashFailure
+    }
+  | {
+      readonly _tag: 'BrokerFeePredatesOpeningCash'
+      readonly activityId: string
+      readonly feeDate: string
+      readonly openingObservedAt: string
     }
   | {
       readonly _tag: 'AccountingPredatesOpeningCash'
@@ -203,7 +214,7 @@ export type ReconciliationAlgebraFailure =
   | { readonly _tag: 'AuthorityStateDecodeFailed'; readonly cause: unknown }
   | {
       readonly _tag: 'RiskContextTimestampFailed'
-      readonly field: 'authority_observed_at' | 'authority_updated_at'
+      readonly field: 'authority_observed_at'
       readonly epochMillis: number
     }
 
@@ -225,7 +236,7 @@ const fail = (failure: ReconciliationAlgebraFailure): Result.Result<never, Recon
 
 type SubmittedOrderRepresentation = Pick<
   IntentExpectation,
-  'submittedLimitPriceMicros' | 'submittedNotionalMicros' | 'submittedOrderType' | 'submittedQuantityMicros'
+  'submittedLimitPriceMicros' | 'submittedNotionalMicros' | 'submittedOrderType' | 'submittedQuantityAtoms'
 >
 
 const invalidSubmitRepresentation = (row: IntentProjectionRow, cause: unknown): ReconciliationAlgebraFailure => ({
@@ -245,42 +256,12 @@ const submittedOrderRepresentation = (
     )
   }
 
-  const requestIntent = {
-    clientOrderId: row.client_order_id,
-    notionalLimitMicros: row.notional_limit_micros,
-    orderType: row.order_type,
-    quantityMicros: row.quantity_micros,
-    side: row.side,
+  return submittedOrderEvidence(row.submit_request_body, {
+    requestHash: row.submit_request_hash,
     symbol: row.symbol,
-    timeInForce: row.time_in_force,
-  }
-  return Result.flatMap(
-    Result.mapError(compatibleOrderRequestBody(requestIntent, row.submit_request_hash), (cause) =>
-      invalidSubmitRepresentation(row, cause),
-    ),
-    (body) => {
-      if (!('limit_price' in body)) {
-        if ('notional' in body) {
-          const submittedNotionalMicros = orderRequestNotionalMicros(body)
-          return submittedNotionalMicros === undefined
-            ? Result.fail(invalidSubmitRepresentation(row, 'accepted broker notional is not canonical micros'))
-            : Result.succeed({ submittedOrderType: OrderType.Market, submittedNotionalMicros })
-        }
-        return Result.succeed({
-          submittedOrderType: OrderType.Market,
-          submittedQuantityMicros: row.quantity_micros,
-        })
-      }
-      return Result.map(
-        Result.mapError(orderPriceBoundaryMicros(requestIntent), (cause) => invalidSubmitRepresentation(row, cause)),
-        (boundary): SubmittedOrderRepresentation => ({
-          submittedOrderType: OrderType.Limit,
-          submittedQuantityMicros: row.quantity_micros,
-          submittedLimitPriceMicros: boundary.toString(),
-        }),
-      )
-    },
-  )
+    side: row.side,
+    clientOrderId: row.client_order_id,
+  }).pipe(Result.mapError((cause) => invalidSubmitRepresentation(row, cause)))
 }
 
 const mutationIsUnresolved = (row: IntentProjectionRow): boolean =>
@@ -301,7 +282,7 @@ const projectIntentExpectation = (
     orderType: row.order_type,
     ...submitted,
     timeInForce: row.time_in_force,
-    quantityMicros: row.quantity_micros,
+    quantityAtoms: row.quantity_atoms,
     state: row.state,
     ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
     expectsBrokerOrder: row.broker_order_id !== null,
@@ -391,8 +372,77 @@ const accountingHash = (value: unknown): Result.Result<string, ReconciliationAlg
     }),
   )
 
-const verifyAccountingReceiptsDataFirst = (
-  transactions: readonly AccountingTransaction[],
+interface AccountingHistoryRow {
+  readonly transaction: AccountingTransaction
+  readonly fill: Fill
+  readonly prior: PositionCost
+}
+
+export const makeAccountingHistoryVerifier = (ledger: number) => {
+  type VerifiedRow = { readonly input: AccountingHistoryRow; readonly accounting: PreparedAccounting }
+  let previous = new Map<string, VerifiedRow>()
+
+  return (
+    history: readonly AccountingHistoryRow[],
+  ): Result.Result<readonly PreparedAccounting[], ReconciliationAlgebraFailure> =>
+    Result.gen(function* () {
+      const next = new Map<string, VerifiedRow>()
+      const prepared: PreparedAccounting[] = []
+      for (const row of history) {
+        const { transaction, fill, prior } = row
+        const cached = previous.get(transaction.transactionId)
+        if (cached !== undefined && isDeepStrictEqual(row, cached.input)) {
+          next.set(transaction.transactionId, cached)
+          prepared.push(cached.accounting)
+          continue
+        }
+        const expected = yield* Result.mapError(
+          prepareAccounting(
+            transaction.brokerEventId,
+            fill,
+            prior,
+            ledger,
+            transaction.schemaVersion === equityShortAccountingSchemaVersion
+              ? AccountingInventorySide.Short
+              : AccountingInventorySide.Long,
+          ),
+          (cause): ReconciliationAlgebraFailure => ({
+            _tag: 'AccountingPlanFailed',
+            transactionId: transaction.transactionId,
+            brokerEventId: transaction.brokerEventId,
+            cause,
+          }),
+        )
+        // Reconstruction verifies the expected hashes; compare every stored field, including its claimed hashes.
+        if (!isDeepStrictEqual(transaction, expected.transaction))
+          return yield* fail({
+            _tag: 'AccountingTransactionMismatch',
+            transactionId: transaction.transactionId,
+            brokerEventId: transaction.brokerEventId,
+          })
+        // The next cut can share plans with consumers only while every retained record is immutable.
+        expected.ledger.accounts.forEach(Object.freeze)
+        expected.ledger.transfers.forEach(Object.freeze)
+        Object.freeze(expected.ledger.accounts)
+        Object.freeze(expected.ledger.transfers)
+        Object.freeze(expected.ledger)
+        Object.freeze(expected.transaction)
+        const accounting = Object.freeze(expected)
+        next.set(transaction.transactionId, {
+          input: { transaction: { ...transaction }, fill: { ...fill }, prior: { ...prior } },
+          accounting,
+        })
+        prepared.push(accounting)
+      }
+      previous = next
+      return prepared
+    })
+}
+
+export type AccountingHistoryVerifier = ReturnType<typeof makeAccountingHistoryVerifier>
+
+export const verifyAccountingReceipts = (
+  prepared: readonly PreparedAccounting[],
   receipts: readonly AccountingReceipt[],
   config: AccountingLedgerIdentity,
 ): Result.Result<AccountingVerification, ReconciliationAlgebraFailure> =>
@@ -405,47 +455,33 @@ const verifyAccountingReceiptsDataFirst = (
       receiptBrokerEvents.add(receipt.brokerEventId)
     }
     const receiptsByEvent = new Map(receipts.map((receipt) => [receipt.brokerEventId, receipt]))
-    const planned: {
-      readonly transaction: AccountingTransaction
-      readonly plan: LedgerPlan
-    }[] = []
-    for (const transaction of transactions) {
-      planned.push({
-        transaction,
-        plan: yield* Result.mapError(
-          rebuildAccountingLedger(transaction, config.tigerBeetle.ledger),
-          (cause): ReconciliationAlgebraFailure => ({
-            _tag: 'AccountingPlanFailed',
-            transactionId: transaction.transactionId,
-            brokerEventId: transaction.brokerEventId,
-            cause,
-          }),
-        ),
-      })
-    }
-
     const exactReceipts = new Map<string, boolean>()
-    for (const { transaction, plan } of planned) {
+    for (const { transaction, ledger: plan } of prepared) {
       exactReceipts.set(
         transaction.brokerEventId,
         yield* receiptMatches(transaction, receiptsByEvent.get(transaction.brokerEventId), plan, config),
       )
     }
-    return { exactReceipts, plans: planned.map(({ plan }) => plan) }
+    return { exactReceipts, plans: prepared.map(({ ledger }) => ledger) }
   })
-
-export const verifyAccountingReceipts = Pipeable.dual(3, verifyAccountingReceiptsDataFirst)
 
 export const compareOpeningCash = (input: {
   readonly accountId: string
   readonly openingCash: OpeningCashRow
   readonly transactions: readonly AccountingTransaction[]
+  readonly fillExecutionTimes: ReadonlyMap<string, string>
+  readonly fees?: readonly import('../broker/alpaca/model').FeeActivity[]
+  readonly brokerFeeAccruals: readonly FeeAccrual[]
+  readonly cashReportingOffsetMicros: string
+  readonly cashSettlementDeltaMicros: string
+  readonly brokerCashSettlements: readonly import('../accounting/cash-settlement').CashSettlementData[]
+  readonly brokerFeeCashDeltaMicros: string
   readonly receipts: readonly AccountingReceipt[]
   readonly ledgerExact: boolean
   readonly snapshot: ReconciliationSnapshotMaterial
   readonly intents: readonly IntentExpectation[]
   readonly durableFills: readonly DurableFill[]
-  readonly projectedPositions: readonly ProjectedPosition[]
+  readonly projectedPositions: readonly Omit<ProjectedPosition, 'costBasisAnchor'>[]
 }): Result.Result<AccountingComparison, ReconciliationAlgebraFailure> =>
   Result.gen(function* () {
     const predecessor = input.transactions.find((transaction) => transaction.occurredAt < input.openingCash.observed_at)
@@ -465,12 +501,34 @@ export const compareOpeningCash = (input: {
         transaction.transactionId,
       )
     }
-    const expectedCashMicros = expectedCash.toString()
+    for (const fee of input.fees ?? []) {
+      if (brokerFeePredatesOpeningCash(fee, input.openingCash.observed_at))
+        return yield* fail({
+          _tag: 'BrokerFeePredatesOpeningCash',
+          activityId: fee.activityId,
+          feeDate: fee.date,
+          openingObservedAt: input.openingCash.observed_at,
+        })
+    }
+    expectedCash += yield* parseAccountingAmount('transaction-cash-delta', input.brokerFeeCashDeltaMicros)
+    expectedCash += yield* parseAccountingAmount('transaction-cash-delta', input.cashSettlementDeltaMicros)
+    const reportingOffset = yield* parseAccountingAmount('transaction-cash-delta', input.cashReportingOffsetMicros)
+    const expectedCashMicros = reportedCashMicros(
+      (expectedCash + reportingOffset).toString(),
+      input.snapshot.cashReportingQuantumMicros,
+    )
     const accountingHashValue = yield* accountingHash({
-      schemaVersion: legacyAccountingStateSchemaVersion,
+      schemaVersion: 'bayn.accounting-state.v4',
       accountId: input.accountId,
       openingCash: input.openingCash,
       transactions: input.transactions,
+      ...(input.fees === undefined || input.fees.length === 0 ? {} : { brokerFees: input.fees }),
+      brokerFeeAccruals: input.brokerFeeAccruals,
+      brokerFeeCashDeltaMicros: input.brokerFeeCashDeltaMicros,
+      cashReportingQuantumMicros: input.snapshot.cashReportingQuantumMicros,
+      cashReportingOffsetMicros: input.cashReportingOffsetMicros,
+      cashSettlementDeltaMicros: input.cashSettlementDeltaMicros,
+      brokerCashSettlements: input.brokerCashSettlements,
       receipts: input.receipts,
       ledgerExact: input.ledgerExact,
     })
@@ -495,7 +553,17 @@ export const compareOpeningCash = (input: {
         fills: input.snapshot.fills,
         intents: input.intents,
         durableFills: input.durableFills,
-        projectedPositions: input.projectedPositions,
+        projectedPositions: input.projectedPositions.map((position) => ({
+          ...position,
+          costBasisAnchor: positionCostAnchor(
+            input.accountId,
+            position,
+            input.transactions,
+            input.brokerFeeAccruals,
+            input.snapshot.positionsObservedAt,
+            input.fillExecutionTimes,
+          ),
+        })),
         expectedCashMicros,
         valuation: input.snapshot.valuation,
         accountingHash: accountingHashValue,
@@ -507,7 +575,7 @@ export const compareOpeningCash = (input: {
     return { accountingHash: accountingHashValue, comparison }
   })
 
-const ageDiscrepanciesDataFirst = (
+export const ageDiscrepancies = (
   comparison: ReconciliationComparison,
   previous: readonly Discrepancy[],
   reconciledAt: string,
@@ -546,8 +614,6 @@ const ageDiscrepanciesDataFirst = (
     status: discrepancies.length === 0 ? ReconciliationStatus.Exact : ReconciliationStatus.Discrepancy,
   })
 }
-
-export const ageDiscrepancies = Pipeable.dual(3, ageDiscrepanciesDataFirst)
 
 export const makeReconciliationIdentity = (input: {
   readonly accountId: string
@@ -605,7 +671,7 @@ export const decideReconciliation = (input: {
     return yield* makeReconciliationIdentity({ ...input, aged })
   })
 
-const validateReconciliationReadbackDataFirst = (
+export const validateReconciliationReadback = (
   reconciliation: Reconciliation,
   storedContentHash: string,
 ): Result.Result<void, ReconciliationAlgebraFailure> =>
@@ -618,12 +684,7 @@ const validateReconciliationReadbackDataFirst = (
         storedContentHash,
       })
 
-export const validateReconciliationReadback = Pipeable.dual(2, validateReconciliationReadbackDataFirst)
-
-const timestamp = (
-  field: 'authority_observed_at' | 'authority_updated_at',
-  value: Date,
-): Result.Result<string, ReconciliationAlgebraFailure> =>
+const timestamp = (field: 'authority_observed_at', value: Date): Result.Result<string, ReconciliationAlgebraFailure> =>
   Number.isFinite(value.getTime())
     ? Result.succeed(value.toISOString())
     : fail({ _tag: 'RiskContextTimestampFailed', field, epochMillis: value.getTime() })
@@ -636,7 +697,7 @@ const riskMaterial = (row: RiskContextRow, unknownMutationCount: number) => ({
   peakEquityMicros: row.peak_equity_micros,
 })
 
-const riskContextFromRowDataFirst = (
+export const riskContextFromRow = (
   row: RiskContextRow,
   unknownMutationCount: number,
 ): Result.Result<ReconciliationRiskContext, ReconciliationAlgebraFailure> =>
@@ -698,7 +759,6 @@ const riskContextFromRowDataFirst = (
       })
     }
 
-    const authorityUpdatedAt = yield* timestamp('authority_updated_at', row.authority_updated_at)
     const authority = yield* Result.mapError(
       decodeAuthorityState({
         schemaVersion: row.authority_schema_version,
@@ -708,12 +768,13 @@ const riskContextFromRowDataFirst = (
         kill: row.authority_kill,
         ...(row.authority_reason === null ? {} : { reason: row.authority_reason }),
         version,
-        updatedAt: authorityUpdatedAt,
+        updatedAt: row.authority_updated_at,
       }),
       (cause): ReconciliationAlgebraFailure => ({ _tag: 'AuthorityStateDecodeFailed', cause }),
     )
     const authorityObservedAt = yield* timestamp('authority_observed_at', row.authority_observed_at)
-    if (authority.updatedAt > authorityObservedAt) {
+    // Observation clocks remain millisecond-resolution; the unmodified timestamp still binds exact SQL identity.
+    if (Date.parse(authority.updatedAt) > Date.parse(authorityObservedAt)) {
       return yield* fail({
         _tag: 'InvalidRiskContext',
         reason: 'authority-update-after-observation',
@@ -727,8 +788,6 @@ const riskContextFromRowDataFirst = (
     }
   })
 
-export const riskContextFromRow = Pipeable.dual(2, riskContextFromRowDataFirst)
-
 interface ReconciliationAlgebraFailureDetails {
   readonly failure: 'decode' | 'invariant'
   readonly message: string
@@ -739,6 +798,12 @@ export const reconciliationAlgebraFailureDetails = (
   failure: ReconciliationAlgebraFailure,
 ): ReconciliationAlgebraFailureDetails => {
   switch (failure._tag) {
+    case 'AccountingTransactionMismatch':
+      return {
+        failure: 'invariant',
+        message: `accounting transaction ${failure.transactionId} differs from its fill and inventory history`,
+        cause: failure,
+      }
     case 'AccountingPlanFailed':
       return {
         failure: 'invariant',
@@ -756,6 +821,12 @@ export const reconciliationAlgebraFailureDetails = (
         failure: 'invariant',
         message: `accounting receipt verification failed for broker event ${failure.brokerEventId}`,
         cause: failure.cause,
+      }
+    case 'BrokerFeePredatesOpeningCash':
+      return {
+        failure: 'invariant',
+        message: `broker fee ${failure.activityId} predates the opening cash baseline and requires earlier baseline evidence`,
+        cause: failure,
       }
     case 'AccountingPredatesOpeningCash':
       return {

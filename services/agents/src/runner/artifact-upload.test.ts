@@ -4,7 +4,8 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { resolveArtifactUploadConfig, uploadOutputArtifacts } from './artifact-upload'
+import { resolveArtifactUploadConfig } from '../artifact-storage'
+import { uploadOutputArtifacts } from './artifact-upload'
 
 describe('agent runner artifact upload', () => {
   it('resolves storage config from canonical and reflected secret env names', () => {

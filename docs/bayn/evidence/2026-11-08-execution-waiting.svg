@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="794" viewBox="0 0 1200 794" role="img" aria-labelledby="title desc">
+<title id="title">Observed Bayn Waiting pass, 1161.319 milliseconds</title>
+<desc id="desc">Recorded November 8, 2026 at 14:18:39 PST. Source 1a291e1. No inference or order submission. Bars retain real offsets; nested inclusive durations overlap. Reconciliation persistence dominates this one measured pass.</desc>
+<rect width="1200" height="794" fill="#ffffff"/>
+<g font-family="system-ui, sans-serif" fill="#17212b">
+<text x="12" y="28" font-size="19" font-weight="500">Bayn execution pass · Waiting · 1.161 seconds</text>
+<text x="12" y="52" font-size="13">2026-11-08 14:18:39 PST · source 1a291e1 · no inference or broker submission</text>
+<text x="12" y="80" font-size="12">Operation, nested by parent</text>
+<text x="1140" y="80" font-size="12">Elapsed ms</text>
+<line x1="450.00" y1="97" x2="450.00" y2="750" stroke="#e7e9ec"/>
+<text x="450.00" y="91" text-anchor="middle" font-size="12">0</text>
+<line x1="563.33" y1="97" x2="563.33" y2="750" stroke="#e7e9ec"/>
+<text x="563.33" y="91" text-anchor="middle" font-size="12">200</text>
+<line x1="676.67" y1="97" x2="676.67" y2="750" stroke="#e7e9ec"/>
+<text x="676.67" y="91" text-anchor="middle" font-size="12">400</text>
+<line x1="790.00" y1="97" x2="790.00" y2="750" stroke="#e7e9ec"/>
+<text x="790.00" y="91" text-anchor="middle" font-size="12">600</text>
+<line x1="903.33" y1="97" x2="903.33" y2="750" stroke="#e7e9ec"/>
+<text x="903.33" y="91" text-anchor="middle" font-size="12">800</text>
+<line x1="1016.67" y1="97" x2="1016.67" y2="750" stroke="#e7e9ec"/>
+<text x="1016.67" y="91" text-anchor="middle" font-size="12">1000</text>
+<line x1="1130.00" y1="97" x2="1130.00" y2="750" stroke="#e7e9ec"/>
+<text x="1130.00" y="91" text-anchor="middle" font-size="12">1200</text>
+<text x="12" y="128" font-size="12">Execution pass · Waiting</text>
+<rect x="450.000" y="115" width="658.081" height="17" rx="2" fill="#3b6ca8"><title>Execution pass · Waiting: start 0.000 ms; inclusive duration 1161.319 ms</title></rect>
+<text x="1185" y="128" text-anchor="end" font-size="12">1161.319</text>
+<text x="27" y="157" font-size="12">Read authority generation</text>
+<rect x="450.128" y="144" width="6.555" height="17" rx="2" fill="#b56f20"><title>Read authority generation: start 0.225 ms; inclusive duration 11.567 ms</title></rect>
+<text x="1185" y="157" text-anchor="end" font-size="12">11.567</text>
+<text x="27" y="186" font-size="12">Reconcile account</text>
+<rect x="456.830" y="173" width="530.423" height="17" rx="2" fill="#3b6ca8"><title>Reconcile account: start 12.054 ms; inclusive duration 936.041 ms</title></rect>
+<text x="1185" y="186" text-anchor="end" font-size="12">936.041</text>
+<text x="42" y="215" font-size="12">Read broker observation</text>
+<rect x="456.843" y="202" width="66.372" height="17" rx="2" fill="#6d7680"><title>Read broker observation: start 12.076 ms; inclusive duration 117.127 ms</title></rect>
+<text x="1185" y="215" text-anchor="end" font-size="12">117.127</text>
+<text x="57" y="244" font-size="12">Materialize cached observation</text>
+<rect x="459.179" y="231" width="56.448" height="17" rx="2" fill="#6d7680"><title>Materialize cached observation: start 16.198 ms; inclusive duration 99.614 ms</title></rect>
+<text x="1185" y="244" text-anchor="end" font-size="12">99.614</text>
+<text x="72" y="273" font-size="12">Valkey GET</text>
+<rect x="459.237" y="260" width="9.219" height="17" rx="2" fill="#6d7680"><title>Valkey GET: start 16.300 ms; inclusive duration 16.269 ms</title></rect>
+<text x="1185" y="273" text-anchor="end" font-size="12">16.269</text>
+<text x="42" y="302" font-size="12">Persist reconciliation</text>
+<rect x="523.260" y="289" width="463.986" height="17" rx="2" fill="#3b6ca8"><title>Persist reconciliation: start 129.282 ms; inclusive duration 818.799 ms</title></rect>
+<text x="1185" y="302" text-anchor="end" font-size="12">818.799</text>
+<text x="57" y="331" font-size="12">PostgreSQL writer transaction</text>
+<rect x="565.918" y="318" width="421.091" height="17" rx="2" fill="#b56f20"><title>PostgreSQL writer transaction: start 204.561 ms; inclusive duration 743.102 ms</title></rect>
+<text x="1185" y="331" text-anchor="end" font-size="12">743.102</text>
+<text x="72" y="360" font-size="12">Persist valuation</text>
+<rect x="583.773" y="347" width="84.353" height="17" rx="2" fill="#b56f20"><title>Persist valuation: start 236.071 ms; inclusive duration 148.858 ms</title></rect>
+<text x="1185" y="360" text-anchor="end" font-size="12">148.858</text>
+<text x="72" y="389" font-size="12">Cash settlement</text>
+<rect x="717.997" y="376" width="16.820" height="17" rx="2" fill="#3b6ca8"><title>Cash settlement: start 472.936 ms; inclusive duration 29.682 ms</title></rect>
+<text x="1185" y="389" text-anchor="end" font-size="12">29.682</text>
+<text x="72" y="418" font-size="12">Fee posting</text>
+<rect x="734.853" y="405" width="30.399" height="17" rx="2" fill="#3b6ca8"><title>Fee posting: start 502.682 ms; inclusive duration 53.646 ms</title></rect>
+<text x="1185" y="418" text-anchor="end" font-size="12">53.646</text>
+<text x="72" y="447" font-size="12">Read accruals</text>
+<rect x="765.294" y="434" width="12.222" height="17" rx="2" fill="#b56f20"><title>Read accruals: start 556.400 ms; inclusive duration 21.568 ms</title></rect>
+<text x="1185" y="447" text-anchor="end" font-size="12">21.568</text>
+<text x="72" y="476" font-size="12">Verify accounting</text>
+<rect x="777.551" y="463" width="167.804" height="17" rx="2" fill="#3b6ca8"><title>Verify accounting: start 578.032 ms; inclusive duration 296.125 ms</title></rect>
+<text x="1185" y="476" text-anchor="end" font-size="12">296.125</text>
+<text x="87" y="505" font-size="12">TigerBeetle · verify-account-accounts</text>
+<rect x="925.580" y="492" width="7.059" height="17" rx="2" fill="#7c59aa"><title>TigerBeetle · verify-account-accounts: start 839.258 ms; inclusive duration 12.458 ms</title></rect>
+<text x="1185" y="505" text-anchor="end" font-size="12">12.458</text>
+<text x="87" y="534" font-size="12">TigerBeetle · verify-account-transfers</text>
+<rect x="925.675" y="521" width="13.616" height="17" rx="2" fill="#7c59aa"><title>TigerBeetle · verify-account-transfers: start 839.427 ms; inclusive duration 24.028 ms</title></rect>
+<text x="1185" y="534" text-anchor="end" font-size="12">24.028</text>
+<text x="87" y="563" font-size="12">TigerBeetle · verify-account-accounts</text>
+<rect x="932.750" y="550" width="6.875" height="17" rx="2" fill="#7c59aa"><title>TigerBeetle · verify-account-accounts: start 851.911 ms; inclusive duration 12.131 ms</title></rect>
+<text x="1185" y="563" text-anchor="end" font-size="12">12.131</text>
+<text x="87" y="592" font-size="12">TigerBeetle · verify-account-transfers</text>
+<rect x="939.529" y="579" width="4.067" height="17" rx="2" fill="#7c59aa"><title>TigerBeetle · verify-account-transfers: start 863.875 ms; inclusive duration 7.177 ms</title></rect>
+<text x="1185" y="592" text-anchor="end" font-size="12">7.177</text>
+<text x="72" y="621" font-size="12">Compare ledgers</text>
+<rect x="945.384" y="608" width="32.959" height="17" rx="2" fill="#3b6ca8"><title>Compare ledgers: start 874.207 ms; inclusive duration 58.162 ms</title></rect>
+<text x="1185" y="621" text-anchor="end" font-size="12">58.162</text>
+<text x="27" y="650" font-size="12">Alpaca market calendar</text>
+<rect x="989.873" y="637" width="115.402" height="17" rx="2" fill="#387c63"><title>Alpaca market calendar: start 952.717 ms; inclusive duration 203.650 ms</title></rect>
+<text x="1185" y="650" text-anchor="end" font-size="12">203.650</text>
+<text x="42" y="679" font-size="12">Calendar request → headers</text>
+<rect x="989.972" y="666" width="114.886" height="17" rx="2" fill="#387c63"><title>Calendar request → headers: start 952.892 ms; inclusive duration 202.740 ms</title></rect>
+<text x="1185" y="679" text-anchor="end" font-size="12">202.740</text>
+<text x="42" y="708" font-size="12">Read calendar response body</text>
+<rect x="1104.939" y="695" width="2.000" height="17" rx="2" fill="#387c63"><title>Read calendar response body: start 1155.774 ms; inclusive duration 0.271 ms</title></rect>
+<text x="1185" y="708" text-anchor="end" font-size="12">0.271</text>
+<text x="27" y="737" font-size="12">Read authority generation</text>
+<rect x="1107.350" y="724" width="2.000" height="17" rx="2" fill="#b56f20"><title>Read authority generation: start 1160.029 ms; inclusive duration 0.970 ms</title></rect>
+<text x="1185" y="737" text-anchor="end" font-size="12">0.970</text>
+<text x="12" y="779" font-size="12">Nested inclusive durations are not additive. This single idle pass does not measure CHART, JEV, order latency or a latency percentile.</text>
+</g></svg>

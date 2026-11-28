@@ -30,8 +30,9 @@ object AlpacaMapper {
     feed: String,
     equityFeed: EquityFeed? = null,
     seqProvider: (String) -> Long,
-  ): Envelope<JsonElement>? =
-    when (message) {
+  ): Envelope<JsonElement>? {
+    require(marketType != AlpacaMarketType.CRYPTO) { "crypto requires its native event decoder" }
+    return when (message) {
       is AlpacaTrade ->
         envelope(
           message.symbol,
@@ -91,6 +92,7 @@ object AlpacaMapper {
         )
       else -> null
     }
+  }
 
   private fun tradePayload(
     message: AlpacaTrade,

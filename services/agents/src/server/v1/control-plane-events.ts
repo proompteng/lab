@@ -43,10 +43,10 @@ type PrimitiveEventsKubeServiceDefinition = {
   }) => Effect.Effect<Record<string, unknown>[], PrimitiveEventsKubeError>
 }
 
-export class PrimitiveEventsKubeService extends Context.Tag('agents/PrimitiveEventsKubeService')<
+export class PrimitiveEventsKubeService extends Context.Service<
   PrimitiveEventsKubeService,
   PrimitiveEventsKubeServiceDefinition
->() {}
+>()('agents/PrimitiveEventsKubeService') {}
 
 const parseLimit = (value: string | null) => {
   if (!value) return 25
@@ -206,8 +206,12 @@ const eventErrorMessage = (error: PrimitiveEventsError) => {
 
 export const listPrimitiveEvents = async (request: Request, deps: PrimitiveEventsDependencies = {}) => {
   const result = await Effect.runPromise(
-    listPrimitiveEventsEffect(request).pipe(Effect.provide(makePrimitiveEventsKubeLayer(deps)), Effect.either),
+    listPrimitiveEventsEffect(request).pipe(Effect.provide(makePrimitiveEventsKubeLayer(deps)), Effect.result),
   )
-  if (result._tag === 'Right') return okResponse(result.right)
-  return errorResponse(eventErrorMessage(result.left), eventErrorStatus(result.left), eventErrorDetails(result.left))
+  if (result._tag === 'Success') return okResponse(result.success)
+  return errorResponse(
+    eventErrorMessage(result.failure),
+    eventErrorStatus(result.failure),
+    eventErrorDetails(result.failure),
+  )
 }

@@ -12,7 +12,7 @@ The chart is published on Artifact Hub:
 
 - Artifact Hub: <https://artifacthub.io/packages/helm/agents/agents>
 - OCI chart: `oci://ghcr.io/proompteng/charts/agents`
-- Current chart version: `0.9.15`
+- Current chart version: `0.9.34`
 
 ## Start Here
 
@@ -136,7 +136,7 @@ Install:
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.13 \
+  --version 0.9.34 \
   --namespace agents \
   --values agents-values.yaml \
   --wait
@@ -160,7 +160,7 @@ same HTTP port.
 Run the chart smoke examples from the published package:
 
 ```bash
-helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.13 --untar
+helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.34 --untar
 
 kubectl -n agents apply -f agents/examples/agentprovider-smoke.yaml
 kubectl -n agents apply -f agents/examples/agent-smoke.yaml
@@ -214,7 +214,7 @@ That is deliberate. The chart should be safe to install into a namespace and the
 
 ```bash
 helm template agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.13 \
+  --version 0.9.34 \
   --namespace agents \
   --values agents-values.yaml
 ```
@@ -225,7 +225,7 @@ The chart includes an opt-in test Pod that curls the in-cluster health endpoint 
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.13 \
+  --version 0.9.34 \
   --namespace agents \
   --values agents-values.yaml \
   --set tests.enabled=true \
@@ -233,6 +233,18 @@ helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
 
 helm test agents --namespace agents
 ```
+
+### Repository CI
+
+The `Agents Kind smoke` job runs on a GitHub-hosted Ubuntu runner. The official Tailscale action joins an ephemeral
+`tag:ci` node before Kind pulls published Agents images from `registry.ide-newton.ts.net`. Changed runtime images are
+built with Nix using `https://attic.ide-newton.ts.net/lab` and loaded into Kind. The test uses its own cluster and does
+not connect to the production Kubernetes API.
+
+Configure repository secrets `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET` with a Tailscale OAuth client that can write
+auth keys for `tag:ci`. The tailnet policy must permit that tag to reach the registry and Attic on TCP 443. The job
+checks registry connectivity from both the host and the Kind node, configures the node to use MagicDNS, and verifies
+Attic when local image builds need it. The Tailscale node logs out when the job ends.
 
 ### Use A Local Chart Checkout
 
@@ -327,6 +339,11 @@ Valid scope patterns:
 
 Invalid combinations fail at render time, including empty scope lists, wildcard mixed with real namespace names, and multi-namespace scope with namespaced RBAC.
 
+Kubernetes watches recycle after 300 seconds by default. Set `env.vars.AGENTS_KUBE_WATCH_TIMEOUT_SECONDS` to tune
+this for both deployments. The minimum accepted value is 30 seconds and values above 600 are capped at 600;
+missing, invalid, or too-small values use the default. Normal closes resume from the last observed resource version
+without contributing to watch health degradation.
+
 ### Runner Defaults
 
 The controller resolves AgentRun Job images from per-run, provider, and chart defaults.
@@ -339,6 +356,14 @@ Precedence:
 4. `runner.image.*`
 
 Use `env.vars.AGENTS_AGENT_RUNNER_IMAGE` for an explicit runner image override.
+
+The standard runner's generated scratch volumes have per-mount ceilings: 16 GiB for `/workspace`, 6 GiB for `/tmp`,
+8 GiB for `/opt/bun/install/cache`, and 1 GiB for the Codex auth home when mounted. They normally use tmpfs and are
+capped at the Job's configured memory limit when smaller. Standard GitHub Lab Codex Jobs with at least an 8 GiB
+`ephemeral-storage` request and 16 GiB limit use disk for their generated workspace and Bun cache; the Pod's
+ephemeral-storage limit applies to these two volumes and other local storage together. Use
+`controller.defaultWorkload.affinity` and
+`controller.defaultWorkload.topologySpreadConstraints` to set default scheduling for AgentRun Jobs.
 
 ### Availability
 
@@ -361,6 +386,11 @@ controllers:
       maxSurge: 1
 ```
 
+When the Auto Ontology MCP gateway is enabled, use `autoOntologyMcpGateway.podDisruptionBudget`,
+`autoOntologyMcpGateway.tolerations`, and `autoOntologyMcpGateway.topologySpreadConstraints` to manage its
+availability and scheduling separately. For each disruption budget, set `maxUnavailable` to use it instead
+of `minAvailable`.
+
 ### Observability
 
 Metrics are enabled by default. Add ServiceMonitor and dashboard support when your cluster has Prometheus Operator and a Grafana sidecar:
@@ -377,6 +407,9 @@ metrics:
   dashboards:
     enabled: true
 ```
+
+The ServiceMonitor scrapes the control-plane metrics Service. With `controllers.enabled: true`, it also scrapes a
+separate controller-only ClusterIP Service so the dashboard receives controller metrics such as queue snapshots.
 
 ### Network Policy
 
@@ -544,6 +577,7 @@ Frequent render failures:
 | `controllers.enabled`                                                | Run the controller deployment.                                            |
 | `grpc.enabled`                                                       | Expose gRPC support for in-cluster clients and agentctl.                  |
 | `metrics.serviceMonitor.enabled`                                     | Create a ServiceMonitor.                                                  |
+| `telemetry.otlpEndpoint`                                             | Opt-in OTLP/HTTP base URL for AgentRun lifecycle traces.                  |
 | `podDisruptionBudget.enabled`                                        | Create a PDB for the control plane.                                       |
 | `controllers.podDisruptionBudget.enabled`                            | Create a PDB for controllers.                                             |
 | `tests.enabled`                                                      | Render the optional Helm test Pod.                                        |
@@ -551,6 +585,9 @@ Frequent render failures:
 See `values.yaml` and `values.schema.json` for the full contract.
 
 ### Publishing The Chart
+
+Pull requests that change templates, CRDs, or `values.yaml` must increase `Chart.yaml`'s version. Keep the same
+version in `artifacthub-pkg.yml`.
 
 Package and validate locally:
 

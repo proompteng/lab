@@ -117,6 +117,30 @@ linearMcpGateway:
   networkPolicy:
     enabled: true
 
+# Enable only after the controller and runner images and API token Secret are available.
+autoOntologyMcpGateway:
+  enabled: false
+  replicaCount: 2
+  apiTokenSecretName: auto-ontology-mcp-token
+  apiUrl: http://frontend.auto-ontology.svc.cluster.local:3000
+  runnerServiceAccountName: codex-auto-ontology-runner
+  tokenAudience: agents.proompteng.ai/auto-ontology-mcp
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    # When set, maxUnavailable is used instead of minAvailable.
+    maxUnavailable: ''
+    annotations: {}
+  tolerations: []
+  topologySpreadConstraints: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+
 agentsShell:
   enabled: false
   replicaCount: 1
@@ -142,18 +166,12 @@ agentsShell:
       AGENTS_SHELL_LISTEN_PORT: '8080'
       AGENTS_SHELL_ALLOWED_K8S_NAMESPACES: agents
       AGENTS_SHELL_WORKSPACE_ROOT: /workspace
-      AGENTS_SHELL_AUDIT_LOG_PATH: /workspace/.agents-shell/audit.jsonl
+      AGENTS_SHELL_AUDIT_LOG_PATH: ''
       AGENTS_SHELL_ENABLE_K8S_APPLY: 'false'
       HOME: /workspace/.agents-shell/home
       AGENTS_SHELL_GIT_USER_NAME: Greg Konush
-      AGENTS_SHELL_GIT_USER_EMAIL: greg@proompteng.ai
-      AGENTS_SHELL_AGENT_NAMESPACE: agents
-      AGENTS_SHELL_AGENT_NAME: codex-agent
-      AGENTS_SHELL_AGENT_REPOSITORY: proompteng/lab
-      AGENTS_SHELL_AGENT_BASE_BRANCH: main
-      AGENTS_SHELL_AGENT_VCS_REF: github
-      AGENTS_SHELL_AGENT_RUNTIME_SERVICE_ACCOUNT: agents-sa
-      AGENTS_SHELL_AGENT_SECRETS: github-token,codex-auth
+      AGENTS_SHELL_GIT_USER_EMAIL: 12027037+gregkonush@users.noreply.github.com
+      AGENTS_SHELL_REPO_BASE_BRANCH: main
     secrets: []
     config: []
     extra: []
@@ -312,6 +330,10 @@ metrics:
     annotations: {}
     labels:
       grafana_dashboard: '1'
+
+telemetry:
+  # Optional OTLP/HTTP protobuf base URL (the runtime appends /v1/traces).
+  otlpEndpoint: ''
 
 cors:
   allowedOrigins: []
@@ -481,7 +503,6 @@ controller:
     max: 50
     strict: false
   logRetentionSeconds: 604800
-  jobTtlSeconds: 600
   jobTtlSecondsAfterFinished: 600
   runtimeDebrisCleanup:
     mode: disabled

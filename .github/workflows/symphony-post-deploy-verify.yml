@@ -7,7 +7,6 @@ on:
     paths:
       - 'argocd/applications/symphony/**'
       - 'argocd/applications/symphony-jangar/**'
-      - 'argocd/applications/symphony-torghut/**'
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -33,7 +32,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
@@ -124,11 +123,3 @@ jobs:
             --kustomization-path argocd/applications/symphony-jangar/kustomization.yaml \
             --argo-application symphony-jangar \
             --service-base-url http://symphony-jangar.jangar.svc.cluster.local:8080
-
-          bun run packages/scripts/src/symphony/verify-deployment.ts \
-            "${ARGS[@]}" \
-            --namespace torghut \
-            --deployment symphony-torghut \
-            --kustomization-path argocd/applications/symphony-torghut/kustomization.yaml \
-            --argo-application symphony-torghut \
-            --service-base-url http://symphony-torghut.torghut.svc.cluster.local:8080

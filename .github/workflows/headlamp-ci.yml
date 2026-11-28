@@ -6,9 +6,6 @@ permissions:
 on:
   pull_request:
     paths:
-      - '.github/workflows/headlamp-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'nix/oci-push.sh'
       - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
       - 'nix/images/headlamp.nix'
@@ -17,9 +14,6 @@ on:
     branches:
       - main
     paths:
-      - '.github/workflows/headlamp-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'nix/oci-push.sh'
       - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
       - 'nix/images/headlamp.nix'
@@ -61,9 +55,9 @@ jobs:
     with:
       image_name: headlamp
       package_attr: headlamp-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
-      image_build_timeout: 20m
 
   nix-image:
     if: >-
@@ -79,9 +73,9 @@ jobs:
     with:
       image_name: headlamp
       package_attr: headlamp-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      image_build_timeout: 20m
     secrets:
       ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}

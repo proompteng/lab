@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { MutationOperation } from '../../broker/alpaca-mutations'
+import { MutationOperation, MutationRoutingSchema } from '../../broker/alpaca-mutations/model'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion } from '../legacy-wire'
 import {
@@ -15,6 +15,7 @@ import {
   HttpStatus,
   MutationEventType,
   Sequence,
+  type ExpiredEntryCancellationFacts,
   type MutationAuthoritySnapshot,
   type MutationEvent,
   type MutationIntentSnapshot,
@@ -22,7 +23,8 @@ import {
   type MutationStoreError,
   type OutcomeStoreOperation,
 } from './model'
-import { Pipeable } from '../../pipeable'
+
+import { SubmissionDenialReasonSchema } from '../submission-denial'
 
 const StoredEventRows = Schema.Array(
   Schema.Struct({
@@ -39,6 +41,8 @@ const StoredEventRows = Schema.Array(
     request_id: Schema.NullOr(NonEmptyString),
     response_status: Schema.NullOr(HttpStatus),
     response_content_hash: Schema.NullOr(Sha256),
+    routing: Schema.NullOr(MutationRoutingSchema),
+    denial_reason: Schema.optionalKey(Schema.NullOr(SubmissionDenialReasonSchema)),
     occurred_at: UtcInstant,
   }),
 )
@@ -51,6 +55,25 @@ const AuthorityRows = Schema.Array(
     generation_maximum: Schema.NullOr(Schema.Enum(Authority)),
     kill_state: Schema.Enum(KillState),
     maximum: Schema.Enum(Authority),
+  }),
+)
+
+const ExpiredEntryCancellationRows = Schema.Array(
+  Schema.Struct({
+    account_id: NonEmptyString,
+    authority_generation_hash: Sha256,
+    authority_version: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
+    maximum: Schema.Enum(Authority),
+    effective: Schema.Enum(Authority),
+    kill_state: Schema.Enum(KillState),
+    reason: Schema.NullOr(NonEmptyString),
+    intent_id: Sha256,
+    intent_authority_generation_hash: Sha256,
+    client_order_id: NonEmptyString,
+    side: Schema.Enum(OrderSide),
+    protection_tag: Schema.NullOr(Schema.String),
+    broker_order_id: NonEmptyString,
+    admitted_at: UtcInstant,
   }),
 )
 
@@ -84,6 +107,7 @@ const AcknowledgedRows = Schema.Array(Schema.Struct({ acknowledged: Schema.Boole
 const decodeStoredEventRows = Schema.decodeUnknownResult(StoredEventRows, strictParseOptions)
 const decodeAuthorityRows = Schema.decodeUnknownResult(AuthorityRows, strictParseOptions)
 const decodeIntentRows = Schema.decodeUnknownResult(IntentRows, strictParseOptions)
+const decodeExpiredEntryCancellationRows = Schema.decodeUnknownResult(ExpiredEntryCancellationRows, strictParseOptions)
 const decodeUnresolvedRows = Schema.decodeUnknownResult(UnresolvedRows, strictParseOptions)
 const decodeEventIdRows = Schema.decodeUnknownResult(EventIdRows, strictParseOptions)
 const decodeIntentIdRows = Schema.decodeUnknownResult(IntentIdRows, strictParseOptions)
@@ -105,6 +129,8 @@ const toEvent = (row: (typeof StoredEventRows.Type)[number]): MutationEvent => (
   ...(row.request_id === null ? {} : { requestId: row.request_id }),
   ...(row.response_status === null ? {} : { responseStatus: row.response_status }),
   ...(row.response_content_hash === null ? {} : { responseContentHash: row.response_content_hash }),
+  ...(row.routing === null ? {} : { routing: row.routing }),
+  ...(row.denial_reason == null ? {} : { denialReason: row.denial_reason }),
   occurredAt: row.occurred_at,
 })
 
@@ -121,7 +147,7 @@ export const decodeIntentId = (intentId: string): Result.Result<string, Mutation
     storeError({ operation: 'read', failure: 'decode', message: 'invalid intent ID', cause }),
   )
 
-const decodeAuthoritySnapshotDataFirst = (
+export const decodeAuthoritySnapshot = (
   operation: MutationOperation,
   rows: unknown,
 ): Result.Result<MutationAuthoritySnapshot | undefined, MutationStoreError> =>
@@ -149,9 +175,42 @@ const decodeAuthoritySnapshotDataFirst = (
     },
   )
 
-export const decodeAuthoritySnapshot = Pipeable.dual(2, decodeAuthoritySnapshotDataFirst)
+export const decodeExpiredEntryCancellationFacts = (
+  rows: unknown,
+): Result.Result<ExpiredEntryCancellationFacts | undefined, MutationStoreError> =>
+  Result.map(
+    Result.mapError(decodeExpiredEntryCancellationRows(rows), (cause) =>
+      storeError({
+        operation: 'begin-cancel',
+        failure: 'decode',
+        message: 'expired entry cancellation admission snapshot failed decoding',
+        cause,
+      }),
+    ),
+    (decoded) => {
+      const row = decoded[0]
+      return row === undefined
+        ? undefined
+        : {
+            accountId: row.account_id,
+            authorityGenerationHash: row.authority_generation_hash,
+            authorityVersion: Number(row.authority_version),
+            maximum: row.maximum,
+            effective: row.effective,
+            killState: row.kill_state,
+            ...(row.reason === null ? {} : { reason: row.reason }),
+            intentId: row.intent_id,
+            intentAuthorityGenerationHash: row.intent_authority_generation_hash,
+            clientOrderId: row.client_order_id,
+            side: row.side,
+            protectionTag: row.protection_tag,
+            brokerOrderId: row.broker_order_id,
+            admittedAt: row.admitted_at,
+          }
+    },
+  )
 
-const decodeIntentSnapshotDataFirst = (
+export const decodeIntentSnapshot = (
   operation: MutationOperation,
   rows: unknown,
 ): Result.Result<MutationIntentSnapshot | undefined, MutationStoreError> =>
@@ -184,8 +243,6 @@ const decodeIntentSnapshotDataFirst = (
     },
   )
 
-export const decodeIntentSnapshot = Pipeable.dual(2, decodeIntentSnapshotDataFirst)
-
 export const decodeUnresolved = (rows: unknown): Result.Result<boolean | undefined, MutationStoreError> =>
   Result.map(
     Result.mapError(decodeUnresolvedRows(rows), (cause) =>
@@ -199,7 +256,7 @@ export const decodeUnresolved = (rows: unknown): Result.Result<boolean | undefin
     (decoded) => decoded[0]?.unresolved,
   )
 
-const decodeEventIdsDataFirst = (
+export const decodeEventIds = (
   operation: MutationStoreError['operation'],
   rows: unknown,
 ): Result.Result<readonly string[], MutationStoreError> =>
@@ -210,9 +267,7 @@ const decodeEventIdsDataFirst = (
     (decoded) => decoded.map((row) => row.event_id),
   )
 
-export const decodeEventIds = Pipeable.dual(2, decodeEventIdsDataFirst)
-
-const decodeIntentIdsDataFirst = (
+export const decodeIntentIds = (
   operation: OutcomeStoreOperation | 'begin-submit',
   message: string,
   rows: unknown,
@@ -222,9 +277,7 @@ const decodeIntentIdsDataFirst = (
     (decoded) => decoded.map((row) => row.intent_id),
   )
 
-export const decodeIntentIds = Pipeable.dual(3, decodeIntentIdsDataFirst)
-
-const decodeOutcomeIntentSnapshotDataFirst = (
+export const decodeOutcomeIntentSnapshot = (
   operation: OutcomeStoreOperation,
   rows: unknown,
 ): Result.Result<MutationReplayIntentSnapshot | undefined, MutationStoreError> =>
@@ -243,9 +296,7 @@ const decodeOutcomeIntentSnapshotDataFirst = (
     },
   )
 
-export const decodeOutcomeIntentSnapshot = Pipeable.dual(2, decodeOutcomeIntentSnapshotDataFirst)
-
-const decodeAcknowledgedDataFirst = (
+export const decodeAcknowledged = (
   operation: OutcomeStoreOperation,
   rows: unknown,
 ): Result.Result<boolean | undefined, MutationStoreError> =>
@@ -260,5 +311,3 @@ const decodeAcknowledgedDataFirst = (
     ),
     (decoded) => decoded[0]?.acknowledged,
   )
-
-export const decodeAcknowledged = Pipeable.dual(2, decodeAcknowledgedDataFirst)

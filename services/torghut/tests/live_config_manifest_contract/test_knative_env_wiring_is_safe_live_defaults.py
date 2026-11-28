@@ -12,7 +12,7 @@ from tests.live_config_manifest_contract.support import (
     _assert_chip_universe,
     _assert_exact_live_execution_chip_universe,
     _assert_exact_quote_covered_paper_strategy_universe,
-    _assert_exact_websocket_subscription_universe,
+    _assert_exact_shared_market_data_universes,
     _container_env,
     _csv_symbols,
     _csv_values,
@@ -317,15 +317,8 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             _csv_symbols(sim_env.get("TRADING_UNIVERSE_SYMBOL_ALLOWLIST")),
             context="sim runtime universe allowlist",
         )
-        ws_symbols = _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS"))
-        _assert_exact_websocket_subscription_universe(
-            self,
-            ws_symbols,
-            context="websocket core subscription universe",
-        )
-        self.assertEqual(
-            _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS_ALLOWLIST")),
-            ws_symbols,
+        _assert_exact_shared_market_data_universes(
+            self, cast(Mapping[str, object], ws_data)
         )
         observation_symbols = _csv_symbols(
             cast(Mapping[str, object], universe_data).get("UNIVERSE_SYMBOLS")
@@ -367,6 +360,59 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             ),
             "Replace=true",
         )
+
+    def test_shared_market_data_contract_rejects_subscription_and_coverage_drift(
+        self,
+    ) -> None:
+        config = _load_yaml_mapping("argocd/applications/torghut/ws/configmap.yaml")
+        data = cast(Mapping[str, object], config["data"])
+        invalid_configs = (
+            (
+                {
+                    "ALPACA_MARKET_DATA_BARS_SYMBOLS": str(data["SYMBOLS"]).replace(
+                        "TSLA,", ""
+                    )
+                },
+                "twenty-two-symbol",
+            ),
+            (
+                {"ALPACA_MARKET_DATA_QUOTES_SYMBOLS": "AAPL,AMZN,IWM,NVDA,SPY"},
+                "WebSocket quotes",
+            ),
+            (
+                {"ALPACA_LATEST_BAR_SYMBOLS": "GOOGL"},
+                "completed REST bars must not overlap",
+            ),
+            (
+                {
+                    "ALPACA_LATEST_SYMBOLS": str(data["ALPACA_LATEST_SYMBOLS"]).replace(
+                        "TSLA,", ""
+                    )
+                },
+                "remaining quotes symbols",
+            ),
+            (
+                {"ALPACA_MARKET_DATA_TRADES_SYMBOLS": "AAPL,AMZN,SPY"},
+                "WebSocket trades",
+            ),
+            (
+                {
+                    "SYMBOLS": f"{data['SYMBOLS']},UNREQUESTED",
+                    "SYMBOLS_ALLOWLIST": f"{data['SYMBOLS_ALLOWLIST']},UNREQUESTED",
+                },
+                "shared source symbols must exactly match",
+            ),
+            (
+                {"ALPACA_MARKET_DATA_CHANNELS": "trades,quotes,bars,updatedBars"},
+                "only the reviewed WS channels",
+            ),
+        )
+        for overrides, message in invalid_configs:
+            with (
+                self.subTest(overrides=overrides),
+                self.assertRaisesRegex(AssertionError, message),
+            ):
+                _assert_exact_shared_market_data_universes(self, {**data, **overrides})
 
     def test_sim_manifest_contains_paper_live_signal_profile_for_safe_migration(
         self,
@@ -679,13 +725,13 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(spec_mapping["pdb"], {"enabled": True, "minAvailable": 1})
         self.assertEqual(spec_mapping["health"], {"checkIntervalSeconds": 5})
 
-    def test_torghut_kustomization_includes_tigerbeetle_cluster(self) -> None:
+    def test_torghut_kustomization_excludes_retired_tigerbeetle_cluster(self) -> None:
         manifest = _load_yaml_mapping("argocd/applications/torghut/kustomization.yaml")
         resources = manifest.get("resources")
 
         self.assertIsInstance(resources, list)
-        self.assertIn("tigerbeetle-cluster.yaml", resources)
-        self.assertIn("tigerbeetle-smoke-job.yaml", resources)
+        self.assertNotIn("tigerbeetle-cluster.yaml", resources)
+        self.assertNotIn("tigerbeetle-smoke-job.yaml", resources)
         self.assertNotIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
         self.assertNotIn(
             "bounded-paper-route-target-materialization-cronjob.yaml", resources

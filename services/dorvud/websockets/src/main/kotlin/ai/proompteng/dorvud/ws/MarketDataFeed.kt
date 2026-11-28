@@ -1,5 +1,14 @@
 package ai.proompteng.dorvud.ws
 
+import ai.proompteng.dorvud.platform.CRYPTO_LOCATIONS
+import ai.proompteng.dorvud.platform.Envelope
+import ai.proompteng.dorvud.platform.isCryptoPair
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
@@ -19,6 +28,29 @@ enum class EquityFeed(
       entries.firstOrNull { it.id == value.trim().lowercase() }
         ?: error("unsupported Alpaca equity feed: $value")
   }
+}
+
+internal const val BASIC_SYMBOL_CHANNEL_LIMIT = 30
+private const val SIP_SYMBOL_CHANNEL_CEILING = 400
+
+internal fun marketDataSubscriptionLimit(
+  env: Map<String, String>,
+  consolidatedSip: Boolean,
+): Int {
+  val entitlement = env["ALPACA_MARKET_DATA_ENTITLEMENT"]?.trim()?.lowercase()
+  val configuredLimit = env["ALPACA_MAX_SYMBOL_CHANNELS"]
+  require(consolidatedSip || (entitlement == null && configuredLimit == null)) {
+    "ALPACA_MARKET_DATA_ENTITLEMENT and ALPACA_MAX_SYMBOL_CHANNELS are only supported on consolidated SIP"
+  }
+  require(entitlement == null || entitlement == "basic" || entitlement == "algo_trader_plus") {
+    "ALPACA_MARKET_DATA_ENTITLEMENT must be basic or algo_trader_plus"
+  }
+  val ceiling = if (entitlement == "basic") BASIC_SYMBOL_CHANNEL_LIMIT else SIP_SYMBOL_CHANNEL_CEILING
+  return configuredLimit?.let { raw ->
+    val limit = raw.trim().toIntOrNull()
+    require(limit != null && limit in 1..ceiling) { "ALPACA_MAX_SYMBOL_CHANNELS must be within [1, $ceiling]" }
+    limit
+  } ?: if (entitlement == "algo_trader_plus") SIP_SYMBOL_CHANNEL_CEILING else BASIC_SYMBOL_CHANNEL_LIMIT
 }
 
 enum class MarketSession(
@@ -47,6 +79,7 @@ data class ObservationFeedConfig(
 )
 
 data class FeedRuntimeConfig(
+  val marketType: AlpacaMarketType,
   val feed: String,
   val equityFeed: EquityFeed?,
   val channels: List<String>,
@@ -55,18 +88,63 @@ data class FeedRuntimeConfig(
   val symbolOverridesByChannel: Map<String, List<String>> = emptyMap(),
   val symbolAllowlist: Set<String>,
   val core: Boolean,
+  val cryptoEventsTopic: String? = null,
+  val sipUniverse: MarketDataUniverseContract? = null,
 )
+
+// The shared Envelope layout also lives in Flink's Kryo checkpoints. Extend only the SIP wire record.
+internal fun MarketDataUniverseContract.encodeSipKafkaEnvelope(
+  json: Json,
+  envelope: Envelope<JsonElement>,
+): String {
+  val delayClass = MarketDataDelayClass.RealTimeConsolidated.id
+  check(envelope.feed == EquityFeed.Sip.id && envelope.delayClass == delayClass) {
+    "invalid consolidated SIP record provenance"
+  }
+  val fields = json.encodeToJsonElement(envelope).jsonObject
+  return buildJsonObject {
+    fields.forEach { (key, value) ->
+      if (key != "delayClass") put(key, value)
+    }
+    put("delay_class", delayClass)
+    put("universe_id", id)
+    put("universe_symbol_hash", symbolHash)
+  }.toString()
+}
+
+data class CryptoFeedConfig(
+  val location: String,
+  val symbols: List<String>,
+  val topic: String,
+) {
+  companion object {
+    fun fromEnv(
+      env: Map<String, String>,
+      marketType: AlpacaMarketType,
+      coreSymbols: List<String>,
+    ): CryptoFeedConfig? {
+      val rawSymbols = env["ALPACA_CRYPTO_SYMBOLS"]
+      if (rawSymbols == null && marketType != AlpacaMarketType.CRYPTO) return null
+      require(marketType != AlpacaMarketType.OPTIONS) { "crypto and options streams require separate forwarders" }
+      val symbols = (rawSymbols?.split(",") ?: coreSymbols).map { it.trim().uppercase() }
+      require(symbols.isNotEmpty() && symbols.all(::isCryptoPair) && symbols.distinct().size == symbols.size) {
+        "ALPACA_CRYPTO_SYMBOLS must contain unique BASE/QUOTE pairs"
+      }
+      val location = env["ALPACA_CRYPTO_LOCATION"]?.trim()?.lowercase() ?: "us"
+      require(location in CRYPTO_LOCATIONS) { "unsupported ALPACA_CRYPTO_LOCATION" }
+      val topic = requireNotNull(env["TOPIC_CRYPTO_EVENTS"]?.trim()?.takeIf { it.isNotEmpty() }) { "TOPIC_CRYPTO_EVENTS must be set" }
+      return CryptoFeedConfig(location, symbols, topic)
+    }
+  }
+}
 
 internal fun FeedRuntimeConfig.desiredSymbolsByChannel(symbols: Collection<String>): Map<String, List<String>> {
   val normalized = symbols.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
   return channels.associateWith { channel -> symbolOverridesByChannel[channel] ?: normalized }
 }
 
-internal fun FeedRuntimeConfig.topicFor(
-  channel: String,
-  marketType: AlpacaMarketType,
-): String? =
-  when (canonicalMarketDataChannel(channel)) {
+internal fun FeedRuntimeConfig.topicFor(channel: String): String? =
+  cryptoEventsTopic ?: when (canonicalMarketDataChannel(channel)) {
     "trades" -> topics.trades
     "quotes" -> topics.quotes
     "bars", "updatedBars" -> topics.bars1m
@@ -118,20 +196,25 @@ internal fun ForwarderConfig.marketDataFeedConfigs(): List<FeedRuntimeConfig> {
     } else {
       null
     }
+  require(coreEquityFeed != EquityFeed.Sip || latestMarketData == null) { "latest market data is IEX-only" }
   val core =
     FeedRuntimeConfig(
-      feed = alpacaFeed,
+      marketType = alpacaMarketType,
+      feed = if (alpacaMarketType == AlpacaMarketType.CRYPTO) requireNotNull(cryptoFeed).location else alpacaFeed,
       equityFeed = coreEquityFeed,
       channels = alpacaMarketDataChannels,
       topics = topics,
-      symbols = staticSymbols,
+      symbols = if (alpacaMarketType == AlpacaMarketType.CRYPTO) requireNotNull(cryptoFeed).symbols else staticSymbols,
       symbolOverridesByChannel = alpacaMarketDataSymbolOverrides,
       symbolAllowlist = symbolAllowlist,
       core = true,
+      cryptoEventsTopic = cryptoFeed?.takeIf { alpacaMarketType == AlpacaMarketType.CRYPTO }?.topic,
+      sipUniverse = if (coreEquityFeed == EquityFeed.Sip) requireNotNull(universeContract) else null,
     )
   return listOf(core) +
     observationFeeds.map { observation ->
       FeedRuntimeConfig(
+        marketType = AlpacaMarketType.EQUITY,
         feed = observation.feed.id,
         equityFeed = observation.feed,
         channels = defaultAlpacaMarketDataChannels(AlpacaMarketType.EQUITY),
@@ -140,5 +223,20 @@ internal fun ForwarderConfig.marketDataFeedConfigs(): List<FeedRuntimeConfig> {
         symbolAllowlist = emptySet(),
         core = false,
       )
-    }
+    } +
+    listOfNotNull(
+      cryptoFeed?.takeIf { alpacaMarketType != AlpacaMarketType.CRYPTO }?.let { crypto ->
+        FeedRuntimeConfig(
+          marketType = AlpacaMarketType.CRYPTO,
+          feed = crypto.location,
+          equityFeed = null,
+          channels = defaultAlpacaMarketDataChannels(AlpacaMarketType.CRYPTO),
+          topics = topics,
+          symbols = crypto.symbols,
+          symbolAllowlist = crypto.symbols.toSet(),
+          core = false,
+          cryptoEventsTopic = crypto.topic,
+        )
+      },
+    )
 }

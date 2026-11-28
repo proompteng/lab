@@ -4,7 +4,7 @@ import { resourceFromAttributes } from '@opentelemetry/resources'
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import type { HooksProvider } from '@restatedev/restate-sdk'
 import { openTelemetryHook } from '@restatedev/restate-sdk-opentelemetry'
-import { Effect } from 'effect'
+import { Effect, Tracer } from 'effect'
 
 import { decodeOtlpTraceEndpoint, type TelemetryRuntimeOptions } from '../telemetry'
 
@@ -42,6 +42,13 @@ export const currentOpenTelemetryLogAnnotations = (): Readonly<Record<string, st
   return spanContext === undefined || !isSpanContextValid(spanContext)
     ? {}
     : { trace_id: spanContext.traceId, span_id: spanContext.spanId }
+}
+
+export const currentOpenTelemetryParentSpan = (): Tracer.ExternalSpan | undefined => {
+  const span = trace.getSpan(context.active())?.spanContext()
+  return span === undefined || !isSpanContextValid(span)
+    ? undefined
+    : Tracer.externalSpan({ spanId: span.spanId, traceId: span.traceId, sampled: (span.traceFlags & 1) === 1 })
 }
 
 const configuredTelemetry = (options: TelemetryRuntimeOptions, endpoint: string): RestateTelemetryResource => {

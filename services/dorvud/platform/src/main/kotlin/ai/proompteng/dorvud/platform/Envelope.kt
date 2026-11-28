@@ -9,6 +9,8 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import java.time.Instant
 
+const val LATEST_REST_SOURCE = "rest_latest"
+
 /** Shared envelope used for all forwarder outputs. */
 @Serializable
 data class Envelope<T>(

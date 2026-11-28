@@ -1,0 +1,9 @@
+apiVersion: v1alpha1
+kind: UdevRulesConfig
+rules:
+  - ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ATTRS{wwid}=="naa.5000c500e89cc161", ATTR{queue/scheduler}="mq-deadline", ATTR{queue/iosched/write_expire}="500"
+  - ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ATTRS{wwid}=="naa.5000c500e89fc09f", ATTR{queue/scheduler}="mq-deadline", ATTR{queue/iosched/write_expire}="500"
+  - ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ATTRS{wwid}=="naa.5000c500e899f6c4", ATTR{queue/scheduler}="mq-deadline", ATTR{queue/iosched/write_expire}="500"
+  - ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ATTRS{wwid}=="naa.5000c500e908cdc3", ATTR{queue/scheduler}="mq-deadline", ATTR{queue/iosched/write_expire}="500"
+  - ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ATTRS{wwid}=="naa.5000c500e898a64b", ATTR{queue/scheduler}="mq-deadline", ATTR{queue/iosched/write_expire}="500"
+  - ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ATTRS{wwid}=="naa.5000c500e877f329", ATTR{queue/scheduler}="mq-deadline", ATTR{queue/iosched/write_expire}="500"

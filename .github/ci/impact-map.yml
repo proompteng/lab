@@ -1,9 +1,8 @@
 version: 1
 
-# This file is the path ownership contract for pull-request.yml. Keep service
-# workflows for expensive, service-specific validation; list those workflows as
-# delegated targets so the router can explain why they run without duplicating
-# their jobs.
+# Path ownership for the router matrix and path-only delegation. Reusable PR
+# services that need Bun dependency selection use the affected-inputs batch in
+# pull-request.yml instead of duplicating their paths here.
 targets:
   planner:
     kind: planner
@@ -17,9 +16,15 @@ targets:
   landing:
     kind: validation
     paths:
+      - services/ofz/**
+      - proto/proompteng/authz/**
       - apps/landing/**
       - packages/backend/**
       - packages/design/**
+      - services/nanoagent/**
+      - services/tengri/**
+      - .github/workflows/tengri.yaml
+      - .github/scripts/install-tengri-chromium.mjs
 
   app:
     kind: validation
@@ -60,10 +65,44 @@ targets:
     kind: validation
     paths:
       - .github/ci/impact-map.yml
+      - .github/ci/root-script-map.yml
       - .github/workflows/pull-request.yml
+      - .github/workflows/hermes-agent-mirror.yml
+      - .github/workflows/forgejo-image-publish.yml
+      - argocd/applications/forgejo/upstream-image.json
       - argocd/applications/hermes/**
+      - argocd/applications/kargo/stages.yaml
       - argocd/applications/kube-router/**
+      - argocd/applications/buzz/networkpolicy.yaml
+      - argocd/applications/devbox/network-policy.yaml
+      - argocd/applications/froussard/approval-networkpolicy.yaml
+      - argocd/applications/glitchtip/auto-ontology-db-networkpolicy.yaml
+      - argocd/applications/jangar/auto-ontology-db-networkpolicy.yaml
+      - argocd/applications/kargo/smoke-access.yaml
+      - argocd/applications/keycloak/network-policy.yaml
+      - argocd/applications/ofz/control-plane/network-policy.yaml
+      - argocd/applications/opencode/networkpolicy.yaml
+      - argocd/applications/opencode/research.yaml
+      - argocd/applications/paperless/network.yaml
+      - argocd/applications/pelican/networking.yaml
+      - argocd/applications/clickhouse-upgrade-acceptance/preparation.yaml
+      - argocd/applications/observability/grafana-upgrade-backup.yaml
+      - argocd/applications/postgres-upgrade-acceptance/base/preparation.yaml
+      - argocd/applications/postgres-upgrade-acceptance/base/recovery.yaml
+      - argocd/applications/postgres-upgrade-acceptance/base/three-source-recovery.yaml
+      - argocd/applications/proompteng/network-policy.yaml
+      - argocd/applications/proompteng/admin-network-policy.yaml
+      - argocd/applications/relay/network-policy.yaml
+      - argocd/applications/restate/networkpolicy.yaml
+      - argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-4112-v3-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-509-backup.yaml
+      - argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml
+      - argocd/applications/temporal/upgrade/**
       - argocd/applications/tengri/network-policies.yaml
+      - argocd/applications/tengri/run-reader.yaml
       - argocd/applications/observability/cluster-metrics-alloy-config.river
       - argocd/applications/observability/cluster-metrics-alloy-deployment.yaml
       - argocd/applications/observability/graf-mimir-rules.yaml
@@ -72,6 +111,27 @@ targets:
       - docs/runbooks/hermes-production-rollout.md
       - docs/runbooks/kube-router-network-policy-rollout.md
       - scripts/**
+      - packages/scripts/src/ci/impact-router.ts
+      - packages/scripts/src/ci/__tests__/impact-router.test.ts
+      - argocd/applications/flamingo/**
+      - argocd/applications/agents/anypi*agentprovider.yaml
+      - argocd/applications/agents/values.yaml
+      - argocd/applications/bumba/deployment.yaml
+      - argocd/applications/jangar/deployment.yaml
+      - argocd/applications/jangar/openwebui-values.yaml
+      - argocd/applications/kubevirt/kustomization.yaml
+      - argocd/applications/saigak/**
+      - services/anypi/src/config*.ts
+      - services/bumba/src/activities/index.ts
+      - docs/agents/anypi.md
+      - docs/jangar/*flamingo*.md
+      - argocd/applications/openclaw/**
+      - .github/workflows/hermes-*.yml
+      - argocd/applications/clickhouse-upgrade-acceptance/**
+      - argocd/applications/postgres-upgrade-acceptance/**
+      - argocd/applications/*/postgres-upgrade-backup.yaml
+      - argocd/applications/*/postgres-cluster.yaml
+      - argocd/applications/coder/coder-cluster.yaml
 
   sag:
     kind: validation
@@ -113,11 +173,22 @@ targets:
   kubeconform:
     kind: validation
     paths:
+      - .github/workflows/pull-request.yml
+      - .github/workflows/kubeconform.yml
+      - flake.nix
+      - flake.lock
+      - nix/**
+      - services/ofz/test-ha-manifests.sh
+      - services/ofz/tests/ha_manifests.py
+      - scripts/cluster-upgrades/temporal_*.py
+      - argocd/applications/auto-ontology/*.cfg
+      - argocd/applications/auto-ontology/*.test.ts
       - argocd/**/*.yaml
       - argocd/**/*.yml
       - argocd/**/*.river
       - schemas/custom/**
       - scripts/kubeconform.sh
+      - scripts/test-bayn-secret-file-mode.sh
       - kubernetes/**/*.yaml
       - kubernetes/**/*.yml
 
@@ -177,11 +248,16 @@ targets:
       - packages/temporal-bun-sdk/**/*.spec.tsx
     paths:
       - .github/workflows/agents-ci.yml
+      - docs/agents/ontology/**
       - flake.lock
       - flake.nix
       - nix/images/agents.nix
       - nix/images/bun-workspace-service.nix
+      - nix/images/relativize-bun-cache.sh
+      - patches/effect@4.1.4.patch
+      - nix/images/antigravity-cli.nix
       - nix/images/openai-codex-cli.nix
+      - nix/images/agentrun-tools.nix
       - nix/packages.nix
       - packages/agent-contracts/**
       - packages/codex/**
@@ -202,27 +278,54 @@ targets:
     workflow: agentctl-ci
     paths:
       - services/agents/agentctl/**
+      - docs/agents/agentctl-cli-design.md
       - docs/agents/agentctl-release.md
 
-  bumba:
-    kind: delegated
-    workflow: bumba-ci
-    paths:
-      - services/bumba/**
-
-  jangar:
-    kind: delegated
-    workflow: jangar-ci
+  jangar-inventory:
+    kind: validation
+    exclude:
+      - services/agents/src/**/*.test.ts
+      - services/agents/src/**/*.test.tsx
+      - services/agents/src/**/*.spec.ts
+      - services/agents/src/**/*.spec.tsx
+      - services/agents/src/**/*.gen.ts
+      - services/agents/src/**/*.gen.tsx
+      - services/agents/src/**/*.generated.ts
+      - services/agents/src/**/*.generated.tsx
     paths:
       - services/jangar/**
-      - packages/scripts/src/jangar/**
-      - argocd/applications/jangar/**
+      - services/agents/src/app-routes/**
+      - services/agents/src/components/control-plane/**
+      - services/agents/src/control-plane/**
+      - services/agents/src/routes/**
+      - services/agents/src/server/agents-controller/**
+      - services/agents/src/server/control-plane*.ts
+      - services/agents/src/server/control-plane*/**
+      - services/agents/src/server/v1/control-plane-*.ts
+      - services/agents/src/server/v1/control-plane-*/**
+      - services/agents/src/server/health.ts
+      - services/agents/src/server/metrics.ts
+      - services/agents/src/server/ready.ts
+      - services/agents/src/server/start-runtime.ts
+      - services/agents/src/server/orchestration-controller.ts
+      - services/agents/src/server/supporting-primitives-controller.ts
+      - docs/jangar/architecture-inventory.md
 
-  froussard:
+  orbit-salvage:
     kind: delegated
-    workflow: froussard-ci
+    workflow: orbit-salvage-ci
     paths:
-      - apps/froussard/**
+      - apps/orbit-salvage/**
+      - .github/workflows/orbit-salvage-ci.yml
+      - .github/ci/impact-map.yml
+
+  ricochet-rush:
+    kind: delegated
+    workflow: ricochet-rush-ci
+    paths:
+      - apps/ricochet-rush/**
+      - .github/workflows/ricochet-rush-ci.yml
+      - .github/ci/impact-map.yml
 
   golink:
     kind: delegated
@@ -238,12 +341,6 @@ targets:
     paths:
       - services/khoshut/**
       - argocd/applications/khoshut/**
-
-  oirat:
-    kind: delegated
-    workflow: oirat-ci
-    paths:
-      - services/oirat/**
 
   reestr:
     kind: delegated
@@ -262,6 +359,7 @@ targets:
     workflow: scripts-ci
     paths:
       - packages/scripts/**
+      - scripts/jangar/**
       - argocd/root.yaml
       - argocd/applications/argocd/**
       - argocd/applications/observability/**
@@ -274,6 +372,7 @@ targets:
     kind: delegated
     workflow: symphony-ci
     paths:
+      - patches/effect@4.1.4.patch
       - services/symphony/**
       - packages/scripts/src/symphony/**
       - argocd/applications/symphony/**
@@ -310,6 +409,7 @@ targets:
     workflow: dorvud-ci
     paths:
       - services/dorvud/**
+      - services/bayn/src/market-data/features/fixtures/**
 
   otel:
     kind: delegated

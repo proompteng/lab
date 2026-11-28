@@ -1,0 +1,46 @@
+diff --git a/src/runtime-rs/crates/hypervisor/src/device/device_manager.rs b/src/runtime-rs/crates/hypervisor/src/device/device_manager.rs
+--- a/src/runtime-rs/crates/hypervisor/src/device/device_manager.rs
++++ b/src/runtime-rs/crates/hypervisor/src/device/device_manager.rs
+@@ -311,0 +312,5 @@
++                let mut config = config.clone();
++                if config.path_on_host.is_empty() {
++                    config.path_on_host = get_host_path(DEVICE_TYPE_BLOCK, config.major, config.minor)
++                        .context("failed to get host path")?;
++                }
+@@ -317 +322 @@
+-                self.create_block_device_modern(config, device_id.clone())
++                self.create_block_device_modern(&config, device_id.clone())
+@@ -517,6 +521,0 @@
+-        }
+-
+-        if block_config.path_on_host.is_empty() {
+-            block_config.path_on_host =
+-                get_host_path(DEVICE_TYPE_BLOCK, config.major, config.minor)
+-                    .context("failed to get host path")?;
+@@ -725,0 +725,26 @@
++    async fn test_reuses_raw_block_device_without_host_path() {
++        let entry = std::fs::read_dir("/sys/dev/block")
++            .expect("Linux block device sysfs is required")
++            .next()
++            .expect("a Linux block device is required")
++            .unwrap();
++        let numbers = entry.file_name().to_string_lossy().to_string();
++        let (major, minor) = numbers.split_once(':').unwrap();
++        let dm = new_device_manager().await.unwrap();
++        let block_driver = get_block_device_info(&dm).await.block_device_driver;
++        let config = DeviceConfig::BlockCfgModern(BlockConfigModern {
++            major: major.parse().unwrap(),
++            minor: minor.parse().unwrap(),
++            driver_option: block_driver,
++            ..Default::default()
++        });
++        let first = dm.write().await.new_device(&config).await.unwrap();
++        let second = dm.write().await.new_device(&config).await.unwrap();
++        assert_eq!(
++            first, second,
++            "a restarted container must reuse the existing block device"
++        );
++        assert_eq!(dm.read().await.devices.len(), 1);
++    }
++
++    #[actix_rt::test]

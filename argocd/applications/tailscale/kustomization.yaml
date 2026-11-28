@@ -4,7 +4,7 @@ kind: Kustomization
 helmCharts:
   - name: tailscale-operator
     repo: https://pkgs.tailscale.com/helmcharts
-    version: 1.98.9
+    version: 1.104.7
     releaseName: tailscale-operator
     namespace: tailscale
     valuesFile: values.yaml
@@ -13,3 +13,4 @@ resources:
   - base/secrets.yaml
   - base/coredns-custom.yaml
   - base/connector-subnet-router.yaml
+  - base/proxyclass-default.yaml

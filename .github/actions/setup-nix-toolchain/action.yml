@@ -3,7 +3,7 @@ description: Validate the preinstalled Nix toolchain and optionally fail closed 
 
 inputs:
   github-token:
-    description: GitHub token passed to the fallback Nix installer.
+    description: GitHub token for the Nix installer and unconfigured GitHub input downloads.
     required: false
     default: ''
   extra-nix-config:
@@ -71,10 +71,15 @@ runs:
       shell: bash
       env:
         EXTRA_NIX_CONFIG: ${{ inputs.extra-nix-config }}
+        NIX_GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
         mkdir -p "${HOME}/.config/nix"
         nix_config="${EXTRA_NIX_CONFIG}"
+        if [ -n "${NIX_GITHUB_TOKEN}" ]; then
+          echo "::add-mask::${NIX_GITHUB_TOKEN}"
+          nix_config="${nix_config}"$'\n'"extra-access-tokens = github.com=${NIX_GITHUB_TOKEN}"
+        fi
         has_nixbld_group=false
         if command -v getent >/dev/null 2>&1; then
           if getent group nixbld >/dev/null 2>&1; then
@@ -88,6 +93,7 @@ runs:
           nix_config="${nix_config}"$'\n''build-users-group ='
         fi
         printf '%s\n' "${nix_config}" > "${HOME}/.config/nix/nix.conf"
+        chmod 600 "${HOME}/.config/nix/nix.conf"
         {
           echo 'NIX_CONFIG<<__LAB_NIX_CONFIG__'
           printf '%s\n' "${nix_config}"

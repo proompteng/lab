@@ -1,0 +1,55 @@
+name: Verify Bun dependency closure
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify ${{ inputs.service }} dependency closure (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            system: x86_64-linux
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            system: aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      NIX_BUN_FOD_TIMEOUT: 10m
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ github.token }}
+          install-ci-toolchain: 'false'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = https://cache.nixos.org/
+            fallback = true
+            connect-timeout = 10
+            stalled-download-timeout = 60
+            download-attempts = 1
+
+      - name: Prove dependency source boundary
+        if: inputs.service != 'app'
+        run: nix shell .#bun --command bash nix/images/bun-workspace-deps-source.test.sh
+
+      - name: Recompute Bun fixed-output dependency closure
+        env:
+          BUN_SYSTEM: ${{ matrix.system }}
+          BUN_SERVICE: ${{ inputs.service }}
+        run: bash nix/check-bun-dependency-closure.sh "${BUN_SERVICE}" "${BUN_SYSTEM}"

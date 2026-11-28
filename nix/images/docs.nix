@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "docs";
   packageName = "docs";
   depsHash = {
-    x86_64-linux = "sha256-IBNmEdr6V7oa7xiyeiw3RyxqTudxcqMrDnfwofdFeDA=";
-    aarch64-linux = "sha256-/f3up5Yzm24QZYIMtUXTCZfR7cA7r21eYBOiTLkNYco=";
+    x86_64-linux = "sha256-1YKPJtix9vzsp5shwCOV2NtCBXDNGzIekLo/AB3t/Po=";
+    aarch64-linux = "sha256-B1EU908AslyWBXYLOWA0WvsUBfaU3ZNIW9W8vadlQac=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -24,6 +24,7 @@ import ./bun-workspace-service.nix {
     "packages/design"
   ];
   buildCommands = [
+    ''patchShebangs --build "$(realpath apps/docs/node_modules/.bin/next)"''
     "bun --cwd=apps/docs run build"
   ];
   runtimeInstallPhase = ''

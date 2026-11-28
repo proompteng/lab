@@ -1,0 +1,12 @@
+{
+  "description": "Synthetic cross-language broker notification contract. All identities and credentials are fixtures.",
+  "accountId": "00000000-0000-4000-8000-000000000001",
+  "keyId": "test-key",
+  "secret": "test-secret",
+  "key": "2e281f7bcbf83b7eb9ef358617e338066ccec868594431260841647970fd77da",
+  "notification": {
+    "message": "{\"_tag\":\"TradeUpdate\",\"eventId\":\"367b768aeae1aa5637ba4b93be3b1536285d72a0da2fffd6ef4d5fe1f11e8823\",\"session\":{\"identityHash\":\"2e281f7bcbf83b7eb9ef358617e338066ccec868594431260841647970fd77da\",\"accountId\":\"00000000-0000-4000-8000-000000000001\",\"environment\":\"sandbox\",\"credentialHash\":\"62af8704764faf8ea82fc61ce9c4c3908b6cb97d463a634e9e587d7c885db0ef\",\"sessionId\":\"00000000-0000-4000-8000-000000000002\",\"sourceRevision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"verifiedAt\":\"2026-11-11T17:37:19.000Z\",\"authenticatedAt\":\"2026-11-11T17:37:19.001Z\",\"subscribedAt\":\"2026-11-11T17:37:19.002Z\"},\"receivedAt\":\"2026-11-11T17:37:19.003Z\",\"frameJson\":\"{\\\"stream\\\":\\\"trade_updates\\\",\\\"data\\\":{\\\"event\\\":\\\"fill\\\",\\\"timestamp\\\":\\\"2026-11-11T17:37:18.784802123Z\\\",\\\"price\\\":\\\"123.450000\\\",\\\"order\\\":{\\\"id\\\":\\\"fixture-order\\\"}}}\",\"schemaVersion\":\"bayn.broker-notification.v1\"}",
+    "signature": "2ecff1e0958a4088912d65020e932f8a9dd9d7d21e9044a15c21ca3d5c688860",
+    "schemaVersion": "bayn.signed-broker-notification.v1"
+  }
+}

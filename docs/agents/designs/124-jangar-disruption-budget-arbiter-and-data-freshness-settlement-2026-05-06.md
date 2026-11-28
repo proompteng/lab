@@ -1,6 +1,6 @@
 # 124. Jangar Disruption Budget Arbiter And Data Freshness Settlement (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar rollout safety, disruption evidence, data-plane freshness, action receipts, Torghut capital admission,
@@ -12,8 +12,6 @@ Companion Torghut contract:
 
 Extends:
 
-- `123-jangar-observation-rights-quorum-and-proof-carrying-rollout-admission-2026-05-06.md`
-- `123-jangar-market-context-contradiction-ledger-and-lane-capital-holds-2026-05-06.md`
 - `116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md`
 - `111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md`
 

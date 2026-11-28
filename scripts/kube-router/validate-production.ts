@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 const kubeRouterImage =
-  'docker.io/cloudnativelabs/kube-router@sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22'
+  'docker.io/cloudnativelabs/kube-router@sha256:e1da38f71e2f1521e7a74c5cdaa511fdee9d2ee76972b25c9b5785b030b96fe4'
 const kubectlImage = 'docker.io/bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7'
 const trafficNeutralSafetyNamespaces = [
   'agents',
@@ -14,9 +14,13 @@ const trafficNeutralSafetyNamespaces = [
   'synthesis',
   'torghut',
 ]
+const agentsSafetySelector = {
+  matchExpressions: [{ key: 'app.kubernetes.io/name', operator: 'NotIn', values: ['auto-ontology-sync'] }],
+}
 const retiredSafetyNamespace = 'bayn'
 const safetyNamespaces = [...trafficNeutralSafetyNamespaces, retiredSafetyNamespace]
 const enforcedNamespaces = ['hermes']
+const optionalReviewedNamespaces = ['glitchtip', 'jangar']
 const retiredSafetySelector = {
   'network-policy.proompteng.ai/retired-rollout-policy': retiredSafetyNamespace,
 }
@@ -27,8 +31,32 @@ export const productionPaths = {
   rbac: 'argocd/applications/kube-router/rbac.yaml',
   safetyPolicies: 'argocd/applications/kube-router/safety-policies.yaml',
   preflightHook: 'argocd/applications/kube-router/preflight-hook.yaml',
+  buzzPolicies: 'argocd/applications/buzz/networkpolicy.yaml',
+  devboxPolicies: 'argocd/applications/devbox/network-policy.yaml',
+  froussardPolicies: 'argocd/applications/froussard/approval-networkpolicy.yaml',
+  glitchtipPolicies: 'argocd/applications/glitchtip/auto-ontology-db-networkpolicy.yaml',
+  jangarPolicies: 'argocd/applications/jangar/auto-ontology-db-networkpolicy.yaml',
+  kargoSmokePolicies: 'argocd/applications/kargo/smoke-access.yaml',
+  keycloakPolicies: 'argocd/applications/keycloak/network-policy.yaml',
+  ofzPolicies: 'argocd/applications/ofz/control-plane/network-policy.yaml',
+  opencodePolicies: 'argocd/applications/opencode/networkpolicy.yaml',
+  opencodeResearchPolicies: 'argocd/applications/opencode/research.yaml',
+  paperlessPolicies: 'argocd/applications/paperless/network.yaml',
+  pelicanPolicies: 'argocd/applications/pelican/networking.yaml',
+  grafanaRehearsalPolicies: 'argocd/applications/observability/grafana-upgrade-backup.yaml',
+  proomptengPolicies: 'argocd/applications/proompteng/network-policy.yaml',
+  platformAdminPolicies: 'argocd/applications/proompteng/admin-network-policy.yaml',
+  restatePolicies: 'argocd/applications/restate/networkpolicy.yaml',
+  cassandra311Policies: 'argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml',
+  cassandra411Policies: 'argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml',
+  cassandra411v2Policies: 'argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml',
+  cassandra411v3Policies: 'argocd/applications/temporal/upgrade/cassandra-4112-v3-backup.yaml',
+  cassandra509Policies: 'argocd/applications/temporal/upgrade/cassandra-509-backup.yaml',
+  elasticRehearsalPolicies: 'argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml',
   hermesPolicies: 'argocd/applications/hermes/network-policy.yaml',
   tengriPolicies: 'argocd/applications/tengri/network-policies.yaml',
+  tengriReaderPolicies: 'argocd/applications/tengri/run-reader.yaml',
+  relayPolicies: 'argocd/applications/relay/network-policy.yaml',
   service: 'argocd/applications/kube-router/service.yaml',
   daemonSet: 'argocd/applications/kube-router/daemonset.yaml',
   readme: 'argocd/applications/kube-router/README.md',
@@ -45,6 +73,36 @@ export const productionPaths = {
   impactMap: '.github/ci/impact-map.yml',
   pullRequestWorkflow: '.github/workflows/pull-request.yml',
 } as const
+
+export const reviewedPolicySources = {
+  buzz: ['buzzPolicies', 'kargoSmokePolicies'],
+  'codex-devbox': ['devboxPolicies', 'kargoSmokePolicies'],
+  froussard: ['froussardPolicies'],
+  glitchtip: ['glitchtipPolicies'],
+  jangar: ['jangarPolicies'],
+  keycloak: ['keycloakPolicies'],
+  observability: ['grafanaRehearsalPolicies'],
+  ofz: ['ofzPolicies'],
+  opencode: ['opencodePolicies', 'opencodeResearchPolicies', 'kargoSmokePolicies'],
+  paperless: ['paperlessPolicies'],
+  pelican: ['pelicanPolicies'],
+  proompteng: ['proomptengPolicies', 'platformAdminPolicies', 'kargoSmokePolicies'],
+  restate: ['restatePolicies', 'kargoSmokePolicies', 'tengriReaderPolicies'],
+  temporal: [
+    'cassandra311Policies',
+    'cassandra411Policies',
+    'cassandra411v2Policies',
+    'cassandra411v3Policies',
+    'cassandra509Policies',
+    'elasticRehearsalPolicies',
+  ],
+} as const
+
+// These namespaces combine policies rendered by a pinned Helm chart or owned by an external repository.
+const renderedPolicyHashes = {
+  'rook-ceph': '0827941f4c30c003e17a7294e596fb80e9a5dc8502bf2e30fc33ca37301c3149',
+  stash: '8564654c8298dd42db2da5af776b925a6a146bdc05a303e87d26cd1caa89de54',
+}
 
 export type ProductionPath = keyof typeof productionPaths
 export type ProductionFiles = Record<ProductionPath, string>
@@ -96,9 +154,16 @@ function canonicalJson(value: unknown): unknown {
   )
 }
 
-function networkPolicyHash(content: string): string {
+function networkPolicyHash(content: string, namespace: string): string {
   const contract = yamlDocuments(content)
-    .map((policy) => ({ name: policy.metadata?.name, spec: policy.spec }))
+    .filter((policy) => policy?.kind === 'NetworkPolicy' && (policy.metadata?.namespace ?? namespace) === namespace)
+    .map((policy) => {
+      const spec = { ...policy.spec }
+      for (const direction of ['ingress', 'egress']) {
+        if (Array.isArray(spec[direction]) && spec[direction].length === 0) delete spec[direction]
+      }
+      return { name: policy.metadata?.name, spec }
+    })
     .sort((left, right) => String(left.name).localeCompare(String(right.name)))
   return createHash('sha256')
     .update(`${JSON.stringify(canonicalJson(contract))}\n`)
@@ -158,7 +223,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(`${productionPaths.daemonSet}: DaemonSet must run in kube-system`)
   }
   if (container?.image !== kubeRouterImage) {
-    failures.push(`${productionPaths.daemonSet}: kube-router must use the immutable multi-architecture v2.10.0 index`)
+    failures.push(`${productionPaths.daemonSet}: kube-router must use the immutable multi-architecture v2.12.0 index`)
   }
   if (JSON.stringify(args) !== JSON.stringify(requiredArgs)) {
     failures.push(`${productionPaths.daemonSet}: controller flags must select firewall-only Flannel coexistence`)
@@ -237,7 +302,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
     if (
       !trafficNeutralSafetyNamespaces.includes(namespace) ||
-      JSON.stringify(policy.spec?.podSelector) !== '{}' ||
+      JSON.stringify(policy.spec?.podSelector) !== JSON.stringify(namespace === 'agents' ? agentsSafetySelector : {}) ||
       JSON.stringify(policy.spec?.ingress) !== '[{}]' ||
       JSON.stringify(policy.spec?.egress) !== '[{}]'
     ) {
@@ -247,8 +312,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   const hook = resource(yamlDocuments(files.preflightHook), 'Job', 'kube-router-policy-preflight')
   const hookContainer = hook?.spec?.template?.spec?.containers?.[0]
-  const expectedHermesPolicyHash = networkPolicyHash(files.hermesPolicies)
-  const expectedTengriPolicyHash = networkPolicyHash(files.tengriPolicies)
+  const expectedHermesPolicyHash = networkPolicyHash(
+    [files.hermesPolicies, files.kargoSmokePolicies].join('\n---\n'),
+    'hermes',
+  )
+  const expectedTengriPolicyHash = networkPolicyHash(
+    [files.tengriPolicies, files.kargoSmokePolicies].join('\n---\n'),
+    'tengri',
+  )
+  const expectedRelayPolicyHash = networkPolicyHash(files.relayPolicies, 'relay')
   if (
     hook?.metadata?.annotations?.['argocd.argoproj.io/hook'] !== 'Sync' ||
     hook?.metadata?.annotations?.['argocd.argoproj.io/sync-wave'] !== '-2' ||
@@ -262,24 +334,71 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
     `printf '%s\\n' ${[...safetyNamespaces, ...enforcedNamespaces].sort().join(' ')}`,
     '} | sort -u',
-    'kubectl -n kube-system get namespace tengri',
-    "jq -e '.items | length > 0'",
-    "printf '%s\\n' tengri",
-    'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
+    'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$expected_namespaces" ]]',
     'kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json',
     'case "$namespace" in',
     'network-policy.proompteng.ai/retired-rollout-policy',
     `expected_hermes_policy_hash=${expectedHermesPolicyHash}`,
     `expected_tengri_policy_hash=${expectedTengriPolicyHash}`,
+    `expected_relay_policy_hash=${expectedRelayPolicyHash}`,
+    'if [[ "$actual_relay_policy_hash" != "$expected_relay_policy_hash" ]]',
     'kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json',
     "jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)'",
     'Hermes NetworkPolicies differ from the exact reviewed policy set.',
     "kubectl -n bayn get pods -l 'network-policy.proompteng.ai/retired-rollout-policy=bayn' -o json",
-    '.spec.podSelector == {}',
+    'if $namespace == "agents" then',
+    JSON.stringify(agentsSafetySelector),
+    'else {} end',
     '.spec.ingress == [{}]',
     '.spec.egress == [{}]',
   ])
+
+  const reviewedNamespaces = [...Object.keys(reviewedPolicySources), ...Object.keys(renderedPolicyHashes)].sort()
+  const requiredReviewedNamespaces = reviewedNamespaces
+    .filter((namespace) => !optionalReviewedNamespaces.includes(namespace))
+    .join(' ')
+  requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
+    `printf '%s\\n' ${requiredReviewedNamespaces}\n`,
+    `${reviewedNamespaces.join('|')})`,
+    'if [[ "$actual_reviewed_policy_hash" != "$expected_reviewed_policy_hash" ]]',
+  ])
+  requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
+    `printf '%s\\n' hermes ${requiredReviewedNamespaces}\n`,
+  ])
+  for (const key of ['preflightHook', 'coverageProbe'] as const) {
+    const script = files[key].replace(/^[ \t]+/gm, '')
+    for (const namespace of ['tengri', 'relay', ...optionalReviewedNamespaces]) {
+      const check = [
+        `if kubectl -n kube-system get namespace ${namespace} >/dev/null 2>&1 &&`,
+        `kubectl -n ${namespace} get networkpolicies.networking.k8s.io -o json |`,
+        "jq -e '.items | length > 0' >/dev/null; then",
+        `printf '%s\\n' ${namespace}`,
+        'fi',
+      ].join('\n')
+      if (!script.includes(check)) {
+        failures.push(`${productionPaths[key]}: ${namespace} coverage must check for live NetworkPolicies`)
+      }
+    }
+  }
+  const rootScriptPaths = yamlDocuments(files.impactMap)[0]?.targets?.['root-scripts']?.paths ?? []
+  for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
+    const hash = networkPolicyHash(sources.map((key) => files[key]).join('\n---\n'), namespace)
+    requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
+      `${namespace}) expected_reviewed_policy_hash=${hash} ;;`,
+    ])
+    for (const key of sources) {
+      if (!rootScriptPaths.includes(productionPaths[key])) {
+        failures.push(`${productionPaths.impactMap}: root-scripts must cover ${productionPaths[key]}`)
+      }
+    }
+  }
+
+  for (const [namespace, hash] of Object.entries(renderedPolicyHashes)) {
+    requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
+      `${namespace}) expected_reviewed_policy_hash=${hash} ;;`,
+    ])
+  }
 
   const roles = yamlDocuments(files.rbac).filter((document) => document.kind === 'ClusterRole')
   for (const role of roles) {
@@ -346,8 +465,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   forbidTerms(failures, productionPaths.cleanupDaemonSet, files.cleanupDaemonSet, ['--cleanup-config'])
   requireTerms(failures, productionPaths.readme, files.readme, [
     'manual Argo CD application',
-    'amd64: `sha256:81619a698b981a5c4fd6c89ae015d0faadce5d7a5270df7562c1743e58e3283f`',
-    'arm64: `sha256:b8df3247641d5f4e84e14d30b673b6362a0e3d56901218a1e1ee38a40f37afd8`',
+    'amd64: `sha256:29034446e59a9e984a8a720c03f2ba1ce4e61ebb938d1a88c8f40b08bdb06c78`',
+    'arm64: `sha256:c9b534a88b5a09abe452ba5a20d528e106c640416de95f4e9b6cc308fd24c54a`',
     'Prune=false',
   ])
 
@@ -385,11 +504,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
     'set -euo pipefail',
-    "printf '%s\\n' hermes",
-    'kubectl -n kube-system get namespace tengri',
-    "jq -e '.items | length > 0'",
-    "printf '%s\\n' tengri",
-    'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
+    'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$desired_namespaces" ]]',
   ])
   requireTerms(failures, productionPaths.allNodeProbe, files.allNodeProbe, [
@@ -428,7 +543,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   requireTerms(failures, productionPaths.runbook, files.runbook, [
     'kubectl -n kube-system rollout status daemonset/kube-router',
-    'kube_router_index_digest=sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22',
+    'kube_router_index_digest=sha256:e1da38f71e2f1521e7a74c5cdaa511fdee9d2ee76972b25c9b5785b030b96fe4',
     'pod_rows=$(',
     'if [ "$pod_count" -ne "$desired" ]; then',
     "while IFS=$'\\t' read -r pod node pod_ready restart_count image_id",
@@ -452,6 +567,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.impactMap, files.impactMap, [
     '- argocd/applications/kube-router/**',
     '- argocd/applications/tengri/network-policies.yaml',
+    '- argocd/applications/relay/network-policy.yaml',
     '- docs/runbooks/kube-router-network-policy-rollout.md',
   ])
   requireTerms(failures, productionPaths.pullRequestWorkflow, files.pullRequestWorkflow, [
