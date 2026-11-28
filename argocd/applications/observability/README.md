@@ -239,8 +239,8 @@ Alertmanager sends warnings carrying `notify="email"` to the existing email rece
 interval and fifteen-minute group updates. Critical group updates use five minutes. This includes the existing
 Bayn input, execution and replica warnings and Restate metadata lag. Warnings
 without that opt-in remain quiet. Mimir ingester telemetry detects live series capacity, rejected samples and
-incomplete ingestion. The shared tenant has a bounded 300,000-series runtime allowance; CI timing histograms were
-removed to reduce recurring cardinality. See the [alert delivery RCA](../../../docs/incidents/2026-10-26-alert-delivery-and-bayn-projection.md).
+incomplete ingestion. See [metric admission failures](../../../docs/runbooks/mimir-email-alerting.md#metric-admission-failures)
+for the shared tenant budget and cardinality controls.
 Apply a fallback configuration update before a separately
 reviewed Alertmanager revision bump, as described in the [email runbook](../../../docs/runbooks/mimir-email-alerting.md).
 

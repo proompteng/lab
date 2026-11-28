@@ -1,7 +1,10 @@
-import { expect, test } from 'bun:test'
+import { expect, spyOn, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import { __private as oci } from '../shared/oci'
+import { writeBaynImageCohortOutputs } from './prepare-image-cohort'
 
 const source = '1'.repeat(40)
 const timestamp = '2026-11-21T10:00:00+00:00'
@@ -27,107 +30,125 @@ type Registry = {
   pinnedDescriptorMutation?: { image: string; kind: 'extra' | 'missing' | 'duplicate' }
 }
 
-// Exercise the real CLI, shared index helper, output-file boundary and command ordering without a registry.
-const fakeCommand = `#!${process.execPath}
-const fs = require('node:fs');
-const path = require('node:path');
-const command = path.basename(process.argv[1]);
-const args = process.argv.slice(2);
-const statePath = process.env.COHORT_REGISTRY_STATE;
-const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-fs.appendFileSync(process.env.COHORT_COMMAND_LOG, JSON.stringify([command, ...args]) + '\\n');
-const emit = value => { if (value === undefined) throw new Error('Missing fixture proof'); console.log(typeof value === 'string' ? value : JSON.stringify(value)); };
-if (command === 'git') {
-  if (args[0] === 'rev-parse') emit(state.checkout);
-  else if (args[0] === 'show') emit('${timestamp}');
-  else throw new Error('Unexpected git command');
-} else if (command === 'regctl' && args[0] === 'index' && args[1] === 'create') {
-  const reference = args[2];
-  const image = reference.slice(0, reference.lastIndexOf(':'));
-  if (state.failIndex === image) throw new Error('Simulated index write failure');
-  const manifest = { schemaVersion: 2, mediaType: 'application/vnd.oci.image.index.v1+json', manifests: [], annotations: {} };
-  for (let i = 3; i < args.length; i += 2) {
-    if (args[i] === '--digest') {
-      const digest = args[i + 1];
-      const config = state.configs[image + '@' + digest];
-      manifest.manifests.push({ digest, platform: { os: config.os, architecture: config.architecture } });
-    } else if (args[i] === '--annotation') {
-      const position = args[i + 1].indexOf('=');
-      manifest.annotations[args[i + 1].slice(0, position)] = args[i + 1].slice(position + 1);
-    } else throw new Error('Unexpected index option');
-  }
-  state.tags[reference] = state.indexDigests[image];
-  state.indexes[reference] = manifest;
-  const pinned = structuredClone(manifest);
-  if (state.corruptPinnedIndex === image) pinned.manifests[0].digest = 'sha256:' + 'f'.repeat(64);
-  if (state.pinnedDescriptorMutation?.image === image) {
-    if (state.pinnedDescriptorMutation.kind === 'extra') pinned.manifests.push({ digest: 'sha256:' + 'f'.repeat(64) });
-    if (state.pinnedDescriptorMutation.kind === 'missing') pinned.manifests.pop();
-    if (state.pinnedDescriptorMutation.kind === 'duplicate') pinned.manifests[1] = pinned.manifests[0];
-  }
-  state.indexes[image + '@' + state.indexDigests[image]] = pinned;
-  fs.writeFileSync(statePath, JSON.stringify(state));
-} else if (command === 'crane') {
-  if (args[0] === 'digest') emit(state.tags[args[1]]);
-  else if (args[0] === 'config') emit(state.configs[args[1]]);
-  else if (args[0] === 'manifest') emit(state.indexes[args[1]]);
-  else throw new Error('Unexpected registry mutation or inspection');
-} else throw new Error('Unexpected registry mutation or command');
-`
-
 const run = (mutate: (registry: Registry) => void = () => {}, overrides: Record<string, string> = {}) => {
   const directory = mkdtempSync(join(tmpdir(), 'bayn-cohort-preparation-'))
-  try {
-    const registry: Registry = { tags: {}, configs: {}, indexDigests: {}, indexes: {}, checkout: source }
-    for (const [member, name] of names.entries()) {
-      registry.indexDigests[image(name)] = indexDigest(member)
-      for (const [arch, architecture] of architectures.entries()) {
-        registry.tags[`${image(name)}:sha-${source}-${architecture}`] = childDigest(member, arch)
-        registry.configs[`${image(name)}@${childDigest(member, arch)}`] = config(architecture)
-      }
+  const commands: string[][] = []
+  const registry: Registry = { tags: {}, configs: {}, indexDigests: {}, indexes: {}, checkout: source }
+  for (const [member, name] of names.entries()) {
+    registry.indexDigests[image(name)] = indexDigest(member)
+    for (const [arch, architecture] of architectures.entries()) {
+      registry.tags[`${image(name)}:sha-${source}-${architecture}`] = childDigest(member, arch)
+      registry.configs[`${image(name)}@${childDigest(member, arch)}`] = config(architecture)
     }
-    mutate(registry)
-    const statePath = join(directory, 'registry.json')
-    const outputPath = join(directory, 'outputs')
-    const commandsPath = join(directory, 'commands')
-    writeFileSync(statePath, JSON.stringify(registry))
-    writeFileSync(outputPath, 'existing_output=retained\n')
-    writeFileSync(commandsPath, '')
-    for (const command of ['git', 'crane', 'regctl'])
-      writeFileSync(join(directory, command), fakeCommand, { mode: 0o755 })
-    const result = Bun.spawnSync([process.execPath, new URL('./prepare-image-cohort.ts', import.meta.url).pathname], {
-      env: {
-        ...process.env,
-        PATH: `${directory}:${process.env.PATH}`,
+  }
+  mutate(registry)
+
+  const response = (value: unknown) => ({
+    exitCode: value === undefined ? 1 : 0,
+    stdout: Buffer.from(typeof value === 'string' ? value : (JSON.stringify(value) ?? '')),
+    stderr: Buffer.alloc(0),
+  })
+  let unexpected: string[] | undefined
+  const spawn = ((command: string[]) => {
+    commands.push(command)
+    const [tool, action, reference] = command
+    if (tool === 'git' && action === 'rev-parse') return response(registry.checkout)
+    if (tool === 'git' && action === 'show') return response(timestamp)
+    if (tool === 'crane' && action === 'digest') return response(registry.tags[reference])
+    if (tool === 'crane' && action === 'config') return response(registry.configs[reference])
+    if (tool === 'crane' && action === 'manifest') return response(registry.indexes[reference])
+    if (tool === 'regctl' && action === 'index' && reference === 'create') {
+      const [, , , tag, ...args] = command
+      const repository = tag.slice(0, tag.lastIndexOf(':'))
+      if (registry.failIndex === repository) return response(undefined)
+      const manifest = {
+        schemaVersion: 2,
+        mediaType: 'application/vnd.oci.image.index.v1+json',
+        manifests: [] as { digest: string; platform?: { os: string; architecture: string } }[],
+        annotations: {} as Record<string, string>,
+      }
+      for (let index = 0; index < args.length; index += 2) {
+        const [option, value] = args.slice(index, index + 2)
+        if (option === '--digest') {
+          const { os, architecture } = registry.configs[`${repository}@${value}`] as ReturnType<typeof config>
+          manifest.manifests.push({ digest: value, platform: { os, architecture } })
+        } else if (option === '--annotation') {
+          const position = value.indexOf('=')
+          manifest.annotations[value.slice(0, position)] = value.slice(position + 1)
+        } else {
+          unexpected = command
+          return response(undefined)
+        }
+      }
+      const digest = registry.indexDigests[repository]
+      registry.tags[tag] = digest
+      registry.indexes[tag] = manifest
+      const pinned = structuredClone(manifest)
+      if (registry.corruptPinnedIndex === repository) pinned.manifests[0].digest = `sha256:${'f'.repeat(64)}`
+      if (registry.pinnedDescriptorMutation?.image === repository) {
+        switch (registry.pinnedDescriptorMutation.kind) {
+          case 'extra':
+            pinned.manifests.push({ digest: `sha256:${'f'.repeat(64)}` })
+            break
+          case 'missing':
+            pinned.manifests.pop()
+            break
+          case 'duplicate':
+            pinned.manifests[1] = pinned.manifests[0]
+            break
+        }
+      }
+      registry.indexes[`${repository}@${digest}`] = pinned
+      return response('')
+    }
+    unexpected = command
+    return response(undefined)
+  }) as typeof Bun.spawnSync
+
+  // Keep the real index helper and output file. Fake only the external command boundary.
+  const spawnMock = spyOn(Bun, 'spawnSync').mockImplementation(spawn)
+  const which = spyOn(Bun, 'which').mockImplementation((tool) =>
+    tool === 'crane' || tool === 'regctl' ? `/fixture/${tool}` : null,
+  )
+  oci.setSpawnSync(spawn)
+  try {
+    const output = join(directory, 'outputs')
+    writeFileSync(output, 'existing_output=retained\n')
+    let stderr = ''
+    try {
+      writeBaynImageCohortOutputs({
         GITHUB_REPOSITORY: 'proompteng/lab',
         GITHUB_REF: 'refs/heads/main',
         GITHUB_EVENT_NAME: 'push',
         GITHUB_SHA: source,
         GITHUB_RUN_ID: '123456',
-        GITHUB_OUTPUT: outputPath,
+        GITHUB_OUTPUT: output,
         BAYN_BUILD_RESULT: 'success',
         RESEARCH_BUILD_RESULT: 'success',
         BROKER_FEED_BUILD_RESULT: 'success',
-        COHORT_REGISTRY_STATE: statePath,
-        COHORT_COMMAND_LOG: commandsPath,
         ...overrides,
-      },
-    })
-    const commands: string[][] = readFileSync(commandsPath, 'utf8')
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line))
-    return {
-      exitCode: result.exitCode,
-      stderr: result.stderr.toString(),
-      commands,
-      output: readFileSync(outputPath, 'utf8'),
+      })
+    } catch (error) {
+      if (!(error instanceof Error)) throw error
+      stderr = error.message
     }
+    if (unexpected) throw new Error(`Unexpected fixture command: ${unexpected.join(' ')}`)
+    return { exitCode: stderr ? 1 : 0, stderr, commands, output: readFileSync(output, 'utf8') }
   } finally {
+    spawnMock.mockRestore()
+    which.mockRestore()
+    oci.setSpawnSync()
     rmSync(directory, { recursive: true, force: true })
   }
 }
+
+test('the CLI refuses to prepare a cohort without GITHUB_OUTPUT', () => {
+  const result = Bun.spawnSync([process.execPath, new URL('./prepare-image-cohort.ts', import.meta.url).pathname], {
+    env: { ...process.env, GITHUB_OUTPUT: '' },
+  })
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stderr.toString()).toContain('Bayn image cohort preparation requires GITHUB_OUTPUT')
+})
 
 test.each(['push', 'workflow_dispatch'])(
   'preflights all six images and emits the three deferred indexes for %s',

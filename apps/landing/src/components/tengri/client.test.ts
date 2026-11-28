@@ -12,35 +12,26 @@ import {
   TengriRequestError,
 } from './client'
 
+import { MemoryStorage } from '@/lib/tengri/storage.fixture'
+
 const originalFetch = globalThis.fetch
+
+function stubFetch(handler: (...args: Parameters<typeof fetch>) => Promise<Response> | Response) {
+  globalThis.fetch = Object.assign(async (...args: Parameters<typeof fetch>) => handler(...args), {
+    preconnect: originalFetch.preconnect,
+  })
+}
 const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
 const originalLocks = Object.getOwnPropertyDescriptor(navigator, 'locks')
 const lockQueues = new Map<string, Promise<void>>()
-const values = new Map<string, string>()
-const storage: Storage = {
-  get length() {
-    return values.size
-  },
-  clear: () => values.clear(),
-  getItem: (key) => values.get(key) ?? null,
-  setItem: (key, value) => {
-    values.set(key, value)
-  },
-  removeItem: (key) => {
-    values.delete(key)
-  },
-  key: (index) => [...values.keys()][index] ?? null,
-}
+const storage = new MemoryStorage()
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage })
 Object.defineProperty(navigator, 'locks', {
   configurable: true,
   value: {
     async request(name: string, callback: () => unknown) {
       const previous = lockQueues.get(name) ?? Promise.resolve()
-      let release = () => {}
-      const queued = new Promise<void>((resolve) => {
-        release = resolve
-      })
+      const { promise: queued, resolve: release } = Promise.withResolvers<void>()
       lockQueues.set(name, queued)
       await previous
       try {
@@ -67,12 +58,9 @@ afterEach(() => {
 test('reports rejected snapshot and action fetches without reporting caller cancellation', async () => {
   const capture = spyOn(Sentry, 'captureException').mockReturnValue('fixture-event')
   const failure = new TypeError('PRIVATE_SENTINEL transport failed')
-  globalThis.fetch = Object.assign(
-    async () => {
-      throw failure
-    },
-    { preconnect: originalFetch.preconnect },
-  )
+  stubFetch(async () => {
+    throw failure
+  })
   try {
     await expect(getDesktopSnapshot()).rejects.toBe(failure)
     await expect(
@@ -124,9 +112,7 @@ test('preserves HTTP status and recognized conversation errors without trusting 
     [503, { error: 'Unavailable', code: 'model_selection_unavailable' }, 'Unavailable', undefined],
     [503, { error: 'Unavailable', code: 'file_conflict' }, 'Unavailable', undefined],
   ] as const) {
-    globalThis.fetch = Object.assign(async () => Response.json(body, { status }), {
-      preconnect: originalFetch.preconnect,
-    })
+    stubFetch(async () => Response.json(body, { status }))
     const error = await runTengriAction({
       action: 'resume-thread',
       agentId: 'agent-errors',
@@ -144,7 +130,7 @@ test('reports a failed history record from an HTTP 200 stream with its response 
     return 'fixture-event'
   })
   const traceId = 'd'.repeat(32)
-  globalThis.fetch = Object.assign(
+  stubFetch(
     async () =>
       new Response(
         [
@@ -162,7 +148,6 @@ test('reports a failed history record from an HTTP 200 stream with its response 
           headers: { 'Content-Type': 'application/x-ndjson', 'x-trace-id': traceId },
         },
       ),
-    { preconnect: originalFetch.preconnect },
   )
   try {
     await expect(
@@ -183,14 +168,11 @@ describe('Tengri guest operation coordination', () => {
     test(`keeps lifecycle controls available during ${action.action} and cancels it on transition`, async () => {
       const agentId = action.agentId
       const started = Promise.withResolvers<void>()
-      globalThis.fetch = Object.assign(
-        async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-          started.resolve()
-          await waitForAbort(init?.signal)
-          throw init?.signal?.reason
-        },
-        { preconnect: originalFetch.preconnect },
-      )
+      stubFetch(async (_input, init) => {
+        started.resolve()
+        await waitForAbort(init?.signal)
+        throw init?.signal?.reason
+      })
       const pending = runTengriAction(action).catch((error: unknown) => error)
       await started.promise
       const blocked = getTengriGuestOperationSnapshot(agentId)
@@ -209,7 +191,7 @@ describe('Tengri guest operation coordination', () => {
     const agentId = 'agent-lifecycle'
     const snapshots: boolean[] = []
     const actions: string[] = []
-    globalThis.fetch = (async (_input, init) => {
+    stubFetch(async (_input, init) => {
       if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body')
       const action = JSON.parse(init.body) as { action: string }
       actions.push(action.action)
@@ -218,7 +200,7 @@ describe('Tengri guest operation coordination', () => {
         throw init?.signal?.reason
       }
       return Response.json({ result: action.action === 'sleep-agent' ? { phase: 'sleeping' } : { entries: [] } })
-    }) as typeof fetch
+    })
 
     const unsubscribe = subscribeTengriGuestOperations(agentId, () => {
       snapshots.push(getTengriGuestOperationSnapshot(agentId))
@@ -270,10 +252,10 @@ describe('Tengri guest operation coordination', () => {
 
   test('preserves caller cancellation while tracking the shared guest request', async () => {
     const agentId = 'agent-caller-abort'
-    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    stubFetch(async (_input, init) => {
       await waitForAbort(init?.signal)
       throw init?.signal?.reason
-    }) as unknown as typeof fetch
+    })
     const caller = new AbortController()
     const pending = runTengriAction({ action: 'codex-account', agentId }, caller.signal).catch(
       (error: unknown) => error,
@@ -296,37 +278,48 @@ function waitForAbort(signal: AbortSignal | null | undefined) {
   })
 }
 
+const fixtureOptions = { principalId: 'fixture-human' }
+type RecordedAction = { action: string; operationId: string; displayName?: string }
+
+function captureLifecycleRequests(respond: (request: RecordedAction, requests: RecordedAction[]) => Response) {
+  const requests: RecordedAction[] = []
+  stubFetch(async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body')
+    const request = JSON.parse(init.body) as RecordedAction
+    requests.push(request)
+    return respond(request, requests)
+  })
+  return requests
+}
+
+const lifecycleResult = (result: unknown = {}) => Response.json({ result })
+const workspaceRemoved = () =>
+  Response.json({ error: 'Workspace removed', code: 'lifecycle_superseded' }, { status: 409 })
+
 test('reuses an uncertain runtime operation and allocates a new ID only after success', async () => {
-  const requests: Array<{ action: string; operationId: string }> = []
-  globalThis.fetch = (async (_input, init) => {
-    requests.push(JSON.parse(String(init?.body)))
-    return requests.length === 1
+  const requests = captureLifecycleRequests((_request, recorded) => {
+    return recorded.length === 1
       ? Response.json({ error: 'Unavailable' }, { status: 503 })
       : Response.json({ result: { id: 'agent-test' } })
-  }) as typeof fetch
+  })
   const action = { action: 'sleep-agent' as const, agentId: 'agent-test', workspaceUid: crypto.randomUUID() }
-  const options = { principalId: 'fixture-human' }
-  await expect(runTengriAction(action, options)).rejects.toMatchObject({ status: 503 })
+  await expect(runTengriAction(action, fixtureOptions)).rejects.toMatchObject({ status: 503 })
   expect(storage.getItem('tengri.pending-lifecycle.v2/fixture-human')).toContain(requests[0].operationId)
-  await runTengriAction(action, options)
+  await runTengriAction(action, fixtureOptions)
   expect(requests[1].operationId).toBe(requests[0].operationId)
   expect(storage.getItem('tengri.pending-lifecycle.v2/fixture-human')).toBe('[]')
-  await runTengriAction(action, options)
+  await runTengriAction(action, fixtureOptions)
   expect(requests[2].operationId).not.toBe(requests[0].operationId)
 })
 
 test('retains the exact creation request until its uncertain outcome is resolved', async () => {
-  const requests: Array<{ displayName: string; operationId: string }> = []
-  globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-    if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body')
-    requests.push(JSON.parse(init.body))
+  const requests = captureLifecycleRequests(() => {
     throw new TypeError('connection lost')
-  }) as unknown as typeof fetch
-  const options = { principalId: 'fixture-human' }
-  await expect(runTengriAction({ action: 'create-agent', displayName: 'Original' }, options)).rejects.toThrow(
+  })
+  await expect(runTengriAction({ action: 'create-agent', displayName: 'Original' }, fixtureOptions)).rejects.toThrow(
     'connection lost',
   )
-  await expect(runTengriAction({ action: 'create-agent', displayName: 'Changed' }, options)).rejects.toThrow(
+  await expect(runTengriAction({ action: 'create-agent', displayName: 'Changed' }, fixtureOptions)).rejects.toThrow(
     'connection lost',
   )
   expect(requests).toHaveLength(2)
@@ -334,20 +327,16 @@ test('retains the exact creation request until its uncertain outcome is resolved
 })
 
 test('reconciles an externally removed creation before submitting a different name', async () => {
-  const requests: Array<{ displayName: string; operationId: string }> = []
-  globalThis.fetch = (async (_input, init) => {
-    if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body')
-    requests.push(JSON.parse(init.body))
-    return requests.length === 2
-      ? Response.json({ error: 'Workspace removed', code: 'lifecycle_superseded' }, { status: 409 })
-      : Response.json({ result: { displayName: requests.at(-1)?.displayName } })
-  }) as typeof fetch
-  const options = { principalId: 'fixture-human' }
-  await runTengriAction({ action: 'create-agent', displayName: 'Original workspace' }, options)
+  const requests = captureLifecycleRequests((_request, recorded) => {
+    return recorded.length === 2
+      ? workspaceRemoved()
+      : Response.json({ result: { displayName: recorded.at(-1)?.displayName } })
+  })
+  await runTengriAction({ action: 'create-agent', displayName: 'Original workspace' }, fixtureOptions)
   expect(
     await runTengriAction<{ displayName: string }>(
       { action: 'create-agent', displayName: 'Replacement workspace' },
-      options,
+      fixtureOptions,
     ),
   ).toEqual({
     displayName: 'Replacement workspace',
@@ -364,35 +353,28 @@ test('reconciles an externally removed creation before submitting a different na
 test.each([403, 503])('preserves the original creation when reconciliation returns %s', async (status) => {
   const requests: Array<{ displayName: string; operationId: string }> = []
   let unavailable = true
-  globalThis.fetch = (async (_input, init) => {
+  stubFetch(async (_input, init) => {
     if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body')
     requests.push(JSON.parse(init.body))
     if (requests.length > 1 && requests.at(-1)?.operationId === requests[0].operationId) {
-      return unavailable
-        ? Response.json({ error: 'Recovery denied or unavailable' }, { status })
-        : Response.json({ error: 'Workspace removed', code: 'lifecycle_superseded' }, { status: 409 })
+      return unavailable ? Response.json({ error: 'Recovery denied or unavailable' }, { status }) : workspaceRemoved()
     }
-    return Response.json({ result: {} })
-  }) as typeof fetch
-  const options = { principalId: 'fixture-human' }
-  await runTengriAction({ action: 'create-agent', displayName: 'Original workspace' }, options)
+    return lifecycleResult()
+  })
+  await runTengriAction({ action: 'create-agent', displayName: 'Original workspace' }, fixtureOptions)
   const replacement = { action: 'create-agent' as const, displayName: 'Replacement workspace' }
-  expect(await runTengriAction(replacement, options).catch((error: unknown) => error)).toMatchObject({ status })
+  expect(await runTengriAction(replacement, fixtureOptions).catch((error: unknown) => error)).toMatchObject({ status })
   expect(requests[1]).toEqual(requests[0])
   expect(storage.getItem('tengri.pending-lifecycle.v2/fixture-human')).toContain(requests[0].operationId)
   unavailable = false
-  await runTengriAction(replacement, options)
+  await runTengriAction(replacement, fixtureOptions)
   expect(requests[2]).toEqual(requests[0])
   expect(requests[3].displayName).toBe('Replacement workspace')
   expect(requests[3].operationId).not.toBe(requests[0].operationId)
 })
 
 test('retains a committed creation for stale tabs until its exact workspace is deleted', async () => {
-  const requests: Array<{ action: string; operationId: string }> = []
-  globalThis.fetch = (async (_input, init) => {
-    requests.push(JSON.parse(String(init?.body)))
-    return Response.json({ result: {} })
-  }) as typeof fetch
+  const requests = captureLifecycleRequests(() => lifecycleResult())
   const options = { principalId: '424242' }
   const original = { action: 'create-agent' as const, displayName: 'Shared workspace' }
   await runTengriAction(original, options)
@@ -414,17 +396,12 @@ test('retains a committed creation for stale tabs until its exact workspace is d
 test.each(['same', 'different'])(
   'serializes concurrent %s creation intents before either request is sent',
   async (name) => {
-    const requests: Array<{ displayName: string; operationId: string }> = []
-    globalThis.fetch = (async (_input, init) => {
-      requests.push(JSON.parse(String(init?.body)))
-      return Response.json({ result: {} })
-    }) as typeof fetch
-    const options = { principalId: 'fixture-human' }
+    const requests = captureLifecycleRequests(() => lifecycleResult())
     const outcomes = await Promise.allSettled([
-      runTengriAction({ action: 'create-agent', displayName: 'Shared workspace' }, options),
+      runTengriAction({ action: 'create-agent', displayName: 'Shared workspace' }, fixtureOptions),
       runTengriAction(
         { action: 'create-agent', displayName: name === 'same' ? 'Shared workspace' : 'Different' },
-        options,
+        fixtureOptions,
       ),
     ])
     expect(outcomes[0].status).toBe('fulfilled')
@@ -438,13 +415,10 @@ test.each(['same', 'different'])(
 test('fails before sending a lifecycle request when cross-tab locking is unavailable', async () => {
   const locks = Object.getOwnPropertyDescriptor(navigator, 'locks')
   let called = false
-  globalThis.fetch = Object.assign(
-    async () => {
-      called = true
-      return Response.json({ result: {} })
-    },
-    { preconnect: originalFetch.preconnect },
-  )
+  stubFetch(async () => {
+    called = true
+    return lifecycleResult()
+  })
   Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
   try {
     await expect(
@@ -461,13 +435,11 @@ test('fails before sending a lifecycle request when cross-tab locking is unavail
 test.each(['Original', 'Different'])(
   'scopes uncertain creates to each signed-in principal: %s',
   async (displayName) => {
-    const requests: Array<{ operationId: string }> = []
-    globalThis.fetch = (async (_input, init) => {
-      requests.push(JSON.parse(String(init?.body)))
-      return requests.length === 1
+    const requests = captureLifecycleRequests((_request, recorded) => {
+      return recorded.length === 1
         ? Response.json({ error: 'Unavailable' }, { status: 503 })
         : Response.json({ result: { id: 'agent-test' } })
-    }) as typeof fetch
+    })
     const original = { action: 'create-agent' as const, displayName: 'Original' }
     await expect(runTengriAction(original, { principalId: 'first-human' })).rejects.toMatchObject({ status: 503 })
     await runTengriAction({ action: 'create-agent', displayName }, { principalId: 'second-human' })
@@ -480,13 +452,11 @@ test.each(['Original', 'Different'])(
 test.each(['sleep-agent', 'create-agent'] as const)(
   'clears a superseded %s before a fresh retry without acknowledging it',
   async (kind) => {
-    const requests: Array<{ operationId: string }> = []
-    globalThis.fetch = (async (_input, init) => {
-      requests.push(JSON.parse(String(init?.body)))
-      return requests.length === 1
+    const requests = captureLifecycleRequests((_request, recorded) => {
+      return recorded.length === 1
         ? Response.json({ error: 'Superseded', code: 'lifecycle_superseded' }, { status: 409 })
-        : Response.json({ result: {} })
-    }) as typeof fetch
+        : lifecycleResult()
+    })
     const action =
       kind === 'create-agent'
         ? { action: kind, displayName: 'Tengri' }
@@ -519,13 +489,13 @@ test.each(['matching', 'known-operation', 'unrelated', 'failed', 'another-princi
       )
     }
     const requests: Array<{ action: string; operationId: string }> = []
-    globalThis.fetch = (async (_input, init) => {
+    stubFetch(async (_input, init) => {
       const request = JSON.parse(String(init?.body)) as (typeof requests)[number]
       requests.push(request)
       if (requests.length === 1 || (deletion === 'failed' && request.action === 'delete-agent'))
         return Response.json({ error: 'Uncertain outcome' }, { status: 503 })
-      return Response.json({ result: {} })
-    }) as typeof fetch
+      return lifecycleResult()
+    })
     await expect(runTengriAction(original, { principalId })).rejects.toMatchObject({ status: 503 })
     const creationId = requests[0].operationId
     const agentId =
@@ -562,13 +532,10 @@ test.each(['matching', 'known-operation', 'unrelated', 'failed', 'another-princi
 
 test('requires a signed-in principal before allocating or sending a lifecycle operation', async () => {
   let called = false
-  globalThis.fetch = Object.assign(
-    async () => {
-      called = true
-      return Response.json({ result: {} })
-    },
-    { preconnect: originalFetch.preconnect },
-  )
+  stubFetch(async () => {
+    called = true
+    return lifecycleResult()
+  })
   await expect(runTengriAction({ action: 'create-agent', displayName: 'Original' })).rejects.toThrow(
     'signed-in session',
   )
@@ -586,19 +553,16 @@ test('renews saved connections before a turn without making connector availabili
     text: 'Describe this function',
     images: [],
   }
-  globalThis.fetch = Object.assign(
-    async (input: string | URL | Request, options?: RequestInit) => {
-      const path = String(input)
-      paths.push(path)
-      if (path === '/api/tengri/connections') {
-        expect(JSON.parse(String(options?.body))).toEqual({ kind: 'reconcile', agentId: action.agentId })
-        return Response.json({ error: 'The connector is unavailable' }, { status: 503 })
-      }
-      expect(JSON.parse(String(options?.body))).toEqual(action)
-      return Response.json({ result: { accepted: true } })
-    },
-    { preconnect: originalFetch.preconnect },
-  )
+  stubFetch(async (input: string | URL | Request, options?: RequestInit) => {
+    const path = String(input)
+    paths.push(path)
+    if (path === '/api/tengri/connections') {
+      expect(JSON.parse(String(options?.body))).toEqual({ kind: 'reconcile', agentId: action.agentId })
+      return Response.json({ error: 'The connector is unavailable' }, { status: 503 })
+    }
+    expect(JSON.parse(String(options?.body))).toEqual(action)
+    return Response.json({ result: { accepted: true } })
+  })
   expect(await runTengriAction<{ accepted: boolean }>(action)).toEqual({ accepted: true })
   expect(paths).toEqual(['/api/tengri/connections', '/api/tengri'])
 })

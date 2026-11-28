@@ -67,7 +67,7 @@ Seed acronym names and `Bayn:` analysis names are reserved keys for this sync. U
 
 ### SQL parameters and limits
 
-All five analyses bind `$1` as the verified account ID (`text`), `$2` as the inclusive start, and `$3` as the exclusive
+All analyses bind `$1` as the verified account ID (`text`), `$2` as the inclusive start, and `$3` as the exclusive
 end (both `timestamptz`). Use driver bind parameters, never interpolation. Use an increasing bounded window and
 America/New_York midnights for a full execution date. Cash fee settlement uses the corresponding half-open range
 of New York economic dates, with `$3` also the posting cutoff. Pass account identity only at query time; never store
@@ -80,6 +80,28 @@ different checks; neither infers missing fills, settlement, or executable slippa
 snapshots, not a post-close certification. For the B0 live gate use the [live audit](../live-profitability-audit-runbook.md).
 PDT refers to the legacy research assumption and [FINRA's transition](https://syndication.finra.org/content/understanding-new-intraday-margin-requirements),
 not a live account-capability decision. Auction cutoffs refer to [Alpaca's order contract](https://docs.alpaca.markets/us/reference/getorderforaccount).
+
+### Execution quality through MCP
+
+After migration 0230 reaches the standby, verify both views appear in the Bayn catalog and sync the seed. Use
+`list_custom_analyses` in Auto Ontology MCP to find `Bayn: Daily execution order churn`,
+`Bayn: Daily execution fill slippage`, and `Bayn: Session fill fee drag`.
+Use `check_answerable` and `ask_question` with the `bayn` datasource and the relevant view below. For direct SQL,
+bind the verified live account and an inclusive/exclusive pair of New York midnights. Daily rows cannot answer an
+intraday range.
+
+- `public.execution_order_churn_daily` groups orders by the New York date of their first retained broker update and
+  uses their latest status. This is not an as-of snapshot or a count of cancel requests. An order can be canceled
+  after a partial execution. Zero eligible denominators produce null, not zero.
+- `public.execution_fill_slippage_daily` groups fills by New York execution date and side. Both views separate the
+  intent's strategy and its authority generation's strategy parameter schema version. Unbound fills and orders
+  remain visible with a null strategy. Child orders can inherit the parent intent for attribution, not its price
+  reference. Limit improvement and decision-reference slippage have separate coverage counts and opposite signs.
+  Neither is an observed submit-time arrival quote or the B0 round-trip slippage verdict.
+- Fill fee basis points use recorded fill fees and executed notional, in USD micros. A zero recorded fee does not
+  prove an execution incurred no cost. Account-level cash fees have no fill or strategy key in
+  `broker_cash_fee_deltas`; do not allocate them by guess or add them to the fill-level metric. Read the separately
+  saved cash fee settlement analysis for those.
 
 ## AgentRun knowledge deltas
 

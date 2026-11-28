@@ -1,34 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { MemoryStorage } from '@/lib/tengri/storage.fixture'
 
 import { clearDeletedDesktopState } from './desktop-session-storage'
-
-class MemoryStorage implements Storage {
-  private readonly values = new Map<string, string>()
-
-  get length() {
-    return this.values.size
-  }
-
-  clear() {
-    this.values.clear()
-  }
-
-  getItem(key: string) {
-    return this.values.get(key) ?? null
-  }
-
-  key(index: number) {
-    return [...this.values.keys()][index] ?? null
-  }
-
-  removeItem(key: string) {
-    this.values.delete(key)
-  }
-
-  setItem(key: string, value: string) {
-    this.values.set(key, value)
-  }
-}
 
 const originalStorageDescriptors = {
   localStorage: Object.getOwnPropertyDescriptor(globalThis, 'localStorage'),

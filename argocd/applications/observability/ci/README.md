@@ -56,6 +56,28 @@ and reusable callers from workflow YAML and fails if a new image workflow is mis
 `bun run packages/scripts/src/ci/generate-observability-workflows.ts` when adding a workflow. Diagnostic image builds
 can be included; ordinary semantic checks are excluded.
 
+## Optional SQL projection
+
+The [CI release ontology](../../../../docs/ci/ontology/README.md) reads a subset of the SQLite facts from
+`agents-db-next`. The default deployment does not configure `CI_AUDIT_DATABASE_URL` and does not load a
+Postgres driver or start a projection process. To enable it in a reviewed deployment, package Psycopg 3 in the
+collector image and inject the dedicated `ci_audit_writer` URL for the `agents` database via the approved
+credential path. Use the primary Service and verified TLS settings; never reuse the reader or database owner.
+
+Projection runs only after the Loki drain and metric refresh, if the cycle still has time. A separate process
+gets at most five seconds (including connect and commit); the collector kills a timed-out worker and continues
+without changing its collection heartbeat, errors, or Loki outbox. Failures emit a separate sanitized
+`ci_audit_projection_failed` log.
+
+Each pass upserts up to 100 workflow and job rows combined from retained completed attempts, newest first. The
+SQLite checkpoint advances only after Postgres commits. Retry reuses the same run and job IDs, including after
+a timeout with uncertain commit status. Jobs collected before an attempt ends still reach Loki on schedule but
+enter SQL after the attempt completes. Each pass also refreshes up to 100 failure clusters, drops up to 100 stale
+clusters, and prunes up to 100 rows per fact table for runs last updated more than 90 days ago. These limits leave
+the projection eventually consistent; sustained collector load or a database outage can make it stale.
+If Postgres is restored to a point older than the SQLite checkpoint, clear only `ci_audit_checkpoints` through
+the approved recovery path to replay retained attempts. Keep the original job facts and Loki outbox intact.
+
 ## Interpreting the dashboard
 
 The default view selects ARC, image-build jobs, and push events. Hosted runners, publishing jobs, validation jobs,
@@ -88,11 +110,16 @@ The existing Alloy collector probes Attic's internal cache metadata endpoint eve
 availability, latency, and HTTP status to Mimir. It ships the Attic application container's logs to Loki with namespace,
 pod, container, and service labels. Routine informational SQL statements are dropped; warnings and errors remain visible.
 
-Rolling p50/p95 and sample counts use actual completion times. `1h` covers the latest hour; `7d_baseline` covers the
-preceding seven days, excluding that hour. These gauges provide an immediate baseline during backfill. They are the single timing export. Detailed phase,
-BuildKit and workflow histograms are not exported because their label combinations exhausted the shared Mimir
-series allowance without serving dashboard timing queries. SQLite and Loki retain the underlying records; the
-collection-delay histogram remains cumulative. Dashboard filters use `ci_jobs_completed`.
+Rolling percentiles, phase totals and sample counts use actual completion times. `1h` covers the latest hour;
+`7d_baseline` covers the preceding seven days, excluding that hour. The collector exports recent p50/p95 for
+successful execution and queue timings and for BuildKit cache import, cache export and image export. The baseline
+exports only the successful execution median. Phase totals cover recent steps and exclude whole-job and BuildKit
+timings, which would double-count time in the phase breakdown. Sample counts still cover all cohorts because the
+dashboard's cache-state filter reads their labels. SQLite and Loki retain the underlying records.
+
+Collection delay is a cumulative count and sum without buckets. Mimir still drops buckets from older collector
+versions during rollback. The collection freshness alerts use the last successful poll and oldest live pending
+attempt gauges instead.
 
 Click a build record's runner name to open its resource history during the job. GitHub links select the exact run
 attempt and job. Source revisions and cache evidence support investigation; a timing difference alone does not
@@ -172,5 +199,5 @@ kubectl --context galactic-tailscale -n arc exec deployment/ci-observability -- 
 
 It checks the exact job set and independently recomputes queue/execution durations from GitHub, verifies sanitized
 records reached Loki, and confirms Mimir sees fresh polling. Follow with the Grafana dashboard and live rule-health
-readback. Collection-delay histograms exclude initial backfill and retain the initial installation timestamp across
+readback. Collection-delay totals exclude initial backfill and retain the initial installation timestamp across
 restarts. Warning alerts opt into the existing email route with `notify: email`.

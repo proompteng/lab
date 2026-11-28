@@ -1,26 +1,9 @@
 import { expect, test } from 'bun:test'
+import { MemoryStorage } from './storage.fixture'
 import { completeCodexOperation, prepareCodexOperation } from './codex-operation'
 
-function storageFixture(): Storage {
-  const values = new Map<string, string>()
-  return {
-    get length() {
-      return values.size
-    },
-    clear: () => values.clear(),
-    getItem: (key) => values.get(key) ?? null,
-    key: (index) => [...values.keys()][index] ?? null,
-    removeItem: (key) => {
-      values.delete(key)
-    },
-    setItem: (key, value) => {
-      values.set(key, value)
-    },
-  }
-}
-
 test('a lost response retains the operation identity across retries and reloads', async () => {
-  const storage = storageFixture()
+  const storage = new MemoryStorage()
   const input = { threadId: 'thread-1', text: 'Write the requested file', images: [] }
   const operation = await prepareCodexOperation('submission', input, '', {}, storage)
   const id = operation.id
@@ -33,7 +16,7 @@ test('a lost response retains the operation identity across retries and reloads'
 })
 
 test('a different input gets a different identity', async () => {
-  const storage = storageFixture()
+  const storage = new MemoryStorage()
   const operation = await prepareCodexOperation('submission', { text: 'First request' }, '', {}, storage)
   expect((await prepareCodexOperation('submission', { text: 'Different request' }, '', {}, storage)).id).not.toBe(
     operation.id,
@@ -41,7 +24,7 @@ test('a different input gets a different identity', async () => {
 })
 
 test('an ambiguous retry retains the original model settings without rotating its identity', async () => {
-  const storage = storageFixture()
+  const storage = new MemoryStorage()
   const input = { threadId: 'thread', text: 'One request', images: [] }
   const operation = await prepareCodexOperation(
     'submission',

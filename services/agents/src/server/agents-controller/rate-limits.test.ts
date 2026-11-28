@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  type ControllerRateState,
-  checkControllerRateLimits,
-  checkRateLimit,
-  getRateBucket,
-  resetControllerRateState,
-} from '~/server/agents-controller/rate-limits'
+import { type ControllerRateState, checkControllerRateLimits, resetControllerRateState } from './rate-limits'
 
 const createRateState = (): ControllerRateState => ({
   cluster: { count: 0, resetAt: 0 },
@@ -15,28 +9,13 @@ const createRateState = (): ControllerRateState => ({
 })
 
 describe('agents controller rate-limits module', () => {
-  it('creates and reuses buckets', () => {
-    const map = new Map<string, { count: number; resetAt: number }>()
-    const first = getRateBucket(map, 'ns-a')
-    const second = getRateBucket(map, 'ns-a')
-
-    expect(first).toBe(second)
-    expect(map.get('ns-a')).toBe(first)
-  })
-
-  it('applies bucket windowing and retry-after behavior', () => {
-    const bucket = { count: 0, resetAt: 0 }
-
-    expect(checkRateLimit(bucket, 2, 1000, 100)).toEqual({ ok: true })
-    expect(bucket).toEqual({ count: 1, resetAt: 1100 })
-
-    expect(checkRateLimit(bucket, 2, 1000, 200)).toEqual({ ok: true })
-    expect(bucket.count).toBe(2)
-
-    expect(checkRateLimit(bucket, 2, 1000, 300)).toEqual({ ok: false, retryAfterSeconds: 1 })
-
-    expect(checkRateLimit(bucket, 2, 1000, 1200)).toEqual({ ok: true })
-    expect(bucket.count).toBe(1)
+  it('does not allocate buckets when rate limiting is disabled', () => {
+    const state = createRateState()
+    const limits = { windowSeconds: 60, perNamespace: 0, perRepo: 0, cluster: 0 }
+    expect(
+      checkControllerRateLimits({ namespace: 'agents', repository: 'Org/Repo', state, limits, now: 1_000 }),
+    ).toEqual({ ok: true })
+    expect(state).toEqual(createRateState())
   })
 
   it('resets controller rate state maps and counters', () => {
@@ -69,7 +48,6 @@ describe('agents controller rate-limits module', () => {
         state,
         limits,
         now: 1000,
-        normalizeRepository: (value) => value.trim().toLowerCase(),
       }),
     ).toEqual({ ok: true })
 
@@ -80,7 +58,6 @@ describe('agents controller rate-limits module', () => {
         state,
         limits,
         now: 2000,
-        normalizeRepository: (value) => value.trim().toLowerCase(),
       }),
     ).toEqual({
       ok: false,
@@ -97,7 +74,6 @@ describe('agents controller rate-limits module', () => {
         state: repoState,
         limits: { ...limits, perNamespace: 2 },
         now: 1000,
-        normalizeRepository: (value) => value.trim().toLowerCase(),
       }),
     ).toEqual({ ok: true })
 
@@ -108,7 +84,6 @@ describe('agents controller rate-limits module', () => {
         state: repoState,
         limits: { ...limits, perNamespace: 2 },
         now: 1500,
-        normalizeRepository: (value) => value.trim().toLowerCase(),
       }),
     ).toEqual({
       ok: false,
@@ -125,7 +100,6 @@ describe('agents controller rate-limits module', () => {
         state: clusterState,
         limits: { ...limits, perNamespace: 3 },
         now: 100,
-        normalizeRepository: (value) => value.trim().toLowerCase(),
       }),
     ).toEqual({ ok: true })
 
@@ -136,7 +110,6 @@ describe('agents controller rate-limits module', () => {
         state: clusterState,
         limits: { ...limits, perNamespace: 3 },
         now: 200,
-        normalizeRepository: (value) => value.trim().toLowerCase(),
       }),
     ).toEqual({ ok: true })
 
@@ -147,7 +120,6 @@ describe('agents controller rate-limits module', () => {
         state: clusterState,
         limits: { ...limits, perNamespace: 3 },
         now: 300,
-        normalizeRepository: (value) => value.trim().toLowerCase(),
       }),
     ).toEqual({
       ok: false,
@@ -155,5 +127,22 @@ describe('agents controller rate-limits module', () => {
       retryAfterSeconds: 60,
       message: 'Cluster rate limit reached',
     })
+  })
+
+  it('does not consume cluster or namespace budget when a repository is throttled', () => {
+    const state = createRateState()
+    const limits = { windowSeconds: 60, perNamespace: 2, perRepo: 1, cluster: 3 }
+    const admit = (namespace: string, repository: string, now: number) =>
+      checkControllerRateLimits({ namespace, repository, state, limits, now })
+
+    expect(admit('agents', 'org/hot', 1_000)).toEqual({ ok: true })
+    for (let i = 0; i < 200; i += 1) {
+      expect(admit('agents', 'Org/Hot', 2_000)).toMatchObject({ ok: false, scope: 'repo' })
+    }
+    expect(admit('agents', 'org/cold', 2_000)).toEqual({ ok: true })
+    expect(admit('agents', 'org/third', 2_000)).toMatchObject({ ok: false, scope: 'namespace' })
+    expect(admit('other', 'org/third', 2_000)).toEqual({ ok: true })
+    expect(admit('other', 'org/fourth', 2_000)).toMatchObject({ ok: false, scope: 'cluster', retryAfterSeconds: 59 })
+    expect(admit('agents', 'Org/Hot', 61_000)).toEqual({ ok: true })
   })
 })

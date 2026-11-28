@@ -93,22 +93,29 @@ uses Bun: Landing drives the Ofz/Tengri/Nanoagent/Proompteng cohort, and Signal 
 Publication slots are shared only after selection so unrelated pushes cannot displace a pending publish.
 Bayn retains its comparison against the last verified cohort. Manual selection retains each workflow's existing controls.
 
-The Agents Kind smoke test resolves unaffected image defaults from one fetched `kargo/agents` commit, records that
-commit as `gitops_revision`, and reads its values without changing the source checkout. Kargo owns the promoted
-digests. The baseline values on `main` can reference images removed by registry retention and are not CI defaults.
+The Agents Kind smoke test resolves unaffected control-plane and controller images from one fetched `kargo/agents`
+commit, records it as `gitops_revision`, and reads its values without changing the checkout. Kargo owns those digests.
+The baseline values on `main` can reference images removed by registry retention and are not CI defaults.
+Lifecycle jobs use the slim `agents-smoke-runner` image. Local smoke builds it from the checkout. Published smoke
+uses the digest for `agents-smoke-runner:sha-<promoted source SHA>` and builds from checkout only if the registry
+confirms the tag is absent. The smoke image is published separately from the four-image Kargo receipt. CI still
+verifies the full toolchain in a fresh Pod when the plan selects a local production runner build.
 
 Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain source, authorization,
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
 Bayn also publishes images only from `main`. PRs limited to offline Bayn tools or documentation use the fast tier:
 lint, type checks, and tools unit tests without disposable services. Full-tier inputs include Bayn source (including
-tests), migrations, Bayn GitOps, workflow definitions, and the integration drivers and runtime inputs stored under
-tools and docs. Mixed PRs are not eligible for the fast tier. Standalone contract, formal, and GEPA changes still
-select their owned checks when they don't touch full-tier inputs. The same `Bayn release gate` requires success for
-every selected job and a skip for every unselected job. Merge groups, dispatches, and release callers always run
-every suite. See the [Bayn test-suite audit](../../docs/bayn/test-suite-audit-2026-11-27.md) for coverage and fixtures.
+tests), migrations, Bayn workflows and their shared workflow/action, and the integration drivers and runtime inputs
+stored under tools and docs. Mixed PRs are not eligible for the fast tier. Bayn GitOps changes select PR contracts
+and keep root manifest validation; the PostgreSQL monitoring ConfigMap and shared ClickHouse archive DDL also select
+the integration suites that execute those inputs. Formal verification and GEPA are selected independently for their
+proof/conformance and strategy/prompt inputs. The same `Bayn release gate` requires success for every selected job
+and a skip for every unselected job. Merge groups, dispatches, and release callers always run every suite.
+See the [Bayn test-suite audit](../../docs/bayn/test-suite-audit-2026-11-27.md) for coverage and fixtures.
 Replay image and execution acceptance share one hosted job and Nix environment, including dependency boundaries.
-The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
+The inference ledger group owns the native equity-short regression with and without TigerBeetle, so the PostgreSQL
+matrix does not repeat the PostgreSQL-only case.
 Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
 the controller. Runtime compiler tools retain main-branch publication.
 Ofz, Tengri, and Nanoagent source validation uses GitHub-hosted runners; native image and KVM jobs retain the cluster

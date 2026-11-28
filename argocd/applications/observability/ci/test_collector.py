@@ -1,22 +1,32 @@
+import contextlib
 import io
 import json
+import os
 import pathlib
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import urllib.error
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import patch
+import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from unittest.mock import MagicMock, patch
 
 from collector import (
     Collector,
     GitHub,
     Store,
     cache_evidence,
+    exposition,
     job_record,
+    labels,
+    metrics_handler,
     phase,
+    project_ci_audit,
     timestamp,
 )
 
@@ -291,9 +301,11 @@ class CollectorTests(unittest.TestCase):
         self.assertIn("ci_jobs_completed", metrics)
 
     def test_retained_histogram_rows_cannot_reintroduce_unbounded_phase_series(self):
-        self.store.observe(
-            "retained", "build", "ci_job_phase_duration_seconds", {"phase": "build"}, 12
-        )
+        with self.store.db:
+            self.store.db.execute(
+                """INSERT INTO aggregates VALUES
+                   ('ci_job_phase_duration_seconds', '{"phase":"build"}', 1, 12, '[0,0,0,1]')"""
+            )
         metrics = self.store.render(self.now)
         self.assertNotIn("ci_job_phase_duration_seconds", metrics)
 
@@ -350,19 +362,77 @@ class CollectorTests(unittest.TestCase):
         )
 
     def test_rolling_comparisons_use_event_time_and_keep_cache_cohorts_separate(self):
-        for offset, state in [(0, "warm"), (1, "cold"), (2, "warm")]:
-            record = job_record(run(), job())
+        exports = {"cache_import": 1.0, "cache_export": 2.0, "image_export": 3.0}
+        phases = {
+            "queue": 213.0,
+            "execution": 239.0,
+            "build": 16.0,
+            "unattributed": 223.0,
+            **{f"buildkit_{phase}": value for phase, value in exports.items()},
+        }
+        export_percentiles = [
+            (f"buildkit_{phase}", p) for phase in exports for p in (50, 95)
+        ]
+        recent_success = export_percentiles + [
+            ("queue", 50),
+            ("queue", 95),
+            ("execution", 50),
+            ("execution", 95),
+        ]
+        fixture = [
+            ("1h", "warm", "success", recent_success),
+            ("1h", "cold", "success", recent_success),
+            ("7d_baseline", "warm", "success", [("execution", 50)]),
+            ("1h", "mixed", "failure", export_percentiles),
+            ("7d_baseline", "mixed", "failure", []),
+        ]
+        expected_percentiles, expected_totals, expected_samples = [], [], []
+        for offset, (window, state, outcome, quantiles) in enumerate(fixture):
+            record = job_record(
+                run(),
+                job() | {"conclusion": outcome},
+                [{"id": "build", "pattern": ".*"}],
+            )
             record["job_id"] += offset
-            if offset == 2:
+            if window == "7d_baseline":
                 record["completed_at"] = "2026-10-24T12:31:15Z"
             self.store.save_job(
-                record, {"state": state, "source": "test", "durations": {}}
+                record, {"state": state, "source": "test", "durations": exports}
             )
-        text = self.store.render(self.now)
-        self.assertIn('cache_state="warm"', text)
-        self.assertIn('cache_state="cold"', text)
-        self.assertIn('window="7d_baseline"', text)
-        self.assertIn('window="1h"', text)
+            attrs = labels(record, cache_state=state, window=window)
+            for phase_name in phases:
+                expected_samples.append(
+                    exposition(
+                        "ci_job_duration_samples", 1, attrs | {"phase": phase_name}
+                    ).strip()
+                )
+            if window == "1h":
+                for phase_name in ("build", "unattributed"):
+                    expected_totals.append(
+                        exposition(
+                            "ci_job_phase_total_seconds",
+                            phases[phase_name],
+                            attrs | {"phase": phase_name},
+                        ).strip()
+                    )
+            for phase_name, percentile in quantiles:
+                expected_percentiles.append(
+                    exposition(
+                        "ci_job_duration_percentile_seconds",
+                        phases[phase_name],
+                        attrs | {"phase": phase_name, "percentile": percentile},
+                    ).strip()
+                )
+        lines = self.store.render(self.now).splitlines()
+        for metric, expected in (
+            ("ci_job_duration_percentile_seconds", expected_percentiles),
+            ("ci_job_phase_total_seconds", expected_totals),
+            ("ci_job_duration_samples", expected_samples),
+        ):
+            with self.subTest(metric=metric):
+                self.assertCountEqual(
+                    [line for line in lines if line.startswith(metric + "{")], expected
+                )
 
     def test_loki_failure_retains_outbox_and_retry_uses_same_record_identity(self):
         received = []
@@ -441,6 +511,8 @@ class CollectorTests(unittest.TestCase):
             return io.BytesIO()
 
         with (
+            patch.dict(os.environ, {"CI_AUDIT_DATABASE_URL": "example"}),
+            patch("collector.subprocess.run") as project,
             patch.object(observer, "poll", side_effect=slow_poll),
             patch.object(observer, "history"),
             patch("time.time", side_effect=lambda: clock[0]),
@@ -453,6 +525,173 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(sizes, [100, 100, 1])
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0
+        )
+        project.assert_not_called()  # The optional writer cannot overrun the cycle.
+
+    def test_audit_projection_is_a_noop_without_a_url(self):
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ),
+            patch.dict(sys.modules, {"psycopg": None}),
+            patch("collector.subprocess.run") as worker,
+            patch.object(observer, "poll"),
+            patch.object(observer, "history"),
+            patch("time.sleep", side_effect=StopIteration),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(StopIteration),
+        ):
+            os.environ.pop("CI_AUDIT_DATABASE_URL", None)
+            project_ci_audit(self.path, os.environ.get("CI_AUDIT_DATABASE_URL"))
+            observer.run()
+        worker.assert_not_called()
+        self.assertEqual(output.getvalue(), "")
+        self.assertIsNone(
+            self.store.db.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='ci_audit_checkpoints'"
+            ).fetchone()
+        )
+
+    def test_audit_timeout_is_fail_open_after_loki_delivery(self):
+        record = job_record(run(), job())
+        self.store.save_job(record, cache_evidence(""))
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        output = io.StringIO()
+
+        def stall(command, *, timeout, **_kwargs):
+            self.assertLessEqual(timeout, 5)
+            self.assertNotIn("example", command)
+            self.assertEqual(
+                self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0
+            )
+            raise subprocess.TimeoutExpired(command, timeout)
+
+        with (
+            patch.dict(os.environ, {"CI_AUDIT_DATABASE_URL": "example"}),
+            patch("collector.subprocess.run", side_effect=stall) as worker,
+            patch.object(observer, "poll"),
+            patch.object(observer, "history"),
+            patch("urllib.request.urlopen", return_value=io.BytesIO()),
+            patch("time.sleep", side_effect=StopIteration),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(StopIteration),
+        ):
+            observer.run()
+        worker.assert_called_once()
+        self.assertEqual(observer.errors, 0)
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            {
+                "event": "ci_audit_projection_failed",
+                "error_type": "TimeoutExpired",
+            },
+        )
+
+    def test_audit_batches_retry_unacknowledged_rows_and_page_large_attempts(self):
+        value = run() | {"head_branch": "main"}
+        failed, unassigned = job(), job()
+        failed["conclusion"] = "failure"
+        failed["steps"][0]["conclusion"] = "failure"
+        unassigned.update(
+            id=failed["id"] + 1,
+            runner_name=None,
+            started_at="0001-01-01T00:00:00Z",
+            conclusion="cancelled",
+            steps=[],
+        )
+        last = job() | {"id": failed["id"] + 2}
+        jobs = [failed, unassigned, last]
+        self.store.discover(value, self.now)
+        for item in jobs:
+            self.store.save_job(job_record(value, item), cache_evidence(""))
+        self.store.finish(value, jobs)
+        self.assertNotIn(
+            "head_branch",
+            json.loads(
+                self.store.db.execute(
+                    "SELECT line FROM outbox ORDER BY id DESC LIMIT 1"
+                ).fetchone()[0]
+            ),
+        )
+
+        driver = types.SimpleNamespace(connect=MagicMock())
+        db = driver.connect.return_value.__enter__.return_value
+        cursor = db.cursor.return_value.__enter__.return_value
+        output = io.StringIO()
+        url = "postgresql://ci_audit_writer:private@localhost/agents"
+        with (
+            patch.dict(sys.modules, {"psycopg": driver}),
+            patch("collector.CI_AUDIT_ROW_LIMIT", 3),
+            patch("time.time", return_value=self.now),
+            contextlib.redirect_stdout(output),
+        ):
+            driver.connect.return_value.__exit__.side_effect = OSError(url)
+            project_ci_audit(self.path, url)
+            checkpoint = "SELECT job_cursor FROM ci_audit_checkpoints"
+            self.assertIsNone(self.store.db.execute(checkpoint).fetchone())
+            driver.connect.return_value.__exit__.side_effect = None
+            project_ci_audit(self.path, url)
+            self.assertEqual(
+                self.store.db.execute(checkpoint).fetchone()[0], unassigned["id"]
+            )
+            project_ci_audit(self.path, url)
+            self.assertEqual(self.store.db.execute(checkpoint).fetchone()[0], -1)
+            project_ci_audit(self.path, url)
+
+        self.assertNotIn("private", output.getvalue())
+        self.assertEqual(json.loads(output.getvalue())["error_type"], "OSError")
+        self.assertEqual(driver.connect.call_args.kwargs["user"], "ci_audit_writer")
+        self.assertEqual(driver.connect.call_args.kwargs["connect_timeout"], 2)
+        self.assertIn(
+            "statement_timeout=2000", driver.connect.call_args.kwargs["options"]
+        )
+        self.assertEqual(len(cursor.executemany.call_args_list), 6)
+        for index, expected_jobs in enumerate(
+            ([failed, unassigned], [failed, unassigned], [last])
+        ):
+            workflow_sql, workflows = cursor.executemany.call_args_list[2 * index].args
+            self.assertIn("ON CONFLICT (run_id) DO UPDATE", workflow_sql)
+            self.assertEqual(
+                [(row[0], row[2]) for row in workflows], [(value["id"], "main")]
+            )
+            job_sql, projected = cursor.executemany.call_args_list[2 * index + 1].args
+            self.assertIn("ON CONFLICT (job_id) DO NOTHING", job_sql)
+            self.assertEqual(
+                [row[0] for row in projected], [item["id"] for item in expected_jobs]
+            )
+        first_batch = cursor.executemany.call_args_list[1].args[1]
+        self.assertEqual(first_batch[0][-1], "build")
+        self.assertIsNone(first_batch[1][4])  # Runner.
+        self.assertIsNone(first_batch[1][7])  # Start time.
+        self.assertIsNone(first_batch[1][-1])  # Failure category.
+        self.assertEqual(len(cursor.execute.call_args_list), 4 * 3)
+        for statement in cursor.execute.call_args_list:
+            sql, params = statement.args
+            self.assertIn("LIMIT %s", sql)
+            self.assertEqual(params[-1], 3)
+        cluster_sql, params = cursor.execute.call_args_list[-3].args
+        self.assertIn("interval '24 hours'", cluster_sql)
+        self.assertIn("ON CONFLICT (cluster_key) DO UPDATE", cluster_sql)
+        self.assertEqual(params, (3, 3))
+
+    def test_audit_backfill_does_not_replace_the_latest_completed_attempt(self):
+        first = run() | {"conclusion": "failure"}
+        newest = run(2) | {"updated_at": "2026-10-25T12:34:49Z"}
+        self.store.discover(newest, self.now)
+        self.store.finish(newest, [])
+        driver = types.SimpleNamespace(connect=MagicMock())
+        cursor = driver.connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        with (
+            patch.dict(sys.modules, {"psycopg": driver}),
+            patch("time.time", return_value=self.now),
+        ):
+            project_ci_audit(self.path, "example")
+            self.store.finish(first, [])
+            project_ci_audit(self.path, "example")
+        self.assertEqual(cursor.executemany.call_count, 2)
+        self.assertEqual(
+            [list(call.args[1])[0][6] for call in cursor.executemany.call_args_list],
+            ["success", "success"],
         )
 
     def test_failed_active_poll_does_not_advance_success_heartbeat(self):
@@ -1119,6 +1358,58 @@ class CollectorTests(unittest.TestCase):
         self.store.db.close()
         self.store = Store(self.path)
         self.assertEqual(self.store.installed_at, installed)
+
+    def test_metrics_scrape_keeps_collection_delay_totals_without_buckets(self):
+        record = job_record(run(), job())
+        self.store.installed_at = timestamp("2026-10-25T12:30:00Z")
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO aggregates VALUES (?, ?, ?, ?, ?)",
+                (
+                    "ci_job_collection_delay_seconds",
+                    json.dumps(labels(record), sort_keys=True),
+                    2,
+                    90,
+                    json.dumps([0] * 4 + [2] * 9),
+                ),
+            )
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        observer.last_poll = self.now - 30
+        with patch("time.time", return_value=self.now):
+            self.store.save_job(record, cache_evidence(""))
+            backfill_job = job(2) | {"completed_at": "2026-10-25T12:29:59Z"}
+            self.store.save_job(job_record(run(2), backfill_job), cache_evidence(""))
+            self.store.discover(run(), self.now)
+            observer.refresh()
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), metrics_handler(observer)) as server:
+            worker = threading.Thread(target=server.serve_forever)
+            worker.start()
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{server.server_port}/metrics", timeout=5
+                ) as response:
+                    metrics = response.read().decode()
+            finally:
+                server.shutdown()
+                worker.join()
+
+        self.assertIn(
+            f"ci_observability_last_poll_timestamp_seconds {self.now - 30}\n", metrics
+        )
+        self.assertIn("ci_observability_oldest_live_pending_seconds 131.0\n", metrics)
+        actual = [
+            (line.split("{", 1)[0], float(line.rsplit(" ", 1)[1]))
+            for line in metrics.splitlines()
+            if line.startswith("ci_job_collection_delay_seconds_")
+        ]
+        self.assertCountEqual(
+            actual,
+            [
+                ("ci_job_collection_delay_seconds_count", 3),
+                ("ci_job_collection_delay_seconds_sum", 315),
+            ],
+        )
 
     def test_signed_log_failure_cannot_discard_completed_job_timings(self):
         api = FakeGitHub({}, {})

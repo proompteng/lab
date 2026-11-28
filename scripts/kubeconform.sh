@@ -87,11 +87,14 @@ SKIP_GVKS=(
   ceph.rook.io/v1/CephBlockPool
   ceph.rook.io/v1/CephCluster
   ceph.rook.io/v1/CephFilesystem
+  ceph.rook.io/v1/CephObjectStore
   ceph.rook.io/v1/CephObjectStoreAccount
   ceph.rook.io/v1/CephObjectStoreUser
   cert-manager.io/v1/Certificate
   cert-manager.io/v1/ClusterIssuer
   cert-manager.io/v1/Issuer
+  csi.ceph.io/v1/Driver
+  csi.ceph.io/v1/OperatorConfig
   external-secrets.io/v1/ClusterSecretStore
   external-secrets.io/v1/ExternalSecret
   external-secrets.io/v1/SecretStore

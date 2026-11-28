@@ -13,6 +13,7 @@ export type ArtifactUploadOptions = {
   env?: Record<string, string | undefined>
   fetch?: typeof fetch
   now?: () => Date
+  signal?: AbortSignal
 }
 
 const DEFAULT_REGION = 'us-east-1'
@@ -131,12 +132,14 @@ const requestS3Object = async (input: {
   method: 'GET' | 'PUT'
   range?: string
   timeoutMs?: number
+  signal?: AbortSignal
   config: ArtifactUploadConfig
   key: string
   body: Buffer
   fetch: typeof fetch
   now: Date
 }) => {
+  input.signal?.throwIfAborted()
   const key = normalizeArtifactKey(input.key)
   if (!key) throw new Error('artifact upload key is empty')
 
@@ -157,6 +160,7 @@ const requestS3Object = async (input: {
     `Signature=${signature}`,
   ].join(', ')
 
+  const timeout = AbortSignal.timeout(input.timeoutMs ?? 15_000)
   const response = await input.fetch(url, {
     method: input.method,
     redirect: 'error',
@@ -167,7 +171,7 @@ const requestS3Object = async (input: {
       ...(input.range ? { Range: input.range } : {}),
     },
     ...(input.method === 'PUT' ? { body: new Uint8Array(input.body).buffer } : {}),
-    signal: AbortSignal.timeout(input.timeoutMs ?? 15_000),
+    signal: input.signal ? AbortSignal.any([input.signal, timeout]) : timeout,
   })
   if (!response.ok) {
     await response.body?.cancel()
@@ -190,6 +194,7 @@ export class ArtifactStorageError extends Error {
 
 type S3ObjectRequest = {
   timeoutMs?: number
+  signal?: AbortSignal
   config: ArtifactUploadConfig
   key: string
   fetch: typeof fetch

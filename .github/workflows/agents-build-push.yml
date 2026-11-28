@@ -98,6 +98,18 @@ jobs:
       pr_number: ${{ github.event.pull_request.number || '' }}
     secrets: inherit
 
+  smoke-runner-image:
+    # CI-only fixture, published independently of the four-image Kargo receipt.
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: agents-smoke-runner
+      package_attr: agents-smoke-runner-image
+      tag: sha-${{ github.sha }}
+      tmpfs: ${{ github.event_name != 'workflow_dispatch' || inputs.tmpfs }}
+      publish_kargo_tag: false
+    secrets: inherit
+
   write-values:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs:

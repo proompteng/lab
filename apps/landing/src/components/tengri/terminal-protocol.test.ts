@@ -18,6 +18,15 @@ import {
   terminalTicketProtocol,
 } from './terminal-protocol'
 
+const resumeState = {
+  agentId: 'agent-a',
+  desktopId: 'desktop-a',
+  sessionId: 'abcdefghijklmnopqrstuvwx',
+  reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
+  sequence: 42,
+}
+const storedResume = JSON.stringify(resumeState)
+
 describe('Tengri terminal protocol', () => {
   test('decodes framed binary output and rejects malformed frames', () => {
     const frame = new Uint8Array([1, 0, 0, 0, 42, 104, 105])
@@ -63,23 +72,19 @@ describe('Tengri terminal protocol', () => {
       bufferEnd: 5,
     })
     expect(parseTerminalControlFrame('{"type":"exit","exitCode":7}')).toEqual({ type: 'exit', exitCode: 7 })
-    const serialized = JSON.stringify({
-      agentId: 'agent-a',
-      desktopId: 'desktop-a',
+    expect(parseTerminalResumeState(storedResume, 'agent-a', 'desktop-a')).toMatchObject({
       sessionId: 'abcdefghijklmnopqrstuvwx',
-      reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
-      sequence: 12,
+      sequence: 42,
+      cleanupPending: false,
     })
-    expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-a')?.sequence).toBe(12)
-    expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-a')?.cleanupPending).toBe(false)
-    expect(parseTerminalResumeState(serialized, 'agent-b', 'desktop-a')).toBeNull()
-    expect(
-      parseTerminalResumeState(
-        JSON.stringify({ ...JSON.parse(serialized), cleanupPending: true }),
-        'agent-a',
-        'desktop-a',
-      )?.cleanupPending,
-    ).toBe(true)
+    for (const [agentId, desktopId] of [
+      ['agent-b', 'desktop-a'],
+      ['agent-a', 'desktop-b'],
+    ]) {
+      expect(parseTerminalResumeState(storedResume, agentId, desktopId)).toBeNull()
+    }
+    const pending = JSON.stringify({ ...resumeState, cleanupPending: true })
+    expect(parseTerminalResumeState(pending, 'agent-a', 'desktop-a')?.cleanupPending).toBe(true)
   })
 
   test('probes after a suspended heartbeat before timing out an unanswered ping', () => {
@@ -103,36 +108,13 @@ describe('Tengri terminal protocol', () => {
   })
 
   test('replays a fresh display and detaches duplicated tabs from the inherited token', () => {
-    const state = parseTerminalResumeState(
-      JSON.stringify({
-        agentId: 'agent-a',
-        desktopId: 'desktop-a',
-        sessionId: 'abcdefghijklmnopqrstuvwx',
-        reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
-        sequence: 42,
-      }),
-      'agent-a',
-      'desktop-a',
-    )
+    const state = parseTerminalResumeState(storedResume, 'agent-a', 'desktop-a')
     if (!state) throw new Error('expected valid terminal state')
     expect(terminalResumeAttachment(state, false)).toEqual({
       reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
       sequence: 0,
     })
     expect(terminalResumeAttachment(state, true)).toEqual({ reconnectToken: '', sequence: 0 })
-  })
-
-  test('rejects terminal resume state cloned into another desktop', () => {
-    const serialized = JSON.stringify({
-      agentId: 'agent-a',
-      desktopId: 'desktop-a',
-      sessionId: 'abcdefghijklmnopqrstuvwx',
-      reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
-      sequence: 42,
-    })
-
-    expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-a')?.sessionId).toBe('abcdefghijklmnopqrstuvwx')
-    expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-b')).toBeNull()
   })
 
   test('reconciles only the exact terminal creation identity', () => {
@@ -150,13 +132,9 @@ describe('Tengri terminal protocol', () => {
   test('cleans an accepted terminal when its window closes before creation returns', async () => {
     const cleanup = mock(async () => undefined)
     const session = { id: 'abcdefghijklmnopqrstuvwx' }
-    let failure: unknown
-    try {
-      await settleTerminalCreation(Promise.resolve(session), () => true, cleanup)
-    } catch (cause) {
-      failure = cause
-    }
-    expect(failure).toMatchObject({ name: 'AbortError' })
+    await expect(settleTerminalCreation(Promise.resolve(session), () => true, cleanup)).rejects.toMatchObject({
+      name: 'AbortError',
+    })
     expect(cleanup).toHaveBeenCalledWith(session)
     expect(await settleTerminalCreation(Promise.resolve(session), () => false, cleanup)).toBe(session)
   })

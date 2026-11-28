@@ -17,6 +17,10 @@
       "pattern": "^runner-image(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "smoke-runner-image",
+      "pattern": "^smoke-runner-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "write-values",
       "pattern": "^write-values(?: \\(.*\\))?$"
     }

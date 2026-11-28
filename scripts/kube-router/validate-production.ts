@@ -104,13 +104,8 @@ const renderedPolicyHashes = {
   stash: '8564654c8298dd42db2da5af776b925a6a146bdc05a303e87d26cd1caa89de54',
 }
 
-// ONT-2 (#16535) ships the Jangar policy separately. Until it lands, use the digest of the reviewed source at 8683cf79b.
-const pendingJangarPolicyHash = 'f7839ddf4cef724fcc86d69e55e2b7229ff89d8182823cd7216cab243d7bf69b'
-
 export type ProductionPath = keyof typeof productionPaths
-export type ProductionFiles = Record<Exclude<ProductionPath, 'jangarPolicies'>, string> & {
-  jangarPolicies: string | null
-}
+export type ProductionFiles = Record<ProductionPath, string>
 
 type YamlObject = Record<string, any>
 
@@ -177,15 +172,7 @@ function networkPolicyHash(content: string, namespace: string): string {
 
 export async function loadProductionFiles(): Promise<ProductionFiles> {
   const entries = await Promise.all(
-    Object.entries(productionPaths).map(async ([name, path]) => {
-      try {
-        return [name, await readFile(path, 'utf8')] as const
-      } catch (error) {
-        if (name === 'jangarPolicies' && (error as NodeJS.ErrnoException).code === 'ENOENT')
-          return [name, null] as const
-        throw error
-      }
-    }),
+    Object.entries(productionPaths).map(async ([name, path]) => [name, await readFile(path, 'utf8')] as const),
   )
   return Object.fromEntries(entries) as ProductionFiles
 }
@@ -396,10 +383,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   const rootScriptPaths = yamlDocuments(files.impactMap)[0]?.targets?.['root-scripts']?.paths ?? []
   for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
-    const hash =
-      namespace === 'jangar' && files.jangarPolicies === null
-        ? pendingJangarPolicyHash
-        : networkPolicyHash(sources.map((key) => files[key]).join('\n---\n'), namespace)
+    const hash = networkPolicyHash(sources.map((key) => files[key]).join('\n---\n'), namespace)
     requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
       `${namespace}) expected_reviewed_policy_hash=${hash} ;;`,
     ])

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 const metricsMocks = vi.hoisted(() => ({
   clearAgentsControllerGauges: vi.fn(),
@@ -70,6 +70,9 @@ import {
   stopAgentsController,
 } from '~/server/agents-controller'
 import { RESOURCE_MAP } from '~/server/kube-types'
+import { asString, readNested } from '../primitives'
+import { createControllerState } from './namespace-state'
+import { AgentRunIndex } from './queue-state'
 
 configureAgentsControllerRuntime({
   createPrimitivesStore: primitivesStoreMocks.createPrimitivesStore,
@@ -84,14 +87,14 @@ const defaultConcurrency = {
   repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map<string, number>() },
 }
 
-const buildInFlight = (
-  overrides: Partial<{ total: number; perAgent: Map<string, number>; perRepository: Map<string, number> }> = {},
-) => ({
-  total: 0,
-  perAgent: new Map<string, number>(),
-  perRepository: new Map<string, number>(),
-  ...overrides,
-})
+const indexRuns = (runs: Record<string, unknown>[]) => {
+  const index = new AgentRunIndex()
+  for (const run of runs) {
+    const name = asString(readNested(run, ['metadata', 'name']))
+    if (name) index.update('agents', name, run)
+  }
+  return index
+}
 
 const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
   apiVersion: 'agents.proompteng.ai/v1alpha1',
@@ -326,7 +329,7 @@ describe('agents controller startup', () => {
 
   it('adopts untouched AgentRuns during controller resync', async () => {
     stopAgentsController()
-    const state = { namespaces: new Map() }
+    const state = createControllerState()
     const kube = buildKube({
       list: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.AgentRun) {
@@ -364,7 +367,7 @@ describe('agents controller startup', () => {
       }),
     })
 
-    await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+    await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
 
     expect(kube.patch).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-resync', 'agents', {
       metadata: { finalizers: [finalizer] },
@@ -385,7 +388,7 @@ describe('agents controller startup', () => {
 
   it('does not count Template AgentRuns as untouched during controller resync', async () => {
     stopAgentsController()
-    const state = { namespaces: new Map() }
+    const state = createControllerState()
     const kube = buildKube({
       list: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.AgentRun) {
@@ -412,7 +415,7 @@ describe('agents controller startup', () => {
       }),
     })
 
-    await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+    await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
 
     expect(kube.patch).not.toHaveBeenCalled()
     expect(kube.applyStatus).not.toHaveBeenCalled()
@@ -430,7 +433,7 @@ describe('agents controller startup', () => {
     process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE = '10'
 
     try {
-      const state = { namespaces: new Map() }
+      const state = createControllerState()
       const deleteMock = vi.fn(async () => ({}))
       const kube = buildKube({
         delete: deleteMock,
@@ -455,7 +458,7 @@ describe('agents controller startup', () => {
         }),
       })
 
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
 
       expect(deleteMock).toHaveBeenCalledWith('pod', 'run-1-step-1-attempt-1-abcd', 'agents', { wait: false })
     } finally {
@@ -480,7 +483,7 @@ describe('agents controller startup', () => {
 
     try {
       const oldFinishedAt = new Date(Date.now() - 120_000).toISOString()
-      const state = { namespaces: new Map() }
+      const state = createControllerState()
       const deleteMock = vi.fn(async () => ({}))
       const run = (name: string, ttlSecondsAfterFinished?: number) =>
         buildAgentRun({
@@ -511,16 +514,14 @@ describe('agents controller startup', () => {
         }),
       })
 
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
 
       expect(deleteMock).toHaveBeenCalledTimes(2)
       expect(deleteMock).toHaveBeenNthCalledWith(1, RESOURCE_MAP.AgentRun, 'run-zero-ttl', 'agents', { wait: false })
       expect(deleteMock).toHaveBeenNthCalledWith(2, RESOURCE_MAP.AgentRun, 'run-default-ttl', 'agents', {
         wait: false,
       })
-      const retainedRuns = Array.from(
-        ((state.namespaces as Map<string, { runs: Map<string, unknown> }>).get('agents')?.runs ?? new Map()).keys(),
-      )
+      const retainedRuns = state.runs.list('agents').map((run) => readNested(run, ['metadata', 'name']))
       expect(retainedRuns).toEqual(['run-over-budget'])
     } finally {
       if (previousRetention === undefined) delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
@@ -543,7 +544,7 @@ describe('agents controller startup', () => {
 
     try {
       const oldUpdatedAt = new Date(Date.now() - 120_000).toISOString()
-      const state = { namespaces: new Map() }
+      const state = createControllerState()
       const deleteMock = vi.fn(async () => ({}))
       const agentRun = buildAgentRun({
         metadata: {
@@ -571,7 +572,7 @@ describe('agents controller startup', () => {
         }),
       })
 
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
 
       expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-no-finished-at', 'agents', { wait: false })
     } finally {
@@ -592,7 +593,7 @@ describe('agents controller startup', () => {
 
     try {
       const oldFinishedAt = new Date(Date.now() - 120_000).toISOString()
-      const state = { namespaces: new Map() }
+      const state = createControllerState()
       const deleteMock = vi.fn(async () => ({}))
       const agentRun = buildAgentRun({
         metadata: {
@@ -621,7 +622,7 @@ describe('agents controller startup', () => {
         }),
       })
 
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
 
       expect(deleteMock).not.toHaveBeenCalled()
     } finally {
@@ -636,7 +637,7 @@ describe('agents controller startup', () => {
 
   it('adopts missed AgentRuns on watch restart resync', async () => {
     stopAgentsController()
-    const state = { namespaces: new Map() }
+    const state = createControllerState()
     const kube = buildKube({
       list: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.AgentRun) {
@@ -676,13 +677,7 @@ describe('agents controller startup', () => {
       }),
     })
 
-    await __test.resyncAgentRunsForNamespace(
-      kube as never,
-      'agents',
-      state as never,
-      defaultConcurrency,
-      'watch_restart',
-    )
+    await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'watch_restart')
 
     expect(kube.patch).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-watch-restart', 'agents', {
       metadata: { finalizers: [finalizer] },
@@ -717,10 +712,8 @@ describe('agents controller startup', () => {
         buildAgentRun(),
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
       messages = infoSpy.mock.calls.map((call) => String(call[0]))
     } finally {
@@ -769,7 +762,7 @@ describe('agents controller startup', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     expect(kube.delete).toHaveBeenCalledWith('job', 'run-template-step-1-attempt-1', 'agents', {
       wait: false,
@@ -790,7 +783,7 @@ describe('agents controller startup', () => {
     stopAgentsController()
     const previousDebug = process.env.AGENTS_CONTROLLER_DEBUG_LOGS
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
-    const state = { namespaces: new Map() }
+    const state = createControllerState()
     const kube = buildKube({
       list: vi.fn(async (resource: string) => {
         if (resource === RESOURCE_MAP.AgentRun) {
@@ -830,13 +823,13 @@ describe('agents controller startup', () => {
 
     try {
       delete process.env.AGENTS_CONTROLLER_DEBUG_LOGS
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
       let messages = infoSpy.mock.calls.map((call) => String(call[0]))
       expect(messages.some((message) => message.includes('agentrun_resync_adopted'))).toBe(false)
 
       infoSpy.mockClear()
       process.env.AGENTS_CONTROLLER_DEBUG_LOGS = 'true'
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
       messages = infoSpy.mock.calls.map((call) => String(call[0]))
       expect(messages.some((message) => message.includes('agentrun_resync_adopted'))).toBe(true)
     } finally {
@@ -855,7 +848,7 @@ describe('agents controller startup', () => {
     vi.setSystemTime(new Date('2026-01-20T00:03:00Z'))
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
-    const state = { namespaces: new Map() }
+    const state = createControllerState()
     const staleRun = buildAgentRun({
       metadata: {
         name: 'run-stale',
@@ -879,9 +872,9 @@ describe('agents controller startup', () => {
     })
 
     try {
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
       vi.advanceTimersByTime(1500)
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
 
       let stallMessages = warnSpy.mock.calls
         .map((call) => String(call[0]))
@@ -895,13 +888,13 @@ describe('agents controller startup', () => {
         return { items: [] }
       })
 
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
       let recoveryMessages = infoSpy.mock.calls
         .map((call) => String(call[0]))
         .filter((line) => line.includes('agentrun_ingestion_recovered'))
       expect(recoveryMessages).toHaveLength(0)
 
-      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'manual')
 
       recoveryMessages = infoSpy.mock.calls
         .map((call) => String(call[0]))
@@ -1005,7 +998,7 @@ describe('agents controller reconcileAgentRun', () => {
     agentRun.metadata.finalizers = []
 
     await expect(
-      __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0),
+      __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency),
     ).resolves.toBeUndefined()
 
     expect(patchMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', {
@@ -1024,7 +1017,7 @@ describe('agents controller reconcileAgentRun', () => {
     ;(agentRun.metadata as unknown as Record<string, unknown>).deletionTimestamp = new Date().toISOString()
 
     await expect(
-      __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0),
+      __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency),
     ).resolves.toBeUndefined()
 
     expect(patchMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', {
@@ -1061,7 +1054,7 @@ describe('agents controller reconcileAgentRun', () => {
     const agentRun = buildAgentRun()
     agentRun.metadata.finalizers = []
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     expect(kube.patch).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', {
       metadata: { finalizers: [finalizer] },
@@ -1117,10 +1110,8 @@ describe('agents controller reconcileAgentRun', () => {
         buildAgentRun(),
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
 
       const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
@@ -1205,7 +1196,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       expect(getAppliedJobContainerResources(apply)).toEqual({
         requests: {
@@ -1300,7 +1291,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       expect(getAppliedJobContainerResources(apply)).toEqual({
         requests: {
@@ -1349,10 +1340,12 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      [],
+      indexRuns(
+        Array.from({ length: defaultConcurrency.perAgent }, (_, i) =>
+          buildAgentRun({ metadata: { name: `running-${i}` }, status: { phase: 'Running' } }),
+        ),
+      ),
       defaultConcurrency,
-      buildInFlight({ perAgent: new Map([['agent-1', defaultConcurrency.perAgent]]) }),
-      0,
     )
 
     const blockedStatus = getLastStatus(kube)
@@ -1367,7 +1360,7 @@ describe('agents controller reconcileAgentRun', () => {
       status: blockedStatus,
     })
 
-    await __test.reconcileAgentRun(kube as never, mutated, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, mutated, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Running')
@@ -1398,7 +1391,7 @@ describe('agents controller reconcileAgentRun', () => {
       })
 
       const agentRun = buildAgentRun()
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const acceptedStatus = getLastStatus(kube)
       expect(acceptedStatus.phase).toBe('Running')
@@ -1412,7 +1405,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: acceptedStatus,
       })
 
-      await __test.reconcileAgentRun(kube as never, mutated, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, mutated, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const status = getLastStatus(kube)
       expect(status.phase).toBe('Failed')
@@ -1443,16 +1436,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        terminalRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, terminalRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       expect(kube.applyStatus).not.toHaveBeenCalled()
     } finally {
@@ -1484,13 +1468,16 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      [],
+      indexRuns([
+        buildAgentRun({
+          metadata: { name: 'running' },
+          status: { phase: 'Running', vcs: { repository: 'proompteng/lab' } },
+        }),
+      ]),
       {
         ...defaultConcurrency,
         repoConcurrency: { enabled: true, defaultLimit: 1, overrides: new Map() },
       },
-      buildInFlight({ perRepository: new Map([['proompteng/lab', 1]]) }),
-      0,
     )
 
     const status = getLastStatus(kube)
@@ -1558,7 +1545,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(findCondition(status, 'Duplicate')).toBeUndefined()
@@ -1591,7 +1578,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     const agentRun = buildAgentRun()
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -1631,7 +1618,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -1667,7 +1654,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     const agentRun = buildAgentRun()
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -1707,7 +1694,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     const agentRun = buildAgentRun()
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -1743,7 +1730,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Failed')
@@ -1791,7 +1778,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Failed')
@@ -1853,7 +1840,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -1898,7 +1885,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -1917,7 +1904,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -1934,7 +1921,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -1952,7 +1939,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Succeeded', finishedAt },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
@@ -1982,7 +1969,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Failed', finishedAt },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
@@ -2012,7 +1999,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Succeeded', finishedAt },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       expect(kube.delete).not.toHaveBeenCalled()
     } finally {
@@ -2034,7 +2021,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Succeeded', finishedAt: new Date().toISOString() },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       expect(kube.delete).not.toHaveBeenCalled()
     } finally {
@@ -2079,7 +2066,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     const agentRun = buildAgentRun()
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
     const job = appliedResources.find((resource) => resource.kind === 'Job')
@@ -2167,7 +2154,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     const agentRun = buildAgentRun()
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
     const job = appliedResources.find((resource) => resource.kind === 'Job') as Record<string, unknown> | undefined
@@ -2215,7 +2202,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
     const job = appliedResources.find((resource) => resource.kind === 'Job')
@@ -2264,7 +2251,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
     const job = appliedResources.find((resource) => resource.kind === 'Job')
@@ -2345,7 +2332,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Failed')
@@ -2404,7 +2391,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
     const job = appliedResources.find((resource) => resource.kind === 'Job')
@@ -2522,7 +2509,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
     const job = appliedResources.find((resource) => resource.kind === 'Job')
@@ -2611,7 +2598,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Failed')
@@ -2663,7 +2650,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Failed')
@@ -2711,7 +2698,7 @@ describe('agents controller reconcileAgentRun', () => {
 
       const agentRun = buildAgentRun()
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
       const job = appliedResources.find((resource) => resource.kind === 'Job')
@@ -2836,7 +2823,7 @@ describe('agents controller reconcileAgentRun', () => {
       })
 
       const agentRun = buildAgentRun()
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const defaultTemplate = (((lastJob ?? {}) as { spec?: unknown }).spec as { template?: unknown } | undefined)
         ?.template as Record<string, unknown> | undefined
@@ -2882,16 +2869,7 @@ describe('agents controller reconcileAgentRun', () => {
       }
 
       lastJob = null
-      await __test.reconcileAgentRun(
-        kube as never,
-        overrideRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, overrideRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const overrideTemplate = (((lastJob ?? {}) as { spec?: unknown }).spec as { template?: unknown } | undefined)
         ?.template as Record<string, unknown> | undefined
@@ -2972,7 +2950,7 @@ describe('agents controller reconcileAgentRun', () => {
       })
 
       const agentRun = buildAgentRun()
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const defaultTemplate = (((lastJob ?? {}) as { spec?: unknown }).spec as { template?: unknown } | undefined)
         ?.template as Record<string, unknown> | undefined
@@ -3020,7 +2998,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const status = getLastStatus(kube)
       const condition = findCondition(status, 'InvalidSpec')
@@ -3063,7 +3041,7 @@ describe('agents controller reconcileAgentRun', () => {
 
       const agentRun = buildAgentRun()
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const status = getLastStatus(kube)
       const condition = findCondition(status, 'InvalidSpec')
@@ -3125,7 +3103,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     expect(lastJob).toBeTruthy()
 
@@ -3166,13 +3144,25 @@ describe('agents controller reconcileAgentRun', () => {
     expect(requiredVar?.value).toBe('true')
   })
 
-  it('advances workflow steps and completes', async () => {
+  it.each([
+    'registry.ide-newton.ts.net/lab/agents-smoke-runner:nix',
+    `registry.ide-newton.ts.net/lab/agents-smoke-runner:sha-${'a'.repeat(40)}@sha256:${'b'.repeat(64)}`,
+  ])('advances workflow steps on the configured smoke runner (%s) and completes', async (runnerImage) => {
+    vi.stubEnv('AGENTS_AGENT_RUNNER_IMAGE', runnerImage)
+    onTestFinished(() => {
+      vi.unstubAllEnvs()
+    })
     const jobStatuses = new Map<string, Record<string, unknown>>()
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
       const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
       const applied = { ...resource, metadata: { ...metadata, uid } }
       if (resource.kind === 'Job') {
+        expect(resource).toMatchObject({
+          spec: {
+            template: { spec: { containers: [{ image: runnerImage, command: ['/usr/local/bin/agent-runner'] }] } },
+          },
+        })
         const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
         if (name) {
           jobStatuses.set(name, applied)
@@ -3210,14 +3200,13 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'step-one' }, { name: 'step-two' }],
         },
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const firstStatus = getLastStatus(kube)
     expect(firstStatus.phase).toBe('Running')
@@ -3235,16 +3224,7 @@ describe('agents controller reconcileAgentRun', () => {
     })
 
     const secondAgentRun = { ...agentRun, status: firstStatus }
-    await __test.reconcileAgentRun(
-      kube as never,
-      secondAgentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, secondAgentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const secondStatus = getLastStatus(kube)
     const secondWorkflow = (secondStatus.workflow as Record<string, unknown>) ?? {}
@@ -3260,16 +3240,7 @@ describe('agents controller reconcileAgentRun', () => {
     })
 
     const thirdAgentRun = { ...agentRun, status: secondStatus }
-    await __test.reconcileAgentRun(
-      kube as never,
-      thirdAgentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, thirdAgentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const thirdStatus = getLastStatus(kube)
     const thirdWorkflow = thirdStatus.workflow as Record<string, unknown>
@@ -3363,7 +3334,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const runningStatus = getLastStatus(kube)
     const workflow = (runningStatus.workflow as Record<string, unknown>) ?? {}
@@ -3381,10 +3352,8 @@ describe('agents controller reconcileAgentRun', () => {
       { ...agentRun, status: runningStatus },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       defaultConcurrency,
-      buildInFlight(),
-      0,
     )
 
     const status = getLastStatus(kube)
@@ -3525,7 +3494,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: getLastStatus(kube),
       })
       const reconcile = (run = currentRun()) =>
-        __test.reconcileAgentRun(kube as never, run, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+        __test.reconcileAgentRun(kube as never, run, 'agents', [], new AgentRunIndex(), defaultConcurrency)
       const completeJob = (name: string, keepLooping: boolean, runnerTelemetry: typeof telemetry) => {
         const job = jobStatuses.get(name)
         jobStatuses.set(name, {
@@ -3704,7 +3673,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const firstStatus = getLastStatus(kube)
       const firstWorkflow = firstStatus.workflow as Record<string, unknown>
@@ -3731,10 +3700,8 @@ describe('agents controller reconcileAgentRun', () => {
         { ...agentRun, status: firstStatus },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
 
       const secondStatus = getLastStatus(kube)
@@ -3748,10 +3715,8 @@ describe('agents controller reconcileAgentRun', () => {
         { ...agentRun, status: secondStatus },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
 
       const thirdStatus = getLastStatus(kube)
@@ -3779,10 +3744,8 @@ describe('agents controller reconcileAgentRun', () => {
         { ...agentRun, status: thirdStatus },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
 
       const fourthStatus = getLastStatus(kube)
@@ -3872,7 +3835,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
       const firstStatus = getLastStatus(kube)
       const firstWorkflow = firstStatus.workflow as Record<string, unknown>
       const firstStep = ((firstWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
@@ -3889,10 +3852,8 @@ describe('agents controller reconcileAgentRun', () => {
         { ...agentRun, status: firstStatus },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
 
       const secondStatus = getLastStatus(kube)
@@ -3982,7 +3943,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
       const firstStatus = getLastStatus(kube)
       const firstWorkflow = firstStatus.workflow as Record<string, unknown>
       const firstStep = ((firstWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
@@ -3999,10 +3960,8 @@ describe('agents controller reconcileAgentRun', () => {
         { ...agentRun, status: firstStatus },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
 
       const secondStatus = getLastStatus(kube)
@@ -4092,7 +4051,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
       const firstStatus = getLastStatus(kube)
       const firstWorkflow = firstStatus.workflow as Record<string, unknown>
       const firstStep = ((firstWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
@@ -4113,10 +4072,8 @@ describe('agents controller reconcileAgentRun', () => {
         { ...agentRun, status: firstStatus },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
 
       const secondStatus = getLastStatus(kube)
@@ -4197,7 +4154,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
       const firstStatus = getLastStatus(kube)
       const firstWorkflow = firstStatus.workflow as Record<string, unknown>
       const firstStep = ((firstWorkflow.steps as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
@@ -4214,10 +4171,8 @@ describe('agents controller reconcileAgentRun', () => {
         { ...agentRun, status: firstStatus },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
       const secondStatus = getLastStatus(kube)
       const secondWorkflow = secondStatus.workflow as Record<string, unknown>
@@ -4230,10 +4185,8 @@ describe('agents controller reconcileAgentRun', () => {
         { ...agentRun, status: secondStatus },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
       const thirdStatus = getLastStatus(kube)
       const thirdWorkflow = thirdStatus.workflow as Record<string, unknown>
@@ -4251,10 +4204,8 @@ describe('agents controller reconcileAgentRun', () => {
         { ...agentRun, status: thirdStatus },
         'agents',
         [],
-        [],
+        new AgentRunIndex(),
         defaultConcurrency,
-        buildInFlight(),
-        0,
       )
 
       const fourthStatus = getLastStatus(kube)
@@ -4326,7 +4277,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
@@ -4389,7 +4340,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const warning = findCondition(status, 'Warning')
@@ -4465,7 +4416,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const warning = findCondition(status, 'Warning')
@@ -4548,7 +4499,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const firstStatus = getLastStatus(kube)
     const firstWorkflow = firstStatus.workflow as Record<string, unknown>
@@ -4560,16 +4511,7 @@ describe('agents controller reconcileAgentRun', () => {
     })
 
     const secondAgentRun = { ...agentRun, status: firstStatus }
-    await __test.reconcileAgentRun(
-      kube as never,
-      secondAgentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, secondAgentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const secondStatus = getLastStatus(kube)
     const secondWorkflow = secondStatus.workflow as Record<string, unknown>
@@ -4599,16 +4541,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     }
     const thirdAgentRun = { ...agentRun, status: retryStatus }
-    await __test.reconcileAgentRun(
-      kube as never,
-      thirdAgentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, thirdAgentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const thirdStatus = getLastStatus(kube)
     const thirdWorkflow = thirdStatus.workflow as Record<string, unknown>
@@ -4666,7 +4599,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const firstStatus = getLastStatus(kube)
     const firstWorkflow = firstStatus.workflow as Record<string, unknown>
@@ -4692,10 +4625,8 @@ describe('agents controller reconcileAgentRun', () => {
       { ...agentRun, status: firstStatus },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       defaultConcurrency,
-      buildInFlight(),
-      0,
     )
 
     const failedStatus = getLastStatus(kube)
@@ -4774,7 +4705,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const firstStatus = getLastStatus(kube)
     const firstWorkflow = firstStatus.workflow as Record<string, unknown>
@@ -4800,10 +4731,8 @@ describe('agents controller reconcileAgentRun', () => {
       { ...agentRun, status: firstStatus },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       defaultConcurrency,
-      buildInFlight(),
-      0,
     )
 
     const failedStatus = getLastStatus(kube)
@@ -4883,7 +4812,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const firstStatus = getLastStatus(kube)
     const firstWorkflow = firstStatus.workflow as Record<string, unknown>
@@ -4909,10 +4838,8 @@ describe('agents controller reconcileAgentRun', () => {
       { ...agentRun, status: firstStatus },
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       defaultConcurrency,
-      buildInFlight(),
-      0,
     )
 
     const failedStatus = getLastStatus(kube)
@@ -4956,7 +4883,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Failed')
@@ -5002,7 +4929,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const warning = findCondition(status, 'Warning')
@@ -5082,7 +5009,7 @@ describe('agents controller reconcileAgentRun', () => {
     })
 
     const reconcile = () =>
-      __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
     kube.applyStatus.mockRejectedValueOnce(new Error('stale resource version'))
     await expect(reconcile()).rejects.toThrow('stale resource version')
     expect(metricsMocks.recordRunnerCompletion).not.toHaveBeenCalled()
@@ -5168,7 +5095,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Cancelled')
@@ -5227,7 +5154,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Failed')
@@ -5293,7 +5220,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
@@ -5367,7 +5294,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     const status = getLastStatus(kube)
     const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
@@ -5392,7 +5319,7 @@ describe('agents controller reconcileAgentRun', () => {
     agentRun.spec = { ...(agentRun.spec as Record<string, unknown>), ttlSecondsAfterFinished: 30 }
     agentRun.status = { phase: 'Succeeded', finishedAt }
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
     expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
   })
@@ -5409,7 +5336,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Failed', finishedAt },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
@@ -5430,10 +5357,8 @@ describe('agents controller reconcileAgentRun', () => {
       buildAgentRun(),
       'agents',
       [],
-      [],
+      new AgentRunIndex(),
       defaultConcurrency,
-      buildInFlight(),
-      0,
     )
 
     expect(recordReconcileDurationMs).toHaveBeenCalled()
@@ -5460,16 +5385,7 @@ describe('agents controller queue and rate limits', () => {
         }),
       ]
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        existingRuns,
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], indexRuns(existingRuns), defaultConcurrency)
 
       const status = getLastStatus(kube)
       const condition = findCondition(status, 'Blocked')
@@ -5550,18 +5466,9 @@ describe('agents controller queue and rate limits', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRunTwo,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRunTwo, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
       const status = getLastStatus(kube)
       const condition = findCondition(status, 'Blocked')
@@ -5634,7 +5541,7 @@ describe('agents controller resolveVcsContext', () => {
         issueNumber: '123',
       },
       allowedSecrets: [],
-      existingRuns: [
+      runs: indexRuns([
         {
           metadata: { name: 'run-2' },
           status: {
@@ -5642,7 +5549,7 @@ describe('agents controller resolveVcsContext', () => {
             vcs: { repository: 'proompteng/lab', headBranch: 'codex/123' },
           },
         },
-      ],
+      ]),
     })
 
     expect(result.ok).toBe(true)
@@ -5691,7 +5598,7 @@ describe('agents controller resolveVcsContext', () => {
         repository: 'proompteng/lab',
       },
       allowedSecrets: [],
-      existingRuns: [],
+      runs: new AgentRunIndex(),
     })
 
     expect(result.ok).toBe(true)

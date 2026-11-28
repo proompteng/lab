@@ -1,5 +1,9 @@
 import { asString, readNested } from '../primitives'
 
+import { AgentRunIndex } from './queue-state'
+
+export type RunObservation = { resource: Record<string, unknown>; deleted: boolean }
+
 export type NamespaceState = {
   agents: Map<string, Record<string, unknown>>
   providers: Map<string, Record<string, unknown>>
@@ -7,11 +11,13 @@ export type NamespaceState = {
   sources: Map<string, Record<string, unknown>>
   vcsProviders: Map<string, Record<string, unknown>>
   memories: Map<string, Record<string, unknown>>
-  runs: Map<string, Record<string, unknown>>
+  runListVersion: string | null
+  runChangesDuringRead: Map<string, RunObservation> | null
 }
 
 export type ControllerState = {
   namespaces: Map<string, NamespaceState>
+  runs: AgentRunIndex
 }
 
 export type NamespaceSnapshot = {
@@ -21,7 +27,6 @@ export type NamespaceSnapshot = {
   sources: Record<string, unknown>[]
   vcsProviders: Record<string, unknown>[]
   memories: Record<string, unknown>[]
-  runs: Record<string, unknown>[]
 }
 
 export const listItems = (resource: Record<string, unknown>) => {
@@ -56,8 +61,11 @@ export const createNamespaceState = (): NamespaceState => ({
   sources: new Map(),
   vcsProviders: new Map(),
   memories: new Map(),
-  runs: new Map(),
+  runListVersion: null,
+  runChangesDuringRead: null,
 })
+
+export const createControllerState = (): ControllerState => ({ namespaces: new Map(), runs: new AgentRunIndex() })
 
 export const ensureNamespaceState = (state: ControllerState, namespace: string) => {
   const existing = state.namespaces.get(namespace)
@@ -88,5 +96,4 @@ export const snapshotNamespace = (state: NamespaceState): NamespaceSnapshot => (
   sources: Array.from(state.sources.values()),
   vcsProviders: Array.from(state.vcsProviders.values()),
   memories: Array.from(state.memories.values()),
-  runs: Array.from(state.runs.values()),
 })

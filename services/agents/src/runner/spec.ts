@@ -236,17 +236,32 @@ const resolveExecProvider = (provider: AgentProviderSpec | undefined): AgentProv
   }
 }
 
-export const normalizeRunnerSpec = (spec: AgentRunnerSpec): AgentRunnerSpec => {
-  if (spec.schemaVersion && spec.schemaVersion !== AGENT_RUNNER_SCHEMA_VERSION) {
-    throw new Error(`Unsupported agent-runner schemaVersion "${spec.schemaVersion}"`)
+export const normalizeRunnerSpec = (spec: unknown): AgentRunnerSpec => {
+  if (!isRecord(spec)) throw new Error('agent-runner spec must be a JSON object')
+  if (spec.schemaVersion !== undefined && spec.schemaVersion !== AGENT_RUNNER_SCHEMA_VERSION) {
+    throw new Error(`Unsupported agent-runner schemaVersion; expected ${AGENT_RUNNER_SCHEMA_VERSION}`)
   }
-  if (!spec.provider) {
-    throw new Error('agent-runner spec requires provider')
+  if (typeof spec.provider !== 'string' || !spec.provider.trim()) {
+    throw new Error('agent-runner spec requires provider to be a non-empty string')
+  }
+  for (const field of ['payloads', 'artifacts', 'providerSpec'] as const) {
+    if (spec[field] !== undefined && !isRecord(spec[field]))
+      throw new Error(`agent-runner spec ${field} must be an object`)
+  }
+  const adapter = spec.adapter
+  if (adapter !== undefined) {
+    if (!isRecord(adapter)) throw new Error('agent-runner spec adapter must be an object')
+    const { type } = adapter
+    if (type !== 'codex-app-server' && type !== 'agy-cli' && type !== 'exec') {
+      throw new Error('agent-runner spec adapter.type must be codex-app-server, agy-cli, or exec')
+    }
+    const config = adapter[type === 'codex-app-server' ? 'codex' : type === 'agy-cli' ? 'agy' : 'exec']
+    if (config !== undefined && !isRecord(config)) throw new Error('agent-runner spec adapter config must be an object')
   }
   return {
     ...spec,
-    schemaVersion: spec.schemaVersion ?? AGENT_RUNNER_SCHEMA_VERSION,
-  }
+    schemaVersion: AGENT_RUNNER_SCHEMA_VERSION,
+  } as AgentRunnerSpec
 }
 
 export const resolveAdapter = (rawSpec: AgentRunnerSpec): ResolvedAgentRunnerAdapter => {

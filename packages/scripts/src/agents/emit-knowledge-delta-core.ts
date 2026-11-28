@@ -1,12 +1,13 @@
 import { validateAgentsOntologyAnalyses } from './agents-ontology-schema'
 import { validateKnowledgeDelta } from './ontology-deltas'
 import { formatOntologyJson, isJsonObject, maxOntologyJsonBytes } from './ontology-json'
+import type { OntologySqlSchema } from './ontology-sql'
 
 const jsonStringCount = (text: string) => text.match(/"(?:[^"\\]|\\.)*"/g)?.length ?? 0
 
 export const prepareKnowledgeDelta = async (
   source: string,
-  { headCommit, check = false }: { headCommit: string; check?: boolean },
+  { headCommit, check = false, sqlSchema }: { headCommit: string; check?: boolean; sqlSchema?: OntologySqlSchema },
 ): Promise<string> => {
   if (headCommit.length !== 40 || !/^[a-f0-9]{40}$/.test(headCommit)) {
     throw new Error('Expected a full Git SHA for the checked-out commit')
@@ -33,6 +34,6 @@ export const prepareKnowledgeDelta = async (
   if (Buffer.byteLength(canonical) > maxOntologyJsonBytes) throw new Error('Emitted JSON exceeds the 1 MiB size limit')
   if (check && source !== canonical) throw new Error('Expected canonical knowledge-delta JSON; re-emit the proposal')
 
-  await validateAgentsOntologyAnalyses(delta.customAnalyses ?? [])
+  await validateAgentsOntologyAnalyses(delta.customAnalyses ?? [], sqlSchema)
   return canonical
 }

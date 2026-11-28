@@ -5,11 +5,10 @@ import { baskets, capital, createReplay, type Day, netAt, prepare, splits } from
 import { base } from '../research-10yr-qqq-smh-conditioning'
 import { foldBounds, requireAlignedSessions } from '../research-lib/calendar'
 import { sum, wealth } from '../research-lib/statistics'
-import { universe } from '../vol-regime-carry-data'
+import { assets, type Session } from '../vol-regime-carry-data'
 import { replay as replayCarry } from '../vol-regime-carry-replay'
 import { signalModel, type Trial } from '../vol-regime-carry-signals'
 import type { DailyReturn } from './event-calendar-etf-replay'
-import type { DailyFrame } from './macro-etf-core-dual-horizon-data'
 
 const f4 = { family: 'F4', cadence: 42, power: 1, credit: 'LQD', mix: 'parity' } satisfies Trial
 export const controlIds = { SPY: 'buy-and-hold', F4: 'F4-42-1-LQD-parity', O1: trialId(mix), B0: base.id }
@@ -32,7 +31,7 @@ const o1Compounded = [
   [10, [0.3319073922, 0.120115304, 0.2755039391, 0.9029113849]],
 ] as const
 
-export const prepareControls = (daily: readonly DailyFrame[], intraday: readonly Day[]) => {
+export const prepareControls = (daily: readonly Session[], intraday: readonly Day[]) => {
   requireAlignedSessions(daily, intraday)
   const dates = daily.map(({ date }) => date)
   const folds = [
@@ -58,13 +57,12 @@ export const prepareControls = (daily: readonly DailyFrame[], intraday: readonly
       return { roundTripBps, pinned, reproduced }
     })
 
-  const carry = daily.map(({ date, bars }) => ({ date, bars: universe.map((symbol) => bars.get(symbol)) }))
-  const f4Targets = signalModel(carry)(f4)
-  const f4At = (bp: number) => replayCarry(carry, f4Targets, bp).map(({ date, idle }) => ({ date, ...idle }))
+  const f4Targets = signalModel(daily)(f4)
+  const f4At = (bp: number) => replayCarry(daily, f4Targets, bp).map(({ date, idle }) => ({ date, ...idle }))
   const canary = daily.map(({ date, bars }) => ({
     date,
-    open: Float64Array.from(etfs, (symbol) => bars.get(symbol)?.open ?? NaN),
-    close: Float64Array.from(etfs, (symbol) => bars.get(symbol)?.close ?? NaN),
+    open: Float64Array.from(etfs, (symbol) => bars[assets[symbol]]?.open ?? NaN),
+    close: Float64Array.from(etfs, (symbol) => bars[assets[symbol]]?.close ?? NaN),
   }))
   const o1Targets = targets(mix, features(canary), -1)
   const o1Marks = marks(canary)
@@ -89,8 +87,8 @@ export const prepareControls = (daily: readonly DailyFrame[], intraday: readonly
       return { date: dates[i], net: pnl / capital, turnover, tradeCount: ledger.trades }
     })
   const spy = daily.map(({ date, bars }, i) => {
-    const bar = bars.get('SPY')
-    const previous = i === 0 ? bar?.open : daily[i - 1].bars.get('SPY')?.close
+    const bar = bars[assets.SPY]
+    const previous = i === 0 ? bar?.open : daily[i - 1].bars[assets.SPY]?.close
     if (bar === undefined || previous === undefined) throw new Error(`Missing SPY benchmark: ${date}`)
     return { date, net: bar.close / previous - 1, turnover: 0 }
   })
