@@ -25,7 +25,7 @@ const apiName = (name: unknown, max = 253): name is string =>
   typeof name === 'string' && name.length <= max && /^[a-z0-9](?:[-.a-z0-9]*[a-z0-9])?$/.test(name)
 
 type Implementation = { source: 'inline'; spec: Record<string, unknown> } | { source: 'ref'; name: string }
-type Task = { implementation: Implementation; parameters: Record<string, string> }
+type Task = { implementation: Implementation; parameters: Record<string, string>; executable: boolean }
 
 export const parseRunBatch = (content: string, namespace: string, verify: boolean) => {
   const documents = YAML.parseAllDocuments(content)
@@ -88,8 +88,10 @@ export const parseRunBatch = (content: string, namespace: string, verify: boolea
     if (verify && !isJobRuntime(type)) throw invalid('--verify requires the job or workflow runtime.')
 
     const checkIdentity = (...values: unknown[]) => {
-      if (values.some((value) => Object.hasOwn(asRecord(value) ?? {}, 'serviceAccountName'))) {
-        throw invalid('serviceAccountName overrides are forbidden; inherit the AgentProvider identity.')
+      for (const field of ['serviceAccount', 'serviceAccountName']) {
+        if (values.some((value) => Object.hasOwn(asRecord(value) ?? {}, field))) {
+          throw invalid(`${field} overrides are forbidden; inherit the AgentProvider identity.`)
+        }
       }
     }
     checkIdentity(spec, runtime?.config, spec.workload)
@@ -126,8 +128,8 @@ export const parseRunBatch = (content: string, namespace: string, verify: boolea
 
     const baseImpl = implementation(spec)
     if (!baseImpl) throw invalid('provide a prompt in spec.implementation.inline.text or spec.implementationSpecRef.')
-    const base: Task = { implementation: baseImpl, parameters: parameters(spec.parameters) }
-    const tasks = [base]
+    const baseParameters = parameters(spec.parameters)
+    const tasks: Task[] = [{ implementation: baseImpl, parameters: baseParameters, executable: type !== 'workflow' }]
     if (type === 'workflow') {
       const steps = asRecord(spec.workflow)?.steps
       if (!Array.isArray(steps) || !steps.length) throw invalid('workflow runs require spec.workflow.steps.')
@@ -140,7 +142,8 @@ export const parseRunBatch = (content: string, namespace: string, verify: boolea
         checkIdentity(step, step.workload)
         tasks.push({
           implementation: implementation(step) ?? baseImpl,
-          parameters: { ...base.parameters, ...parameters(step.parameters) },
+          parameters: { ...baseParameters, ...parameters(step.parameters) },
+          executable: true,
         })
       }
     }
@@ -154,7 +157,7 @@ export const prepareRunBatch = (
 ) => {
   const branchOwners = new Map<string, number>()
   return entries.map((entry) => {
-    const prompts = entry.tasks.map(({ implementation, parameters }) => {
+    const prompts = entry.tasks.flatMap(({ implementation, parameters, executable }) => {
       const spec =
         implementation.source === 'inline' ? implementation.spec : asRecord(implementations.get(implementation.name))
       if (!spec || !asString(spec.text))
@@ -162,6 +165,8 @@ export const prepareRunBatch = (
       const { payload } = buildEventContext(spec, parameters)
       const prompt = asString(payload.prompt)
       if (!prompt) throw validationError(`Batch entry ${entry.index}: rendered prompt is empty.`)
+      // The workflow base must be valid, but only its steps execute.
+      if (!executable) return []
       const head = asString(payload.head) ?? resolveRunHeadBranch({ spec: { parameters } })
       if (head) {
         const owner = branchOwners.get(head)
@@ -169,9 +174,9 @@ export const prepareRunBatch = (
           throw validationError(`Batch entry ${entry.index}: duplicate head branch (also used by entry ${owner}).`)
         branchOwners.set(head, entry.index)
       }
-      return prompt
+      return [prompt]
     })
-    return { ...entry, prompts: prompts.length > 1 ? prompts.slice(1) : prompts }
+    return { ...entry, prompts }
   })
 }
 

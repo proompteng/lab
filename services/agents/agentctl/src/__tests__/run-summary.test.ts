@@ -42,6 +42,37 @@ describe('runner log summary', () => {
     })
   })
 
+  it('recovers a long final response following tool-free commentary', () => {
+    const final = `Implementation complete. ${'The workflow and binary checks passed. '.repeat(8)}Done.`
+    const logs = jsonl(
+      { type: 'turn_started' },
+      { type: 'message', delta: 'I will check the workflow and report back.' },
+      { type: 'message', delta: final.slice(0, 100) },
+      { type: 'message', delta: final.slice(100) },
+      {
+        type: 'runner_terminal_status',
+        status: { status: 'succeeded', result: { text: final.slice(0, 256), truncated: true } },
+      },
+    )
+    expect(parseRunLogs(logs)).toMatchObject({
+      assistantMessage: final,
+      assistantMessageComplete: true,
+    })
+  })
+
+  it('keeps a preview partial when it matches more than one point in the stream', () => {
+    const preview = 'The following is the final response. '.repeat(7).slice(0, 256)
+    const logs = jsonl(
+      { type: 'message', delta: `The expected response is: ${preview}\n` },
+      { type: 'message', delta: `${preview}Done.` },
+    )
+    const status = { status: 'succeeded', result: { text: preview, truncated: true } }
+    expect(parseRunLogs(logs, status)).toMatchObject({
+      assistantMessage: preview.trim(),
+      assistantMessageComplete: false,
+    })
+  })
+
   it('uses the terminal result when it disagrees with deltas or logs have rotated', () => {
     const logs = jsonl(
       { type: 'turn_started' },

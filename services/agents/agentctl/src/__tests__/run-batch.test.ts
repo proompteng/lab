@@ -47,6 +47,40 @@ describe('AgentRun batch preflight', () => {
     expect(() => prepareRunBatch(entries, new Map())).toThrow('Batch entry 2: duplicate head branch')
   })
 
+  it('allows workflows with a shared default head when every step overrides it', () => {
+    const manifests = ['first', 'second'].map((name) =>
+      manifest(name, {
+        runtime: { type: 'workflow' },
+        parameters: { head: 'codex/shared' },
+        workflow: {
+          steps: [
+            { name: 'implement', parameters: { head: `codex/${name}-implement` } },
+            { name: 'verify', parameters: { head: `codex/${name}-verify` } },
+          ],
+        },
+      }),
+    )
+    const entries = parseRunBatch(JSON.stringify(manifests), 'fixture', false)
+    expect(prepareRunBatch(entries, new Map()).map(({ prompts }) => prompts)).toEqual([
+      ['Implement a task on codex/first-implement.', 'Implement a task on codex/first-verify.'],
+      ['Implement a task on codex/second-implement.', 'Implement a task on codex/second-verify.'],
+    ])
+  })
+
+  it('rejects collisions between steps that inherit the same default head', () => {
+    const manifests = ['first', 'second'].map((name) =>
+      manifest(name, {
+        runtime: { type: 'workflow' },
+        parameters: { head: 'codex/shared' },
+        workflow: {
+          steps: [{ name: 'implement', parameters: { head: `codex/${name}` } }, { name: 'verify' }],
+        },
+      }),
+    )
+    const entries = parseRunBatch(JSON.stringify(manifests), 'fixture', false)
+    expect(() => prepareRunBatch(entries, new Map())).toThrow('Batch entry 2: duplicate head branch')
+  })
+
   it('rejects service account overrides even without --verify', () => {
     for (const spec of [
       { runtime: { type: 'job', config: { serviceAccountName: 'privileged' } } },
@@ -60,6 +94,13 @@ describe('AgentRun batch preflight', () => {
         parseRunBatch(JSON.stringify([manifest('first'), manifest('second', spec)]), 'fixture', false),
       ).toThrow('Batch entry 2: serviceAccountName overrides are forbidden')
     }
+  })
+
+  it('rejects the runtime serviceAccount alias even without --verify', () => {
+    const overridden = manifest('second', { runtime: { type: 'job', config: { serviceAccount: 'other-sa' } } })
+    expect(() => parseRunBatch(JSON.stringify([manifest('first'), overridden]), 'fixture', false)).toThrow(
+      'Batch entry 2: serviceAccount overrides are forbidden',
+    )
   })
 
   it('requires non-blank prompt sources and rejects run and workflow prompt overrides', () => {

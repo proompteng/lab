@@ -115,12 +115,18 @@ export const parseRunLogs = (logs: string, status?: unknown, knownToken?: string
     message = previewText
     complete = preview?.truncated === false
     if (!complete) {
-      // Existing pods do not include message IDs in deltas. Use the authoritative final preview
-      // to choose its streamed text, not the commentary that can precede a tool call.
-      const matches = candidates.filter(({ text }) => text.startsWith(previewText))
+      // Deltas lack message IDs, so commentary and the final answer can share a candidate.
+      // Recover the suffix only when the authoritative preview identifies a unique starting point.
+      const matches = candidates.flatMap(({ text, truncated }) => {
+        const start = text.indexOf(previewText)
+        return start === -1 ? [] : [{ text, start, truncated }]
+      })
       if (matches.length === 1) {
-        message = matches[0].text
-        complete = !matches[0].truncated && message.length > previewText.length
+        const { text, start, truncated } = matches[0]
+        if (start === text.lastIndexOf(previewText)) {
+          message = text.slice(start)
+          complete = !truncated && message.length > previewText.length
+        }
       }
     }
   }

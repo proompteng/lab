@@ -230,12 +230,13 @@ spec:
       text: Check that the installation examples match the current CLI.
 ```
 
-The CLI rejects duplicate head branches, `serviceAccountName` overrides, and missing task text, then uses Kubernetes
-server-side dry runs to validate every manifest before creating any run. `--concurrency` bounds each stage (default
-8). `--verify` checks the mounted prompt and inherited identity on each submitted run’s runner Pod. The table shows
-the node if the Pod has been scheduled; `-` means no placement was observed. If a create or verification fails after
-preflight, the command reports the outcomes for the whole batch and exits nonzero. Inspect the reported runs before
-retrying; a failed request does not roll back other submissions.
+The CLI rejects head branch collisions across runs (including the effective heads of workflow steps),
+`serviceAccount` and `serviceAccountName` overrides, and missing task text. It then uses Kubernetes server-side dry runs
+to validate every manifest before creating any run. `--concurrency` bounds each stage (default 8). `--verify` checks
+the mounted prompt and inherited identity on each submitted run’s runner Pod. The table shows the node if the Pod
+has been scheduled; `-` means no placement was observed. If a create or verification fails after preflight, the
+command reports the outcomes for the whole batch and exits nonzero. Inspect the reported runs before retrying; a
+failed request does not roll back other submissions.
 
 Use `agentctl run summary NAME` or `agentctl run summary NAME --json` to read the current runner Pod’s logs. The summary
 shows run and workload phase, node, duration, model and effort, cumulative token counts, VCS branches, detected GitHub
