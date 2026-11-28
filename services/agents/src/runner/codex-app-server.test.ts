@@ -230,6 +230,9 @@ describe('codex app-server runner adapter', () => {
   it('retains a completed structured log and telemetry when workspace preparation fails', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'runner-failed-log-'))
     onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const authPath = join(dir, 'auth.json')
+    await writeFile(authPath, JSON.stringify({ tokens: { access_token: 'fixture' } }))
+    process.env.CODEX_AUTH = authPath
     const runPath = join(dir, 'run.json')
     const logPath = join(dir, 'runner.log')
     const statusPath = join(dir, 'status.json')
