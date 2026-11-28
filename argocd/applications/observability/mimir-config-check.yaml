@@ -12,6 +12,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
   template:
     spec:
       automountServiceAccountToken: false

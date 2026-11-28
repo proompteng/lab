@@ -70,7 +70,7 @@ describe('agents-ci workflow', () => {
     expect(verify({ ...plan, IMAGE_TARGETS: '["control-plane","controller","runner"]' })).toBe(1)
   })
 
-  it('runs validation on hosted runners and gates integration on cheap checks', () => {
+  it('runs validation on hosted runners and schedules independent suites directly from the plan', () => {
     const workflow = readWorkflow('agents-ci.yml')
 
     expect(workflow).toContain('unit:\n    name: Agents typecheck and unit tests\n    needs: plan')
@@ -79,9 +79,10 @@ describe('agents-ci workflow', () => {
     expect(workflow).toContain('integration:\n    name: Agents Kind smoke (${{ needs.plan.outputs.tier }})')
     expect(workflow).toContain('runs-on: ubuntu-24.04')
     expect(workflow).not.toContain('runs-on: arc-amd64')
-    expect(workflow).toContain("needs.plan.outputs.run_integration == 'true'")
-    expect(workflow).toContain("needs.unit.result == 'success' || needs.unit.result == 'skipped'")
-    expect(workflow).toContain("needs.static.result == 'success' || needs.static.result == 'skipped'")
+    expect(parse(workflow).jobs.integration).toMatchObject({
+      needs: 'plan',
+      if: "${{ needs.plan.outputs.run_integration == 'true' }}",
+    })
   })
 
   it('connects the hosted smoke runner before accessing internal images and the Nix cache', () => {

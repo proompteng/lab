@@ -1,11 +1,20 @@
-import { stationaryP } from '../vol-regime-carry-metrics'
-import { elapsedDays } from '../pure-etf-dual-horizon-data'
+import { elapsedDays } from '../research-lib/calendar'
+import {
+  calmar,
+  exTopExcess,
+  maxDrawdown,
+  mean,
+  sharpe,
+  sortino,
+  stationaryMeanP,
+  type StationaryPlan,
+  sum,
+  wealth,
+} from '../research-lib/statistics'
 import { initialUsd, type LedgerRow } from './macro-etf-core-dual-horizon-account'
 
-const sum = (values: readonly number[]) => values.reduce((a, b) => a + b, 0)
-const mean = (values: readonly number[]) => sum(values) / values.length
-const compound = (returns: readonly number[]) => returns.reduce((nav, r) => nav * (1 + r), 1)
 const annual = 252
+export const bootstrap = { draws: 10_000, meanBlock: 10, seed: 0x5c2016 } as const
 
 const correlation = (x: readonly number[], y: readonly number[]) => {
   if (x.length < 2 || x.every((r) => r === x[0]) || y.every((r) => r === y[0])) return null
@@ -43,63 +52,56 @@ export type Day = Pick<
   'date' | 'net' | 'overnight' | 'intraday' | 'oneWayTurnover' | 'overnightOneWayTurnover'
 >
 
-export const summarize = (rows: readonly Day[], shy: readonly number[], drawdown: readonly boolean[]) => {
+export const summarize = (
+  rows: readonly Day[],
+  shy: readonly number[],
+  drawdown: readonly boolean[],
+  plan: StationaryPlan,
+) => {
   const net = rows.map((r) => r.net)
   const years = (elapsedDays(rows[0].date, rows[rows.length - 1].date) + 1) / 365.2425
-  const wealth = compound(net)
-  const shyWealth = compound(shy)
-  const cagr = wealth ** (1 / years) - 1
+  const nav = wealth(net, true)
+  const shyWealth = wealth(shy, true)
+  const cagr = nav ** (1 / years) - 1
   const shyCagr = shyWealth ** (1 / years) - 1
-  const average = mean(net)
-  const stddev = Math.sqrt(sum(net.map((r) => (r - average) ** 2)) / (net.length - 1))
-  const downside = Math.sqrt(mean(net.map((r) => Math.min(0, r) ** 2)))
-  let peak = 1
-  let nav = 1
-  let maxDrawdown = 0
-  for (const r of net) {
-    nav *= 1 + r
-    peak = Math.max(nav, peak)
-    maxDrawdown = Math.max(maxDrawdown, 1 - nav / peak)
-  }
-  const exclude = new Set(
-    net
-      .map((r, i) => ({ r, i }))
-      .filter(({ r }) => r > 0)
-      .sort((a, b) => b.r - a.r || a.i - b.i)
-      .slice(0, 10)
-      .map(({ i }) => i),
-  )
+  const maximumDrawdown = maxDrawdown(net, true)
+  const [exTop10] = exTopExcess(net, shy, true, [10])
   const calendarReturns = Object.fromEntries(
     [...new Set(rows.map(({ date }) => date.slice(0, 4)))].map((year) => [
       year,
-      compound(rows.filter(({ date }) => date.startsWith(year)).map(({ net }) => net)) - 1,
+      wealth(
+        rows.filter(({ date }) => date.startsWith(year)).map(({ net }) => net),
+        true,
+      ) - 1,
     ]),
   )
-  const exTop = compound(net.filter((_, i) => !exclude.has(i))) - compound(shy.filter((_, i) => !exclude.has(i)))
   return {
     sessions: rows.length,
     from: rows[0].date,
     through: rows[rows.length - 1].date,
-    finalEquityUsd: initialUsd * wealth,
-    totalReturn: wealth - 1,
+    finalEquityUsd: initialUsd * nav,
+    totalReturn: nav - 1,
     cagr,
     excessCagrOverShy: cagr - shyCagr,
-    excessUsdOverShy: (wealth - shyWealth) * initialUsd,
-    sharpe: stddev > 0 ? (average * Math.sqrt(annual)) / stddev : null,
-    sortino: downside > 0 ? (average * Math.sqrt(annual)) / downside : null,
-    maxDrawdown,
-    calmar: maxDrawdown > 0 ? cagr / maxDrawdown : null,
+    excessUsdOverShy: (nav - shyWealth) * initialUsd,
+    sharpe: sharpe(net),
+    sortino: sortino(net),
+    maxDrawdown: maximumDrawdown,
+    calmar: calmar(cagr, maximumDrawdown),
     annualOneWayTurnover: mean(rows.map((r) => r.oneWayTurnover)) * annual,
     annualOvernightOneWayTurnover: mean(rows.map((r) => r.overnightOneWayTurnover)) * annual,
     bear2022Return: calendarReturns['2022'] ?? null,
     positiveYears: Object.values(calendarReturns).filter((value) => value > 0).length,
     calendarReturns,
-    exTop10DayExcessOverShy: exTop,
+    exTop10DayExcessOverShy: exTop10,
     correlation: pairedCorrelation(
       rows.map((r) => r.overnight),
       rows.map((r) => r.intraday),
       drawdown,
     ),
-    stationaryPOverShy: stationaryP(net.map((r, i) => r - shy[i])),
+    stationaryPOverShy: stationaryMeanP(
+      net.map((r, i) => r - shy[i]),
+      plan,
+    ),
   }
 }

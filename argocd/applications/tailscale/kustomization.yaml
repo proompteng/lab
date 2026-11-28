@@ -13,3 +13,4 @@ resources:
   - base/secrets.yaml
   - base/coredns-custom.yaml
   - base/connector-subnet-router.yaml
+  - base/proxyclass-default.yaml

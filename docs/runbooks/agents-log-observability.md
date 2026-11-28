@@ -56,6 +56,38 @@ Alert definitions are in `argocd/applications/observability/graf-mimir-rules.yam
 2. `AgentsAlloyContainerRestarts`
 3. `AgentsJobsRunningWithoutLogCollector`
 
+## Fleet triage
+
+Open [Agents Fleet Operations](https://grafana.k8s.proompteng.ai/d/agents-fleet-operations). In Mimir,
+`up{job="agents"}` should show separate targets for `agents`, `agents-controllers`, and `agents-alloy`.
+Controller metrics can carry a watched `namespace` such as `synthesis` even though the targets live in `agents`.
+
+- `AgentsUntouchedBacklogHigh` and `AgentsControllerReconcileSlow`: compare the affected namespace's queue,
+  concurrency cap, and p95 latency. Look for `agentrun_ingestion_stalled` and Kubernetes API errors in controller logs.
+- `AgentsRunFailureRateHigh`: compare `Failed` with all non-cancelled completions. Search controller logs for
+  `agentrun_terminal_status_committed`, then inspect the failed runner. If a `trace_id` is present, open it in Tempo
+  for the committed lifecycle span. The span uses runner timestamps when available.
+- `AgentsQuotaNearLimit`: inspect the reported `limit_id` before dispatching more work. Only seven-day windows from
+  completed runners are shown. A missing sample means unobserved or expired, not unused quota. The throughput panels
+  count completed runners, including individual workflow steps, retries, and loop iterations once their progress is
+  saved. Cached input and reasoning are subsets, not additional token totals.
+- Compare Pod RAM with the runner `/workspace` tmpfs panel. The latter is filesystem usage for that mount only,
+  sampled every heartbeat. cAdvisor working-set bytes are not a separate tmpfs measurement. Verify `up` and collection
+  errors separately for the `agents-db-next` CNPG exporters.
+
+### Loki structured metadata activation
+
+Leave `AGENTS_LOKI_STRUCTURED_METADATA=false` in the Alloy Deployment while Loki's active index is BoltDB Shipper.
+Loki rejects pushes containing structured metadata with that index. JSON parsing and the workspace metric still work,
+and the original lines remain queryable with `| json`. Once a separately validated TSDB migration is active and Loki
+accepts structured metadata, set the flag to `true` in Git and verify a completed run with:
+
+```logql
+{job="agents",container="agents-controllers"} | event_type="agentrun_terminal_status_committed" | agent_run="<run-name>"
+```
+
+Use `agent_run` as a metadata filter, not in the stream selector. Revert the flag if Loki rejects new pushes.
+
 ## Troubleshooting
 
 1. `AgentsAlloyDeploymentUnavailable`:

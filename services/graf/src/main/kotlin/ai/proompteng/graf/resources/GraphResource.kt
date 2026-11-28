@@ -3,6 +3,7 @@ package ai.proompteng.graf.resources
 import ai.proompteng.graf.autoresearch.AutoResearchConfig
 import ai.proompteng.graf.autoresearch.AutoResearchLauncher
 import ai.proompteng.graf.codex.CodexResearchService
+import ai.proompteng.graf.config.AgentsConfig
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.model.ArtifactReference
 import ai.proompteng.graf.model.AutoResearchLaunchResponse
@@ -17,6 +18,7 @@ import ai.proompteng.graf.model.ComplementResponse
 import ai.proompteng.graf.model.DeleteRequest
 import ai.proompteng.graf.model.EntityBatchRequest
 import ai.proompteng.graf.model.EntityPatchRequest
+import ai.proompteng.graf.model.ErrorResponse
 import ai.proompteng.graf.model.GraphResponse
 import ai.proompteng.graf.model.RelationshipBatchRequest
 import ai.proompteng.graf.model.RelationshipPatchRequest
@@ -48,6 +50,7 @@ class GraphResource(
   private val providedMinioConfig: MinioConfig? = null,
   private val providedAutoResearchConfig: AutoResearchConfig? = null,
   private val providedAutoResearchLauncher: AutoResearchLauncher? = null,
+  private val providedAgentsConfig: AgentsConfig? = null,
 ) {
   private val graphService: GraphService by lazy { providedGraphService ?: GrafKoin.koin().get<GraphService>() }
   private val codexResearchService: CodexResearchService by lazy {
@@ -60,6 +63,11 @@ class GraphResource(
   private val autoResearchLauncher: AutoResearchLauncher by lazy {
     providedAutoResearchLauncher ?: GrafKoin.koin().get<AutoResearchLauncher>()
   }
+
+  private val agentsConfig by lazy { providedAgentsConfig ?: GrafKoin.koin().get<AgentsConfig>() }
+
+  private fun researchUnavailable() =
+    Response.status(Response.Status.SERVICE_UNAVAILABLE).entity(ErrorResponse("Graf research has no configured agent")).build()
 
   @POST
   @Path("/entities")
@@ -117,6 +125,7 @@ class GraphResource(
   @Path("/codex-research")
   @GrafRouteTemplate("POST /v1/codex-research")
   suspend fun startCodexResearch(payload: CodexResearchRequest): Response {
+    if (agentsConfig.agentName == null) return researchUnavailable()
     val agentRunName = "codex-research-${UUID.randomUUID()}"
     val artifactKey = "codex-research/$agentRunName/codex-artifact.json"
     val launch =
@@ -145,6 +154,7 @@ class GraphResource(
   @Path("/autoresearch")
   @GrafRouteTemplate("POST /v1/autoresearch")
   suspend fun startAutoResearch(payload: AutoResearchRequest): Response {
+    if (agentsConfig.agentName == null) return researchUnavailable()
     val agentRunPrefix = autoResearchConfig.agentRunNamePrefix
     val agentRunName = "$agentRunPrefix-${UUID.randomUUID()}"
     val artifactKey = "codex-research/$agentRunName/codex-artifact.json"

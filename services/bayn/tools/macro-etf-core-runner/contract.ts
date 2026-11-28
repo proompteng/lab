@@ -33,6 +33,7 @@ export const usage = [
   'Usage: bun services/bayn/tools/run-macro-etf-core-rebalance.ts --output <new-receipt.json>',
   '  [--profile F2|F4|F2_F4_EQUAL] [--exclude-symbols QQQ,SMH] [--capital-budget-usd 50000]',
   '  [--tif opg|day] [--mode shadow|paper-submit] [--confirm-paper-account <uuid>]',
+  '  Use --exclude-symbols "" only with verified isolated shadow credentials.',
 ].join('\n')
 
 export const parseOptions = (args: readonly string[]) =>
@@ -55,7 +56,10 @@ export const parseOptions = (args: readonly string[]) =>
       catch: () => failure('config', usage),
     })
     const { mode, profile, tif, output, 'confirm-paper-account': accountId, 'capital-budget-usd': budget } = values
-    const exclusions = values['exclude-symbols'].split(',').map((symbol) => symbol.trim().toUpperCase())
+    const isolatedShadow = mode === Mode.Shadow && values['exclude-symbols'] === ''
+    const exclusions = isolatedShadow
+      ? []
+      : values['exclude-symbols'].split(',').map((symbol) => symbol.trim().toUpperCase())
     if (
       new Set(tokens.map((token) => (token.kind === 'option' ? token.name : ''))).size !== tokens.length ||
       !isProfile(profile) ||
@@ -82,7 +86,7 @@ export const parseOptions = (args: readonly string[]) =>
       tif,
       output,
       confirmPaperAccount: accountId,
-      excludeSymbols: [...new Set([...intradaySymbols, ...exclusions])].sort(),
+      excludeSymbols: isolatedShadow ? [] : [...new Set([...intradaySymbols, ...exclusions])].sort(),
       capitalBudgetCents,
     }
   })

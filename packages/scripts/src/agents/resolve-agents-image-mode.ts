@@ -6,7 +6,7 @@ export const AGENTS_IMAGE_TARGETS = ['control-plane', 'controller', 'runner', 'a
 
 export type AgentsImageTarget = (typeof AGENTS_IMAGE_TARGETS)[number]
 export type AgentsImageMode = 'build-local-image' | 'reuse-published-image'
-export type AgentsCiTier = 'unit' | 'published-smoke' | 'local-smoke'
+export type AgentsCiTier = 'unit' | 'static' | 'published-smoke' | 'local-smoke'
 
 export type AgentsImageModeResult = {
   tier: AgentsCiTier
@@ -33,19 +33,20 @@ const UNIT_PREFIXES = [
   'services/agents/',
 ]
 
-const STATIC_PREFIXES = [
+const PUBLISHED_SMOKE_PREFIXES = [
   'argocd/applications/agents/',
   'argocd/applications/argo-workflows/',
   'charts/agents/',
   'scripts/agents/',
 ]
 
-const STATIC_EXACT_PATHS = new Set([
+const PUBLISHED_SMOKE_EXACT_PATHS = new Set([
   '.github/workflows/agents-ci.yml',
   'packages/scripts/src/agents/deploy-service.ts',
   'packages/scripts/src/agents/smoke-agents.ts',
-  'scripts/download_crd_schema.py',
 ])
+
+const STATIC_ONLY_PATHS = new Set(['scripts/agents/validate-agents.sh', 'scripts/download_crd_schema.py'])
 
 const DEPENDENCY_EXACT_PATHS = new Set([
   'patches/effect@4.1.4.patch',
@@ -104,8 +105,9 @@ const isDocumentationPath = (path: string) => {
 
 const isTestPath = (path: string) => TEST_PATH_MARKERS.some((marker) => path.includes(marker))
 
-const isStaticPath = (path: string) =>
-  STATIC_EXACT_PATHS.has(path) || STATIC_PREFIXES.some((prefix) => path.startsWith(prefix))
+const isPublishedSmokePath = (path: string) =>
+  !STATIC_ONLY_PATHS.has(path) &&
+  (PUBLISHED_SMOKE_EXACT_PATHS.has(path) || PUBLISHED_SMOKE_PREFIXES.some((prefix) => path.startsWith(prefix)))
 
 const imageTargetsForPath = (path: string): AgentsImageTarget[] => {
   if (isDocumentationPath(path) || isTestPath(path)) return []
@@ -134,7 +136,8 @@ const sortImageTargets = (targets: Iterable<AgentsImageTarget>): AgentsImageTarg
 export const classifyAgentsImageMode = (paths: string[]): AgentsImageModeResult => {
   const normalizedPaths = [...new Set(paths.map(normalizePath).filter(Boolean))].sort()
   const activePaths = normalizedPaths.filter((path) => !isDocumentationPath(path))
-  const runStatic = activePaths.some(isStaticPath)
+  const runPublishedSmoke = activePaths.some(isPublishedSmokePath)
+  const runStatic = runPublishedSmoke || activePaths.some((path) => STATIC_ONLY_PATHS.has(path))
   const runUnit = activePaths.some(
     (path) =>
       path === '.github/workflows/agents-ci.yml' ||
@@ -144,8 +147,14 @@ export const classifyAgentsImageMode = (paths: string[]): AgentsImageModeResult 
   const imageTargets = sortImageTargets(activePaths.flatMap(imageTargetsForPath))
   const matchedPaths = activePaths.filter((path) => imageTargetsForPath(path).length > 0)
   const needsLocalAgentsImage = imageTargets.length > 0
-  const runIntegration = runStatic || needsLocalAgentsImage
-  const tier: AgentsCiTier = needsLocalAgentsImage ? 'local-smoke' : runStatic ? 'published-smoke' : 'unit'
+  const runIntegration = runPublishedSmoke || needsLocalAgentsImage
+  const tier: AgentsCiTier = needsLocalAgentsImage
+    ? 'local-smoke'
+    : runPublishedSmoke
+      ? 'published-smoke'
+      : runStatic
+        ? 'static'
+        : 'unit'
 
   return {
     tier,
@@ -203,7 +212,6 @@ if (import.meta.main) {
 
 export const __private = {
   imageTargetsForPath,
-  isStaticPath,
   isTestPath,
   outputLines,
 }

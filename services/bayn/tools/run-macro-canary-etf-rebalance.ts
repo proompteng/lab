@@ -2,15 +2,16 @@ import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import { NodeFileSystem, NodeRuntime } from '@effect/platform-node'
-import { Clock, Config, Console, Effect, FileSystem, Layer, Logger, Result, Schema } from 'effect'
+import { Clock, Console, Effect, FileSystem, Layer, Logger, Result, Schema } from 'effect'
 import { FetchHttpClient } from 'effect/http'
 
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../src/hash'
 import { utcInstantFromEpochMillis } from '../src/time'
-import { AccountId, makeAlpaca, paperOrigin, type Alpaca } from './macro-canary-runner/alpaca'
+import { AccountId, makeRunnerAlpaca } from './macro-canary-runner/alpaca'
 import { failure, Mode, TimeInForce, type Options } from './macro-canary-runner/contract'
 import { assertSubmissionWindow, readMarket, readWindow } from './macro-canary-runner/market'
-import { cents, orderPrefix, overnightCapCents, planRebalance, type Snapshot } from './macro-canary-runner/planner'
+import { readSnapshot } from './macro-canary-runner/paper-rebalance'
+import { cents, orderPrefix, overnightCapCents, planRebalance } from './macro-canary-runner/planner'
 import { computeSignals, historyLength, wave5dRevision } from './macro-canary-runner/signals'
 
 const usage =
@@ -77,33 +78,17 @@ const canonicalText = (material: unknown) =>
     Effect.mapError((cause) => failure('receipt', 'Evidence could not be canonically serialized', cause)),
   )
 
-const readSnapshot = Effect.fn('macro-canary.reconcile')(function* (alpaca: Alpaca, options: Options) {
-  const account = yield* alpaca.account()
-  if (options.mode === Mode.PaperSubmit && account.id !== options.confirmPaperAccount)
-    return yield* failure('reconcile', 'Paper account ID does not match --confirm-paper-account')
-  const positions = yield* alpaca.positions()
-  const openOrders = yield* alpaca.orders()
-  return {
-    account,
-    positions: positions.toSorted((a, b) => a.symbol.localeCompare(b.symbol)),
-    openOrders: openOrders.toSorted((a, b) => a.id.localeCompare(b.id)),
-  } satisfies Snapshot
-})
-
 const fileMode = { flag: 'wx', mode: 0o600, noFollow: true } as const
 
 export const runRebalance = Effect.fn('macro-canary.rebalance')(function* (args: readonly string[]) {
   const options = yield* Effect.fromResult(parseOptions(args))
-  const origin = yield* Config.String('BAYN_ALPACA_BASE_URL').pipe(Config.withDefault(paperOrigin))
-  const key = yield* Config.Redacted('BAYN_ALPACA_KEY_ID')
-  const secret = yield* Config.Redacted('BAYN_ALPACA_SECRET_KEY')
-  const alpaca = yield* makeAlpaca(origin, key, secret)
+  const { alpaca, expectedAccountId } = yield* makeRunnerAlpaca('CANARY', options.mode)
   const fs = yield* FileSystem.FileSystem
   const now = yield* Clock.currentTimeMillis
   const window = yield* readWindow(alpaca, now)
   const market = yield* readMarket(alpaca, window)
   const signals = yield* Effect.fromResult(computeSignals(market.older, market.recent))
-  const snapshot = yield* readSnapshot(alpaca, options)
+  const snapshot = yield* readSnapshot(alpaca, expectedAccountId ?? options.confirmPaperAccount)
   const plan = yield* Effect.fromResult(
     planRebalance(snapshot, options, window.executionDate, signals.reviewDue, signals.targetWeights, market.rawBars),
   )
@@ -153,7 +138,7 @@ export const runRebalance = Effect.fn('macro-canary.rebalance')(function* (args:
   const history = yield* alpaca.orders(window.lastCloseAt)
   if (history.some(({ client_order_id }) => client_order_id.startsWith(prefix)))
     return yield* failure('paper-submit', 'This account already has a runner order for the execution session')
-  const fresh = yield* readSnapshot(alpaca, options)
+  const fresh = yield* readSnapshot(alpaca, options.confirmPaperAccount)
   if ((yield* hash(fresh)) !== (yield* hash(snapshot)))
     return yield* failure('paper-submit', 'Broker state changed after planning; no orders submitted')
 

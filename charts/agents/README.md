@@ -12,7 +12,7 @@ The chart is published on Artifact Hub:
 
 - Artifact Hub: <https://artifacthub.io/packages/helm/agents/agents>
 - OCI chart: `oci://ghcr.io/proompteng/charts/agents`
-- Current chart version: `0.9.31`
+- Current chart version: `0.9.32`
 
 ## Start Here
 
@@ -136,7 +136,7 @@ Install:
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.31 \
+  --version 0.9.32 \
   --namespace agents \
   --values agents-values.yaml \
   --wait
@@ -160,7 +160,7 @@ same HTTP port.
 Run the chart smoke examples from the published package:
 
 ```bash
-helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.31 --untar
+helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.32 --untar
 
 kubectl -n agents apply -f agents/examples/agentprovider-smoke.yaml
 kubectl -n agents apply -f agents/examples/agent-smoke.yaml
@@ -214,7 +214,7 @@ That is deliberate. The chart should be safe to install into a namespace and the
 
 ```bash
 helm template agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.31 \
+  --version 0.9.32 \
   --namespace agents \
   --values agents-values.yaml
 ```
@@ -225,7 +225,7 @@ The chart includes an opt-in test Pod that curls the in-cluster health endpoint 
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.31 \
+  --version 0.9.32 \
   --namespace agents \
   --values agents-values.yaml \
   --set tests.enabled=true \
@@ -339,6 +339,11 @@ Valid scope patterns:
 
 Invalid combinations fail at render time, including empty scope lists, wildcard mixed with real namespace names, and multi-namespace scope with namespaced RBAC.
 
+Kubernetes watches recycle after 300 seconds by default. Set `env.vars.AGENTS_KUBE_WATCH_TIMEOUT_SECONDS` to tune
+this for both deployments. The minimum accepted value is 30 seconds and values above 600 are capped at 600;
+missing, invalid, or too-small values use the default. Normal closes resume from the last observed resource version
+without contributing to watch health degradation.
+
 ### Runner Defaults
 
 The controller resolves AgentRun Job images from per-run, provider, and chart defaults.
@@ -351,6 +356,12 @@ Precedence:
 4. `runner.image.*`
 
 Use `env.vars.AGENTS_AGENT_RUNNER_IMAGE` for an explicit runner image override.
+
+The standard runner's generated scratch volumes use tmpfs with per-mount ceilings: 16 GiB for `/workspace`, 6 GiB
+for `/tmp`, 8 GiB for `/opt/bun/install/cache`, and 1 GiB for the Codex auth home when mounted. Each generated
+ceiling is capped at the Job's configured memory limit when smaller. The volumes share that limit with the runner;
+the ceilings do not reserve memory. Use `controller.defaultWorkload.affinity` and
+`controller.defaultWorkload.topologySpreadConstraints` to set default scheduling for AgentRun Jobs.
 
 ### Availability
 
@@ -389,6 +400,9 @@ metrics:
   dashboards:
     enabled: true
 ```
+
+The ServiceMonitor scrapes the control-plane metrics Service. With `controllers.enabled: true`, it also scrapes a
+separate controller-only ClusterIP Service so the dashboard receives controller metrics such as queue snapshots.
 
 ### Network Policy
 
@@ -556,6 +570,7 @@ Frequent render failures:
 | `controllers.enabled`                                                | Run the controller deployment.                                            |
 | `grpc.enabled`                                                       | Expose gRPC support for in-cluster clients and agentctl.                  |
 | `metrics.serviceMonitor.enabled`                                     | Create a ServiceMonitor.                                                  |
+| `telemetry.otlpEndpoint`                                             | Opt-in OTLP/HTTP base URL for AgentRun lifecycle traces.                  |
 | `podDisruptionBudget.enabled`                                        | Create a PDB for the control plane.                                       |
 | `controllers.podDisruptionBudget.enabled`                            | Create a PDB for controllers.                                             |
 | `tests.enabled`                                                      | Render the optional Helm test Pod.                                        |
