@@ -452,7 +452,6 @@ describe('scheduled AgentRun templates', () => {
       'argocd/applications/agents/codex-agentprovider.yaml',
       'argocd/applications/agents/codex-smoke-agentprovider.yaml',
       'argocd/applications/agents/anypi-agentprovider.yaml',
-      'charts/agents/examples/agentprovider-native-workflow.yaml',
       'charts/agents/examples/agentprovider-sample.yaml',
       'charts/agents/examples/agentprovider-smoke.yaml',
     ]
@@ -537,7 +536,6 @@ describe('scheduled AgentRun templates', () => {
     const adapter = objectAt(providerSpec, 'adapter')
     const codex = objectAt(adapter, 'codex')
     const threadConfig = objectAt(codex, 'threadConfig')
-    const envTemplate = objectAt(providerSpec, 'envTemplate')
 
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
     expect(objectAt(codex, 'binaryPath')).toBe('/usr/local/bin/agents-fake-codex-app-server')
@@ -546,9 +544,6 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(codex, 'cwd')).toBeUndefined()
     expect(objectAt(threadConfig, 'mcp_servers')).toEqual({})
     expect(objectAt(threadConfig, 'web_search')).toBe('off')
-    expect(objectAt(envTemplate, 'CODEX_MODEL')).toBe('agents-fake-codex-app-server')
-    expect(objectAt(envTemplate, 'CODEX_DISABLE_RESUME')).toBe('1')
-    expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('1')
   })
 
   it('runs the live Argo smoke as a deterministic app-server canary without OpenAI quota', () => {

@@ -17,8 +17,3 @@ spec:
       threadConfig:
         mcp_servers: {}
         web_search: off
-  argsTemplate: []
-  envTemplate:
-    CODEX_MODEL: agents-fake-codex-app-server
-    CODEX_DISABLE_RESUME: "1"
-    CODEX_MAX_SESSION_ATTEMPTS: "1"
