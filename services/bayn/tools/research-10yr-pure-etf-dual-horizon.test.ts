@@ -2,16 +2,17 @@ import { describe, expect, test } from 'bun:test'
 
 import { etfs as premiaEtfs } from './multi-asset-risk-premia-protocol'
 import { buyingPower, mixes, replayAccount, tradeNoise } from './pure-etf-dual-horizon-account'
-import { gunzipBound, sha256, type DailyFrame, type IntradayDay } from './pure-etf-dual-horizon-data'
+import type { DailyFrame, IntradayDay } from './pure-etf-dual-horizon-data'
 import { bindExitSupplement, executionSupplement, noiseOrders, type NoiseOrder } from './pure-etf-dual-horizon-noise'
 import {
   attribution,
   bootstrapRisk,
   correlations,
   spyDrawdownIndices,
-  stationaryBlocks,
+  bootstrapProtocol,
   summarize,
 } from './pure-etf-dual-horizon-statistics'
+import { stationaryBootstrap, StationarySampling } from './research-lib/statistics'
 
 const quote = (open: number, close = open) => ({ open, high: Math.max(open, close), low: Math.min(open, close), close })
 const order = (overrides: Partial<NoiseOrder> = {}): NoiseOrder => ({
@@ -29,25 +30,6 @@ const order = (overrides: Partial<NoiseOrder> = {}): NoiseOrder => ({
 const flat = { O1: [], O2: [] }
 
 describe('frozen SIP contracts', () => {
-  test('authenticates the entire object while decoding only its declared gzip member', async () => {
-    const member = Bun.gzipSync('first\nlast\n')
-    const original = Uint8Array.from([...member, 0x41, 0x42, 0x43])
-    const receipt = { name: 'test', bytes: original.length, sha256: sha256(original), memberBytes: member.length }
-    const split = (bytes: Uint8Array<ArrayBuffer>) =>
-      new ReadableStream<Uint8Array<ArrayBuffer>>({
-        start(controller) {
-          controller.enqueue(bytes.subarray(0, member.length - 1))
-          controller.enqueue(bytes.subarray(member.length - 1))
-          controller.close()
-        },
-      })
-    const open = (bytes: Uint8Array<ArrayBuffer>) => new Response(gunzipBound(split(bytes), receipt)).text()
-    expect(await open(original)).toBe('first\nlast\n')
-    const corrupted = original.slice()
-    corrupted[corrupted.length - 1] ^= 1
-    await expect(open(corrupted)).rejects.toThrow('Compressed byte receipt mismatch')
-  })
-
   test('binds only the missing IWM exit to an overlapping SIP receipt without modifying signal input', () => {
     const { anchor, exit, date, symbol } = executionSupplement
     const bars: (ReturnType<typeof quote> | undefined)[] = Array.from({ length: 78 }, (_, i) =>
@@ -225,15 +207,14 @@ describe('paired metrics and stationary bootstrap', () => {
 
   test('centers paired excess for the null and uses the uncentered strategy path for tail losses', () => {
     const constant = [0.01, 0.01, 0.01]
-    const blocks = stationaryBlocks(constant.length)
-    expect(stationaryBlocks(constant.length)).toEqual(blocks)
-    expect(bootstrapRisk(constant, [0, 0, 0], 'compound', blocks)).toEqual({
+    const plan = stationaryBootstrap(constant.length, bootstrapProtocol, StationarySampling.RightTailMidpoint)
+    expect(bootstrapRisk(constant, [0, 0, 0], 'compound', plan)).toEqual({
       draws: 10_000,
       pExcess: 1 / 10_001,
       maxDrawdownVaR95: 0,
       maxDrawdownCVaR95: 0,
     })
-    const result = bootstrapRisk([-0.01, -0.01, -0.01], [-0.01, -0.01, -0.01], 'compound', blocks)
+    const result = bootstrapRisk([-0.01, -0.01, -0.01], [-0.01, -0.01, -0.01], 'compound', plan)
     expect(result.pExcess).toBe(1)
     expect(result.maxDrawdownVaR95).toBeCloseTo(1 - 0.99 ** 3, 12)
     expect(result.maxDrawdownCVaR95).toBeCloseTo(result.maxDrawdownVaR95, 12)

@@ -7,6 +7,8 @@ resources:
   - serviceaccount.yaml
   - clickhouse-secret.yaml
   - alpaca-sealedsecret.yaml
+  - alpaca-macro-core-sealedsecret.yaml
+  - alpaca-macro-canary-sealedsecret.yaml
   - objectbucketclaim.yaml
   - research-storage.yaml
   - research-objectbucket.yaml
@@ -31,6 +33,7 @@ resources:
   - networkpolicy.yaml
   - jev-sealedsecret.yaml
   - bayn-research-db-sealedsecret.yaml
+  - bayn-audit-ro-db-sealedsecret.yaml
   - bayn-research-authority-sealedsecret.yaml
   - research-worker.yaml
   - opencode-retained-state.yaml

@@ -1,3 +1,4 @@
+import { executionServiceName } from './execution-service-names'
 import * as restate from '@restatedev/restate-sdk'
 import { Clock, Result } from 'effect'
 
@@ -58,7 +59,7 @@ export const makeBaynBrokerActivities = (
   }
   const reconcile = (ctx: restate.ObjectContext, eventId: string) =>
     ctx.genericSend({
-      service: 'BaynBrokerObservations',
+      service: executionServiceName('observations', config.servicePrefix),
       method: 'reconcile',
       key: ctx.key,
       parameter: { eventId },
@@ -66,7 +67,7 @@ export const makeBaynBrokerActivities = (
       idempotencyKey: `broker-activity-reconcile:${eventId}`,
     })
   return restate.object({
-    name: 'BaynBrokerActivities',
+    name: executionServiceName('activities', config.servicePrefix),
     metadata: {
       'bayn.source-revision': config.sourceRevision,
       'bayn.broker-identity-hash': config.controllerKey,
