@@ -3,13 +3,8 @@ import { parseArgs } from 'node:util'
 import { NodeRuntime } from '@effect/platform-node'
 import { Console, Data, Effect, Redacted } from 'effect'
 
-import {
-  annualDebitBps,
-  costSweep,
-  type pairedMetrics,
-  start,
-  targetVolatility,
-} from './multi-account-daily-sleeves/walk-forward'
+import { grossLimitBps, MacroRiskMode } from '../src/strategy/macro-portfolio/risk'
+import { costSweep, type pairedMetrics, start, targetVolatility } from './multi-account-daily-sleeves/walk-forward'
 import { receipts } from './pure-etf-dual-horizon-data'
 import { prepareDaily } from './research-3account-capital-allocation'
 import { foldBounds } from './research-lib/calendar'
@@ -18,6 +13,7 @@ import { loadFrozenDailyFrames, loadFrozenDailyFramesFromDirectory } from './res
 const first = '2016-11-01'
 const last = '2026-11-25'
 const drawdownCeiling = 0.12
+const cashGrossLimit = grossLimitBps(MacroRiskMode.Cash) / 10_000
 type Metrics = ReturnType<typeof pairedMetrics>
 
 class MacroPortfolioStudyError extends Data.TaggedError('MacroPortfolioStudyError')<{
@@ -25,13 +21,13 @@ class MacroPortfolioStudyError extends Data.TaggedError('MacroPortfolioStudyErro
   readonly cause?: Redacted.Redacted<unknown>
 }> {}
 
-const evidenceGate = (baseline: Metrics, candidate: Metrics, gross: number) => ({
+const evidenceGate = (baseline: Metrics, candidate: Metrics) => ({
   higherCagr: candidate.cagr > Math.max(baseline.cagr, 0),
   higherSharpe: candidate.sharpe !== null && baseline.sharpe !== null && candidate.sharpe > baseline.sharpe,
   lowerCorrelation:
     candidate.correlation !== null && baseline.correlation !== null && candidate.correlation < baseline.correlation,
   maxDrawdownUnder12Pct: candidate.maxDrawdown < drawdownCeiling,
-  grossWithinCap: candidate.maxOpeningGross !== null && candidate.maxOpeningGross <= gross,
+  grossWithinCap: candidate.maxOpeningGross !== null && candidate.maxOpeningGross <= cashGrossLimit,
 })
 
 const main = Effect.gen(function* () {
@@ -54,21 +50,19 @@ const main = Effect.gen(function* () {
       )
       const { daily, evidence: frozenTargets } = prepareDaily(frames)
       const sweep = costSweep(frames, daily, firstIndex)
-      const scenarios = sweep.scenarios.map(({ bps, baseline, cash, margin }) => ({
+      const scenarios = sweep.scenarios.map(({ bps, baseline, cash }) => ({
         bps,
         baseline,
         cash,
-        margin,
-        checks: { cash: evidenceGate(baseline, cash, 1), margin: evidenceGate(baseline, margin, 1.5) },
+        checks: evidenceGate(baseline, cash),
       }))
       if (scenarios.some(({ baseline }) => baseline.years < 10 || baseline.last !== last))
         throw new Error('Fewer than ten matched years of scored sessions')
       return {
-        schemaVersion: 'bayn.macro-portfolio-v2-walk-forward.v1',
+        schemaVersion: 'bayn.macro-portfolio-v2-walk-forward.v2',
         window: { first, last, fullTapeSessions: frames.length },
         startingEquityUsd: start,
         targetVolatility,
-        annualDebitBps,
         tape: { daily: receipts.datasets.daily.sha256, supplement: receipts.datasets.macro.sha256 },
         frozenTargets,
         policyHashes: sweep.policyHashes,
@@ -83,11 +77,9 @@ const main = Effect.gen(function* () {
   })
   // Aggregate rows only. Do not persist per-session data or change frozen artifacts.
   yield* Console.log(JSON.stringify(evidence, null, 2))
-  if (
-    evidence.scenarios.some(({ checks }) => Object.values(checks).some((mode) => !Object.values(mode).every(Boolean)))
-  )
+  if (evidence.scenarios.some(({ checks }) => !Object.values(checks).every(Boolean)))
     return yield* new MacroPortfolioStudyError({
-      message: 'At least one cost/mode failed the retrospective evidence gate',
+      message: 'At least one cash stress cost failed the retrospective evidence gate',
     })
 })
 
