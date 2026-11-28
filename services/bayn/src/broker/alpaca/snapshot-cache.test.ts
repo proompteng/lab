@@ -200,9 +200,11 @@ const healthPass = (read: BrokerReadShape, timeoutMs = 1000) =>
   })
 
 describe('durable broker observations', () => {
-  test('status identifies pending cash fees and clears the reason only after the canonical cut settles', async () => {
+  test('status only identifies a cash fee wait with verified broker permissions', async () => {
     const source = fixture()
-    let snapshot = { ...observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z'), pendingCashFeeCount: 2 }
+    const settled = observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z')
+    const pending = { ...settled, pendingCashFeeCount: 2 }
+    let snapshot = pending
     let failure: Cause.Cause<BrokerReadError> | undefined
     const observed = Effect.suspend(() =>
       failure === undefined ? Effect.succeed(snapshot) : Effect.failCause(failure),
@@ -220,40 +222,51 @@ describe('durable broker observations', () => {
         )
         const facts = () =>
           healthPass(projected).pipe(
-            Effect.map((broker) =>
-              statusFacts(
+            Effect.map((broker) => ({
+              broker,
+              status: statusFacts(
                 { ...readyState(), broker },
                 runtimeConfig.execution,
                 provenance,
                 runtimeConfig.build.verification,
               ),
-            ),
+            })),
           )
-        expect(yield* facts()).toMatchObject({
+        expect((yield* facts()).status).toMatchObject({
           operational: { ready: false },
           broker: { readAvailable: false, reasonCode: 'BROKER_CASH_FEES_PENDING', error: 'BROKER_CASH_FEES_PENDING' },
         })
-        const blockedSnapshot = {
-          ...snapshot,
-          snapshot: {
-            ...snapshot.snapshot,
-            account: {
-              ...snapshot.snapshot.account,
-              value: { ...snapshot.snapshot.account.value, tradingBlocked: true },
-            },
-          },
-        }
-        snapshot = blockedSnapshot
-        expect(yield* facts()).toMatchObject({
-          operational: { ready: false },
-          broker: {
+        for (const [restriction, message] of [
+          [{ tradingBlocked: true }, 'trading is blocked'],
+          [{ accountBlocked: true }, 'account is blocked'],
+          [{ status: AccountStatus.Inactive }, 'account status is INACTIVE, expected ACTIVE'],
+          [{ transfersBlocked: true }, 'transfers are blocked'],
+        ] as const) {
+          const { account } = pending.snapshot
+          snapshot = Result.getOrThrow(
+            decodeObservedBrokerSnapshot({
+              ...pending,
+              snapshot: { ...pending.snapshot, account: { ...account, value: { ...account.value, ...restriction } } },
+            }),
+          )
+          const { broker, status } = yield* facts()
+          expect(broker).toMatchObject({
+            accountBound: true,
             readAvailable: false,
-            reasonCode: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
-            error: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
-          },
-        })
-        snapshot = { ...observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z'), pendingCashFeeCount: 0 }
-        expect(yield* facts()).toMatchObject({
+            error: `Alpaca account permission drift detected: ${message}`,
+          })
+          expect(broker).not.toHaveProperty('observationFailure')
+          expect(status).toMatchObject({
+            operational: { ready: false },
+            broker: {
+              readAvailable: false,
+              reasonCode: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+              error: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+            },
+          })
+        }
+        snapshot = settled
+        expect((yield* facts()).status).toMatchObject({
           operational: { ready: true },
           broker: { readAvailable: true, reasonCode: null, error: null },
         })
@@ -266,13 +279,18 @@ describe('durable broker observations', () => {
           }),
         )
         failure = timeout
-        expect(yield* facts()).toMatchObject({
+        expect((yield* facts()).status).toMatchObject({
           operational: { ready: false },
           broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
         })
         const feeWait = yield* Effect.flip(requireSettledCashFees({ pendingCashFeeCount: 1 }))
+        failure = Cause.fail(feeWait)
+        expect((yield* facts()).status).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
+        })
         failure = Cause.combine(Cause.fail(feeWait), timeout)
-        expect(yield* facts()).toMatchObject({
+        expect((yield* facts()).status).toMatchObject({
           operational: { ready: false },
           broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
         })
