@@ -17,6 +17,7 @@ Start here when deciding which documentation to trust.
 - Nix image transfer concurrency trial: [comparison and acceptance](runbooks/nix-substitution-concurrency-trial.md)
 - Galactic upgrade compatibility, acceptance and recovery: [cluster stable upgrades](runbooks/cluster-stable-upgrades-2026-09.md)
 - Repository cleanup backlog: `repository-cleanup-todo.md`
+- App and service retention: [deprecation matrix](cleanup/apps-services-deprecation-matrix.md)
 - Agents/Jangar: `agents/README.md`
 - Agents/Jangar source-read state: `agents/current-source-state.md`
 - Bayn: [runbooks, architecture, and evidence](bayn/README.md)
