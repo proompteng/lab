@@ -141,15 +141,17 @@ export const makeAlpaca = Effect.fn('macro-canary.alpaca')(function* (
       )
       const response = yield* http
         .execute(req)
-        .pipe(Effect.mapError((cause) => failure(operation, 'Alpaca HTTP transport failed', cause._tag)))
+        .pipe(Effect.mapError((cause) => failure(operation, 'Alpaca HTTP transport failed', cause.reason._tag)))
       if (response.status !== 200)
-        return yield* failure(operation, `Alpaca returned HTTP ${response.status}; no automatic retry`)
+        return yield* failure(operation, `Alpaca returned HTTP ${response.status}; no automatic retry`, {
+          status: response.status,
+        })
       const json = yield* response.json.pipe(
-        Effect.mapError((cause) => failure(operation, 'Alpaca response was not valid JSON', cause._tag)),
+        Effect.mapError((cause) => failure(operation, 'Alpaca response was not valid JSON', cause.reason._tag)),
       )
       // Do not attach provider-controlled response contents to errors printed by the CLI.
       return yield* Schema.decodeUnknownEffect(schema)(json).pipe(
-        Effect.mapError(() => failure(operation, 'Unexpected Alpaca response shape')),
+        Effect.mapError((cause) => failure(operation, 'Unexpected Alpaca response shape', { kind: cause.issue._tag })),
       )
     }).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, { redirect: 'error' }),

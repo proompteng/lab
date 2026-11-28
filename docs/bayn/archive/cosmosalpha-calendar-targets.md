@@ -10,7 +10,7 @@ For a positive finite current close, select the first subsequent finite close in
 
 Each split starts with an empty endpoint state. An endpoint after its cutoff is unavailable, even if a later split has a valid price. Warmup and between-split rows have no admitted target. CSV rows retain their membership date, split, source masks, endpoint date, session distance, value and explicit status. Unknown masks remain unknown.
 
-The implementation uses a discriminated target state in [the pure TypeScript kernel](../../packages/scripts/src/bayn/cosmosalpha-calendar-targets.ts). The [generator](../../packages/scripts/src/bayn/generate-cosmosalpha-targets.ts) decodes Qlib little-endian float32 files and writes a deterministic CSV and manifest. The manifest binds every consumed input file, the generator source, split definitions and CSV content. It excludes machine-specific source paths from the target identity. Existing output directories are rejected. A failed generation can leave an unsealed `.partial` CSV, but publishes no manifest.
+The implementation uses a discriminated target state in [the pure TypeScript kernel](../../../packages/scripts/src/bayn/cosmosalpha-calendar-targets.ts). The [generator](../../../packages/scripts/src/bayn/generate-cosmosalpha-targets.ts) decodes Qlib little-endian float32 files and writes a deterministic CSV and manifest. The manifest binds every consumed input file, the generator source, split definitions and CSV content. It excludes machine-specific source paths from the target identity. Existing output directories are rejected. A failed generation can leave an unsealed `.partial` CSV, but publishes no manifest.
 
 ## Reproduce
 
@@ -51,7 +51,7 @@ It verifies the retained native market and mask artifact hashes, decodes their v
 
 ## Observed full-data proof
 
-The [verification receipt](evidence/2026-11-08-calendar-target-verification.json) covers all 1,165,440 projected rows and 800 instruments from January 2010 through December 2025. It verifies 2,403 source files, every endpoint/null state and all 1,122,941 finite labels with zero unexplained mismatches and zero numeric tolerance. The same 1,165,440 source price/mask rows also match the retained native snapshot. The report preserves 17,267 outside-split rows, 24,322 invalid-current rows and 910 cutoff rows rather than dropping them.
+The [verification receipt](../evidence/2026-11-08-calendar-target-verification.json) covers all 1,165,440 projected rows and 800 instruments from January 2010 through December 2025. It verifies 2,403 source files, every endpoint/null state and all 1,122,941 finite labels with zero unexplained mismatches and zero numeric tolerance. The same 1,165,440 source price/mask rows also match the retained native snapshot. The report preserves 17,267 outside-split rows, 24,322 invalid-current rows and 910 cutoff rows rather than dropping them.
 
 Target identity: `685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e`.
 CSV SHA-256: `806a92ffe7ce0bee3917883ba0b70b1fd93378708b719fe625b91f936de5bda1`.

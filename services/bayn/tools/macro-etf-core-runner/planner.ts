@@ -27,7 +27,12 @@ const shares = (decimal: string) => {
 export const orderPrefix = (accountId: string, session: string) =>
   `bayn-mec-${session}-${sha256(accountId).slice(0, 12)}-`
 
-export const planRebalance = (snapshot: Snapshot, options: Options, allocation: Allocation, market: Market) =>
+export const planRebalance = (
+  snapshot: Snapshot,
+  options: Pick<Options, 'capitalBudgetCents' | 'tif'>,
+  allocation: Allocation,
+  market: Market,
+) =>
   Result.gen(function* () {
     const { account, positions, openOrders } = snapshot
     const protectedSymbols = new Set(allocation.excludedSymbols)
