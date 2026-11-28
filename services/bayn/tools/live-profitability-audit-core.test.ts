@@ -14,6 +14,7 @@ import {
   decodeAuditInput,
   renderAuditJson,
   renderAuditMarkdown,
+  SlippageBudgetStatus,
 } from './live-profitability-audit-core'
 
 type Session = typeof AuditInput.fields.sessions.value.Type
@@ -57,7 +58,7 @@ const session = {
   unverifiedDecisions: 0,
 } satisfies Session
 
-const wrap = (...sessions: Session[]): typeof AuditInput.Type => ({
+const wrap = (...sessions: Session[]): AuditInput => ({
   schemaVersion: 'bayn.live-profitability-evidence.v1',
   sessions,
 })
@@ -277,7 +278,7 @@ test('Black Friday: catches the GOOGL short gap-through, controller storm, timed
     { symbol: 'GOOGL', lastLedgerQuantity: '-103', lastBrokerQuantity: '-103', eodUnrealizedMicros: '-500013500' },
   ])
   expect(report.bySleeve[0]).toMatchObject({ sleeve: IntradayAlphaPhase.MorningOrb, eodUnrealizedMicros: '-500013500' })
-  expect(report.slippageGate.promotion).toBe('INSUFFICIENT_EVIDENCE')
+  expect(report.slippageGate.promotion).toBe(SlippageBudgetStatus.Insufficient)
   const markdown = renderAuditMarkdown(analyzeProfitability(wrap(googlBracketFailure)))
   expect(markdown).toContain('stop $275.31 / limit $275.58')
   expect(markdown).toContain('NO_ADMISSIBLE_CUT: 354; CLOSE_MARKET_DATA_UNAVAILABLE: 5548')
@@ -358,7 +359,7 @@ test('live promotion threshold is strict and distinct from research breakeven', 
     promotion: 'FAIL',
     fullPeriodBreakeven: 'FAIL',
   })
-  expect(audited(withSlip('100984851')).slippageGate.promotion).toBe('PASS')
+  expect(audited(withSlip('100984851')).slippageGate.promotion).toBe(SlippageBudgetStatus.Pass)
 })
 
 test('unmeasured, unreconciled, missing or unmatched evidence does not become flatness, zero P&L, or a pass', () => {

@@ -134,3 +134,74 @@ No pairs means drift is unavailable. A live Postgres read without retained quote
 cannot confirm or rule out a gap-through; supply the archived quotes, rather than treating OHLC extremes as an
 executable price. Stop the port-forward and remove the temporary CA file when finished. Store outputs only in
 approved incident/evidence storage.
+
+## Offline fill-quality attribution
+
+Use this diagnostic to locate execution costs in a retained cut. It accepts the same
+`bayn.live-profitability-evidence.v1` fixture as the audit, not the audit report or an ontology delta. It reads
+local JSON files and writes the report to stdout only. It never connects to Postgres, an archive, or a broker.
+
+```sh
+bun services/bayn/tools/analyze-fill-quality.ts --fixture /secure/session-evidence.json --format markdown
+bun services/bayn/tools/analyze-fill-quality.ts --fixture /secure/session-evidence.json \
+  --timing-evidence /secure/timing.json --market-evidence /secure/market.json --format json
+```
+
+Markdown is the default; JSON uses `bayn.fill-quality-attribution.v1`. Both group retained fills by fill time in
+New York, symbol, side, leg type, and order type. Windows include their start and exclude their end and respect
+the provider's regular-session bounds, including early closes. Known out-of-session activity has its own bucket;
+unknown dimensions are `null`. Unbound fills remain in the report without inferred order types or benchmarks.
+
+### Optional timing and market evidence
+
+Use the same `{ "bars": [...], "quotes": [...] }` shape above for supplemental market data. Embedded and supplemental
+rows are combined. For submit-time attribution, supply independently retained clocks tied to the same session date
+and broker order ID as the fixture:
+
+```json
+{
+  "schemaVersion": "bayn.fill-quality-timing-evidence.v1",
+  "orders": [
+    {
+      "date": "2026-11-30",
+      "orderId": "example-order",
+      "signalAt": "2026-11-30T15:00:00.000Z",
+      "submittedAt": "2026-11-30T15:00:00.025Z"
+    }
+  ]
+}
+```
+
+Use the observed strategy signal (or exit decision) and actual submission clock for the order, not when the broker
+first reported it. `openedAt` in the audit fixture may be a broker-update fallback and is not used as a verified
+submit time. Use `"signalAt": null` if only submission is known; omit the order from timing evidence if submission
+is unknown. Unknown order bindings, duplicate clocks, and inconsistent timestamps fail with no report.
+
+### Interpret the report
+
+- **Realized slippage:** entry signal price (or its planned reference when the signal price is unavailable) or the
+  recorded exit reference. Costs are signed so positive is adverse on either side. Each diagnostic price/latency
+  sample is one retained fill record, including each partial fill; the B0 row is not a fill-record average.
+- **Decomposition:** reference → submit midpoint, submit midpoint → fill midpoint (drift while the order was
+  waiting), fill midpoint → executable side of the quote (half-spread), and executable side → actual fill
+  (execution residual). Each difference uses the same reference-price denominator and side. They add for a fully
+  decomposed fill, not across summaries with different sample sets. Elapsed submit → fill time for a resting
+  stop includes time waiting for the trigger; it is not broker processing latency.
+- **Quote evidence:** use the latest IEX quote at or before the event, no more than one second old, at full source
+  timestamp precision. Conflicting or withdrawn quotes do not fall back to older rows or SIP. A midpoint needs
+  both sides. This is descriptive event-time attribution, not proof of quote availability to the controller or
+  causation.
+- **Collar misses:** reported separately from fill costs. An attempt is a canceled or expired entry limit order
+  with no retained fill. It is measurable only with no missing fill events, a verified submit clock, and an
+  executable IEX side; a miss means the ask (buy) or bid (sell) was strictly outside the limit. The rate uses
+  measured attempts, not intended entries or orders with unknown quotes.
+- **IEX vs SIP:** compare completed regular-session minute closes by session, symbol and ET bucket, independent of
+  fills. Report signed and absolute dispersion and count unmatched or conflicting minutes without imputing either
+  price. An unpaired feed can yield coverage counts without any dispersion estimate.
+- **B0:** retain the audit's per-session QQQ/SMH flat-to-flat Noise Area cohort and quantity-weighted partial fills
+  by leg. Compare both mean and median to **2.5 bp** without rounding; equality fails. Missing or unresolved fill
+  evidence and unverified decisions cannot turn a result into a pass. A B0 status here is not the full profitability
+  audit verdict and does not authorize promotion.
+
+Metrics with no observations report `null`; sample and coverage counts still describe the evidence present. Exit
+status zero means a report was produced, not that B0 passed. Store fixtures and outputs in approved evidence storage.

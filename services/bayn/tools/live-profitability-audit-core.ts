@@ -201,16 +201,24 @@ export const AuditInput = Schema.Struct({
   sessions: Schema.Array(Session),
 }).check(Schema.makeFilter((row) => unique(row.sessions.map(({ date }) => date)), { expected: 'unique session dates' }))
 export const decodeAuditInput = Schema.decodeUnknownResult(AuditInput, strictParseOptions)
-type AuditInput = typeof AuditInput.Type
+export type AuditInput = typeof AuditInput.Type
+export type MarketEvidence = typeof MarketEvidence.Type
 type Session = typeof Session.Type
 type Fill = typeof Fill.Type
 type Order = typeof Order.Type
 type Entry = typeof Entry.Type
 
 const priceScale = 1_000_000_000n
-const promotionBps = 2.5
-const breakevenBps = 11.2
-const recentBreakevenBps = 15.6
+const promotionTenthsBps = 25n
+const breakevenTenthsBps = 112n
+const recentBreakevenTenthsBps = 156n
+
+export enum SlippageBudgetStatus {
+  Pass = 'PASS',
+  Fail = 'FAIL',
+  Insufficient = 'INSUFFICIENT_EVIDENCE',
+}
+
 const byKey = (a: string, b: string) => (a < b ? -1 : a === b ? 0 : 1)
 const add = (values: readonly bigint[]) => values.reduce((sum, value) => sum + value, 0n)
 const sign = (side: OrderSide) => (side === OrderSide.Buy ? 1n : -1n)
@@ -223,15 +231,19 @@ const delta = (fill: Fill) => sign(fill.side) * BigInt(fill.quantityAtoms)
 const working = (order: Order) =>
   [OrderStatus.New, OrderStatus.Pending, OrderStatus.PartiallyFilled].includes(order.status)
 
-export const summarizeBps = (values: readonly number[]) => {
+export const summarizeObservations = (values: readonly number[]) => {
   const sorted = values.toSorted((a, b) => a - b)
   const lower = sorted[Math.floor((sorted.length - 1) / 2)]
   const upper = sorted[Math.floor(sorted.length / 2)]
   return {
     samples: sorted.length,
-    meanBps: sorted.length === 0 ? null : sorted.reduce((a, b) => a + b, 0) / sorted.length,
-    medianBps: lower === undefined || upper === undefined ? null : (lower + upper) / 2,
+    mean: sorted.length === 0 ? null : sorted.reduce((a, b) => a + b, 0) / sorted.length,
+    median: lower === undefined || upper === undefined ? null : (lower + upper) / 2,
   }
+}
+export const summarizeBps = (values: readonly number[]) => {
+  const { samples, mean, median } = summarizeObservations(values)
+  return { samples, meanBps: mean, medianBps: median }
 }
 const presentBps = ({ samples, meanBps, medianBps }: ReturnType<typeof summarizeBps>) => ({
   samples,
@@ -240,7 +252,25 @@ const presentBps = ({ samples, meanBps, medianBps }: ReturnType<typeof summarize
 })
 const distribution = (values: readonly number[]) => presentBps(summarizeBps(values))
 
-const slippage = (fills: readonly Fill[], benchmark: (fill: Fill) => string | null) => {
+type Slippage = { readonly numerator: bigint; readonly denominator: bigint }
+const toBps = ({ numerator, denominator }: Slippage) => Number(numerator) / Number(denominator)
+const addSlippage = (a: Slippage, b: Slippage): Slippage => {
+  // Use the least common denominator to keep pooled fractions small.
+  let divisor = a.denominator
+  let remainder = b.denominator
+  while (remainder !== 0n) [divisor, remainder] = [remainder, divisor % remainder]
+  const scale = b.denominator / divisor
+  return {
+    numerator: a.numerator * scale + b.numerator * (a.denominator / divisor),
+    denominator: a.denominator * scale,
+  }
+}
+const compareSlippage = (a: Slippage, b: Slippage) => {
+  const difference = a.numerator * b.denominator - b.numerator * a.denominator
+  return difference < 0n ? -1 : difference > 0n ? 1 : 0
+}
+
+const slippage = (fills: readonly Fill[], benchmark: (fill: Fill) => string | null): Slippage | null => {
   let reference = 0n
   let adverse = 0n
   for (const fill of fills) {
@@ -250,11 +280,11 @@ const slippage = (fills: readonly Fill[], benchmark: (fill: Fill) => string | nu
     reference += expected
     adverse += sign(fill.side) * (fillNotional(fill) - expected)
   }
-  return reference === 0n ? null : (Number(adverse) / Number(reference)) * 10_000
+  return reference === 0n ? null : { numerator: adverse * 10_000n, denominator: reference }
 }
 
-const group = <A>(rows: readonly A[], key: (row: A) => string) => {
-  const groups = new Map<string, A[]>()
+export const group = <A, K>(rows: readonly A[], key: (row: A) => K) => {
+  const groups = new Map<K, A[]>()
   for (const row of rows) {
     const k = key(row)
     const values = groups.get(k)
@@ -264,38 +294,59 @@ const group = <A>(rows: readonly A[], key: (row: A) => string) => {
   return groups
 }
 
-const marketDrift = (session: Session) => {
-  const bars = session.market.bars.filter(
+export const completedMarketMinutes = (
+  { calendar, asOf }: Pick<Session, 'calendar' | 'asOf'>,
+  evidence: MarketEvidence['bars'],
+) => {
+  const bars = evidence.filter(
     ({ at }) =>
-      session.calendar !== null &&
-      at >= session.calendar.openAt &&
-      Date.parse(at) + 60_000 <= Date.parse(session.calendar.closeAt) &&
-      Date.parse(at) + 60_000 <= Date.parse(session.asOf),
+      calendar !== null &&
+      at >= calendar.openAt &&
+      Date.parse(at) + 60_000 <= Date.parse(calendar.closeAt) &&
+      Date.parse(at) + 60_000 <= Date.parse(asOf),
   )
-  const bySymbol = group(bars, ({ symbol }) => symbol)
-  return [...bySymbol]
+  return [...group(bars, ({ symbol }) => symbol)]
     .sort(([a], [b]) => byKey(a, b))
-    .map(([symbol, rows]) => {
-      const samples: number[] = []
-      let unmatchedMinutes = 0
-      let conflictingMinutes = 0
-      for (const [, minute] of [...group(rows, ({ at }) => at)].sort(([a], [b]) => byKey(a, b))) {
-        const iex = new Set(minute.filter(({ feed }) => feed === 'iex').map(({ closeMicros }) => closeMicros))
-        const sip = new Set(minute.filter(({ feed }) => feed === 'sip').map(({ closeMicros }) => closeMicros))
-        const [left] = iex
-        const [right] = sip
-        if (iex.size > 1 || sip.size > 1) conflictingMinutes++
-        else if (left === undefined || right === undefined) unmatchedMinutes++
-        else samples.push((Number(BigInt(left) - BigInt(right)) / Number(right)) * 10_000)
-      }
-      return {
-        symbol,
-        ...distribution(samples),
-        absolute: distribution(samples.map(Math.abs)),
-        unmatchedMinutes,
-        conflictingMinutes,
-      }
-    })
+    .flatMap(([symbol, rows]) =>
+      [...group(rows, ({ at }) => at)]
+        .sort(([a], [b]) => byKey(a, b))
+        .map(([at, minute]) => {
+          const iex = new Set(minute.filter(({ feed }) => feed === 'iex').map(({ closeMicros }) => closeMicros))
+          const sip = new Set(minute.filter(({ feed }) => feed === 'sip').map(({ closeMicros }) => closeMicros))
+          const [left] = iex
+          const [right] = sip
+          const conflicting = iex.size > 1 || sip.size > 1
+          const dispersionBps =
+            conflicting || left === undefined || right === undefined
+              ? null
+              : (Number(BigInt(left) - BigInt(right)) / Number(right)) * 10_000
+          return { symbol, at, conflicting, dispersionBps }
+        }),
+    )
+}
+export const summarizeMarketMinutes = (minutes: ReturnType<typeof completedMarketMinutes>) => {
+  const samples = minutes.flatMap(({ dispersionBps }) => (dispersionBps === null ? [] : [dispersionBps]))
+  const conflictingMinutes = minutes.filter(({ conflicting }) => conflicting).length
+  return {
+    ...distribution(samples),
+    absolute: distribution(samples.map(Math.abs)),
+    unmatchedMinutes: minutes.length - samples.length - conflictingMinutes,
+    conflictingMinutes,
+  }
+}
+const marketDrift = (session: Session) =>
+  [...group(completedMarketMinutes(session, session.market.bars), ({ symbol }) => symbol)].map(([symbol, minutes]) => ({
+    symbol,
+    ...summarizeMarketMinutes(minutes),
+  }))
+
+export const bindAuditOrder = (fill: Fill, order: Order | undefined) =>
+  order?.symbol === fill.symbol && order.side === fill.side ? order : undefined
+
+export const matchAuditEntry = (order: Order | undefined, entryById: ReadonlyMap<string, Entry>) => {
+  if (order === undefined || order.entryId === null || order.parentId !== null || order.protective) return undefined
+  const entry = entryById.get(order.entryId)
+  return entry?.symbol === order.symbol && entry.side === order.side ? entry : undefined
 }
 
 const auditSession = (session: Session) => {
@@ -307,15 +358,8 @@ const auditSession = (session: Session) => {
   const openingQty = new Map(
     session.openingPositions.map(({ symbol, quantityAtoms }) => [symbol, BigInt(quantityAtoms)]),
   )
-  const entryFor = (order: Order | undefined) => {
-    if (order === undefined || order.entryId === null || order.parentId !== null || order.protective) return undefined
-    const entry = entryById.get(order.entryId)
-    return entry?.symbol === order.symbol && entry.side === order.side ? entry : undefined
-  }
-  const boundOrder = (fill: Fill) => {
-    const order = orderById.get(fill.orderId)
-    return order?.symbol === fill.symbol && order.side === fill.side ? order : undefined
-  }
+  const entryFor = (order: Order | undefined) => matchAuditEntry(order, entryById)
+  const boundOrder = (fill: Fill) => bindAuditOrder(fill, orderById.get(fill.orderId))
   const ordersByEntry = group(session.orders, (order) => entryFor(order)?.id ?? '')
   const quotes = group(
     session.market.quotes
@@ -365,7 +409,7 @@ const auditSession = (session: Session) => {
         })
       const displaySlip = (reference: (fill: Fill) => string | null) => {
         const result = slippage(matched, reference)
-        return result === null ? null : round(result)
+        return result === null ? null : round(toBps(result))
       }
       return {
         ...entry,
@@ -470,7 +514,7 @@ const auditSession = (session: Session) => {
   const openSleeves = new Map<string, IntradayAlphaPhase>()
   const closeSleeves = new Map<string, IntradayAlphaPhase>()
   type OwnedTrade = { entryId: string; symbol: string; sleeve: IntradayAlphaPhase }
-  const episodes: (OwnedTrade & { roundTripBps: number | null })[] = []
+  const episodes: (OwnedTrade & { roundTrip: Slippage | null })[] = []
   const timedExitBreaches: (OwnedTrade & { dueAt: string; flatAt: string | null })[] = []
   for (const [symbol, rows] of symbolFills) {
     let inventory = openingQty.get(symbol) ?? 0n
@@ -502,8 +546,8 @@ const auditSession = (session: Session) => {
           })
       }
       if (!open) {
-        const entryBps = slippage(entered, () => owner?.signalMicros ?? owner?.referenceMicros ?? null)
-        const exitBps = slippage(exited, (fill) => {
+        const entryCost = slippage(entered, () => owner?.signalMicros ?? owner?.referenceMicros ?? null)
+        const exitCost = slippage(exited, (fill) => {
           const order = boundOrder(fill)
           return order?.exitReferenceMicros ?? null
         })
@@ -511,7 +555,7 @@ const auditSession = (session: Session) => {
           entryId: owner.id,
           symbol,
           sleeve: owner.sleeve,
-          roundTripBps: entryBps === null || exitBps === null ? null : entryBps + exitBps,
+          roundTrip: entryCost === null || exitCost === null ? null : addSlippage(entryCost, exitCost),
         })
       }
     }
@@ -650,8 +694,8 @@ const auditSession = (session: Session) => {
       timedExitBreaches: timedExitBreaches.filter((row) => match(row.symbol, row.sleeve)).length,
       regularCloseBreaches: regularCloseBreaches.filter((row) => match(row.symbol, row.regularCloseSleeve)).length,
       nonFlatEodPositions: eodNonFlat.filter((row) => match(row.symbol, row.sleeve)).length,
-      roundTrip: distribution(trades.flatMap(({ roundTripBps }) => (roundTripBps === null ? [] : [roundTripBps]))),
-      unmeasuredRoundTrips: trades.filter(({ roundTripBps }) => roundTripBps === null).length,
+      roundTrip: distribution(trades.flatMap(({ roundTrip }) => (roundTrip === null ? [] : [toBps(roundTrip)]))),
+      unmeasuredRoundTrips: trades.filter(({ roundTrip }) => roundTrip === null).length,
     }
   }
   const all = metrics()
@@ -663,17 +707,22 @@ const auditSession = (session: Session) => {
   const unmatchedB0Entries = entryReports.filter(
     (row) => inB0(row) && row.filledQuantityAtoms !== '0' && !closedB0EntryIds.has(row.id),
   ).length
-  const roundTrips = b0.flatMap(({ roundTripBps }) => (roundTripBps === null ? [] : [roundTripBps]))
+  const measured = b0.flatMap(({ roundTrip }) => (roundTrip === null ? [] : [roundTrip]))
+  const roundTrips = measured.map(toBps)
   const stats = summarizeBps(roundTrips)
-  // Compare unrounded estimates so formatting cannot change the verdict.
-  const compareBudget = (threshold: number) => {
-    const { meanBps, medianBps, samples } = stats
-    const exceeded = (meanBps !== null && meanBps >= threshold) || (medianBps !== null && medianBps >= threshold)
-    return exceeded
-      ? 'FAIL'
-      : samples === 0 || b0.length !== samples || unmatchedB0Entries > 0
-        ? 'INSUFFICIENT_EVIDENCE'
-        : 'PASS'
+  const sorted = measured.toSorted(compareSlippage)
+  const lower = sorted[Math.floor((sorted.length - 1) / 2)]
+  const upper = sorted[Math.floor(sorted.length / 2)]
+  const total = measured.reduce(addSlippage, { numerator: 0n, denominator: 1n })
+  const middle = lower === undefined || upper === undefined ? null : addSlippage(lower, upper)
+  // An exact threshold must not pass even if converting leg costs or their sum to binary floats rounds down.
+  const compareBudget = (tenthsBps: bigint) => {
+    const atLeast = (sum: Slippage, count: number) => sum.numerator * 10n >= tenthsBps * sum.denominator * BigInt(count)
+    return (stats.samples > 0 && atLeast(total, stats.samples)) || (middle !== null && atLeast(middle, 2))
+      ? SlippageBudgetStatus.Fail
+      : stats.samples === 0 || b0.length !== stats.samples || unmatchedB0Entries > 0
+        ? SlippageBudgetStatus.Insufficient
+        : SlippageBudgetStatus.Pass
   }
   const slippageGate = {
     cohort: 'B0 (QQQ+SMH 1.4x)',
@@ -682,12 +731,12 @@ const auditSession = (session: Session) => {
     // Daily summaries cannot recover a pooled median or preserve the unrounded gate boundary.
     roundTripBps: roundTrips,
     unmeasuredRoundTrips: b0.length - stats.samples,
-    promotionBps,
-    promotion: compareBudget(promotionBps),
-    fullPeriodBreakevenBps: breakevenBps,
-    fullPeriodBreakeven: compareBudget(breakevenBps),
-    recentBreakevenBps,
-    recentBreakeven: compareBudget(recentBreakevenBps),
+    promotionBps: Number(promotionTenthsBps) / 10,
+    promotion: compareBudget(promotionTenthsBps),
+    fullPeriodBreakevenBps: Number(breakevenTenthsBps) / 10,
+    fullPeriodBreakeven: compareBudget(breakevenTenthsBps),
+    recentBreakevenBps: Number(recentBreakevenTenthsBps) / 10,
+    recentBreakeven: compareBudget(recentBreakevenTenthsBps),
   }
   const alerts = [
     ...(noAdmissibleCut > 0 ? ['NO_ADMISSIBLE_CUT'] : []),
@@ -719,9 +768,12 @@ const auditSession = (session: Session) => {
     asOf: session.asOf,
     calendar: session.calendar,
     verdict:
-      alerts.length > 0 || losses || slippageGate.promotion === 'FAIL'
+      alerts.length > 0 || losses || slippageGate.promotion === SlippageBudgetStatus.Fail
         ? 'FAIL'
-        : incomplete || session.pendingFees > 0 || slippageGate.promotion !== 'PASS' || all.netRealizedMicros === '0'
+        : incomplete ||
+            session.pendingFees > 0 ||
+            slippageGate.promotion !== SlippageBudgetStatus.Pass ||
+            all.netRealizedMicros === '0'
           ? 'INSUFFICIENT_EVIDENCE'
           : 'PASS',
     metrics: all,
