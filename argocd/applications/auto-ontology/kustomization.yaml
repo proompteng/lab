@@ -4,7 +4,12 @@ namespace: auto-ontology
 resources:
   - sealedsecret.yaml
   - mcp.yaml
+  - oauth-discovery.yaml
   - tailscale-ingress.yaml
+configMapGenerator:
+  - name: auto-ontology-oauth-discovery
+    files:
+      - haproxy.cfg=oauth-discovery.cfg
 helmCharts:
   - name: auto-ontology
     releaseName: auto-ontology
