@@ -2,7 +2,19 @@ import { dirname } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import { NodeFileSystem, NodeRuntime } from '@effect/platform-node'
-import { Config, Console, Effect, FileSystem, Layer, Logger, Result, Schema, type PlatformError } from 'effect'
+import {
+  Cause,
+  Config,
+  Console,
+  Effect,
+  FileSystem,
+  Layer,
+  Logger,
+  Option,
+  Result,
+  Schema,
+  type PlatformError,
+} from 'effect'
 import { FetchHttpClient } from 'effect/http'
 
 import { MacroEtfCoreEvidenceError } from '../src/strategy/macro-etf-core/policy'
@@ -336,8 +348,17 @@ if (import.meta.main) {
       : runDailySleeves(args).pipe(
           Effect.scoped,
           Effect.flatMap(({ portfolioSha256 }) => Effect.logInfo('Daily sleeves receipt written', { portfolioSha256 })),
+          Effect.tapCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) return Effect.void
+            const failure = Cause.findErrorOption(cause)
+            return Effect.logError(
+              'Daily sleeves run failed',
+              Option.isSome(failure) ? describeFailure(failure.value) : { stage: 'runtime', code: 'UnexpectedDefect' },
+            )
+          }),
           // @effect-diagnostics-next-line strictEffectProvide:off -- entry point owns HTTP and receipt files
           Effect.provide(runtime),
         ),
+    { disableErrorReporting: true },
   )
 }
