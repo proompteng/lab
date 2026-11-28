@@ -62,14 +62,36 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ofz-authorization-${{ github.ref }}
+  group: ofz-authorization-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).ofz }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/ofz.yaml
+          dependency-aware-push: 'true'
+          workspaces: |
+            ofz: ['', 'apps/landing', 'packages/backend', 'packages/design']
+
   validate:
+    needs: changes
+    if: >-
+      !cancelled() && (github.event_name != 'push' ||
+      (needs.changes.result == 'success' && needs.changes.outputs.changed == 'true'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -160,8 +182,13 @@ jobs:
         run: bash services/ofz/test-control.sh identity
 
   build-ofz:
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: validate
+    if: >-
+      !cancelled() && needs.validate.result == 'success' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    concurrency:
+      group: ofz-publish-${{ github.ref }}
+      cancel-in-progress: false
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: ofz

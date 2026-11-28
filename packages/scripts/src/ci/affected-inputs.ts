@@ -203,7 +203,7 @@ export const selectAffectedRange = (
 ) => {
   const range = changedRange(event, base, head)
   const files = git('diff', '--no-renames', '--name-only', '-z', range.base, range.head).split('\0').filter(Boolean)
-  // Most main publishers use path selection to co-build a Kargo image set at one revision.
+  // Publishers without Bun inputs can use path selection without reading the lockfile.
   if (event === 'push' && !dependencyAwarePush) {
     return {
       files,
