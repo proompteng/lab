@@ -231,6 +231,7 @@ describe('Alpaca paper reads', () => {
   })
 
   test('reads and runtime-decodes the configured paper account without leaking credentials', async () => {
+    const response = { ...accountResponse, transfers_blocked: true }
     let method = ''
     let url = ''
     let key = ''
@@ -255,7 +256,7 @@ describe('Alpaca paper reads', () => {
               }),
           ),
         )
-        return jsonResponse(request, accountResponse)
+        return jsonResponse(request, response)
       }),
     )
 
@@ -292,12 +293,13 @@ describe('Alpaca paper reads', () => {
       equityMicros: '103820560000',
       lastEquityMicros: '104000000000',
       buyingPowerMicros: '262113632000',
+      transfersBlocked: true,
       observedAt: '1970-01-01T00:00:00.000Z',
     })
     expect(result.evidence).toEqual({
       requestId: 'req-123',
       status: 200,
-      contentHash: Result.getOrThrow(canonicalHashV1Result(accountResponse)),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
       rateLimit: {
         limit: '200',

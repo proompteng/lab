@@ -20,7 +20,7 @@ overnight carry of intraday positions. It is not a capital grant or a forward de
   [`2781b0544f`](https://github.com/proompteng/lab/commit/2781b0544fc4b5b246757ec622c2e28ed9232bd3);
   the program authenticated the original freeze and regenerated every development ledger and ranking before replay.
   Neither archive, the model, the statistical gate nor the protocol changed.
-- [Results](results.json) contains the full 1/2/3/5/10 bp × zero cash/SHY metrics by split and year, 16 singletons,
+- [Results][archived-results] contains the full 1/2/3/5/10 bp × zero cash/SHY metrics by split and year, 16 singletons,
   16 reweighted leave-one-ETF-out runs, conditional 14-name replay, 16×16 daily correlation matrices, all
   descriptive Holdout grid scores, plateau, paired bootstrap tests and cumulative DSR.
 - The exact C5 replay reproduces [Wave 5A](https://github.com/proompteng/lab/pull/16377) to the cent: 2016–2023
@@ -150,3 +150,5 @@ Use the existing read-only S3 credentials and endpoint for the pinned artifacts.
 published HEAD on the assigned branch, the original freeze and its transport erratum. The official receipt
 records the exact scoring commit. Development-only reproduction at the original freeze commit uses
 `bun "$study" --develop --output /tmp/noise-area-wave6a-development.json`; it never requests Holdout bars.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-10yr-16etf-noise-area/results.json

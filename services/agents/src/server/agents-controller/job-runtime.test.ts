@@ -791,4 +791,97 @@ describe('agents controller job-runtime module', () => {
       missing: ['run-1-inputs'],
     })
   })
+
+  it('builds agy-cli jobs without codex-auth while mounting /root/.gemini and provider secretEnv', async () => {
+    setEnv('AGENTS_CONTROLLER_AUTH_SECRET_NAME', 'codex-auth')
+    setEnv('AGENTS_CONTROLLER_AUTH_SECRET_KEY', 'auth.json')
+    setEnv('AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH', '/root/.codex')
+
+    const applied: Record<string, unknown>[] = []
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
+    }
+
+    await submitJobRun(
+      kube as never,
+      { metadata: { name: 'google-run-1', uid: 'google-uid-1', namespace: 'agents' }, spec: {} },
+      { metadata: { name: 'google-agent' }, spec: {} },
+      {
+        metadata: { name: 'google' },
+        spec: {
+          binary: '/usr/local/bin/agent-runner',
+          adapter: {
+            type: 'agy-cli',
+            agy: {
+              model: 'gemini-4-neon',
+              effort: 'high',
+              cwd: '/workspace/lab',
+              quotaProject: 'proompteng',
+              location: 'global',
+            },
+          },
+          secretEnv: [
+            {
+              name: 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+              secretName: 'google-adc-auth',
+              key: 'credentials.json',
+            },
+          ],
+        },
+      },
+      { text: 'Verify Gemini 4 Neon runner' },
+      null,
+      'agents',
+      'registry.example/agents-codex-runner:standard',
+      'job',
+    )
+
+    const specConfigMap = applied.find((resource) => resource.kind === 'ConfigMap') as
+      | { data?: Record<string, string> }
+      | undefined
+    const runnerSpec = JSON.parse(specConfigMap?.data?.['agent-runner.json'] ?? '{}') as Record<string, unknown>
+    expect(runnerSpec.adapter).toEqual({
+      type: 'agy-cli',
+      agy: {
+        cwd: '/workspace/lab',
+        model: 'gemini-4-neon',
+        effort: 'high',
+        dangerouslySkipPermissions: true,
+        prompt: 'Verify Gemini 4 Neon runner',
+        adcAuth: true,
+        quotaProject: 'proompteng',
+        location: 'global',
+      },
+    })
+
+    const job = applied.find((resource) => resource.kind === 'Job') as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{
+              env: Array<{ name: string; value?: string; valueFrom?: Record<string, unknown> }>
+              volumeMounts: Array<{ name: string; mountPath: string }>
+            }>
+            volumes: Array<{ name: string; secret?: { secretName?: string } }>
+          }
+        }
+      }
+    }
+    const container = job.spec.template.spec.containers[0]
+    expect(container.env.find((entry) => entry.name === 'CODEX_HOME')).toBeUndefined()
+    expect(container.env.find((entry) => entry.name === 'CODEX_AUTH')).toBeUndefined()
+    expect(container.env).toContainEqual({ name: 'AGENT_RUN_NAMESPACE', value: 'agents' })
+    expect(container.env).toContainEqual({ name: 'AGENT_RUN_UID', value: 'google-uid-1' })
+    expect(container.env).toContainEqual({
+      name: 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+      valueFrom: { secretKeyRef: { name: 'google-adc-auth', key: 'credentials.json' } },
+    })
+    expect(container.volumeMounts.find((mount) => mount.mountPath === '/root/.codex/auth.json')).toBeUndefined()
+    expect(container.volumeMounts.find((mount) => mount.mountPath === '/root/.gemini')).toBeDefined()
+    expect(job.spec.template.spec.volumes.find((vol) => vol.secret?.secretName === 'codex-auth')).toBeUndefined()
+  })
 })

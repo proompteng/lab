@@ -1,3 +1,9 @@
+import {
+  noProtection,
+  planFixtureIntents,
+  withFixtureIntentStore,
+  withFixtureMutationStore,
+} from './testing/execution-stores.test-support'
 import { makePostgresFixture } from './testing/postgres-fixture.test-support'
 import { isProtectedEntryTarget } from './strategy/runtime-decision'
 import {
@@ -18,7 +24,7 @@ import { streamingFixture, streamingFixtureFromRaw } from './testing/streaming-m
 import { executionMarketDataBinding } from './observe-composition/intraday-market-data'
 import { persistIntradayRecordRows } from './market-data/intraday/verification'
 import { EquityCutFeed, SipDelayClass, sipTopics } from './market-data/sip/provenance'
-import { describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
 import { NodeServices } from '@effect/platform-node'
@@ -39,6 +45,7 @@ import { cycleDecisionStoreEvidence } from './cycle/store/decision-contract'
 import { PostgresClientLive } from './db/postgres-client'
 import { postgresMigrations } from './db/postgres-migrations'
 import { baynTestPostgresUrl } from './test-environment.test-support'
+import { prepareClonedPostgres, type PostgresTestTemplate } from './testing/postgres-template.test-support'
 
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from './cycle/model'
 import { makeCycleDraft } from './cycle/construction'
@@ -57,13 +64,8 @@ import {
   type Reconciliation,
 } from './execution/contracts'
 import { makeExecutionIntentFromDecodedPlan } from './execution/intents/domain'
-import { IntentStore, IntentStoreError, planExecutionIntent, type StoredIntent } from './execution/intents/domain'
-import {
-  MutationEventType,
-  MutationStore,
-  type MutationEvent,
-  type MutationStoreShape,
-} from './execution/mutations/model'
+import { IntentStoreError, type StoredIntent } from './execution/intents/domain'
+import { MutationEventType, type MutationEvent } from './execution/mutations/model'
 import { MutationOperation } from './broker/alpaca-mutations/model'
 import { prepareMutationIntent } from './observe-composition/mutation-intent-interpreter'
 import type { ReconciliationPassResult } from './reconciler'
@@ -253,7 +255,7 @@ const policy = (account = accountId): Policy =>
     decisionTtlMs: 120_000,
   })
 
-const fixture = (
+const makeFixture = (
   premiums: Readonly<Record<string, number>> = {},
   simulation = false,
   account = accountId,
@@ -363,23 +365,24 @@ const fixture = (
     symbols: planningSymbols,
     purpose: IntradaySnapshotPurpose.EntryPricing,
   }
-  const originalPricing = makeIntradayMomentumTestSnapshot(native.protocol, pricingRequest, premiums)
-  const rawPricing = {
-    ...originalPricing,
-    quotes: originalPricing.quotes.map((quote) => {
-      if (pricingStopOffsetMicros === undefined || compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v7')
-        return quote
-      const plan = compiledDecision.exitPolicy.plans[quote.symbol]
-      if (plan === undefined) return quote
-      const bidPrice = (Number(plan.levels.stopPriceMicros) + pricingStopOffsetMicros) / 1_000_000
-      return { ...quote, bidPrice, askPrice: bidPrice + 0.01 }
-    }),
-  }
-  const pricing = !hasEntryTargets
-    ? snapshot
-    : simulation
+  const pricing = (() => {
+    if (!hasEntryTargets) return snapshot
+    const original = makeIntradayMomentumTestSnapshot(native.protocol, pricingRequest, premiums)
+    const rawPricing = {
+      ...original,
+      quotes: original.quotes.map((quote) => {
+        if (pricingStopOffsetMicros === undefined || compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v7')
+          return quote
+        const plan = compiledDecision.exitPolicy.plans[quote.symbol]
+        if (plan === undefined) return quote
+        const bidPrice = (Number(plan.levels.stopPriceMicros) + pricingStopOffsetMicros) / 1_000_000
+        return { ...quote, bidPrice, askPrice: bidPrice + 0.01 }
+      }),
+    }
+    return simulation
       ? simulatedFixture(rawPricing, pricingRequest)
       : streamingFixtureFromRaw(rawPricing, pricingRequest).snapshot
+  })()
   const pricingMarketData = hasEntryTargets ? value(executionMarketDataBinding(pricing)) : decisionMarketData
   const marketData = pricingMarketData
   const priceMicros = Object.fromEntries(
@@ -586,6 +589,94 @@ const fixtureRiskContext = (
   }
 }
 
+const fixtures = new Map<string, ObserveShadowDecisionInput>()
+const fixture = (
+  premiums: Readonly<Record<string, number>> = {},
+  simulation = false,
+  account = accountId,
+  pricingStopOffsetMicros?: number,
+): ObserveShadowDecisionInput => {
+  // Only the ordinary inputs are shared. Tests own their copies; alternate accounts and stop offsets
+  // (including the multi-megabyte retention threshold fixtures) do not populate the cache.
+  if (simulation || account !== accountId || pricingStopOffsetMicros !== undefined)
+    return makeFixture(premiums, simulation, account, pricingStopOffsetMicros)
+  const key = JSON.stringify(premiums)
+  let original = fixtures.get(key)
+  if (original === undefined) {
+    original = makeFixture(premiums)
+    fixtures.set(key, original)
+  }
+  return structuredClone(original)
+}
+
+const executionFixtureInput = (input: ObserveShadowDecisionInput): ExecutionDecisionInput => ({
+  ...input,
+  authorityGenerationHash: hash('6'),
+  riskContext: fixtureRiskContext(input),
+  executionSession: executionSession(input),
+})
+
+const makeCommittedEntry = async () => {
+  const input = fixture({ AAPL: 0.02 })
+  const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
+  return { document, input }
+}
+let committedEntry: ReturnType<typeof makeCommittedEntry> | undefined
+// Mutation-preparation cases vary durable state and time, not construction. Clone the
+// document so no case reuses another case's object or its in-process validation receipt.
+const committedEntryFixture = async () => structuredClone(await (committedEntry ??= makeCommittedEntry()))
+
+const bindFixtureCycle = (input: ObserveShadowDecisionInput, document: CycleDecisionDocument): AutonomousCycle => ({
+  ...input.cycle,
+  bindings: { ...input.cycle.bindings, snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
+})
+
+const mockDecisionSql = makePostgresFixture({
+  acquirer: Effect.die('Synthetic decision SQL must not connect to PostgreSQL'),
+  compiler: PgClient.makeCompiler(undefined, false),
+  spanAttributes: [],
+})
+
+const postgresLayer = (url: string) =>
+  PostgresClientLive({
+    operationTimeoutMs: 30_000,
+    postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
+  }).pipe(Layer.provideMerge(NodeServices.layer))
+
+const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
+let migratedTemplate: PostgresTestTemplate | undefined
+beforeAll(async () => {
+  if (baynTestPostgresUrl === undefined) return
+  migratedTemplate = await prepareClonedPostgres(baynTestPostgresUrl, async (url) => {
+    const runtime = ManagedRuntime.make(postgresLayer(url))
+    try {
+      await runtime.runPromise(postgresMigrations)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+})
+afterAll(async () => migratedTemplate?.dispose())
+
+const withDecisionDatabase = async <A, E>(
+  program: Effect.Effect<A, E, PgClient.PgClient | CycleStore | WriterFence>,
+) => {
+  if (migratedTemplate === undefined) throw new Error('Missing disposable test database')
+  const database = await migratedTemplate.clone()
+  const runtime = ManagedRuntime.make(
+    Layer.merge(CycleStoreLive, WriterFenceLive).pipe(Layer.provideMerge(postgresLayer(database.url))),
+  )
+  try {
+    return await runtime.runPromise(program)
+  } finally {
+    try {
+      await runtime.dispose()
+    } finally {
+      await database.dispose()
+    }
+  }
+}
+
 describe('intraday shadow decision', () => {
   test.each(['success', 'commit-failure', 'interruption'] as const)(
     'bound decision retention preserves the stored-row boundary after %s',
@@ -597,11 +688,7 @@ describe('intraday shadow decision', () => {
       await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const client = yield* makePostgresFixture({
-              acquirer: Effect.die('Binding retention tests never connect to PostgreSQL'),
-              compiler: PgClient.makeCompiler(undefined, false),
-              spanAttributes: [],
-            })
+            const client = yield* mockDecisionSql
             let stored: unknown = persisted
             let missing = false
             let completion = false
@@ -700,33 +787,6 @@ describe('intraday shadow decision', () => {
     },
   )
 
-  test.each([{}, { AAPL: 0.02 }])(
-    'Jev decisions keep one copy of identical planning broker state: %j',
-    async (premiums) => {
-      const input = fixture(premiums)
-      const complete = {
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }
-      const target = input.compiledDecision
-      if (!isProtectedEntryTarget(target)) throw new Error('Expected a protected entry fixture')
-      expect(value(canonicalHashV1Result(input.plannerInput.brokerState))).toBe(
-        value(canonicalHashV1Result(target.evidence.observation.portfolio.brokerState)),
-      )
-      const document = await Effect.runPromise(buildExecutionDecision(complete))
-      expect(Object.hasOwn(document.plannerInput ?? {}, 'brokerState')).toBe(false)
-      const { contentHash: _hash, ...material } = document
-      const retained = value(makeExecutionDecisionDocument({ ...material, plannerInput: input.plannerInput }))
-      expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
-      expect(Result.isSuccess(decodeExecutionDecisionDocument(retained))).toBe(true)
-      expect(document.targetPlan).toEqual(retained.targetPlan)
-      expect(document.deltaRisk).toEqual(retained.deltaRisk)
-      expect(Buffer.byteLength(JSON.stringify(document))).toBeLessThan(Buffer.byteLength(JSON.stringify(retained)))
-    },
-  )
-
   test('a refreshed planning cut keeps its own state and cannot substitute the earlier observation', async () => {
     const input = fixture()
     const refreshed = brokerState(accountId, undefined, '2026-08-18T16:00:00.001Z')
@@ -742,12 +802,9 @@ describe('intraday shadow decision', () => {
     }
     const document = await Effect.runPromise(
       buildExecutionDecision({
-        ...input,
+        ...executionFixtureInput(input),
         plannerInput,
         targetPlan: value(planTargets(plannerInput)),
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
       }),
     )
     expect(Object.hasOwn(document.plannerInput ?? {}, 'brokerState')).toBe(true)
@@ -757,57 +814,58 @@ describe('intraday shadow decision', () => {
     expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, plannerInput: plannerFacts }))).toBe(true)
   })
 
-  test.each([{}, { AAPL: 0.02 }])('Jev decisions reuse their verified observation rows: %j', async (premiums) => {
-    const input = fixture(premiums)
-    const complete = {
-      ...input,
-      authorityGenerationHash: hash('6'),
-      riskContext: fixtureRiskContext(input),
-      executionSession: executionSession(input),
-    }
-    const legacy = await Effect.runPromise(buildExecutionDecision(complete))
-    const { decisionMarketDataRows: rows, ...compact } = complete
-    const document = await Effect.runPromise(buildExecutionDecision(compact))
-    const baseline = {
-      documentBytes: Buffer.byteLength(JSON.stringify(legacy)),
-      duplicatedRowBytes: Buffer.byteLength(JSON.stringify(rows)),
-    }
-    expect(document.decisionMarketDataRows).toBeUndefined()
-    const { contentHash: _legacyHash, decisionMarketDataRows: _legacyRows, ...legacyMaterial } = legacy
-    const { contentHash: _compactHash, ...compactMaterial } = document
-    expect(compactMaterial).toEqual(legacyMaterial)
-    expect(Result.isSuccess(decodeExecutionDecisionDocument(legacy))).toBe(true)
-    expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
-    expect(value(reproduceRecordedStreamingDecision(document)).snapshots).toHaveLength(
-      value(reproduceRecordedStreamingDecision(legacy)).snapshots.length,
-    )
-    expect(baseline.documentBytes - Buffer.byteLength(JSON.stringify(document))).toBeGreaterThanOrEqual(
-      baseline.duplicatedRowBytes,
-    )
-    const { contentHash: _hash, ...material } = document
-    expect(
-      Result.isFailure(
-        makeExecutionDecisionDocument({
-          ...material,
-          decisionMarketDataRows: { bars: [], quotes: [], trades: [] },
-        }),
-      ),
-    ).toBe(true)
-  })
+  test.each([{}, { AAPL: 0.02 }])(
+    'Jev decisions reuse identical broker state and verified observation rows: %j',
+    async (premiums) => {
+      const input = fixture(premiums)
+      const complete = executionFixtureInput(input)
+      const target = input.compiledDecision
+      if (!isProtectedEntryTarget(target)) throw new Error('Expected a protected entry fixture')
+      expect(value(canonicalHashV1Result(input.plannerInput.brokerState))).toBe(
+        value(canonicalHashV1Result(target.evidence.observation.portfolio.brokerState)),
+      )
+      const legacy = await Effect.runPromise(buildExecutionDecision(complete))
+      expect(Object.hasOwn(legacy.plannerInput ?? {}, 'brokerState')).toBe(false)
+      const { contentHash: _hashWithRows, ...withRows } = legacy
+      const uncompressed = value(makeExecutionDecisionDocument({ ...withRows, plannerInput: input.plannerInput }))
+      expect(Result.isSuccess(decodeExecutionDecisionDocument(uncompressed))).toBe(true)
+      expect(legacy.targetPlan).toEqual(uncompressed.targetPlan)
+      expect(legacy.deltaRisk).toEqual(uncompressed.deltaRisk)
+      expect(Buffer.byteLength(JSON.stringify(legacy))).toBeLessThan(Buffer.byteLength(JSON.stringify(uncompressed)))
+      const { decisionMarketDataRows: rows, ...compact } = complete
+      const document = await Effect.runPromise(buildExecutionDecision(compact))
+      const baseline = {
+        documentBytes: Buffer.byteLength(JSON.stringify(legacy)),
+        duplicatedRowBytes: Buffer.byteLength(JSON.stringify(rows)),
+      }
+      expect(document.decisionMarketDataRows).toBeUndefined()
+      const { contentHash: _legacyHash, decisionMarketDataRows: _legacyRows, ...legacyMaterial } = legacy
+      const { contentHash: _compactHash, ...compactMaterial } = document
+      expect(compactMaterial).toEqual(legacyMaterial)
+      expect(Result.isSuccess(decodeExecutionDecisionDocument(legacy))).toBe(true)
+      expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+      expect(value(reproduceRecordedStreamingDecision(document)).snapshots).toHaveLength(
+        value(reproduceRecordedStreamingDecision(legacy)).snapshots.length,
+      )
+      expect(baseline.documentBytes - Buffer.byteLength(JSON.stringify(document))).toBeGreaterThanOrEqual(
+        baseline.duplicatedRowBytes,
+      )
+      const { contentHash: _hash, ...material } = document
+      expect(
+        Result.isFailure(
+          makeExecutionDecisionDocument({
+            ...material,
+            decisionMarketDataRows: { bars: [], quotes: [], trades: [] },
+          }),
+        ),
+      ).toBe(true)
+    },
+  )
 
   test.each([0, -10000])('durable Jev entry rejects a verified quote %s micros from its stop', async (offset) => {
     const input = fixture({ AAPL: 0.02 }, false, accountId, offset)
     expect(input.targetPlan.intentTargets.length).toBeGreaterThan(0)
-    const result = await Effect.runPromise(
-      Effect.result(
-        buildExecutionDecision({
-          ...input,
-          authorityGenerationHash: hash('6'),
-          riskContext: fixtureRiskContext(input),
-          executionSession: executionSession(input),
-        }),
-      ),
-    )
+    const result = await Effect.runPromise(Effect.result(buildExecutionDecision(executionFixtureInput(input))))
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) expect(result.failure.failure).toBe('contract')
   })
@@ -815,14 +873,7 @@ describe('intraday shadow decision', () => {
   test('durable Jev entry accepts a verified quote one price tick above its stop', async () => {
     const input = fixture({ AAPL: 0.02 }, false, accountId, 10000)
     expect(input.targetPlan.intentTargets.length).toBeGreaterThan(0)
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
+    const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
     const bound = await Effect.runPromise(
       decodeDecisionInput({
@@ -862,14 +913,7 @@ describe('intraday shadow decision', () => {
     'retains historical %s decision identities in financial reads without making them executable',
     async (schemaVersion) => {
       const input = fixture({ AAPL: 0.02 })
-      const document = await Effect.runPromise(
-        buildExecutionDecision({
-          ...input,
-          authorityGenerationHash: hash('6'),
-          riskContext: fixtureRiskContext(input),
-          executionSession: executionSession(input),
-        }),
-      )
+      const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
       const row = Schema.decodeUnknownSync(CycleDecisionRow)({
         cycle_id: document.bindings.cycleId,
         decision_hash: document.contentHash,
@@ -925,11 +969,7 @@ describe('intraday shadow decision', () => {
           const started = yield* Deferred.make<void>()
           const released = yield* Deferred.make<void>()
           let pauseNext = false
-          const client = yield* makePostgresFixture({
-            acquirer: Effect.die('Decision query contract tests never connect to PostgreSQL'),
-            compiler: PgClient.makeCompiler(undefined, false),
-            spanAttributes: [],
-          })
+          const client = yield* mockDecisionSql
           const sql = new Proxy(client, {
             get(target, property, receiver) {
               if (property === 'json') return (value: unknown) => JSON.stringify(value)
@@ -1031,9 +1071,9 @@ describe('intraday shadow decision', () => {
     )
   })
 
-  test.each([true, false].flatMap((retained) => [false, true].map((seeded) => ({ retained, seeded }))))(
-    'decision retention is byte bounded: %j',
-    async ({ retained, seeded }) => {
+  test.each([true, false])(
+    'decision retention is byte bounded (within budget: %s)',
+    async (retained) => {
       const base = await Effect.runPromise(buildObserveShadowDecision(fixture()))
       const baseJson = JSON.stringify(base)
       const accountCopies = baseJson.split(accountId).length - 1
@@ -1044,43 +1084,42 @@ describe('intraday shadow decision', () => {
         buildObserveShadowDecision(fixture({}, false, 'a'.repeat(accountLength))),
       )
       expect(Buffer.byteLength(JSON.stringify(document)) <= 8 * 1024 * 1024).toBe(retained)
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const client = yield* makePostgresFixture({
-              acquirer: Effect.die('Decision retention contract tests never connect to PostgreSQL'),
-              compiler: PgClient.makeCompiler(undefined, false),
-              spanAttributes: [],
-            })
-            const hasRetainedBody: boolean[] = []
-            const sql = new Proxy(client, {
-              apply(target, receiver, args) {
-                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
-                const [query, parameters] = statement.compile()
-                if (query === 'clock_timestamp()') return statement
-                const supplied = parameters[1]
-                hasRetainedBody.push(supplied !== null)
-                return Effect.succeed([
-                  {
-                    document: supplied === null ? document : null,
-                    matches_retained_document: supplied !== null,
-                    document_digest: sha256(JSON.stringify(document)),
-                    execution_completion_evidence_matches: false,
-                    execution_generation_is_superseded: false,
-                  },
-                ])
-              },
-            })
-            const queries = makeCycleQueries(sql)
-            if (seeded) yield* queries.retainDecisionInput(document, sha256(JSON.stringify(document)))
-            for (let read = 0; read < 2; read += 1) {
-              const result = yield* queries.selectDecisionDocuments(document.bindings.cycleId)
-              expect(result[0]?.contentHash).toBe(document.contentHash)
-            }
-            expect(hasRetainedBody).toEqual([seeded && retained, retained])
-          }),
-        ).pipe(Effect.provide(Reactivity.layer)),
-      )
+      const digest = sha256(JSON.stringify(document))
+      for (const seeded of [false, true]) {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const client = yield* mockDecisionSql
+              const hasRetainedBody: boolean[] = []
+              const sql = new Proxy(client, {
+                apply(target, receiver, args) {
+                  const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+                  const [query, parameters] = statement.compile()
+                  if (query === 'clock_timestamp()') return statement
+                  const supplied = parameters[1]
+                  hasRetainedBody.push(supplied !== null)
+                  return Effect.succeed([
+                    {
+                      document: supplied === null ? document : null,
+                      matches_retained_document: supplied !== null,
+                      document_digest: digest,
+                      execution_completion_evidence_matches: false,
+                      execution_generation_is_superseded: false,
+                    },
+                  ])
+                },
+              })
+              const queries = makeCycleQueries(sql)
+              if (seeded) yield* queries.retainDecisionInput(document, digest)
+              for (let read = 0; read < 2; read += 1) {
+                const result = yield* queries.selectDecisionDocuments(document.bindings.cycleId)
+                expect(result[0]?.contentHash).toBe(document.contentHash)
+              }
+              expect(hasRetainedBody).toEqual([seeded && retained, retained])
+            }),
+          ).pipe(Effect.provide(Reactivity.layer)),
+        )
+      }
     },
     30_000,
   )
@@ -1100,11 +1139,7 @@ describe('intraday shadow decision', () => {
           })
           const defect = new Error('test query defect')
           let mode: 'success' | 'failure' | 'defect' | 'wait' | 'duplicate' = 'success'
-          const client = yield* makePostgresFixture({
-            acquirer: Effect.die('Decision failure contract tests never connect to PostgreSQL'),
-            compiler: PgClient.makeCompiler(undefined, false),
-            spanAttributes: [],
-          })
+          const client = yield* mockDecisionSql
           const sql = new Proxy(client, {
             apply(target, receiver, args) {
               const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
@@ -1159,123 +1194,84 @@ describe('intraday shadow decision', () => {
     )
   })
 
-  const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
   postgresTest.each(['statement', 'commit'] as const)(
     'migrated cycle guard rolls back entry lease rejection at %s and permits normal expiry',
     async (rejectedAt) => {
-      if (baynTestPostgresUrl === undefined) throw new Error('missing local PostgreSQL test URL')
-      const url = new URL(baynTestPostgresUrl)
-      if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test')) {
-        throw new Error('expiry regression requires a disposable local test database')
-      }
       const original = fixture({ AAPL: 0.02 }, false, `replay-${hash('e')}`)
       const input = {
         ...original,
         cycle: { ...original.cycle, createdAt: brokerObservedAt, updatedAt: brokerObservedAt },
       }
-      const document = await Effect.runPromise(
-        buildExecutionDecision({
-          ...input,
-          authorityGenerationHash: hash('6'),
-          riskContext: fixtureRiskContext(input),
-          executionSession: executionSession(input),
-        }),
-      )
+      const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
       const expiredAt = new Date(unusedEntryExpiresAt(input.cycle)).toISOString()
-      const runtime = ManagedRuntime.make(
-        WriterFenceLive.pipe(
-          Layer.provideMerge(
-            PostgresClientLive({
-              operationTimeoutMs: 30_000,
-              postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
-            }),
-          ),
-          Layer.provideMerge(NodeServices.layer),
-        ),
-      )
-      try {
-        await runtime.runPromise(
-          Effect.gen(function* () {
-            const sql = yield* PgClient.PgClient
-            const fence = yield* WriterFence
-            yield* sql`DROP SCHEMA public CASCADE`
-            yield* sql`CREATE SCHEMA public`
-            yield* postgresMigrations
-            yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+      await withDecisionDatabase(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const fence = yield* WriterFence
+          yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
             VALUES (${input.cycle.identity.accountId}, ${hash('e')}, ${document.createdAt})`
-            const cycles = yield* makeCycleStore()
-            yield* cycles.acquire(
-              value(makeCycleDraft(input.cycle.identity, input.cycle.window)),
-              input.cycle.createdAt,
-            )
-            yield* cycles.activate(input.cycle.identity.cycleId, input.cycle.updatedAt)
-            const expire = sql`UPDATE simulated_execution_clocks SET observed_at = ${expiredAt}
+          const cycles = yield* makeCycleStore()
+          yield* cycles.acquire(value(makeCycleDraft(input.cycle.identity, input.cycle.window)), input.cycle.createdAt)
+          yield* cycles.activate(input.cycle.identity.cycleId, input.cycle.updatedAt)
+          const expire = sql`UPDATE simulated_execution_clocks SET observed_at = ${expiredAt}
             WHERE account_id = ${input.cycle.identity.accountId}`
-            // Exercise the migrated row and deferred guards with a complete decoded document,
-            // independently of external source and capital-activation fixture setup.
-            const binding = runCycleStore(
-              'bind-decision',
-              sql.withTransaction(
-                Effect.gen(function* () {
-                  yield* sql`INSERT INTO autonomous_cycle_shadow_decisions (cycle_id, schema_version, document, created_at)
+          // Exercise the migrated row and deferred guards with a complete decoded document,
+          // independently of external source and capital-activation fixture setup.
+          const binding = runCycleStore(
+            'bind-decision',
+            sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`INSERT INTO autonomous_cycle_shadow_decisions (cycle_id, schema_version, document, created_at)
               VALUES (${input.cycle.identity.cycleId}, ${document.schemaVersion}, ${sql.json(document)}, ${document.createdAt})`
-                  if (rejectedAt === 'statement') yield* expire
-                  yield* sql`UPDATE autonomous_cycles SET snapshot_id = ${document.bindings.snapshotId},
+                if (rejectedAt === 'statement') yield* expire
+                yield* sql`UPDATE autonomous_cycles SET snapshot_id = ${document.bindings.snapshotId},
               decision_hash = ${document.contentHash}, state_version = state_version + 1,
               updated_at = ${document.createdAt} WHERE cycle_id = ${input.cycle.identity.cycleId}`
-                  if (rejectedAt === 'commit') yield* expire
-                  return { cycle: input.cycle, changed: true }
-                }),
-              ),
-            )
-            const fenced = withWriterFenceCycleStore({ ...cycles, bindDecision: () => binding }, fence, {
-              commit: (intent, decision) =>
-                Effect.succeed({
-                  record: { intent, decision, stateVersion: 2, updatedAt: document.createdAt },
-                  deduplicated: false,
-                }),
-            })
-            const result = yield* fenced
-              .bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
-              .pipe(Effect.result)
-            expect(result).toMatchObject({
-              _tag: 'Failure',
-              failure: { failure: 'entry-expired', persistenceFailure: 'constraint' },
-            })
-            expect(Option.getOrThrow(yield* cycles.read(input.cycle.identity.cycleId))).toMatchObject({
-              state: CycleState.Active,
-              bindings: {},
-            })
-            expect(Option.isNone(yield* cycles.readDecisionDocument(input.cycle.identity.cycleId))).toBe(true)
-            const [counts] = yield* sql`SELECT (SELECT count(*)::integer FROM intents) AS intents,
+                if (rejectedAt === 'commit') yield* expire
+                return { cycle: input.cycle, changed: true }
+              }),
+            ),
+          )
+          const fenced = withWriterFenceCycleStore({ ...cycles, bindDecision: () => binding }, fence, {
+            commit: (intent, decision) =>
+              Effect.succeed({
+                record: { intent, decision, stateVersion: 2, updatedAt: document.createdAt },
+                deduplicated: false,
+              }),
+          })
+          const result = yield* fenced
+            .bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
+            .pipe(Effect.result)
+          expect(result).toMatchObject({
+            _tag: 'Failure',
+            failure: { failure: 'entry-expired', persistenceFailure: 'constraint' },
+          })
+          expect(Option.getOrThrow(yield* cycles.read(input.cycle.identity.cycleId))).toMatchObject({
+            state: CycleState.Active,
+            bindings: {},
+          })
+          expect(Option.isNone(yield* cycles.readDecisionDocument(input.cycle.identity.cycleId))).toBe(true)
+          const [counts] = yield* sql`SELECT (SELECT count(*)::integer FROM intents) AS intents,
             (SELECT count(*)::integer FROM mutation_events) AS mutations, (SELECT count(*)::integer FROM orders) AS orders`
-            expect(counts).toEqual({ intents: 0, mutations: 0, orders: 0 })
-            const blocked = yield* fenced.block(
-              input.cycle.identity.cycleId,
-              CycleTerminalReason.UnusedEntryExpired,
-              expiredAt,
-            )
-            expect(blocked.cycle).toMatchObject({
-              state: CycleState.Blocked,
-              terminalReason: CycleTerminalReason.UnusedEntryExpired,
-              bindings: {},
-            })
-          }),
-        )
-      } finally {
-        await runtime.dispose()
-      }
+          expect(counts).toEqual({ intents: 0, mutations: 0, orders: 0 })
+          const blocked = yield* fenced.block(
+            input.cycle.identity.cycleId,
+            CycleTerminalReason.UnusedEntryExpired,
+            expiredAt,
+          )
+          expect(blocked.cycle).toMatchObject({
+            state: CycleState.Blocked,
+            terminalReason: CycleTerminalReason.UnusedEntryExpired,
+            bindings: {},
+          })
+        }),
+      )
     },
     30_000,
   )
   postgresTest(
     'migrated cycle guard validates constructed no-trade plans against durable risk facts',
     async () => {
-      if (baynTestPostgresUrl === undefined) throw new Error('missing local PostgreSQL test URL')
-      const url = new URL(baynTestPostgresUrl)
-      if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test')) {
-        throw new Error('risk-context regression requires a disposable local test database')
-      }
       const input = fixture()
       const riskContext = {
         ...fixtureRiskContext(input),
@@ -1294,29 +1290,19 @@ describe('intraday shadow decision', () => {
       expect(document.deltaRisk).toEqual([])
       expect(document.bindings.riskContext).toEqual(riskContext)
       expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
-      const runtime = ManagedRuntime.make(
-        PostgresClientLive({
-          operationTimeoutMs: 30_000,
-          postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
-        }).pipe(Layer.provideMerge(NodeServices.layer)),
-      )
-      try {
-        await runtime.runPromise(
-          Effect.gen(function* () {
-            const sql = yield* PgClient.PgClient
-            yield* sql`DROP SCHEMA public CASCADE`
-            yield* sql`CREATE SCHEMA public`
-            yield* postgresMigrations
-            const reconciliation = input.plannerInput.brokerState.reconciliation
-            yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id,
+      await withDecisionDatabase(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const reconciliation = input.plannerInput.brokerState.reconciliation
+          yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id,
           expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
           VALUES (${reconciliation.reconciliationId}, ${reconciliation.schemaVersion}, ${accountId},
           ${reconciliation.expectedHash}, ${reconciliation.observedHash}, ${reconciliation.contentHash},
           ${reconciliation.status}, '[]'::jsonb, ${reconciliation.reconciledAt})`
-            const initialAt = new Date(Date.parse(brokerObservedAt) - 1000).toISOString()
-            yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+          const initialAt = new Date(Date.parse(brokerObservedAt) - 1000).toISOString()
+          yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
           VALUES (${hash('1')}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${initialAt})`
-            yield* sql`INSERT INTO authority_generations (
+          yield* sql`INSERT INTO authority_generations (
           generation_hash, schema_version, activation_schema_version, previous_generation_hash,
           maximum, authority_version, activation_source_revision, activation_image_repository,
           activation_image_digest, strategy_name, strategy_behavior_hash, strategy_parameter_hash,
@@ -1330,18 +1316,18 @@ describe('intraday shadow decision', () => {
           'bayn.jev.protocol.v37', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
-            yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
+          yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
           VALUES ('bayn.paper-authority.v1', ${hash('1')}, ${Authority.Observe}, ${Authority.Observe}, ${KillState.Clear}, 1, ${initialAt})`
-            yield* sql`UPDATE authority_state SET generation_hash = ${hash('6')}, maximum = ${Authority.Execution},
+          yield* sql`UPDATE authority_state SET generation_hash = ${hash('6')}, maximum = ${Authority.Execution},
           effective = ${Authority.Execution}, version = 2, updated_at = ${brokerObservedAt} WHERE singleton`
-            yield* sql`INSERT INTO valuations (valuation_id, schema_version, account_id, source_hash,
+          yield* sql`INSERT INTO valuations (valuation_id, schema_version, account_id, source_hash,
           cash_micros, long_market_value_micros, short_market_value_micros, equity_micros, as_of)
           VALUES (${hash('a')}, 'bayn.paper-valuation.v1', ${accountId}, ${hash('b')},
           ${riskContext.dayStartEquityMicros}, 0, 0, ${riskContext.dayStartEquityMicros}, ${reconciliation.reconciledAt})`
-            const marketData = document.bindings.executionMarketData
-            if (marketData?.schemaVersion !== 'bayn.execution-market-data-binding.v3')
-              throw new Error('missing streaming fixture binding')
-            yield* sql`INSERT INTO streaming_snapshot_references (snapshot_id, schema_version, content_hash, observed_at, manifest)
+          const marketData = document.bindings.executionMarketData
+          if (marketData?.schemaVersion !== 'bayn.execution-market-data-binding.v3')
+            throw new Error('missing streaming fixture binding')
+          yield* sql`INSERT INTO streaming_snapshot_references (snapshot_id, schema_version, content_hash, observed_at, manifest)
           VALUES (${marketData.snapshotId}, 'bayn.streaming-snapshot-reference.v1', ${marketData.contentHash},
           ${marketData.observedAt}, ${sql.json({
             schemaVersion: 'bayn.streaming-market-snapshot.v1',
@@ -1350,69 +1336,54 @@ describe('intraday shadow decision', () => {
             contentHash: marketData.contentHash,
             observedAt: marketData.observedAt,
           })})`
-            const store = yield* makeCycleStore()
-            yield* store.acquire(value(makeCycleDraft(input.cycle.identity, input.cycle.window)), input.cycle.createdAt)
-            if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v7')
-              throw new Error('missing Jev evidence')
-            const { observation, batchPlan, batchResult } = document.strategyDecision.evidence
-            yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
+          const store = yield* makeCycleStore()
+          yield* store.acquire(value(makeCycleDraft(input.cycle.identity, input.cycle.window)), input.cycle.createdAt)
+          if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v7')
+            throw new Error('missing Jev evidence')
+          const { observation, batchPlan, batchResult } = document.strategyDecision.evidence
+          yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
             VALUES (${batchPlan.observationHash}, ${batchPlan.cycleId}, ${observation.observedAt}, ${sql.json(observation)})`
-            yield* sql`INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
+          yield* sql`INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
             VALUES (${batchPlan.batchId}, ${batchPlan.cycleId}, ${batchPlan.authorityGenerationHash}, ${batchPlan.observationHash}, ${sql.json(batchPlan)})`
-            yield* sql`INSERT INTO jev_batch_results (batch_id, result_hash, payload)
+          yield* sql`INSERT INTO jev_batch_results (batch_id, result_hash, payload)
             VALUES (${batchPlan.batchId}, ${batchResult.resultHash}, ${sql.json(batchResult)})`
-            const queries = makeCycleQueries(sql)
-            expect(yield* queries.decisionEvidenceMismatch(document)).toBeNull()
-            const { contentHash: _contentHash, ...material } = document
-            const { riskContext: _riskContext, ...historicalBindings } = material.bindings
-            const historical = value(makeExecutionDecisionDocument({ ...material, bindings: historicalBindings }))
-            expect(Result.isSuccess(decodeExecutionDecisionDocument(historical))).toBe(true)
-            expect(yield* queries.decisionEvidenceMismatch(historical)).toBe(DecisionEvidenceMismatch.RiskContext)
-            for (const forgedContext of [
-              { ...riskContext, authority: { ...riskContext.authority, version: 3 } },
-              { ...riskContext, dayStartEquityMicros: (BigInt(riskContext.dayStartEquityMicros) + 1n).toString() },
-              { ...riskContext, peakEquityMicros: (BigInt(riskContext.peakEquityMicros) + 1n).toString() },
-              { ...riskContext, dailyTradedNotionalMicros: '1' },
-              { ...riskContext, unknownMutationCount: 1 },
-            ]) {
-              const forged = value(
-                makeExecutionDecisionDocument({
-                  ...material,
-                  bindings: { ...material.bindings, riskContext: forgedContext },
-                }),
-              )
-              expect(Result.isSuccess(decodeExecutionDecisionDocument(forged))).toBe(true)
-              expect(yield* queries.decisionEvidenceMismatch(forged)).toBe(DecisionEvidenceMismatch.RiskContext)
-            }
-          }),
-        )
-      } finally {
-        await runtime.dispose()
-      }
+          const queries = makeCycleQueries(sql)
+          expect(yield* queries.decisionEvidenceMismatch(document)).toBeNull()
+          const { contentHash: _contentHash, ...material } = document
+          const { riskContext: _riskContext, ...historicalBindings } = material.bindings
+          const historical = value(makeExecutionDecisionDocument({ ...material, bindings: historicalBindings }))
+          expect(Result.isSuccess(decodeExecutionDecisionDocument(historical))).toBe(true)
+          expect(yield* queries.decisionEvidenceMismatch(historical)).toBe(DecisionEvidenceMismatch.RiskContext)
+          for (const forgedContext of [
+            { ...riskContext, authority: { ...riskContext.authority, version: 3 } },
+            { ...riskContext, dayStartEquityMicros: (BigInt(riskContext.dayStartEquityMicros) + 1n).toString() },
+            { ...riskContext, peakEquityMicros: (BigInt(riskContext.peakEquityMicros) + 1n).toString() },
+            { ...riskContext, dailyTradedNotionalMicros: '1' },
+            { ...riskContext, unknownMutationCount: 1 },
+          ]) {
+            const forged = value(
+              makeExecutionDecisionDocument({
+                ...material,
+                bindings: { ...material.bindings, riskContext: forgedContext },
+              }),
+            )
+            expect(Result.isSuccess(decodeExecutionDecisionDocument(forged))).toBe(true)
+            expect(yield* queries.decisionEvidenceMismatch(forged)).toBe(DecisionEvidenceMismatch.RiskContext)
+          }
+        }),
+      )
     },
     30_000,
   )
   postgresTest(
     'migrated cycle guard refuses early terminalization and admits expiration of an unused Jev entry',
     async () => {
-      if (baynTestPostgresUrl === undefined) throw new Error('missing local PostgreSQL test URL')
-      const url = new URL(baynTestPostgresUrl)
-      if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test')) {
-        throw new Error('expiry regression requires a disposable local test database')
-      }
       const original = fixture({ AAPL: 0.02 }, false, `replay-${hash('e')}`)
       const input = {
         ...original,
         cycle: { ...original.cycle, createdAt: brokerObservedAt, updatedAt: brokerObservedAt },
       }
-      const document = await Effect.runPromise(
-        buildExecutionDecision({
-          ...input,
-          authorityGenerationHash: hash('6'),
-          riskContext: fixtureRiskContext(input),
-          executionSession: executionSession(input),
-        }),
-      )
+      const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
       expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
       expect(document.riskBlock).toBeUndefined()
       const buy = document.deltaRisk[0]
@@ -1426,138 +1397,114 @@ describe('intraday shadow decision', () => {
                 : [],
           }),
         )
-      const runtime = ManagedRuntime.make(
-        CycleStoreLive.pipe(
-          Layer.provideMerge(
-            PostgresClientLive({
-              // Schema setup has its own budget; expiry is checked against the explicit decision timestamps below.
-              operationTimeoutMs: 30_000,
-              postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
-            }),
-          ),
-          Layer.provideMerge(NodeServices.layer),
-        ),
-      )
-      try {
-        await runtime.runPromise(
-          Effect.gen(function* () {
-            const sql = yield* PgClient.PgClient
-            const cycles = yield* CycleStore
-            yield* sql`DROP SCHEMA public CASCADE`
-            yield* sql`CREATE SCHEMA public`
-            yield* postgresMigrations
-            yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+      await withDecisionDatabase(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const cycles = yield* CycleStore
+          yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
               VALUES (${input.cycle.identity.accountId}, ${hash('e')}, ${document.createdAt})`
-            yield* cycles.acquire(
-              value(makeCycleDraft(input.cycle.identity, input.cycle.window)),
-              input.cycle.createdAt,
-            )
-            yield* cycles.activate(input.cycle.identity.cycleId, input.cycle.updatedAt)
-            const boundReads: ReadonlyArray<Record<string, unknown>>[] = []
-            const bindingSql = new Proxy(sql, {
-              apply(target, receiver, args) {
-                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
-                return statement.compile()[0].includes('WITH decision_read')
-                  ? statement.pipe(Effect.tap((rows) => Effect.sync(() => boundReads.push(rows))))
-                  : statement
-              },
-            })
-            const boundQueries = makeCycleQueries(bindingSql)
-            // Exercise the real binding SQL, migrated tables and triggers. As in
-            // the previous direct insertion, external source/capital facts are fixtures.
-            const binding = makeCycleBindingPrograms(
-              bindingSql,
-              {
-                ...boundQueries,
-                decisionEvidenceMismatch: () => Effect.succeed(null),
-              },
-              makeCycleMutationPrimitives(bindingSql, boundQueries),
-            )
-            const bind = () => binding.bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
-            const rolledBack = yield* sql
-              .withTransaction(bind().pipe(Effect.andThen(Effect.fail(new Error('test rollback after binding')))))
-              .pipe(Effect.result)
-            expect(Result.isFailure(rolledBack)).toBe(true)
-            expect(yield* boundQueries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([])
-            expect(Option.getOrThrow(yield* cycles.read(input.cycle.identity.cycleId)).bindings).toEqual({})
-            yield* bind()
-            expect(yield* boundQueries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([document])
-            expect(boundReads.at(-1)?.[0]?.['document']).toBeNull()
-            expect(boundReads.at(-1)?.[0]?.['matches_retained_document']).toBe(true)
-            const projectedRows: ReadonlyArray<Record<string, unknown>>[] = []
-            const observedSql = new Proxy(sql, {
-              apply(target, receiver, args) {
-                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
-                if (statement.compile()[0] === 'clock_timestamp()') return statement
-                return statement.pipe(Effect.tap((rows) => Effect.sync(() => projectedRows.push(rows))))
-              },
-            })
-            const queries = makeCycleQueries(observedSql)
-            const cold = yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)
-            expect(cold).toEqual([document])
-            const warm = yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)
-            expect(warm).toEqual(cold)
-            expect(warm[0]).not.toBe(cold[0])
-            expect(projectedRows[0]?.[0]?.['document']).toEqual(document)
-            expect(projectedRows[0]?.[0]?.['matches_retained_document']).toBe(false)
-            expect(projectedRows[1]?.[0]?.['document']).toBeNull()
-            expect(projectedRows[1]?.[0]?.['matches_retained_document']).toBe(true)
-            expect(yield* queries.selectDecisionDocuments(hash('0'))).toEqual([])
-            yield* sql.withTransaction(
-              Effect.gen(function* () {
-                // Isolate read corruption from immutable write-admission triggers.
-                // The query and fresh evidence functions still execute in PostgreSQL.
-                yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+          yield* cycles.acquire(value(makeCycleDraft(input.cycle.identity, input.cycle.window)), input.cycle.createdAt)
+          yield* cycles.activate(input.cycle.identity.cycleId, input.cycle.updatedAt)
+          const boundReads: ReadonlyArray<Record<string, unknown>>[] = []
+          const bindingSql = new Proxy(sql, {
+            apply(target, receiver, args) {
+              const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+              return statement.compile()[0].includes('WITH decision_read')
+                ? statement.pipe(Effect.tap((rows) => Effect.sync(() => boundReads.push(rows))))
+                : statement
+            },
+          })
+          const boundQueries = makeCycleQueries(bindingSql)
+          // Exercise the real binding SQL, migrated tables and triggers. As in
+          // the previous direct insertion, external source/capital facts are fixtures.
+          const binding = makeCycleBindingPrograms(
+            bindingSql,
+            {
+              ...boundQueries,
+              decisionEvidenceMismatch: () => Effect.succeed(null),
+            },
+            makeCycleMutationPrimitives(bindingSql, boundQueries),
+          )
+          const bind = () => binding.bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
+          const rolledBack = yield* sql
+            .withTransaction(bind().pipe(Effect.andThen(Effect.fail(new Error('test rollback after binding')))))
+            .pipe(Effect.result)
+          expect(Result.isFailure(rolledBack)).toBe(true)
+          expect(yield* boundQueries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([])
+          expect(Option.getOrThrow(yield* cycles.read(input.cycle.identity.cycleId)).bindings).toEqual({})
+          yield* bind()
+          expect(yield* boundQueries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([document])
+          expect(boundReads.at(-1)?.[0]?.['document']).toBeNull()
+          expect(boundReads.at(-1)?.[0]?.['matches_retained_document']).toBe(true)
+          const projectedRows: ReadonlyArray<Record<string, unknown>>[] = []
+          const observedSql = new Proxy(sql, {
+            apply(target, receiver, args) {
+              const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+              if (statement.compile()[0] === 'clock_timestamp()') return statement
+              return statement.pipe(Effect.tap((rows) => Effect.sync(() => projectedRows.push(rows))))
+            },
+          })
+          const queries = makeCycleQueries(observedSql)
+          const cold = yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)
+          expect(cold).toEqual([document])
+          const warm = yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)
+          expect(warm).toEqual(cold)
+          expect(warm[0]).not.toBe(cold[0])
+          expect(projectedRows[0]?.[0]?.['document']).toEqual(document)
+          expect(projectedRows[0]?.[0]?.['matches_retained_document']).toBe(false)
+          expect(projectedRows[1]?.[0]?.['document']).toBeNull()
+          expect(projectedRows[1]?.[0]?.['matches_retained_document']).toBe(true)
+          expect(yield* queries.selectDecisionDocuments(hash('0'))).toEqual([])
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              // Isolate read corruption from immutable write-admission triggers.
+              // The query and fresh evidence functions still execute in PostgreSQL.
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
                   cycle_id text PRIMARY KEY, decision_hash text, document jsonb NOT NULL
                 ) ON COMMIT DROP`
-                yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
+              yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
                   SELECT cycle_id, decision_hash, document FROM public.autonomous_cycle_shadow_decisions
                   WHERE cycle_id = ${input.cycle.identity.cycleId}`
-                expect(yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual(cold)
-                expect(projectedRows.at(-1)?.[0]?.['document']).toBeNull()
-                yield* sql`UPDATE autonomous_cycle_shadow_decisions
+              expect(yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual(cold)
+              expect(projectedRows.at(-1)?.[0]?.['document']).toBeNull()
+              yield* sql`UPDATE autonomous_cycle_shadow_decisions
                   SET document = jsonb_set(document, '{bindings,accountId}', '"corrupt-same-hash"'::jsonb)
                   WHERE cycle_id = ${input.cycle.identity.cycleId}`
-                const corrupted = yield* queries
-                  .selectDecisionDocuments(input.cycle.identity.cycleId)
-                  .pipe(Effect.result)
-                expect(Result.isFailure(corrupted)).toBe(true)
-                expect(projectedRows.at(-1)?.[0]?.['matches_retained_document']).toBe(false)
-                expect(
-                  Result.isFailure(
-                    yield* boundQueries.selectDecisionDocuments(input.cycle.identity.cycleId).pipe(Effect.result),
-                  ),
-                ).toBe(true)
-                yield* sql`DELETE FROM autonomous_cycle_shadow_decisions WHERE cycle_id = ${input.cycle.identity.cycleId}`
-                expect(yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([])
-              }),
-            )
-            const blocked = yield* cycles
-              .block(
-                input.cycle.identity.cycleId,
-                CycleTerminalReason.Risk,
-                new Date(Date.parse(buy.evaluation.decision.expiresAt) - 1).toISOString(),
-              )
-              .pipe(Effect.result)
-            expect(Result.isFailure(blocked)).toBe(true)
-            const [retained] = yield* sql<{ state: string; decision_hash: string; terminal_reason: string | null }>`
-          SELECT state, decision_hash, terminal_reason FROM autonomous_cycles WHERE cycle_id = ${input.cycle.identity.cycleId}`
-            expect(retained).toEqual({ state: 'ACTIVE', decision_hash: document.contentHash, terminal_reason: null })
-            const [counts] = yield* sql<{ intents: number; mutations: number; orders: number }>`SELECT
-          (SELECT count(*)::integer FROM intents) AS intents, (SELECT count(*)::integer FROM mutation_events) AS mutations,
-          (SELECT count(*)::integer FROM orders) AS orders`
-            expect(counts).toEqual({ intents: 0, mutations: 0, orders: 0 })
-            const expired = yield* cycles.block(
+              const corrupted = yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId).pipe(Effect.result)
+              expect(Result.isFailure(corrupted)).toBe(true)
+              expect(projectedRows.at(-1)?.[0]?.['matches_retained_document']).toBe(false)
+              expect(
+                Result.isFailure(
+                  yield* boundQueries.selectDecisionDocuments(input.cycle.identity.cycleId).pipe(Effect.result),
+                ),
+              ).toBe(true)
+              yield* sql`DELETE FROM autonomous_cycle_shadow_decisions WHERE cycle_id = ${input.cycle.identity.cycleId}`
+              expect(yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([])
+            }),
+          )
+          const blocked = yield* cycles
+            .block(
               input.cycle.identity.cycleId,
               CycleTerminalReason.Risk,
-              buy.evaluation.decision.expiresAt,
+              new Date(Date.parse(buy.evaluation.decision.expiresAt) - 1).toISOString(),
             )
-            expect(expired.cycle.state).toBe(CycleState.Blocked)
-          }),
-        )
-      } finally {
-        await runtime.dispose()
-      }
+            .pipe(Effect.result)
+          expect(Result.isFailure(blocked)).toBe(true)
+          const [retained] = yield* sql<{ state: string; decision_hash: string; terminal_reason: string | null }>`
+          SELECT state, decision_hash, terminal_reason FROM autonomous_cycles WHERE cycle_id = ${input.cycle.identity.cycleId}`
+          expect(retained).toEqual({ state: 'ACTIVE', decision_hash: document.contentHash, terminal_reason: null })
+          const [counts] = yield* sql<{ intents: number; mutations: number; orders: number }>`SELECT
+          (SELECT count(*)::integer FROM intents) AS intents, (SELECT count(*)::integer FROM mutation_events) AS mutations,
+          (SELECT count(*)::integer FROM orders) AS orders`
+          expect(counts).toEqual({ intents: 0, mutations: 0, orders: 0 })
+          const expired = yield* cycles.block(
+            input.cycle.identity.cycleId,
+            CycleTerminalReason.Risk,
+            buy.evaluation.decision.expiresAt,
+          )
+          expect(expired.cycle.state).toBe(CycleState.Blocked)
+        }),
+      )
     },
     30_000,
   )
@@ -1571,15 +1518,7 @@ describe('intraday shadow decision', () => {
   )(
     'never submits or commits an expired Jev entry ($expiry, $commitState, allowed=$allowSubmit)',
     async ({ allowSubmit, commitState, expiry }) => {
-      const input = fixture({ AAPL: 0.02 })
-      const document = await Effect.runPromise(
-        buildExecutionDecision({
-          ...input,
-          authorityGenerationHash: hash('6'),
-          riskContext: fixtureRiskContext(input),
-          executionSession: executionSession(input),
-        }),
-      )
+      const { document, input } = await committedEntryFixture()
       expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
       expect(document.riskBlock).toBeUndefined()
       expect(document.targetPlan.intentTargets.map(({ side }) => side)).toEqual([Side.Buy])
@@ -1598,29 +1537,22 @@ describe('intraday shadow decision', () => {
         updatedAt: evaluatedAt,
       }
       const records = new Map<string, StoredIntent>()
-      for (const [index, target] of document.targetPlan.intentTargets.entries()) {
-        const risk = document.deltaRisk[index]
-        if (risk === undefined) throw new Error('missing bound intent risk')
-        const intent = await Effect.runPromise(
-          planExecutionIntent(
-            {
-              schemaVersion: intentPlanSchemaVersion,
-              ...target,
-              notionalLimitMicros: risk.notionalLimitMicros,
-              limitPriceMicros: risk.limitPriceMicros,
-              ...(risk.protection === undefined ? {} : { protection: risk.protection }),
-              createdAt: document.createdAt,
-            },
-            { authority: { ...authority, effective: Authority.Execution, kill: KillState.Clear } },
-          ),
-        )
-        if (commitState === 'partial') continue
-        records.set(intent.intentId, {
-          intent: { ...intent, state: IntentState.Approved, riskDecisionId: risk.evaluation.decision.decisionId },
-          decision: risk.evaluation.decision,
-          stateVersion: 2,
-          updatedAt: document.createdAt,
-        })
+      const planned = await Effect.runPromise(
+        planFixtureIntents(document, {
+          ...authority,
+          effective: Authority.Execution,
+          kill: KillState.Clear,
+        }),
+      )
+      if (commitState === 'complete') {
+        for (const { intent, decision } of planned) {
+          records.set(intent.intentId, {
+            intent: { ...intent, state: IntentState.Approved, riskDecisionId: decision.decisionId },
+            decision,
+            stateVersion: 2,
+            updatedAt: document.createdAt,
+          })
+        }
       }
       const broker = brokerState(accountId, undefined, evaluatedAt)
       const reconciliation = {
@@ -1628,14 +1560,7 @@ describe('intraday shadow decision', () => {
         brokerState: broker,
         report: { metrics: { accountingExact: true }, reconciliation: broker.reconciliation },
       } as unknown as ReconciliationPassResult
-      const cycle = {
-        ...input.cycle,
-        bindings: {
-          ...input.cycle.bindings,
-          snapshotId: document.bindings.snapshotId,
-          decisionHash: document.contentHash,
-        },
-      }
+      const cycle = bindFixtureCycle(input, document)
       let commits = 0
       let restrictions = 0
       const step = await Effect.runPromise(
@@ -1666,11 +1591,8 @@ describe('intraday shadow decision', () => {
               }),
           },
         ).pipe(
-          Effect.provideService(IntentStore, {
-            protectionForCycle: () => Effect.succeed([]),
-            beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
-            recordProtectionCancelAccepted: () =>
-              Effect.die(new Error('unexpected protection cancellation acceptance')),
+          withFixtureIntentStore({
+            ...noProtection,
             read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
             commit: () =>
               Effect.sync(() => {
@@ -1678,7 +1600,7 @@ describe('intraday shadow decision', () => {
                 throw new Error('expired set must not commit')
               }),
           }),
-          Effect.provideService(MutationStore, { latest: () => Effect.void } as unknown as MutationStoreShape),
+          withFixtureMutationStore({ latest: () => Effect.as(Effect.void, undefined) }),
         ),
       )
       expect(step).toMatchObject({
@@ -1695,15 +1617,7 @@ describe('intraday shadow decision', () => {
   test.each([false, true])(
     'unknown Jev entry submission recovers before risk and reconciliation reads (persisted risk=%s)',
     async (withRisk) => {
-      const input = fixture({ AAPL: 0.02 })
-      const document = await Effect.runPromise(
-        buildExecutionDecision({
-          ...input,
-          authorityGenerationHash: hash('6'),
-          riskContext: fixtureRiskContext(input),
-          executionSession: executionSession(input),
-        }),
-      )
+      const { document, input } = await committedEntryFixture()
       expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
       expect(document.riskBlock).toBeUndefined()
       const records = new Map<string, StoredIntent>()
@@ -1718,33 +1632,14 @@ describe('intraday shadow decision', () => {
         version: 1,
         updatedAt: document.createdAt,
       }
-      for (const [index, target] of document.targetPlan.intentTargets.entries()) {
-        const risk = document.deltaRisk[index]?.evaluation.decision
-        const protection = document.deltaRisk[index]?.protection
-        const notional = document.deltaRisk[index]?.notionalLimitMicros
-        const limitPriceMicros = document.deltaRisk[index]?.limitPriceMicros
-        if (risk === undefined || notional === undefined || limitPriceMicros === undefined)
-          throw new Error('missing bound risk')
-        const intent = await Effect.runPromise(
-          planExecutionIntent(
-            {
-              schemaVersion: intentPlanSchemaVersion,
-              ...target,
-              notionalLimitMicros: notional,
-              limitPriceMicros,
-              ...(protection === undefined ? {} : { protection }),
-              createdAt: document.createdAt,
-            },
-            { authority },
-          ),
-        )
+      for (const { intent, decision } of await Effect.runPromise(planFixtureIntents(document, authority))) {
         records.set(intent.intentId, {
           intent: {
             ...intent,
             state: IntentState.Unknown,
-            ...(withRisk ? { riskDecisionId: risk.decisionId } : {}),
+            ...(withRisk ? { riskDecisionId: decision.decisionId } : {}),
           },
-          ...(withRisk ? { decision: risk } : {}),
+          ...(withRisk ? { decision } : {}),
           stateVersion: 2,
           updatedAt: document.createdAt,
         })
@@ -1769,10 +1664,7 @@ describe('intraday shadow decision', () => {
           { accountId, authorityGenerationHash: hash('6'), mutationPhase: 'ENTRY' },
           { executionModel: intradayMomentumExecutionModel },
           input.policy,
-          {
-            ...input.cycle,
-            bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
-          },
+          bindFixtureCycle(input, document),
           document,
           Effect.die(new Error('lookup selection must not reconcile')),
           false,
@@ -1783,18 +1675,15 @@ describe('intraday shadow decision', () => {
             restrictAuthority: () => Effect.die(new Error('lookup selection must not restrict authority')),
           },
         ).pipe(
-          Effect.provideService(IntentStore, {
-            protectionForCycle: () => Effect.succeed([]),
-            beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
-            recordProtectionCancelAccepted: () =>
-              Effect.die(new Error('unexpected protection cancellation acceptance')),
+          withFixtureIntentStore({
+            ...noProtection,
             read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
             commit: () => Effect.die(new Error('malformed set cannot commit')),
           }),
-          Effect.provideService(MutationStore, {
+          withFixtureMutationStore({
             latest: (id: string, operation: MutationOperation) =>
               Effect.succeed(id === firstId && operation === MutationOperation.Submit ? event : undefined),
-          } as unknown as MutationStoreShape),
+          }),
         ),
       )
       expect(step).toEqual({ _tag: 'Execute', action: 'RECOVER_SUBMIT', intentId: firstId, observedAt: evaluatedAt })
@@ -1802,13 +1691,7 @@ describe('intraday shadow decision', () => {
   )
 
   test('simulated decision and pricing cuts execute the same planner and risk checks only for their replay account', async () => {
-    const build = (input: ObserveShadowDecisionInput) =>
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      })
+    const build = (input: ObserveShadowDecisionInput) => buildExecutionDecision(executionFixtureInput(input))
     const input = fixture({ AAPL: 0.02 }, true, `replay-${hash('b')}`)
     const document = await Effect.runPromise(build(input))
     expect(document.bindings.executionMarketData?.schemaVersion).toBe('bayn.execution-market-data-binding.v4')
@@ -1832,14 +1715,7 @@ describe('intraday shadow decision', () => {
 
   test('persists reproducible streaming decision and pricing cuts and rejects altered or missing execution rows', async () => {
     const input = fixture({ AAPL: 0.02 })
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
+    const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
     expect(value(reproduceRecordedStreamingDecision(document)).snapshots).toHaveLength(2)
     expect(document.bindings.executionMarketData?.schemaVersion).toBe('bayn.execution-market-data-binding.v3')
     expect(document.decisionMarketDataRows).toEqual(input.decisionMarketDataRows)
@@ -1856,14 +1732,7 @@ describe('intraday shadow decision', () => {
 
   test('rejects a reproducible SIP pricing cut bound to a retained IEX signal', async () => {
     const input = fixture({ AAPL: 0.02 })
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
+    const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
     const binding = document.bindings.executionMarketData
     const rows = document.executionMarketDataRows
     if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v3' || rows === undefined)
@@ -1926,12 +1795,7 @@ describe('intraday shadow decision', () => {
       const input = fixture()
       const cycle = input.cycle
       let cycleReads = 0
-      const executionInput = {
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }
+      const executionInput = executionFixtureInput(input)
       const build = (): Effect.Effect<CycleDecisionDocument, ShadowDecisionError> =>
         authority === Authority.Execution ? buildExecutionDecision(executionInput) : buildObserveShadowDecision(input)
       const expected = await Effect.runPromise(build())
@@ -1986,12 +1850,7 @@ describe('intraday shadow decision', () => {
 
   test('retains an execution construction defect inside its observed Effect', async () => {
     const input = fixture()
-    const executionInput = {
-      ...input,
-      authorityGenerationHash: hash('6'),
-      riskContext: fixtureRiskContext(input),
-      executionSession: executionSession(input),
-    }
+    const executionInput = executionFixtureInput(input)
     const defect = new Error('test construction defect')
     Object.defineProperty(executionInput, 'cycle', {
       enumerable: true,
@@ -2042,14 +1901,7 @@ describe('intraday shadow decision', () => {
 
   test('rejects retired intraday-v1 and v2 contracts at every execution boundary', async () => {
     const input = fixture()
-    const current = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
+    const current = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
     const currentPlanner = executionDecisionPlannerInput(current)
     if (currentPlanner === undefined) throw new Error('missing Jev planner evidence')
     const { contentHash: _contentHash, ...material } = current
@@ -2077,11 +1929,8 @@ describe('intraday shadow decision', () => {
         Result.isFailure(
           await Effect.runPromise(
             buildExecutionDecision({
-              ...input,
+              ...executionFixtureInput(input),
               compiledDecision: strategyDecision as unknown as typeof input.compiledDecision,
-              authorityGenerationHash: hash('6'),
-              riskContext: fixtureRiskContext(input),
-              executionSession: executionSession(input),
             }).pipe(Effect.result),
           ),
         ),
@@ -2103,14 +1952,7 @@ describe('intraday shadow decision', () => {
         }),
       ),
     ).toBe(true)
-    const current = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
+    const current = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
     expect(current.schemaVersion).toBe('bayn.paper-cycle-decision.v2')
     const { contentHash: _, ...material } = current
     const retired = { ...material, schemaVersion: 'bayn.paper-cycle-decision.v1' }
@@ -2130,14 +1972,7 @@ describe('intraday shadow decision', () => {
     }
     expect(input.compiledDecision.selectedSymbols).toEqual([selectedSymbol])
     expect(input.targetPlan.status).toBe(TargetPlanStatus.Planned)
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
+    const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
     const { contentHash: _contentHash, ...material } = document
     expect(material.strategyDecision).toEqual(input.compiledDecision)
     expect(executionDecisionPlannerInput(document)).toEqual(input.plannerInput)
@@ -2321,19 +2156,27 @@ describe('intraday shadow decision', () => {
     ).toBeTrue()
   })
 
-  test('rejects a fully rehashed evaluation whose durable risk context differs from the bound planner state', async () => {
+  test.each([
+    [
+      'daily-start equity',
+      (state: ShadowDeltaRiskInput['state']) => ({
+        ...state,
+        dayStartEquityMicros: (BigInt(state.dayStartEquityMicros) + 1n).toString(),
+      }),
+    ],
+    [
+      'authority version',
+      (state: ShadowDeltaRiskInput['state']) => ({
+        ...state,
+        authority: { ...state.authority, version: state.authority.version + 1 },
+      }),
+    ],
+  ] as const)('rejects a fully rehashed evaluation with a different %s', async (_field, rewrite) => {
     const selectedSymbol = protocol.candidateSymbols[0]
     if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
     const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
     const authorityGenerationHash = hash('6')
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash,
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
+    const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
     const target = document.targetPlan.intentTargets[0]
     const risk = document.deltaRisk[0]
     if (target === undefined || risk?.facts === undefined) {
@@ -2351,64 +2194,7 @@ describe('intraday shadow decision', () => {
         authorityGenerationHash,
       ),
     )
-    const forgedState = {
-      ...risk.facts.state,
-      dayStartEquityMicros: (BigInt(risk.facts.state.dayStartEquityMicros) + 1n).toString(),
-    }
-    const forgedEvaluation = value(
-      evaluate({
-        intent,
-        state: forgedState,
-        policy: input.policy,
-        proposedPositions: risk.facts.proposedPositions,
-      }),
-    )
-    const { contentHash: _contentHash, ...material } = document
-    const forged = makeExecutionDecisionDocument({
-      ...material,
-      deltaRisk: [{ ...risk, facts: { ...risk.facts, state: forgedState }, evaluation: forgedEvaluation }],
-    })
-
-    expect(Result.isFailure(forged)).toBeTrue()
-    if (Result.isFailure(forged)) {
-      expect(String(forged.failure.cause)).toContain('must match the exact planner, authority, market-data')
-    }
-  })
-
-  test('rejects a fully rehashed evaluation whose authority version differs from the bound state', async () => {
-    const selectedSymbol = protocol.candidateSymbols[0]
-    if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
-    const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
-    const authorityGenerationHash = hash('6')
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash,
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
-    const target = document.targetPlan.intentTargets[0]
-    const risk = document.deltaRisk[0]
-    if (target === undefined || risk?.facts === undefined) {
-      throw new Error('authority fixture requires one persisted execution risk input')
-    }
-    const intent = value(
-      makeExecutionIntentFromDecodedPlan(
-        {
-          schemaVersion: intentPlanSchemaVersion,
-          ...target,
-          notionalLimitMicros: risk.notionalLimitMicros,
-          limitPriceMicros: risk.limitPriceMicros,
-          ...(risk.protection === undefined ? {} : { protection: risk.protection }),
-        },
-        authorityGenerationHash,
-      ),
-    )
-    const forgedState = {
-      ...risk.facts.state,
-      authority: { ...risk.facts.state.authority, version: risk.facts.state.authority.version + 1 },
-    }
+    const forgedState = rewrite(risk.facts.state)
     const forgedEvaluation = value(
       evaluate({
         intent,
@@ -2434,14 +2220,7 @@ describe('intraday shadow decision', () => {
     if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
     const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
     const authorityGenerationHash = hash('6')
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash,
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
+    const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
     const target = document.targetPlan.intentTargets[0]
     const risk = document.deltaRisk[0]
     if (target === undefined || risk?.facts === undefined) {
@@ -2573,14 +2352,7 @@ test.each(['committed', 'intent-failed', 'caller-mutated'] as const)(
   'entry decision binding and approval share the writer transaction when %s',
   async (scenario) => {
     const input = fixture({ AAPL: 0.02 })
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
+    const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
     expect(document.orderedIntentIds).toHaveLength(1)
     const expectedIds = [...document.orderedIntentIds]
     const expectedRisk = structuredClone(document.deltaRisk[0])
@@ -2648,98 +2420,68 @@ test.each(['committed', 'intent-failed', 'caller-mutated'] as const)(
   },
 )
 
-const atomicBindingPostgresTest = baynTestPostgresUrl === undefined ? test.skip : test
-atomicBindingPostgresTest.each([false, true])(
+postgresTest.each([false, true])(
   'PostgreSQL entry binding and nested intent approval are atomic with rejection=%s',
   async (rejectIntent) => {
-    if (baynTestPostgresUrl === undefined) throw new Error('missing local PostgreSQL test URL')
-    const url = new URL(baynTestPostgresUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test'))
-      throw new Error('atomic binding regression requires a disposable local test database')
     const input = fixture({ AAPL: 0.02 })
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
-    const runtime = ManagedRuntime.make(
-      WriterFenceLive.pipe(
-        Layer.provideMerge(
-          PostgresClientLive({
-            operationTimeoutMs: 10_000,
-            postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
-          }),
-        ),
-        Layer.provideMerge(NodeServices.layer),
-      ),
-    )
-    try {
-      await runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const fence = yield* WriterFence
-          yield* sql`CREATE TABLE test_atomic_entry_binding (kind text PRIMARY KEY, transaction_id xid8 NOT NULL)`
-          const store = withWriterFenceCycleStore(
-            bindingOnlyCycleStore((_cycleId, retained) =>
-              runCycleStore(
-                'bind-decision',
-                sql.withTransaction(
-                  sql`INSERT INTO test_atomic_entry_binding VALUES ('BIND', pg_current_xact_id())`.pipe(
-                    Effect.as({
-                      changed: true,
-                      cycle: { ...input.cycle, bindings: { decisionHash: retained.contentHash } },
-                    }),
-                  ),
+    const document = await Effect.runPromise(buildExecutionDecision(executionFixtureInput(input)))
+    await withDecisionDatabase(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        yield* sql`CREATE TABLE test_atomic_entry_binding (kind text PRIMARY KEY, transaction_id xid8 NOT NULL)`
+        const store = withWriterFenceCycleStore(
+          bindingOnlyCycleStore((_cycleId, retained) =>
+            runCycleStore(
+              'bind-decision',
+              sql.withTransaction(
+                sql`INSERT INTO test_atomic_entry_binding VALUES ('BIND', pg_current_xact_id())`.pipe(
+                  Effect.as({
+                    changed: true,
+                    cycle: { ...input.cycle, bindings: { decisionHash: retained.contentHash } },
+                  }),
                 ),
               ),
             ),
-            fence,
-            {
-              commit: (intent, decision) =>
-                fence.transaction(
-                  Effect.gen(function* () {
-                    yield* sql`INSERT INTO test_atomic_entry_binding VALUES ('INTENT', pg_current_xact_id())`.pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new IntentStoreError({
-                            operation: 'commit',
-                            failure: 'query',
-                            message: 'test approval write failed',
-                            cause,
-                          }),
-                      ),
-                    )
-                    if (rejectIntent)
-                      return yield* new IntentStoreError({
-                        operation: 'commit',
-                        failure: 'conflict',
-                        message: 'reject nested approval',
-                      })
-                    return {
-                      record: { intent, decision, stateVersion: 2, updatedAt: document.createdAt },
-                      deduplicated: false,
-                    }
-                  }),
-                ),
-            },
-          )
-          const result = yield* store
-            .bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
-            .pipe(Effect.result)
-          expect(Result.isFailure(result)).toBe(rejectIntent)
-          const rows = yield* sql`SELECT kind, transaction_id::text FROM test_atomic_entry_binding ORDER BY kind`
-          expect(rows.map((row) => row['kind'])).toEqual(rejectIntent ? [] : ['BIND', 'INTENT'])
-          expect(new Set(rows.map((row) => row['transaction_id'])).size).toBe(rejectIntent ? 0 : 1)
-        }),
-      )
-    } finally {
-      await runtime.runPromise(
-        Effect.flatMap(PgClient.PgClient, (sql) => sql`DROP TABLE IF EXISTS test_atomic_entry_binding`),
-      )
-      await runtime.dispose()
-    }
+          ),
+          fence,
+          {
+            commit: (intent, decision) =>
+              fence.transaction(
+                Effect.gen(function* () {
+                  yield* sql`INSERT INTO test_atomic_entry_binding VALUES ('INTENT', pg_current_xact_id())`.pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new IntentStoreError({
+                          operation: 'commit',
+                          failure: 'query',
+                          message: 'test approval write failed',
+                          cause,
+                        }),
+                    ),
+                  )
+                  if (rejectIntent)
+                    return yield* new IntentStoreError({
+                      operation: 'commit',
+                      failure: 'conflict',
+                      message: 'reject nested approval',
+                    })
+                  return {
+                    record: { intent, decision, stateVersion: 2, updatedAt: document.createdAt },
+                    deduplicated: false,
+                  }
+                }),
+              ),
+          },
+        )
+        const result = yield* store
+          .bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
+          .pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(rejectIntent)
+        const rows = yield* sql`SELECT kind, transaction_id::text FROM test_atomic_entry_binding ORDER BY kind`
+        expect(rows.map((row) => row['kind'])).toEqual(rejectIntent ? [] : ['BIND', 'INTENT'])
+        expect(new Set(rows.map((row) => row['transaction_id'])).size).toBe(rejectIntent ? 0 : 1)
+      }),
+    )
   },
 )

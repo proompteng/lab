@@ -15,7 +15,7 @@ it lost **$1,793** after its ten best days were removed. Neither result warrants
 - All **2,741 official sessions** from January 4, 2016 through November 25, 2026 were retained, including
   21 early closes and 60 common warmup sessions. The original SIP archives cover 10 of the 13 symbols.
   The separate **639,098-row** Alpaca SIP 5-minute supplement for XLB, XLP and XLU covers every session
-  for those symbols; no frozen inputs were edited. [Results](results.json) records the calendar, daily,
+  for those symbols; no frozen inputs were edited. [Results][archived-results] records the calendar, daily,
   frozen intraday and supplemental byte receipts, per-name gaps and 11 annual liquidity elections.
 - The registered 5 bp DSR reference uses **39 defined Train Sharpes** on **1,510** common resolved Train
   sessions and the full **43-trial** count. The expected maximum null daily Sharpe was **0.06155**.
@@ -53,7 +53,7 @@ correlation to B0 was **0.980**. Equal risk gave nearly the same result. The sub
 cost **$15,628**, **0.454 Sharpe** and **1.084 Calmar** against the inverse-vol XLK rung, while increasing
 turnover **12.98×** and shrinking breakeven **5.42 bp**. Its p10 capacity proxy rebounded relative to the
 XLK rung but remained below the original B0. The top-K and All13 books break even at only **2.93–3.98 bp**
-and lose money at 5 bp. The [machine-readable file](results.json) gives unrounded deltas in Sharpe, Calmar,
+and lose money at 5 bp. The [machine-readable file][archived-results] gives unrounded deltas in Sharpe, Calmar,
 MaxDD, turnover, breakeven and both capacity percentiles versus B0 and the previous same-weight rung.
 
 The p10 and median capacity figures are modeled capital at 1% participation in the limiting observed
@@ -70,7 +70,7 @@ sessions, two using the same two qualifying days. No long-only variant survived 
 not evidence of durable diversification: most dates were cash, and the pair is dollar-, not beta-neutral.
 
 The table shows 5 bp Holdout net at both horizons and the number of active sessions (identical across
-horizons here). Medium means 0.25 to <0.75 ATR; large means ≥0.75 ATR. The [results](results.json) preserve
+horizons here). Medium means 0.25 to <0.75 ATR; large means ≥0.75 ATR. The [results][archived-results] preserve
 all costs, p-values at 5 bp, DSR, risk, turnover, capacity, correlations and verdict reasons per cell.
 
 | Direction    | Book           | Size   | Prior close | Days |  30m net |  60m net |
@@ -116,7 +116,7 @@ and 2025 but not in partial 2026.
 
 ## Reproduction
 
-From the repository root with existing read-only access to the `agents-artifacts` archive:
+From the repository root in the [archived checkout][study-revision], with existing read-only access to the `agents-artifacts` archive:
 
 ```sh
 scratch="$(mktemp -d)"
@@ -128,3 +128,6 @@ rm -rf "$scratch"
 
 The command validates archive identity and refuses to overwrite an output. Nothing in this study changes
 runtime strategy, broker or capital authority, or activation of `bayn.intraday-alpha-policy.v3`.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-sector-etf-intraday-expansion/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

@@ -1,28 +1,30 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
-    Any,
-    Path,
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import historical_simulation_startup
+from scripts.historical_simulation_startup import (
     PostgresRuntimeConfig,
-    StartHistoricalSimulationTestCaseBase,
-    TemporaryDirectory,
     _merge_env_entries,
     _run_migrations,
     _torghut_env_overrides_from_manifest,
-    datetime,
-    patch,
-    historical_simulation_startup,
-    timezone,
-    uuid,
+    kubernetes_argocd,
+    resource_planning,
+    runtime_migrations,
+    storage_and_database,
 )
+from tests.historical_simulation.fixtures import make_postgres_config
 
 
-class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBase):
+class TestStartHistoricalSimulationPostgres(TestCase):
     def test_run_migrations_uses_admin_simulation_dsn(self) -> None:
-        config = PostgresRuntimeConfig(
+        config = make_postgres_config(
             admin_dsn="postgresql://postgres:admin-secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
             migrations_command="/opt/venv/bin/alembic upgrade heads",
         )
         captured_envs: list[str] = []
@@ -47,20 +49,23 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
             return operation()
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.resource_planning._run_command",
+            patch.object(
+                resource_planning,
+                "_run_command",
                 side_effect=_fake_run_command,
             ),
-            patch(
-                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
+            patch.object(
+                kubernetes_argocd,
+                "_run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
             patch(
                 "scripts.historical_simulation_startup.resource_planning.shutil.which",
                 return_value="/usr/bin/alembic",
             ),
-            patch(
-                "scripts.historical_simulation_startup.runtime_migrations._assert_required_simulation_metadata_tables",
+            patch.object(
+                runtime_migrations,
+                "_assert_required_simulation_metadata_tables",
                 return_value=None,
             ),
         ):
@@ -130,7 +135,7 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
             operation: object,
             attempts: int = 8,
             sleep_seconds: float = 0.5,
-        ) -> Any:
+        ) -> object:
             _ = (label, attempts, sleep_seconds)
             return operation()
 
@@ -139,12 +144,14 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
                 "scripts.historical_simulation_startup.storage_and_database.psycopg.connect",
                 side_effect=_fake_connect,
             ),
-            patch(
-                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
+            patch.object(
+                kubernetes_argocd,
+                "_run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
-            patch(
-                "scripts.historical_simulation_startup.storage_and_database._postgres_extension_exists",
+            patch.object(
+                storage_and_database,
+                "_postgres_extension_exists",
                 return_value=True,
             ),
         ):
@@ -188,10 +195,8 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
     def test_assert_required_simulation_metadata_tables_raises_when_missing(
         self,
     ) -> None:
-        config = PostgresRuntimeConfig(
+        config = make_postgres_config(
             admin_dsn="postgresql://postgres:admin-secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
             migrations_command="/opt/venv/bin/alembic upgrade heads",
         )
 
@@ -239,8 +244,9 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
                 "scripts.historical_simulation_startup.storage_and_database.psycopg.connect",
                 return_value=_FakeConnection(),
             ),
-            patch(
-                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
+            patch.object(
+                kubernetes_argocd,
+                "_run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
         ):
@@ -268,10 +274,7 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
             self.assertTrue(migration.exists())
 
     def test_reset_postgres_runtime_state_truncates_runtime_tables(self) -> None:
-        config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
+        config = make_postgres_config(
             migrations_command="/opt/venv/bin/alembic upgrade heads",
         )
         statements: list[object] = []
@@ -322,8 +325,9 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
                 "scripts.historical_simulation_startup.storage_and_database.psycopg.connect",
                 return_value=_FakeConnection(),
             ),
-            patch(
-                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
+            patch.object(
+                kubernetes_argocd,
+                "_run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
         ):
@@ -414,8 +418,9 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
                 "scripts.historical_simulation_startup.storage_and_database.psycopg.connect",
                 return_value=_FakeConnection(),
             ),
-            patch(
-                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
+            patch.object(
+                kubernetes_argocd,
+                "_run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
         ):

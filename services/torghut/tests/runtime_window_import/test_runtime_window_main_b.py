@@ -1,23 +1,30 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Decimal,
+import json
+from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import import_hypothesis_runtime_windows as runtime_import_cli
+from scripts.hypothesis_runtime_window_import import cli_parsing as runtime_import_args
+from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_RUNTIME_LEDGER,
-    Path,
-    RuntimeWindowImportTestCaseBase,
-    SimpleNamespace,
-    TemporaryDirectory,
-    _FakeSession,
-    _complete_runtime_ledger_bucket,
-    datetime,
-    json,
     main,
-    patch,
-    timezone,
+)
+from tests.runtime_window_import.ledger_fixtures import (
+    march_6_market_hour,
+    paper_import_args,
+)
+from tests.runtime_window_import.runtime_window_import_support import (
+    _complete_runtime_ledger_bucket,
+    _FakeSession,
 )
 
 
-class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportMainB(TestCase):
     def test_main_imports_exact_runtime_ledger_artifact_without_db_activity(
         self,
     ) -> None:
@@ -87,20 +94,13 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                 ),
                 encoding="utf-8",
             )
-            args = SimpleNamespace(
+            args = paper_import_args(
                 run_id="run-ledger-artifact",
                 candidate_id="H-TSMOM-LIQ-01",
                 hypothesis_id="H-TSMOM-LIQ-01",
-                observed_stage="paper",
                 strategy_family="intraday_tsmom_consistent",
                 source_dsn="",
-                source_dsn_env="DB_DSN",
                 strategy_name="intraday-tsmom-profit-v3",
-                account_label="TORGHUT_SIM",
-                window_start="2026-03-06T14:30:00Z",
-                window_end="2026-03-06T15:00:00Z",
-                bucket_minutes=30,
-                sample_minutes=5,
                 source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
                 source_kind="paper_runtime_observed",
                 artifact_ref=[str(artifact_path)],
@@ -116,10 +116,6 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                         "window_end": "2026-03-06T15:00:00+00:00",
                     }
                 ),
-                dependency_quorum_decision="allow",
-                continuity_ok="true",
-                drift_ok="true",
-                json=False,
             )
             fake_session = _FakeSession()
             manifest = SimpleNamespace(
@@ -129,12 +125,10 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
             )
 
             with (
-                patch(
-                    "scripts.import_hypothesis_runtime_windows._parse_args",
-                    return_value=args,
-                ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                patch.object(runtime_import_cli, "_parse_args", return_value=args),
+                patch.object(
+                    runtime_import_cli,
+                    "resolve_hypothesis_manifest",
                     return_value=(
                         SimpleNamespace(
                             path="config/trading/hypotheses/h-tsmom-liq-01.json"
@@ -143,20 +137,21 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     ),
                 ),
                 patch.dict("os.environ", {}, clear=True),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                patch.object(
+                    runtime_import_cli, "_query_timestamps"
                 ) as query_timestamps,
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                patch.object(
+                    runtime_import_cli,
+                    "build_observed_runtime_buckets",
                     return_value=[],
                 ) as build_buckets,
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                patch.object(
+                    runtime_import_cli,
+                    "persist_observed_runtime_windows",
                     return_value={"run_id": "run-ledger-artifact"},
                 ) as persist_windows,
-                patch(
-                    "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                    return_value=fake_session,
+                patch.object(
+                    runtime_import_args, "SessionLocal", return_value=fake_session
                 ),
                 patch("builtins.print"),
             ):
@@ -221,30 +216,18 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
     def test_main_imports_durable_runtime_ledger_bucket_without_source_dsn(
         self,
     ) -> None:
-        args = SimpleNamespace(
+        args = paper_import_args(
             run_id="run-durable-ledger",
             candidate_id="H-TSMOM-LIQ-01",
             hypothesis_id="H-TSMOM-LIQ-01",
-            observed_stage="paper",
             strategy_family="intraday_tsmom_consistent",
             source_dsn="",
-            source_dsn_env="DB_DSN",
             strategy_name="intraday-tsmom-profit-v3",
-            account_label="TORGHUT_SIM",
-            window_start="2026-03-06T14:30:00Z",
-            window_end="2026-03-06T15:00:00Z",
-            bucket_minutes=30,
-            sample_minutes=5,
             source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
             source_kind="paper_runtime_observed",
-            artifact_ref=[],
             delay_adjusted_depth_stress_report_ref="",
             dataset_snapshot_ref="durable-runtime-ledger-snapshot",
             target_metadata_json="",
-            dependency_quorum_decision="allow",
-            continuity_ok="true",
-            drift_ok="true",
-            json=False,
         )
         fake_session = _FakeSession()
         manifest = SimpleNamespace(
@@ -253,7 +236,7 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
             max_allowed_slippage_bps=Decimal("6"),
         )
         durable_tca_row = {
-            "computed_at": datetime(2026, 3, 6, 14, 59, 59, tzinfo=timezone.utc),
+            "computed_at": march_6_market_hour(59, 59),
             "abs_slippage_bps": Decimal("10"),
             "post_cost_expectancy_bps": Decimal("40"),
             "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
@@ -271,12 +254,10 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
         }
 
         with (
-            patch(
-                "scripts.import_hypothesis_runtime_windows._parse_args",
-                return_value=args,
-            ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+            patch.object(runtime_import_cli, "_parse_args", return_value=args),
+            patch.object(
+                runtime_import_cli,
+                "resolve_hypothesis_manifest",
                 return_value=(
                     SimpleNamespace(
                         path="config/trading/hypotheses/h-tsmom-liq-01.json"
@@ -285,11 +266,10 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                 ),
             ),
             patch.dict("os.environ", {}, clear=True),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._query_timestamps",
-            ) as query_timestamps,
-            patch(
-                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_durable_buckets",
+            patch.object(runtime_import_cli, "_query_timestamps") as query_timestamps,
+            patch.object(
+                runtime_import_cli,
+                "_runtime_ledger_tca_rows_from_durable_buckets",
                 return_value=(
                     [durable_tca_row],
                     {
@@ -301,17 +281,16 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     },
                 ),
             ) as durable_buckets,
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
-                return_value=[],
+            patch.object(
+                runtime_import_cli, "build_observed_runtime_buckets", return_value=[]
             ) as build_buckets,
-            patch(
-                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+            patch.object(
+                runtime_import_cli,
+                "persist_observed_runtime_windows",
                 return_value={"run_id": "run-durable-ledger"},
             ) as persist_windows,
-            patch(
-                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                return_value=fake_session,
+            patch.object(
+                runtime_import_args, "SessionLocal", return_value=fake_session
             ),
             patch("builtins.print"),
         ):
@@ -343,23 +322,15 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
     def test_main_imports_source_runtime_ledger_bucket_with_source_dsn(
         self,
     ) -> None:
-        args = SimpleNamespace(
+        args = paper_import_args(
             run_id="run-source-ledger",
             candidate_id="H-TSMOM-LIQ-01",
             hypothesis_id="H-TSMOM-LIQ-01",
-            observed_stage="paper",
             strategy_family="intraday_tsmom_consistent",
             source_dsn="postgresql://source",
-            source_dsn_env="DB_DSN",
             strategy_name="intraday-tsmom-profit-v3",
-            account_label="TORGHUT_SIM",
-            window_start="2026-03-06T14:30:00Z",
-            window_end="2026-03-06T15:00:00Z",
-            bucket_minutes=30,
-            sample_minutes=5,
             source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
             source_kind="paper_route_probe_runtime_observed",
-            artifact_ref=[],
             delay_adjusted_depth_stress_report_ref="",
             dataset_snapshot_ref="source-runtime-ledger-snapshot",
             target_metadata_json=json.dumps(
@@ -375,10 +346,6 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     ],
                 }
             ),
-            dependency_quorum_decision="allow",
-            continuity_ok="true",
-            drift_ok="true",
-            json=False,
         )
         fake_session = _FakeSession()
         manifest = SimpleNamespace(
@@ -387,7 +354,7 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
             max_allowed_slippage_bps=Decimal("6"),
         )
         source_tca_row = {
-            "computed_at": datetime(2026, 3, 6, 14, 59, 59, tzinfo=timezone.utc),
+            "computed_at": march_6_market_hour(59, 59),
             "abs_slippage_bps": Decimal("10"),
             "post_cost_expectancy_bps": Decimal("40"),
             "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
@@ -405,12 +372,10 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
         }
 
         with (
-            patch(
-                "scripts.import_hypothesis_runtime_windows._parse_args",
-                return_value=args,
-            ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+            patch.object(runtime_import_cli, "_parse_args", return_value=args),
+            patch.object(
+                runtime_import_cli,
+                "resolve_hypothesis_manifest",
                 return_value=(
                     SimpleNamespace(
                         path="config/trading/hypotheses/h-tsmom-liq-01.json"
@@ -418,12 +383,12 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     manifest,
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._query_timestamps",
-                return_value=([], [], []),
+            patch.object(
+                runtime_import_cli, "_query_timestamps", return_value=([], [], [])
             ) as query_timestamps,
-            patch(
-                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_source_dsn",
+            patch.object(
+                runtime_import_cli,
+                "_runtime_ledger_tca_rows_from_source_dsn",
                 return_value=(
                     [source_tca_row],
                     {
@@ -437,17 +402,16 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     },
                 ),
             ) as source_buckets,
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
-                return_value=[],
+            patch.object(
+                runtime_import_cli, "build_observed_runtime_buckets", return_value=[]
             ) as build_buckets,
-            patch(
-                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+            patch.object(
+                runtime_import_cli,
+                "persist_observed_runtime_windows",
                 return_value={"run_id": "run-source-ledger"},
             ) as persist_windows,
-            patch(
-                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                return_value=fake_session,
+            patch.object(
+                runtime_import_args, "SessionLocal", return_value=fake_session
             ),
             patch("builtins.print"),
         ):
@@ -485,24 +449,16 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
     def test_main_uses_observed_bucket_materialization_over_stale_source_diagnostics(
         self,
     ) -> None:
-        args = SimpleNamespace(
+        args = paper_import_args(
             run_id="run-observed-clean",
             candidate_id="H-TSMOM-LIQ-01",
             hypothesis_id="H-TSMOM-LIQ-01",
-            observed_stage="paper",
             strategy_family="intraday_tsmom_consistent",
             source_dsn="postgresql://source",
-            source_dsn_env="DB_DSN",
             strategy_name="intraday-tsmom-profit-v3",
-            account_label="TORGHUT_SIM",
             source_account_label="TORGHUT_SIM",
-            window_start="2026-03-06T14:30:00Z",
-            window_end="2026-03-06T15:00:00Z",
-            bucket_minutes=30,
-            sample_minutes=5,
             source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
             source_kind="paper_route_probe_runtime_observed",
-            artifact_ref=[],
             delay_adjusted_depth_stress_report_ref="",
             dataset_snapshot_ref="observed-clean-snapshot",
             target_metadata_json=json.dumps(
@@ -515,10 +471,6 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     "final_promotion_allowed": False,
                 }
             ),
-            dependency_quorum_decision="allow",
-            continuity_ok="true",
-            drift_ok="true",
-            json=False,
         )
         fake_session = _FakeSession()
         manifest = SimpleNamespace(
@@ -539,7 +491,7 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
             },
         )
         stale_source_tca_row = {
-            "computed_at": datetime(2026, 3, 6, 14, 59, 59, tzinfo=timezone.utc),
+            "computed_at": march_6_market_hour(59, 59),
             "abs_slippage_bps": Decimal("10"),
             "post_cost_expectancy_bps": Decimal("40"),
             "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
@@ -565,12 +517,10 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
         )
 
         with (
-            patch(
-                "scripts.import_hypothesis_runtime_windows._parse_args",
-                return_value=args,
-            ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+            patch.object(runtime_import_cli, "_parse_args", return_value=args),
+            patch.object(
+                runtime_import_cli,
+                "resolve_hypothesis_manifest",
                 return_value=(
                     SimpleNamespace(
                         path="config/trading/hypotheses/h-tsmom-liq-01.json"
@@ -578,16 +528,18 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     manifest,
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+            patch.object(
+                runtime_import_cli,
+                "_query_timestamps",
                 return_value=(
-                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [march_6_market_hour(35)],
+                    [march_6_market_hour(36)],
                     [],
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_source_dsn",
+            patch.object(
+                runtime_import_cli,
+                "_runtime_ledger_tca_rows_from_source_dsn",
                 return_value=(
                     [stale_source_tca_row],
                     {
@@ -603,8 +555,9 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     },
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+            patch.object(
+                runtime_import_cli,
+                "build_observed_runtime_buckets",
                 return_value=[
                     SimpleNamespace(
                         payload_json={
@@ -613,13 +566,13 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     )
                 ],
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+            patch.object(
+                runtime_import_cli,
+                "persist_observed_runtime_windows",
                 return_value={"run_id": "run-observed-clean"},
             ) as persist_windows,
-            patch(
-                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                return_value=fake_session,
+            patch.object(
+                runtime_import_args, "SessionLocal", return_value=fake_session
             ),
             patch("builtins.print"),
         ):
@@ -678,29 +631,17 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                 '{"passed": true, "case_count": 2, "checked_at": "2026-03-06T15:20:00Z"}',
                 encoding="utf-8",
             )
-            args = SimpleNamespace(
+            args = paper_import_args(
                 run_id="run-depth",
                 candidate_id="chip-paper-microbar-composite@execution-proof",
                 hypothesis_id="H-MICRO-01",
-                observed_stage="paper",
                 strategy_family="microstructure_breakout",
                 source_dsn="postgresql://example",
-                source_dsn_env="DB_DSN",
                 strategy_name="microbar_volume_continuation_long_top2_chip_v1@paper",
-                account_label="TORGHUT_SIM",
-                window_start="2026-03-06T14:30:00Z",
-                window_end="2026-03-06T15:00:00Z",
-                bucket_minutes=30,
-                sample_minutes=5,
                 source_manifest_ref="config/trading/hypotheses/h-micro-01.json",
                 source_kind="simulation_paper_runtime",
                 dataset_snapshot_ref="runtime-depth-snapshot",
-                artifact_ref=[],
                 delay_adjusted_depth_stress_report_ref=str(report_path),
-                dependency_quorum_decision="allow",
-                continuity_ok="true",
-                drift_ok="true",
-                json=False,
             )
             fake_session = _FakeSession()
             manifest = SimpleNamespace(
@@ -710,12 +651,10 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
             )
 
             with (
-                patch(
-                    "scripts.import_hypothesis_runtime_windows._parse_args",
-                    return_value=args,
-                ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                patch.object(runtime_import_cli, "_parse_args", return_value=args),
+                patch.object(
+                    runtime_import_cli,
+                    "resolve_hypothesis_manifest",
                     return_value=(
                         SimpleNamespace(
                             path="config/trading/hypotheses/h-micro-01.json"
@@ -723,29 +662,30 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                         manifest,
                     ),
                 ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                patch.object(
+                    runtime_import_cli,
+                    "_query_timestamps",
                     return_value=(
-                        [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-                        [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                        [march_6_market_hour(35)],
+                        [march_6_market_hour(36)],
                         [],
                     ),
                 ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+                patch.object(
+                    runtime_import_cli, "build_regular_session_buckets", return_value=[]
+                ),
+                patch.object(
+                    runtime_import_cli,
+                    "build_observed_runtime_buckets",
                     return_value=[],
                 ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
-                    return_value=[],
-                ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                patch.object(
+                    runtime_import_cli,
+                    "persist_observed_runtime_windows",
                     return_value={"run_id": "run-depth"},
                 ) as persist_windows,
-                patch(
-                    "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                    return_value=fake_session,
+                patch.object(
+                    runtime_import_args, "SessionLocal", return_value=fake_session
                 ),
                 patch("builtins.print"),
             ):
@@ -781,29 +721,18 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                 '{"pnl":{"net_pnl_estimated":"50","execution_notional_total":"10000"}}',
                 encoding="utf-8",
             )
-            args = SimpleNamespace(
+            args = paper_import_args(
                 run_id="run-report-pnl",
                 candidate_id="cand-report-pnl",
                 hypothesis_id="H-CONT-01",
-                observed_stage="paper",
                 strategy_family="",
                 source_dsn="postgresql://example",
-                source_dsn_env="DB_DSN",
                 strategy_name="intraday-tsmom-profit-v2",
-                account_label="TORGHUT_SIM",
-                window_start="2026-03-06T14:30:00Z",
-                window_end="2026-03-06T15:00:00Z",
-                bucket_minutes=30,
-                sample_minutes=5,
                 source_manifest_ref="",
                 source_kind="simulation_paper_runtime",
                 artifact_ref=[str(report_path)],
                 delay_adjusted_depth_stress_report_ref="",
                 dataset_snapshot_ref="runtime-report-snapshot",
-                dependency_quorum_decision="allow",
-                continuity_ok="true",
-                drift_ok="true",
-                json=False,
             )
             fake_session = _FakeSession()
             manifest = SimpleNamespace(
@@ -813,12 +742,10 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
             )
 
             with (
-                patch(
-                    "scripts.import_hypothesis_runtime_windows._parse_args",
-                    return_value=args,
-                ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                patch.object(runtime_import_cli, "_parse_args", return_value=args),
+                patch.object(
+                    runtime_import_cli,
+                    "resolve_hypothesis_manifest",
                     return_value=(
                         SimpleNamespace(
                             path="config/trading/hypotheses/h-cont-01.json"
@@ -826,29 +753,30 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                         manifest,
                     ),
                 ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                patch.object(
+                    runtime_import_cli,
+                    "_query_timestamps",
                     return_value=(
-                        [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-                        [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                        [march_6_market_hour(35)],
+                        [march_6_market_hour(36)],
                         [],
                     ),
                 ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
-                    return_value=[],
+                patch.object(
+                    runtime_import_cli, "build_regular_session_buckets", return_value=[]
                 ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                patch.object(
+                    runtime_import_cli,
+                    "build_observed_runtime_buckets",
                     return_value=[],
                 ) as build_buckets,
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                patch.object(
+                    runtime_import_cli,
+                    "persist_observed_runtime_windows",
                     return_value={"run_id": "run-report-pnl"},
                 ) as persist_windows,
-                patch(
-                    "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                    return_value=fake_session,
+                patch.object(
+                    runtime_import_args, "SessionLocal", return_value=fake_session
                 ),
                 patch("builtins.print"),
             ):

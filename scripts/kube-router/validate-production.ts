@@ -20,6 +20,7 @@ const agentsSafetySelector = {
 const retiredSafetyNamespace = 'bayn'
 const safetyNamespaces = [...trafficNeutralSafetyNamespaces, retiredSafetyNamespace]
 const enforcedNamespaces = ['hermes']
+const optionalReviewedNamespaces = ['glitchtip', 'jangar']
 const retiredSafetySelector = {
   'network-policy.proompteng.ai/retired-rollout-policy': retiredSafetyNamespace,
 }
@@ -33,6 +34,8 @@ export const productionPaths = {
   buzzPolicies: 'argocd/applications/buzz/networkpolicy.yaml',
   devboxPolicies: 'argocd/applications/devbox/network-policy.yaml',
   froussardPolicies: 'argocd/applications/froussard/approval-networkpolicy.yaml',
+  glitchtipPolicies: 'argocd/applications/glitchtip/auto-ontology-db-networkpolicy.yaml',
+  jangarPolicies: 'argocd/applications/jangar/auto-ontology-db-networkpolicy.yaml',
   kargoSmokePolicies: 'argocd/applications/kargo/smoke-access.yaml',
   keycloakPolicies: 'argocd/applications/keycloak/network-policy.yaml',
   ofzPolicies: 'argocd/applications/ofz/control-plane/network-policy.yaml',
@@ -75,6 +78,8 @@ export const reviewedPolicySources = {
   buzz: ['buzzPolicies', 'kargoSmokePolicies'],
   'codex-devbox': ['devboxPolicies', 'kargoSmokePolicies'],
   froussard: ['froussardPolicies'],
+  glitchtip: ['glitchtipPolicies'],
+  jangar: ['jangarPolicies'],
   keycloak: ['keycloakPolicies'],
   observability: ['grafanaRehearsalPolicies'],
   ofz: ['ofzPolicies'],
@@ -329,11 +334,6 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
     `printf '%s\\n' ${[...safetyNamespaces, ...enforcedNamespaces].sort().join(' ')}`,
     '} | sort -u',
-    'kubectl -n kube-system get namespace tengri',
-    'kubectl -n kube-system get namespace relay',
-    "printf '%s\\n' relay",
-    "jq -e '.items | length > 0'",
-    "printf '%s\\n' tengri",
     'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$expected_namespaces" ]]',
     'kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json',
@@ -355,20 +355,35 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
 
   const reviewedNamespaces = [...Object.keys(reviewedPolicySources), ...Object.keys(renderedPolicyHashes)].sort()
+  const requiredReviewedNamespaces = reviewedNamespaces
+    .filter((namespace) => !optionalReviewedNamespaces.includes(namespace))
+    .join(' ')
   requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
-    `printf '%s\\n' ${reviewedNamespaces.join(' ')}`,
+    `printf '%s\\n' ${requiredReviewedNamespaces}\n`,
     `${reviewedNamespaces.join('|')})`,
     'if [[ "$actual_reviewed_policy_hash" != "$expected_reviewed_policy_hash" ]]',
   ])
   requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
-    `printf '%s\\n' hermes ${reviewedNamespaces.join(' ')}`,
-    'kubectl -n kube-system get namespace relay',
-    "printf '%s\\n' relay",
+    `printf '%s\\n' hermes ${requiredReviewedNamespaces}\n`,
   ])
+  for (const key of ['preflightHook', 'coverageProbe'] as const) {
+    const script = files[key].replace(/^[ \t]+/gm, '')
+    for (const namespace of ['tengri', 'relay', ...optionalReviewedNamespaces]) {
+      const check = [
+        `if kubectl -n kube-system get namespace ${namespace} >/dev/null 2>&1 &&`,
+        `kubectl -n ${namespace} get networkpolicies.networking.k8s.io -o json |`,
+        "jq -e '.items | length > 0' >/dev/null; then",
+        `printf '%s\\n' ${namespace}`,
+        'fi',
+      ].join('\n')
+      if (!script.includes(check)) {
+        failures.push(`${productionPaths[key]}: ${namespace} coverage must check for live NetworkPolicies`)
+      }
+    }
+  }
   const rootScriptPaths = yamlDocuments(files.impactMap)[0]?.targets?.['root-scripts']?.paths ?? []
   for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
-    const policyContent = sources.map((key) => files[key]).join('\n---\n')
-    const hash = networkPolicyHash(policyContent, namespace)
+    const hash = networkPolicyHash(sources.map((key) => files[key]).join('\n---\n'), namespace)
     requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
       `${namespace}) expected_reviewed_policy_hash=${hash} ;;`,
     ])
@@ -489,10 +504,6 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
     'set -euo pipefail',
-    "printf '%s\\n' hermes",
-    'kubectl -n kube-system get namespace tengri',
-    "jq -e '.items | length > 0'",
-    "printf '%s\\n' tengri",
     'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$desired_namespaces" ]]',
   ])

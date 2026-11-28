@@ -41,8 +41,12 @@ describe('classifyAgentsImageMode', () => {
     })
   })
 
-  it('runs the published smoke tier when its workflow changes', () => {
-    expect(classifyAgentsImageMode(['.github/workflows/agents-ci.yml'])).toEqual({
+  it.each([
+    '.github/workflows/agents-ci.yml',
+    'packages/scripts/src/agents/resolve-published-agents-images.ts',
+    'packages/scripts/src/agents/resolve-smoke-runner-image.ts',
+  ])('runs the published smoke tier when %s changes', (path) => {
+    expect(classifyAgentsImageMode([path])).toEqual({
       tier: 'published-smoke',
       mode: 'reuse-published-image',
       needsLocalAgentsImage: false,
@@ -95,7 +99,11 @@ describe('classifyAgentsImageMode', () => {
   })
 
   it('rebuilds the runner when its toolchain or acceptance command changes', () => {
-    for (const path of ['nix/images/agentrun-tools.nix', 'services/agents/scripts/runner-acceptance.sh']) {
+    for (const path of [
+      'nix/images/agentrun-tools.nix',
+      'nix/images/antigravity-cli.nix',
+      'services/agents/scripts/runner-acceptance.sh',
+    ]) {
       expect(classifyAgentsImageMode([path]).imageTargets).toEqual(['runner'])
     }
   })

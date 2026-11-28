@@ -11,6 +11,7 @@ let
   kubectl = exact.kubectl or pkgs.kubectl;
   yq = exact.yq or pkgs.yq;
   pythonPackages = pkgs.python312Packages;
+  antigravityCli = import ./antigravity-cli.nix { inherit pkgs; };
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
   runnerTools = import ./agentrun-tools.nix { inherit pkgs lib; };
   pstackVersion = "0.9.159";
@@ -523,6 +524,7 @@ let
     applyPatch
     bun
     nodejs
+    antigravityCli
     openaiCodexCli
     pstackBundle
     pkgs.bash
@@ -603,6 +605,7 @@ let
       "$out/app/services/agents/scripts/codex" \
       "$out/app/services/agents/scripts" \
       "$out/root/.codex" \
+      "$out/root/.gemini/antigravity-cli" \
       "$out/workspace" \
       "$out/usr/bin" \
       "$out/usr/local/bin"
@@ -634,6 +637,8 @@ let
     #!${pkgs.bash}/bin/bash
     exec ${bun}/bin/bun /app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js "$@"
     EOF
+    ln -s ${antigravityCli}/bin/agy "$out/usr/local/bin/agy"
+    ln -s ${antigravityCli}/bin/agy "$out/usr/bin/agy"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/local/bin/codex"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/bin/codex"
     ln -s ${runnerPython}/bin/alpaca-mcp-server "$out/usr/local/bin/alpaca-mcp-server"
@@ -691,6 +696,8 @@ let
         "WORKSPACE=/workspace"
         "WORKTREE=/workspace/lab"
         "GIT_TERMINAL_PROMPT=0"
+        "AGENTS_AGY_BINARY=/usr/local/bin/agy"
+        "AGY_CLI_DISABLE_AUTO_UPDATE=true"
         "AGENTS_CODEX_BINARY=/usr/local/bin/codex"
         "CODEX_BINARY=/usr/local/bin/codex"
         "BUN_INSTALL=/usr/local"
@@ -704,6 +711,48 @@ let
         "CC=${pkgs.stdenv.cc}/bin/cc"
         "CXX=${pkgs.stdenv.cc}/bin/c++"
       ];
+    };
+
+  # Kind lifecycle smoke uses the real runner with a deterministic app-server,
+  # without the production runner's development toolchain or workspace cache.
+  mkSmokeRunnerImage =
+    import ./bun-workspace-service.nix {
+      inherit
+        pkgs
+        lib
+        repoRoot
+        bun
+        nodejs
+        depsHash
+        installFilters
+        runtimeSourceFilter
+        ;
+      sourcePaths = runnerSourcePaths;
+      depsName = "agents-controller";
+      packageName = "@proompteng/agents-smoke-runner";
+      serviceName = "agents-smoke-runner";
+      dependencyClosure = "bunCache";
+      buildCommands = [
+        "patchShebangs --build node_modules"
+        "bun --cwd=packages/codex run build"
+        ''bun build --target bun --outdir "$TMPDIR/smoke-runner" services/agents/scripts/codex/{agent-runner,fake-app-server}.ts''
+      ];
+      runtimeInstallPhase = ''
+        mkdir -p "$out/app" "$out/workspace" "$out/usr/local/bin"
+        cp "$TMPDIR/smoke-runner/"{agent-runner,fake-app-server}.js "$out/app/"
+
+        cat > "$out/usr/local/bin/agent-runner" <<'EOF'
+        #!/bin/sh
+        exec ${bun}/bin/bun /app/agent-runner.js "$@"
+        EOF
+        cat > "$out/usr/local/bin/agents-fake-codex-app-server" <<'EOF'
+        #!/bin/sh
+        exec ${bun}/bin/bun /app/fake-app-server.js "$@"
+        EOF
+        chmod +x "$out/usr/local/bin/"{agent-runner,agents-fake-codex-app-server}
+      '';
+      command = [ "/usr/local/bin/agent-runner" ];
+      workingDir = "/workspace";
     };
 in
 {
@@ -775,5 +824,6 @@ in
   };
 
   "agents-codex-runner-image" = mkRunnerImage;
+  "agents-smoke-runner-image" = mkSmokeRunnerImage;
   "ofz-fixture-tools" = import ./ofz-fixture-tools.nix { inherit pkgs lib runnerTools; };
 }

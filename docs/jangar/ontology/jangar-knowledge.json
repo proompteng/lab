@@ -1,0 +1,63 @@
+{
+  "acronyms": [
+    {
+      "description": "Jangar's index of the reconciled Git repository snapshot. Atlas search requires a ready corpus for the exact requested commit.",
+      "name": "Atlas"
+    },
+    {
+      "description": "A search unit derived from a file version. The audit view reports counts and timestamps, not chunk text or embedding vectors.",
+      "name": "Atlas chunk"
+    },
+    {
+      "description": "The identity of a file within a repository. The current Atlas corpus stores at most one file version for each file key.",
+      "name": "Atlas file key"
+    },
+    {
+      "description": "A recorded indexing workflow attempt associated with a GitHub event. An event can have more than one attempt.",
+      "name": "Atlas ingestion"
+    }
+  ],
+  "customAnalyses": [
+    {
+      "description": "Last successful Atlas index time and current recorded status per repository. Missing timestamps sort first. Age measures the last successful index, not whether Atlas matches the current Git head.",
+      "name": "Atlas indexing freshness",
+      "sql": "SELECT repository_id, index_status, indexed_at, updated_at,\n  ROUND(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - indexed_at) / 3600, 2) AS hours_since_success\nFROM jangar_audit.atlas_repositories\nORDER BY indexed_at ASC NULLS FIRST, repository_id\nLIMIT 100"
+    },
+    {
+      "description": "File counts, share of indexed files, and recorded line counts by repository and language in the current corpus. This is observed coverage, not a comparison against Git.",
+      "name": "Atlas file and language coverage",
+      "sql": "SELECT repository_id, language, COUNT(*) AS indexed_files, SUM(line_count) AS indexed_lines,\n  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (PARTITION BY repository_id), 2) AS pct_of_indexed_files\nFROM jangar_audit.atlas_file_versions\nGROUP BY repository_id, language\nORDER BY indexed_files DESC, repository_id, language\nLIMIT 100"
+    },
+    {
+      "description": "Current chunk and embedding counts per repository, newest timestamps, and age of the oldest chunk without an embedding. Presence does not prove that the embedding uses the current model.",
+      "name": "Atlas chunk embedding lag",
+      "sql": "SELECT repository_id, SUM(chunk_count) AS chunks, SUM(embedded_chunk_count) AS embedded_chunks,\n  SUM(chunk_count) - SUM(embedded_chunk_count) AS unembedded_chunks,\n  MAX(newest_chunk_at) AS newest_chunk_at, MAX(newest_embedding_at) AS newest_embedding_at,\n  ROUND(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - MIN(oldest_unembedded_at)) / 60, 2) AS oldest_unembedded_minutes\nFROM jangar_audit.atlas_chunk_coverage\nGROUP BY repository_id\nORDER BY unembedded_chunks DESC, repository_id\nLIMIT 100"
+    },
+    {
+      "description": "Daily UTC counts by event type for GitHub deliveries received in the last 14 days, including those without a recorded processing time. Processing does not imply a successful index.",
+      "name": "Atlas GitHub event intake",
+      "sql": "SELECT DATE_TRUNC('day', received_at, 'UTC') AS intake_day_utc, event_type,\n  COUNT(*) AS received_events, COUNT(*) FILTER (WHERE processed_at IS NULL) AS unprocessed_events\nFROM jangar_audit.atlas_github_events\nWHERE received_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'\n  AND received_at < CURRENT_TIMESTAMP\nGROUP BY 1, event_type\nORDER BY intake_day_utc DESC, received_events DESC, event_type\nLIMIT 300"
+    }
+  ],
+  "dataSource": "jangar-db",
+  "database": "jangar",
+  "ruleTag": "jangar canonical rule",
+  "rules": [
+    {
+      "description": "Run Jangar ontology queries through jangar_audit on the standby. Keep raw Atlas and application relations outside the catalog.",
+      "name": "Atlas audit projections only",
+      "searchTerm": "jangar_audit"
+    },
+    {
+      "description": "Use the exact requested Git commit and the production Atlas verification contract in docs/atlas/README.md to prove corpus completeness. Counts, embedding presence, and freshness are diagnostics.",
+      "name": "Atlas coverage is not completeness",
+      "searchTerm": "atlas_chunk_coverage"
+    },
+    {
+      "description": "Distinguish event receipt, event processing, and indexing success. A processed GitHub delivery may have been skipped or may have started an ingestion that failed.",
+      "name": "Atlas intake is not index completion",
+      "searchTerm": "atlas_github_events"
+    }
+  ],
+  "version": 1
+}

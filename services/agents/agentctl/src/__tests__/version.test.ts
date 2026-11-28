@@ -2,12 +2,6 @@ import { describe, expect, it } from 'bun:test'
 import pkg from '../../package.json'
 import { getVersion } from '../runtime'
 
-type PackageJson = {
-  version?: string
-}
-
-const packageJson = pkg as PackageJson
-
 const withEnv = (value: string | undefined, run: () => void) => {
   const previous = process.env.AGENTCTL_VERSION
   if (value === undefined) {
@@ -35,7 +29,7 @@ describe('getVersion', () => {
 
   it('defaults to package.json version', () => {
     withEnv(undefined, () => {
-      expect(getVersion()).toBe(packageJson.version)
+      expect(getVersion()).toBe(pkg.version)
     })
   })
 })

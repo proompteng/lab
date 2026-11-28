@@ -1,7 +1,9 @@
 import { expect, test } from 'bun:test'
 import { Effect, Ref } from 'effect'
 
-import { readinessResponseDecision, statusFacts } from '../http'
+import { CycleOperationsCondition, CycleOperationsReason } from '../cycle/observability'
+import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
+import { readinessResponseDecision, renderPrometheusMetrics, statusFacts } from '../http'
 import {
   ExecutionControllerOutcome,
   executionControllerStatusHasCompletion,
@@ -52,6 +54,122 @@ const transition = (probes: HealthProbeResults) => {
     },
   )
 }
+
+test('confirmed overnight cash fee waits block execution without reporting stale reconciliation as a failure', () => {
+  const observedAt = '2026-11-25T01:06:00.000Z'
+  const accountId = 'test-account'
+  const initial = readyState()
+  const generationHash = 'a'.repeat(64)
+  const state = {
+    ...initial,
+    capitalActivation: {
+      _tag: 'Realized',
+      requestHash: 'b'.repeat(64),
+      generationHash,
+      grant: 'Research',
+      scope: 'Standing',
+    },
+    autonomousCycleLoop: {
+      ...initial.autonomousCycleLoop,
+      owner: 'Process',
+      lastPass: { result: 'SUCCESS', outcome: 'WAITING', waitReason: 'BROKER_OBSERVATION_PENDING', observedAt },
+    },
+  } as const
+  if (results.cycle._tag !== 'Available') throw new Error('Missing cycle projection fixture')
+  const projection = {
+    ...results.cycle.value,
+    authority: {
+      generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      reason: null,
+      updatedAt: observedAt,
+    },
+    reconciliation: {
+      accountId,
+      reconciliationId: 'c'.repeat(64),
+      status: ReconciliationStatus.Exact,
+      discrepancyCount: 0,
+      reconciledAt: observedAt,
+      coversLatestMutation: true,
+    },
+  }
+  const pending = {
+    _tag: 'Unavailable',
+    error: 'Broker observation is awaiting authoritative cash fee records',
+    observationFailure: 'CASH_FEES_PENDING',
+  } as const
+  const observe = (at: string, overrides?: Partial<HealthProbeResults>) =>
+    deriveHealthTransition(
+      {
+        ...state,
+        autonomousCycleLoop: {
+          ...state.autonomousCycleLoop,
+          lastPass: { ...state.autonomousCycleLoop.lastPass, observedAt: at },
+        },
+      },
+      {
+        config,
+        results: { ...results, broker: pending, cycle: { _tag: 'Available', value: projection }, ...overrides },
+        broker: { expectedAccountId: accountId, executionEligible: true, executionDisabledReason: null },
+        cycleFiber: { _tag: 'Running' },
+        clock: { _tag: 'Available', checkedAt: at, checkedAtMs: Date.parse(at) },
+      },
+    ).next
+  const overnight = '2026-11-25T07:52:59.000Z'
+  for (const at of [observedAt, overnight]) {
+    const waiting = observe(at)
+    expect(statusFacts(waiting, config.execution, provenance, config.build.verification)).toMatchObject({
+      operational: { ready: false },
+      cycle: {
+        condition: CycleOperationsCondition.Waiting,
+        reason: 'CASH_FEES_PENDING',
+        alerts: { reconciliationBlocked: true, cycleFailed: false },
+      },
+      executionSession: { condition: 'BLOCKED', ready: false },
+      broker: { readAvailable: false, reasonCode: 'BROKER_CASH_FEES_PENDING' },
+    })
+    expect(readinessResponseDecision(waiting).status).toBe(503)
+    const metrics = renderPrometheusMetrics(waiting, config, provenance, config.build.verification)
+    expect(metrics).toContain('bayn_cycle_reason{reason="cash_fees_pending"} 1\n')
+    expect(metrics).toContain('bayn_cycle_condition{condition="failed"} 0\n')
+  }
+
+  const unavailable = observe(overnight, { broker: { _tag: 'Unavailable', error: 'Broker read unavailable' } })
+  expect(unavailable.cycle).toMatchObject({
+    condition: CycleOperationsCondition.Failed,
+    reason: CycleOperationsReason.ReconciliationStale,
+  })
+  const journalFailed = observe(overnight, { tigerBeetle: { _tag: 'Unavailable', error: 'Ledger unavailable' } })
+  expect(journalFailed.cycle.condition).toBe(CycleOperationsCondition.Failed)
+  const mismatch = observe(overnight, {
+    cycle: {
+      _tag: 'Available',
+      value: {
+        ...projection,
+        reconciliation: { ...projection.reconciliation, status: ReconciliationStatus.Discrepancy, discrepancyCount: 1 },
+      },
+    },
+  })
+  expect(mismatch.cycle).toMatchObject({
+    condition: CycleOperationsCondition.Failed,
+    reason: CycleOperationsReason.ReconciliationDiscrepancy,
+  })
+
+  const settledAt = '2026-11-25T07:53:00.000Z'
+  const brokerAvailable = { _tag: 'Available', value: { accountId, permissionError: null } } as const
+  expect(observe(settledAt, { broker: brokerAvailable }).cycle.reason).toBe(CycleOperationsReason.ReconciliationStale)
+  const settled = observe(settledAt, {
+    broker: brokerAvailable,
+    cycle: {
+      _tag: 'Available',
+      value: { ...projection, reconciliation: { ...projection.reconciliation, reconciledAt: settledAt } },
+    },
+  })
+  expect(settled.cycle.reason).toBe(CycleOperationsReason.NoCycleRecorded)
+  expect(readinessResponseDecision(settled).status).toBe(200)
+})
 
 const completedController: ExecutionControllerStatusWithCompletion = {
   schemaVersion: 1,

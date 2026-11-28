@@ -20,6 +20,8 @@ describe('Agents Codex runner image layout', () => {
   it('builds the production runner with the complete Nix toolchain', () => {
     const content = image()
     expect(content).toContain('runnerTools.contents ++ [')
+    expect(content).toContain('antigravityCli = import ./antigravity-cli.nix')
+    expect(content).toContain('AGY_CLI_DISABLE_AUTO_UPDATE=true')
     expect(content).toContain('agentsShellInterpreterCompat')
     expect(content).toContain('PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1')
     expect(content).toContain('runner-acceptance.sh')
@@ -80,6 +82,7 @@ describe('Agents Codex runner image layout', () => {
       const bundle = await readFile(outfile, 'utf8')
       expect(bundle).toContain('// services/agents/src/runner/codex-app-server.ts')
       expect(bundle).toContain('// services/agents/src/runner/pstack.ts')
+      expect(bundle).toContain('// services/agents/src/runner/agy-cli.ts')
       expect(bundle).not.toMatch(/from ["']effect["']/)
       expect(bundle).not.toMatch(/require\(["']effect["']\)/)
       expect(bundle).not.toMatch(/import\(["']effect["']\)/)
@@ -120,4 +123,75 @@ describe('Agents Codex runner image layout', () => {
       await rm(outDir, { recursive: true, force: true })
     }
   })
+})
+
+describe('Agents lifecycle smoke runner image', () => {
+  it('runs the two bundles without workspace dependencies or a toolchain on PATH', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'agents-smoke-runner-'))
+    try {
+      await execFileAsync(
+        'bun',
+        [
+          'build',
+          '--target',
+          'bun',
+          '--outdir',
+          outDir,
+          'services/agents/scripts/codex/agent-runner.ts',
+          'services/agents/scripts/codex/fake-app-server.ts',
+        ],
+        { cwd: repoRoot },
+      )
+      const { stdout } = await execFileAsync('bun', ['-p', 'process.execPath'])
+      const bun = stdout.trim()
+      const fakeServer = join(outDir, 'agents-fake-codex-app-server')
+      await writeFile(fakeServer, `#!/bin/sh\nexec "${bun}" "${join(outDir, 'fake-app-server.js')}" "$@"\n`, {
+        mode: 0o755,
+      })
+
+      const runPath = join(outDir, 'run.json')
+      const specPath = join(outDir, 'agent-runner.json')
+      const statusPath = join(outDir, 'status.json')
+      const logPath = join(outDir, 'runner.log')
+      const artifactPath = join(outDir, 'result.md')
+      const prompt = `Write \`${artifactPath}\` and respond OK.`
+      await writeFile(runPath, JSON.stringify({ implementation: { text: prompt } }))
+      await writeFile(
+        specPath,
+        JSON.stringify({
+          schemaVersion: AGENT_RUNNER_SCHEMA_VERSION,
+          provider: 'smoke-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath, logPath },
+          providerSpec: { outputArtifacts: [{ name: 'smoke-result', path: artifactPath }] },
+          adapter: {
+            type: 'codex-app-server',
+            codex: {
+              binaryPath: fakeServer,
+              model: 'agents-fake-codex-app-server',
+              effort: 'low',
+              sandbox: 'danger-full-access',
+              approval: 'never',
+              prompt,
+            },
+          },
+        }),
+      )
+
+      await execFileAsync(bun, [join(outDir, 'agent-runner.js'), specPath], {
+        cwd: outDir,
+        env: { PATH: '', HOME: outDir },
+        timeout: 10_000,
+      })
+      expect(JSON.parse(await readFile(statusPath, 'utf8'))).toMatchObject({
+        status: 'succeeded',
+        turnStatus: 'completed',
+        artifacts: { outputArtifacts: [{ name: 'smoke-result', path: artifactPath }] },
+      })
+      expect(await readFile(logPath, 'utf8')).toContain('"delta":"OK\\n"')
+      expect(await readFile(artifactPath, 'utf8')).toContain('startup status: ok')
+    } finally {
+      await rm(outDir, { recursive: true, force: true })
+    }
+  }, 15_000)
 })

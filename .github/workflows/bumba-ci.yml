@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: bumba-${{ github.event.pull_request.number || github.ref }}
+  group: bumba-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -35,10 +35,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          filter: blob:none
       - uses: ./.github/actions/affected-inputs
         id: filter
         with:
           workflow: .github/workflows/bumba-ci.yml
+          dependency-aware-push: 'true'
           workspaces: |
             service: ['', 'services/bumba', 'packages/temporal-bun-sdk']
 
@@ -106,6 +108,9 @@ jobs:
           !contains(github.event.head_commit.message || '', 'automated release PR')
         )
       }}
+    concurrency:
+      group: bumba-publish-${{ github.ref }}
+      cancel-in-progress: false
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bumba

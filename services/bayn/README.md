@@ -2573,6 +2573,45 @@ liquidity; an unsupported market remainder fails the simulation. See the streami
 [close and coverage acceptance](src/market-data/streaming/README.md#replay-close-and-coverage-acceptance). Negative
 returns are valid measurements. Reconciled simulated results do not establish profitability or calibrate broker fills.
 
+### ETF Noise Area v4 research
+
+[The v4 walk-forward command](tools/research-noise-area-v4.ts) tests three fixed changes and their combinations
+against exact [Wave 6A B0](../../docs/bayn/evidence/2026-11-27-10yr-16etf-noise-area/README.md), not a new live
+default. It trades only QQQ and SMH in replay; XLK, SPY and IWM supply breadth. Use the existing read-only
+`agents-artifacts` credentials for the [pinned 5m SIP tape](../../docs/bayn/evidence/2026-11-27-10yr-qqq-smh-conditioning/protocol.md)
+and the [F4/O1 daily inputs](tools/vol-regime-carry-data.ts).
+
+1. At the committed research revision, run `bun services/bayn/tools/research-noise-area-v4.ts --develop`. Record the
+   source SHA and development receipt before accessing Holdout. The annual forward folds (2019–23) choose on
+   expanding prior history with 20 official sessions purged before each test. The 2024–26 arms are frozen to the
+   final development choice with the same purge. Prior bars may warm features across the seam, never positions.
+2. From that same revision, run `bun services/bayn/tools/research-noise-area-v4.ts --score <receipt-sha256>`. The
+   command checks the source, development replay and B0 parity before opening Holdout. It emits only a Markdown
+   summary; no per-bar, per-trade, or per-day reports.
+
+- **Sizing:** scale each B0 reservation by at most one, inversely to realized noise (overnight log gap plus
+  completed intraday log returns in quadrature), relative to the prior 14 same-clock observations. An inactive
+  name never transfers its reservation to another name.
+- **Regime:** the candidate must close beyond its first 15-minute range and VWAP. Require all four peer snapshots
+  and at least three peers on the same side of their open and VWAP. From 11:30 to 13:30 ET, also require
+  directional net progress of at least 35% of the last hour's absolute path.
+- **Exit:** instead of the opposite band, initialize a fill-anchored 4× five-minute ATR stop. Only a completed
+  close showing strictly more than 1.2R activates breakeven and the one-way Chandelier ratchet. An already-active
+  stop wins on an ambiguous bar. Exits use the next observed open, or flatten 15 minutes before the scheduled
+  close. There is no re-entry; the exit change alone cannot reduce the number of round trips.
+
+All arms use a fixed $100k B0 sizing base, whole shares, a $180k marked-gross ceiling, 2/5/10 bp **round-trip**
+costs and 0.21 bp on sells. CAGR and drawdown use starting capital plus cumulative net P&L, with no reinvestment.
+Turnover is mean daily two-sided raw traded value over starting capital. At **both** stress costs the locked arm
+must be profitable, exceed B0 by >1 CAGR percentage point and >0.15 Sharpe, clear DSR ≥0.95 and a paired
+stationary-block p <0.05, and improve both metrics in at least two of the three Holdout years. Each retained
+part must lift both metrics standalone and against the locked arm without that part. An incomplete Holdout
+execution path vetoes promotion. Descriptive arms cannot replace a failed lock.
+
+[DSR](https://doi.org/10.3905/jpm.2014.40.5.094) deflates for this eight-arm grid, not earlier research on
+the same years. The archive does not establish executable quotes, arrival latency, market impact or borrow.
+These results cannot authorize a switch from the frozen live v2/v3 configurations.
+
 ## Historical data workflow
 
 `bun run --filter @proompteng/bayn history --input job.json` is the single offline data tool. Its four operations

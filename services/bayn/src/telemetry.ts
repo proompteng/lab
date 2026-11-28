@@ -34,6 +34,13 @@ interface TelemetryEnvironment {
 
 type SpanAttributes = Readonly<Record<string, string | number | boolean>>
 
+enum ObservedStageOutcome {
+  Succeeded = 'succeeded',
+  Pending = 'pending',
+  Failed = 'failed',
+  Interrupted = 'interrupted',
+}
+
 export interface ActiveExecutionStage {
   readonly stage: string
   readonly dependency?: string
@@ -333,6 +340,8 @@ export const withObservedStage =
       readonly recordCompletion?: boolean
       /** Isolate diagnostic finalizer defects from the wrapped operation's exit. */
       readonly diagnosticOnly?: boolean
+      /** Classify a typed wait without changing the operation's exit. */
+      readonly isPendingError?: (error: unknown) => boolean
       readonly attributes?: SpanAttributes
     } = {},
   ) =>
@@ -361,10 +370,15 @@ export const withObservedStage =
                 yield* Effect.annotateCurrentSpan('bayn.native_wall.finished_at', yield* currentUtcInstant)
                 const elapsedMs = Math.max(0, finishedAt - startedAt)
                 const outcome = Exit.isSuccess(exit)
-                  ? 'succeeded'
+                  ? ObservedStageOutcome.Succeeded
                   : Cause.hasInterruptsOnly(exit.cause)
-                    ? 'interrupted'
-                    : 'failed'
+                    ? ObservedStageOutcome.Interrupted
+                    : exit.cause.reasons.length > 0 &&
+                        exit.cause.reasons.every(
+                          (reason) => Cause.isFailReason(reason) && options.isPendingError?.(reason.error) === true,
+                        )
+                      ? ObservedStageOutcome.Pending
+                      : ObservedStageOutcome.Failed
                 yield* Metric.update(
                   operationDuration.pipe(
                     Metric.withAttributes({
@@ -385,17 +399,21 @@ export const withObservedStage =
                     count: (previous?.count ?? 0) + 1,
                     inclusiveElapsedMs: (previous?.inclusiveElapsedMs ?? 0) + elapsedMs,
                     maxElapsedMs: Math.max(previous?.maxElapsedMs ?? 0, elapsedMs),
-                    failures: (previous?.failures ?? 0) + (outcome === 'failed' ? 1 : 0),
-                    interruptions: (previous?.interruptions ?? 0) + (outcome === 'interrupted' ? 1 : 0),
+                    failures: (previous?.failures ?? 0) + (outcome === ObservedStageOutcome.Failed ? 1 : 0),
+                    interruptions:
+                      (previous?.interruptions ?? 0) + (outcome === ObservedStageOutcome.Interrupted ? 1 : 0),
                   })
                 }
                 const slow = options.slowAfterMs !== null && elapsedMs >= (options.slowAfterMs ?? 1_000)
-                if (Exit.isSuccess(exit) && !slow && options.recordCompletion !== true) return
-                const log = Exit.isFailure(exit)
+                const didFail = outcome === ObservedStageOutcome.Failed || outcome === ObservedStageOutcome.Interrupted
+                if (!didFail && !slow && options.recordCompletion !== true) return
+                const log = didFail
                   ? Effect.logWarning('Bayn execution stage did not complete')
                   : slow
                     ? Effect.logWarning('Bayn operation exceeded its diagnostic threshold')
-                    : Effect.logInfo('Bayn execution stage completed')
+                    : outcome === ObservedStageOutcome.Pending
+                      ? Effect.logInfo('Bayn execution stage is pending')
+                      : Effect.logInfo('Bayn execution stage completed')
                 return yield* Effect.currentSpan.pipe(
                   Effect.orDie,
                   Effect.flatMap((span) => {

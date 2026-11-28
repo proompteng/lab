@@ -1,25 +1,29 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Decimal,
-    Mapping,
-    RuntimeWindowImportTestCaseBase,
+from decimal import Decimal
+from typing import Mapping, cast
+from unittest import TestCase
+
+from scripts.import_hypothesis_runtime_windows import (
     _build_realized_strategy_pnl_rows,
     _runtime_ledger_bucket_profit_proof_present,
-    cast,
-    datetime,
-    timezone,
+)
+from tests.runtime_window_import.ledger_fixtures import (
+    execution_fill,
+    march_6_market_hour,
+    paper_order_event,
+    strategy_decision_row,
 )
 
 
-class TestRuntimeWindowImportRealizedPnlF(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportRealizedPnlF(TestCase):
     def test_build_realized_strategy_pnl_rows_materializes_audit_only_runtime_metadata(
         self,
     ) -> None:
         rows = _build_realized_strategy_pnl_rows(
             [
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(35),
                     "symbol": "AAPL",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
@@ -46,7 +50,7 @@ class TestRuntimeWindowImportRealizedPnlF(RuntimeWindowImportTestCaseBase):
                     },
                 },
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(40),
                     "symbol": "AAPL",
                     "side": "sell",
                     "filled_qty": Decimal("1"),
@@ -113,7 +117,7 @@ class TestRuntimeWindowImportRealizedPnlF(RuntimeWindowImportTestCaseBase):
         rows = _build_realized_strategy_pnl_rows(
             [
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(35),
                     "symbol": "AAPL",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
@@ -123,7 +127,7 @@ class TestRuntimeWindowImportRealizedPnlF(RuntimeWindowImportTestCaseBase):
                     "decision_json": decision_json,
                 },
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(40),
                     "symbol": "AAPL",
                     "side": "sell",
                     "filled_qty": Decimal("1"),
@@ -163,36 +167,26 @@ class TestRuntimeWindowImportRealizedPnlF(RuntimeWindowImportTestCaseBase):
     ) -> None:
         rows = _build_realized_strategy_pnl_rows(
             [
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
-                    "symbol": "AAPL",
-                    "side": "buy",
-                    "filled_qty": Decimal("1"),
-                    "avg_fill_price": Decimal("100"),
-                    "cost_amount": Decimal("0.20"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-buy",
-                    "alpaca_order_id": "order-buy",
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                    "source_decision_mode": "route_acquisition_probe",
-                },
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
-                    "symbol": "AAPL",
-                    "side": "sell",
-                    "filled_qty": Decimal("1"),
-                    "avg_fill_price": Decimal("101"),
-                    "cost_amount": Decimal("0.10"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-sell",
-                    "alpaca_order_id": "order-sell",
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                    "source_decision_mode": "route_acquisition_probe",
-                },
+                execution_fill(
+                    computed_at=march_6_market_hour(35),
+                    side="buy",
+                    avg_fill_price=Decimal("100"),
+                    cost_amount=Decimal("0.20"),
+                    decision_hash="decision-buy",
+                    alpaca_order_id="order-buy",
+                    execution_policy_hash="policy-sha",
+                    source_decision_mode="route_acquisition_probe",
+                ),
+                execution_fill(
+                    computed_at=march_6_market_hour(40),
+                    side="sell",
+                    avg_fill_price=Decimal("101"),
+                    cost_amount=Decimal("0.10"),
+                    decision_hash="decision-sell",
+                    alpaca_order_id="order-sell",
+                    execution_policy_hash="policy-sha",
+                    source_decision_mode="route_acquisition_probe",
+                ),
             ],
             allow_authoritative_runtime_ledger_materialization=True,
         )
@@ -236,33 +230,21 @@ class TestRuntimeWindowImportRealizedPnlF(RuntimeWindowImportTestCaseBase):
             price: str,
             minute: int,
         ) -> dict[str, object]:
-            return {
-                "execution_id": execution_id,
-                "trade_decision_id": decision_id,
-                "computed_at": datetime(2026, 3, 6, 14, minute, tzinfo=timezone.utc),
-                "execution_event_at": datetime(
-                    2026,
-                    3,
-                    6,
-                    14,
-                    minute,
-                    tzinfo=timezone.utc,
-                ),
-                "symbol": "AAPL",
-                "side": side,
-                "filled_qty": Decimal("1"),
-                "avg_fill_price": Decimal(price),
-                "cost_amount": Decimal("0.10"),
-                "cost_basis": "broker_reported_commission_and_fees",
-                "account_label": "TORGHUT_SIM",
-                "strategy_id": "microbar-cross-sectional-pairs-v1",
-                "decision_hash": f"{decision_id}-hash",
-                "alpaca_order_id": f"{execution_id}-order",
-                "execution_policy_hash": "policy-sha",
-                "cost_model_hash": "cost-sha",
-                "lineage_hash": "lineage-sha",
-                "source_decision_mode": mode,
-            }
+            return execution_fill(
+                execution_id=execution_id,
+                trade_decision_id=decision_id,
+                computed_at=march_6_market_hour(minute),
+                execution_event_at=march_6_market_hour(minute),
+                side=side,
+                avg_fill_price=Decimal(price),
+                cost_amount=Decimal("0.10"),
+                account_label="TORGHUT_SIM",
+                strategy_id="microbar-cross-sectional-pairs-v1",
+                decision_hash=f"{decision_id}-hash",
+                alpaca_order_id=f"{execution_id}-order",
+                execution_policy_hash="policy-sha",
+                source_decision_mode=mode,
+            )
 
         def decision_row(
             *,
@@ -270,19 +252,14 @@ class TestRuntimeWindowImportRealizedPnlF(RuntimeWindowImportTestCaseBase):
             mode: str,
             minute: int,
         ) -> dict[str, object]:
-            return {
-                "trade_decision_id": decision_id,
-                "computed_at": datetime(2026, 3, 6, 14, minute, tzinfo=timezone.utc),
-                "symbol": "AAPL",
-                "account_label": "TORGHUT_SIM",
-                "strategy_id": "microbar-cross-sectional-pairs-v1",
-                "decision_hash": f"{decision_id}-hash",
-                "event_type": "decision",
-                "execution_policy_hash": "policy-sha",
-                "cost_model_hash": "cost-sha",
-                "lineage_hash": "lineage-sha",
-                "source_decision_mode": mode,
-            }
+            return strategy_decision_row(
+                trade_decision_id=decision_id,
+                computed_at=march_6_market_hour(minute),
+                decision_hash=f"{decision_id}-hash",
+                execution_policy_hash="policy-sha",
+                cost_model_hash="cost-sha",
+                source_decision_mode=mode,
+            )
 
         def order_event_row(
             *,
@@ -294,26 +271,21 @@ class TestRuntimeWindowImportRealizedPnlF(RuntimeWindowImportTestCaseBase):
             offset: int,
             minute: int,
         ) -> dict[str, object]:
-            row: dict[str, object] = {
-                "execution_order_event_id": event_id,
-                "trade_decision_id": decision_id,
-                "execution_id": execution_id,
-                "event_ts": datetime(2026, 3, 6, 14, minute, 1, tzinfo=timezone.utc),
-                "symbol": "AAPL",
-                "account_label": "TORGHUT_SIM",
-                "strategy_id": "microbar-cross-sectional-pairs-v1",
-                "decision_hash": f"{decision_id}-hash",
-                "alpaca_order_id": f"{execution_id}-order",
-                "event_type": event_type,
-                "source_topic": "alpaca-trade-updates",
-                "source_partition": 0,
-                "source_offset": offset,
-                "source_window_id": f"source-window-{mode}",
-                "execution_policy_hash": "policy-sha",
-                "cost_model_hash": "cost-sha",
-                "lineage_hash": "lineage-sha",
-                "source_decision_mode": mode,
-            }
+            row: dict[str, object] = paper_order_event(
+                execution_order_event_id=event_id,
+                trade_decision_id=decision_id,
+                execution_id=execution_id,
+                event_ts=march_6_market_hour(minute, 1),
+                decision_hash=f"{decision_id}-hash",
+                alpaca_order_id=f"{execution_id}-order",
+                event_type=event_type,
+                source_topic="alpaca-trade-updates",
+                source_offset=offset,
+                source_window_id=f"source-window-{mode}",
+                execution_policy_hash="policy-sha",
+                cost_model_hash="cost-sha",
+                source_decision_mode=mode,
+            )
             if event_type in {"fill", "filled", "partial_fill"}:
                 avg_fill_price = Decimal(
                     {

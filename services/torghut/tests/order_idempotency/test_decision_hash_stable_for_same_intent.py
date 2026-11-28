@@ -1,24 +1,19 @@
 from __future__ import annotations
 
-from tests.order_idempotency.support import (
-    Decimal,
-    Execution,
-    ExecutionTCAMetric,
-    FakeAlpacaClient,
-    OrderExecutor,
-    Reconciler,
-    SimulationExecutionAdapter,
-    Strategy,
-    StrategyDecision,
-    TradeDecision,
-    _TestOrderIdempotencyBase,
-    datetime,
-    decision_hash,
-    patch,
-    select,
-    settings,
-    timezone,
-)
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest.mock import patch
+
+from sqlalchemy import select
+
+from app.config import settings
+from app.models import Execution, ExecutionTCAMetric, TradeDecision
+from app.trading.execution import OrderExecutor
+from app.trading.execution_adapters import SimulationExecutionAdapter
+from app.trading.models import StrategyDecision, decision_hash
+from app.trading.reconcile import Reconciler
+from tests.order_idempotency.support import FakeAlpacaClient, _TestOrderIdempotencyBase
+from tests.trading_fixtures import make_strategy
 
 
 class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
@@ -103,13 +98,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
 
     def test_execution_exists_ignores_unrelated_same_account_execution(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -162,13 +153,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
     ) -> None:
         settings.trading_multi_account_enabled = True
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -215,13 +202,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
         self,
     ) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -310,13 +293,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
 
     def test_execution_exists_matches_by_client_order_id_hash(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -358,13 +337,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
 
     def test_retry_after_db_failure_does_not_duplicate_submit(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -413,13 +388,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
     ) -> None:
         settings.trading_mode = "live"
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="retry-recovery",
                 description="retry recovery",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -483,13 +454,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
 
     def test_submit_order_records_tca_row_with_null_safe_defaults(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -529,12 +496,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
 
     def test_simulation_submit_order_uses_decision_price_for_fill_and_tca(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo-simulation",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
                 universe_symbols=["NVDA"],
             )
             session.add(strategy)
@@ -605,12 +569,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
 
     def test_simulation_submit_order_persists_queue_partial_fill_and_tca(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo-simulation-queue",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
                 universe_symbols=["NVDA"],
             )
             session.add(strategy)
@@ -690,12 +651,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
         self,
     ) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo-simulation-policy-queue",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
                 universe_symbols=["NVDA"],
             )
             session.add(strategy)
@@ -766,12 +724,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
         self,
     ) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo-simulation-policy-metadata",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
                 universe_symbols=["NVDA"],
             )
             session.add(strategy)
@@ -844,12 +799,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
 
     def test_simulation_submit_order_uses_price_snapshot_without_context(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo-simulation-snapshot",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
                 universe_symbols=["NVDA"],
             )
             session.add(strategy)

@@ -1,39 +1,47 @@
 from __future__ import annotations
 
-from tests.order_feed.support import (
-    Decimal,
-    EXECUTION_RAW_ORDER_SOURCE_PARTITION,
-    EXECUTION_RAW_ORDER_SOURCE_TOPIC,
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.models import (
     Execution,
     ExecutionOrderEvent,
-    FakeConsumer,
-    FakeManualConsumer,
-    FakeRecord,
-    ORDER_FEED_SOURCE_REVISION,
     OrderFeedConsumerCursor,
-    OrderFeedIngestor,
     OrderFeedSourceWindow,
-    OrderFeedTestCase,
-    Session,
-    SimpleNamespace,
+)
+from app.trading.order_feed import (
+    ORDER_FEED_SOURCE_REVISION,
+    OrderFeedIngestor,
     backfill_order_feed_events_from_executions,
+    repair_order_feed_execution_links,
+    repair_order_feed_execution_states,
+    repair_order_feed_fill_deltas,
+)
+from app.trading.order_feed.resolve_execution_linkage_for_identity import (
     create_historical_source_window_for_event,
-    datetime,
     ensure_aware_utc,
     event_timestamp_for_source_window,
     execution_backfill_event_type,
     find_existing_source_window_for_event,
-    func,
     isoformat_datetime,
-    patch,
-    repair_order_feed_execution_links,
-    repair_order_feed_execution_states,
-    repair_order_feed_fill_deltas,
-    select,
-    settings,
     stable_execution_source_offset,
-    timedelta,
-    timezone,
+)
+from app.trading.order_feed.shared_context import (
+    EXECUTION_RAW_ORDER_SOURCE_PARTITION,
+    EXECUTION_RAW_ORDER_SOURCE_TOPIC,
+)
+from tests.order_feed.support import (
+    FakeConsumer,
+    FakeManualConsumer,
+    FakeRecord,
+    OrderFeedTestCase,
+    filled_order_event,
 )
 
 
@@ -100,71 +108,51 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
                 session.add(execution)
             session.add_all(
                 [
-                    ExecutionOrderEvent(
+                    filled_order_event(
                         event_fingerprint="inside-link-event",
                         source_topic="torghut.trade-updates.v2",
-                        source_partition=0,
                         source_offset=201,
                         alpaca_account_label="PA3SX7FYNUTF",
                         event_ts=inside_ts,
-                        symbol="AAPL",
                         alpaca_order_id="inside-link-order",
                         client_order_id="inside-link-client",
-                        event_type="fill",
-                        status="filled",
                         filled_qty=Decimal("1"),
                         avg_fill_price=Decimal("191.25"),
-                        raw_event={"event": "fill"},
                     ),
-                    ExecutionOrderEvent(
+                    filled_order_event(
                         event_fingerprint="outside-link-event",
                         source_topic="torghut.trade-updates.v2",
-                        source_partition=0,
                         source_offset=202,
                         alpaca_account_label="PA3SX7FYNUTF",
                         event_ts=outside_ts,
-                        symbol="AAPL",
                         alpaca_order_id="outside-link-order",
                         client_order_id="outside-link-client",
-                        event_type="fill",
-                        status="filled",
                         filled_qty=Decimal("1"),
                         avg_fill_price=Decimal("191.25"),
-                        raw_event={"event": "fill"},
                     ),
-                    ExecutionOrderEvent(
+                    filled_order_event(
                         event_fingerprint="inside-state-event",
                         source_topic="torghut.trade-updates.v2",
-                        source_partition=0,
                         source_offset=203,
                         alpaca_account_label="PA3SX7FYNUTF",
                         event_ts=inside_ts,
-                        symbol="AAPL",
                         alpaca_order_id="inside-state-order",
                         client_order_id="inside-state-client",
-                        event_type="fill",
-                        status="filled",
                         filled_qty=Decimal("1"),
                         avg_fill_price=Decimal("191.25"),
-                        raw_event={"event": "fill"},
                         execution_id=inside_state_execution.id,
                         trade_decision_id=inside_state_execution.trade_decision_id,
                     ),
-                    ExecutionOrderEvent(
+                    filled_order_event(
                         event_fingerprint="outside-state-event",
                         source_topic="torghut.trade-updates.v2",
-                        source_partition=0,
                         source_offset=204,
                         alpaca_account_label="PA3SX7FYNUTF",
                         event_ts=outside_ts,
-                        symbol="AAPL",
                         alpaca_order_id="outside-state-order",
                         client_order_id="outside-state-client",
-                        event_type="fill",
-                        status="filled",
                         filled_qty=Decimal("1"),
                         avg_fill_price=Decimal("191.25"),
-                        raw_event={"event": "fill"},
                         execution_id=outside_state_execution.id,
                         trade_decision_id=outside_state_execution.trade_decision_id,
                     ),
@@ -232,19 +220,13 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
         with Session(self.engine) as session:
             execution = self._seed_execution(session, account_label="PA3SX7FYNUTF")
             session.add(
-                ExecutionOrderEvent(
+                filled_order_event(
                     event_fingerprint="existing-live-fill",
                     source_topic="torghut.trade-updates.v2",
-                    source_partition=0,
                     source_offset=101,
                     alpaca_account_label="PA3SX7FYNUTF",
-                    event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                    symbol="AAPL",
                     alpaca_order_id=execution.alpaca_order_id,
                     client_order_id=execution.client_order_id,
-                    event_type="fill",
-                    status="filled",
-                    raw_event={"event": "fill"},
                     execution_id=execution.id,
                     trade_decision_id=execution.trade_decision_id,
                 )
@@ -373,12 +355,10 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
     def test_historical_source_window_helpers_handle_missing_and_aware_offsets(
         self,
     ) -> None:
-        event = ExecutionOrderEvent(
+        event = filled_order_event(
             event_fingerprint="legacy-fill-missing-offset",
-            source_topic="torghut.trade-updates.v1",
             source_partition=None,
             source_offset=None,
-            alpaca_account_label="paper",
             event_ts=datetime(
                 2026,
                 2,
@@ -387,10 +367,6 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
                 0,
                 tzinfo=timezone(timedelta(hours=-8)),
             ),
-            symbol="AAPL",
-            event_type="fill",
-            status="filled",
-            raw_event={"event": "fill"},
         )
 
         with Session(self.engine) as session:

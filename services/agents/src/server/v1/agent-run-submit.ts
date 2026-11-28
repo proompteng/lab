@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { Context, Effect, Layer } from 'effect'
 
 import { resolveAgentRunAdmissionConfig } from '../agents-controller/controller-config'
+import { extractProviderSecretEnvNames } from '../agents-controller/policy'
 import { resolveAgentRunnerDefaultsConfig } from '../agents-controller/runtime-config'
 import { resolveWorkloadImage } from '../agents-controller/workload-image'
 import { parseJsonBody, requireIdempotencyKey } from '../http'
@@ -1203,6 +1204,9 @@ export const submitAgentRunWithServicesEffect = (
 
           const requiredSecretSet = new Set(requiredSecrets)
           for (const name of vcsSecrets) {
+            requiredSecretSet.add(name)
+          }
+          for (const name of extractProviderSecretEnvNames(provider)) {
             requiredSecretSet.add(name)
           }
           const policy = parsed.policy ?? {}
