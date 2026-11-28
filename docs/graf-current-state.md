@@ -1,6 +1,6 @@
 # Graf Service – Current State (November 10, 2025)
 
-This document captures the current architecture of the Graf Neo4j persistence service as deployed from the `services/graf` module. It reflects the refreshed AutoResearch Codex prompt (no Koog agent) and how it complements the existing CRUD/complement/clean API surface.
+The Galactic Graf agent was retired in November 2026. This historical snapshot captures the current architecture of the Graf Neo4j persistence service as deployed from the `services/graf` module. It reflects the refreshed AutoResearch Codex prompt (no Koog agent) and how it complements the existing CRUD/complement/clean API surface.
 
 ## Key Components
 
