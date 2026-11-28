@@ -1,12 +1,19 @@
-import json
+import contextlib
 import io
+import json
+import os
 import pathlib
+import socket
+import subprocess
+import sys
 import tempfile
 import threading
+import time
+import types
 import unittest
 import urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from collector import (
     Collector,
@@ -15,6 +22,7 @@ from collector import (
     cache_evidence,
     job_record,
     phase,
+    project_ci_audit,
     timestamp,
 )
 
@@ -229,7 +237,7 @@ class CollectorTests(unittest.TestCase):
             self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
         )
         with patch.object(api, "log", wraps=api.log) as download:
-            observer.collect_job(run(), value, float("inf"))
+            observer.collect_job(job_record(run(), value), time.monotonic() + 20)
         download.assert_called_once_with(value["id"])
         record = json.loads(
             self.store.db.execute("SELECT record FROM jobs").fetchone()[0]
@@ -306,7 +314,7 @@ class CollectorTests(unittest.TestCase):
         )
         self.store.discover(second, self.now)
         while pending := self.store.pending():
-            observer.collect_attempt(pending)
+            observer.collect_attempt(pending, time.monotonic() + 20)
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 2
         )
@@ -418,6 +426,210 @@ class CollectorTests(unittest.TestCase):
             worker.join()
             server.server_close()
 
+    def test_slow_poll_does_not_limit_loki_to_one_batch(self):
+        record = job_record(run(), job())
+        for offset in range(201):
+            self.store.save_job(
+                record | {"job_id": record["job_id"] + offset}, cache_evidence("")
+            )
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        clock = [time.time()]
+        sizes = []
+
+        def slow_poll(_now):
+            clock[0] += 75
+
+        def deliver(request, timeout):
+            sizes.append(
+                sum(len(s["values"]) for s in json.loads(request.data)["streams"])
+            )
+            clock[0] += 1.45
+            return io.BytesIO()
+
+        with (
+            patch.dict(os.environ, {"CI_AUDIT_DATABASE_URL": "example"}),
+            patch("collector.subprocess.run") as project,
+            patch.object(observer, "poll", side_effect=slow_poll),
+            patch.object(observer, "history"),
+            patch("time.time", side_effect=lambda: clock[0]),
+            patch("time.monotonic", side_effect=lambda: clock[0]),
+            patch("urllib.request.urlopen", side_effect=deliver),
+            patch("time.sleep", side_effect=StopIteration),
+            self.assertRaises(StopIteration),
+        ):
+            observer.run()
+        self.assertEqual(sizes, [100, 100, 1])
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0
+        )
+        project.assert_not_called()  # The optional writer cannot overrun the cycle.
+
+    def test_audit_projection_is_a_noop_without_a_url(self):
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ),
+            patch.dict(sys.modules, {"psycopg": None}),
+            patch("collector.subprocess.run") as worker,
+            patch.object(observer, "poll"),
+            patch.object(observer, "history"),
+            patch("time.sleep", side_effect=StopIteration),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(StopIteration),
+        ):
+            os.environ.pop("CI_AUDIT_DATABASE_URL", None)
+            project_ci_audit(self.path, os.environ.get("CI_AUDIT_DATABASE_URL"))
+            observer.run()
+        worker.assert_not_called()
+        self.assertEqual(output.getvalue(), "")
+        self.assertIsNone(
+            self.store.db.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='ci_audit_checkpoints'"
+            ).fetchone()
+        )
+
+    def test_audit_timeout_is_fail_open_after_loki_delivery(self):
+        record = job_record(run(), job())
+        self.store.save_job(record, cache_evidence(""))
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        output = io.StringIO()
+
+        def stall(command, *, timeout, **_kwargs):
+            self.assertLessEqual(timeout, 5)
+            self.assertNotIn("example", command)
+            self.assertEqual(
+                self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0
+            )
+            raise subprocess.TimeoutExpired(command, timeout)
+
+        with (
+            patch.dict(os.environ, {"CI_AUDIT_DATABASE_URL": "example"}),
+            patch("collector.subprocess.run", side_effect=stall) as worker,
+            patch.object(observer, "poll"),
+            patch.object(observer, "history"),
+            patch("urllib.request.urlopen", return_value=io.BytesIO()),
+            patch("time.sleep", side_effect=StopIteration),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(StopIteration),
+        ):
+            observer.run()
+        worker.assert_called_once()
+        self.assertEqual(observer.errors, 0)
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            {
+                "event": "ci_audit_projection_failed",
+                "error_type": "TimeoutExpired",
+            },
+        )
+
+    def test_audit_batches_retry_unacknowledged_rows_and_page_large_attempts(self):
+        value = run() | {"head_branch": "main"}
+        failed, unassigned = job(), job()
+        failed["conclusion"] = "failure"
+        failed["steps"][0]["conclusion"] = "failure"
+        unassigned.update(
+            id=failed["id"] + 1,
+            runner_name=None,
+            started_at="0001-01-01T00:00:00Z",
+            conclusion="cancelled",
+            steps=[],
+        )
+        last = job() | {"id": failed["id"] + 2}
+        jobs = [failed, unassigned, last]
+        self.store.discover(value, self.now)
+        for item in jobs:
+            self.store.save_job(job_record(value, item), cache_evidence(""))
+        self.store.finish(value, jobs)
+        self.assertNotIn(
+            "head_branch",
+            json.loads(
+                self.store.db.execute(
+                    "SELECT line FROM outbox ORDER BY id DESC LIMIT 1"
+                ).fetchone()[0]
+            ),
+        )
+
+        driver = types.SimpleNamespace(connect=MagicMock())
+        db = driver.connect.return_value.__enter__.return_value
+        cursor = db.cursor.return_value.__enter__.return_value
+        output = io.StringIO()
+        url = "postgresql://ci_audit_writer:private@localhost/agents"
+        with (
+            patch.dict(sys.modules, {"psycopg": driver}),
+            patch("collector.CI_AUDIT_ROW_LIMIT", 3),
+            patch("time.time", return_value=self.now),
+            contextlib.redirect_stdout(output),
+        ):
+            driver.connect.return_value.__exit__.side_effect = OSError(url)
+            project_ci_audit(self.path, url)
+            checkpoint = "SELECT job_cursor FROM ci_audit_checkpoints"
+            self.assertIsNone(self.store.db.execute(checkpoint).fetchone())
+            driver.connect.return_value.__exit__.side_effect = None
+            project_ci_audit(self.path, url)
+            self.assertEqual(
+                self.store.db.execute(checkpoint).fetchone()[0], unassigned["id"]
+            )
+            project_ci_audit(self.path, url)
+            self.assertEqual(self.store.db.execute(checkpoint).fetchone()[0], -1)
+            project_ci_audit(self.path, url)
+
+        self.assertNotIn("private", output.getvalue())
+        self.assertEqual(json.loads(output.getvalue())["error_type"], "OSError")
+        self.assertEqual(driver.connect.call_args.kwargs["user"], "ci_audit_writer")
+        self.assertEqual(driver.connect.call_args.kwargs["connect_timeout"], 2)
+        self.assertIn(
+            "statement_timeout=2000", driver.connect.call_args.kwargs["options"]
+        )
+        self.assertEqual(len(cursor.executemany.call_args_list), 6)
+        for index, expected_jobs in enumerate(
+            ([failed, unassigned], [failed, unassigned], [last])
+        ):
+            workflow_sql, workflows = cursor.executemany.call_args_list[2 * index].args
+            self.assertIn("ON CONFLICT (run_id) DO UPDATE", workflow_sql)
+            self.assertEqual(
+                [(row[0], row[2]) for row in workflows], [(value["id"], "main")]
+            )
+            job_sql, projected = cursor.executemany.call_args_list[2 * index + 1].args
+            self.assertIn("ON CONFLICT (job_id) DO NOTHING", job_sql)
+            self.assertEqual(
+                [row[0] for row in projected], [item["id"] for item in expected_jobs]
+            )
+        first_batch = cursor.executemany.call_args_list[1].args[1]
+        self.assertEqual(first_batch[0][-1], "build")
+        self.assertIsNone(first_batch[1][4])  # Runner.
+        self.assertIsNone(first_batch[1][7])  # Start time.
+        self.assertIsNone(first_batch[1][-1])  # Failure category.
+        self.assertEqual(len(cursor.execute.call_args_list), 4 * 3)
+        for statement in cursor.execute.call_args_list:
+            sql, params = statement.args
+            self.assertIn("LIMIT %s", sql)
+            self.assertEqual(params[-1], 3)
+        cluster_sql, params = cursor.execute.call_args_list[-3].args
+        self.assertIn("interval '24 hours'", cluster_sql)
+        self.assertIn("ON CONFLICT (cluster_key) DO UPDATE", cluster_sql)
+        self.assertEqual(params, (3, 3))
+
+    def test_audit_backfill_does_not_replace_the_latest_completed_attempt(self):
+        first = run() | {"conclusion": "failure"}
+        newest = run(2) | {"updated_at": "2026-10-25T12:34:49Z"}
+        self.store.discover(newest, self.now)
+        self.store.finish(newest, [])
+        driver = types.SimpleNamespace(connect=MagicMock())
+        cursor = driver.connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        with (
+            patch.dict(sys.modules, {"psycopg": driver}),
+            patch("time.time", return_value=self.now),
+        ):
+            project_ci_audit(self.path, "example")
+            self.store.finish(first, [])
+            project_ci_audit(self.path, "example")
+        self.assertEqual(cursor.executemany.call_count, 2)
+        self.assertEqual(
+            [list(call.args[1])[0][6] for call in cursor.executemany.call_args_list],
+            ["success", "success"],
+        )
+
     def test_failed_active_poll_does_not_advance_success_heartbeat(self):
         api = FakeGitHub({}, {})
         observer = Collector(self.store, api, {}, "http://unused")
@@ -427,6 +639,26 @@ class CollectorTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 observer.poll(self.now)
         self.assertEqual(observer.last_poll, 0)
+
+    def test_poll_deadline_interrupts_a_blocking_response_body(self):
+        api = GitHub("unused")
+        observer = Collector(self.store, api, {}, "http://unused")
+        observer.last_poll = self.now - 60
+        observer.active_metrics = "last complete snapshot"
+        reader, writer = socket.socketpair()
+        with reader, writer, reader.makefile("rb") as response:
+            reader.settimeout(1)
+            writer.sendall(b'{"workflow_runs": [')
+            response.headers = {}
+            with (
+                patch("collector.POLL_BUDGET_SECONDS", 0.1),
+                patch.object(api, "pages", return_value=iter([])),
+                patch.object(api.opener, "open", return_value=response),
+                self.assertRaisesRegex(RuntimeError, "GitHub poll.*budget"),
+            ):
+                observer.poll(self.now)
+        self.assertEqual(observer.last_poll, self.now - 60)
+        self.assertEqual(observer.active_metrics, "last complete snapshot")
 
     def test_blocked_poll_exposes_live_phase_without_refreshing_cached_facts(self):
         observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
@@ -740,17 +972,29 @@ class CollectorTests(unittest.TestCase):
         with (
             patch.object(api, "pages", side_effect=pages),
             patch.object(api, "runs", return_value=iter([]), create=True),
+            patch.object(api, "log", wraps=api.log) as download,
             patch("time.time", return_value=self.now),
         ):
             observer.poll(self.now)
-        self.assertEqual(
-            self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1
+            download.assert_not_called()
+            self.assertEqual(observer.last_poll, self.now)
+            self.assertEqual(
+                self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0
+            )
+            self.store.db.close()
+            self.store = Store(self.path)
+            observer = Collector(self.store, api, observer.families, "http://unused")
+            observer.collect_pending(time.monotonic() + 20)
+            download.assert_called_once_with(job()["id"])
+        record = json.loads(
+            self.store.db.execute("SELECT record FROM jobs").fetchone()[0]
         )
+        self.assertEqual(record["cache"]["state"], "warm")
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 0
         )
         self.store.discover(run(), self.now)
-        observer.collect_attempt(self.store.pending())
+        observer.collect_pending(time.monotonic() + 20)
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1
         )
@@ -762,6 +1006,80 @@ class CollectorTests(unittest.TestCase):
         ]
         self.assertTrue(completed)
         self.assertTrue(all(line.endswith(" 1") for line in completed))
+
+    def test_pending_drains_oldest_live_attempts_even_as_new_ones_arrive(self):
+        api = FakeGitHub({}, {})
+        api.remaining = 1999
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        self.store.installed_at = timestamp("2026-10-24T00:00:00Z")
+        attempts = {
+            run_id: run() | {"id": run_id, "updated_at": updated}
+            for run_id, updated in (
+                (1, "2026-10-23T12:00:00Z"),  # Backfill must wait for quota.
+                (2, "2026-10-24T12:00:00Z"),
+                (3, "2026-10-25T12:00:00Z"),
+                (4, "2026-10-25T12:30:00Z"),
+            )
+        }
+        for run_id in (1, 2, 3):
+            self.store.discover(attempts[run_id], self.now)
+        clock = [self.now]
+
+        def get(path):
+            clock[0] += 20  # Only one attempt fits in this slice.
+            return attempts[int(path.split("/")[2])]
+
+        with (
+            patch.object(api, "get", side_effect=get),
+            patch.object(api, "pages", return_value=iter([])),
+            patch("time.time", side_effect=lambda: clock[0]),
+            patch("time.monotonic", side_effect=lambda: clock[0]),
+        ):
+            observer.collect_pending(clock[0] + 20)
+            self.store.discover(attempts[4], self.now)
+            observer.collect_pending(clock[0] + 20)
+            states = dict(self.store.db.execute("SELECT run_id, state FROM attempts"))
+            self.assertEqual(
+                states, {1: "pending", 2: "complete", 3: "complete", 4: "pending"}
+            )
+            age = self.now - timestamp(attempts[4]["updated_at"])
+            self.assertIn(
+                f"ci_observability_oldest_live_pending_seconds {age}\n",
+                self.store.render(self.now),
+            )
+            observer.collect_pending(clock[0] + 40)
+            self.assertEqual(self.store.pending()["run_id"], 1)
+            api.remaining = 2000
+            observer.collect_pending(clock[0] + 20)
+            self.assertIsNone(self.store.pending())
+
+    def test_pending_retries_a_blocked_attempt_without_holding_up_the_queue(self):
+        older = run() | {"id": 1, "updated_at": "2026-10-25T11:00:00Z"}
+        newer = run() | {"id": 2}
+        for attempt in (older, newer):
+            self.store.discover(attempt, self.now)
+        api = FakeGitHub({}, {})
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(
+                api,
+                "get",
+                side_effect=[RuntimeError("Attempt not ready"), newer, older],
+            ) as request,
+            patch.object(api, "pages", return_value=iter([])),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Attempt not ready"):
+                observer.collect_pending(time.monotonic() + 20)
+            observer.collect_pending(time.monotonic() + 20)
+        self.assertEqual(
+            [call.args[0].split("/")[2] for call in request.call_args_list],
+            ["1", "2", "1"],
+        )
+        self.assertIsNone(self.store.pending())
 
     def test_slow_historical_discovery_cannot_starve_pending_attempts(self):
         api = FakeGitHub({1: run()}, {1: [job()]})
@@ -989,7 +1307,7 @@ class CollectorTests(unittest.TestCase):
             patch.object(api, "log", side_effect=error),
             patch("time.time", return_value=self.now),
         ):
-            observer.collect_job(run(), job(), self.now + 10)
+            observer.collect_job(job_record(run(), job()), time.monotonic() + 10)
         record = json.loads(
             self.store.db.execute("SELECT record FROM jobs").fetchone()[0]
         )
@@ -997,6 +1315,28 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(record["cache"]["state"], "unknown")
         self.assertEqual(record["cache"]["reason"], "download_failed")
         self.assertEqual(observer.cache_errors, 1)
+
+    def test_slow_log_cannot_consume_more_than_the_pending_budget(self):
+        api = FakeGitHub({}, {})
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        self.store.defer_job(job_record(run(), job()), self.now)
+
+        def slow_log(job_id):
+            time.sleep(0.3)
+            return "build output"
+
+        with patch.object(api, "log", side_effect=slow_log) as download:
+            observer.collect_pending(time.monotonic() + 0.1)
+        download.assert_called_once_with(job()["id"])
+        record = json.loads(
+            self.store.db.execute("SELECT record FROM jobs").fetchone()[0]
+        )
+        self.assertEqual(record["durations"]["execution"], 239)
+        self.assertEqual(record["cache"]["reason"], "collection_budget")
+        self.assertEqual(observer.cache_errors, 1)
+        self.assertIsNone(self.store.pending_job())
 
     def test_expired_unacknowledged_records_cannot_block_new_loki_delivery(self):
         first, second = job_record(run(), job()), job_record(run(), job())

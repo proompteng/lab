@@ -36,7 +36,7 @@ import {
   intradayAlphaCandidateSymbols,
   intradayAlphaEquityMarketProfile,
   makeIntradayAlphaPolicy,
-  type IntradayAlphaPolicy,
+  type IntradayAlphaV2PolicyMaterial,
 } from '../src/strategy/intraday-alpha/policy'
 import { makeIntradayAlphaPolicyV21, type IntradayAlphaPolicyV21 } from '../src/strategy/intraday-alpha/policy-v2-1'
 import {
@@ -172,7 +172,7 @@ interface ActiveSimulatedPosition {
 const allowedSymbols = new Set<string>([...intradayAlphaCandidateSymbols, intradayAlphaBenchmarkSymbol])
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 const v2Policy = makeIntradayAlphaPolicy(protocol)
-type ReplayPolicy = IntradayAlphaPolicy | IntradayAlphaPolicyV21
+type ReplayPolicy = IntradayAlphaV2PolicyMaterial | IntradayAlphaPolicyV21
 const ReplayPolicyOption = Schema.Literals(['v2', 'v2_1'])
 const accountId = 'alpha-replay-verifier'
 export { accountId as replayAccountId }

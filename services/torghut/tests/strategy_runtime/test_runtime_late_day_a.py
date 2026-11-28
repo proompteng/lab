@@ -1,54 +1,40 @@
 from __future__ import annotations
 
-from tests.strategy_runtime.support import (
-    Decimal,
-    SignalEnvelope,
-    Strategy,
-    StrategyConfig,
-    StrategyRuntime,
-    TestCase,
-    _compose_strategy_description,
-    datetime,
-    normalize_feature_vector_v3,
-    timezone,
-    uuid,
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest import TestCase
+
+from app.trading.features import normalize_feature_vector_v3
+from app.trading.models import SignalEnvelope
+from app.trading.strategy_runtime import StrategyRuntime
+from tests.trading_fixtures import (
+    make_catalog_strategy,
+    make_runtime_strategy,
+    make_signal,
 )
 
 
 class TestStrategyRuntimeLateDayA(TestCase):
     def test_breakout_continuation_plugin_skips_late_entry_near_flatten(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "entry_start_minute_utc": "840",
-                        "entry_end_minute_utc": "1170",
-                        "session_flatten_start_minute_utc": "1170",
-                        "min_entry_minutes_before_flatten": "15",
-                        "min_price_vs_vwap_w5m_bps": "-6",
-                        "max_price_vs_vwap_w5m_bps": "18",
-                        "min_imbalance_pressure": "0.02",
-                        "max_spread_bps": "6",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "entry_start_minute_utc": "840",
+                "entry_end_minute_utc": "1170",
+                "session_flatten_start_minute_utc": "1170",
+                "min_entry_minutes_before_flatten": "15",
+                "min_price_vs_vwap_w5m_bps": "-6",
+                "max_price_vs_vwap_w5m_bps": "18",
+                "min_imbalance_pressure": "0.02",
+                "max_spread_bps": "6",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 19, 20, 3, tzinfo=timezone.utc),
@@ -89,37 +75,22 @@ class TestStrategyRuntimeLateDayA(TestCase):
     def test_breakout_continuation_plugin_respects_latest_breakout_entry_end(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="breakout-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="breakout-continuation",
-                    strategy_id="breakout_continuation_long_v1@research",
-                    strategy_type="breakout_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "entry_start_minute_utc": "845",
-                        "entry_end_minute_utc": "990",
-                        "latest_breakout_entry_end_minute_utc": "980",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="breakout_continuation_long_v1@research",
+            strategy_type="breakout_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "entry_start_minute_utc": "845",
+                "entry_end_minute_utc": "990",
+                "latest_breakout_entry_end_minute_utc": "980",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 24, 16, 26, 28, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 24, 16, 26, 28, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=61,
             payload={
@@ -164,20 +135,16 @@ class TestStrategyRuntimeLateDayA(TestCase):
         self.assertIsNone(decision)
 
     def test_late_day_continuation_plugin_emits_buy_on_late_strength(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="late-day-continuation",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=5,
             payload={
@@ -222,37 +189,22 @@ class TestStrategyRuntimeLateDayA(TestCase):
         self.assertIn("late_day_strength", decision.intent.rationale)
 
     def test_late_day_continuation_plugin_prefers_live_structure_rank(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="late-day-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="late-day-continuation",
-                    strategy_id="late_day_continuation_long_v1@research",
-                    strategy_type="late_day_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="late_day_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_opening_window_return_bps": "18",
-                        "min_cross_section_opening_window_return_rank": "0.65",
-                        "min_cross_section_continuation_rank": "0.78",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="late_day_continuation_long_v1@research",
+            strategy_type="late_day_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_opening_window_return_bps": "18",
+                "min_cross_section_opening_window_return_rank": "0.65",
+                "min_cross_section_continuation_rank": "0.78",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=55,
             payload={
@@ -302,36 +254,21 @@ class TestStrategyRuntimeLateDayA(TestCase):
         self.assertIn("late_day_strength", decision.intent.rationale)
 
     def test_late_day_continuation_plugin_respects_recent_hold_quality(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="late-day-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="late-day-continuation",
-                    strategy_id="late_day_continuation_long_v1@research",
-                    strategy_type="late_day_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="late_day_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_recent_above_opening_range_high_ratio": "0.45",
-                        "min_recent_above_vwap_w5m_ratio": "0.70",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="late_day_continuation_long_v1@research",
+            strategy_type="late_day_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_recent_above_opening_range_high_ratio": "0.45",
+                "min_recent_above_vwap_w5m_ratio": "0.70",
+            },
         )
-        strong_signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        strong_signal = make_signal(
+            datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=56,
             payload={
@@ -399,37 +336,22 @@ class TestStrategyRuntimeLateDayA(TestCase):
     def test_late_day_continuation_plugin_accepts_open_close_hold_when_orh_hold_is_weak(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="late-day-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="late-day-continuation",
-                    strategy_id="late_day_continuation_long_v1@research",
-                    strategy_type="late_day_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="late_day_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_recent_above_opening_range_high_ratio": "0.45",
-                        "min_recent_above_opening_window_close_ratio": "0.80",
-                        "min_recent_above_vwap_w5m_ratio": "0.70",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="late_day_continuation_long_v1@research",
+            strategy_type="late_day_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_recent_above_opening_range_high_ratio": "0.45",
+                "min_recent_above_opening_window_close_ratio": "0.80",
+                "min_recent_above_vwap_w5m_ratio": "0.70",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=156,
             payload={
@@ -482,37 +404,22 @@ class TestStrategyRuntimeLateDayA(TestCase):
     def test_late_day_continuation_plugin_blocks_when_open_close_hold_is_weak(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="late-day-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="late-day-continuation",
-                    strategy_id="late_day_continuation_long_v1@research",
-                    strategy_type="late_day_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="late_day_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_recent_above_opening_range_high_ratio": "0.45",
-                        "min_recent_above_opening_window_close_ratio": "0.80",
-                        "min_recent_above_vwap_w5m_ratio": "0.70",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="late_day_continuation_long_v1@research",
+            strategy_type="late_day_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_recent_above_opening_range_high_ratio": "0.45",
+                "min_recent_above_opening_window_close_ratio": "0.80",
+                "min_recent_above_vwap_w5m_ratio": "0.70",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=157,
             payload={
@@ -562,40 +469,25 @@ class TestStrategyRuntimeLateDayA(TestCase):
     def test_late_day_continuation_plugin_relaxes_breadth_for_strong_opening_drive(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="late-day-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="late-day-continuation",
-                    strategy_id="late_day_continuation_long_v1@research",
-                    strategy_type="late_day_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="late_day_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "min_cross_section_positive_session_open_ratio": "0.25",
-                        "min_cross_section_positive_opening_window_return_ratio": "0.40",
-                        "min_cross_section_above_vwap_w5m_ratio": "0.45",
-                        "min_cross_section_continuation_breadth": "0.40",
-                        "min_cross_section_opening_window_return_rank": "0.65",
-                        "min_cross_section_continuation_rank": "0.70",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="late_day_continuation_long_v1@research",
+            strategy_type="late_day_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "min_cross_section_positive_session_open_ratio": "0.25",
+                "min_cross_section_positive_opening_window_return_ratio": "0.40",
+                "min_cross_section_above_vwap_w5m_ratio": "0.45",
+                "min_cross_section_continuation_breadth": "0.40",
+                "min_cross_section_opening_window_return_rank": "0.65",
+                "min_cross_section_continuation_rank": "0.70",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 18, 46, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 18, 46, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=176,
             payload={
@@ -648,36 +540,21 @@ class TestStrategyRuntimeLateDayA(TestCase):
     def test_late_day_continuation_plugin_blocks_isolated_overextension_above_open_close(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="late-day-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="late-day-continuation",
-                    strategy_id="late_day_continuation_long_v1@research",
-                    strategy_type="late_day_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="late_day_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "isolated_flow_max_late_day_price_vs_opening_range_high_bps": "30",
-                        "isolated_flow_max_late_day_price_vs_opening_window_close_bps": "40",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="late_day_continuation_long_v1@research",
+            strategy_type="late_day_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "isolated_flow_max_late_day_price_vs_opening_range_high_bps": "30",
+                "isolated_flow_max_late_day_price_vs_opening_window_close_bps": "40",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 19, 4, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 19, 4, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=89,
             payload={
@@ -721,35 +598,20 @@ class TestStrategyRuntimeLateDayA(TestCase):
     def test_late_day_continuation_plugin_blocks_isolated_leader_with_hard_invalid_quote_ratio(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="late-day-continuation",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="late-day-continuation",
-                    strategy_id="late_day_continuation_long_v1@research",
-                    strategy_type="late_day_continuation_long_v1",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="late_day_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("14000"),
-                    params={
-                        "hard_max_recent_quote_invalid_ratio": "0.12",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="late_day_continuation_long_v1@research",
+            strategy_type="late_day_continuation_long_v1",
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
+            params={
+                "hard_max_recent_quote_invalid_ratio": "0.12",
+            },
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 19, 7, 34, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 19, 7, 34, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=90,
             payload={

@@ -341,3 +341,80 @@ test('makeClickhouseTrailingBaseline binds provider/feed/source_topic/finality a
   const failed = await Effect.runPromiseExit(service.load({ ...query, sessionDate: iso('2026-09-03') }))
   expect(Exit.isFailure(failed)).toBe(true)
 })
+
+test('pure-ETF ClickHouse daily summary query requires session-length-aware minimum bar coverage in addition to endpoints', async () => {
+  const executed: { readonly sql: string; readonly params: unknown[] }[] = []
+  const dates = ['2026-08-26', '2026-08-27', '2026-08-28', '2026-08-31', '2026-09-01']
+  const fakeSql = Object.assign(
+    (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const text = strings.join('?')
+      executed.push({ sql: text, params: values })
+      if (text.includes('FROM signal.intraday_bars_1m_v2') && text.includes('ARRAY JOIN')) {
+        return Effect.succeed(
+          dates.flatMap((d) =>
+            [30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((cp) => ({
+              symbol: 'QQQ',
+              session_date: d,
+              minute_from_open: cp,
+              close: 502.5,
+            })),
+          ),
+        )
+      }
+      if (text.includes('FROM signal.intraday_bars_1m_v2')) {
+        return Effect.succeed(
+          dates.map((d) => ({
+            symbol: 'QQQ',
+            session_date: d,
+            open: 500,
+            high: 505,
+            low: 495,
+            close: 500,
+          })),
+        )
+      }
+      return Effect.succeed([])
+    },
+    { param: (type: string, value: unknown) => ({ type, value }) },
+  ) as unknown as ClickhouseClient.ClickhouseClient
+
+  const service = makeClickhouseTrailingBaseline(fakeSql)
+  const acquire = service.acquire
+  if (acquire === undefined) throw new Error('Missing native acquisition')
+  await Effect.runPromise(
+    acquire(
+      {
+        sessionDate: iso('2026-09-02'),
+        symbols: ['QQQ'],
+        noiseAreaSymbols: ['QQQ'],
+        lookbackSessions: 4,
+        minimumSessions: 4,
+        checkpointMinutesFromOpen: [30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330],
+        sourceContract: {
+          provider: 'alpaca',
+          feed: 'iex',
+          sourceTopic: 'torghut.bars.1m.v1',
+          universeId: 'torghut-core-equity-v3',
+        },
+      },
+      {
+        regularOpenAt: '2026-09-02T13:30:00.000Z',
+        loadHistorySessions: Effect.succeed(
+          dates.map((date, index) => ({
+            date: iso(date),
+            openAt: `${date}T13:30:00.000Z`,
+            closeAt: index === 0 ? `${date}T17:00:00.000Z` : `${date}T20:00:00.000Z`,
+          })),
+        ),
+      },
+    ),
+  )
+
+  const coverageFragment = executed.find((entry) =>
+    entry.sql.includes('tuple(toUnixTimestamp(min(ny_ts)), toUnixTimestamp(max(ny_ts)) + 60)'),
+  )
+  expect(coverageFragment).toBeDefined()
+  expect(coverageFragment?.sql).toContain(
+    'count() * 390 * 60 >= 200 * (toUnixTimestamp(max(ny_ts)) + 60 - toUnixTimestamp(min(ny_ts)))',
+  )
+})

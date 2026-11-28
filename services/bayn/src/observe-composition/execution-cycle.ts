@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../strategy/runtime-decision'
 import type { DecisionConstruction } from '../decision-construction'
 import { advancePositionProtection } from './position-protection-interpreter'
 import { executionCloseRecoveryExpiry } from '../market-hours'
@@ -343,7 +344,7 @@ const terminalOrderStatuses = new Set<OrderStatus>([
 ])
 
 const ownedSymbolsForDocument = (document: ExecutionDecisionDocument): ReadonlySet<string> | undefined =>
-  document.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+  isIntradayAlphaTarget(document.strategyDecision)
     ? new Set(Object.keys(document.strategyDecision.exitPolicy.plans))
     : undefined
 
@@ -478,6 +479,7 @@ const entryExecutionCycleIntentEvidence = (
   })
 
 type ExecutionCycleClosureResult =
+  | { readonly _tag: 'LegSettled' }
   | {
       readonly _tag: 'Close'
       readonly document: ExecutionDecisionDocument
@@ -594,11 +596,19 @@ export const ensureExecutionCycleClosure = <R>({
 
     const latestReplan = yield* readLatestExecutionCycleCloseReplan(cycle.identity.cycleId, store)
     const active = latestReplan ?? existing
+    const activeTarget = active.document.strategyDecision
+    const scopedTarget =
+      entryDocument.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v3' &&
+      observedAt < closeWindow.startAt &&
+      activeTarget?.schemaVersion === 'bayn.jev-exit-target.v5'
+        ? activeTarget
+        : undefined
+    const reconciliationSymbols = scopedTarget === undefined ? ownedSymbols : new Set(scopedTarget.symbols)
     const terminal = yield* readTerminalCloseReconciliation(
       active.document,
       reconcile,
       refreshReconciliation,
-      ownedSymbols,
+      reconciliationSymbols,
     )
     if (terminal._tag === 'Unsettled') {
       return { _tag: 'Close', document: active.document } as const
@@ -610,11 +620,11 @@ export const ensureExecutionCycleClosure = <R>({
         waitReason: terminal.observationPending ? 'BROKER_OBSERVATION_PENDING' : 'COMPLETION_EVIDENCE_PENDING',
       } as const
     const residualReconciliation = terminal.reconciliation
-    if (!isTerminalCloseReconciliationReady(residualReconciliation, terminal.settledAt, ownedSymbols))
+    if (!isTerminalCloseReconciliationReady(residualReconciliation, terminal.settledAt, reconciliationSymbols))
       return {
         _tag: 'Wait',
         observedAt: yield* currentUtcInstant,
-        waitReason: isExecutionCycleReconciled(residualReconciliation, ownedSymbols)
+        waitReason: isExecutionCycleReconciled(residualReconciliation, reconciliationSymbols)
           ? 'BROKER_OBSERVATION_PENDING'
           : 'COMPLETION_EVIDENCE_PENDING',
       } as const
@@ -627,6 +637,12 @@ export const ensureExecutionCycleClosure = <R>({
       if (terminalization !== undefined) return terminalization
     }
 
+    const scopedFlat =
+      scopedTarget !== undefined &&
+      !residualReconciliation.brokerState.positions.some(
+        (position) => scopedTarget.symbols.includes(position.symbol) && BigInt(position.quantityAtoms) !== 0n,
+      )
+    if (scopedFlat && exitTarget === undefined) return { _tag: 'LegSettled' } as const
     const remainingOpenSymbols = residualReconciliation.brokerState.positions
       .filter(
         (position) =>
@@ -635,11 +651,15 @@ export const ensureExecutionCycleClosure = <R>({
       .map((position) => position.symbol)
       .toSorted((left, right) => left.localeCompare(right))
     const reusableExitTarget =
-      existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' &&
-      existing.document.strategyDecision.symbols.length === remainingOpenSymbols.length &&
-      existing.document.strategyDecision.symbols.every((symbol, index) => symbol === remainingOpenSymbols[index])
-        ? existing.document.strategyDecision
-        : undefined
+      scopedTarget !== undefined
+        ? scopedFlat
+          ? exitTarget
+          : scopedTarget
+        : activeTarget?.schemaVersion === 'bayn.jev-exit-target.v5' &&
+            activeTarget.symbols.length === remainingOpenSymbols.length &&
+            activeTarget.symbols.every((symbol, index) => symbol === remainingOpenSymbols[index])
+          ? activeTarget
+          : undefined
     const prepared = yield* prepareClosingExecutionCycleDecision({
       input,
       preparation,
@@ -648,7 +668,7 @@ export const ensureExecutionCycleClosure = <R>({
       entryDocument,
       reconcile: refreshReconciliation.pipe(
         Effect.flatMap((facts) =>
-          isTerminalCloseReconciliationReady(facts, terminal.settledAt, ownedSymbols) &&
+          isTerminalCloseReconciliationReady(facts, terminal.settledAt, reconciliationSymbols) &&
           countOpenPositions(
             ownedSymbols === undefined
               ? facts.brokerState.positions
@@ -891,7 +911,8 @@ const executeBoundExecutionCycle = (
         : yield* readExecutionCycleClosure(cycle.identity.cycleId, input.executionCycleClosureStore)
     const closeDue =
       observedAt >= closeWindow.startAt ||
-      committedClosure?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5'
+      (document.strategyDecision?.schemaVersion !== 'bayn.intraday-alpha-target.v3' &&
+        committedClosure?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5')
     const closeOnlyContainmentReason =
       document.targetPlan.status === TargetPlanStatus.Blocked &&
       (document.targetPlan.reason === TargetPlanReason.ShortPositionNotAllowed ||
@@ -938,6 +959,27 @@ const executeBoundExecutionCycle = (
     if (step === undefined) {
       let closeDocument: ExecutionDecisionDocument | undefined
       let closeReconciliation: ReconciliationPassResult | undefined
+      if (
+        !closeDue &&
+        committedClosure !== undefined &&
+        document.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v3'
+      ) {
+        const ongoing = yield* ensureExecutionCycleClosure({
+          input,
+          preparation,
+          policy,
+          cycle,
+          entryDocument: document,
+          closeWindow,
+          reconcile,
+          refreshReconciliation: reconciliation.refresh,
+          existing: committedClosure,
+        })
+        if (ongoing._tag === 'Close') {
+          closeDocument = ongoing.document
+          closeReconciliation = ongoing.reconciliation
+        } else if (ongoing._tag !== 'LegSettled') return ongoing
+      }
       if (closeDue) {
         const protectionFacts = yield* reconcile.pipe(Effect.mapError(reconciliationRunnerError))
         const protection = yield* advancePositionProtection({
@@ -972,6 +1014,7 @@ const executeBoundExecutionCycle = (
             refreshReconciliation: reconciliation.refresh,
             existing: committedClosure,
           })
+          if (closure._tag === 'LegSettled') return { _tag: 'Wait', observedAt, waitReason: 'JEV_POSITION_HELD' }
           if (closure._tag !== 'Close') return closure
           closeDocument = closure.document
           closeReconciliation = closure.reconciliation
@@ -1063,6 +1106,7 @@ const executeBoundExecutionCycle = (
             existing: committedClosure,
             exitTarget: protection.exitTarget,
           })
+          if (closure._tag === 'LegSettled') return { _tag: 'Wait', observedAt, waitReason: 'JEV_POSITION_HELD' }
           if (closure._tag !== 'Close') return closure
           const boundCloseWindow = boundExecutionCycleCloseWindow(closeWindow, closure.document)
           closeOnly = true
@@ -1384,27 +1428,6 @@ export const deferPostMutationReconciliation = (pending: PostMutationReconciliat
     ? {}
     : { protectionReleaseCycleId: pending.protectionReleaseCycleId }),
 })
-
-export const readUnfinishedMutationCycle = (
-  context: Pick<CycleRunContext<ObserveDecisionRuntime>, 'cycleBindingId' | 'accountId'>,
-): Effect.Effect<AutonomousCycle | undefined, CycleRunnerError, CycleStore> =>
-  CycleStore.pipe(
-    Effect.flatMap((store) =>
-      store.readOldestUnfinished({
-        qualificationRunId: context.cycleBindingId,
-        accountId: context.accountId,
-      }),
-    ),
-    Effect.mapError((cause) =>
-      mutationRunnerError({
-        operation: 'read-oldest-unfinished',
-        message: 'oldest unfinished mutation cycle read failed',
-        cause,
-        failure: 'store',
-      }),
-    ),
-    Effect.map(Option.getOrUndefined),
-  )
 
 export const readUnfinishedMutationCycles = (
   context: Pick<CycleRunContext<ObserveDecisionRuntime>, 'cycleBindingId' | 'accountId'>,

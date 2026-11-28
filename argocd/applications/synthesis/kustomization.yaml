@@ -11,4 +11,4 @@ resources:
 - networkpolicy.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/synthesis
-  digest: sha256:1b08042d483da7f9e4aac0b2cc23a975e1565366c42c0e82675e4d370e115fc5
+  digest: sha256:94481d4a0922a398f70ce7e83bdd16e945e6862543cd7390dc01a32245b80142

@@ -1,22 +1,24 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
-    Any,
+import re
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import call, patch
+
+import yaml
+
+from scripts import historical_simulation_startup
+from scripts.historical_simulation_startup import (
     ArgocdAutomationConfig,
-    Path,
-    SimpleNamespace,
-    StartHistoricalSimulationTestCaseBase,
     _prepare_argocd_for_run,
     _restore_argocd_after_run,
-    call,
-    patch,
-    re,
-    historical_simulation_startup,
-    yaml,
+    argocd_rollouts,
 )
+from tests.historical_simulation.fixtures import make_argocd_config
 
 
-class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase):
+class TestStartHistoricalSimulationArgocdB(TestCase):
     def test_product_applicationset_torghut_sim_env_ignore_is_selective(self) -> None:
         repo_root = Path(__file__).resolve().parents[4]
         appset = yaml.safe_load(
@@ -109,14 +111,8 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         )
 
     def test_prepare_argocd_for_run_pauses_root_and_applicationset(self) -> None:
-        config = ArgocdAutomationConfig(
+        config = make_argocd_config(
             manage_automation=True,
-            applicationset_name="product",
-            applicationset_namespace="argocd",
-            app_name="torghut",
-            root_app_name="root",
-            desired_mode_during_run="manual",
-            restore_mode_after_run="previous",
             verify_timeout_seconds=30,
         )
         resources = SimpleNamespace(
@@ -137,9 +133,9 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         def _set_application_sync_policy(
             *,
             config: ArgocdAutomationConfig,
-            desired_sync_policy: dict[str, Any] | None,
+            desired_sync_policy: dict[str, object] | None,
             app_name: str | None = None,
-        ) -> dict[str, Any]:
+        ) -> dict[str, object]:
             del config
             call_order.append(f"application_sync:{app_name}")
             return {
@@ -154,7 +150,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
             *,
             config: ArgocdAutomationConfig,
             desired_mode: str,
-        ) -> dict[str, Any]:
+        ) -> dict[str, object]:
             del config
             call_order.append("applicationset")
             return {
@@ -165,7 +161,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                 "changed": True,
             }
 
-        def _set_ignore_differences(**kwargs: Any) -> dict[str, Any]:
+        def _set_ignore_differences(**kwargs: object) -> dict[str, object]:
             del kwargs
             call_order.append("ignore_differences")
             return {
@@ -176,7 +172,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                 "changed": True,
             }
 
-        def _wait_application_mode(**kwargs: Any) -> dict[str, Any]:
+        def _wait_application_mode(**kwargs: object) -> dict[str, object]:
             del kwargs
             call_order.append("wait_application")
             return {
@@ -185,15 +181,17 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
             }
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._read_argocd_automation_mode",
+            patch.object(
+                argocd_rollouts,
+                "_read_argocd_automation_mode",
                 return_value={
                     "pointer": "/spec/generators/0/list/elements/0/automation",
                     "mode": "auto",
                 },
             ) as automation_read_mock,
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._read_named_argocd_application_sync_policy",
+            patch.object(
+                argocd_rollouts,
+                "_read_named_argocd_application_sync_policy",
                 side_effect=[
                     {
                         "sync_policy": {
@@ -221,20 +219,24 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                     },
                 ],
             ) as application_read_mock,
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_application_sync_policy",
+            patch.object(
+                argocd_rollouts,
+                "_set_argocd_application_sync_policy",
                 side_effect=_set_application_sync_policy,
             ) as application_sync_mock,
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_application_ignore_differences",
+            patch.object(
+                argocd_rollouts,
+                "_set_argocd_application_ignore_differences",
                 side_effect=_set_ignore_differences,
             ) as ignore_differences_mock,
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_automation_mode",
+            patch.object(
+                argocd_rollouts,
+                "_set_argocd_automation_mode",
                 side_effect=_set_applicationset_mode,
             ) as applicationset_mock,
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._wait_for_argocd_application_mode",
+            patch.object(
+                argocd_rollouts,
+                "_wait_for_argocd_application_mode",
                 side_effect=_wait_application_mode,
             ) as application_mode_mock,
         ):
@@ -297,14 +299,8 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
     def test_ensure_argocd_manual_before_runtime_mutation_noops_when_everything_is_manual(
         self,
     ) -> None:
-        config = ArgocdAutomationConfig(
+        config = make_argocd_config(
             manage_automation=True,
-            applicationset_name="product",
-            applicationset_namespace="argocd",
-            app_name="torghut",
-            root_app_name="root",
-            desired_mode_during_run="manual",
-            restore_mode_after_run="previous",
             verify_timeout_seconds=30,
         )
         resources = SimpleNamespace(
@@ -319,15 +315,17 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
             )
         )
         with (
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._read_argocd_automation_mode",
+            patch.object(
+                argocd_rollouts,
+                "_read_argocd_automation_mode",
                 return_value={
                     "pointer": "/spec/generators/0/list/elements/0/automation",
                     "mode": "manual",
                 },
             ),
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._read_named_argocd_application_sync_policy",
+            patch.object(
+                argocd_rollouts,
+                "_read_named_argocd_application_sync_policy",
                 side_effect=[
                     {
                         "sync_policy": {
@@ -355,9 +353,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                     },
                 ],
             ),
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._prepare_argocd_for_run"
-            ) as prepare_mock,
+            patch.object(argocd_rollouts, "_prepare_argocd_for_run") as prepare_mock,
         ):
             report = historical_simulation_startup._ensure_argocd_manual_before_runtime_mutation(
                 config=config,
@@ -373,14 +369,8 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
     def test_ensure_argocd_manual_before_runtime_mutation_reasserts_when_child_app_drifted(
         self,
     ) -> None:
-        config = ArgocdAutomationConfig(
+        config = make_argocd_config(
             manage_automation=True,
-            applicationset_name="product",
-            applicationset_namespace="argocd",
-            app_name="torghut",
-            root_app_name="root",
-            desired_mode_during_run="manual",
-            restore_mode_after_run="previous",
             verify_timeout_seconds=30,
         )
         resources = SimpleNamespace(
@@ -390,15 +380,17 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
             ta_deployment="torghut-ta-sim",
         )
         with (
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._read_argocd_automation_mode",
+            patch.object(
+                argocd_rollouts,
+                "_read_argocd_automation_mode",
                 return_value={
                     "pointer": "/spec/generators/0/list/elements/0/automation",
                     "mode": "manual",
                 },
             ),
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._read_named_argocd_application_sync_policy",
+            patch.object(
+                argocd_rollouts,
+                "_read_named_argocd_application_sync_policy",
                 side_effect=[
                     {
                         "sync_policy": {
@@ -426,8 +418,9 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                     },
                 ],
             ),
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._prepare_argocd_for_run",
+            patch.object(
+                argocd_rollouts,
+                "_prepare_argocd_for_run",
                 return_value={
                     "managed": True,
                     "changed": True,
@@ -445,14 +438,8 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         self.assertTrue(report["changed"])
 
     def test_restore_argocd_after_run_restores_root_and_applicationset(self) -> None:
-        config = ArgocdAutomationConfig(
+        config = make_argocd_config(
             manage_automation=True,
-            applicationset_name="product",
-            applicationset_namespace="argocd",
-            app_name="torghut",
-            root_app_name="root",
-            desired_mode_during_run="manual",
-            restore_mode_after_run="previous",
             verify_timeout_seconds=30,
         )
         previous_sync_policy = {
@@ -465,7 +452,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
             *,
             config: ArgocdAutomationConfig,
             desired_mode: str,
-        ) -> dict[str, Any]:
+        ) -> dict[str, object]:
             del config
             call_order.append("applicationset")
             return {
@@ -479,9 +466,9 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         def _set_application_sync_policy(
             *,
             config: ArgocdAutomationConfig,
-            desired_sync_policy: dict[str, Any] | None,
+            desired_sync_policy: dict[str, object] | None,
             app_name: str | None = None,
-        ) -> dict[str, Any]:
+        ) -> dict[str, object]:
             del config
             call_order.append(f"application_sync:{app_name}")
             return {
@@ -492,7 +479,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                 "changed": True,
             }
 
-        def _set_ignore_differences(**kwargs: Any) -> dict[str, Any]:
+        def _set_ignore_differences(**kwargs: object) -> dict[str, object]:
             del kwargs
             call_order.append("ignore_differences")
             return {
@@ -505,7 +492,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                 "changed": True,
             }
 
-        def _wait_application_mode(**kwargs: Any) -> dict[str, Any]:
+        def _wait_application_mode(**kwargs: object) -> dict[str, object]:
             del kwargs
             call_order.append("wait_application")
             return {
@@ -514,20 +501,24 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
             }
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_automation_mode",
+            patch.object(
+                argocd_rollouts,
+                "_set_argocd_automation_mode",
                 side_effect=_set_applicationset_mode,
             ) as applicationset_mock,
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_application_sync_policy",
+            patch.object(
+                argocd_rollouts,
+                "_set_argocd_application_sync_policy",
                 side_effect=_set_application_sync_policy,
             ) as application_mock,
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_application_ignore_differences",
+            patch.object(
+                argocd_rollouts,
+                "_set_argocd_application_ignore_differences",
                 side_effect=_set_ignore_differences,
             ) as ignore_differences_mock,
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._wait_for_argocd_application_mode",
+            patch.object(
+                argocd_rollouts,
+                "_wait_for_argocd_application_mode",
                 side_effect=_wait_application_mode,
             ) as application_mode_mock,
         ):

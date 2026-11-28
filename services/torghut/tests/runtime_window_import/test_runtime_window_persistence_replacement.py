@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.support import (
-    Decimal,
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from uuid import uuid4
+
+from sqlalchemy import select
+
+from app.models import (
     StrategyCapitalAllocation,
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
@@ -11,16 +16,18 @@ from tests.runtime_window_import.support import (
     TigerBeetleAccountRef,
     TigerBeetleTransferRef,
     VNextDatasetSnapshot,
+)
+from app.trading.runtime_window_import.observed_buckets import (
+    build_observed_runtime_buckets,
+)
+from app.trading.runtime_window_import.persistence import (
+    persist_observed_runtime_windows,
+)
+from tests.runtime_window_import.ledger_fixtures import march_6_market_hour
+from tests.runtime_window_import.support import (
     _runtime_ledger_bucket,
     _runtime_pnl_basis,
     _TestRuntimeWindowImportBase,
-    build_observed_runtime_buckets,
-    datetime,
-    persist_observed_runtime_windows,
-    select,
-    timedelta,
-    timezone,
-    uuid4,
 )
 
 
@@ -30,7 +37,7 @@ class TestRuntimeWindowPersistenceReplacement(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 ),
@@ -41,16 +48,16 @@ class TestRuntimeWindowPersistenceReplacement(_TestRuntimeWindowImportBase):
                 ),
             ],
             decision_times=[
-                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                march_6_market_hour(35),
                 datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
             ],
             execution_times=[
-                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                march_6_market_hour(36),
                 datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
             ],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("3"),
                     "runtime_ledger_bucket": {
@@ -285,18 +292,16 @@ class TestRuntimeWindowPersistenceReplacement(_TestRuntimeWindowImportBase):
             return build_observed_runtime_buckets(
                 bucket_ranges=[
                     (
-                        datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        march_6_market_hour(30),
                         datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                         6,
                     )
                 ],
-                decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-                execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                decision_times=[march_6_market_hour(35)],
+                execution_times=[march_6_market_hour(36)],
                 tca_rows=[
                     {
-                        "computed_at": datetime(
-                            2026, 3, 6, 14, 36, tzinfo=timezone.utc
-                        ),
+                        "computed_at": march_6_market_hour(36),
                         "abs_slippage_bps": Decimal("1"),
                         "post_cost_expectancy_bps": Decimal("40"),
                         "runtime_ledger_bucket": _runtime_ledger_bucket(
@@ -418,7 +423,7 @@ class TestRuntimeWindowPersistenceReplacement(_TestRuntimeWindowImportBase):
                 strategy_family="microbar_cross_sectional_pairs",
                 source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
                 buckets=buckets_for(
-                    computed_at=datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    computed_at=march_6_market_hour(36),
                     bucket_started_at="2026-03-06T14:35:00+00:00",
                     bucket_ended_at="2026-03-06T14:36:00+00:00",
                     source_window_start="2026-03-06T14:35:00+00:00",
@@ -441,7 +446,7 @@ class TestRuntimeWindowPersistenceReplacement(_TestRuntimeWindowImportBase):
                 strategy_family="microbar_cross_sectional_pairs",
                 source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
                 buckets=buckets_for(
-                    computed_at=datetime(2026, 3, 6, 14, 56, tzinfo=timezone.utc),
+                    computed_at=march_6_market_hour(56),
                     bucket_started_at="2026-03-06T14:55:00+00:00",
                     bucket_ended_at="2026-03-06T14:56:00+00:00",
                     source_window_start="2026-03-06T14:35:00+00:00",

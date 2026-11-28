@@ -39,7 +39,7 @@ test('defaults to offline dry-run and rejects unknown arguments', () => {
 })
 
 test('the checked-in seed decodes strictly and every analysis uses the shared binding contract', () => {
-  expect(Result.getOrThrow(prepareKnowledge(seed))).toHaveLength(5)
+  expect(Result.getOrThrow(prepareKnowledge(seed))).toHaveLength(8)
   expect(seed.acronyms.map(({ name }) => name)).toEqual([
     'B0',
     'F4',
@@ -56,6 +56,9 @@ test('the checked-in seed decodes strictly and every analysis uses the shared bi
     'MOO',
     'MOC',
     'CNPG',
+    'OrderChurn',
+    'ExecutionSlippage',
+    'FillFeeDrag',
     'Bayn',
     'Dorvud',
   ])

@@ -134,7 +134,7 @@ substitute. H3 showed no consistent edge across ETFs.
 
 ## Reproduce
 
-From the repository root, with read-only access to the existing `agents-artifacts` S3 archive:
+From the repository root in the [archived checkout][study-revision], with read-only access to the existing `agents-artifacts` S3 archive:
 
 ```sh
 out=$(mktemp -d)
@@ -153,3 +153,5 @@ or a failed control oracle. The modeled auction and intraday bar marks do not es
 fills, market impact, shared-account capacity, or the opportunity cost of idle cash. The date split
 does not make these historically researched tapes prospective. No policy, deployment, or capital
 authority changes as a result of this study.
+
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

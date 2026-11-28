@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseAllDocuments } from 'yaml'
 
+import { localSmokeRunnerImage } from '../resolve-smoke-runner-image'
 import {
   checkFreshDeploymentReady,
   isFreshDeploymentReady,
@@ -161,6 +162,8 @@ describe('buildHelmArgs', () => {
       'controlPlane.image.digest=',
       '--set',
       'controllers.image.digest=',
+      '--set-string',
+      `env.vars.AGENTS_AGENT_RUNNER_IMAGE=${localSmokeRunnerImage}`,
     ])
   })
 
@@ -217,8 +220,9 @@ describe('buildHelmArgs', () => {
     )
   })
 
-  it('allows a separate runner image pin for AgentRun jobs', () => {
+  it('passes the exact published smoke runner digest to AgentRun jobs independently of deployment images', () => {
     const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
+    const smokeRunnerImage = `registry.ide-newton.ts.net/lab/agents-smoke-runner:sha-${'a'.repeat(40)}@sha256:${'b'.repeat(64)}`
     const args = buildHelmArgs({
       releaseName: 'agents',
       namespace: 'agents-ci',
@@ -227,20 +231,32 @@ describe('buildHelmArgs', () => {
       imageRepository: 'registry.example/agents-control-plane',
       controlPlaneImageRepository: 'registry.example/agents-control-plane',
       controllersImageRepository: 'registry.example/agents-controller',
-      runnerImageRepository: 'registry.example/agents-codex-runner',
       imageTag: 'ci',
-      runnerImageTag: 'runner-ci',
-      imageDigestSet: false,
-      imageDigest: '',
-      runnerImageDigestSet: true,
-      runnerImageDigest: 'sha256:3333333333333333333333333333333333333333333333333333333333333333',
+      imageDigestSet: true,
+      imageDigest: `sha256:${'c'.repeat(64)}`,
+      smokeRunnerImage,
     })
 
-    expect(args).toContain('runner.image.repository=registry.example/agents-codex-runner')
-    expect(args).toContain('runner.image.tag=runner-ci')
-    expect(args).toContain(
-      'runner.image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333',
-    )
+    expect(args.slice(-2)).toEqual(['--set-string', `env.vars.AGENTS_AGENT_RUNNER_IMAGE=${smokeRunnerImage}`])
+  })
+
+  it.each([
+    '',
+    'registry.ide-newton.ts.net/lab/agents-codex-runner:nix',
+    'registry.ide-newton.ts.net/lab/agents-smoke-runner:latest',
+    `registry.ide-newton.ts.net/lab/agents-smoke-runner:sha-${'a'.repeat(40)}`,
+  ])('does not accept a missing, production, or unpinned published runner (%s)', (smokeRunnerImage) => {
+    expect(() =>
+      buildHelmArgs({
+        releaseName: 'agents',
+        namespace: 'agents-ci',
+        valuesFile: resolve(process.cwd(), 'scripts/agents/values-ci.yaml'),
+        createNamespace: false,
+        imageDigestSet: false,
+        imageDigest: '',
+        smokeRunnerImage,
+      }),
+    ).toThrow('AGENTS_SMOKE_RUNNER_IMAGE')
   })
 
   it('passes numeric-looking published image tags as strings for Helm schema validation', () => {
@@ -252,10 +268,8 @@ describe('buildHelmArgs', () => {
       createNamespace: false,
       controlPlaneImageRepository: 'registry.example/agents-control-plane',
       controllersImageRepository: 'registry.example/agents-controller',
-      runnerImageRepository: 'registry.example/agents-codex-runner',
       controlPlaneImageTag: '80403146',
       controllersImageTag: '80403146',
-      runnerImageTag: '80403146',
       imageDigestSet: false,
       imageDigest: '',
     })
@@ -273,9 +287,6 @@ describe('buildHelmArgs', () => {
         args.indexOf('controllers.image.tag=80403146') + 1,
       ),
     ).toEqual(['--set-string', 'controllers.image.tag=80403146'])
-    expect(
-      args.slice(args.indexOf('runner.image.tag=80403146') - 1, args.indexOf('runner.image.tag=80403146') + 1),
-    ).toEqual(['--set-string', 'runner.image.tag=80403146'])
   })
 
   it('omits image digest when the env key is unset', () => {
@@ -452,7 +463,6 @@ describe('scheduled AgentRun templates', () => {
       'argocd/applications/agents/codex-agentprovider.yaml',
       'argocd/applications/agents/codex-smoke-agentprovider.yaml',
       'argocd/applications/agents/anypi-agentprovider.yaml',
-      'charts/agents/examples/agentprovider-native-workflow.yaml',
       'charts/agents/examples/agentprovider-sample.yaml',
       'charts/agents/examples/agentprovider-smoke.yaml',
     ]
@@ -537,7 +547,6 @@ describe('scheduled AgentRun templates', () => {
     const adapter = objectAt(providerSpec, 'adapter')
     const codex = objectAt(adapter, 'codex')
     const threadConfig = objectAt(codex, 'threadConfig')
-    const envTemplate = objectAt(providerSpec, 'envTemplate')
 
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
     expect(objectAt(codex, 'binaryPath')).toBe('/usr/local/bin/agents-fake-codex-app-server')
@@ -546,9 +555,6 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(codex, 'cwd')).toBeUndefined()
     expect(objectAt(threadConfig, 'mcp_servers')).toEqual({})
     expect(objectAt(threadConfig, 'web_search')).toBe('off')
-    expect(objectAt(envTemplate, 'CODEX_MODEL')).toBe('agents-fake-codex-app-server')
-    expect(objectAt(envTemplate, 'CODEX_DISABLE_RESUME')).toBe('1')
-    expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('1')
   })
 
   it('runs the live Argo smoke as a deterministic app-server canary without OpenAI quota', () => {
@@ -685,7 +691,7 @@ describe('scheduled AgentRun templates', () => {
     })
     expect(objectAt(defaultWorkload, 'topologySpreadConstraints')).toEqual([
       {
-        maxSkew: 16,
+        maxSkew: 4,
         topologyKey: 'kubernetes.io/hostname',
         whenUnsatisfiable: 'ScheduleAnyway',
         labelSelector: { matchExpressions: [{ key: 'agents.proompteng.ai/agent-run', operator: 'Exists' }] },

@@ -1,3 +1,6 @@
+import { utcInstantFromEpochMillis } from '../time'
+import { MarketCalendarObservationSchema } from '../broker/alpaca/model'
+import { regularEquitySessions } from '../market-hours'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Schema } from 'effect'
 
@@ -95,7 +98,7 @@ export const makeNativeAlphaBaselinePreparation = (
   baseline: IntradayTrailingBaselineService,
   executionBuild: ExecutionBuild,
 ): NativeAlphaBaselinePreparation['Service'] => ({
-  prepare: (request: NativeAlphaBaselinePreparationRequest) =>
+  prepare: (request: NativeAlphaBaselinePreparationRequest, marketCalendar) =>
     Effect.gen(function* () {
       const identity = yield* Effect.fromResult(alphaBaselinePreparationIdentity(request, executionBuild))
       const existing = yield* readRecorded(sql, identity.scopeHash)
@@ -106,8 +109,30 @@ export const makeNativeAlphaBaselinePreparation = (
           operation: 'alpha-baseline-preparation',
           message: 'Native preparation requires the source-retaining acquisition capability',
         })
+      const loadHistorySessions =
+        identity.query.checkpointMinutesFromOpen === undefined || marketCalendar === undefined
+          ? undefined
+          : marketCalendar({
+              start: utcInstantFromEpochMillis(Date.parse(request.sessionDate) - 30 * 86_400_000).slice(0, 10),
+              end: utcInstantFromEpochMillis(Date.parse(request.sessionDate) - 86_400_000).slice(0, 10),
+            }).pipe(
+              Effect.flatMap(({ value }) =>
+                Schema.decodeUnknownEffect(MarketCalendarObservationSchema.fields.sessions)(
+                  regularEquitySessions(value),
+                ),
+              ),
+              Effect.mapError((cause) =>
+                operationalError({
+                  component: 'market-data',
+                  operation: 'alpha-baseline-preparation',
+                  message: 'Could not read provider history sessions',
+                  cause,
+                }),
+              ),
+            )
       const acquisition = yield* baseline.acquire(identity.query, {
         regularOpenAt: identity.providerSession.regularOpenAt,
+        ...(loadHistorySessions === undefined ? {} : { loadHistorySessions }),
       })
       if (
         acquisition.startedAt < identity.providerSession.regularOpenAt &&
@@ -116,6 +141,7 @@ export const makeNativeAlphaBaselinePreparation = (
         return yield* new TrailingBaselinePendingCoverage({
           message: 'Preopen baseline preparation awaits complete symbol and noise-checkpoint coverage',
           regularOpenAt: identity.providerSession.regularOpenAt,
+          ...(loadHistorySessions === undefined ? {} : { loadHistorySessions }),
         })
       const payload = {
         schemaVersion: 'bayn.intraday-alpha-baseline-preparation.v1' as const,

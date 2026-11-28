@@ -63,7 +63,28 @@ const podSpec = struct({
   ),
 })
 
-export const pod = struct({ metadata, spec: opt(podSpec), status: opt(struct({ phase: opt(string) })) })
+export const pod = struct({
+  metadata,
+  spec: opt(podSpec),
+  status: opt(
+    struct({
+      phase: opt(string),
+      containerStatuses: opt(
+        array(
+          struct({
+            name: string,
+            state: opt(
+              struct({
+                waiting: opt(Schema.Unknown),
+                terminated: opt(struct({ message: opt(string) })),
+              }),
+            ),
+          }),
+        ),
+      ),
+    }),
+  ),
+})
 export type Pod = typeof pod.Type
 export type PodSpec = typeof podSpec.Type
 
@@ -137,9 +158,11 @@ export const agentRun = struct({
   status: opt(
     struct({
       phase: opt(string),
+      startedAt: opt(string),
+      finishedAt: opt(string),
       runtimeRef: opt(struct({ ...workflowRef.fields, type: opt(string), stepName: opt(string) })),
       conditions: opt(array(condition)),
-      vcs: opt(struct({ headBranch: opt(string) })),
+      vcs: opt(struct({ baseBranch: opt(string), headBranch: opt(string) })),
       workflow: opt(
         struct({
           steps: opt(array(struct({ name: string, phase: opt(string), attempt: opt(int), jobRef: opt(workflowRef) }))),

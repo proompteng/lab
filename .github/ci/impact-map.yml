@@ -1,9 +1,8 @@
 version: 1
 
-# This file is the path ownership contract for pull-request.yml. Keep service
-# workflows for expensive, service-specific validation; list those workflows as
-# delegated targets so the router can explain why they run without duplicating
-# their jobs.
+# Path ownership for the router matrix and path-only delegation. Reusable PR
+# services that need Bun dependency selection use the affected-inputs batch in
+# pull-request.yml instead of duplicating their paths here.
 targets:
   planner:
     kind: planner
@@ -77,6 +76,8 @@ targets:
       - argocd/applications/buzz/networkpolicy.yaml
       - argocd/applications/devbox/network-policy.yaml
       - argocd/applications/froussard/approval-networkpolicy.yaml
+      - argocd/applications/glitchtip/auto-ontology-db-networkpolicy.yaml
+      - argocd/applications/jangar/auto-ontology-db-networkpolicy.yaml
       - argocd/applications/kargo/smoke-access.yaml
       - argocd/applications/keycloak/network-policy.yaml
       - argocd/applications/ofz/control-plane/network-policy.yaml
@@ -247,12 +248,14 @@ targets:
       - packages/temporal-bun-sdk/**/*.spec.tsx
     paths:
       - .github/workflows/agents-ci.yml
+      - docs/agents/ontology/**
       - flake.lock
       - flake.nix
       - nix/images/agents.nix
       - nix/images/bun-workspace-service.nix
       - nix/images/relativize-bun-cache.sh
       - patches/effect@4.1.4.patch
+      - nix/images/antigravity-cli.nix
       - nix/images/openai-codex-cli.nix
       - nix/images/agentrun-tools.nix
       - nix/packages.nix
@@ -277,12 +280,6 @@ targets:
       - services/agents/agentctl/**
       - docs/agents/agentctl-cli-design.md
       - docs/agents/agentctl-release.md
-
-  bumba:
-    kind: delegated
-    workflow: bumba-ci
-    paths:
-      - services/bumba/**
 
   jangar-inventory:
     kind: validation
@@ -314,12 +311,6 @@ targets:
       - services/agents/src/server/supporting-primitives-controller.ts
       - docs/jangar/architecture-inventory.md
 
-  froussard:
-    kind: delegated
-    workflow: froussard-ci
-    paths:
-      - apps/froussard/**
-
   orbit-salvage:
     kind: delegated
     workflow: orbit-salvage-ci
@@ -350,12 +341,6 @@ targets:
     paths:
       - services/khoshut/**
       - argocd/applications/khoshut/**
-
-  oirat:
-    kind: delegated
-    workflow: oirat-ci
-    paths:
-      - services/oirat/**
 
   reestr:
     kind: delegated

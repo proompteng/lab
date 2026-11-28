@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
+import { mimirRuleGroup } from './mimir-rules'
 
 interface Rule {
   alert: string
@@ -16,17 +17,7 @@ interface Rule {
 }
 
 test('signal pipeline alerts detect missing telemetry and failed jobs without duplicate outage pages', () => {
-  const manifest = YAML.parse(
-    readFileSync(
-      new URL('../../../../../argocd/applications/observability/graf-mimir-rules.yaml', import.meta.url),
-      'utf8',
-    ),
-  ) as { data: Record<string, string> }
-  const groups = YAML.parse(manifest.data['graf-rules.yaml'] ?? '') as {
-    groups: { name: string; rules: Rule[] }[]
-  }
-  const rules = groups.groups.find(({ name }) => name === 'torghut-ta.rules')?.rules
-  if (!rules || rules.length !== 3) throw new Error('All three signal pipeline alerts are required')
+  const rules = mimirRuleGroup('torghut-ta.rules').rules as Rule[]
   const names = rules.map(({ alert }) => alert)
   expect(names).toEqual([
     'TorghutSignalPipelineMetricsDown',
@@ -118,18 +109,22 @@ test('signal pipeline alerts detect missing telemetry and failed jobs without du
       ]),
     })),
   )
-  runPromql(rules, cases)
+  runPromql(rules, { tests: cases })
 })
 
-function runPromql(rules: Rule[], cases: unknown[]): void {
+function runPromql(rules: Rule[], ...fixtures: { tests: unknown[]; evaluation_interval?: string }[]): void {
   const directory = mkdtempSync(join(tmpdir(), 'torghut-signal-pipeline-promql-'))
   try {
     writeFileSync(join(directory, 'rules.yaml'), YAML.stringify({ groups: [{ name: 'signal-pipelines', rules }] }))
-    writeFileSync(
-      join(directory, 'tests.yaml'),
-      YAML.stringify({ rule_files: ['rules.yaml'], evaluation_interval: '30s', tests: cases }),
-    )
-    const result = spawnSync(process.env.PROMTOOL ?? 'promtool', ['test', 'rules', 'tests.yaml'], {
+    const files = fixtures.map((fixture, index) => {
+      const file = `tests-${index}.yaml`
+      writeFileSync(
+        join(directory, file),
+        YAML.stringify({ rule_files: ['rules.yaml'], evaluation_interval: '30s', ...fixture }),
+      )
+      return file
+    })
+    const result = spawnSync(process.env.PROMTOOL ?? 'promtool', ['test', 'rules', ...files], {
       cwd: directory,
       encoding: 'utf8',
       timeout: 30_000,
@@ -143,18 +138,8 @@ function runPromql(rules: Rule[], cases: unknown[]): void {
 }
 
 test('daily publication alert detects missed schedules and resolves after recovery without weekend pages', () => {
-  const manifest = YAML.parse(
-    readFileSync(
-      new URL('../../../../../argocd/applications/observability/graf-mimir-rules.yaml', import.meta.url),
-      'utf8',
-    ),
-  ) as { data: Record<string, string> }
-  const groups = YAML.parse(manifest.data['graf-rules.yaml'] ?? '') as {
-    groups: { name: string; rules: Rule[] }[]
-  }
-  const rule = groups.groups
-    .find(({ name }) => name === 'signal-publications.rules')
-    ?.rules.find(({ alert }) => alert === 'SignalAdjustedDailyPublicationMissed')
+  const rules = mimirRuleGroup('signal-publications.rules').rules as Rule[]
+  const rule = rules.find(({ alert }) => alert === 'SignalAdjustedDailyPublicationMissed')
   if (!rule) throw new Error('Daily publication deadline alert is required')
   expect(rule.for).toBe('5m')
   expect(rule.labels).toEqual({ severity: 'warning', team: 'trading', notify: 'email' })
@@ -189,12 +174,22 @@ test('daily publication alert detects missed schedules and resolves after recove
       { alertname: rule.alert, eval_time: '150m', exp_alerts: scenario.firing ? [expected] : [] },
       {
         alertname: rule.alert,
-        eval_time: scenario.name === 'scheduled run succeeds' ? '3d' : '160m',
+        eval_time: '160m',
         exp_alerts: scenario.firing && scenario.name !== 'owned recovery completes' ? [expected] : [],
       },
     ],
   }))
-  runPromql([rule], cases)
+  const successfulRun = cases.find(({ name }) => name === 'scheduled run succeeds')
+  if (!successfulRun) throw new Error('Successful publication fixture is missing')
+  // Keep the deadline and recovery checks at 30 seconds. Only the stable weekend case needs sparse evaluation.
+  runPromql(
+    [rule],
+    { tests: cases },
+    {
+      evaluation_interval: '10m',
+      tests: [{ ...successfulRun, alert_rule_test: [{ alertname: rule.alert, eval_time: '3d', exp_alerts: [] }] }],
+    },
+  )
 })
 
 test('cluster collector retains the CronJob timestamps needed to detect a missed publication', () => {
@@ -219,18 +214,8 @@ test('cluster collector retains the CronJob timestamps needed to detect a missed
 })
 
 test('Bayn readiness flaps remain one incident until five minutes of recovery', () => {
-  const manifest = YAML.parse(
-    readFileSync(
-      new URL('../../../../../argocd/applications/observability/graf-mimir-rules.yaml', import.meta.url),
-      'utf8',
-    ),
-  ) as { data: Record<string, string> }
-  const groups = YAML.parse(manifest.data['graf-rules.yaml'] ?? '') as {
-    groups: { name: string; rules: Rule[] }[]
-  }
-  const rule = groups.groups
-    .find(({ name }) => name === 'bayn-cycle-operations.rules')
-    ?.rules.find(({ alert }) => alert === 'BaynRuntimeDegraded')
+  const rules = mimirRuleGroup('bayn-cycle-operations.rules').rules as Rule[]
+  const rule = rules.find(({ alert }) => alert === 'BaynRuntimeDegraded')
   if (!rule) throw new Error('Bayn runtime alert is required')
   expect(rule.for).toBe('1m')
   expect(rule.keep_firing_for).toBe('5m')
@@ -239,9 +224,8 @@ test('Bayn readiness flaps remain one incident until five minutes of recovery', 
     exp_labels: { job: 'bayn', namespace: 'bayn', ...rule.labels },
     exp_annotations: rule.annotations,
   }
-  runPromql(
-    [rule],
-    [
+  runPromql([rule], {
+    tests: [
       {
         name: 'detect sustained failure promptly, hold across short recoveries, then resolve',
         interval: '30s',
@@ -260,5 +244,5 @@ test('Bayn readiness flaps remain one incident until five minutes of recovery', 
         ],
       },
     ],
-  )
+  })
 })

@@ -26,7 +26,6 @@ export type PublishedAgentsImagesMetadata = {
   sourceSha: string
   controlPlane: ImageValues
   controller: ImageValues
-  runner: ImageValues
 }
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
@@ -54,8 +53,7 @@ Defaults:
 Output keys:
   source_sha,
   control_plane_image_repository, control_plane_image_tag, control_plane_image_digest, control_plane_image_ref,
-  controller_image_repository, controller_image_tag, controller_image_digest, controller_image_ref,
-  runner_image_repository, runner_image_tag, runner_image_digest, runner_image_ref`)
+  controller_image_repository, controller_image_tag, controller_image_digest, controller_image_ref`)
       process.exit(0)
     }
 
@@ -116,10 +114,8 @@ export const resolvePublishedAgentsImages = (valuesPath = defaultValuesPath): Pu
   const rootImage = asRecord(values.image) ?? {}
   const controlPlane = asRecord(values.controlPlane)
   const controllers = asRecord(values.controllers)
-  const runner = asRecord(values.runner)
   const controlPlaneImage = asRecord(controlPlane?.image)
   const controllerImage = asRecord(controllers?.image)
-  const runnerImage = asRecord(runner?.image)
   const controlPlaneEnv = asRecord(asRecord(controlPlane?.env)?.vars)
 
   return {
@@ -130,7 +126,6 @@ export const resolvePublishedAgentsImages = (valuesPath = defaultValuesPath): Pu
       asString(rootImage.tag),
     controlPlane: resolveImageValues(rootImage, controlPlaneImage, 'controlPlane'),
     controller: resolveImageValues(rootImage, controllerImage, 'controllers'),
-    runner: resolveImageValues(rootImage, runnerImage, 'runner'),
   }
 }
 
@@ -144,10 +139,6 @@ const toGitHubOutputLines = (metadata: PublishedAgentsImagesMetadata): string[] 
   `controller_image_tag=${metadata.controller.tag}`,
   `controller_image_digest=${metadata.controller.digest}`,
   `controller_image_ref=${metadata.controller.ref}`,
-  `runner_image_repository=${metadata.runner.repository}`,
-  `runner_image_tag=${metadata.runner.tag}`,
-  `runner_image_digest=${metadata.runner.digest}`,
-  `runner_image_ref=${metadata.runner.ref}`,
 ]
 
 const emitOutputs = (metadata: PublishedAgentsImagesMetadata, outputPath?: string) => {

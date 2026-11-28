@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../strategy/runtime-decision'
 import { isProtectedEntryTarget, protectedEntryExpiresAtMs } from '../strategy/runtime-decision'
 import { Result, Schema } from 'effect'
 
@@ -20,7 +21,7 @@ import {
 } from '../shadow-decision-contract'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { isNativeSystemRegistration, isStrategyBoundSystemRegistration, type ScheduledEvaluation } from './policy'
-import { ResearchStrategyEngine, validateResearchStrategyBinding } from './strategy-binding'
+import { isAlphaBinding, ResearchStrategyEngine, validateResearchStrategyBinding } from './strategy-binding'
 import type { RecordedProtectedEntryTarget as ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { JevProtocolSchema, usesJevOnlyInference, type JevProtocolMaterial } from '../jev/protocol'
 import { qualificationCalendar } from './calendar'
@@ -127,8 +128,7 @@ const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) 
     sourceAt,
     correct:
       completedAt >= sourceAt &&
-      (strategy.schemaVersion === 'bayn.repeated-momentum-target.v1' ||
-      strategy.schemaVersion === 'bayn.intraday-alpha-target.v2'
+      (strategy.schemaVersion === 'bayn.repeated-momentum-target.v1' || isIntradayAlphaTarget(strategy)
         ? exclusions === undefined || (Array.isArray(exclusions) && exclusions.length === 0)
         : strategy.evidence.batchPlan.candidates.every(
             (c) => c.status !== 'EXCLUDED' || (c.reason !== 'not-ready' && c.reason !== 'freshness'),
@@ -153,7 +153,7 @@ const entryMatchesRegisteredEngine = (target: ProtectedEntryTarget, registration
   if (Result.isFailure(checked)) return false
   const binding = checked.success
   const parameters =
-    binding.engine === ResearchStrategyEngine.IntradayAlpha && target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+    isAlphaBinding(binding) && isIntradayAlphaTarget(target)
       ? target.policy
       : binding.engine === ResearchStrategyEngine.Jev && target.schemaVersion === 'bayn.jev-entry-target.v7'
         ? target.evidence.observation.protocol

@@ -9,7 +9,14 @@ import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
 import type { verifyJobConfigMaps } from './job-runtime'
 import { resolveMemory } from './namespace-state'
-import { type ImagePolicyCandidate, validateAuthSecretPolicy, validateImagePolicy } from './policy'
+import {
+  extractProviderSecretEnvNames,
+  type ImagePolicyCandidate,
+  providerUsesControllerAuthSecret,
+  validateAuthSecretPolicy,
+  validateImagePolicy,
+  validateProviderSecretEnvPolicy,
+} from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
 import { resolveImplementation, resolveParameters } from './run-utils'
 import { buildRuntimeRef, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
@@ -334,7 +341,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
     const allowedSourceProviders = extractAllowedImplementationSourceProviders(asRecord(agent.spec) ?? {})
     const runSecrets = parseStringList(spec.secrets)
-    const authSecret = resolveAuthSecretConfig()
+    const authSecret = providerUsesControllerAuthSecret(provider) ? resolveAuthSecretConfig() : null
     if (allowedSecrets.length > 0) {
       const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
       if (forbidden.length > 0) {
@@ -347,8 +354,10 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     }
 
     const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+    const providerSecretNames = extractProviderSecretEnvNames(provider)
     const blockedSecrets = collectBlockedSecrets([
       ...runSecrets,
+      ...providerSecretNames,
       ...(memorySecretName ? [memorySecretName] : []),
       ...(authSecret ? [authSecret.name] : []),
     ])
@@ -363,6 +372,10 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     const authSecretPolicy = validateAuthSecretPolicy(allowedSecrets, authSecret)
     if (!authSecretPolicy.ok) {
       return authSecretPolicy
+    }
+    const providerSecretEnvPolicy = validateProviderSecretEnvPolicy(allowedSecrets, providerSecretNames)
+    if (!providerSecretEnvPolicy.ok) {
+      return providerSecretEnvPolicy
     }
     if (memorySecretName) {
       if (allowedSecrets.length > 0 && !allowedSecrets.includes(memorySecretName)) {

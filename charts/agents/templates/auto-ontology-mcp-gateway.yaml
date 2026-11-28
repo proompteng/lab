@@ -2,6 +2,7 @@
 {{- $config := .Values.autoOntologyMcpGateway -}}
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
 {{- $name := printf "%s-auto-ontology-mcp-gateway" (include "agents.fullname" .) -}}
+{{- $selectorLabels := dict "app.kubernetes.io/name" "agents-auto-ontology-mcp-gateway" "app.kubernetes.io/instance" .Release.Name -}}
 {{- $image := .Values.controllers.image -}}
 {{- $repository := $image.repository | default .Values.image.repository -}}
 {{- $tag := $image.tag | default .Values.image.tag -}}
@@ -87,18 +88,24 @@ spec:
   replicas: {{ $config.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: agents-auto-ontology-mcp-gateway
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- toYaml $selectorLabels | nindent 6 }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: agents-auto-ontology-mcp-gateway
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- toYaml $selectorLabels | nindent 8 }}
     spec:
       serviceAccountName: {{ $name }}
       automountServiceAccountToken: true
       enableServiceLinks: false
       terminationGracePeriodSeconds: 75
+      {{- with $config.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $config.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -153,6 +160,24 @@ spec:
               port: http
             periodSeconds: 15
             timeoutSeconds: 11
+{{- $pdb := $config.podDisruptionBudget | default dict }}
+{{- if $pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  {{- with $pdb.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- toYaml $selectorLabels | nindent 6 }}
+  {{- include "agents.podDisruptionBudgetAvailability" $pdb | nindent 2 }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -161,8 +186,7 @@ metadata:
   namespace: {{ $namespace }}
 spec:
   selector:
-    app.kubernetes.io/name: agents-auto-ontology-mcp-gateway
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- toYaml $selectorLabels | nindent 4 }}
   ports:
     - name: http
       port: 8080
@@ -176,8 +200,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: agents-auto-ontology-mcp-gateway
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- toYaml $selectorLabels | nindent 6 }}
   policyTypes: [Ingress]
   ingress:
     - from:

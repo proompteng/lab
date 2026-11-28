@@ -1,26 +1,37 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.support import (
-    Decimal,
-    StrategyRuntimeLedgerBucket,
-    delay_adjusted_depth_stress_blocking_reasons,
+from datetime import datetime, timezone
+from decimal import Decimal
+
+from app.models import StrategyRuntimeLedgerBucket
+from app.trading.runtime_cost_authority import (
+    cost_basis_counts_have_non_promotion_grade_costs,
+)
+from app.trading.runtime_decision_authority import (
+    source_decision_mode_counts_have_non_profit_proof_modes,
+)
+from app.trading.runtime_window_import.common import (
     observation_bool,
     observation_decimal,
     observation_int,
     parse_observation_datetime,
     persisted_runtime_ledger_bucket_evidence_grade,
-    _runtime_ledger_bucket,
     runtime_ledger_bucket_blockers,
-    runtime_ledger_bucket_payloads,
-    _runtime_pnl_basis,
-    runtime_window_import_readback_from_rows,
-    _TestRuntimeWindowImportBase,
-    build_observed_runtime_buckets,
-    cost_basis_counts_have_non_promotion_grade_costs,
-    datetime,
+)
+from app.trading.runtime_window_import.evidence_gates import (
+    delay_adjusted_depth_stress_blocking_reasons,
     resolve_hypothesis_manifest,
-    source_decision_mode_counts_have_non_profit_proof_modes,
-    timezone,
+)
+from app.trading.runtime_window_import.observed_buckets import (
+    build_observed_runtime_buckets,
+    runtime_ledger_bucket_payloads,
+    runtime_window_import_readback_from_rows,
+)
+from tests.runtime_window_import.ledger_fixtures import march_6_market_hour
+from tests.runtime_window_import.support import (
+    _runtime_ledger_bucket,
+    _runtime_pnl_basis,
+    _TestRuntimeWindowImportBase,
 )
 
 
@@ -54,29 +65,29 @@ class TestRuntimeWindowSourceAuthority(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 )
             ],
             decision_times=[
-                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
-                datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                march_6_market_hour(35),
+                march_6_market_hour(40),
             ],
             execution_times=[
-                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
-                datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
+                march_6_market_hour(36),
+                march_6_market_hour(41),
             ],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("100"),
                     "runtime_ledger_bucket": source_backed_bucket,
                     **_runtime_pnl_basis(),
                 },
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(41),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("1000"),
                     "runtime_ledger_bucket": replay_only_bucket,
@@ -248,7 +259,7 @@ class TestRuntimeWindowSourceAuthority(_TestRuntimeWindowImportBase):
             candidate_id="cand",
             hypothesis_id="hyp",
             observed_stage="paper",
-            bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            bucket_started_at=march_6_market_hour(30),
             bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
             account_label="TORGHUT_SIM",
             runtime_strategy_name="strategy",
@@ -297,7 +308,7 @@ class TestRuntimeWindowSourceAuthority(_TestRuntimeWindowImportBase):
             candidate_id="cand",
             hypothesis_id="hyp",
             observed_stage="paper",
-            bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            bucket_started_at=march_6_market_hour(30),
             bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
             account_label="TORGHUT_SIM",
             runtime_strategy_name="strategy",
@@ -329,7 +340,7 @@ class TestRuntimeWindowSourceAuthority(_TestRuntimeWindowImportBase):
     def test_runtime_window_readback_counts_only_source_backed_mixed_rows(
         self,
     ) -> None:
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
         source_backed_payload = _runtime_ledger_bucket()
         aggregate_only_payload = {
@@ -411,7 +422,7 @@ class TestRuntimeWindowSourceAuthority(_TestRuntimeWindowImportBase):
     def test_runtime_window_import_readback_normalizes_source_offsets(
         self,
     ) -> None:
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
         good_payload = _runtime_ledger_bucket(
             source_offsets={
@@ -498,11 +509,9 @@ class TestRuntimeWindowSourceAuthority(_TestRuntimeWindowImportBase):
         self.assertEqual(payloads[0]["blockers"], [])
 
     def test_runtime_observation_parsers_handle_edge_inputs(self) -> None:
-        parsed = parse_observation_datetime(
-            datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
-        )
+        parsed = parse_observation_datetime(march_6_market_hour(30))
 
-        self.assertEqual(parsed, datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc))
+        self.assertEqual(parsed, march_6_market_hour(30))
         self.assertEqual(parse_observation_datetime("not-a-date"), None)
         self.assertEqual(observation_bool(1), True)
         self.assertEqual(observation_bool(0), False)

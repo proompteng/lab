@@ -10,6 +10,9 @@ import v41ObserveCutover from '../../migrations/0212_risk_symmetry_observe_cutov
 import v42ObserveCutover from '../../migrations/0216_stop_floor_reward_risk_observe_cutover'
 import v43ObserveCutover from '../../migrations/0218_v43_paper_settlement'
 import v44ObserveCutover from '../../migrations/0221_v44_paper_settlement'
+import v2PaperSettlement from '../../migrations/0229_intraday_alpha_v2_paper_settlement'
+import { loadSharedJevProtocol } from '../strategy'
+import { intradayAlphaStrategyIdentity, makeIntradayAlphaPolicy } from '../strategy/intraday-alpha/policy'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -20,13 +23,18 @@ import { migrationLoader } from './migrations'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const url = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
+const retainedV2 = Result.getOrThrow(
+  intradayAlphaStrategyIdentity(makeIntradayAlphaPolicy(Result.getOrThrow(loadSharedJevProtocol()))),
+)
 for (const {
+  behaviorHash = '76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67',
   schemaVersion,
   migrationId,
   effectiveEntryObserveCutover,
   parameterHash,
   protocolHash,
   rejectionMessage,
+  requiresFreshPositionSnapshot = false,
 } of [
   {
     schemaVersion: 'bayn.jev.protocol.v38',
@@ -91,8 +99,18 @@ for (const {
     rejectionMessage:
       'v44 PAPER settlement requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
   },
+  {
+    schemaVersion: retainedV2.strategy.parameterSchemaVersion,
+    migrationId: 229,
+    effectiveEntryObserveCutover: v2PaperSettlement,
+    behaviorHash: retainedV2.strategy.behaviorHash,
+    parameterHash: retainedV2.strategy.parameterHash,
+    protocolHash: retainedV2.protocolHash,
+    requiresFreshPositionSnapshot: true,
+    rejectionMessage:
+      'intraday-alpha v2 PAPER settlement requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
+  },
 ]) {
-  const behaviorHash = '76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
   const hash = (value: string) => Result.getOrThrow(canonicalHashV1Result({ value }))
 
   const postgres = PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(
@@ -131,6 +149,8 @@ for (const {
   END $fixture$`)
     yield* sql`INSERT INTO authority_generations VALUES
     ('current','account','jev',${schemaVersion},${behaviorHash},${parameterHash},${protocolHash})`
+    if (requiresFreshPositionSnapshot)
+      yield* sql`INSERT INTO position_snapshots VALUES ('account',0,clock_timestamp(),'initial-flat')`
   })
 
   const withGuardFixture = <A, E, R>(seed: string, body: Effect.Effect<A, E, R>) =>
@@ -185,6 +205,15 @@ for (const {
   })
 
   const blockers = [
+    ...(requiresFreshPositionSnapshot
+      ? [
+          { name: 'no broker position snapshot', seed: 'DELETE FROM position_snapshots' },
+          {
+            name: 'stale broker position snapshot',
+            seed: "UPDATE position_snapshots SET observed_at=clock_timestamp()-interval '61 seconds'",
+          },
+        ]
+      : []),
     { name: 'nonterminal intent', seed: "INSERT INTO intents VALUES ('intent','PLANNED','account')" },
     ...['PENDING', 'ACTIVE'].map((state) => ({
       name: `${state} cycle`,

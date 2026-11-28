@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { changedRange, matchesOnlyPaths, matchesPaths, parseTargets, selectAffectedInputs } from '../affected-inputs'
-import { matchesGlob } from '../impact-router'
+import { loadImpactMap, matchesGlob, selectImpactPlan } from '../impact-router'
 
 const before = {
   lockfileVersion: 1,
@@ -78,7 +78,7 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
         (filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml') ||
           (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath) ||
           (event === 'pull_request' &&
-            ['attic-build-push.yaml', 'ofz.yaml', 'relay.yml'].includes(filename) &&
+            ['attic-build-push.yaml', 'relay.yml'].includes(filename) &&
             file === `.github/workflows/${filename}`) ||
           (event === 'pull_request' &&
             filename === 'opencode-ci.yml' &&
@@ -216,7 +216,7 @@ test('OpenCode PR validation selects the PR head without publication secrets', (
   const image = property(property(validation, 'jobs'), 'image')
   expect(property(image, 'secrets')).toBeUndefined()
   expect(property(image, 'if')).toBeUndefined()
-  expect(property(property(property(publication, 'jobs'), 'image'), 'if')).toBeUndefined()
+  expect(property(property(property(publication, 'jobs'), 'image'), 'needs')).toBe('changes')
   expect(property(property(validation, 'permissions'), 'contents')).toBe('read')
   const source = text(property(property(image, 'with'), 'source_revision')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
   expect(
@@ -314,7 +314,8 @@ test('App source changes do not force dependency downloads; dependency input cha
     '',
     'pull_request',
   )
-  expect(configured.app_dependencies).toBeDefined()
+  const paths = property(property(property(workflow, 'on'), 'pull_request'), 'paths')
+  expect(paths).toEqual(configured.app_dependencies.paths)
   const workspaces = Object.fromEntries(
     Object.values(configured)
       .flatMap((target) => target.workspaces)
@@ -337,9 +338,17 @@ test('App source changes do not force dependency downloads; dependency input cha
     'nix/check-bun-dependency-closure.sh',
   ]) {
     expect(selectAffectedInputs([file], configured, lock, lock).app_dependencies).toBe(true)
-    const outer = property(property(property(workflow, 'on'), 'pull_request'), 'paths')
-    if (!Array.isArray(outer)) throw new Error('Missing product PR inputs')
-    expect(matchesPaths(file, outer.map(text))).toBe(true)
+  }
+  for (const file of [
+    'apps/app/src/routes/index.tsx',
+    'apps/landing/src/components/tengri/desktop-dock.tsx',
+    'apps/docs/content/index.mdx',
+    'apps/synthesis/src/app.tsx',
+    'argocd/applications/docs/service.yaml',
+    'nix/images/docs.nix',
+    'packages/scripts/src/ci/affected-inputs.ts',
+  ]) {
+    expect(matchesPaths(file, configured.app_dependencies.paths), file).toBe(false)
   }
   const expression = text(property(property(jobs, 'build-app'), 'if')).replaceAll(
     'needs.verify-app-dependency-closure',
@@ -477,9 +486,9 @@ test('Ofz implementation keeps runtime qualification and production packages one
 
 test('Ofz publication helpers use script CI without waking service qualification', () => {
   const workflow = Bun.YAML.parse(readFileSync('.github/workflows/ofz.yaml', 'utf8'))
-  for (const event of ['pull_request', 'push']) {
-    const paths = property(property(property(workflow, 'on'), event), 'paths')
-    if (!Array.isArray(paths)) throw new Error('Missing Ofz image trigger paths')
+  const pushPaths = property(property(property(workflow, 'on'), 'push'), 'paths')
+  if (!Array.isArray(pushPaths)) throw new Error('Missing Ofz image trigger paths')
+  for (const paths of [pushPaths.map(text), prServiceTargets().ofz.paths]) {
     for (const file of [
       'packages/scripts/src/shared/oci.ts',
       'packages/scripts/src/shared/cli.ts',
@@ -489,26 +498,13 @@ test('Ofz publication helpers use script CI without waking service qualification
       'nix/ci-run-timed.sh',
       '.github/actions/setup-nix-toolchain/action.yml',
     ]) {
-      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(false)
+      expect(matchesPaths(file, paths)).toBe(false)
     }
   }
 })
 
 test('Ofz PR validation selects its identity fixture dependency changes', () => {
-  const filename = '.github/workflows/ofz.yaml'
-  const workflow: unknown = Bun.YAML.parse(readFileSync(filename, 'utf8'))
-  const steps = property(property(property(workflow, 'jobs'), 'validate'), 'steps')
-  if (!Array.isArray(steps)) throw new Error('Missing Ofz validation steps')
-  const planning = steps.find((step) => property(step, 'id') === 'inputs')
-  expect(property(planning, 'uses')).toBe('./.github/actions/affected-inputs')
-  expect(property(planning, 'if')).toBe("github.event_name == 'pull_request'")
-  const inputs = property(planning, 'with')
-  const configured = parseTargets(
-    text(property(inputs, 'workspaces')),
-    '{}',
-    text(property(inputs, 'workflow')),
-    'pull_request',
-  )
+  const configured = { ofz: prServiceTargets().ofz }
   const base = {
     ...before,
     workspaces: {
@@ -530,10 +526,6 @@ test('Ofz PR validation selects its identity fixture dependency changes', () => 
   expect(selectAffectedInputs(['bun.lock'], configured, base, unrelated)).toEqual({ ofz: false })
   expect(selectAffectedInputs(['bun.lock'], configured, base, identity)).toEqual({ ofz: true })
   expect(selectAffectedInputs(['services/ofz/src/main.rs'], configured, base, base)).toEqual({ ofz: true })
-  const identityStep = steps.find(
-    (step) => property(step, 'name') === 'Verify real browser identity and shared sessions',
-  )
-  expect(property(identityStep, 'if')).toBe("steps.selection.outputs.run != 'false'")
 })
 
 test('a changed transitive dependency still runs its consumers', () => {
@@ -642,22 +634,75 @@ const text = (value: unknown): string => {
   return value
 }
 
-test('Jangar CI selects runtime and dependency changes without taking Agents or observability ownership', () => {
+const prServiceTargets = () => {
   const router: unknown = Bun.YAML.parse(readFileSync('.github/workflows/pull-request.yml', 'utf8'))
   const steps = property(property(property(router, 'jobs'), 'plan'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing CI planner steps')
-  const step = steps.find((candidate) => property(candidate, 'id') === 'jangar')
-  expect(step).toMatchObject({
-    if: "github.event_name == 'pull_request'",
-    uses: './.github/actions/affected-inputs',
-  })
+  const planner = steps.filter((step) => property(step, 'uses') === './.github/actions/affected-inputs')
+  if (planner.length !== 1) throw new Error('Expected a single PR affected-inputs plan')
+  const [step] = planner
+  expect(step).toMatchObject({ id: 'pr_inputs', if: "github.event_name == 'pull_request'" })
   const inputs = property(step, 'with')
-  const configured = parseTargets(
-    text(property(inputs, 'workspaces')),
-    text(property(inputs, 'filters')),
-    '',
-    'pull_request',
-  )
+  return parseTargets(text(property(inputs, 'workspaces')), text(property(inputs, 'filters')), '', 'pull_request')
+}
+
+test('one PR plan skips unrelated workspace and lock changes without dropping owning suites', () => {
+  const configured = prServiceTargets()
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8')) as { workspaces: Record<string, object> }
+  const changeWorkspace = (workspace: string) => ({
+    ...lock,
+    workspaces: {
+      ...lock.workspaces,
+      [workspace]: { ...lock.workspaces[workspace], version: '0.0.999' },
+    },
+  })
+  const unrelated = changeWorkspace('services/golink')
+  const select = (files: string[], head = unrelated) =>
+    Object.entries(selectAffectedInputs(files, configured, lock, head))
+      .filter(([, affected]) => affected)
+      .map(([id]) => id)
+      .sort()
+  const metadata = ['services/golink/package.json', 'bun.lock']
+  expect(unrelated.workspaces['services/golink']).not.toEqual(lock.workspaces['services/golink'])
+  expect(select(metadata)).toEqual([])
+  expect(select(['docs/release-automation.md'])).toEqual([])
+  expect(select(['packages/scripts/src/ci/affected-inputs.ts'])).toEqual([])
+  const owned: [string, string[]][] = [
+    ['apps/froussard/src/index.ts', ['froussard']],
+    ['packages/agent-contracts/src/index.ts', ['froussard', 'jangar']],
+    ['services/oirat/src/index.ts', ['oirat']],
+    ['packages/discord/src/index.ts', ['jangar', 'oirat']],
+    ['services/bumba/src/atlas/reconciliation.ts', ['bumba', 'jangar']],
+    ['packages/temporal-bun-sdk/src/index.ts', ['bumba', 'jangar']],
+    ['services/signal-publisher/src/index.ts', ['signal-publisher']],
+    ['argocd/applications/torghut/clickhouse/service.yaml', ['signal-publisher']],
+    ['apps/landing/src/components/tengri/desktop-dock.tsx', ['ofz']],
+    ['proto/proompteng/authz/v1/authz.proto', ['ofz']],
+    ['.github/workflows/bumba-ci.yml', ['bumba']],
+    ['.github/workflows/nix-bun-dependency-closure.yml', ['bumba', 'froussard', 'jangar', 'oirat']],
+    ['nix/check-bun-dependency-closure.sh', []],
+    ['nix/images/bun-workspace-service.nix', ['bumba', 'froussard', 'oirat']],
+    ['nix/images/bun-workspace-deps-source.nix', ['bumba', 'froussard', 'oirat']],
+    ['nix/images/bun-workspace-deps-source.test.sh', ['bumba', 'froussard', 'oirat']],
+    ['nix/images/prune-bun-dependency-metadata.sh', ['bumba', 'froussard', 'oirat']],
+  ]
+  for (const [file, expected] of owned) expect(select([...metadata, file]), file).toEqual(expected)
+
+  const installed: [string, string[]][] = [
+    ['apps/froussard', ['froussard']],
+    ['services/oirat', ['oirat']],
+    ['services/bumba', ['bumba', 'jangar', 'signal-publisher']],
+    ['services/signal-publisher', ['signal-publisher']],
+    ['apps/landing', ['ofz']],
+  ]
+  for (const [workspace, expected] of installed) {
+    expect(lock.workspaces[workspace], workspace).toBeDefined()
+    expect(select(['bun.lock'], changeWorkspace(workspace)), workspace).toEqual(expected)
+  }
+})
+
+test('Jangar CI selects runtime and dependency changes without taking Agents or observability ownership', () => {
+  const configured = { jangar: prServiceTargets().jangar }
   const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8')) as { packages: Record<string, unknown[]> }
   const unrelated = [
     'argocd/applications/agents/values.yaml',
@@ -773,10 +818,11 @@ test('Tengri frontend PRs skip native images while main publishes coordinated re
       expect(paths.some((pattern) => matchesGlob(runtimeSource, text(pattern)))).toBe(true)
     }
     expect(matchesPaths(tengriPublisherPath, paths.map(text))).toBe(event === 'push')
-    const ofzPaths = property(property(property(ofz, 'on'), event), 'paths')
-    if (!Array.isArray(ofzPaths)) throw new Error('Missing Ofz trigger paths')
-    expect(matchesPaths(tengriPublisherPath, ofzPaths.map(text))).toBe(event === 'push')
   }
+  const ofzPushPaths = property(property(property(ofz, 'on'), 'push'), 'paths')
+  if (!Array.isArray(ofzPushPaths)) throw new Error('Missing Ofz push paths')
+  expect(matchesPaths(tengriPublisherPath, prServiceTargets().ofz.paths)).toBe(false)
+  expect(matchesPaths(tengriPublisherPath, ofzPushPaths.map(text))).toBe(true)
 })
 
 test('the shared Warehouse binds desktop and runtime artifacts to the same immutable source', () => {
@@ -791,15 +837,8 @@ test('the shared Warehouse binds desktop and runtime artifacts to the same immut
   }
 })
 
-test.each([
-  'bayn-ci.yml',
-  'bumba-ci.yml',
-  'froussard-ci.yml',
-  'oirat-ci.yml',
-  'signal-publisher-build-push.yml',
-  'restate-images.yml',
-  'product-nix-images.yml',
-])('%s uses dependency-aware PR selection for the Landing-only regression', (filename) => {
+const imagePlanners = ['signal-publisher-build-push.yml', 'restate-images.yml', 'product-nix-images.yml']
+test.each(imagePlanners)('%s skips unrelated work for a Landing-only PR', (filename) => {
   const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing planner steps')
@@ -909,6 +948,8 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     expect(run('push', base).affected).toEqual({ bayn: true, landing: true })
     expect(run('push', initial, 'true').affected).toEqual({ bayn: false, landing: true })
     expect(run('push', base, 'true').affected).toEqual({ bayn: true, landing: true })
+    expect(() => run('push', '0'.repeat(40), 'true')).toThrow()
+    expect(() => run('push', '1'.repeat(40), 'true')).toThrow()
     expect(() => run('push', initial, 'typo')).toThrow()
     expect(run('workflow_dispatch', '')).toEqual({
       affected: { bayn: true, landing: true },
@@ -950,15 +991,15 @@ test('Bayn selects fast checks only for offline PRs and retains full and indepen
     '',
     'pull_request',
   )
-  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8'))
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8')) as { workspaces: Record<string, object> }
   const onlyPaths: unknown = Bun.YAML.parse(text(property(inputs, 'only-paths')))
   if (!Array.isArray(onlyPaths)) throw new Error('Missing Bayn fast path allowlist')
-  const outputNames = ['fast', 'full', 'pr_checks', 'formal', 'gepa']
-  const selected = (paths: string[], event = 'pull_request') => {
+  const outputNames = ['fast', 'full', 'pr_checks', 'postgres', 'archive', 'formal', 'gepa']
+  const selected = (paths: string[], event = 'pull_request', head = lock) => {
     const outputs =
       event === 'pull_request'
         ? {
-            affected: JSON.stringify(selectAffectedInputs(paths, targets, lock, lock)),
+            affected: JSON.stringify(selectAffectedInputs(paths, targets, lock, head)),
             only_paths: String(matchesOnlyPaths(paths, onlyPaths.map(text))),
           }
         : {}
@@ -971,39 +1012,61 @@ test('Bayn selects fast checks only for offline PRs and retains full and indepen
       })
     })
   }
-  const full = ['full', 'pr_checks', 'formal', 'gepa']
+  const full = ['full', 'pr_checks', 'postgres', 'archive']
+  const complete = [...full, 'formal', 'gepa']
   const docs = 'docs/bayn/test-suite-audit-2026-11-27.md'
   const tool = 'services/bayn/tools/research-10yr-pure-etf-dual-horizon.ts'
   for (const paths of [[docs], [tool], [docs, tool], ['services/bayn/tools/native-arrival-coverage.md']])
     expect(selected(paths)).toEqual(['fast'])
-  for (const event of ['merge_group', 'workflow_dispatch', 'push']) expect(selected([tool], event)).toEqual(full)
+  for (const event of ['merge_group', 'workflow_dispatch', 'push']) expect(selected([tool], event)).toEqual(complete)
 
   for (const path of [
-    'services/bayn/src/execution/controller.ts',
     'services/bayn/src/risk.test.ts',
+    'services/bayn/src/http.ts',
     'services/bayn/src/system-assessment/README.md',
-    'services/bayn/migrations/20261106-cost-evidence.sql',
-    'argocd/applications/bayn/research-networkpolicy.yaml',
-    'argocd/applications/bayn/postgres-monitoring.yaml',
-    'argocd/applications/bayn/README.md',
-    '.github/workflows/bayn-ci.yml',
-    '.github/workflows/bayn-formal.yml',
     '.github/workflows/common-monorepo.yml',
-    'argocd/applications/torghut/clickhouse/schema/historical-datasets.sql',
+    '.github/actions/affected-inputs/action.yml',
     'nix/images/bayn.nix',
     'services/bayn/tools/compile-frozen-control.ts',
     'services/bayn/tools/test-postgres.ts',
     'services/bayn/tools/test-ledger.ts',
     'services/bayn/tools/retire-broker-polls.integration.test.ts',
     'services/bayn/tools/run-macro-etf-core-rebalance.ts',
-    ...baynPostgresTestHelpers,
-    'docs/bayn/jev-migration-acceptance-v2.json',
+    ...baynPostgresTestHelpers.filter((path) => path.startsWith('services/bayn/tools/')),
   ]) {
-    expect(selected([path])).toEqual(full)
-    expect(selected([docs, tool, path])).toEqual(full)
+    expect(selected([path]), path).toEqual(full)
+    expect(selected([docs, tool, path]), path).toEqual(full)
   }
   for (const path of ['nix/ci-run-timed.sh', 'apps/landing/src/index.ts', 'bun.lock'])
     expect(selected([docs, path])).toEqual(full)
+
+  for (const path of [
+    'services/bayn/src/execution/controller.ts',
+    'services/bayn/migrations/20261106-cost-evidence.sql',
+    'services/bayn/src/db/risk-clock-rejection.integration.test.ts',
+    'services/bayn/src/testing/postgres-template.test-support.ts',
+    'services/bayn/package.json',
+    'docs/bayn/jev-migration-acceptance-v2.json',
+    '.github/workflows/bayn-formal.yml',
+    'tsconfig.base.json',
+    '.npmrc',
+    'bunfig.toml',
+    'patches/effect@4.1.4.patch',
+  ]) {
+    expect(selected([path]), path).toEqual([...full, 'formal'])
+    expect(selected([path, '.github/workflows/ofz.yaml', 'argocd/applications/bayn/configmap.yaml']), path).toEqual([
+      ...full,
+      'formal',
+    ])
+  }
+  for (const path of [
+    '.github/workflows/bayn-ci.yml',
+    'services/bayn/src/strategy/intraday-momentum/decision-core.ts',
+    'services/bayn/src/jev/instructions.ts',
+    'package.json',
+  ])
+    expect(selected([path]), path).toEqual(complete)
+  expect(selected(['services/bayn/tools/build-jev-instruction-variant.ts'])).toEqual([...full, 'gepa'])
 
   for (const path of [
     'services/bayn/formal/Bayn/Reliability.lean',
@@ -1011,12 +1074,54 @@ test('Bayn selects fast checks only for offline PRs and retains full and indepen
     'services/bayn/formal/conformance/economics.test.ts',
   ])
     expect(selected([path])).toEqual(['formal'])
-  for (const path of ['packages/scripts/src/bayn/verify-egress-proxy-restart.sh', 'packages/scripts/package.json'])
-    expect(selected([path])).toEqual(['pr_checks'])
+  for (const path of [
+    'packages/scripts/src/bayn/verify-egress-proxy-restart.sh',
+    'packages/scripts/package.json',
+    'argocd/applications/bayn/execution-controller.yaml',
+    'argocd/applications/bayn/research-networkpolicy.yaml',
+    'argocd/applications/bayn/README.md',
+    'argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml',
+  ])
+    expect(selected([path]), path).toEqual(['pr_checks'])
+  expect(selected(['argocd/applications/bayn/postgres-monitoring.yaml'])).toEqual(['pr_checks', 'postgres'])
+  for (const path of [
+    'argocd/applications/torghut/clickhouse/schema/historical-datasets.sql',
+    'argocd/applications/torghut/clickhouse/schema/intraday-bars.sql',
+  ])
+    expect(selected([path]), path).toEqual(['archive'])
   for (const path of ['apps/landing/src/index.ts', 'services/bayn/formal/tla/README.md', 'services/dorvud/README.md'])
     expect(selected([path])).toEqual([])
+  for (const path of [
+    'services/agents/agentctl/cmd/root.go',
+    'services/agents/package.json',
+    'apps/landing/package.json',
+    '.github/workflows/agentctl-release.yml',
+    '.github/workflows/ofz.yaml',
+    '.github/workflows/pull-request.yml',
+    'argocd/applications/torghut/clickhouse/clickhouse-keeper.yaml',
+    'argocd/applications/torghut/clickhouse/auto-ontology-networkpolicy.yaml',
+    'argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml',
+    'argocd/applications/observability/graf-mimir-rules.yaml',
+  ])
+    expect(selected([path]), path).toEqual([])
   expect(selected([])).toEqual([])
   expect(selected(['services/bayn/gepa/runner.py'])).toEqual(['pr_checks', 'gepa'])
+
+  const changeWorkspace = (workspace: string) => ({
+    ...lock,
+    workspaces: { ...lock.workspaces, [workspace]: { ...lock.workspaces[workspace], version: '0.0.999' } },
+  })
+  expect(selected(['bun.lock', 'apps/landing/package.json'], 'pull_request', changeWorkspace('apps/landing'))).toEqual(
+    [],
+  )
+  expect(selected(['bun.lock'], 'pull_request', changeWorkspace('services/bayn'))).toEqual([...full, 'formal'])
+})
+
+test('the root PR workflow still routes Bayn manifests to Argo and schema validation', () => {
+  const map = loadImpactMap('.github/ci/impact-map.yml')
+  expect(selectImpactPlan(['argocd/applications/bayn/execution-controller.yaml'], map).validationTargets).toEqual(
+    expect.arrayContaining(['argo-lint', 'kubeconform']),
+  )
 })
 
 test('Bayn publication still watches runtime rather than test or offline inputs', () => {
@@ -1065,13 +1170,8 @@ test('Bayn publication still watches runtime rather than test or offline inputs'
     expect(['services/bayn/README.md', path].some((changed) => matchesPaths(changed, paths))).toBe(true)
 })
 
-test.each([
-  'bumba-ci.yml',
-  'oirat-ci.yml',
-  'froussard-ci.yml',
-  'signal-publisher-build-push.yml',
-  'product-nix-images.yml',
-])('%s gives shared verifier changes one native App owner', (filename) => {
+const verifierPlanners = ['signal-publisher-build-push.yml', 'product-nix-images.yml']
+test.each(verifierPlanners)('%s gives shared verifier changes one native App owner', (filename) => {
   const workflow = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing planner steps')

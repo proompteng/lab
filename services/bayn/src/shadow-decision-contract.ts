@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from './strategy/runtime-decision'
 import {
   entryAblationStrategyIdentity,
   makeEntryAblationPolicy,
@@ -26,7 +27,8 @@ import {
 import {
   intradayAlphaStrategyIdentity,
   makeIntradayAlphaPolicy,
-  type IntradayAlphaPolicy,
+  makePureEtfPolicy,
+  type IntradayAlphaPolicyMaterial,
 } from './strategy/intraday-alpha/policy'
 import { entryBracketProtection } from './execution/position-protection'
 import { jevProfitTargetLimitFloors, jevProfitTargetLimitCeilings } from './jev/exit'
@@ -1035,7 +1037,7 @@ const streamingPricingEvidenceIssues = (
   )
     return [{ path: ['plannerInput'], issue: 'streaming execution requires quote-bound planner inputs' }]
   const target = document.strategyDecision
-  const isIntradayAlpha = target?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+  const isIntradayAlpha = isIntradayAlphaTarget(target)
   const alphaBarCloses = isIntradayAlpha
     ? Result.gen(function* () {
         const rangeEndAt = target.evidence.observation.manifest['rangeEndAt']
@@ -1406,13 +1408,11 @@ const momentumProtocolIdentityMatches = (
 }
 
 const intradayAlphaProtocolIdentityMatches = (
-  policy: Omit<IntradayAlphaPolicy, 'sharedProtocol'> & {
-    readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
-  },
+  policy: IntradayAlphaPolicyMaterial,
   strategyProtocolHash: string,
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
-  const expected = canonicalHashV1Result({ ...retainedExpectedProtocolDocument(policy.sharedProtocol) })
+  const expected = canonicalHashV1Result(defaultJevProtocolDocument)
   const identity = intradayAlphaStrategyIdentity(policy)
   return (
     Result.isSuccess(parameters) &&
@@ -1470,7 +1470,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
             targetWeights: jevPlanningTargetWeights(target),
             capitalMicros: observation.portfolio.brokerState.account.equityMicros,
             precision: observation.protocol.executionModel.precision,
-            ...(target.schemaVersion === 'bayn.intraday-alpha-target.v2' ? { ignoreDisplayedBidSize: true } : {}),
+            ...(isIntradayAlphaTarget(target) ? { ignoreDisplayedBidSize: true } : {}),
           }),
           equityShortEntries: protectedEntryShortEligibility(target),
         }
@@ -1521,7 +1521,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
     target.selectedSymbols.some(
       (symbol) =>
         (document.entryLimitSlippageBps ?? 0) >
-        (target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+        (isIntradayAlphaTarget(target)
           ? target.policy.entryLimitSlippageBps
           : jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps),
     )
@@ -1544,7 +1544,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     !(target.schemaVersion === 'bayn.repeated-momentum-target.v1'
       ? momentumProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
-      : target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+      : isIntradayAlphaTarget(target)
         ? intradayAlphaProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
         : target.schemaVersion === 'bayn.entry-ablation-target.v1'
           ? ablationProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
@@ -1650,7 +1650,8 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
       intradayAlphaProtocolIdentityMatches(
         makeIntradayAlphaPolicy(evidence.protocol),
         document.bindings.strategyProtocolHash,
-      )
+      ) ||
+      intradayAlphaProtocolIdentityMatches(makePureEtfPolicy(evidence.protocol), document.bindings.strategyProtocolHash)
     ) ||
     target.cycleId !== document.bindings.cycleId ||
     target.sessionDate !== document.executionSession?.executionSession.date ||

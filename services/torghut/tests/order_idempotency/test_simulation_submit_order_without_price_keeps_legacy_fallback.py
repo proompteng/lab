@@ -1,26 +1,26 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+from decimal import Decimal
+
+from sqlalchemy import select
+
+from app.config import settings
+from app.models import Execution, ExecutionTCAMetric
+from app.trading.execution import OrderExecutor
+from app.trading.execution_adapters import SimulationExecutionAdapter
+from app.trading.models import StrategyDecision
 from tests.order_idempotency.support import (
     AccountShortingDisabledClient,
     ConflictingOrderClient,
-    Decimal,
-    Execution,
-    ExecutionTCAMetric,
     FakeAlpacaClient,
     FilledAlpacaClient,
-    OrderExecutor,
     PositionLookupNoneClient,
-    SimulationExecutionAdapter,
-    Strategy,
-    StrategyDecision,
     SymbolNotShortableClient,
     _TestOrderIdempotencyBase,
-    datetime,
-    json,
-    select,
-    settings,
-    timezone,
 )
+from tests.trading_fixtures import make_strategy
 
 
 def _add_lagging_broker_fill(session: object, suffix: str) -> None:
@@ -48,12 +48,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
 ):
     def test_simulation_submit_order_without_price_keeps_legacy_fallback(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo-simulation-no-price",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
                 universe_symbols=["NVDA"],
             )
             session.add(strategy)
@@ -108,13 +105,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
         self,
     ) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -168,13 +161,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
 
     def test_submit_order_prefers_persisted_advice_provenance(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -239,13 +228,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
         self,
     ) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -294,13 +279,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
 
     def test_submit_order_prefers_persisted_execution_policy_context(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -370,13 +351,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
 
     def test_submit_order_persists_runtime_ledger_metadata_in_audit(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -443,13 +420,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
         self,
     ) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -521,13 +494,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
         self,
     ) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -578,13 +547,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
 
     def test_submit_order_precheck_blocks_opposite_side_open_order(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -616,13 +581,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
 
     def test_submit_order_precheck_blocks_invalid_equity_fractional_qty(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -656,13 +617,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
     ) -> None:
         settings.trading_fractional_equities_enabled = True
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -697,13 +654,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
         settings.trading_fractional_equities_enabled = True
         settings.trading_allow_shorts = True
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -785,13 +738,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
         settings.trading_fractional_equities_enabled = True
         settings.trading_allow_shorts = True
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -860,13 +809,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
         settings.trading_fractional_equities_enabled = True
         settings.trading_allow_shorts = True
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -900,13 +845,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
     ) -> None:
         settings.trading_allow_shorts = True
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()
@@ -942,13 +883,9 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
     def test_submit_order_precheck_blocks_short_when_symbol_not_shortable(self) -> None:
         settings.trading_allow_shorts = True
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="demo",
                 description="demo",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()

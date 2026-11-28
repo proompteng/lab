@@ -56,7 +56,7 @@ Compare all five fields exactly against the five-minute export; an empty minute 
 This corroborates completeness relative to the frozen provider aggregation, not a bar on every clock minute, venue-level
 trade completeness, or historical NBBO execution.
 
-See [results.json](results.json) for the full engine, portfolio, execution and coverage matrices, and
+See [results.json][archived-results] for the full engine, portfolio, execution and coverage matrices, and
 [freeze.json](freeze.json) for the development-only design ranking and bindings. No raw data is committed.
 
 ## Live v2: 10 bp entry / 10 bp stop limit
@@ -217,6 +217,8 @@ itself proof of a data-delivery failure, nor is it an executable price.
 
 ## Reproduction
 
+The commands below use the runner and results from the [archived checkout][study-revision].
+
 Use exact [freeze commit `391406f88`](https://github.com/proompteng/lab/commit/391406f88) in a clean checkout with the
 read-only Agents artifacts S3 endpoint and credentials. Scoring intentionally refuses a different source tree,
 including a later PR head that incorporates intervening changes on `main`.
@@ -235,3 +237,6 @@ SHA-256 of that committed receipt and refuses changed inputs or research code:
 bun services/bayn/tools/research-3yr-sip-bayn21-v2.ts --score
 bunx oxfmt --write docs/bayn/evidence/2026-11-27-3yr-sip-bayn21-v2/results.json
 ```
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-3yr-sip-bayn21-v2/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

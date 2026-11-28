@@ -18,32 +18,16 @@ on:
       - '.npmrc'
       - 'patches/**'
       - 'argocd/applications/froussard/**'
-  pull_request:
-    paths:
-      - '.github/actions/affected-inputs/**'
-      - 'packages/scripts/src/ci/**'
-      - 'apps/froussard/**'
-      - 'packages/agent-contracts/**'
-      - 'nix/images/froussard.nix'
-      - '.github/workflows/nix-bun-dependency-closure.yml'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/images/bun-workspace-deps-source.nix'
-      - 'nix/images/bun-workspace-deps-source.test.sh'
-      - 'nix/images/prune-bun-dependency-metadata.sh'
-      - 'bun.lock'
-      - '**/package.json'
-      - 'bunfig.toml'
-      - '.npmrc'
-      - 'patches/**'
-      - 'argocd/applications/froussard/**'
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: froussard-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
@@ -51,16 +35,20 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          filter: blob:none
       - uses: ./.github/actions/affected-inputs
         id: filter
         with:
           workflow: .github/workflows/froussard-ci.yml
+          dependency-aware-push: 'true'
           workspaces: |
-            service: ['', 'apps/froussard']
+            service: ['', 'apps/froussard', 'packages/agent-contracts']
 
   test:
     needs: changes
-    if: needs.changes.outputs.changed == 'true'
+    if: >-
+      !cancelled() && (github.event_name == 'pull_request' ||
+      (needs.changes.result == 'success' && needs.changes.outputs.changed == 'true'))
     uses: ./.github/workflows/common-monorepo.yml
     with:
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agent-contracts --filter froussard && bun run --filter @proompteng/agent-contracts build
@@ -72,7 +60,9 @@ jobs:
 
   dependency-closure:
     needs: changes
-    if: needs.changes.outputs.changed == 'true'
+    if: >-
+      !cancelled() && (github.event_name == 'pull_request' ||
+      (needs.changes.result == 'success' && needs.changes.outputs.changed == 'true'))
     uses: ./.github/workflows/nix-bun-dependency-closure.yml
     with:
       service: froussard
@@ -81,6 +71,9 @@ jobs:
   nix-image:
     needs: [dependency-closure, test]
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    concurrency:
+      group: froussard-publish-${{ github.ref }}
+      cancel-in-progress: false
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: froussard

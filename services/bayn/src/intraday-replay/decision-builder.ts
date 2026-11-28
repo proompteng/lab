@@ -1,3 +1,4 @@
+import { isIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { Effect } from 'effect'
 
 import { Authority } from '../execution/contracts'
@@ -49,7 +50,7 @@ export const observeResearchEntry =
             const selection = selected
             if (
               selection === undefined ||
-              observation.payload.schemaVersion !== 'bayn.intraday-alpha-observation.v2' ||
+              !isIntradayAlphaObservation(observation.payload) ||
               observation.payload.cycleId !== context.observation.cycleId ||
               observation.payload.authorityGenerationHash !== context.observation.authorityGenerationHash
             )

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
-    ArgocdAutomationConfig,
-    ClickHouseRuntimeConfig,
-    Path,
-    PostgresRuntimeConfig,
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import TestCase
+from unittest.mock import patch
+
+import yaml
+
+from scripts import historical_simulation_startup
+from scripts.historical_simulation_startup import (
     RolloutsAnalysisConfig,
-    StartHistoricalSimulationTestCaseBase,
-    TemporaryDirectory,
     _build_argocd_automation_config,
     _build_autonomy_lane_config,
     _build_resources,
@@ -16,13 +18,19 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _run_rollouts_analysis,
     _set_argocd_application_sync_policy,
     _set_argocd_automation_mode,
-    patch,
-    historical_simulation_startup,
-    yaml,
+    argocd_rollouts,
+    kubernetes_argocd,
+    service_environment,
+)
+from tests.historical_simulation.fixtures import (
+    make_argocd_config,
+    make_clickhouse_config,
+    make_postgres_config,
+    simulation_resources,
 )
 
 
-class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase):
+class TestStartHistoricalSimulationArgocdA(TestCase):
     def test_build_argocd_automation_config_defaults(self) -> None:
         config = _build_argocd_automation_config({})
         self.assertFalse(config.manage_automation)
@@ -72,7 +80,7 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
             ):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("stub", encoding="utf-8")
-            resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
+            resources = simulation_resources()
 
             config = _build_autonomy_lane_config(
                 {
@@ -113,7 +121,7 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
         )
 
     def test_build_autonomy_lane_config_defaults_to_disabled(self) -> None:
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
+        resources = simulation_resources()
 
         config = _build_autonomy_lane_config(
             {},
@@ -124,7 +132,7 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
         self.assertFalse(config.enabled)
 
     def test_build_autonomy_lane_config_rejects_invalid_promotion_target(self) -> None:
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
+        resources = simulation_resources()
 
         with self.assertRaisesRegex(
             RuntimeError,
@@ -142,7 +150,7 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
             )
 
     def test_run_simulation_autonomy_lane_requires_required_inputs(self) -> None:
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
+        resources = simulation_resources()
 
         self.assertIsNone(
             historical_simulation_startup._run_simulation_autonomy_lane(
@@ -188,15 +196,8 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
                 "cursor_grace_seconds": 10,
             },
         }
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        postgres_config = make_postgres_config()
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
         rollouts_config = RolloutsAnalysisConfig(
@@ -245,18 +246,21 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
             raise AssertionError(f"unexpected kubectl args: {args}")
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._kubectl_delete_if_exists",
+            patch.object(
+                argocd_rollouts,
+                "_kubectl_delete_if_exists",
                 return_value=None,
             ),
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._kubectl_apply",
+            patch.object(
+                argocd_rollouts,
+                "_kubectl_apply",
                 side_effect=lambda namespace, payload: captured_apply.update(
                     {"namespace": namespace, "payload": payload}
                 ),
             ),
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._kubectl_json",
+            patch.object(
+                argocd_rollouts,
+                "_kubectl_json",
                 side_effect=_fake_kubectl_json,
             ),
         ):
@@ -393,23 +397,16 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
             }
         }
         with (
-            patch(
-                "scripts.historical_simulation_startup.kubernetes_argocd._kubectl_json_global",
+            patch.object(
+                kubernetes_argocd,
+                "_kubectl_json_global",
                 side_effect=[payload_auto, payload_manual],
             ),
-            patch(
-                "scripts.historical_simulation_startup.kubernetes_argocd._kubectl_patch_json"
-            ) as patch_mock,
+            patch.object(kubernetes_argocd, "_kubectl_patch_json") as patch_mock,
         ):
             report = _set_argocd_automation_mode(
-                config=ArgocdAutomationConfig(
+                config=make_argocd_config(
                     manage_automation=True,
-                    applicationset_name="product",
-                    applicationset_namespace="argocd",
-                    app_name="torghut",
-                    root_app_name="root",
-                    desired_mode_during_run="manual",
-                    restore_mode_after_run="previous",
                     verify_timeout_seconds=30,
                 ),
                 desired_mode="manual",
@@ -444,23 +441,16 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
             }
         }
         with (
-            patch(
-                "scripts.historical_simulation_startup.kubernetes_argocd._kubectl_json_global",
+            patch.object(
+                kubernetes_argocd,
+                "_kubectl_json_global",
                 side_effect=[payload_auto, payload_manual],
             ),
-            patch(
-                "scripts.historical_simulation_startup.kubernetes_argocd._kubectl_patch"
-            ) as patch_mock,
+            patch.object(kubernetes_argocd, "_kubectl_patch") as patch_mock,
         ):
             report = _set_argocd_application_sync_policy(
-                config=ArgocdAutomationConfig(
+                config=make_argocd_config(
                     manage_automation=True,
-                    applicationset_name="product",
-                    applicationset_namespace="argocd",
-                    app_name="torghut",
-                    root_app_name="root",
-                    desired_mode_during_run="manual",
-                    restore_mode_after_run="previous",
                     verify_timeout_seconds=30,
                 ),
                 desired_sync_policy=payload_manual["spec"]["syncPolicy"],
@@ -494,8 +484,9 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
         self.assertIn("TRADING_SIMULATION_ORDER_UPDATES_TOPIC", ignore_jq)
         self.assertNotIn("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS", ignore_jq)
         with (
-            patch(
-                "scripts.historical_simulation_startup.service_environment._read_argocd_applicationset_entry",
+            patch.object(
+                service_environment,
+                "_read_argocd_applicationset_entry",
                 side_effect=[
                     {
                         "pointer": "/spec/generators/0/list/elements/0",
@@ -511,27 +502,20 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
                     },
                 ],
             ),
-            patch(
-                "scripts.historical_simulation_startup.service_environment._read_named_argocd_application_sync_policy",
+            patch.object(
+                service_environment,
+                "_read_named_argocd_application_sync_policy",
                 return_value={
                     "sync_policy": None,
                     "automation_mode": "manual",
                     "ignore_differences": runtime_ignore_differences,
                 },
             ),
-            patch(
-                "scripts.historical_simulation_startup.service_environment._kubectl_patch_json"
-            ) as patch_mock,
+            patch.object(service_environment, "_kubectl_patch_json") as patch_mock,
         ):
             report = historical_simulation_startup._set_argocd_application_ignore_differences(
-                config=ArgocdAutomationConfig(
+                config=make_argocd_config(
                     manage_automation=True,
-                    applicationset_name="product",
-                    applicationset_namespace="argocd",
-                    app_name="torghut",
-                    root_app_name="root",
-                    desired_mode_during_run="manual",
-                    restore_mode_after_run="previous",
                     verify_timeout_seconds=30,
                 ),
                 required_ignore_differences=runtime_ignore_differences,
