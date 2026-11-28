@@ -3,14 +3,23 @@ import { STATUS_CODES } from 'node:http'
 import { KubeConfig, Watch } from '@kubernetes/client-node'
 
 import { buildBunKubernetesFetchInit, shouldUseBunKubernetesTransport } from './kubernetes-bun-transport'
+import { parsePositiveIntEnv } from './runtime-env'
 
 type WatchQuery = Record<string, string | number | boolean | undefined>
 
 type WatchDone = (error: Error | null) => void
 
+const WATCH_TIMEOUT_GRACE_MS = 30_000
+
 const isAbortError = (error: unknown) => {
   if (!(error instanceof Error)) return false
   return error.name === 'AbortError' || error.message.includes('aborted')
+}
+
+const isWatchTimeoutClose = (error: unknown, timeoutAt: number) => {
+  if (!(error instanceof Error) || !('code' in error) || error.code !== 'ECONNRESET') return false
+  const elapsedPastDeadline = performance.now() - timeoutAt
+  return elapsedPastDeadline >= 0 && elapsedPastDeadline < WATCH_TIMEOUT_GRACE_MS
 }
 
 const drainWatchStream = async (
@@ -18,6 +27,7 @@ const drainWatchStream = async (
   callback: (type: string, object: unknown, data: unknown) => void,
   done: WatchDone,
   controller: AbortController,
+  timeoutAt: number,
 ) => {
   const reader = response.body?.getReader()
   if (!reader) {
@@ -55,7 +65,12 @@ const drainWatchStream = async (
     flushLine(buffer)
     done(null)
   } catch (error) {
-    if (controller.signal.aborted && isAbortError(error)) {
+    // Bun can report a server close as ECONNRESET. Only accept it at the
+    // expected timeout of an established stream, between complete events.
+    if (
+      (controller.signal.aborted && isAbortError(error)) ||
+      (buffer.length === 0 && isWatchTimeoutClose(error, timeoutAt))
+    ) {
       done(null)
       return
     }
@@ -66,7 +81,7 @@ const drainWatchStream = async (
 const watchWithBunFetch = async (
   kubeConfig: KubeConfig,
   path: string,
-  queryParams: WatchQuery,
+  queryParams: WatchQuery & { timeoutSeconds: number },
   callback: (type: string, object: unknown, data: unknown) => void,
   done: WatchDone,
 ) => {
@@ -94,13 +109,14 @@ const watchWithBunFetch = async (
 
   void (async () => {
     try {
-      const response = await fetch(
-        watchURL,
-        await buildBunKubernetesFetchInit(kubeConfig, {
-          method: 'GET',
-          signal: controller.signal,
-        }),
-      )
+      const init = await buildBunKubernetesFetchInit(kubeConfig, {
+        method: 'GET',
+        signal: controller.signal,
+      })
+      const timeoutMs = queryParams.timeoutSeconds * 1000
+      const timeoutAt = performance.now() + timeoutMs
+      // Let the API server finish the watch before Bun's socket idle timeout.
+      const response = await fetch(watchURL, { ...init, timeout: timeoutMs + WATCH_TIMEOUT_GRACE_MS })
       if (response.status !== 200) {
         const statusText = response.statusText || STATUS_CODES[response.status] || 'Internal Server Error'
         const error = new Error(statusText) as Error & { statusCode?: number }
@@ -108,7 +124,7 @@ const watchWithBunFetch = async (
         throw error
       }
 
-      await drainWatchStream(response, callback, doneOnce, controller)
+      await drainWatchStream(response, callback, doneOnce, controller, timeoutAt)
     } catch (error) {
       if (controller.signal.aborted && isAbortError(error)) {
         doneOnce(null)
@@ -128,12 +144,17 @@ export const startKubernetesWatch = async (
   callback: (type: string, object: unknown, data: unknown) => void,
   done: WatchDone,
 ) => {
+  const timeoutSeconds = parsePositiveIntEnv(process.env.AGENTS_KUBE_WATCH_TIMEOUT_SECONDS, 300, {
+    minimum: 30,
+    maximum: 600,
+  })
+  const query = { ...queryParams, timeoutSeconds }
   if (shouldUseBunKubernetesTransport()) {
-    return watchWithBunFetch(kubeConfig, path, queryParams, callback, done)
+    return watchWithBunFetch(kubeConfig, path, query, callback, done)
   }
 
   const watch = new Watch(kubeConfig)
-  return watch.watch(path, queryParams, callback, done)
+  return watch.watch(path, query, callback, done)
 }
 
 export const __private = {

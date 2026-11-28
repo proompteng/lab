@@ -8,8 +8,15 @@ metadata:
 spec:
   postgresql:
     parameters:
+      shared_buffers: 512MB
       wal_buffers: 16MB
   instances: 1
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      memory: "4Gi"
   imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
   primaryUpdateStrategy: unsupervised
   storage:
