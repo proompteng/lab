@@ -1,4 +1,13 @@
+import { createImplementationContractTools } from '../../../src/server/agents-controller/implementation-contract'
 import { validationError } from './errors'
+
+export const { buildEventContext } = createImplementationContractTools((params, keys) => {
+  for (const key of keys) {
+    const value = params[key]
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim()
+  }
+  return ''
+})
 
 export const parseRunValues = (values: readonly string[], flag: string) =>
   Object.fromEntries(
