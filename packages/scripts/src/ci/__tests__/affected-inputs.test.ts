@@ -930,7 +930,7 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
   }
 })
 
-test('Bayn separates formal checks from runtime validation and publication', () => {
+test('Bayn separates contract, formal, and GEPA checks from runtime validation and publication', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing Bayn change detection')
@@ -944,38 +944,44 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     '',
     'pull_request',
   )
-  const lock = { ...before, workspaces: { ...before.workspaces, 'packages/scripts': { name: 'scripts' } } }
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8'))
+  const selected = (...paths: string[]) =>
+    Object.entries(selectAffectedInputs(paths, targets, lock, lock))
+      .filter(([, affected]) => affected)
+      .map(([name]) => name)
   for (const path of [
     'services/bayn/formal/Bayn/Reliability.lean',
     'services/bayn/formal/tla/Controller.tla',
     'services/bayn/formal/conformance/economics.test.ts',
     '.github/workflows/bayn-formal.yml',
   ])
-    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: false, gepa: false, formal: true })
-  expect(selectAffectedInputs(['services/bayn/src/execution/controller.ts'], targets, lock, lock)).toEqual({
-    bayn: true,
-    gepa: false,
-    formal: true,
-  })
-  expect(selectAffectedInputs(['argocd/applications/bayn/configmap.yaml'], targets, lock, lock)).toEqual({
-    bayn: true,
-    gepa: false,
-    formal: false,
-  })
-  expect(selectAffectedInputs(['apps/landing/src/index.ts'], targets, lock, lock)).toEqual({
-    bayn: false,
-    gepa: false,
-    formal: false,
-  })
-  for (const path of ['services/bayn/src/risk.test.ts', 'services/bayn/tools/history.test.ts'])
-    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: true, formal: false, gepa: false })
+    expect(selected(path)).toEqual(['formal'])
+  expect(selected('services/bayn/src/execution/controller.ts')).toEqual(['bayn', 'formal'])
+  for (const path of [
+    'argocd/applications/bayn/research-networkpolicy.yaml',
+    'packages/scripts/src/bayn/verify-egress-proxy-restart.sh',
+    'packages/scripts/package.json',
+    'services/bayn/src/system-assessment/README.md',
+  ])
+    expect(selected(path)).toEqual(['contracts'])
+  expect(selected('argocd/applications/bayn/postgres-monitoring.yaml')).toEqual(['bayn', 'contracts'])
+  expect(selected('argocd/applications/bayn/research-networkpolicy.yaml', 'services/bayn/src/index.ts')).toEqual([
+    'bayn',
+    'contracts',
+    'formal',
+  ])
+  for (const path of ['apps/landing/src/index.ts', 'services/bayn/formal/tla/README.md', 'services/dorvud/README.md'])
+    expect(selected(path)).toEqual([])
+  for (const path of [
+    'services/bayn/src/risk.test.ts',
+    'services/bayn/tools/history.test.ts',
+    'services/bayn/tools/compile-frozen-control.ts',
+    'argocd/applications/torghut/clickhouse/schema/historical-datasets.sql',
+  ])
+    expect(selected(path)).toEqual(['bayn'])
   for (const [path, formal] of baynPostgresTestHelpers)
-    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: true, formal, gepa: false })
-  expect(selectAffectedInputs(['services/bayn/gepa/runner.py'], targets, lock, lock)).toEqual({
-    bayn: true,
-    formal: false,
-    gepa: true,
-  })
+    expect(selected(path)).toEqual(formal ? ['bayn', 'formal'] : ['bayn'])
+  expect(selected('services/bayn/gepa/runner.py')).toEqual(['contracts', 'gepa'])
   for (const path of [
     'services/bayn/src/db/entry-inference-postgres.integration.test.ts',
     'services/bayn/src/system-assessment/postgres.integration.test.ts',
@@ -1015,13 +1021,7 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'bun.lock',
   ])
     expect(['services/bayn/README.md', path].some((changed) => matchesPaths(changed, paths))).toBe(true)
-  expect(
-    selectAffectedInputs(['services/bayn/README.md', 'argocd/applications/bayn/README.md'], targets, lock, lock),
-  ).toEqual({
-    bayn: false,
-    gepa: false,
-    formal: false,
-  })
+  expect(selected('services/bayn/README.md', 'argocd/applications/bayn/README.md')).toEqual([])
 })
 
 test.each([
