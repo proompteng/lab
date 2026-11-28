@@ -339,6 +339,11 @@ Valid scope patterns:
 
 Invalid combinations fail at render time, including empty scope lists, wildcard mixed with real namespace names, and multi-namespace scope with namespaced RBAC.
 
+Kubernetes watches recycle after 300 seconds by default. Set `env.vars.AGENTS_KUBE_WATCH_TIMEOUT_SECONDS` to tune
+this for both deployments. The minimum accepted value is 30 seconds and values above 600 are capped at 600;
+missing, invalid, or too-small values use the default. Normal closes resume from the last observed resource version
+without contributing to watch health degradation.
+
 ### Runner Defaults
 
 The controller resolves AgentRun Job images from per-run, provider, and chart defaults.
@@ -351,6 +356,12 @@ Precedence:
 4. `runner.image.*`
 
 Use `env.vars.AGENTS_AGENT_RUNNER_IMAGE` for an explicit runner image override.
+
+The standard runner's generated scratch volumes use tmpfs with per-mount ceilings: 16 GiB for `/workspace`, 6 GiB
+for `/tmp`, 8 GiB for `/opt/bun/install/cache`, and 1 GiB for the Codex auth home when mounted. Each generated
+ceiling is capped at the Job's configured memory limit when smaller. The volumes share that limit with the runner;
+the ceilings do not reserve memory. Use `controller.defaultWorkload.affinity` and
+`controller.defaultWorkload.topologySpreadConstraints` to set default scheduling for AgentRun Jobs.
 
 ### Availability
 
