@@ -378,4 +378,40 @@ describe('runner log summary', () => {
     expect(parsed.assistantMessageComplete).toBe(true)
     expect(parsed.prUrls).toEqual(['https://github.com/proompteng/lab/pull/514'])
   })
+
+  it('reconstructs cumulative agy-cli responses across tool calls even when the preview fits inside the first chunk', () => {
+    const firstChunk = Array.from(
+      { length: 10 },
+      (_, idx) => `Step ${idx + 1} commentary before invoking the tool. `,
+    ).join('')
+    const finalChunk = 'Final answer after tool call with https://github.com/proompteng/lab/pull/515.'
+    const logs = [
+      JSON.stringify({
+        ts: '2026-11-28T10:00:01Z',
+        event: { type: 'message', delta: firstChunk, truncated: false },
+      }),
+      JSON.stringify({
+        ts: '2026-11-28T10:00:02Z',
+        event: { type: 'tool', kind: 'commandExecution', status: 'started' },
+      }),
+      JSON.stringify({
+        ts: '2026-11-28T10:00:03Z',
+        event: { type: 'message', delta: finalChunk, truncated: false },
+      }),
+    ].join('\n')
+    const status = {
+      provider: 'google',
+      adapter: 'agy-cli',
+      status: 'succeeded',
+      result: {
+        text: firstChunk.slice(0, 256),
+        truncated: true,
+      },
+    }
+
+    const parsed = parseRunLogs(logs, status)
+    expect(parsed.assistantMessage).toBe(`${firstChunk}${finalChunk}`)
+    expect(parsed.assistantMessageComplete).toBe(true)
+    expect(parsed.prUrls).toEqual(['https://github.com/proompteng/lab/pull/515'])
+  })
 })

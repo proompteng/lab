@@ -241,25 +241,40 @@ export const parseRunLogs = (logs: string, status?: unknown, knownToken?: string
         message = agyResult.text
         complete = true
       } else {
-        // Deltas lack message IDs, so commentary and the final answer can share a candidate.
-        // Recover the suffix only when the authoritative preview identifies a unique starting point.
-        const matches = candidates.flatMap(({ text, truncated }) => {
-          const start = text.indexOf(previewText)
-          return start === -1 ? [] : [{ text, start, truncated }]
-        })
-        if (matches.length === 1) {
-          const { text, start, truncated } = matches[0]
-          if (start === text.lastIndexOf(previewText)) {
-            message = text.slice(start)
-            complete = !truncated && message.length > previewText.length
-          }
-        } else if (matches.length === 0 && candidates.length > 1) {
+        const isAgyRun =
+          asString(terminal?.adapter) === 'agy-cli' ||
+          asString(terminal?.provider) === 'google' ||
+          agyModel !== null ||
+          agyResult !== null
+        if (isAgyRun && candidates.length > 1) {
           // agy-cli accumulates agent_response deltas across tool calls into status.result.text.
           const joined = candidates.map(({ text }) => text).join('')
           const start = joined.indexOf(previewText)
           if (start !== -1 && start === joined.lastIndexOf(previewText)) {
             message = joined.slice(start)
             complete = !candidates.some(({ truncated }) => truncated) && message.length > previewText.length
+          }
+        }
+        if (!complete) {
+          // Deltas lack message IDs, so commentary and the final answer can share a candidate.
+          // Recover the suffix only when the authoritative preview identifies a unique starting point.
+          const matches = candidates.flatMap(({ text, truncated }) => {
+            const start = text.indexOf(previewText)
+            return start === -1 ? [] : [{ text, start, truncated }]
+          })
+          if (matches.length === 1) {
+            const { text, start, truncated } = matches[0]
+            if (start === text.lastIndexOf(previewText)) {
+              message = text.slice(start)
+              complete = !truncated && message.length > previewText.length
+            }
+          } else if (!isAgyRun && matches.length === 0 && candidates.length > 1) {
+            const joined = candidates.map(({ text }) => text).join('')
+            const start = joined.indexOf(previewText)
+            if (start !== -1 && start === joined.lastIndexOf(previewText)) {
+              message = joined.slice(start)
+              complete = !candidates.some(({ truncated }) => truncated) && message.length > previewText.length
+            }
           }
         }
         if (!complete && agyResult && agyResult.text.length > message.length) {
