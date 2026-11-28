@@ -3,6 +3,29 @@ kind: ObjectBucketClaim
 metadata:
   name: agents-artifacts
   namespace: agents
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   bucketName: agents-artifacts
   storageClassName: rook-ceph-bucket
+  additionalConfig:
+    # RGW returns an all-keys rule as an empty top-level Prefix. Match its
+    # readback so Rook can compare the policy without rewriting it.
+    bucketLifecycle: |
+      {
+        "Rules": [
+          {
+            "ID": "abort-incomplete-multipart-uploads",
+            "Status": "Enabled",
+            "Prefix": "",
+            "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+          },
+          {
+            "ID": "expire-runner-telemetry",
+            "Status": "Enabled",
+            "Filter": { "Prefix": "runner-telemetry/" },
+            "Expiration": { "Days": 14 },
+            "NoncurrentVersionExpiration": { "NoncurrentDays": 14 }
+          }
+        ]
+      }
