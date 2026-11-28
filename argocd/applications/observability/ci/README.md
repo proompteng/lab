@@ -110,11 +110,16 @@ The existing Alloy collector probes Attic's internal cache metadata endpoint eve
 availability, latency, and HTTP status to Mimir. It ships the Attic application container's logs to Loki with namespace,
 pod, container, and service labels. Routine informational SQL statements are dropped; warnings and errors remain visible.
 
-Rolling p50/p95 and sample counts use actual completion times. `1h` covers the latest hour; `7d_baseline` covers the
-preceding seven days, excluding that hour. These gauges provide an immediate baseline during backfill. They are the single timing export. Detailed phase,
-BuildKit and workflow histograms are not exported because their label combinations exhausted the shared Mimir
-series allowance without serving dashboard timing queries. SQLite and Loki retain the underlying records; the
-collection-delay histogram remains cumulative. Dashboard filters use `ci_jobs_completed`.
+Rolling percentiles, phase totals and sample counts use actual completion times. `1h` covers the latest hour;
+`7d_baseline` covers the preceding seven days, excluding that hour. The collector exports recent p50/p95 for
+successful execution and queue timings and for BuildKit cache import, cache export and image export. The baseline
+exports only the successful execution median. Phase totals cover recent steps and exclude whole-job and BuildKit
+timings, which would double-count time in the phase breakdown. Sample counts still cover all cohorts because the
+dashboard's cache-state filter reads their labels. SQLite and Loki retain the underlying records.
+
+Collection delay is a cumulative count and sum without buckets. Mimir still drops buckets from older collector
+versions during rollback. The collection freshness alerts use the last successful poll and oldest live pending
+attempt gauges instead.
 
 Click a build record's runner name to open its resource history during the job. GitHub links select the exact run
 attempt and job. Source revisions and cache evidence support investigation; a timing difference alone does not
@@ -194,5 +199,5 @@ kubectl --context galactic-tailscale -n arc exec deployment/ci-observability -- 
 
 It checks the exact job set and independently recomputes queue/execution durations from GitHub, verifies sanitized
 records reached Loki, and confirms Mimir sees fresh polling. Follow with the Grafana dashboard and live rule-health
-readback. Collection-delay histograms exclude initial backfill and retain the initial installation timestamp across
+readback. Collection-delay totals exclude initial backfill and retain the initial installation timestamp across
 restarts. Warning alerts opt into the existing email route with `notify: email`.

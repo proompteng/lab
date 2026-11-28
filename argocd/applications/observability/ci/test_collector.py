@@ -12,7 +12,8 @@ import time
 import types
 import unittest
 import urllib.error
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from unittest.mock import MagicMock, patch
 
 from collector import (
@@ -20,7 +21,10 @@ from collector import (
     GitHub,
     Store,
     cache_evidence,
+    exposition,
     job_record,
+    labels,
+    metrics_handler,
     phase,
     project_ci_audit,
     timestamp,
@@ -297,9 +301,11 @@ class CollectorTests(unittest.TestCase):
         self.assertIn("ci_jobs_completed", metrics)
 
     def test_retained_histogram_rows_cannot_reintroduce_unbounded_phase_series(self):
-        self.store.observe(
-            "retained", "build", "ci_job_phase_duration_seconds", {"phase": "build"}, 12
-        )
+        with self.store.db:
+            self.store.db.execute(
+                """INSERT INTO aggregates VALUES
+                   ('ci_job_phase_duration_seconds', '{"phase":"build"}', 1, 12, '[0,0,0,1]')"""
+            )
         metrics = self.store.render(self.now)
         self.assertNotIn("ci_job_phase_duration_seconds", metrics)
 
@@ -356,19 +362,77 @@ class CollectorTests(unittest.TestCase):
         )
 
     def test_rolling_comparisons_use_event_time_and_keep_cache_cohorts_separate(self):
-        for offset, state in [(0, "warm"), (1, "cold"), (2, "warm")]:
-            record = job_record(run(), job())
+        exports = {"cache_import": 1.0, "cache_export": 2.0, "image_export": 3.0}
+        phases = {
+            "queue": 213.0,
+            "execution": 239.0,
+            "build": 16.0,
+            "unattributed": 223.0,
+            **{f"buildkit_{phase}": value for phase, value in exports.items()},
+        }
+        export_percentiles = [
+            (f"buildkit_{phase}", p) for phase in exports for p in (50, 95)
+        ]
+        recent_success = export_percentiles + [
+            ("queue", 50),
+            ("queue", 95),
+            ("execution", 50),
+            ("execution", 95),
+        ]
+        fixture = [
+            ("1h", "warm", "success", recent_success),
+            ("1h", "cold", "success", recent_success),
+            ("7d_baseline", "warm", "success", [("execution", 50)]),
+            ("1h", "mixed", "failure", export_percentiles),
+            ("7d_baseline", "mixed", "failure", []),
+        ]
+        expected_percentiles, expected_totals, expected_samples = [], [], []
+        for offset, (window, state, outcome, quantiles) in enumerate(fixture):
+            record = job_record(
+                run(),
+                job() | {"conclusion": outcome},
+                [{"id": "build", "pattern": ".*"}],
+            )
             record["job_id"] += offset
-            if offset == 2:
+            if window == "7d_baseline":
                 record["completed_at"] = "2026-10-24T12:31:15Z"
             self.store.save_job(
-                record, {"state": state, "source": "test", "durations": {}}
+                record, {"state": state, "source": "test", "durations": exports}
             )
-        text = self.store.render(self.now)
-        self.assertIn('cache_state="warm"', text)
-        self.assertIn('cache_state="cold"', text)
-        self.assertIn('window="7d_baseline"', text)
-        self.assertIn('window="1h"', text)
+            attrs = labels(record, cache_state=state, window=window)
+            for phase_name in phases:
+                expected_samples.append(
+                    exposition(
+                        "ci_job_duration_samples", 1, attrs | {"phase": phase_name}
+                    ).strip()
+                )
+            if window == "1h":
+                for phase_name in ("build", "unattributed"):
+                    expected_totals.append(
+                        exposition(
+                            "ci_job_phase_total_seconds",
+                            phases[phase_name],
+                            attrs | {"phase": phase_name},
+                        ).strip()
+                    )
+            for phase_name, percentile in quantiles:
+                expected_percentiles.append(
+                    exposition(
+                        "ci_job_duration_percentile_seconds",
+                        phases[phase_name],
+                        attrs | {"phase": phase_name, "percentile": percentile},
+                    ).strip()
+                )
+        lines = self.store.render(self.now).splitlines()
+        for metric, expected in (
+            ("ci_job_duration_percentile_seconds", expected_percentiles),
+            ("ci_job_phase_total_seconds", expected_totals),
+            ("ci_job_duration_samples", expected_samples),
+        ):
+            with self.subTest(metric=metric):
+                self.assertCountEqual(
+                    [line for line in lines if line.startswith(metric + "{")], expected
+                )
 
     def test_loki_failure_retains_outbox_and_retry_uses_same_record_identity(self):
         received = []
@@ -1294,6 +1358,58 @@ class CollectorTests(unittest.TestCase):
         self.store.db.close()
         self.store = Store(self.path)
         self.assertEqual(self.store.installed_at, installed)
+
+    def test_metrics_scrape_keeps_collection_delay_totals_without_buckets(self):
+        record = job_record(run(), job())
+        self.store.installed_at = timestamp("2026-10-25T12:30:00Z")
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO aggregates VALUES (?, ?, ?, ?, ?)",
+                (
+                    "ci_job_collection_delay_seconds",
+                    json.dumps(labels(record), sort_keys=True),
+                    2,
+                    90,
+                    json.dumps([0] * 4 + [2] * 9),
+                ),
+            )
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        observer.last_poll = self.now - 30
+        with patch("time.time", return_value=self.now):
+            self.store.save_job(record, cache_evidence(""))
+            backfill_job = job(2) | {"completed_at": "2026-10-25T12:29:59Z"}
+            self.store.save_job(job_record(run(2), backfill_job), cache_evidence(""))
+            self.store.discover(run(), self.now)
+            observer.refresh()
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), metrics_handler(observer)) as server:
+            worker = threading.Thread(target=server.serve_forever)
+            worker.start()
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{server.server_port}/metrics", timeout=5
+                ) as response:
+                    metrics = response.read().decode()
+            finally:
+                server.shutdown()
+                worker.join()
+
+        self.assertIn(
+            f"ci_observability_last_poll_timestamp_seconds {self.now - 30}\n", metrics
+        )
+        self.assertIn("ci_observability_oldest_live_pending_seconds 131.0\n", metrics)
+        actual = [
+            (line.split("{", 1)[0], float(line.rsplit(" ", 1)[1]))
+            for line in metrics.splitlines()
+            if line.startswith("ci_job_collection_delay_seconds_")
+        ]
+        self.assertCountEqual(
+            actual,
+            [
+                ("ci_job_collection_delay_seconds_count", 3),
+                ("ci_job_collection_delay_seconds_sum", 315),
+            ],
+        )
 
     def test_signed_log_failure_cannot_discard_completed_job_timings(self):
         api = FakeGitHub({}, {})
