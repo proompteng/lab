@@ -112,7 +112,7 @@ const readReleaseFrontier = (
        FROM native_protection_cancel_commands x JOIN intents i USING (intent_id, account_id)
        WHERE x.account_id = ${accountId} AND i.cycle_id = ${cycleId}
        ORDER BY x.requested_at DESC, x.intent_id, x.broker_order_id LIMIT 1) AS "latestCommand",
-      (SELECT count(*)::text FROM broker_notification_receipts WHERE account_id = ${accountId}
+      (SELECT count(*)::text FROM broker_source_events WHERE account_id = ${accountId}
         AND recorded_at >= ${reconciledAt}::timestamptz) AS notifications
     FROM authority_state a CROSS JOIN autonomous_cycles c
     WHERE a.singleton AND c.account_id = ${accountId} AND c.cycle_id = ${cycleId} AND c.state = 'ACTIVE'
@@ -359,6 +359,10 @@ export const readProtectionSubmit = (
       (submitExpiresAt !== undefined && row.databaseAt >= submitExpiresAt)
     )
       return undefined
+    if (phase === 'admission') {
+      // Serialize the scoped start with capture reservation until the intent becomes durably IO_STARTED.
+      yield* sql`SELECT account_id FROM broker_observations WHERE account_id = ${row.accountId} FOR UPDATE`
+    }
     return yield* withCurrentProtectionReleaseProof(
       {
         proofId,

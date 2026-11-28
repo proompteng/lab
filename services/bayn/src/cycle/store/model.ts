@@ -60,6 +60,7 @@ export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
     | 'read-authority-slot'
     | 'read-decision-document'
     | 'read-oldest-unfinished'
+    | 'read-unfinished'
   readonly failure: 'conflict' | 'decode' | 'entry-expired' | 'risk-expired' | 'invariant' | 'not-found' | 'query'
   readonly persistenceFailure?: 'connectivity' | 'constraint' | 'decode' | 'invariant' | 'query' | 'transaction'
   readonly message: string
@@ -78,6 +79,7 @@ export interface CycleStoreShape {
   readonly readOldestUnfinished: (
     scope: CycleRecoveryScope,
   ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
+  readonly readUnfinished?: (scope: CycleRecoveryScope) => Effect.Effect<readonly AutonomousCycle[], CycleStoreError>
   readonly activate: (cycleId: string, observedAt: string) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly bindDecision: (
     cycleId: string,

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { JevAcceptanceVersion, JevResearchPolicy } from '../jev/acceptance'
+import { JevAcceptanceVersion, JevResearchPolicy, retainedJevResearchPolicies } from '../jev/acceptance'
 import type { InferenceRateSchema } from '../inference-costs'
 import { registrationFixture } from './fixtures.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
@@ -78,7 +78,7 @@ test.each([JevAcceptanceVersion.Current, JevAcceptanceVersion.RetainedV3])(
   'registered contract rates under %s',
   (version) => {
     const registration = registrationFixture(undefined, 20, version)
-    for (const policy of Object.values(JevResearchPolicy))
+    for (const policy of retainedJevResearchPolicies)
       for (const rate of ['0', '1', '41999', '42000', '42001', '100000000']) {
         const result = validateSystemRegistration(
           {

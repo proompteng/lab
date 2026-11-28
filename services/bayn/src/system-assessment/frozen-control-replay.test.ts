@@ -7,6 +7,7 @@ import { testHash, withRegistrationCommitments } from './fixtures.test-support'
 import { FrozenControlReplaySchema, frozenReplayReplica, prepareFrozenControlReplay } from './frozen-control-replay'
 
 import { frozenControlReplayFixture } from './frozen-control.test-support'
+import { isStrategyBoundSystemRegistration } from './policy'
 
 let fixture: Awaited<ReturnType<typeof frozenControlReplayFixture>>
 beforeAll(async () => {
@@ -32,6 +33,7 @@ test('an original single-position control binds its own registered carrier and o
 
 test('the frozen polling engine cannot qualify a streaming runtime by resealing its registration', () => {
   const original = fixture.input.latencyStress.registration
+  if (isStrategyBoundSystemRegistration(original)) throw new Error('Expected retained registration')
   const retained = original.obligations.configuration
   if (retained.schemaVersion !== 'bayn.qualification-runtime.v1') throw new Error('Expected retained polling runtime')
   const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...common } = retained

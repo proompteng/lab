@@ -3,7 +3,7 @@ import { Result } from 'effect'
 
 import { OrderClass, OrderStatus, OrderSide } from '../broker/alpaca/model'
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
-import type { IntentBinding } from '../db/reconciliation'
+import type { IntentBinding } from '../db/intent-bindings'
 import { normalizeSnapshot } from './broker-normalization'
 import { normalizationFixture } from './broker-normalization.test-support'
 
@@ -24,7 +24,13 @@ test('normalizes protection history identically to explicit child bindings, pres
     history: { ...snapshot.history, orders: { ...snapshot.history.orders, rows } },
   }
   const actual = Result.getOrThrow(normalizeSnapshot(snapshot, bindings))
-  expect(actual).toEqual(Result.getOrThrow(normalizeSnapshot(explicit, expandedBindings)))
+  const { protectionGroups, ...events } = actual
+  const { protectionGroups: explicitGroups, ...explicitEvents } = Result.getOrThrow(
+    normalizeSnapshot(explicit, expandedBindings),
+  )
+  expect(events).toEqual(explicitEvents)
+  expect(protectionGroups).toHaveLength(100)
+  expect(explicitGroups).toEqual([])
   expect(actual.orderEvents.map((event) => event.order.brokerOrderId)).toEqual(
     rows.map((row) => row.value.brokerOrderId),
   )

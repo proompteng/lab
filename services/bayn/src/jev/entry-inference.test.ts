@@ -23,7 +23,7 @@ const fixture = () => {
   const bars = [
     { minuteBeforeWindowEnd: 4, open: 100, high: 103, low: 97, close: 101, volume: 100 },
     { minuteBeforeWindowEnd: 3, open: 101, high: 102, low: 99, close: 100, volume: 100 },
-    { minuteBeforeWindowEnd: 2, open: 103, high: 108, low: 102, close: 104, volume: 100 },
+    { minuteBeforeWindowEnd: 2, open: 103, high: 113, low: 102, close: 104, volume: 100 },
     { minuteBeforeWindowEnd: 1, open: 104, high: 105, low: 103, close: 104, volume: 100 },
   ]
   return {
@@ -36,7 +36,7 @@ const fixture = () => {
       numericalState: {
         schemaVersion: defaultJevProtocolDocument.inputDefinition,
         webullContext: null,
-        entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
+        entryEconomics: { maximumEntryQuoteDriftBps: 5, maximumEntryLimitSlippageBps: 5 },
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },
@@ -269,7 +269,7 @@ describe('claimed sequential entry inference', () => {
       if (disposition.status !== 'READY') throw new Error('Expected dependent judgments')
       const expected = setups.flatMap((value) => {
         const prefix = `equity_${value.toLowerCase()}`
-        return [`${prefix}_confirmed`, `${prefix}_stop_invalidates`]
+        return [`${prefix}_confirmed`, `${prefix}_stop_invalidates`, `${prefix}_target_obstructed`]
       })
       expect(Object.keys(disposition.jevRequest.questions)).toEqual(expected)
       expect(result.jev.status).toBe('RECEIVED')
@@ -307,7 +307,7 @@ describe('claimed sequential entry inference', () => {
       const bars = Array.from({ length: count }, (_, index) => ({
         minuteBeforeWindowEnd: count - index,
         open: 100,
-        high: index === count - 1 ? 108 : 102,
+        high: index === count - 1 ? 113 : 102,
         low: 97,
         close: index === count - 1 ? 104 : 101,
         volume: 100,
@@ -331,7 +331,7 @@ describe('claimed sequential entry inference', () => {
     const bars = Array.from({ length: 6 }, (_, index) => ({
       minuteBeforeWindowEnd: 6 - index,
       open: 100,
-      high: 108,
+      high: 113,
       low: 97,
       close: 104,
       volume: 100,

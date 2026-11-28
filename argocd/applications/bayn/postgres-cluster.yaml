@@ -11,7 +11,7 @@ metadata:
 spec:
   description: Bayn control and evaluation evidence
   instances: 2
-  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
   imagePullPolicy: IfNotPresent
   enablePDB: true
   enableSuperuserAccess: false

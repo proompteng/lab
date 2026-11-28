@@ -30,24 +30,31 @@ _RESEARCHED_CHIP_TECH_UNIVERSE = (
 )
 _LIVE_EXECUTION_CHIP_TECH_UNIVERSE = _RESEARCHED_CHIP_TECH_UNIVERSE
 _QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE = _LIVE_EXECUTION_CHIP_TECH_UNIVERSE
-_WEBSOCKET_SUBSCRIPTION_UNIVERSE = (
+_WEBSOCKET_BAR_UNIVERSE = (
     "AAPL",
     "AMD",
     "AMZN",
     "AVGO",
     "COHR",
     "CRDO",
+    "GOOGL",
+    "INTC",
     "IWM",
     "LITE",
+    "META",
     "MRVL",
+    "MSFT",
     "MU",
+    "NFLX",
     "NVDA",
     "QQQ",
     "SMH",
     "SNDK",
     "SPY",
+    "TSLA",
     "WDC",
 )
+_WEBSOCKET_QUOTE_TRADE_UNIVERSE = ("AAPL", "AMZN", "NVDA", "SPY")
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
 _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
 
@@ -337,20 +344,58 @@ def _assert_exact_quote_covered_paper_strategy_universe(
     )
 
 
-def _assert_exact_websocket_subscription_universe(
-    test_case: TestCase, symbols: Iterable[object], *, context: str
+def _assert_exact_shared_market_data_universes(
+    test_case: TestCase, data: Mapping[str, object]
 ) -> None:
-    normalized = [
-        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
-    ]
+    # Completed bars for every shared symbol must arrive on the streamed decision path.
+    # Preserve active execution quotes/trades and SPY within the same 30-unit budget.
+    shared_symbols = _csv_symbols(data.get("SYMBOLS"))
+    streamed_bars = _csv_symbols(data.get("ALPACA_MARKET_DATA_BARS_SYMBOLS"))
+    rest_bars = _csv_symbols(data.get("ALPACA_LATEST_BAR_SYMBOLS"))
+    latest_symbols = _csv_symbols(data.get("ALPACA_LATEST_SYMBOLS"))
     test_case.assertEqual(
-        tuple(normalized),
-        _WEBSOCKET_SUBSCRIPTION_UNIVERSE,
-        f"{context} does not match the exact shared market-data subscription universe",
+        tuple(streamed_bars),
+        _WEBSOCKET_BAR_UNIVERSE,
+        "WebSocket bars must cover the exact shared twenty-two-symbol universe",
+    )
+    test_case.assertEqual(
+        rest_bars,
+        [],
+        "completed REST bars must not overlap the fully streamed shared universe",
+    )
+    test_case.assertEqual(
+        shared_symbols,
+        streamed_bars,
+        "shared source symbols must exactly match streamed bars",
+    )
+    test_case.assertEqual(_csv_symbols(data.get("SYMBOLS_ALLOWLIST")), shared_symbols)
+    test_case.assertEqual(
+        _csv_values(data.get("ALPACA_MARKET_DATA_CHANNELS")),
+        {"trades", "quotes", "bars"},
+        "only the reviewed WS channels may consume subscription units",
+    )
+    subscription_units = len(streamed_bars)
+    for channel in ("QUOTES", "TRADES"):
+        streamed = _csv_symbols(data.get(f"ALPACA_MARKET_DATA_{channel}_SYMBOLS"))
+        test_case.assertEqual(
+            tuple(streamed),
+            _WEBSOCKET_QUOTE_TRADE_UNIVERSE,
+            f"WebSocket {channel.lower()} must preserve its exact admitted universe",
+        )
+        test_case.assertEqual(
+            latest_symbols,
+            sorted(set(shared_symbols) - set(streamed)),
+            f"REST observations must cover exactly the remaining {channel.lower()} symbols",
+        )
+        subscription_units += len(streamed)
+    test_case.assertEqual(
+        subscription_units,
+        30,
+        "the shared source must preserve the WS subscription budget",
     )
     test_case.assertTrue(
-        set(_QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE).issubset(normalized),
-        f"{context} does not cover the executable strategy universe",
+        set(_QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE).issubset(shared_symbols),
+        "the shared source must cover the unchanged executable strategy universe",
     )
 
 
@@ -378,7 +423,7 @@ __all__: tuple[str, ...] = (
     "_assert_exact_chip_tech_universe",
     "_assert_exact_live_execution_chip_universe",
     "_assert_exact_quote_covered_paper_strategy_universe",
-    "_assert_exact_websocket_subscription_universe",
+    "_assert_exact_shared_market_data_universes",
     "_container_env",
     "_csv_symbols",
     "_csv_values",

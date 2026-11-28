@@ -606,7 +606,7 @@ describe('codex app-server runner adapter', () => {
 
     const exitCode = await runCodexAppServerAdapter(
       {
-        provider: 'codex-spark-smoke',
+        provider: 'codex-smoke',
         payloads: { eventFilePath: runPath },
         artifacts: { statusPath, logPath },
         providerSpec: {
@@ -630,7 +630,7 @@ describe('codex app-server runner adapter', () => {
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"OK\\n"')
     const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
     expect(status).toMatchObject({
-      provider: 'codex-spark-smoke',
+      provider: 'codex-smoke',
       adapter: 'codex-app-server',
       exitCode: 0,
       status: 'succeeded',

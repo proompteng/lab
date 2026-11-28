@@ -10,7 +10,7 @@ import {
   type ReadResult,
   type FillActivityPage,
 } from '../broker/alpaca/model'
-import type { AccountActivityCut } from '../broker/alpaca/activity-stream'
+import type { AccountActivityCut } from '../broker/activities'
 import { type BrokerReadError } from '../broker/alpaca/failures'
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -316,7 +316,11 @@ export const readFeePages = (
   })
 
 type ReadPaperActivities = Effect.Effect<
-  { readonly cut: AccountActivityCut; readonly fees: readonly Observed<FeeActivity>[] },
+  {
+    readonly cut: AccountActivityCut
+    readonly fees: readonly Observed<FeeActivity>[]
+    readonly pendingCashFeeCount: number
+  },
   BrokerReadError | ReconciliationError
 >
 
@@ -329,9 +333,9 @@ const readHistory = (read: BrokerReadShape, until: string, paperActivities: Read
           ? Effect.all(
               { fills: readFillPages(read, until, initialFillPaginationState()), fees: readFeePages(read) },
               { concurrency: 2 },
-            )
+            ).pipe(Effect.map((activities) => ({ ...activities, pendingCashFeeCount: 0 })))
           : paperActivities.pipe(
-              Effect.map(({ cut, fees }) => ({
+              Effect.map(({ cut, fees, pendingCashFeeCount }) => ({
                 fills: {
                   rows: cut.fills,
                   recentFills: {
@@ -340,15 +344,17 @@ const readHistory = (read: BrokerReadShape, until: string, paperActivities: Read
                   },
                 },
                 fees,
+                pendingCashFeeCount,
               })),
             ),
     },
     { concurrency: 2 },
   ).pipe(
-    Effect.map(({ orders, activities: { fills, fees } }) => ({
+    Effect.map(({ orders, activities: { fills, fees, pendingCashFeeCount } }) => ({
       history: { orders: orders.history, fills: fills.rows, fees },
       recentOrders: orders.recentOrders,
       recentFills: fills.recentFills,
+      pendingCashFeeCount,
     })),
   )
 
@@ -443,6 +449,7 @@ export const readBrokerSnapshotOnce = (
     readonly snapshot: StableBrokerSnapshot
     readonly recentOrders: ReadResult<readonly BrokerOrder[]>
     readonly recentFills: ReadResult<FillActivityPage>
+    readonly pendingCashFeeCount: number
   },
   BrokerReadError | ReconciliationError
 > =>
@@ -459,17 +466,24 @@ export const readBrokerSnapshotOnce = (
       snapshot: { account, positions, history },
       recentOrders: after.recentOrders,
       recentFills: after.recentFills,
+      pendingCashFeeCount: after.pendingCashFeeCount,
     }
   })
 
-export const readStableBrokerSnapshot = (
+export const readReconciliationSnapshot = (
   read: BrokerReadShape,
   now: Effect.Effect<string, ReconciliationError>,
   waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
-): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
-  read.projection?.snapshot ??
+): Effect.Effect<
+  {
+    readonly snapshot: StableBrokerSnapshot
+    readonly complete: Effect.Effect<void, BrokerReadError>
+  },
+  BrokerReadError | ReconciliationError
+> =>
+  read.projection?.reconciliationSnapshot ??
   readBrokerSnapshotOnce(read, now, undefined).pipe(
-    Effect.map((value) => value.snapshot),
+    Effect.map((value) => ({ snapshot: value.snapshot, complete: Effect.void })),
     Effect.retry(
       Schedule.recurs(2).pipe(
         Schedule.while(({ input: cause }) =>
@@ -483,3 +497,10 @@ export const readStableBrokerSnapshot = (
       ),
     ),
   )
+
+export const readStableBrokerSnapshot = (
+  read: BrokerReadShape,
+  now: Effect.Effect<string, ReconciliationError>,
+  waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
+): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
+  readReconciliationSnapshot(read, now, waitForRetry).pipe(Effect.map(({ snapshot }) => snapshot))

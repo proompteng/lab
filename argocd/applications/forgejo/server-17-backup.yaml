@@ -1,7 +1,7 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata:
-  name: forgejo-server-17-0-2-db
+  name: forgejo-server-17-0-2-cutover-db
   namespace: forgejo
   annotations:
     argocd.argoproj.io/sync-wave: '-10'
@@ -16,7 +16,7 @@ spec:
 apiVersion: snapshot.storage.k8s.io/v1
 kind: VolumeSnapshot
 metadata:
-  name: forgejo-server-17-0-2-data
+  name: forgejo-server-17-0-2-cutover-data
   namespace: forgejo
   annotations:
     argocd.argoproj.io/sync-wave: '-10'
@@ -29,7 +29,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: forgejo-server-17-0-2-restore-db
+  name: forgejo-server-17-0-2-cutover-restore-db
   namespace: forgejo
   annotations:
     argocd.argoproj.io/sync-wave: '-5'
@@ -44,12 +44,12 @@ spec:
   dataSource:
     apiGroup: snapshot.storage.k8s.io
     kind: VolumeSnapshot
-    name: forgejo-server-17-0-2-db
+    name: forgejo-server-17-0-2-cutover-db
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: forgejo-server-17-0-2-restore-data
+  name: forgejo-server-17-0-2-cutover-restore-data
   namespace: forgejo
   annotations:
     argocd.argoproj.io/sync-wave: '-5'
@@ -64,4 +64,4 @@ spec:
   dataSource:
     apiGroup: snapshot.storage.k8s.io
     kind: VolumeSnapshot
-    name: forgejo-server-17-0-2-data
+    name: forgejo-server-17-0-2-cutover-data

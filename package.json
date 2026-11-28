@@ -35,7 +35,7 @@
     "proto:generate": "buf generate --path proto/proompteng && buf generate --template buf.temporal.gen.yaml --path proto/temporal",
     "clean": "find . -name node_modules -type d -prune -exec rm -rf '{}' +",
     "format": "bunx oxfmt",
-    "hooks:install": "node node_modules/lefthook/bin/index.js install --reset-hooks-path",
+    "hooks:install": "mise exec -- hk install --mise",
     "postinstall": "bun run postinstall:workspace-artifacts",
     "postinstall:workspace-artifacts": "bun run --filter @proompteng/codex build && bun run --filter @proompteng/discord build && bun run --filter @proompteng/otel build && bun run --filter @proompteng/temporal-bun-sdk build && bun run --filter docs fumadocs:generate && bun run --filter olden fumadocs:generate",
     "dev:convex": "bun run --filter @proompteng/backend dev",
@@ -116,22 +116,12 @@
     "@commitlint/config-conventional": "20.5.3",
     "@playwright/test": "^1.59.1",
     "bun-types": "1.4.2",
-    "lefthook": "2.1.9",
-    "lint-staged": "16.4.0",
     "node-gyp": "12.3.0",
     "oxfmt": "^0.48.0",
     "oxlint": "^1.63.0",
     "oxlint-tsgolint": "^0.22.1",
     "turbo": "2.9.9",
     "typescript": "7.0.2"
-  },
-  "lint-staged": {
-    "*.go": "gofmt -w",
-    "*.{ts,tsx,js,jsx}": [
-      "oxlint --config .oxlintrc.json",
-      "oxfmt --no-error-on-unmatched-pattern"
-    ],
-    "*.css": "oxfmt --no-error-on-unmatched-pattern"
   },
   "engines": {
     "node": "24.11.1"

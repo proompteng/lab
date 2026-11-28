@@ -27,34 +27,13 @@ References:
 - https://forgejo.org/docs/latest/
 - https://artifacthub.io/packages/helm/forgejo-helm/forgejo
 
-## Version 16 rollout
+## Version 17 recovery
 
 The Application tracks `kargo/forgejo` and authorizes only `forgejo-release:forgejo`.
-The Warehouse requires a main source commit and its matching immutable
-published image. The Stage updates both Helm-rendered containers and the
-isolated rehearsal through a Kustomize image transformation, writes source
-metadata, and syncs the exact generated commit.
+The 17.0.2 cutover retained offline PostgreSQL and repository snapshots and
+their isolated clone claims. Recover them as a pair from the
+`forgejo-server-17-0-2-cutover-*` resources. The published image uses the
+upstream rootless index and platform digests exercised in the clone rehearsal.
 
-The selected-image rehearsal passed against new snapshots and isolated clones.
-The final promotion restores one production replica and retires the maintenance
-Jobs, ConfigMap, read-only RBAC and isolation policy. Both recovery sets and all
-claims remain retained. Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md)
-for migration acceptance and coordinated recovery.
-
-## Version 17.0.2 maintenance
-
-Before merging the rehearsal, use the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md)
-to hold Forgejo at its current Kargo revision, verify idle runners and an empty
-queue, and flush the server queues. Confirm the reviewed activation is ready.
-The runbook's recorded versions and migration counts describe the previous
-cutover.
-
-The first 17.0.2 promotion stops the current Deployment, confirms that its
-Pods are gone and that both source claims retain their identities, and takes a
-fresh offline PostgreSQL backup and repository snapshot. The rehearsal uses
-isolated clones with PostgreSQL 18.6 and the promoted Forgejo image. It verifies
-all 45 release migrations, identity counts, references and Git integrity, and
-shuts down the cloned database cleanly. Keep production stopped until that
-proof passes. The activation promotion restores the one production replica and
-retires the maintenance Jobs, RBAC and isolation policy while retaining the
-snapshots and clones.
+Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md) for
+the acceptance checks and coordinated recovery.

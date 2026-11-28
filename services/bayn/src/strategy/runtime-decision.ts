@@ -5,6 +5,8 @@ import { EntryAblationTargetSchema } from '../jev/entry-ablation'
 import { JevEntryTargetSchema } from '../jev/decision'
 import { JevExitTargetSchema } from '../jev/exit'
 import { RepeatedMomentumTargetSchema } from './repeated-momentum/decision'
+import { IntradayAlphaTargetSchema, type IntradayAlphaTarget } from './intraday-alpha/decision'
+import { IntradayAlphaPhase } from './intraday-alpha/constants'
 import type { RetainedJevEntryTarget, RetainedJevExitTarget } from '../jev/retained-jev-targets'
 import type { RetainedJevAblationTarget, RetainedJevMomentumTarget } from '../jev/retained-jev-control-targets'
 import { isShortExitPlan } from './funded-exit-plan'
@@ -34,6 +36,7 @@ export const RuntimeStrategyDecisionSchema = Schema.Union([
   JevEntryTargetSchema,
   EntryAblationTargetSchema,
   RepeatedMomentumTargetSchema,
+  IntradayAlphaTargetSchema,
   JevExitTargetSchema,
   IntradayMomentumTargetPortfolioSchema,
   FlatExecutionTargetSchema,
@@ -56,6 +59,7 @@ export const runtimeDecisionMatchesStrategy = (
     case 'bayn.jev-entry-target.v7':
     case 'bayn.entry-ablation-target.v1':
     case 'bayn.repeated-momentum-target.v1':
+    case 'bayn.intraday-alpha-target.v2':
     case 'bayn.jev-exit-target.v5':
       return strategyName === 'jev'
     case 'bayn.intraday-momentum.target.v3':
@@ -88,7 +92,10 @@ export const isChartEntryTarget = <Decision extends RecordedRuntimeStrategyDecis
 > =>
   decision?.schemaVersion === 'bayn.jev-entry-target.v7' || decision?.schemaVersion === 'bayn.entry-ablation-target.v1'
 
-export type ProtectedEntryTarget = ChartEntryTarget | typeof RepeatedMomentumTargetSchema.Type
+export type ProtectedEntryTarget =
+  | ChartEntryTarget
+  | typeof RepeatedMomentumTargetSchema.Type
+  | typeof IntradayAlphaTargetSchema.Type
 export type RecordedProtectedEntryTarget =
   | ProtectedEntryTarget
   | RetainedJevEntryTarget
@@ -104,8 +111,25 @@ export const isProtectedEntryTarget = <Decision extends RecordedRuntimeStrategyD
       | 'bayn.jev-entry-target.v7'
       | 'bayn.entry-ablation-target.v1'
       | 'bayn.repeated-momentum-target.v1'
+      | 'bayn.intraday-alpha-target.v2'
   }
-> => isChartEntryTarget(decision) || decision?.schemaVersion === 'bayn.repeated-momentum-target.v1'
+> =>
+  isChartEntryTarget(decision) ||
+  decision?.schemaVersion === 'bayn.repeated-momentum-target.v1' ||
+  decision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+
+export const isMiddayAlphaTarget = (
+  decision: RecordedRuntimeStrategyDecision | undefined,
+): decision is IntradayAlphaTarget & { readonly phase: IntradayAlphaPhase.MiddayReversion } =>
+  decision?.schemaVersion === 'bayn.intraday-alpha-target.v2' && decision.phase === IntradayAlphaPhase.MiddayReversion
+
+export const isBrokerManagedAlphaTarget = (
+  decision: RecordedRuntimeStrategyDecision | undefined,
+): decision is IntradayAlphaTarget & {
+  readonly phase: IntradayAlphaPhase.MiddayReversion | IntradayAlphaPhase.NoiseAreaTrend
+} =>
+  decision?.schemaVersion === 'bayn.intraday-alpha-target.v2' &&
+  (decision.phase === IntradayAlphaPhase.MiddayReversion || decision.phase === IntradayAlphaPhase.NoiseAreaTrend)
 
 export const protectedEntryBuyPriceCeilings = (
   decision: RecordedRuntimeStrategyDecision | undefined,
@@ -135,7 +159,7 @@ export const protectedEntrySellPriceFloors = (
 export const protectedEntryShortEligibility = (
   decision: RecordedRuntimeStrategyDecision | undefined,
 ): Readonly<Record<string, EquityShortEligibility>> => {
-  if (!isChartEntryTarget(decision)) return {}
+  if (!isChartEntryTarget(decision) && decision?.schemaVersion !== 'bayn.intraday-alpha-target.v2') return {}
   const observation = decision.evidence.observation
   if (!('equityShortEligibility' in observation) || observation.equityShortEligibility === undefined) return {}
   return Object.fromEntries(

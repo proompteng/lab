@@ -23,6 +23,48 @@ const digests = {
   'bayn-broker-feed': `sha256:${'c'.repeat(64)}`,
 }
 
+test('one cohort publisher prepares all indexes without weakening terminal or discovery gates', () => {
+  const cohort = workflow.jobs['publish-cohort']
+  expect(cohort.needs).toEqual(['image', 'research-image', 'broker-feed-image'])
+  expect(cohort['runs-on']).toBe('arc-amd64')
+  expect(cohort['timeout-minutes']).toBe(15)
+  expect(cohort.env).toEqual({ KARGO_TAG: 'kargo-sha-${{ github.sha }}-run-${{ github.run_id }}' })
+  for (const member of cohort.needs) expect(workflow.jobs[member].with.publish_index).toBe(false)
+  const prepareIndex = steps.findIndex((step: { id?: string }) => step.id === 'indexes')
+  const preparation = steps[prepareIndex]
+  expect(preparation.run).toBe('bun run packages/scripts/src/bayn/prepare-image-cohort.ts')
+  expect(preparation.env).toEqual({
+    BAYN_BUILD_RESULT: '${{ needs.image.result }}',
+    RESEARCH_BUILD_RESULT: '${{ needs.research-image.result }}',
+    BROKER_FEED_BUILD_RESULT: '${{ needs.broker-feed-image.result }}',
+  })
+  const verification = steps[prepareIndex + 1]
+  const artifact = steps[prepareIndex + 2]
+  const sourceGuard = steps[prepareIndex + 3]
+  const discovery = steps[prepareIndex + 4]
+  expect(verification.run).toBe(verify)
+  expect(artifact.uses).toBe('actions/upload-artifact@v6')
+  expect(artifact.with).toEqual({
+    name: 'bayn-image-cohort',
+    path: 'bayn-image-cohort.json',
+    'if-no-files-found': 'error',
+    'retention-days': 3,
+  })
+  expect(sourceGuard.run).toBe('bash packages/scripts/src/bayn/verify-publication-source.sh')
+  expect(discovery.run).toBe(publish)
+  const outputs = {
+    BAYN_DIGEST: '${{ steps.indexes.outputs.bayn_digest }}',
+    RESEARCH_DIGEST: '${{ steps.indexes.outputs.research_digest }}',
+    BROKER_FEED_DIGEST: '${{ steps.indexes.outputs.broker_feed_digest }}',
+  }
+  expect(verification.env).toEqual(outputs)
+  expect(discovery.env).toEqual(outputs)
+  for (const gate of [cohort, preparation, verification, artifact, sourceGuard, discovery]) {
+    expect(gate.if).toBeUndefined()
+    expect(gate['continue-on-error']).toBeUndefined()
+  }
+})
+
 test('every native cohort image waits for the same nonpublishing hosted broker validation', () => {
   expect(workflow.jobs['broker-feed-validation']).toEqual({
     needs: 'changes',

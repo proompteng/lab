@@ -21,7 +21,6 @@ resources:
   - execution-bootstrap-sealedsecret.yaml
   - execution-controller.yaml
   - broker-feed.yaml
-  - broker-kafka-ingress.yaml
   - broker-stream-networkpolicy.yaml
   - execution-controller-pdb.yaml
   - execution-controller-networkpolicy.yaml
@@ -37,12 +36,6 @@ resources:
   - opencode-retained-state.yaml
   - research-networkpolicy.yaml
 configMapGenerator:
-  - name: bayn-broker-kafka-health
-    files:
-      - probe.sh=broker-kafka-health.sh
-    options:
-      annotations:
-        argocd.argoproj.io/sync-wave: "-2"
   - name: bayn-telemetry
     files:
       - config.alloy=telemetry.alloy

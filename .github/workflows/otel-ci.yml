@@ -10,9 +10,14 @@ on:
   pull_request:
     paths:
       - 'packages/otel/**'
+      - '.github/workflows/otel-ci.yml'
+  workflow_call:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: otel-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,4 +29,3 @@ jobs:
       oxlint-command: bunx oxlint --config .oxlintrc.json packages/otel/src packages/otel/tests
       test-command: bun run --filter @proompteng/otel test
       build-command: bun run --filter @proompteng/otel build
-    secrets: inherit

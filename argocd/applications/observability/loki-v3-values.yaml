@@ -3,6 +3,8 @@
 fullnameOverride: observability-loki-v3
 nameOverride: observability-loki-v3
 deploymentMode: Distributed
+test:
+  enabled: false
 
 defaults:
   extraArgs:
@@ -297,6 +299,9 @@ singleBinary:
 
 lokiCanary:
   enabled: true
+  image:
+    tag: "3.7.10"
+    digest: sha256:fb5e3e189f46c61196067c88afc37f82dcc9bd5a886180cdd4370b0b0110669e
   tolerations:
     - key: workload.proompteng.ai/compute-local
       operator: Equal
@@ -310,9 +315,6 @@ lokiCanary:
     limits:
       cpu: 50m
       memory: 64Mi
-
-minio:
-  enabled: false
 
 memcachedExporter:
   resources:

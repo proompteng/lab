@@ -582,6 +582,7 @@ class CollectorTests(unittest.TestCase):
         active_run["status"] = "in_progress"
         queued.update(
             status="queued",
+            labels=["arc-arm64-tmpfs-large"],
             runner_name="",
             started_at=None,
             completed_at=None,

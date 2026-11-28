@@ -9,9 +9,11 @@ on:
   pull_request:
     paths:
       - 'services/graf/**'
+      - '.github/workflows/graf-service.yml'
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: Graf Kotlin service-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

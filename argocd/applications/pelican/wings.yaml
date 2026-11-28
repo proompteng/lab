@@ -55,6 +55,8 @@ spec:
                 bus: virtio
           interfaces:
             - name: default
+              # The retained guest's cloud-init netplan matches this MAC.
+              macAddress: b2:97:18:c1:12:bb
               masquerade: {}
               ports:
                 - name: api

@@ -15,6 +15,10 @@ on:
       - 'proto/proompteng/authz/**'
       - 'proto/proompteng/relay/**'
       - 'services/bayn/**'
+      # These files are used only by Bayn's PostgreSQL tests.
+      - '!services/bayn/src/testing/postgres-template.test-support.ts'
+      - '!services/bayn/tools/postgres-file-preload.ts'
+      - '!services/bayn/tools/postgres-test-databases.ts'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
@@ -54,6 +58,7 @@ jobs:
     with:
       image_name: opencode
       package_attr: opencode-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       source_revision: ${{ github.sha }}

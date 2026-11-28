@@ -21,7 +21,7 @@ spec:
         app: torghut-ws
       annotations:
         kubectl.kubernetes.io/restartedAt: 2026-05-01T01:25:51.190Z
-        torghut.proompteng.ai/ws-config-generation: bayn-iex-single-session-qualification-v1
+        torghut.proompteng.ai/market-data-subscription-plan: iex-all-bars-v1
     spec:
       serviceAccountName: torghut-runtime
       securityContext:

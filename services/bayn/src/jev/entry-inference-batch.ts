@@ -195,7 +195,10 @@ const handoff = (
     else if (terminal.outcome.status === 'FAILED')
       disposition = { status: 'VISUAL_FAILED', failure: terminal.outcome.failure }
     else {
-      const derived = deriveEntryHandoffDisposition(work.prepared.input, terminal.outcome.inference)
+      const derived = deriveEntryHandoffDisposition(
+        { input: work.prepared.input, chart: work.chart, visualRequest: work.visualRequest },
+        terminal.outcome.inference,
+      )
       disposition = Result.isSuccess(derived)
         ? derived.success
         : {

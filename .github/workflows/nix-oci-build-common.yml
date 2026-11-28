@@ -22,10 +22,19 @@ on:
         required: false
         type: string
         default: ''
+      tmpfs:
+        description: Build both platform archives on the standard tmpfs runners
+        type: boolean
+        default: false
       latest:
         required: false
         type: boolean
         default: false
+      publish_index:
+        description: Publish the index here; disable only when the caller prepares a verified image cohort
+        required: false
+        type: boolean
+        default: true
       publish_kargo_tag:
         required: false
         type: boolean
@@ -74,7 +83,7 @@ jobs:
           - platform: linux/arm64
             arch: arm64
             runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ format('{0}{1}', matrix.runner, inputs.tmpfs && '-tmpfs' || '') }}
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
@@ -295,10 +304,12 @@ jobs:
   publish-index:
     if: >-
       ${{
-        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-        (
-          github.event_name == 'workflow_dispatch' &&
-          (github.ref == 'refs/heads/main' || inputs.publish_on_dispatch)
+        inputs.publish_index && (
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (
+            github.event_name == 'workflow_dispatch' &&
+            (github.ref == 'refs/heads/main' || inputs.publish_on_dispatch)
+          )
         )
       }}
     needs: build-platform

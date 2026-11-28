@@ -2470,6 +2470,9 @@ describe('execution coordinator', () => {
             const cached = yield* makeProjectedBrokerRead(fresh).pipe(
               Effect.provideService(BrokerObservations, {
                 read: observed,
+                readForReconciliation: observed.pipe(
+                  Effect.map((observation) => ({ observation, complete: Effect.void })),
+                ),
                 readState: observed,
                 readForSubmit: () => observed,
                 invalidate: Effect.sync(() => {

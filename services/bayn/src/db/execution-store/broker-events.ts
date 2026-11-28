@@ -8,14 +8,17 @@ import type { EventReceipt, ExecutionStoreError, HistoryEventInput, PositionSnap
 import {
   decideBrokerEventAppend,
   decideNextSourceSequence,
+  decideOrderVersion,
   decidePositionSnapshotInsert,
   finishPositionSnapshot,
   planPositionSnapshot,
+  selectLatestOrderVersions,
   validateStoredPositionSnapshot,
 } from './decisions'
 import { failExecutionStore, liftStoreDecision, runExecutionOperation } from './errors'
 import {
   decodeBrokerEvent,
+  decodeCurrentOrderVersionRows,
   decodeEventIdRows,
   decodeEventInput,
   decodeEventRows,
@@ -44,6 +47,22 @@ export const makeBrokerEventInterpreter = (
   sql: PgClient.PgClient,
   writerFence: WriterFenceService,
 ): BrokerEventInterpreter => {
+  const readCurrentOrderVersions = (broker: Broker, accountId: string, brokerOrderIds: readonly string[]) =>
+    brokerOrderIds.length === 0
+      ? Effect.succeed([])
+      : sql<Record<string, unknown>>`
+          SELECT DISTINCT ON (observed_order.broker_order_id)
+            event.event_id, event.normalized_content_hash AS content_hash,
+            observed_order.broker_order_id, event.source_event_id,
+            event.source_sequence::text AS source_sequence, observed_order.broker_updated_at
+          FROM broker_events AS event
+          JOIN orders AS observed_order USING (event_id)
+          WHERE event.broker = ${broker} AND event.account_id = ${accountId}
+            AND observed_order.broker_order_id IN ${sql.in(brokerOrderIds)}
+          ORDER BY observed_order.broker_order_id, observed_order.broker_updated_at COLLATE "C" DESC,
+            event.source_sequence DESC, event.event_id COLLATE "C" DESC
+        `.pipe(Effect.flatMap(decodeCurrentOrderVersionRows))
+
   const completeHistory = (
     inputs: readonly HistoryEventInput[],
   ): Effect.Effect<ReadonlySet<string>, ExecutionStoreError> =>
@@ -59,6 +78,29 @@ export const makeBrokerEventInterpreter = (
         return yield* writerFence.transaction(
           Effect.gen(function* () {
             yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${first.broker}:${first.accountId}`}, 0))`
+            const orderInputs = inputs.filter(
+              (input): input is Extract<BrokerEventInput, { readonly _tag: 'Order' }> => input._tag === 'Order',
+            )
+            const latestOrderInputs = yield* liftStoreDecision('ingest', selectLatestOrderVersions(orderInputs))
+            const brokerOrderIds = latestOrderInputs.map((input) => input.order.brokerOrderId)
+            const currentOrders = new Map(
+              (yield* readCurrentOrderVersions(first.broker, first.accountId, brokerOrderIds)).map((row) => [
+                row.broker_order_id,
+                row,
+              ]),
+            )
+            for (const input of latestOrderInputs) {
+              const version = yield* liftStoreDecision(
+                'ingest',
+                decideOrderVersion(input, currentOrders.get(input.order.brokerOrderId)),
+              )
+              if (version._tag === 'SupersedeOrderVersion')
+                return yield* failExecutionStore(
+                  'ingest',
+                  'conflict',
+                  'broker history order is older than the retained provider version',
+                )
+            }
             const sourceIds = [...new Set(inputs.map((input) => input.sourceEventId))]
             const rows = yield* sql<Record<string, unknown>>`
               SELECT event.event_id, event.event_kind, event.normalized_content_hash AS content_hash,
@@ -135,13 +177,15 @@ export const makeBrokerEventInterpreter = (
           INSERT INTO orders (
             event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
             side, order_type, time_in_force, quantity_atoms, notional_micros,
-            filled_quantity_atoms, limit_price_micros, stop_price_micros, parent_broker_order_id, status
+            filled_quantity_atoms, limit_price_micros, stop_price_micros, parent_broker_order_id, status,
+            broker_updated_at
           ) VALUES (
             ${eventId}, ${input.order.accountId}, ${input.order.schemaVersion}, ${input.order.brokerOrderId},
             ${input.order.clientOrderId}, ${input.order.intentId ?? null}, ${input.order.symbol}, ${input.order.side},
             ${input.order.orderType}, ${input.order.timeInForce}, ${input.order.quantityAtoms ?? null},
             ${input.order.notionalMicros ?? null},
-            ${input.order.filledQuantityAtoms}, ${input.order.limitPriceMicros ?? null}, ${input.order.stopPriceMicros ?? null}, ${input.order.parentBrokerOrderId ?? null}, ${input.order.status}
+            ${input.order.filledQuantityAtoms}, ${input.order.limitPriceMicros ?? null}, ${input.order.stopPriceMicros ?? null}, ${input.order.parentBrokerOrderId ?? null}, ${input.order.status},
+            ${input.sourceTimestamp}
           )
         `.pipe(Effect.asVoid)
       case 'Fill':
@@ -167,6 +211,11 @@ export const makeBrokerEventInterpreter = (
       'ingest',
       Effect.gen(function* () {
         yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.broker}:${input.accountId}`}, 0))`
+        if (input._tag === 'Order') {
+          const [current] = yield* readCurrentOrderVersions(input.broker, input.accountId, [input.order.brokerOrderId])
+          const version = yield* liftStoreDecision('ingest', decideOrderVersion(input, current))
+          if (version._tag !== 'AcceptOrderVersion') return version.receipt
+        }
         const existing = yield* sql<Record<string, unknown>>`
           SELECT event_id, event_kind, normalized_content_hash AS content_hash, source_sequence::text AS source_sequence
           FROM broker_events

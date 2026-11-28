@@ -1,4 +1,4 @@
-import { postgresQueryFixture } from '../testing/postgres-fixture.test-support'
+import { brokerObservationPostgresFixture } from './broker-observation-postgres.test-support'
 import { ValkeyCache } from '../valkey-cache'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import { mock } from 'bun:test'
@@ -33,23 +33,24 @@ const claims = new Map<unknown, number>()
 const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
   Effect.suspend<readonly unknown[], Error, never>(() => {
     if (strings.join('').includes('RETURNING broker_observations.generation')) {
-      if (values[3] === 'consistency-wait')
+      const captureId = values.at(-1)
+      if (captureId === 'consistency-wait')
         return Effect.succeed([
           { status: 'QUOTA_WAIT', generation: null, startedAt: null, nextPollNotBeforeMs: consistencyDeadline },
         ])
-      if (claims.has(values[3]))
+      if (claims.has(captureId))
         return Effect.succeed([
-          { status: 'ALREADY_CLAIMED', generation: null, startedAt: null, nextPollNotBeforeMs: claims.get(values[3]) },
+          { status: 'ALREADY_CLAIMED', generation: null, startedAt: null, nextPollNotBeforeMs: claims.get(captureId) },
         ])
-      claims.set(values[3], Number(values[4]))
-      now += values[3] === 'clock-regression' ? -1 : 47_000
+      claims.set(captureId, Number(values.at(-2)))
+      now += captureId === 'clock-regression' ? -1 : 47_000
       return Clock.currentTimeMillis.pipe(
         Effect.map((now) => [
           {
             status: 'RESERVED',
             generation: 1,
             startedAt: new Date(now).toISOString(),
-            nextPollNotBeforeMs: Number(values[4]),
+            nextPollNotBeforeMs: Number(values.at(-2)),
           },
         ]),
       )
@@ -68,7 +69,7 @@ const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
 
 await mock.module('../db/postgres-client', () => ({
   ...actualPostgres,
-  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, postgresQueryFixture(sql)),
+  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, brokerObservationPostgresFixture(sql)),
 }))
 await mock.module('../broker/alpaca/http', () => ({
   ...actualHttp,

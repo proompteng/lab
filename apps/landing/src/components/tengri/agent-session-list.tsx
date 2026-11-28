@@ -4,6 +4,7 @@ import { Button, Skeleton } from '@proompteng/design/ui'
 import { Archive, ArrowLeft, LoaderCircle, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
+import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 import { cn } from '@/lib/utils'
 import { runTengriAction, TengriRequestError } from './client'
 
@@ -17,7 +18,7 @@ export function AgentSessionList({
   agentId,
   enabled,
   selected,
-  busyThreadIds,
+  threadPhases,
   canSelect,
   revision,
   onSelect,
@@ -26,7 +27,7 @@ export function AgentSessionList({
   agentId: string
   enabled: boolean
   selected: { id: string; unavailable: boolean } | null
-  busyThreadIds: ReadonlySet<string>
+  threadPhases: ReadonlyMap<string, TengriCodexRun['state']['phase']>
   canSelect: boolean
   revision: number
   onSelect: (threadId: string) => void
@@ -157,7 +158,12 @@ export function AgentSessionList({
           {threads.map((thread) => {
             const unavailable = thread.id === selected?.id && selected.unavailable
             const active = thread.id === selected?.id && !index.archived
-            const busy = busyThreadIds.has(thread.id)
+            const phase = threadPhases.get(thread.id)
+            const busy = phase !== undefined
+            const waiting =
+              phase === 'authorization_required' || phase === 'needs_reconciliation' || phase === 'waiting_for_approval'
+            const status =
+              phase === 'needs_reconciliation' ? 'Response unconfirmed' : waiting ? 'Needs you' : 'Response in progress'
             return (
               <li key={thread.id} className="group relative mb-0.5 flex min-w-0 items-center">
                 <Button
@@ -166,44 +172,57 @@ export function AgentSessionList({
                   data-conversation-id={thread.id}
                   disabled={!canSelect || index.archived}
                   aria-current={active ? 'true' : undefined}
-                  aria-description={busy ? 'Response in progress' : undefined}
+                  aria-description={busy ? status : undefined}
                   onClick={() => onSelect(thread.id)}
                   className={cn(
-                    'h-8 min-w-0 flex-1 justify-start gap-2 pl-2.5 pr-8 text-left [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:pr-12',
+                    'h-8 min-w-0 flex-1 justify-start gap-2 rounded-lg pl-2.5 pr-8 text-left transition-none active:bg-white/[0.12] dark:active:bg-white/[0.12] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:pr-12',
                     active
-                      ? 'bg-white/[0.06] text-zinc-100'
-                      : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200',
+                      ? 'bg-white/10 text-zinc-100 hover:bg-white/10 hover:text-zinc-100 dark:hover:bg-white/10'
+                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100 dark:hover:bg-white/5',
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate text-copy-14">{thread.title}</span>
-                  {busy ? (
-                    <LoaderCircle
-                      className="size-3 shrink-0 animate-spin text-zinc-500 motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  ) : null}
                   {unavailable ? <span className="text-label-12 text-zinc-400">Unavailable</span> : null}
                 </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`${index.archived ? 'Restore' : 'Archive'} ${thread.title}`}
-                  title={
-                    index.archived ? 'Restore chat' : busy ? 'Finish the response before archiving' : 'Archive chat'
-                  }
-                  disabled={changing.has(thread.id) || (!index.archived && (busy || unavailable || !canSelect))}
-                  onClick={() => void setArchived(thread.id, !index.archived)}
-                  className="absolute right-1 size-6 text-zinc-400 hover:text-zinc-100 [@media(pointer:coarse)]:size-11 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100"
-                >
-                  {changing.has(thread.id) ? (
-                    <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
-                  ) : index.archived ? (
-                    <RotateCcw aria-hidden="true" className="size-3.5" />
-                  ) : (
-                    <Archive aria-hidden="true" className="size-3.5" />
-                  )}
-                </Button>
+                {waiting ? (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-1 inline-flex size-6 items-center justify-center text-zinc-400 [@media(pointer:coarse)]:size-11"
+                  >
+                    <span className="size-1.5 rounded-full bg-current" />
+                  </span>
+                ) : busy ? (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-1 inline-flex size-6 items-center justify-center text-zinc-500 group-hover:opacity-0 group-focus-within:opacity-0 [@media(pointer:coarse)]:hidden"
+                  >
+                    <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
+                  </span>
+                ) : null}
+                {!waiting || index.archived ? (
+                  <span className="absolute right-1 inline-flex [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`${index.archived ? 'Restore' : 'Archive'} ${thread.title}`}
+                      title={
+                        index.archived ? 'Restore chat' : busy ? 'Finish the response before archiving' : 'Archive chat'
+                      }
+                      disabled={changing.has(thread.id) || (!index.archived && (busy || unavailable || !canSelect))}
+                      onClick={() => void setArchived(thread.id, !index.archived)}
+                      className="size-6 text-zinc-400 hover:text-zinc-100 [@media(pointer:coarse)]:size-11"
+                    >
+                      {changing.has(thread.id) ? (
+                        <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
+                      ) : index.archived ? (
+                        <RotateCcw aria-hidden="true" className="size-3.5" />
+                      ) : (
+                        <Archive aria-hidden="true" className="size-3.5" />
+                      )}
+                    </Button>
+                  </span>
+                ) : null}
               </li>
             )
           })}

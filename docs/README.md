@@ -13,6 +13,7 @@ Start here when deciding which documentation to trust.
 
 - Atlas code search: `atlas/README.md`
 - Deployment automation: `release-automation.md` (Kargo is the image-promotion authority)
+- Nix image transfer concurrency trial: [comparison and acceptance](runbooks/nix-substitution-concurrency-trial.md)
 - Galactic upgrade compatibility, acceptance and recovery: [cluster stable upgrades](runbooks/cluster-stable-upgrades-2026-09.md)
 - Repository cleanup backlog: `repository-cleanup-todo.md`
 - Agents/Jangar: `agents/README.md`

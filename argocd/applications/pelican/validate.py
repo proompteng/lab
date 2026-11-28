@@ -63,6 +63,11 @@ def main() -> None:
         ["sh", "-n"], input=pod["initContainers"][0]["args"][0], text=True, check=True
     )
     assert all(item["name"] != "ADMIN_PASSWORD" for item in pod["containers"][0]["env"])
+    vm = resource("VirtualMachine", "pelican-wings")["spec"]["template"]["spec"]
+    interface = next(
+        item for item in vm["domain"]["devices"]["interfaces"] if item["name"] == "default"
+    )
+    assert interface.get("macAddress"), "The retained guest needs its original network MAC"
     assert (
         resource("Service", "pelican-games")["spec"]["loadBalancerClass"] == "tailscale"
     )

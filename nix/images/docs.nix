@@ -24,6 +24,7 @@ import ./bun-workspace-service.nix {
     "packages/design"
   ];
   buildCommands = [
+    ''patchShebangs --build "$(realpath apps/docs/node_modules/.bin/next)"''
     "bun --cwd=apps/docs run build"
   ];
   runtimeInstallPhase = ''

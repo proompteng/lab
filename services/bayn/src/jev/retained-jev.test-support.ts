@@ -9,7 +9,11 @@ import {
   verifyEntryInferenceSource,
 } from './entry-inference-input'
 import { JevEvaluationReceiptSchema } from './evidence'
-import { RetainedJevProtocolV39Schema, retainedJevProtocolV39Document } from './protocol'
+import {
+  RetainedJevProtocolV39Schema,
+  retainedJevProtocolV39Document,
+  retainedJevProtocolV41Document,
+} from './protocol'
 import { decodeRetainedStagedEvaluationRequest } from './staged-inference-cost-evidence'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { stagedChartAssessments } from './retained-jev-staged-chart-questions'
@@ -39,7 +43,7 @@ export const makeJevEvaluationRequest = (raw: unknown) =>
     })
   })
 export const entryEvaluationRequestFixture = (at?: string, symbol?: string, selection?: EntryAblationSelection) => {
-  const original = currentRequest(at, symbol, selection)
+  const original = currentRequest(at, symbol, selection, retainedJevProtocolV41Document)
   const prepared = Result.getOrThrow(
     prepareEntryInferenceInput({ ...original.request, protocol: retainedJevProtocolV39Document }),
   )

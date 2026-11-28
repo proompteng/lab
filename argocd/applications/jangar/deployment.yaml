@@ -262,7 +262,7 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: '300'
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
-              value: codex-spark,codex
+              value: codex
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD
               value: '3'
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS

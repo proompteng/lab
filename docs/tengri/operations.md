@@ -64,14 +64,30 @@ and KVM acceptance pass. No operator-created image alias or digest promotion PR 
 Preserve the MicroVM UID, home PVC UID, filesystem and native operation history. Never submit the accepted input
 again. A Ready pod, journal activity, or a recorded `turn/start` result does not prove the turn completed.
 
-`authorization_required` retains the turn ID and waits for **Resume recovery** or a renewed Stop from the current
-signed-in session. Both controls update authority for the existing run. `needs_reconciliation` retains the same
-identity and backs off to one observation per minute. Neither state releases its conversation or sleep pin.
+`authorization_required` retains the run identity and waits for **Reconnect** or Stop from the current signed-in
+session. Both controls update authority for the existing run. `needs_reconciliation` retains the same identity and
+backs off to one observation per minute. Neither state releases its conversation or sleep pin. A durable rejection
+recorded before the native request was sent lets the existing workflow settle and release both pins.
+If the operation records a kernel boot ID and the retained guest now has a different boot ID, reconciliation can
+settle an unconfirmed outcome after reading native history and receipts. The original operation remains in the
+journal and cannot be resent. The conversation and sleep pins can be released so the user can continue in the same
+chat. The runner records the same proof for older receipts when it replaces the guest binary after reaping the VMM.
+When item history is unavailable, Nanoagent checks the exact thread for a missing native rollout. A temporary history
+failure leaves the original run protected.
 Run-worker probes use HTTP `/healthz` on 8080; the Restate HTTP/2 listener remains on 9080.
 
 The `TengriRunStatusFailures` alert counts reads that exhausted their recovery budget. `TengriRunRecoveryBlocked`
 counts actual blocked observations, excluding workflow replay. Check Ofz audit-commit and Restate WAL-fsync latency
 alongside end-to-end reads; healthy storage and pod readiness do not establish responsive product behavior.
+
+For an authorized rebind to a journal-compatible worker, verify the replacement deployment was registered through
+the normal release and test replay against the previous worker first. Record the original invocation and deployment
+IDs, exact workspace/home/operation binding, and dispatch command count. Pause only the affected invocation, read
+back `Paused` or `Suspended`, then resume the same invocation on the explicit replacement deployment ID. Prefer
+the durable workflow to settle its own run and release its pins. Verify the original invocation and journal remain,
+the dispatch count is unchanged, and the exact conversation claim and sleep pin are released after settlement.
+The [Restate versioning procedure](https://docs.restate.dev/services/versioning#pause-invocations-and-resume-on-a-new-deployment)
+preserves journaled results across compatible deployments.
 
 Before deploying a changed workflow journal, settle existing accepted work on its pinned worker. If native terminal
 receipts cannot be recovered after confirmed VMM termination, an authorized incident repair must:
@@ -515,6 +531,12 @@ Use [the chat acceptance contract](agent-chat.md) for authenticated account, tur
 proof. Infrastructure health, unit tests, or a fast Firecracker API call do not establish usable end-to-end latency.
 
 ## Recovery
+
+A lifecycle that loses leadership while a command is in flight fences and reaps Firecracker. If the original
+slot Pod and its disks are still attached, the controller can cold-boot those disks when Ofz again authorizes
+the workspace to run. The runner requires its fenced journal and the same slot allocation. It leaves the Pod,
+home, root disk, and accepted run records in place and discards unusable memory snapshots. A cold boot restarts
+processes, so it does not count as snapshot resume or prove that an interrupted Codex turn completed.
 
 A controller restart leaves existing slot Pods and owned homes intact. A sleeping runner can reopen its committed
 journal only with matching pins and identity. An active runner restart, missing Pod, partition, or incompatible snapshot

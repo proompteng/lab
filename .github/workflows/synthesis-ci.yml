@@ -1,6 +1,7 @@
 name: synthesis
 
 on:
+  workflow_call:
   push:
     branches:
       - main
@@ -17,8 +18,11 @@ on:
       - 'argocd/applications/synthesis/**'
       - 'argocd/applicationsets/product.yaml'
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: synthesis-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

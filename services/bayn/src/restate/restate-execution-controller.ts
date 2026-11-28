@@ -92,6 +92,10 @@ export interface ExecutionControllerConfig {
 }
 
 export interface NativeExecutionRuntime {
+  readonly brokerAccount?: {
+    readonly bind: (signal: AbortSignal) => Promise<string | null>
+    readonly previousController: (signal: AbortSignal) => Promise<string | null>
+  }
   readonly prepareActivation: (signal: AbortSignal) => Promise<void>
   readonly advance: (
     command: import('../execution/advance').AdvanceExecutionCommand,
@@ -265,7 +269,7 @@ const verifyDeactivationBinding = (
   key: string,
   request: ExecutionControllerDeactivation,
 ): void => {
-  if (key !== config.controllerKey || request.controllerKey !== config.controllerKey) {
+  if (key !== request.controllerKey || key !== config.controllerKey) {
     throw terminal('execution controller deactivation does not match this immutable deployment')
   }
 }
@@ -438,6 +442,28 @@ export const makeBaynExecutionController = (
   hooks: readonly restate.HooksProvider[] = [],
   clock: Pick<Clock.Clock, 'currentTimeMillisUnsafe'> = Clock.Clock.defaultValue(),
 ) => {
+  const bindConfiguredAccount = async (ctx: restate.ObjectContext<ControllerObjectState>): Promise<void> => {
+    const account = runtime.brokerAccount
+    if (account === undefined) return
+    const previousKey = await ctx.run(
+      'bind the configured broker account',
+      () => account.bind(ctx.request().attemptCompletedSignal),
+      { maxRetryAttempts: 0 },
+    )
+    if (previousKey === null) return
+    const client = ctx.objectClient(controller, previousKey)
+    const predecessor = await client.status(undefined)
+    if (predecessor === null || !predecessor.active) return
+    const retired = await client.deactivate({
+      schemaVersion: 'bayn.execution-controller-deactivation.v1',
+      controllerKey: previousKey,
+      epoch: predecessor.epoch,
+      planHash: predecessor.planHash,
+      sourceRevision: predecessor.sourceRevision,
+    })
+    if (retired.active) throw terminal('previous account controller is still active')
+  }
+
   const controller = restate.object({
     name: 'BaynExecutionController',
     handlers: {
@@ -450,6 +476,7 @@ export const makeBaynExecutionController = (
           )
           verifyActivationBinding(config, ctx.key, request)
           const decision = decisionOrTerminal(decideExecutionControllerActivation(await readState(ctx), request))
+          await bindConfiguredAccount(ctx)
           await ctx.run(
             'project Bayn execution controller activation',
             () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
@@ -514,6 +541,7 @@ export const makeBaynExecutionController = (
           verifyDeploymentBinding(config, ctx.key, request.deployment)
           verifyDeactivationBinding(config, ctx.key, request.predecessor)
           const decision = decisionOrTerminal(decideExecutionControllerRotation(await readState(ctx), request))
+          await bindConfiguredAccount(ctx)
           await ctx.run(
             'project Bayn execution controller rotation',
             () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
@@ -806,7 +834,7 @@ export const makeBaynExecutionController = (
             }
           }
           if (nextState !== state) ctx.set(stateKey, nextState)
-          // A closed owner has no quote-dependent work. Canonical broker publications still recheck
+          // A closed owner has no quote-dependent work. Canonical broker snapshots and source events still recheck
           // its authority and calendar; source recovery and inference completion remain immediate.
           if (
             event._tag === 'MarketChanged' &&
@@ -913,7 +941,20 @@ export const makeBaynExecutionController = (
             decodeExecutionControllerDeactivation(candidate),
             'execution controller deactivation failed validation',
           )
-          verifyDeactivationBinding(config, ctx.key, request)
+          if (ctx.key === config.controllerKey) {
+            verifyDeactivationBinding(config, ctx.key, request)
+          } else {
+            const account = runtime.brokerAccount
+            if (request.controllerKey !== ctx.key || account === undefined) {
+              throw terminal('execution controller deactivation does not match this immutable deployment')
+            }
+            const previousKey = await ctx.run('read the previous configured controller', () =>
+              account.previousController(ctx.request().attemptCompletedSignal),
+            )
+            if (previousKey !== ctx.key) {
+              throw terminal('execution controller deactivation does not match the previous configured account')
+            }
+          }
           const decision = decisionOrTerminal(decideExecutionControllerDeactivation(await readState(ctx), request))
           await ctx.run(
             'project Bayn execution controller deactivation',

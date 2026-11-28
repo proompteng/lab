@@ -1,7 +1,12 @@
 import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { acquireBrokerObservationRuntime } from '../composition/broker-observation-runtime'
 import { ValkeyCacheLive } from '../valkey-cache'
-import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
+import {
+  makeBaynBrokerObservations,
+  makeBaynBrokerSourceProjector,
+  type BrokerObservationRuntime,
+} from './restate-broker-observations'
+import { makeBaynBrokerActivities, type BrokerActivityRuntime } from './restate-broker-activities'
 import { createServer, type Http2ServerRequest, type Http2ServerResponse } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
@@ -135,6 +140,7 @@ export const makeRestateExecutionEndpointHandler = (
   inferenceRuntime: EntryInferenceRuntime,
   brokerObservations: {
     readonly runtime: BrokerObservationRuntime
+    readonly activityRuntime: BrokerActivityRuntime
     readonly maxAgeMs: number
     readonly freshnessLeadMs: number
   },
@@ -145,10 +151,20 @@ export const makeRestateExecutionEndpointHandler = (
     brokerObservations.runtime,
     hooks,
   )
+  const projector = makeBaynBrokerSourceProjector(
+    { ...config, maxAgeMs: brokerObservations.maxAgeMs, freshnessLeadMs: brokerObservations.freshnessLeadMs },
+    brokerObservations.runtime,
+    hooks,
+  )
+  const activities = makeBaynBrokerActivities(
+    { ...config, maxAgeMs: brokerObservations.maxAgeMs, freshnessLeadMs: brokerObservations.freshnessLeadMs },
+    brokerObservations.activityRuntime,
+    hooks,
+  )
   const controller = makeBaynExecutionController({ ...config, activationAuthorizationHash }, runtime, hooks)
   const inference = makeBaynEntryInference(config, inferenceRuntime, hooks)
   return restate.createEndpointHandler({
-    services: [controller, observations, inference],
+    services: [controller, observations, projector, activities, inference],
     identityKeys: [...identityKeys],
   })
 }

@@ -37,7 +37,17 @@
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "arc-tmpfs-acceptance.yml": [
+    {
+      "id": "verify",
+      "pattern": "^Verify .*(?: \\(.*\\))?$"
+    }
+  ],
   "attic-build-push.yaml": [
+    {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?(?: /.*)?$"
+    },
     {
       "id": "build-and-push",
       "pattern": "^build-and-push(?: \\(.*\\))?(?: /.*)?$"
@@ -157,6 +167,12 @@
     {
       "id": "publish-index",
       "pattern": "^publish-index(?: \\(.*\\))?$"
+    }
+  ],
+  "buzz-relay-cache.yml": [
+    {
+      "id": "seed",
+      "pattern": "^seed(?: \\(.*\\))?$"
     }
   ],
   "codex-devbox.yml": [
@@ -363,6 +379,72 @@
       "pattern": "^build-docs(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "pull-request.yml": [
+    {
+      "id": "plan",
+      "pattern": "^Plan changed-area validation(?: \\(.*\\))?$"
+    },
+    {
+      "id": "landing",
+      "pattern": "^PR validation \\(landing\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "validate",
+      "pattern": "^PR validation \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "agents",
+      "pattern": "^Agents CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "agents-full",
+      "pattern": "^Agents full CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "bayn",
+      "pattern": "^Bayn CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ofz",
+      "pattern": "^Ofz authorization(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "relay",
+      "pattern": "^Relay platform(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "tengri",
+      "pattern": "^Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "buf",
+      "pattern": "^Protobuf validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "scripts",
+      "pattern": "^Repository scripts(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut",
+      "pattern": "^Torghut CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-schema",
+      "pattern": "^Torghut ClickHouse schema(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-notebooks",
+      "pattern": "^Torghut notebooks(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "queue-services",
+      "pattern": "^Queue service validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ci-pr",
+      "pattern": "^ci-pr(?: \\(.*\\))?$"
+    }
+  ],
   "relay.yml": [
     {
       "id": "validate",
@@ -429,12 +511,8 @@
   ],
   "tengri-images.yml": [
     {
-      "id": "validate-tengri",
-      "pattern": "^Validate Tengri(?: \\(.*\\))?$"
-    },
-    {
-      "id": "validate-nanoagent",
-      "pattern": "^Validate Nanoagent(?: \\(.*\\))?$"
+      "id": "validate",
+      "pattern": "^Validate Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "build",

@@ -107,7 +107,13 @@ clipboard.addEventListener('click', async () => {
 document.addEventListener(
   'keydown',
   (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') {
+    const key = event.key.toLowerCase()
+    if (!event.repeat && (event.metaKey || event.ctrlKey) && key === 'c') {
+      // The guest clipboard update arrives asynchronously over VNC.
+      copiedText = ''
+      clipboard.hidden = true
+    }
+    if ((event.metaKey || event.ctrlKey) && key === 'v') {
       event.preventDefault()
       event.stopImmediatePropagation()
       if (!event.repeat)

@@ -9,9 +9,12 @@ import { makeCycleExecutionPolicy } from '../construction'
 import { CycleState, AutonomousCycleSchema } from '../model'
 import {
   makeIntradayCycleDraft,
+  matchesIntradayEntryWindowLineage,
   nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
 } from './calendar-decisions'
+import { continuousMarketHours } from '../../market-hours'
+import { makeInitialCycle } from '../store/decisions'
 
 const policy = Result.getOrThrow(
   makeCycleExecutionPolicy({
@@ -46,6 +49,40 @@ const observation: MarketCalendarObservation = withProviderSessions({
 })
 
 describe('intraday calendar decisions', () => {
+  test('entry-consumption lineage spans continuous windows while keeping exchange and policy boundaries', () => {
+    const candidate = {
+      cycleBindingId: '2'.repeat(64),
+      strategyName: 'jev' as const,
+      strategyProtocolHash: '3'.repeat(64),
+      accountId: 'sandbox-account',
+      executionPolicy: policy,
+    }
+    const before = selectIntradayExecutionSession(continuousMarketHours, policy, '2026-11-27T14:00:00.000Z')
+    const after = selectIntradayExecutionSession(continuousMarketHours, policy, '2026-11-28T14:00:00.000Z')
+    const exchange = observation.sessions[0]
+    if (before === undefined || after === undefined || exchange === undefined)
+      throw new Error('lineage fixture missing')
+    const prior = makeInitialCycle(
+      Result.getOrThrow(makeIntradayCycleDraft(candidate, continuousMarketHours, before, 3)),
+      before.openAt,
+    )
+    expect(matchesIntradayEntryWindowLineage(prior, candidate, continuousMarketHours, after)).toBe(true)
+    expect(matchesIntradayEntryWindowLineage(prior, candidate, observation, exchange)).toBe(false)
+    expect(
+      matchesIntradayEntryWindowLineage(
+        prior,
+        { ...candidate, strategyProtocolHash: '9'.repeat(64) },
+        continuousMarketHours,
+        after,
+      ),
+    ).toBe(false)
+    const equity = makeInitialCycle(
+      Result.getOrThrow(makeIntradayCycleDraft(candidate, observation, exchange, 3)),
+      exchange.openAt,
+    )
+    expect(matchesIntradayEntryWindowLineage(equity, candidate, continuousMarketHours, after)).toBe(false)
+  })
+
   test.each([
     { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_000, eligible: false },
     { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_001, eligible: true },
@@ -58,7 +95,7 @@ describe('intraday calendar decisions', () => {
       closeAt: new Date(Date.parse('2026-11-27T14:30:00.000Z') + durationMs).toISOString(),
     }
     const selected = selectIntradayExecutionSession(
-      { ...observation, sessions: [session] },
+      withProviderSessions({ ...observation, sessions: [session] }),
       { ...policy, warmupAfterOpenMs: warmupMinutes * 60_000, submissionCutoffBeforeCloseMs: 5 * 60_000 },
       session.openAt,
     )

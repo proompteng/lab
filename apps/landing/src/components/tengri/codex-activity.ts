@@ -1,13 +1,19 @@
 import type { TengriCodexEventKind } from '@/lib/tengri/types'
-import type { CodexImageGeneration } from '@/lib/tengri/codex-images'
+import { codexOutputImagePaths, type CodexImageGeneration } from '@/lib/tengri/codex-images'
+import { parseAgentRunView } from '@/lib/tengri/agent-runs'
 
 export function groupCodexActivity<
-  T extends { id: string; kind: TengriCodexEventKind; imageGeneration?: CodexImageGeneration },
+  T extends { id: string; kind: TengriCodexEventKind; text?: string; imageGeneration?: CodexImageGeneration },
 >(items: readonly T[]) {
   const groups: { id: string; activity: boolean; items: T[] }[] = []
   for (const item of items) {
+    const isTool = item.kind === 'tool-call' || item.kind === 'tool-output'
     const activity =
-      !item.imageGeneration && (item.kind === 'tool-call' || item.kind === 'tool-output' || item.kind === 'file-diff')
+      !item.imageGeneration &&
+      (item.kind === 'file-diff' ||
+        (isTool &&
+          !codexOutputImagePaths(item.text ?? '').length &&
+          (item.kind !== 'tool-output' || !parseAgentRunView(item.text))))
     const previous = groups.at(-1)
     if (activity && previous?.activity) previous.items.push(item)
     else groups.push({ id: item.id, activity, items: [item] })

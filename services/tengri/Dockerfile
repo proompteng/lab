@@ -1,16 +1,30 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1.7
 
 ARG DEBIAN_BASE_IMAGE=mirror.gcr.io/debian
+ARG GO_BASE_IMAGE=mirror.gcr.io/golang
+ARG GO_VERSION=1.25.5
 ARG RUST_BASE_IMAGE=mirror.gcr.io/rust
 ARG RUST_VERSION=1.90.0
 ARG FIRECRACKER_RUST_VERSION=1.95.0
+
+FROM --platform=$BUILDPLATFORM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS nanoagent
+ARG TARGETARCH
+ARG TARGETOS
+WORKDIR /src
+COPY --from=nanoagent-src /go.mod /go.sum ./
+RUN go mod download
+COPY --from=nanoagent-src /*.go /browser-client.html /browser-client.js /developer-profile.sh ./
+COPY --from=nanoagent-src /internal ./internal
+COPY --from=nanoagent-src /vscode-extension ./vscode-extension
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
 
 FROM --platform=$BUILDPLATFORM ${RUST_BASE_IMAGE}:${RUST_VERSION}-bookworm AS chef
 
 ARG TARGETARCH
 
 RUN apt-get update -o Acquire::Retries=3 && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends protobuf-compiler curl ca-certificates && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends protobuf-compiler curl ca-certificates e2fsprogs && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -100,9 +114,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-re
 
 FROM ${DEBIAN_BASE_IMAGE}:bookworm-slim AS runtime
 
-ARG SOURCE_REVISION=development
-ENV APP_SOURCE_REVISION=${SOURCE_REVISION}
-
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates e2fsprogs iproute2 nftables && \
     rm -rf /var/lib/apt/lists/* && \
@@ -110,10 +121,15 @@ RUN apt-get update -o Acquire::Retries=3 && \
     useradd --uid 65532 --gid 65532 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin tengri
 
 COPY --from=build /out-tengri /usr/local/bin/tengri
+COPY --from=nanoagent /out/nanoagent /usr/share/tengri/nanoagent
+COPY --from=nanoagent-src /bootstrap-codex.sh /usr/share/tengri/bootstrap-codex
 COPY --from=firecracker-build /out-firecracker /usr/local/bin/firecracker
 COPY --from=firecracker-build /firecracker/LICENSE /firecracker/NOTICE /usr/share/doc/tengri/firecracker/
 COPY --from=firecracker-build /libseccomp/LICENSE /usr/share/doc/tengri/firecracker/libseccomp-LICENSE
 COPY --chmod=0555 network.sh /usr/local/bin/tengri-network
+
+ARG SOURCE_REVISION=development
+ENV APP_SOURCE_REVISION=${SOURCE_REVISION}
 
 USER 65532:65532
 EXPOSE 50051 8080

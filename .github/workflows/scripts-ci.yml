@@ -1,6 +1,7 @@
 name: packages-scripts
 
 on:
+  workflow_call:
   push:
     branches:
       - main
@@ -136,8 +137,11 @@ on:
       - nix/check-bun-dependency-closure.sh
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: packages-scripts-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   lint-and-test:
@@ -162,4 +166,7 @@ jobs:
       lint-command: bun run --filter @proompteng/scripts lint
       oxlint-command: bun run --cwd packages/scripts lint:oxlint
       oxlint-type-command: bun run --cwd packages/scripts lint:oxlint:type
-      test-command: bunx tsc --noEmit --project packages/scripts/tsconfig.atlas.json && bun test packages/scripts/src && bun test scripts/jangar/validate-primitives.test.ts
+      test-command: >-
+        bunx tsc --noEmit --project packages/scripts/tsconfig.atlas.json &&
+        bun test --isolate --randomize packages/scripts/src &&
+        bun test scripts/jangar/validate-primitives.test.ts

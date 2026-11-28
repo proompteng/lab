@@ -45,6 +45,26 @@ const inactiveInference = (config: ExecutionControllerConfig) =>
     }),
   )
 
+const registerLocalEndpoint = (admin: string, server: ReturnType<typeof createServer>) =>
+  Effect.gen(function* () {
+    yield* acquireRestateHttp2Server(server, 0)
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')
+    yield* Effect.tryPromise({
+      try: async (signal) => {
+        const response = await fetch(`${admin}/deployments`, {
+          method: 'POST',
+          body: JSON.stringify({ uri: `http://host.docker.internal:${address.port}`, force: true }),
+          headers: { 'content-type': 'application/json' },
+          signal,
+        })
+        if (!response.ok) throw new Error(`Local Restate registration failed: ${await response.text()}`)
+        await response.body?.cancel()
+      },
+      catch: (cause) => cause,
+    })
+  })
+
 describeRestate('Real always-replay Restate execution deployment activation', () => {
   test('one durable activation recovers after dependency failure while restarted waiters reuse its coordinator', async () => {
     if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
@@ -108,6 +128,10 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
           },
           probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
+          isNotificationCovered: async () => false,
+          project: async () => {
+            throw new Error('controller integration does not project broker source events')
+          },
           invalidate: async () => undefined,
           activate: async () => {
             brokerActivations += 1
@@ -197,25 +221,7 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const register = (server: ReturnType<typeof createServer>) =>
-            Effect.gen(function* () {
-              yield* acquireRestateHttp2Server(server, 0)
-              const address = server.address()
-              if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')
-              yield* Effect.tryPromise({
-                try: async (signal) => {
-                  const response = await fetch(`${admin}/deployments`, {
-                    method: 'POST',
-                    body: JSON.stringify({ uri: `http://host.docker.internal:${address.port}`, force: true }),
-                    headers: { 'content-type': 'application/json' },
-                    signal,
-                  })
-                  if (!response.ok) throw new Error(`Local Restate registration failed: ${await response.text()}`)
-                  await response.body?.cancel()
-                },
-                catch: (cause) => cause,
-              })
-            })
+          const register = (server: ReturnType<typeof createServer>) => registerLocalEndpoint(admin, server)
           const predecessor = restate.object({
             name: 'BaynExecutionController',
             handlers: {
@@ -475,6 +481,10 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
                   },
                   probeProtection: async () => undefined,
                   recordNotification: async () => ({ covered: false }),
+                  isNotificationCovered: async () => false,
+                  project: async () => {
+                    throw new Error('controller integration does not project broker source events')
+                  },
                   invalidate: async () => undefined,
                   activate: () => Promise.resolve(),
                   poll: async () => {
@@ -601,6 +611,134 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
       ),
     )
   }, 120_000)
+
+  test('an authenticated account handoff retires the old controller before activating the new one', async () => {
+    if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
+    for (const target of [admin, ingress]) {
+      if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(target).hostname))
+        throw new Error('Restate integration targets must be local')
+    }
+    const token = Buffer.alloc(32, 9).toString('base64url')
+    const original = {
+      controllerKey: randomUUID().replaceAll('-', '').repeat(2),
+      planHash: '6'.repeat(64),
+      sourceRevision: '7'.repeat(40),
+      operationTimeoutMs: 5000,
+      activationAuthorizationHash: Result.getOrThrow(executionActivationAuthorizationHash(token)),
+    }
+    const replacement = {
+      ...original,
+      controllerKey: randomUUID().replaceAll('-', '').repeat(2),
+      sourceRevision: '8'.repeat(40),
+    }
+    const projections: Array<{ key: string; active: boolean }> = []
+    let selectionCount = 0
+    const endpoint = (config: ExecutionControllerConfig & { activationAuthorizationHash: string }) => {
+      const controller = alwaysReplay(
+        makeBaynExecutionController(config, {
+          prepareActivation: async () => {},
+          brokerAccount: {
+            bind: async () => {
+              if (config.controllerKey === original.controllerKey) return null
+              selectionCount += 1
+              return original.controllerKey
+            },
+            previousController: async () =>
+              config.controllerKey === replacement.controllerKey ? original.controllerKey : null,
+          },
+          projectState: async (key, state) => {
+            projections.push({ key, active: state.active })
+          },
+          advance: async (command) => ({
+            completedAt: command.issuedAt,
+            observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
+            outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'a'.repeat(64), nextDelayMs: 30_000 },
+          }),
+          log: async () => {},
+        }),
+      )
+      const observations = alwaysReplay(
+        makeBaynBrokerObservations(
+          { ...config, maxAgeMs: 60_000, freshnessLeadMs: 5_000 },
+          {
+            verifyNotification: () => {
+              throw new Error('Unexpected broker notification')
+            },
+            probeProtection: async () => undefined,
+            recordNotification: async () => ({ covered: false }),
+            isNotificationCovered: async () => false,
+            project: async () => {
+              throw new Error('Unexpected broker source event')
+            },
+            invalidate: async () => undefined,
+            activate: async () => {},
+            poll: async () => {
+              const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+              return {
+                poll: {
+                  _tag: 'Published',
+                  snapshotHash: 'e'.repeat(64),
+                  observedAt: new Date(now).toISOString(),
+                  nextPollNotBeforeMs: 0,
+                },
+                startedAtMs: now,
+                completedAtMs: now,
+              }
+            },
+          },
+        ),
+      )
+      return createServer(
+        restate.createEndpointHandler({ services: [controller, observations, inactiveInference(config)] }),
+      )
+    }
+    const activate = (config: ExecutionControllerConfig) =>
+      Effect.gen(function* () {
+        const request = restateExecutionActivationRequest(
+          {
+            ...config,
+            ingressOrigin: ingress,
+            activationAttemptId: randomUUID(),
+            activationGeneration: 'a'.repeat(64),
+          },
+          token,
+        )
+        const accepted = yield* sendRestateInvocation(`${ingress}${request.path}`, request.body, {
+          timeoutMs: 5000,
+          headers: request.headers,
+        })
+        return Result.getOrThrow(
+          decodeExecutionControllerState(
+            yield* awaitRestateInvocation(ingress, accepted.invocationId, {
+              maximumAttempts: 150,
+              pollIntervalMs: 100,
+              requestTimeoutMs: 5000,
+            }),
+          ),
+        )
+      })
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerLocalEndpoint(admin, endpoint(original))
+          expect(yield* activate(original)).toMatchObject({ active: true, sourceRevision: original.sourceRevision })
+          expect(selectionCount).toBe(0)
+
+          yield* registerLocalEndpoint(admin, endpoint(replacement))
+          expect(yield* activate(replacement)).toMatchObject({
+            active: true,
+            sourceRevision: replacement.sourceRevision,
+          })
+          expect(selectionCount).toBe(1)
+          expect(projections).toEqual([
+            { key: original.controllerKey, active: true },
+            { key: original.controllerKey, active: false },
+            { key: replacement.controllerKey, active: true },
+          ])
+        }),
+      ),
+    )
+  }, 40_000)
 
   test('a saturated recovery window retains one durable successor and its original issuedAt', async () => {
     if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')

@@ -20,3 +20,9 @@ superseded-generation recovery, and account and qualification-run selection.
 Prefer `model/construction/transitions/recovery-decisions -> observability/readiness -> runner -> composition`. Persistence is an infrastructure dependency consumed by orchestration, not a home for domain decisions. Internal cycle code should import the narrow file it needs; consumers outside this directory should use `./cycle`, `./cycle/runner`, `./cycle/observability`, or `./cycle/store` as the intended boundaries.
 
 The architecture test protects the module from import cycles and layer back-edges: the pure cycle core cannot depend on runner/store infrastructure, and persistence cannot depend on runner orchestration.
+
+Successor discovery checks durable Jev entry-window consumption before acquiring a new cycle in the same immutable
+strategy, account, policy and exchange-calendar lineage. A consumed window retains the prior terminal cycle with
+`SIGNAL_WINDOW_OBSERVED` readiness and the next protocol due time; the controller wakes once at that known boundary.
+This timing evidence does not prove market rows have arrived or complete scheduled decision work. The new decision
+still verifies source availability, deduplication and all original risk deadlines. Existing cycle leases are never reset.

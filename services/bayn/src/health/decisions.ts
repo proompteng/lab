@@ -216,6 +216,9 @@ const deriveBrokerStatus = (
     readAvailable: observed._tag === 'Available' && observed.value.permissionError === null,
     checkedAt,
     error: bindingError,
+    ...(observed._tag === 'Unavailable' && observed.observationFailure !== undefined
+      ? { observationFailure: observed.observationFailure }
+      : {}),
     executionEligible: broker.executionEligible,
     executionDisabledReason: broker.executionDisabledReason,
   }

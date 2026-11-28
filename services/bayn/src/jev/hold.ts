@@ -5,6 +5,7 @@ import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
 import {
   JevPositionEvidenceSchema,
+  type JevExitEvidenceMaterial,
   jevBrokerEvidenceFreshUntilMs,
   jevMaximumHoldDueAt,
   jevProtectiveStopCrossed,
@@ -24,12 +25,14 @@ export const JevPositionHoldEvidenceSchema = Schema.Struct({
   }),
 })
 
-/** Reproduce a strategy hold from the same owned position and executable quote required for an exit. */
-export const decideJevPositionHold = (input: unknown) =>
+type JevPositionHoldEvidenceMaterial = Omit<typeof JevPositionHoldEvidenceSchema.Type, 'protocol'> &
+  Pick<JevExitEvidenceMaterial, 'protocol'>
+
+/** Pure reproduction preserves the decoded policy and evidence without supplying current defaults. */
+export const deriveJevPositionHoldMaterial = <Evidence extends JevPositionHoldEvidenceMaterial>(evidence: Evidence) =>
   Result.gen(function* () {
-    const evidence = yield* Schema.decodeUnknownResult(JevPositionHoldEvidenceSchema, strictParseOptions)(input)
     const { portfolio, position, firstFill, entryPlan, now } = yield* validateJevPositionEvidence(evidence)
-    const holdDue = jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)
+    const holdDue = jevMaximumHoldDueAt(firstFill.occurredAt, entryPlan.levels.maximumHoldingMinutes)
     if (portfolio.exitRequestedAt !== null || now >= Date.parse(holdDue))
       return yield* Result.fail(
         new JevContractError({ message: 'An exit request or elapsed holding limit forbids a hold' }),
@@ -40,7 +43,10 @@ export const decideJevPositionHold = (input: unknown) =>
       evidence.source,
     )
     const exitPrice = short ? ask : bid
-    if (jevProtectiveStopCrossed(exitPrice, entryPlan.levels) || (yield* jevProfitTargetCrossed(portfolio, exitPrice)))
+    if (
+      jevProtectiveStopCrossed(exitPrice, entryPlan.levels) ||
+      (yield* jevProfitTargetCrossed(portfolio, exitPrice, position.symbol))
+    )
       return yield* Result.fail(new JevContractError({ message: 'An executable exit threshold forbids a hold' }))
     return {
       schemaVersion: 'bayn.jev-position-hold.v1' as const,
@@ -54,7 +60,15 @@ export const decideJevPositionHold = (input: unknown) =>
       ).toISOString(),
       evidence,
     }
-  }).pipe(
+  })
+
+/** Reproduce a strategy hold from the same owned position and executable quote required for an exit. */
+export const decideJevPositionHold = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    JevPositionHoldEvidenceSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.flatMap(deriveJevPositionHoldMaterial),
     Result.mapError((cause) => new JevContractError({ message: 'Position hold evidence does not reproduce', cause })),
   )
 

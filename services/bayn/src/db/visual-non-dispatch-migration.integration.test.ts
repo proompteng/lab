@@ -17,6 +17,7 @@ import { JevCandidatePlanStatus, JevBatchPlanVersion } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
 import { StagedTerminalReceiptSchema } from '../jev/staged-checkpoint'
+import { defaultJevProtocolDocument, retainedJevProtocolV41Document } from '../jev/protocol'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
@@ -45,10 +46,10 @@ const layer = Layer.mergeAll(
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 const signed = <A extends object>(material: A) => ({ ...material, quoteHash: hash(material) })
 
-const retain = (account: string) =>
+const retain = (account: string, protocol: unknown = defaultJevProtocolDocument) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    const fixture = nativeJevFixture(undefined, undefined, account)
+    const fixture = nativeJevFixture(undefined, undefined, account, protocol)
     const observedAt = fixture.observation.payload.observedAt
     const batch = Result.getOrThrow(
       makeJevTradingSignalBatch({
@@ -185,7 +186,7 @@ integration.each(['ORIGINAL_EXPIRY', 'ADMISSION_EXPIRY'] as const)(
           loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= 200))),
           table: 'schema_migrations',
         })
-        const legacy = yield* retain(`replay-${'5'.repeat(64)}`)
+        const legacy = yield* retain(`replay-${'5'.repeat(64)}`, retainedJevProtocolV41Document)
         const legacyQuote = signed({
           schemaVersion: 'bayn.inference-expense-quote.v4',
           accountBindingHash: hash({ schemaVersion: 'bayn.inference-cost-account.v1', accountId: legacy.account }),

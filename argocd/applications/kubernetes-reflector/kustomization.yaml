@@ -4,11 +4,12 @@ namespace: kubernetes-reflector
 helmCharts:
   - name: reflector
     repo: https://emberstack.github.io/helm-charts
-    version: 10.0.79
+    version: 10.0.81
     releaseName: kubernetes-reflector
     namespace: kubernetes-reflector
 
 images:
   - name: docker.io/emberstack/kubernetes-reflector
     newName: mirror.gcr.io/emberstack/kubernetes-reflector
-    newTag: 10.0.79
+    newTag: 10.0.81
+    digest: sha256:818d7d62218b0cee62a7eed3e05b23af4ce3b55d8de36a34cb2a40c3871de5d8

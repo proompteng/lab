@@ -1,11 +1,43 @@
 package ai.proompteng.dorvud.ws
 
+import ai.proompteng.dorvud.platform.Envelope
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class MarketDataFeedTest {
+  @Test
+  fun `preserves legacy IEX and delayed SIP envelope bytes even when defaults are encoded`() {
+    val json = Json { encodeDefaults = true }
+    val timestamp = "2026-11-12T14:30:00Z"
+    for ((feed, delay) in listOf("iex" to "real_time_exchange_only", "delayed_sip" to "delayed_15m_consolidated")) {
+      val envelope =
+        Envelope(
+          ingestTs = Instant.parse(timestamp),
+          eventTs = Instant.parse(timestamp),
+          feed = feed,
+          channel = "bars",
+          symbol = "SPY",
+          seq = 1,
+          payload = JsonObject(emptyMap()),
+          provider = "alpaca",
+          marketSession = "regular",
+          delayClass = delay,
+          version = 2,
+        )
+      assertEquals(
+        """{"ingestTs":"$timestamp","eventTs":"$timestamp","feed":"$feed","channel":"bars","symbol":"SPY","seq":1,""" +
+          """"payload":{},"accountLabel":null,"isFinal":true,"source":"ws","window":null,"version":2,""" +
+          """"provider":"alpaca","marketSession":"regular","delayClass":"$delay"}""",
+        json.encodeToString(envelope),
+      )
+    }
+  }
+
   @Test
   fun `classifies market-session boundaries in New York across standard and daylight time`() {
     val standard =
