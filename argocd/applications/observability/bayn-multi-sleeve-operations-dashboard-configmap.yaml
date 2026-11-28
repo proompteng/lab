@@ -1,0 +1,204 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bayn-multi-sleeve-operations-dashboard
+  namespace: observability
+data:
+  bayn-multi-sleeve-operations-dashboard.json: |
+    {
+      "title": "Bayn Multi-Sleeve Operations",
+      "uid": "bayn-multi-sleeve-operations",
+      "description": "Execution cycle, daily sleeves and scorecard, Bayn database replication, and advisory Auto Ontology availability. Kubernetes Job success and deployment readiness do not establish trading authority or acceptance.",
+      "schemaVersion": 39,
+      "tags": ["bayn", "trading", "operations"],
+      "time": {"from": "now-24h", "to": "now"},
+      "refresh": "30s",
+      "links": [
+        {"title": "Bayn Cycle Operations", "url": "/d/bayn-cycle-operations", "type": "link"}
+      ],
+      "panels": [
+        {
+          "id": 1,
+          "title": "Current cycle condition",
+          "description": "Condition in the freshest Bayn API projection, not a consensus across API replicas.",
+          "type": "stat",
+          "gridPos": {"x": 0, "y": 0, "w": 12, "h": 4},
+          "datasource": {"type": "prometheus", "uid": "prom"},
+          "options": {"colorMode": "none", "graphMode": "none", "textMode": "name"},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (condition) ((bayn_cycle_condition{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on (instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "legendFormat": "{{condition}}",
+              "instant": true,
+              "range": false
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Last durable controller outcome",
+          "description": "Most recent completed controller wake's outcome in the freshest Bayn API projection. Waiting can be normal.",
+          "type": "stat",
+          "gridPos": {"x": 12, "y": 0, "w": 12, "h": 4},
+          "datasource": {"type": "prometheus", "uid": "prom"},
+          "options": {"colorMode": "none", "graphMode": "none", "textMode": "name"},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (outcome) ((bayn_execution_controller_last_outcome{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on (instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "legendFormat": "{{outcome}}",
+              "instant": true,
+              "range": false
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Controller stage errors per minute",
+          "description": "Failures and interruptions from the same three-minute window as the burst alert. The alert evaluates each stage separately; it does not sum nested errors. A gap means no error series was observed for that stage.",
+          "type": "timeseries",
+          "gridPos": {"x": 0, "y": 4, "w": 24, "h": 8},
+          "datasource": {"type": "prometheus", "uid": "prom"},
+          "fieldConfig": {"defaults": {"min": 0, "unit": "suffix: /min"}},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "bayn:execution_controller_stage_errors:increase3m{namespace=\"bayn\",service=\"bayn-execution-controller\"} / 3",
+              "legendFormat": "{{stage}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Daily CronJob last successful completion",
+          "description": "Native CronJob completion timestamps. An observed CronJob with no success is distinct from a CronJob with no telemetry.",
+          "type": "stat",
+          "gridPos": {"x": 0, "y": 12, "w": 12, "h": 5},
+          "datasource": {"type": "prometheus", "uid": "prom"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "dateTimeAsIso",
+              "mappings": [{"type": "value", "options": {"0": {"text": "NO SUCCESS OBSERVED"}}}]
+            }
+          },
+          "options": {"colorMode": "none", "graphMode": "none", "textMode": "value_and_name"},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "1000 * bayn:daily_cronjob_last_success_timestamp_seconds{namespace=\"bayn\"}",
+              "legendFormat": "{{cronjob}}",
+              "instant": true,
+              "range": false
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Daily CronJob unrecovered terminal failure",
+          "description": "Creation time of the latest retained failed Job not superseded by a CronJob success. NONE OBSERVED does not prove Job telemetry or trading success.",
+          "type": "stat",
+          "gridPos": {"x": 12, "y": 12, "w": 12, "h": 5},
+          "datasource": {"type": "prometheus", "uid": "prom"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "dateTimeAsIso",
+              "mappings": [{"type": "value", "options": {"0": {"text": "NONE OBSERVED"}}}]
+            }
+          },
+          "options": {"colorMode": "none", "graphMode": "none", "textMode": "value_and_name"},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "1000 * bayn:daily_cronjob_unrecovered_failure_timestamp_seconds{namespace=\"bayn\"} or on (namespace, cronjob) 0 * bayn:daily_cronjob_last_success_timestamp_seconds{namespace=\"bayn\"}",
+              "legendFormat": "{{cronjob}}",
+              "instant": true,
+              "range": false
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Bayn database exporter by instance",
+          "description": "Primary and standby exporter reachability, not replication health. See streaming and synchronous standby counts below.",
+          "type": "stat",
+          "gridPos": {"x": 0, "y": 17, "w": 24, "h": 4},
+          "datasource": {"type": "prometheus", "uid": "prom"},
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}
+              ]
+            }
+          },
+          "options": {"colorMode": "value", "graphMode": "none", "textMode": "value_and_name"},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "up{job=\"cnpg-postgres\",namespace=\"bayn\",cluster=\"bayn-db\"}",
+              "legendFormat": "{{pod}} ({{role}})",
+              "instant": true,
+              "range": false
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "title": "Streaming and synchronous standbys",
+          "description": "Standby counts from the primary's pg_stat_replication. Missing samples do not mean zero standbys.",
+          "type": "timeseries",
+          "gridPos": {"x": 0, "y": 21, "w": 12, "h": 8},
+          "datasource": {"type": "prometheus", "uid": "prom"},
+          "fieldConfig": {"defaults": {"min": 0, "decimals": 0}},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "cnpg_bayn_replication_streaming_standbys{job=\"cnpg-postgres\",namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+              "legendFormat": "{{pod}} · streaming"
+            },
+            {
+              "refId": "B",
+              "expr": "cnpg_bayn_replication_synchronous_standbys{job=\"cnpg-postgres\",namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+              "legendFormat": "{{pod}} · synchronous"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "title": "Standby flush lag",
+          "description": "Maximum measured recent flush lag per primary. PostgreSQL can omit the lag estimate on idle standbys; unmeasured lag is not zero.",
+          "type": "timeseries",
+          "gridPos": {"x": 12, "y": 21, "w": 12, "h": 8},
+          "datasource": {"type": "prometheus", "uid": "prom"},
+          "fieldConfig": {"defaults": {"min": 0, "unit": "s"}},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "cnpg_bayn_replication_max_flush_lag_seconds{job=\"cnpg-postgres\",namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"} and on (namespace, cluster, pod) (cnpg_bayn_replication_measured_flush_lag_standbys{job=\"cnpg-postgres\",namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"} > 0)",
+              "legendFormat": "{{pod}} · max flush lag"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "Auto Ontology deployment availability (advisory)",
+          "description": "Available versus desired Deployment replica counts for collective knowledge. These are Kubernetes readiness signals, not request-level probes or trading gates.",
+          "type": "timeseries",
+          "gridPos": {"x": 0, "y": 29, "w": 24, "h": 8},
+          "datasource": {"type": "prometheus", "uid": "prom"},
+          "fieldConfig": {"defaults": {"min": 0, "decimals": 0}},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (deployment) (kube_deployment_status_replicas_available{job=\"kube-state-metrics\",namespace=\"auto-ontology\"})",
+              "legendFormat": "{{deployment}} · available"
+            },
+            {
+              "refId": "B",
+              "expr": "max by (deployment) (kube_deployment_spec_replicas{job=\"kube-state-metrics\",namespace=\"auto-ontology\"})",
+              "legendFormat": "{{deployment}} · desired"
+            }
+          ]
+        }
+      ]
+    }
