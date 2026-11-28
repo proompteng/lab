@@ -76,7 +76,10 @@ const decodeShy = Schema.decodeUnknownSync(
   }),
 )
 
-class ArchiveError extends Data.TaggedError('NoiseAreaArchiveError')<{ readonly message: string }> {}
+class ArchiveError extends Data.TaggedError('NoiseAreaArchiveError')<{
+  readonly message: string
+  readonly cause: Redacted.Redacted<unknown>
+}> {}
 type Open = (key: string) => Promise<Response>
 interface Archive {
   readonly open: Open
@@ -105,8 +108,8 @@ export const withArchive = <A>(run: (archive: Archive) => Promise<A>) =>
             signal,
             redirect: 'error',
             decompress: false,
-          }).catch(() => {
-            throw new Error(`S3 transport failed: ${key}`)
+          }).catch((cause: unknown) => {
+            throw new ArchiveError({ message: `S3 transport failed: ${key}`, cause: Redacted.make(cause) })
           })
           if (!response.ok) {
             await response.body?.cancel()
@@ -123,7 +126,13 @@ export const withArchive = <A>(run: (archive: Archive) => Promise<A>) =>
           },
         })
       },
-      catch: (cause) => new ArchiveError({ message: cause instanceof Error ? cause.message : String(cause) }),
+      catch: (cause) =>
+        cause instanceof ArchiveError
+          ? cause
+          : new ArchiveError({
+              message: cause instanceof Error ? cause.message : 'S3 archive operation failed',
+              cause: Redacted.make(cause),
+            }),
     })
   })
 
@@ -353,6 +362,15 @@ export const loadDevelopment = async (archive: Archive) => {
   )
   const rows = await tapeLines(archive, files.bars_5m, src.memberBytes)
   return readTape(rows, calendar, roster, src.rows, manifest.symbolRowCounts)
+}
+
+// Roster metadata is not bar evidence and can be authenticated before a development freeze.
+export const readIntradayRosters = async (archive: Archive) => {
+  const dev = sources.development
+  const hold = sources.holdout
+  const development = decodeDevelopment(await archive.json(dev.manifest, dev.manifestSha256))
+  const holdout = decodeHoldout(await archive.json(hold.manifest, hold.manifestSha256))
+  return { development: development.symbols, holdout: holdout.universes.all62 }
 }
 
 export const loadHoldout = async (archive: Archive) => {
