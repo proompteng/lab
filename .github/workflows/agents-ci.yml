@@ -445,14 +445,16 @@ jobs:
         run: scripts/agents/ensure-kind-network.sh
 
       - name: Install pinned Kind binary
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           kind_bin="${RUNNER_TOOL_CACHE}/kind/v0.31.0/amd64/kind/bin"
           mkdir -p "${kind_bin}"
-          curl --fail --location --retry 3 \
-            --output "${RUNNER_TEMP}/kind-linux-amd64" \
-            https://github.com/kubernetes-sigs/kind/releases/download/v0.31.0/kind-linux-amd64
-          echo "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa  ${RUNNER_TEMP}/kind-linux-amd64" | sha256sum --check
+          # The anonymous release URL can return 403 on hosted runners.
+          gh release download v0.31.0 --repo kubernetes-sigs/kind \
+            --pattern kind-linux-amd64 --output "${RUNNER_TEMP}/kind-linux-amd64"
+          echo "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa  ${RUNNER_TEMP}/kind-linux-amd64" | sha256sum -c
           # kind-action reuses this checksum-verified executable.
           install -m 755 "${RUNNER_TEMP}/kind-linux-amd64" "${kind_bin}/kind"
 
