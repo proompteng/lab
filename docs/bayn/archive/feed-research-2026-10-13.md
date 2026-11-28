@@ -74,7 +74,7 @@ No claim of a permanently free consolidated replacement is established here. Sou
 
 The first comparison remains immediate momentum, delayed momentum and Jev-filtered entry on common inputs.
 It must include all scheduled opportunities, abstentions, failed model work, turnover, fees and unresolved costs.
-The [incremental-value protocol](jev-incremental-audit.md) separates selection effect from delay effect.
+The [incremental-value protocol](../jev-incremental-audit.md) separates selection effect from delay effect.
 
 A feed or news experiment changes one information set at a time. Freeze dates, the universe, timing rules,
 execution assumptions and cost scenarios before inspecting results. Record the first locally observed version

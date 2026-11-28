@@ -1,7 +1,7 @@
 # Using Jev and TypeSafe in Bayn
 
 Research date: October 18, 2026. This is a research record, not trading authority or a profitable-strategy qualification.
-This audit records `bayn.jev.protocol.v10` and `bayn.jev-trading-signal-state.v9`. The subsequent focused-action change removes unused diagnostics and distinguishes the forecast horizon from the lookback; see the current [service contract](../../services/bayn/README.md). Check the deployed source,
+This audit records `bayn.jev.protocol.v10` and `bayn.jev-trading-signal-state.v9`. The subsequent focused-action change removes unused diagnostics and distinguishes the forecast horizon from the lookback; see the current [service contract](../../../services/bayn/README.md). Check the deployed source,
 immutable image, retained requests and actual broker/accounting receipts before applying any operational conclusion.
 
 ## What Jev does
@@ -73,7 +73,7 @@ are useful, preserve relationships that need joint interpretation, and let code 
 
 ## What Bayn currently asks
 
-Definitions are in [trading-signals.ts](../../services/bayn/src/jev/trading-signals.ts).
+Definitions are in [trading-signals.ts](../../../services/bayn/src/jev/trading-signals.ts).
 The five entry instructions are:
 
 | ID and type            | Actual question                                                                                                                                                                                                                           |
@@ -87,7 +87,7 @@ The five entry instructions are:
 Regime options are `upward_trend`, `downward_trend`, `range`, `unstable`, `unclear`. Setup quality has five levels,
 from no supported setup through strongly aligned evidence. Action options are `enter`, `wait`, `avoid`.
 
-The current [entry decision](../../services/bayn/src/jev/decision.ts) consumes the chosen action, requires verified
+The current [entry decision](../../../services/bayn/src/jev/decision.ts) consumes the chosen action, requires verified
 funded economics and an eligible execution quote, ranks eligible candidates by `p(enter)`, and takes at most one
 position. There is no current minimum entry-probability threshold. The other four answers are retained diagnostics;
 they do not feed their answers into the parallel action question and do not impose additional entry vetoes.
@@ -164,7 +164,7 @@ fee-net round trip. A code-computed break-even price is an accounting calculatio
 Define the executable entry, stop, native exit lifecycle and full costs, then measure outcomes for that definition.
 Keep missing, unfilled, partial, expired, blocked and no-trade opportunities in the sample.
 
-Use the existing [matched entry study](matched-entry-study.md). It compares immediate deterministic momentum,
+Use the existing [matched entry study](../matched-entry-study.md). It compares immediate deterministic momentum,
 the same candidate delayed to actual batch commitment, and Jev selection. Identical execution and mechanical exit
 rules separate selection from latency. Independent native portfolios are required for portfolio P&L; overlapping
 opportunity labels cannot simply be added together.

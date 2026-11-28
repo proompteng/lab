@@ -8,12 +8,12 @@ The candidate is a native-data adaptation of [Regimes in the Order Flow](https:/
 
 These are hypothetical, modeled execution cash flows after native dated fees and declared execution assumptions. Operating, research and financing/cash opportunity costs remain unknown, so these figures are not fully costed profit. The three inspected dates are November 3–5, 2026. Cash, inventory and cumulative fills carry through the entire period without daily cash resets.
 
-| Signing | Scenario | Candidate completed trades | Candidate | Constant hazard | Rolling six buckets | Candidate − constant |
-|---|---|---:|---:|---:|---:|---:|
-| Quote + tick tie (primary) | base | 1 | $10.40 | $10.40 | $-6.57 | $0.00 |
-| Quote + tick tie (primary) | stress | 0 | $0.00 | $0.00 | $-54.53 | $0.00 |
-| Tick only (sensitivity) | base | 1 | $-137.58 | $-137.58 | $-299.13 | $0.00 |
-| Tick only (sensitivity) | stress | 1 | $-52.32 | $-52.32 | $-234.12 | $0.00 |
+| Signing                    | Scenario | Candidate completed trades | Candidate | Constant hazard | Rolling six buckets | Candidate − constant |
+| -------------------------- | -------- | -------------------------: | --------: | --------------: | ------------------: | -------------------: |
+| Quote + tick tie (primary) | base     |                          1 |    $10.40 |          $10.40 |              $-6.57 |                $0.00 |
+| Quote + tick tie (primary) | stress   |                          0 |     $0.00 |           $0.00 |             $-54.53 |                $0.00 |
+| Tick only (sensitivity)    | base     |                          1 |  $-137.58 |        $-137.58 |            $-299.13 |                $0.00 |
+| Tick only (sensitivity)    | stress   |                          1 |   $-52.32 |         $-52.32 |            $-234.12 |                $0.00 |
 
 Cash has zero modeled execution PnL; its operating/opportunity costs are not assumed to be zero. Every modeled portfolio ended flat. The candidate's primary base result comes from one NVDA round trip on November 3. Its primary stress entry did not fill. Tick-only results come from one AAPL round trip on November 5. All candidate exits that filled were triggered by the matched research stop. A transient adverse IEX bid can trigger a stop and then recover before the delayed sell executes; a stop trigger does not determine the realized loss.
 

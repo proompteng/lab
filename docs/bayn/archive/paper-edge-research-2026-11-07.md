@@ -109,8 +109,8 @@ unique evaluated factors, and actual provider calls remain distinct counts.
 
 ## Prospective economic boundary
 
-Use the existing [system qualification policy](../../services/bayn/src/system-assessment/policy.ts) and
-[economic evaluator](../../services/bayn/src/system-assessment/economic-qualification.ts). Current qualification
+Use the existing [system qualification policy](../../../services/bayn/src/system-assessment/policy.ts) and
+[economic evaluator](../../../services/bayn/src/system-assessment/economic-qualification.ts). Current qualification
 requires `bayn.system-registration.v4` and the registered conditional statistical plan. Bootstrap diagnostics do
 not replace this gate. Supports and the conditional mean model are explicit assumptions; daily loss limits and
 observed extrema do not prove them. Check statistical feasibility before consuming an evaluation window.
@@ -121,7 +121,7 @@ deadlines. Attribute inference, data, infrastructure, and research costs without
 unknown. Positive absolute and paired lower bounds, complete evidence, and the existing risk constraints are required
 before claiming an edge. Research or image delivery cannot grant capital authority.
 
-The [original data boundary](market-data-archive.md) and [native comparison](control-portfolios.md) remain binding.
+The [original data boundary](../market-data-archive.md) and [native comparison](../control-portfolios.md) remain binding.
 Historical REST retrieval cannot establish original trading-worker receipt times. The retained September 10–11
 comparison is inspected development evidence with modeled availability and unresolved operating costs. It is not
 training admission for an original-capture-only command or a new prospective window.

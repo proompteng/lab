@@ -107,7 +107,7 @@ Protective execution identity, operating-cost receipts, unclosed windows, entry 
 source completeness and storage evidence remain tracked in
 [#15936](https://github.com/proompteng/lab/issues/15936) and
 [the original investigation](system-investigation-2026-11-13.md). None is resolved by this performance change.
-The [stock short investigation](stock-short-research-2026-11-13.md) separately records failed numerical controls,
+The [stock short investigation](../stock-short-research-2026-11-13.md) separately records failed numerical controls,
 native accounting tests and the contracts still required before short exposure can be considered.
 
 ## November 15 complete-report work

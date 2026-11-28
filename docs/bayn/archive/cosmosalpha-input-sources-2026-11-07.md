@@ -8,11 +8,11 @@ The [pinned author README](https://github.com/wzhmtldswz/CosmosAlpha/blob/237f0a
 
 The README says to use three providers:
 
-| Provider | Required fields |
-|---|---|
-| `qlib_bin` | open, high, low, close, volume, vwap, turn, free_turn, returns |
-| `qlib_exposure_bin` | industry_id, log_mkt_cap and the industry manifest |
-| `qlib_mask_bin` | universe_mask, eligible_mask, entry_tradable_mask, exit_tradable_mask |
+| Provider            | Required fields                                                       |
+| ------------------- | --------------------------------------------------------------------- |
+| `qlib_bin`          | open, high, low, close, volume, vwap, turn, free_turn, returns        |
+| `qlib_exposure_bin` | industry_id, log_mkt_cap and the industry manifest                    |
+| `qlib_mask_bin`     | universe_mask, eligible_mask, entry_tradable_mask, exit_tradable_mask |
 
 Each provider needs matching calendar and CSI300 universe data. Validate the complete file against the publisher checksum, record a separate SHA-256, inspect archive paths, verify field/calendar/universe alignment and read the industry/mask metadata before running. Keep the frozen April 2010–May 2019 reference window and January 2010 warmup, the 100-stock minimum cross-section and the 80% admission thresholds. Download completion alone does not pass those checks.
 
@@ -20,7 +20,7 @@ The authors [explicitly disclose missing strict point-in-time certification for 
 
 ## Use the existing model
 
-The selected run uses [Flamingo](../../argocd/applications/flamingo/README.md), served as `qwen38-flamingo` at `http://flamingo.ide-newton.ts.net/v1`. Live readback confirmed `nvidia/Qwen3.8-27B-NVFP4`, checkpoint and tokenizer revision `482ca0f3832238542f8f5295dde86b5f22711d80`, with serving image digest `sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2` and 262,144-token context.
+The selected run uses [Flamingo](../../../argocd/applications/flamingo/README.md), served as `qwen38-flamingo` at `http://flamingo.ide-newton.ts.net/v1`. Live readback confirmed `nvidia/Qwen3.8-27B-NVFP4`, checkpoint and tokenizer revision `482ca0f3832238542f8f5295dde86b5f22711d80`, with serving image digest `sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2` and 262,144-token context.
 
 The model-list and JSON completion requests succeeded without an Authorization header. The JSON probe used 23 input and six output tokens. The upstream config requires a nonempty key field even for anonymous servers; the local adapter uses a clearly identified non-secret compatibility marker and strips Authorization before sending. It creates no credential or account.
 
@@ -34,11 +34,11 @@ There is a version distinction to record. The [paper’s main experiment](https:
 
 The [live Flash pricing page](https://api-docs.deepseek.com/quick_start/pricing/) lists USD per million tokens:
 
-| Token category | Off-peak | Peak |
-|---|---:|---:|
-| Input, cache miss | $0.15 | $0.30 |
-| Input, cache hit | $0.003 | $0.006 |
-| Output | $0.60 | $1.20 |
+| Token category    | Off-peak |   Peak |
+| ----------------- | -------: | -----: |
+| Input, cache miss |    $0.15 |  $0.30 |
+| Input, cache hit  |   $0.003 | $0.006 |
+| Output            |    $0.60 |  $1.20 |
 
 Peak is 01:00–04:00 and 06:00–10:00 UTC on weekdays, excluding Chinese public holidays. Other times are off-peak. These are published rates, not actual experiment charges.
 

@@ -1,9 +1,30 @@
 # Consolidated SIP shadow rollout
 
-Wave 11C parks the 73-symbol SIP producer at **zero replicas** and provisions, but does not attach, the archive
-settings. IEX remains primary. This change does not authorize activation, a Bayn feed cutover, or trading.
-Activate in the order below through [reviewed GitOps and Kargo](../release-automation.md). Do not patch replicas,
-ConfigMaps, or Flink jobs in the cluster.
+The 73-symbol Consolidated SIP shadow is parked: the producer is declared at **zero replicas** and the archive
+settings are provisioned but not attached. Keep IEX primary while qualifying SIP. The shadow does not authorize
+a Bayn feed cutover, the ETF strategy upgrade, or trading. Activate only through
+[reviewed GitOps and Kargo](../release-automation.md). Do not patch replicas, ConfigMaps, or Flink jobs in the cluster.
+
+## Capture and archive contract
+
+The [Bayn universe manifest](../../services/bayn/src/market-data/sip/universe.ts) defines `torghut-core-equity-sip-v1`.
+Hash its sorted uppercase `all73` as a comma-separated string with no whitespace or trailing newline:
+
+```sh
+sip_symbols="$(bun -e 'import { sipUniverse } from "./services/bayn/src/market-data/sip/universe"; console.log(sipUniverse.all73.join(","))')"
+printf '%s' "$sip_symbols" | sha256sum
+```
+
+The digest must be `89de937a84155ab0cffdfbc5687edf0ace82f68dcd07ffcdc724c58efb28960b`. The
+[SIP forwarder ConfigMap](../../argocd/applications/torghut/ws/sip-configmap.yaml) and
+[archive shadow ConfigMap](../../argocd/applications/torghut/market-data-archive/sip-shadow-configmap.yaml) pin
+that same roster and digest. Use one SIP replica and one upstream socket for all 219 bar, quote, and trade
+subscriptions. Leave dynamic symbol sources, observation feeds, per-channel symbol overrides, backfills, and trade
+updates off during qualification. Never add SIP as an observation feed on the IEX forwarder. The local paid
+declaration allows 400 symbol/channel subscriptions; `ALPACA_MAX_SYMBOL_CHANNELS=219` can cap it to this roster but
+does not grant entitlement. See the [forwarder contract](../../services/dorvud/README.md#consolidated-sip-shadow-forwarder)
+and [archive contract](../../services/dorvud/technical-analysis-flink/README.md#parallel-consolidated-sip-shadow-archive)
+for the implementation details.
 
 ## Preflight
 
@@ -90,8 +111,9 @@ before activation. Neither a REST response nor an Alpaca test/delayed-SIP socket
 ```
 
 Retain the result, not the Secret or frames. Alpaca codes 405, 406, and 409 mean symbol limit, connection limit,
-and insufficient subscription respectively. On any failure, leave replicas at zero and resolve it with the owner.
-If the Secret changes between this check and rollout, repeat the check before activation.
+and insufficient subscription respectively. They stop the SIP forwarder's reconnect loop. On any preflight failure,
+leave replicas at zero and resolve it with the owner. If the Secret changes between this check and rollout, repeat
+the check before activation.
 
 ## Activate capture, then archiving
 
@@ -127,28 +149,94 @@ If the Secret changes between this check and rollout, repeat the check before ac
 
 ## Parity and Phase 2: QQQ + SMH + XLK
 
-Use the [SIP-vs-IEX verifier and qualification guide](https://github.com/proompteng/lab/pull/16399) once that change
-is merged. Run from a pinned checkout containing the verifier and locked dependencies. Load existing read-only
-`BAYN_CLICKHOUSE_URL`, `BAYN_CLICKHOUSE_USERNAME`, `BAYN_CLICKHOUSE_PASSWORD` and calendar-capable
-`BAYN_ALPACA_KEY_ID` / `BAYN_ALPACA_SECRET_KEY` without printing them. Use the matching `BAYN_ALPACA_BASE_URL`
-if not using the paper default.
+### Verify five consecutive completed trading sessions
 
-After close and archive drain, run this for each of **five consecutive completed exchange sessions**. Set
-`SESSION` to the actual date (`YYYY-MM-DD`); use the provider calendar, including early closes.
+Run the [SIP-vs-IEX verifier](../../services/bayn/tools/verify-sip-vs-iex-shadow.ts) from a pinned checkout with Bun
+1.4.2 and locked dependencies. It makes read-only, parameterized ClickHouse HTTP GETs and obtains RTH bounds from
+Alpaca's `GET /v2/calendar`. Inject credentials through the existing secret path; never put them in arguments,
+reports, or shell traces.
+
+| Variable                                               | Purpose                                                                                               |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `BAYN_CLICKHOUSE_URL`                                  | Approved native ClickHouse HTTP(S) endpoint without URL credentials, query, or fragment               |
+| `BAYN_CLICKHOUSE_USERNAME`, `BAYN_CLICKHOUSE_PASSWORD` | Read-only credentials with SELECT on `signal.intraday_bars_1m_v2` and `signal.intraday_quotes_v1`     |
+| `BAYN_ALPACA_KEY_ID`, `BAYN_ALPACA_SECRET_KEY`         | Calendar-capable Alpaca credentials                                                                   |
+| `BAYN_ALPACA_BASE_URL`                                 | `https://paper-api.alpaca.markets` (default) or `https://api.alpaca.markets`, matching the credential |
+
+Confirm both lanes captured from before open, have drained through close, and had no backfill or route change in
+the window. Use **five consecutive exchange trading dates**, including scheduled early closes and skipping holidays
+and weekends. After each close and archive drain, set `SESSION` to that date (`YYYY-MM-DD`) and retain the JSON:
 
 ```bash
-bun services/bayn/tools/verify-sip-vs-iex-shadow.ts --session "${SESSION:?set the session date}" --format json
+(
+  umask 077
+  set -o noclobber
+  bun services/bayn/tools/verify-sip-vs-iex-shadow.ts \
+    --session "${SESSION:?set the session date}" --format json > "sip-shadow-$SESSION.json"
+)
 ```
 
-Retain each JSON report, CLI revision, deployed revisions, and lag/reject evidence. Every session must PASS:
-canonical 73-symbol identity, at least 99.5% final-minute bar coverage for QQQ/SMH/XLK/SPY, zero archived crosses,
-pooled SIP quote ingest p95 below 2 seconds, and median SIP spread no more than 2 bp for QQQ/SMH/XLK individually.
-Verify upstream rejects separately; archived quotes alone cannot show upstream drops. IEX lacks XLK, so compare
-like-for-like spread compression on the common symbol pool, not against synthetic IEX XLK observations.
+The CLI exits zero for PASS, nonzero with a scorecard for a gate FAIL, and nonzero without a scorecard for a
+configuration, session, read, or data-contract failure. Use `--format markdown` for a human-readable scorecard.
+Retain the five dates, JSON reports, verifier and deployed revisions, and source/lag/reject evidence. Live reads
+are not frozen snapshots: late revisions can change a rerun. Write reruns to new paths and do not count them as
+new sessions or skip a failed date. Resolve failures and qualify a new consecutive window.
+
+### Exact gate per session
+
+Every check in `bayn.sip-shadow-parity-report.v1` must pass on all five dates:
+
+- The distinct RTH SIP roster observed across bars and quotes, sorted and hashed, matches the canonical digest.
+  Every SIP row in the window must carry the canonical universe ID and hash.
+- **QQQ, SMH, XLK, and SPY** each have at least **99.5%** unique final SIP minute bars: 389 of 390 regular minutes
+  or 209 of 210 early-close minutes.
+- There are **zero crossed SIP quotes** in the archive. Verify Flink rejects separately: the archive alone does
+  not show upstream drops.
+- Pooled SIP quote p95 ingest latency is **strictly below 2,000 ms**. Raw bar latency is reported but not gated:
+  the bar timestamp labels the minute start, before publication is possible.
+- Median eligible SIP spread is **at most 2.0 bp each** for QQQ, SMH, and XLK. Missing eligible quotes for any
+  of these symbols fails the gate.
+
+The verifier uses event time in `[open, close)`. The latest ingest timestamp wins a bar's minute, then partition
+and offset break ties. Close divergence uses matched symbol/minute pairs, with IEX close as the denominator.
+Spreads are `10,000 × (ask − bid) / midpoint` rounded to nine decimal places in bps. Quotes need two positive
+prices and sizes; crossed quotes are excluded from spreads while locked quotes count as zero. Staleness counts
+received quotes ingested **more than five seconds** after their event time, not quote gaps. Pooled percentiles
+weight observations; medians average the middle pair for even counts, and p75/p95 use nearest rank.
+
+IEX covers 22 symbols and does not include XLK. Both feeds use the full 73-symbol coverage denominator, but
+missing IEX observations are not zero spreads or zero divergence. Use the common-symbol pool for spread
+compression: it is quote-weighted, not time-matched, and does not establish available prices or fill improvement.
+Escalate missing or inconsistent IEX evidence rather than treating it as compression.
+
+Run on a host sized for full-session quote samples. Live mode fails rather than truncates when a read exceeds
+500,000 bars, 30,000,000 quotes, or 20 minutes. Do not use a reader that silently caps results or combine
+percentiles from sampled or split reads.
+
+### Deterministic offline replay
+
+`--fixture` reads a local UTF-8 JSON file of at most 64 MiB without network or credentials:
+
+```sh
+bun services/bayn/tools/verify-sip-vs-iex-shadow.ts \
+  --session 2026-11-27 --fixture /path/to/shadow-fixture.json --format json
+```
+
+Use `{ "session": { "date": "...", "openAt": "...", "closeAt": "..." }, "bars": [], "quotes": [] }` with provider
+UTC RTH bounds and rows matching the two deduplicated SELECT projections in the verifier. Timestamps are UTC
+strings (up to nine fractional digits), bar offsets are decimal strings, and prices, sizes, flags, partitions,
+and versions are JSON numbers. Empty arrays cannot pass. Fixture replay is not live qualification evidence.
+
+### Phase 2 decision
 
 Five passes and the capacity evidence unlock review of **QQQ + SMH + XLK** for Phase 2, not a feed switch or order
-permission. Require a separate reviewed, same-feed Bayn replay and policy activation, with SPY as benchmark, fresh
-SIP quotes and native reconciliation, account, strategy and risk gates. Keep IEX primary if any evidence is missing
-or fails. If capture affects shared workloads, restore replicas to zero and detach the shadow ConfigMap (if attached)
-through reviewed GitOps. Verify IEX progress and archive restoration from the appropriate savepoint; retain SIP rows
-and Kafka records under existing retention and never replay them as IEX.
+permission. Require a separate reviewed, same-feed Bayn replay and policy activation with SPY as benchmark, fresh
+SIP quotes and native reconciliation, account, strategy, and risk gates. Any future primary cutover must verify
+the live decision and pricing path with canonical SIP provenance and keep IEX available for rollback.
+
+## Rollback
+
+Keep IEX primary if any evidence is missing or fails. If SIP capture affects shared workloads, restore the SIP
+producer to zero replicas and detach the shadow ConfigMap (if attached) through reviewed GitOps. Verify IEX progress
+and archive restoration from the appropriate savepoint. Retain SIP rows and Kafka records under existing retention
+and never replay them as IEX.

@@ -18,6 +18,7 @@ Start here when deciding which documentation to trust.
 - Repository cleanup backlog: `repository-cleanup-todo.md`
 - Agents/Jangar: `agents/README.md`
 - Agents/Jangar source-read state: `agents/current-source-state.md`
+- Bayn: [runbooks, architecture, and evidence](bayn/README.md)
 - Torghut: `torghut/README.md`
 - Torghut source-read state: `torghut/current-source-state.md`
 - Incidents: `incidents/README.md`

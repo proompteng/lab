@@ -6,7 +6,7 @@ The original task-local Python environment, provider directories and TOML files 
 
 Use Python 3.12.9 and author commit `237f0a56895fd295542e202be8f62be48d6e9995`. Apply the five patches listed in [the frozen experiment](cosmosalpha-frozen-experiment.md#prepare-and-freeze), in that order, before installing the package. All 101 installed assets must reproduce inventory `651a11dfc78f75893051ae809e27979365e2bda11b1a294eb7027deb9d8524a9`; the runner verifies this before freeze and execution.
 
-The [Linux dependency snapshot](evidence/2026-11-09-cosmosalpha-root-acceptance/requirements-linux.txt) records the resolved environment used for this acceptance, including NumPy 2.5.4, pandas 2.3.3, Qlib 0.9.7, LightGBM 4.7.0 and SciPy 1.18.1. Install those pins into an isolated environment, then install the repaired author package without changing dependencies:
+The [Linux dependency snapshot](../evidence/2026-11-09-cosmosalpha-root-acceptance/requirements-linux.txt) records the resolved environment used for this acceptance, including NumPy 2.5.4, pandas 2.3.3, Qlib 0.9.7, LightGBM 4.7.0 and SciPy 1.18.1. Install those pins into an isolated environment, then install the repaired author package without changing dependencies:
 
 ```sh
 uv venv --python 3.12.9 "$cosmos_venv"
